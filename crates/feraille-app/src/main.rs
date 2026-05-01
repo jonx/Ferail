@@ -97,6 +97,9 @@ pub struct App {
     pub splitter_x: f32,
     pub show_hidden: bool,
     pub ant_trail: AntTrail,
+    /// `Some(idx)` when the Get-Info panel is open, pointing at an
+    /// index in the active tab's entries.
+    pub properties_target: Option<usize>,
     /// Cache of NSWorkspace-fetched icons keyed by `cache_key_for(entry)`
     /// — extension for files (".rs", ".md"), "DIR"/"SYMLINK"/"FILE" for
     /// the rest. Populated lazily on `prefetch_icons` after each navigate.
@@ -187,6 +190,147 @@ impl App {
         self.breadcrumb.enter_edit_mode(&path);
     }
 
+    pub fn toggle_properties(&mut self) {
+        if self.properties_target.is_some() {
+            self.properties_target = None;
+        } else if let Some(idx) = self.tabs[self.active].selection.cursor() {
+            if idx < self.tabs[self.active].entries.len() {
+                self.properties_target = Some(idx);
+            }
+        }
+    }
+
+    fn close_properties(&mut self) {
+        self.properties_target = None;
+    }
+
+    fn paint_properties(&self, tokens: &Tokens, viewport: feraille_render::Size, renderer: &mut dyn Renderer) {
+        let Some(idx) = self.properties_target else { return };
+        let tab = &self.tabs[self.active];
+        let Some(entry) = tab.entries.get(idx) else { return };
+
+        // Backdrop dim
+        renderer.fill_rect(
+            FRect::new(0.0, 0.0, viewport.width, viewport.height),
+            feraille_design::Color::rgba(0, 0, 0, 90),
+        );
+
+        // Panel rect
+        let panel_w = 480.0;
+        let panel_h = 380.0;
+        let panel_x = ((viewport.width - panel_w) / 2.0).round();
+        let panel_y = ((viewport.height - panel_h) / 2.0).round();
+        let panel = FRect::new(panel_x, panel_y, panel_w, panel_h);
+        renderer.fill_rect(panel, tokens.bg.layer1);
+        renderer.stroke_rect(panel, 1.0, tokens.border.default);
+
+        renderer.push_clip(panel);
+
+        let pad = tokens.space.xl;
+        let mut y = panel.top() + pad;
+
+        // Title row: large icon (if cached) + name on the right.
+        let icon_size = 32.0;
+        let icon_x = panel.left() + pad;
+        if let Some(bitmap) = self.icon_cache.get(&cache_key_for(entry)) {
+            renderer.draw_bitmap(
+                FRect::new(icon_x, y, icon_size, icon_size),
+                bitmap,
+            );
+        } else {
+            renderer.fill_rect(
+                FRect::new(icon_x, y, icon_size, icon_size),
+                tokens.accent.fill,
+            );
+        }
+        let name_x = icon_x + icon_size + tokens.space.md;
+        renderer.draw_text(
+            FPoint::new(name_x, y + 2.0),
+            &entry.name,
+            TextStyle {
+                size: tokens.text.lg,
+                weight: FontWeight::SemiBold,
+                color: tokens.fg.primary,
+            },
+        );
+        renderer.draw_text(
+            FPoint::new(name_x, y + tokens.text.lg + 6.0),
+            &entry.display_kind,
+            TextStyle {
+                size: tokens.text.sm,
+                weight: FontWeight::Regular,
+                color: tokens.fg.secondary,
+            },
+        );
+        y += icon_size + pad;
+
+        // Divider
+        renderer.fill_rect(
+            FRect::new(panel.left() + pad, y, panel.size.width - pad * 2.0, 1.0),
+            tokens.border.subtle,
+        );
+        y += pad - 4.0;
+
+        // Key-value rows
+        let path = tab.current_dir.join(&entry.name);
+        let path_str = path.to_string_lossy().into_owned();
+        let size_text = if matches!(entry.kind, EntryKind::Directory) {
+            String::from("—")
+        } else if entry.size >= 1024 {
+            format!("{} ({} bytes)", entry.display_size, entry.size)
+        } else {
+            format!("{} bytes", entry.size)
+        };
+        let magic_text = if entry.display_magic.is_empty() {
+            String::from("—")
+        } else {
+            entry.display_magic.clone()
+        };
+        let mtime_iso = format_iso_date(entry.mtime_unix);
+
+        let rows: [(&str, &str); 5] = [
+            ("Where", path_str.as_str()),
+            ("Kind", entry.display_kind.as_str()),
+            ("Size", size_text.as_str()),
+            ("Modified", mtime_iso.as_str()),
+            ("Magic", magic_text.as_str()),
+        ];
+        for (label, value) in rows {
+            renderer.draw_text(
+                FPoint::new(panel.left() + pad, y),
+                label,
+                TextStyle {
+                    size: tokens.text.sm,
+                    weight: FontWeight::Medium,
+                    color: tokens.fg.secondary,
+                },
+            );
+            renderer.draw_text(
+                FPoint::new(panel.left() + pad + 90.0, y),
+                value,
+                TextStyle {
+                    size: tokens.text.md,
+                    weight: FontWeight::Regular,
+                    color: tokens.fg.primary,
+                },
+            );
+            y += tokens.text.md * 2.0;
+        }
+
+        renderer.pop_clip();
+
+        // Footer hint
+        renderer.draw_text(
+            FPoint::new(panel.left() + pad, panel.bottom() - tokens.space.xl),
+            "Esc to close · Cmd+I again to toggle",
+            TextStyle {
+                size: tokens.text.xs,
+                weight: FontWeight::Regular,
+                color: tokens.fg.disabled,
+            },
+        );
+    }
+
     /// Resolve a path → NodeId via the FS (allocating an ID if new).
     pub fn id_for_path(&self, path: &Path) -> NodeId {
         self.fs.id_for_path(path)
@@ -239,6 +383,7 @@ impl App {
             splitter_x: SIDEBAR_DEFAULT,
             show_hidden: false,
             ant_trail: AntTrail::new(),
+            properties_target: None,
             icon_cache: HashMap::new(),
             magic_cache: HashMap::new(),
             pointer_dips: None,
@@ -707,6 +852,11 @@ impl App {
         // Splitter
         self.splitter.paint(splitter_x, splitter_container, tokens, renderer);
 
+        // Properties panel — overlay over everything else when open.
+        if self.properties_target.is_some() {
+            self.paint_properties(tokens, viewport, renderer);
+        }
+
         // Status
         let status = FRect::new(0.0, viewport.height - STATUS_H, viewport.width, STATUS_H);
         renderer.fill_rect(status, tokens.bg.layer2);
@@ -887,6 +1037,15 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 let Some(p) = self.pointer_dips else { return };
 
+                // Properties panel — when open, any click closes it.
+                // (Iter-3.10 can refine to "click-outside-only" if useful.)
+                if self.properties_target.is_some() {
+                    let _ = p;
+                    self.close_properties();
+                    self.request_redraw();
+                    return;
+                }
+
                 // Splitter (highest priority — narrow but layered above).
                 if self.splitter.begin_drag_at(self.splitter_x, self.splitter_container(), p) {
                     self.request_redraw();
@@ -1051,6 +1210,14 @@ impl ApplicationHandler for App {
                         self.request_redraw();
                         return;
                     }
+                    // Cmd+I (macOS Finder) / Ctrl+I → file properties panel.
+                    let mod_held =
+                        self.modifiers.super_key() || self.modifiers.control_key();
+                    if (t == "i" || t == "I") && mod_held {
+                        self.toggle_properties();
+                        self.request_redraw();
+                        return;
+                    }
                 }
 
                 let count = self.tabs[self.active].entries.len();
@@ -1058,7 +1225,13 @@ impl ApplicationHandler for App {
                 let page = (viewport_h / self.list.row_height) as i64;
                 let sel = &mut self.tabs[self.active].selection;
                 match logical_key {
-                    Key::Named(NamedKey::Escape) => event_loop.exit(),
+                    Key::Named(NamedKey::Escape) => {
+                        if self.properties_target.is_some() {
+                            self.close_properties();
+                        } else {
+                            event_loop.exit();
+                        }
+                    }
                     Key::Named(NamedKey::ArrowDown) => sel.move_cursor(1, count),
                     Key::Named(NamedKey::ArrowUp) => sel.move_cursor(-1, count),
                     Key::Named(NamedKey::PageDown) => sel.move_cursor(page, count),
@@ -1101,6 +1274,26 @@ enum ScrollTarget {
     Tree,
     List,
     None,
+}
+
+fn format_iso_date(unix: i64) -> String {
+    // Reuse the same approach as feraille-fs-native's humanize: derive
+    // Y/M/D from days-since-epoch via Howard Hinnant's algorithm.
+    let secs_in_day = unix.rem_euclid(86_400);
+    let h = (secs_in_day / 3600) as u32;
+    let m = ((secs_in_day % 3600) / 60) as u32;
+    let days = unix.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i32 + era as i32 * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let mo = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = if mo <= 2 { y + 1 } else { y };
+    format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02} UTC")
 }
 
 fn cache_key_for(entry: &FileEntry) -> String {

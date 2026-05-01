@@ -188,6 +188,28 @@ The screenshot tool paid back immediately — without it, this would have taken 
 
 Tree pane still shows colored squares — `FileTree::paint` doesn't take the icon callback yet. Iter-3.7 is the obvious follow-up.
 
+### Iter-3.8 — magic file detection (small port of Ferail's spirit)
+
+Hand-curated table of ~35 high-confidence patterns covering images, documents, archives, executables, audio, video, fonts, SQLite, and UTF-8 BOMs. Falls through to a textual heuristic that requires valid UTF-8 plus <5% control chars; rejects pseudorandom binary cleanly.
+
+Architecture:
+- `feraille-fs-native::detect_magic(path) -> Option<&'static str>` reads first 512 bytes once, matches against the table, returns label.
+- `FileEntry::display_magic` populated lazily by App after enumerate; `detect_magic` itself stays in the FS layer where I/O belongs.
+- `App::magic_cache: HashMap<(PathBuf, mtime), String>` so re-visits don't re-detect. Capped at 200 detections per navigate to keep huge folders responsive — anything beyond stays empty until next refresh / scroll.
+- New `ColumnId::Magic` in the column system; default-on. Sort key plumbed.
+
+What's not here: async detection (worker thread + EventLoopProxy::send_event) — synchronous-with-cap is fine at typical folder sizes; we'll add async only when scrolling lag tells us to. Markdown / TOML / source-code specific entries — currently all hit the textual heuristic, fine. Persistent cache — iter-6 with SQLite.
+
+### Iter-3.9 — file properties panel (Cmd+I)
+
+Modal "Get Info" overlay:
+- `App::properties_target: Option<usize>` points at the entry index when the panel is open.
+- `Cmd+I` (or `Ctrl+I`) toggles. `Esc` closes if open, otherwise quits the app. Any mouse click while open closes.
+- Painted as the *last* layer in `paint_to`: backdrop dim (alpha 90/255) + centered 480×380 panel with the cached system icon, filename, kind subtitle, divider, then label/value rows for Where (full path), Kind, Size (humanized + exact bytes), Modified (ISO date), Magic.
+- Reused the same Howard Hinnant date math that's in `feraille-fs-native::humanize_mtime` — copy-paste fine here; the two use cases drift in different directions so a shared helper would be premature.
+
+What's not here: large 64×64 icon (would want a separate cache key with size_px), live updates if the file changes, click-outside-only-to-close (currently any click closes), property editing (rename + permissions). All iter-3.10+.
+
 ### Iter-3 done; deliberate stop
 
 Pausing autonomous work here. The user is offline and asked me to make my own choices "without overengineering." Iter-3.1 (file actions) and 3.2 (icon hues + title sync) are substantive shipped wins that turn the app from a viewer into something you'd use.
