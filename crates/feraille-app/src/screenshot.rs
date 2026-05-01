@@ -12,7 +12,6 @@ use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use feraille_core::FsBackend;
 use feraille_design::Theme;
 use feraille_render::SoftRenderer;
 
@@ -138,7 +137,7 @@ pub fn run(args: Args) -> Result<()> {
         app.switch_to_tab(idx);
     }
     for p in &args.expand {
-        expand_path_in_tree(&mut app, &canonicalize_or_passthrough(p));
+        app.reveal_in_tree(&canonicalize_or_passthrough(p));
     }
     if let Some(s) = args.splitter {
         app.set_splitter(s);
@@ -182,52 +181,6 @@ fn canonicalize_or_passthrough(p: &Path) -> PathBuf {
         p.to_path_buf()
     };
     std::fs::canonicalize(&expanded).unwrap_or(expanded)
-}
-
-/// Expand the tree to reveal `path` by walking from a known root downward,
-/// populating each ancestor's children as we go.
-fn expand_path_in_tree(app: &mut App, path: &Path) {
-    let home = feraille_fs_native::home_dir();
-    let root = if path.starts_with(&home) {
-        home
-    } else if path.starts_with("/Volumes") {
-        // Find the volume root.
-        let mut comps = path.components();
-        let mut acc = PathBuf::new();
-        for _ in 0..3 {
-            if let Some(c) = comps.next() {
-                acc.push(c.as_os_str());
-            } else {
-                break;
-            }
-        }
-        acc
-    } else {
-        return;
-    };
-
-    let mut current = root.clone();
-    loop {
-        let id = app.fs.id_for_path(&current);
-        let handle = app.fs.enumerate(id);
-        app.tree.populate_children(id, &handle.initial);
-        if current == path {
-            break;
-        }
-        // Step one component deeper toward `path`.
-        let rel = match path.strip_prefix(&current) {
-            Ok(r) => r,
-            Err(_) => break,
-        };
-        let next_component = match rel.components().next() {
-            Some(c) => c,
-            None => break,
-        };
-        current.push(next_component.as_os_str());
-        if !current.is_dir() {
-            break;
-        }
-    }
 }
 
 fn write_png(path: &Path, pixels: &[u32], width: u32, height: u32) -> Result<()> {

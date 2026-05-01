@@ -35,7 +35,6 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
-const HEADER_H: f32 = 40.0;
 const TABSTRIP_H: f32 = 32.0;
 const BREADCRUMB_H: f32 = 32.0;
 const STATUS_H: f32 = 24.0;
@@ -240,12 +239,12 @@ impl App {
     }
 
     fn body_top(&self) -> f32 {
-        HEADER_H + TABSTRIP_H
+        TABSTRIP_H
     }
 
     fn tabstrip_rect(&self) -> FRect {
         let (w, _) = self.viewport_size_dips();
-        FRect::new(0.0, HEADER_H, w, TABSTRIP_H)
+        FRect::new(0.0, 0.0, w, TABSTRIP_H)
     }
 
     fn tree_rect(&self) -> FRect {
@@ -300,7 +299,69 @@ impl App {
         tab.list_scroll = 0.0;
         self.list.scroll_offset = 0.0;
         self.breadcrumb.set_path(&path);
-        self.tree.select(id);
+        self.reveal_in_tree(&path);
+    }
+
+    /// Walk the tree from the appropriate root down to `path`, expanding
+    /// each ancestor. Children are only re-enumerated for ancestors that
+    /// haven't been loaded yet — this is the perf fix that keeps tree
+    /// re-reveals (e.g. clicking a folder a second time) instant. Auto-
+    /// scrolls the tree to keep the target visible.
+    pub fn reveal_in_tree(&mut self, path: &Path) {
+        let home = home_dir();
+        let mut current = if path.starts_with(&home) {
+            home
+        } else if path.starts_with("/Volumes") {
+            let mut comps = path.components();
+            let mut acc = PathBuf::new();
+            for _ in 0..3 {
+                if let Some(c) = comps.next() {
+                    acc.push(c.as_os_str());
+                } else {
+                    break;
+                }
+            }
+            acc
+        } else {
+            self.tree.select(self.fs.id_for_path(path));
+            return;
+        };
+        loop {
+            let id = self.fs.id_for_path(&current);
+            if current != path {
+                if self.tree.is_loaded(id) {
+                    // Cached — just mark expanded; don't touch the FS.
+                    self.tree.ensure_expanded(id);
+                } else {
+                    let handle = self.fs.enumerate(id);
+                    self.tree.populate_children(id, &handle.initial);
+                }
+            }
+            if current == path {
+                self.tree.select(id);
+                let viewport_h = self.tree_rect().size.height;
+                self.tree.ensure_visible(id, viewport_h);
+                break;
+            }
+            let rel = match path.strip_prefix(&current) {
+                Ok(r) => r,
+                Err(_) => {
+                    self.tree.select(id);
+                    break;
+                }
+            };
+            let next = match rel.components().next() {
+                Some(c) => c,
+                None => {
+                    self.tree.select(id);
+                    break;
+                }
+            };
+            current.push(next.as_os_str());
+            if !current.is_dir() {
+                break;
+            }
+        }
     }
 
     fn open_at_cursor(&mut self) {
@@ -399,7 +460,6 @@ impl App {
         let scrollbar_rect = self.scrollbar_rect();
         let splitter_container = self.splitter_container();
         let content_h = self.list_content_height();
-        let header_text = self.tabs[self.active].current_dir.to_string_lossy().into_owned();
         let status_text = format_status(&self.tabs[self.active]);
         let tab_infos: Vec<TabInfo> =
             self.tabs.iter().map(|t| TabInfo { label: t.label() }).collect();
@@ -411,24 +471,7 @@ impl App {
         // Window bg
         renderer.fill_rect(FRect::new(0.0, 0.0, viewport.width, viewport.height), tokens.bg.base);
 
-        // Header
-        let header = FRect::new(0.0, 0.0, viewport.width, HEADER_H);
-        renderer.fill_rect(header, tokens.bg.layer2);
-        renderer.fill_rect(
-            FRect::new(0.0, HEADER_H - 1.0, viewport.width, 1.0),
-            tokens.border.subtle,
-        );
-        renderer.draw_text(
-            FPoint::new(tokens.space.lg, (HEADER_H - tokens.text.lg) / 2.0 - 1.0),
-            &header_text,
-            TextStyle {
-                size: tokens.text.lg,
-                weight: FontWeight::SemiBold,
-                color: tokens.fg.primary,
-            },
-        );
-
-        // Tabstrip
+        // Tabstrip — topmost element (the OS title bar sits above us).
         self.tabstrip.paint(tabstrip_rect, &tab_infos, active, tokens, renderer);
 
         // Tree pane (replaces sidebar)

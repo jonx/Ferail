@@ -279,6 +279,30 @@ impl FileTree {
         self.selected = Some(id);
     }
 
+    /// Whether the node's children have been populated. Used by callers
+    /// (App::reveal_in_tree) to avoid re-enumerating cached folders.
+    pub fn is_loaded(&self, id: NodeId) -> bool {
+        self.nodes.get(&id).map(|n| n.children_loaded).unwrap_or(false)
+    }
+
+    /// Whether the node currently exists in the tree (used as roots or
+    /// reachable through expanded ancestors).
+    pub fn contains(&self, id: NodeId) -> bool {
+        self.nodes.contains_key(&id)
+    }
+
+    /// Adjust scroll so `id` is visible in `viewport_h` DIPs of viewport.
+    /// No-op if `id` is not currently in the visible flat list.
+    pub fn ensure_visible(&mut self, id: NodeId, viewport_h: f32) {
+        let Some(idx) = self.visible.iter().position(|n| *n == id) else { return };
+        let row_y = (idx as f32) * ROW_HEIGHT;
+        if row_y < self.scroll_offset {
+            self.scroll_offset = row_y;
+        } else if row_y + ROW_HEIGHT > self.scroll_offset + viewport_h {
+            self.scroll_offset = (row_y + ROW_HEIGHT - viewport_h).max(0.0);
+        }
+    }
+
     pub fn content_height(&self) -> f32 {
         self.visible.len() as f32 * ROW_HEIGHT
     }

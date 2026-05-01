@@ -82,6 +82,16 @@ What it caught immediately:
 
 Sample screenshots were taken to /tmp/feraille-{home,fixed,light-selected,dark,tree}.png during dev.
 
+### Iter-2.7 shipped — chrome trim + tree reveal + perf fix
+
+- **Removed the standalone header.** The 40-DIP "current path" strip duplicated the breadcrumb. Tabstrip is now the topmost element below the OS title bar — Files App / Finder convention. Saves vertical chrome and reads cleaner in screenshots.
+- **`App.navigate(path)` now reveals the path in the tree.** Walks the chain of ancestors from the appropriate root (Home or `/Volumes/<x>`), calling `populate_children` on each that hasn't been loaded yet, then selects + auto-scrolls to the leaf. Closes the iter-2.5 known gap.
+- **Perf fix on tree re-reveal.** First version of `reveal_in_tree` always re-enumerated every ancestor — fine the first time, slow on every subsequent navigation that crossed cached ancestors. Now skips `fs.enumerate` when `tree.is_loaded(id)` is already true. Catches the user's observation that "folding is instant but not unfolding": with this fix, re-unfold of any cached folder is instant; only the *first* expand of a folder pays I/O cost.
+- **`FileTree::ensure_visible(id, viewport_h)`** added — auto-scrolls the tree to keep a selected node visible, mirroring `VirtualizedList`.
+- **`FileTree::is_loaded` and `contains` accessors** for the host's reveal logic.
+
+Verified via headless screenshot: navigating to `~/Source/Feraille` now shows the full chain expanded in the tree with Feraille selected and visible in the tree's viewport.
+
 ## Trade-offs made under time pressure
 
 - **Sync FS enumeration this iter.** The `FsBackend` trait already encodes streamed batches; iter-2 fills it with a single sync batch. Threading + change-watching land in iter-3 with the macOS shell crate.
