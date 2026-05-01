@@ -209,9 +209,15 @@ impl FileTree {
     /// expands the node — Finder/Explorer convention. May return up to two
     /// events: an `ExpandRequested` (if children aren't loaded) followed by
     /// an `Activate`. The host fires them in order.
-    pub fn click(&mut self, bounds: Rect, point: Point) -> Vec<TreeEvent> {
-        let Some(idx) = self.index_at(bounds, point) else { return Vec::new() };
-        let Some(&id) = self.visible.get(idx) else { return Vec::new() };
+    ///
+    /// Returns `None` if `point` didn't land on any row (so the host can
+    /// fall through to other panes). Returns `Some(events)` whenever a
+    /// row was hit *even if `events` is empty* — important because
+    /// folding a cached expanded folder mutates state but emits no event;
+    /// the host still needs to redraw.
+    pub fn click(&mut self, bounds: Rect, point: Point) -> Option<Vec<TreeEvent>> {
+        let idx = self.index_at(bounds, point)?;
+        let id = *self.visible.get(idx)?;
         let row_top = bounds.top() + (idx as f32 * ROW_HEIGHT) - self.scroll_offset;
         let row_rect = Rect::new(bounds.left(), row_top, bounds.size.width, ROW_HEIGHT);
         let depth = self.nodes.get(&id).map(|n| n.depth).unwrap_or(0);
@@ -220,7 +226,7 @@ impl FileTree {
 
         if chevron_rect.contains(point) {
             // Chevron-only: toggle without navigating.
-            return self.toggle_expand(id).into_iter().collect();
+            return Some(self.toggle_expand(id).into_iter().collect());
         }
 
         // Row click: select + navigate + (auto-)expand if collapsed.
@@ -237,7 +243,7 @@ impl FileTree {
             }
         }
         events.push(TreeEvent::Activate(id));
-        events
+        Some(events)
     }
 
     /// Expand the node by NodeId — used by the host when the user navigates

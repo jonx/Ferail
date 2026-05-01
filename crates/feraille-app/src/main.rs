@@ -702,9 +702,10 @@ impl ApplicationHandler for App {
                     self.request_redraw();
                     return;
                 }
-                // Tree — may emit two events (expand + activate).
-                let tree_events = self.tree.click(self.tree_rect(), p);
-                if !tree_events.is_empty() {
+                // Tree — `Some(events)` even if empty signals "I handled
+                // this click; redraw" (e.g. fold of cached expanded folder
+                // mutates state but emits no event). `None` = missed.
+                if let Some(tree_events) = self.tree.click(self.tree_rect(), p) {
                     for ev in tree_events {
                         self.handle_tree_event(ev);
                     }

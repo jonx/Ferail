@@ -92,6 +92,26 @@ Sample screenshots were taken to /tmp/feraille-{home,fixed,light-selected,dark,t
 
 Verified via headless screenshot: navigating to `~/Source/Feraille` now shows the full chain expanded in the tree with Feraille selected and visible in the tree's viewport.
 
+### Iter-2.7.1 — fold redraw bug
+
+User report: "fold is slow, ~1 second; unfold is fast." Misdiagnosed at first as a perf issue; actually a redraw bug.
+
+`FileTree::toggle_expand` returns `None` when collapsing an already-expanded folder (state mutated, no event for host). My host-side click handler had:
+
+```rust
+if !tree_events.is_empty() {
+    self.request_redraw();
+}
+```
+
+Empty Vec → no redraw. The fold *did* happen in tree state, but the screen showed stale (still-expanded) state until the next event (mouse move, etc.). User experienced this as "1 second of slow," but it was actually a missing redraw, period.
+
+Fix: `tree.click()` now returns `Option<Vec<TreeEvent>>`. `None` = missed all rows (fall through). `Some(events)` = hit a row, redraw needed even if events is empty. The empty-Vec case used to mean "missed"; now it correctly means "handled, no events for you."
+
+Same class of bug existed for cached-unfold (chevron toggle on a previously-loaded folder also returns None) but the user hit it less because most unfolds are first-time and trigger an `ExpandRequested` that *does* drive a redraw.
+
+The right takeaway: anywhere we have "control mutated state but emitted no event," the API has to signal that distinctly — empty event vec is overloaded otherwise.
+
 ## Trade-offs made under time pressure
 
 - **Sync FS enumeration this iter.** The `FsBackend` trait already encodes streamed batches; iter-2 fills it with a single sync batch. Threading + change-watching land in iter-3 with the macOS shell crate.
