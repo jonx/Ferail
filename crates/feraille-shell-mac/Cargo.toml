@@ -29,5 +29,7 @@ objc2-app-kit = { version = "0.2", features = [
     "NSApplication",
     "NSImage",
     "NSWorkspace",
+    "NSMenu",
+    "NSMenuItem",
 ] }
 raw-window-handle = "0.6"

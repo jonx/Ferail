@@ -12,6 +12,30 @@
 #[cfg(target_os = "macos")]
 mod drag;
 
+#[cfg(target_os = "macos")]
+mod menu;
+
+/// Show a context menu at `cursor_dips` (relative to the window's content
+/// view) with the given titles. Returns the 0-based index of the selected
+/// item, or `None` on dismiss. Empty title strings render as separators.
+#[cfg(target_os = "macos")]
+pub fn show_context_menu(
+    window: &winit::window::Window,
+    titles: &[&str],
+    cursor_dips: (f32, f32),
+) -> Option<usize> {
+    menu::show_context_menu(window, titles, cursor_dips)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_context_menu(
+    _window: &winit::window::Window,
+    _titles: &[&str],
+    _cursor_dips: (f32, f32),
+) -> Option<usize> {
+    None
+}
+
 /// Drag a list of file paths out to Finder / other apps. Returns `true`
 /// if the system accepted the drag; `false` if a prerequisite failed
 /// (no window handle, no current NSEvent, etc.). Non-macOS: always `false`.

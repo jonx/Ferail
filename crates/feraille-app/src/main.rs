@@ -221,6 +221,29 @@ impl App {
         }
     }
 
+    /// Right-click handler: select the row and show a context menu at
+    /// the click location. Synchronous — blocks the event loop while
+    /// the menu is open.
+    fn show_context_menu_at(&mut self, p: FPoint) {
+        let inner = self.list_inner_rect();
+        let count = self.tabs[self.active].entries.len();
+        let Some(idx) = self.list.index_at(inner, p, count) else { return };
+        self.tabs[self.active].selection.set_cursor(idx);
+        let Some(window) = self.window.as_ref().cloned() else { return };
+        // Item 4 is the empty separator string.
+        let titles = ["Open", "Reveal in Finder", "Get Info", "Copy Path", "", "Move to Trash"];
+        let choice = feraille_shell_mac::show_context_menu(&window, &titles, (p.x, p.y));
+        match choice {
+            Some(0) => self.open_at_cursor(),
+            Some(1) => self.reveal_cursor_in_finder(),
+            Some(2) => self.toggle_properties(),
+            Some(3) => self.copy_cursor_path(),
+            Some(5) => self.delete_at_cursor_to_trash(),
+            _ => {}
+        }
+        self.request_redraw();
+    }
+
     /// Open Finder with the cursor entry selected.
     pub fn reveal_cursor_in_finder(&self) {
         let tab = &self.tabs[self.active];
@@ -1227,6 +1250,10 @@ impl ApplicationHandler for App {
                     });
                     self.request_redraw();
                 }
+            }
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Right, .. } => {
+                let Some(p) = self.pointer_dips else { return };
+                self.show_context_menu_at(p);
             }
             WindowEvent::MouseInput { state: ElementState::Released, button: MouseButton::Left, .. } => {
                 if self.scrollbar.is_dragging() {
