@@ -9,6 +9,22 @@
 //! Non-macOS builds get no-op stubs so `feraille-app` can call into
 //! this crate unconditionally.
 
+#[cfg(target_os = "macos")]
+mod drag;
+
+/// Drag a list of file paths out to Finder / other apps. Returns `true`
+/// if the system accepted the drag; `false` if a prerequisite failed
+/// (no window handle, no current NSEvent, etc.). Non-macOS: always `false`.
+#[cfg(target_os = "macos")]
+pub fn begin_drag(window: &winit::window::Window, paths: &[&std::path::Path]) -> bool {
+    drag::begin_drag(window, paths)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn begin_drag(_window: &winit::window::Window, _paths: &[&std::path::Path]) -> bool {
+    false
+}
+
 /// Width to reserve at the leading edge of the tabstrip so the OS
 /// traffic-light buttons (close / minimize / zoom) don't overlap our
 /// content. Standard macOS layout puts the leftmost button at ~10 DIPs

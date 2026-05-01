@@ -41,6 +41,16 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
+const DRAG_THRESHOLD_DIPS: f32 = 4.0;
+const DRAG_DELAY_MS: u128 = 100;
+
+#[derive(Clone, Copy, Debug)]
+struct DragWatch {
+    start: FPoint,
+    when: std::time::Instant,
+    row: usize,
+}
+
 const TABSTRIP_H: f32 = 32.0;
 const BREADCRUMB_H: f32 = 32.0;
 const STATUS_H: f32 = 24.0;
@@ -108,6 +118,9 @@ pub struct App {
     /// string = "we tried, no match". Populated capped at 200 entries
     /// per navigate to avoid blocking large folders for too long.
     pub magic_cache: HashMap<(PathBuf, i64), String>,
+    /// `Some` when the user has mouse-down on a list row; promotes to a
+    /// system drag once `(distance > 4 DIPs && time > 100 ms)`.
+    drag_watch: Option<DragWatch>,
     pointer_dips: Option<FPoint>,
     modifiers: ModifiersState,
 
@@ -386,6 +399,7 @@ impl App {
             properties_target: None,
             icon_cache: HashMap::new(),
             magic_cache: HashMap::new(),
+            drag_watch: None,
             pointer_dips: None,
             modifiers: ModifiersState::empty(),
             tokens: Tokens::for_theme(detect_theme()),
@@ -990,6 +1004,29 @@ impl ApplicationHandler for App {
                 let p = FPoint::new((x as f32) / self.scale_factor, (y as f32) / self.scale_factor);
                 self.pointer_dips = Some(p);
                 let mut redraw = false;
+
+                // Drag-out: promote the watch into a system drag once
+                // the cursor has moved past the threshold and the delay
+                // has elapsed. Once kicked, the OS owns the drag visual
+                // until the user drops or cancels.
+                if let Some(watch) = self.drag_watch {
+                    let dx = p.x - watch.start.x;
+                    let dy = p.y - watch.start.y;
+                    let dist = (dx * dx + dy * dy).sqrt();
+                    if dist > DRAG_THRESHOLD_DIPS && watch.when.elapsed().as_millis() > DRAG_DELAY_MS {
+                        self.drag_watch = None;
+                        if let Some(entry) =
+                            self.tabs[self.active].entries.get(watch.row).cloned()
+                        {
+                            let path = self.tabs[self.active].current_dir.join(&entry.name);
+                            if let Some(window) = &self.window {
+                                let _ =
+                                    feraille_shell_mac::begin_drag(window, &[path.as_path()]);
+                            }
+                        }
+                    }
+                }
+
                 if self.scrollbar.is_dragging() {
                     if let Some(off) = self.scrollbar.scroll_offset_for_drag(
                         self.scrollbar_rect(),
@@ -1107,6 +1144,13 @@ impl ApplicationHandler for App {
                 // List click.
                 if let Some(idx) = self.list.index_at(inner, p, self.tabs[self.active].entries.len()) {
                     self.tabs[self.active].selection.set_cursor(idx);
+                    // Arm drag-out: a small motion + delay after mouse-down
+                    // on a row promotes to a system drag.
+                    self.drag_watch = Some(DragWatch {
+                        start: p,
+                        when: std::time::Instant::now(),
+                        row: idx,
+                    });
                     self.request_redraw();
                 }
             }
@@ -1119,6 +1163,7 @@ impl ApplicationHandler for App {
                     self.splitter.end_drag();
                     self.request_redraw();
                 }
+                self.drag_watch = None;
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 // PixelDelta arrives from trackpad / high-precision wheels in
