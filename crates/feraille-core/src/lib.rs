@@ -43,6 +43,10 @@ pub struct FileEntry {
     pub mtime_unix: i64,
     pub display_size: String,
     pub display_mtime: String,
+    /// Friendly type label — "Folder", "Symlink", uppercased extension
+    /// (e.g. "RS", "MD"), or "File" when there's no extension. macOS shell
+    /// crate (iter-4) replaces this with `NSWorkspace.localizedDescription`.
+    pub display_kind: String,
 }
 
 /// Filesystem trait — implemented by `feraille-fs-native` (cross-platform std::fs)

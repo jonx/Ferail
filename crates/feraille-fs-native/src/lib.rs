@@ -110,6 +110,7 @@ impl FsBackend for NativeFs {
                 humanize_bytes(size)
             };
             let display_mtime = humanize_mtime(mtime_unix);
+            let display_kind = describe_kind(kind, &name);
             let id = self.id_for_path(&child_path);
             entries.push(FileEntry {
                 id,
@@ -119,6 +120,7 @@ impl FsBackend for NativeFs {
                 mtime_unix,
                 display_size,
                 display_mtime,
+                display_kind,
             });
         }
         // Directories first, then case-insensitive name.
@@ -252,6 +254,17 @@ pub fn list_volumes() -> Vec<(String, PathBuf)> {
     }
     out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
     out
+}
+
+fn describe_kind(kind: EntryKind, name: &str) -> String {
+    match kind {
+        EntryKind::Directory => "Folder".to_string(),
+        EntryKind::Symlink => "Symlink".to_string(),
+        EntryKind::File => match name.rsplit_once('.') {
+            Some((_, ext)) if !ext.is_empty() && ext.len() <= 8 => ext.to_uppercase(),
+            _ => "File".to_string(),
+        },
+    }
 }
 
 fn humanize_bytes(bytes: u64) -> String {

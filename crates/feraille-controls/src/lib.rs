@@ -17,4 +17,7 @@ pub use filetree::{FileTree, TreeEvent};
 pub use selection::{Selection, SelectionSet};
 pub use sidebar::{Sidebar, SidebarEvent};
 pub use tabstrip::{TabHit, TabInfo, TabStrip, TabStripEvent};
-pub use virtualized_list::{ListEvent, ListItem, VirtualizedList};
+pub use virtualized_list::{
+    default_columns, sort_entries, Column, ColumnAlign, ColumnId, ListEvent, ListItem, SortKey,
+    VirtualizedList,
+};

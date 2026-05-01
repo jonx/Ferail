@@ -34,6 +34,7 @@ pub struct Args {
     pub tab: Option<usize>,
     pub edit_mode: bool,
     pub show_hidden: bool,
+    pub sort: Option<(String, bool)>, // (column_name, ascending)
 }
 
 pub fn parse_args() -> Args {
@@ -74,6 +75,15 @@ pub fn parse_args() -> Args {
             "--tab" => args.tab = iter.next().and_then(|s| s.parse().ok()),
             "--edit-mode" => args.edit_mode = true,
             "--show-hidden" => args.show_hidden = true,
+            "--sort" => {
+                let raw = iter.next().unwrap_or_default();
+                let (col, asc) = if let Some(c) = raw.strip_suffix("-desc") {
+                    (c.to_string(), false)
+                } else {
+                    (raw, true)
+                };
+                args.sort = Some((col, asc));
+            }
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -147,6 +157,23 @@ pub fn run(args: Args) -> Result<()> {
     }
     for p in &args.expand {
         app.reveal_in_tree(&canonicalize_or_passthrough(p));
+    }
+    if let Some((col, asc)) = args.sort.clone() {
+        let id = match col.as_str() {
+            "name" => Some(feraille_controls::ColumnId::Name),
+            "size" => Some(feraille_controls::ColumnId::Size),
+            "kind" => Some(feraille_controls::ColumnId::Kind),
+            "modified" | "mtime" => Some(feraille_controls::ColumnId::Modified),
+            _ => None,
+        };
+        if let Some(id) = id {
+            // toggle_sort flips when re-clicking the same column, so set
+            // ascending explicitly afterward.
+            app.list.toggle_sort(id);
+            app.list.sort = feraille_controls::SortKey { column: id, ascending: asc };
+            let key = app.list.sort;
+            feraille_controls::sort_entries(&mut app.tabs[app.active].entries, key);
+        }
     }
     if let Some(s) = args.splitter {
         app.set_splitter(s);

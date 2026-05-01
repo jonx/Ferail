@@ -19,8 +19,8 @@ use feraille_controls::primitives::{
     scrollbar::Scrollbar, splitter::Splitter, text_input::TextInputKey,
 };
 use feraille_controls::{
-    BreadcrumbBar, BreadcrumbEvent, FileTree, Selection, TabInfo, TabStrip, TabStripEvent,
-    TreeEvent, VirtualizedList,
+    sort_entries, BreadcrumbBar, BreadcrumbEvent, FileTree, Selection, TabInfo, TabStrip,
+    TabStripEvent, TreeEvent, VirtualizedList,
 };
 use feraille_core::{AntTrail, EntryKind, FileEntry, FsBackend, NodeId};
 use feraille_design::{FontWeight, Theme, Tokens};
@@ -272,14 +272,31 @@ impl App {
         )
     }
 
+    fn header_rect(&self) -> FRect {
+        let pane = self.list_pane_rect();
+        FRect::new(pane.left(), pane.top(), pane.size.width, self.list.header_height())
+    }
+
     fn list_inner_rect(&self) -> FRect {
         let pane = self.list_pane_rect();
-        FRect::new(pane.left(), pane.top(), (pane.size.width - SCROLLBAR_W).max(0.0), pane.size.height)
+        let header_h = self.list.header_height();
+        FRect::new(
+            pane.left(),
+            pane.top() + header_h,
+            (pane.size.width - SCROLLBAR_W).max(0.0),
+            (pane.size.height - header_h).max(0.0),
+        )
     }
 
     fn scrollbar_rect(&self) -> FRect {
         let pane = self.list_pane_rect();
-        FRect::new(pane.right() - SCROLLBAR_W, pane.top(), SCROLLBAR_W, pane.size.height)
+        let header_h = self.list.header_height();
+        FRect::new(
+            pane.right() - SCROLLBAR_W,
+            pane.top() + header_h,
+            SCROLLBAR_W,
+            (pane.size.height - header_h).max(0.0),
+        )
     }
 
     fn splitter_container(&self) -> FRect {
@@ -296,6 +313,7 @@ impl App {
         self.ant_trail.record(id);
         let mut handle = self.fs.enumerate(id);
         filter_hidden(&mut handle.initial, self.show_hidden);
+        sort_entries(&mut handle.initial, self.list.sort);
         let tab = &mut self.tabs[self.active];
         tab.entries = handle.initial;
         tab.current_dir = path.clone();
@@ -336,6 +354,7 @@ impl App {
         let id = self.fs.id_for_path(&path);
         let mut handle = self.fs.enumerate(id);
         filter_hidden(&mut handle.initial, self.show_hidden);
+        sort_entries(&mut handle.initial, self.list.sort);
         let tab = &mut self.tabs[self.active];
         tab.entries = handle.initial;
         if let Some(name) = cursor_name {
@@ -358,6 +377,17 @@ impl App {
     pub fn toggle_hidden(&mut self) {
         self.show_hidden = !self.show_hidden;
         self.refresh_active_tab();
+    }
+
+    pub fn cycle_sort(&mut self, column: feraille_controls::ColumnId) {
+        self.list.toggle_sort(column);
+        let key = self.list.sort;
+        sort_entries(&mut self.tabs[self.active].entries, key);
+        self.tabs[self.active].selection = Selection::new();
+        if !self.tabs[self.active].entries.is_empty() {
+            self.tabs[self.active].selection.set_cursor(0);
+        }
+        self.list.scroll_offset = 0.0;
     }
 
     pub fn delete_at_cursor_to_trash(&mut self) {
@@ -543,6 +573,7 @@ impl App {
         let tabstrip_rect = self.tabstrip_rect();
         let tree_rect = self.tree_rect();
         let breadcrumb_rect = self.breadcrumb_rect();
+        let header_rect = self.header_rect();
         let list_inner = self.list_inner_rect();
         let scrollbar_rect = self.scrollbar_rect();
         let splitter_container = self.splitter_container();
@@ -567,6 +598,9 @@ impl App {
 
         // Breadcrumb
         self.breadcrumb.paint(breadcrumb_rect, tokens, renderer);
+
+        // Column header (above list, below breadcrumb)
+        self.list.paint_header(header_rect, tokens, renderer);
 
         // List + scrollbar
         let tab = &self.tabs[self.active];
@@ -743,6 +777,9 @@ impl ApplicationHandler for App {
                     if self.list.update_hover(self.list_inner_rect(), Some(p), count) {
                         redraw = true;
                     }
+                    if self.list.update_header_hover(self.header_rect(), Some(p)) {
+                        redraw = true;
+                    }
                 }
                 if redraw {
                     self.request_redraw();
@@ -754,6 +791,7 @@ impl ApplicationHandler for App {
                 self.tree.update_hover(self.tree_rect(), None);
                 let count = self.tabs[self.active].entries.len();
                 self.list.update_hover(self.list_inner_rect(), None, count);
+                self.list.update_header_hover(self.header_rect(), None);
                 self.request_redraw();
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
@@ -761,6 +799,12 @@ impl ApplicationHandler for App {
 
                 // Splitter (highest priority — narrow but layered above).
                 if self.splitter.begin_drag_at(self.splitter_x, self.splitter_container(), p) {
+                    self.request_redraw();
+                    return;
+                }
+                // Column header — toggle sort.
+                if let Some(id) = self.list.header_column_at(self.header_rect(), p) {
+                    self.cycle_sort(id);
                     self.request_redraw();
                     return;
                 }

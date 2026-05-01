@@ -152,6 +152,22 @@ Also documented the sign convention inline (positive winit delta = "forward" / c
 
 Other touchpad gestures (`TouchpadMagnify`, `TouchpadPressure`, `SmartMagnify`) are unused for now. Pinch-zoom is most plausibly a treemap interaction (iter-7); force-touch could trigger Quick Look preview when the macOS shell crate lands.
 
+### Iter-3.5 — column system (Name / Size / Kind / Modified) + click-to-sort
+
+User asked for "more columns like Ferail." Ferail had six (Name, Size, Type, Modified, Magic, Description); the last two depend on the magic detector that ports in iter-7. iter-3.5 ships the four that don't.
+
+- **`feraille-controls::Column`** — `id` (enum: Name/Size/Kind/Modified), `label`, `width` (0.0 = flex), `align` (Left/Right). One flex column per row is enough; Name takes whatever's left after the fixed-width Size/Kind/Modified.
+- **`SortKey { column, ascending }`** — owned by VirtualizedList; default is name-asc. `sort_entries(slice, key)` sorts in place, with directories grouped before files (Finder/Explorer convention) and the key only ordering within each group.
+- **Header row** — 28 DIPs above the list, painted in `bg.layer2`, click-to-sort. Active sort column gets `fg.primary` weight `SemiBold` plus a `▲` / `▼` arrow next to the label. Hovered headers paint `bg.layer3` underneath.
+- **Kind column data** — new `display_kind` field on `FileEntry`, populated at enumerate time: "Folder" / "Symlink" / uppercased extension ("RS", "MD", "TOML"…) / "File". macOS shell crate (iter-4) replaces with `NSWorkspace.localizedDescription`.
+- **Sort glyph fix** — first try used U+25B4 / U+25BE (small triangles); same lesson as iter-2.6's chevron fix: those aren't in Arial. Switched to U+25B2 / U+25BC (full triangles), which render cleanly.
+- **Screenshot CLI flag** — `--sort name|size|kind|modified[-desc]` for verifying sort behavior headlessly. Verified `/tmp/feraille-cols.png` (name asc) and `/tmp/feraille-cols-by-size.png` (size desc).
+
+What's deliberately not in iter-3.5:
+- **Resizable column widths.** Drag the boundary to resize. Standard but wants a thin hit-zone hover state and per-tab persistence. iter-3.6 if asked.
+- **Configurable column visibility.** Right-click header → toggle which columns show. Wants the context menu host that lands with the macOS shell crate.
+- **Per-tab sort.** Currently sort is global on the list (one VirtualizedList instance, shared across tabs). Per-tab is nicer (Documents sorted by date, Source sorted by name, …); easy to lift if asked.
+
 ### Iter-3 done; deliberate stop
 
 Pausing autonomous work here. The user is offline and asked me to make my own choices "without overengineering." Iter-3.1 (file actions) and 3.2 (icon hues + title sync) are substantive shipped wins that turn the app from a viewer into something you'd use.
