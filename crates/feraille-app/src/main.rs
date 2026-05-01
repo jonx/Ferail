@@ -131,6 +131,7 @@ impl App {
 
     pub fn switch_to_tab(&mut self, idx: usize) {
         self.switch_tab(idx);
+        self.sync_window_title();
     }
 
     pub fn set_splitter(&mut self, x: f32) {
@@ -303,6 +304,17 @@ impl App {
         self.list.scroll_offset = 0.0;
         self.breadcrumb.set_path(&path);
         self.reveal_in_tree(&path);
+        self.sync_window_title();
+    }
+
+    fn sync_window_title(&self) {
+        let Some(w) = &self.window else { return };
+        let path = &self.tabs[self.active].current_dir;
+        let label = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_else(|| path.to_str().unwrap_or("Feraille"));
+        w.set_title(&format!("{} \u{2014} Feraille", label));
     }
 
     /// Re-enumerate the active tab without resetting scroll, preserving
@@ -466,6 +478,7 @@ impl App {
         self.breadcrumb.set_path(&path);
         let id = self.fs.id_for_path(&path);
         self.tree.select(id);
+        self.sync_window_title();
     }
 
     fn new_tab(&mut self) {
