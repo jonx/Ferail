@@ -25,6 +25,7 @@ pub enum ColumnId {
     Name,
     Size,
     Kind,
+    Magic,
     Modified,
 }
 
@@ -60,7 +61,8 @@ pub fn default_columns() -> Vec<Column> {
     vec![
         Column { id: ColumnId::Name, label: "Name", width: 0.0, align: ColumnAlign::Left },
         Column { id: ColumnId::Size, label: "Size", width: 90.0, align: ColumnAlign::Right },
-        Column { id: ColumnId::Kind, label: "Kind", width: 90.0, align: ColumnAlign::Left },
+        Column { id: ColumnId::Kind, label: "Kind", width: 80.0, align: ColumnAlign::Left },
+        Column { id: ColumnId::Magic, label: "Magic", width: 160.0, align: ColumnAlign::Left },
         Column {
             id: ColumnId::Modified,
             label: "Modified",
@@ -91,6 +93,10 @@ pub fn sort_entries(entries: &mut [FileEntry], key: SortKey) {
                 .display_kind
                 .to_lowercase()
                 .cmp(&b.display_kind.to_lowercase()),
+            ColumnId::Magic => a
+                .display_magic
+                .to_lowercase()
+                .cmp(&b.display_magic.to_lowercase()),
             ColumnId::Modified => a.mtime_unix.cmp(&b.mtime_unix),
         };
         if key.ascending {
@@ -423,6 +429,7 @@ fn column_value(id: ColumnId, entry: &FileEntry) -> &str {
         ColumnId::Name => &entry.name,
         ColumnId::Size => &entry.display_size,
         ColumnId::Kind => &entry.display_kind,
+        ColumnId::Magic => &entry.display_magic,
         ColumnId::Modified => &entry.display_mtime,
     }
 }

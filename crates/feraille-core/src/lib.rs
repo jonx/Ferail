@@ -47,6 +47,10 @@ pub struct FileEntry {
     /// (e.g. "RS", "MD"), or "File" when there's no extension. macOS shell
     /// crate (iter-4) replaces this with `NSWorkspace.localizedDescription`.
     pub display_kind: String,
+    /// Magic-byte detected type, e.g. "PNG image", "Mach-O 64-bit", "Plain text".
+    /// Empty string when not yet detected or no match. Populated lazily by
+    /// the host (App) — `feraille-core` never blocks on file I/O.
+    pub display_magic: String,
 }
 
 /// Filesystem trait — implemented by `feraille-fs-native` (cross-platform std::fs)

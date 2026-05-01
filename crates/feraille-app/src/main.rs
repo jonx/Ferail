@@ -25,7 +25,8 @@ use feraille_controls::{
 use feraille_core::{AntTrail, EntryKind, FileEntry, FsBackend, NodeId};
 use feraille_design::{FontWeight, Theme, Tokens};
 use feraille_fs_native::{
-    fetch_icon_rgba, home_dir, list_volumes, move_to_trash, open_with_default, NativeFs,
+    detect_magic, fetch_icon_rgba, home_dir, list_volumes, move_to_trash, open_with_default,
+    NativeFs,
 };
 
 mod screenshot;
@@ -100,6 +101,10 @@ pub struct App {
     /// — extension for files (".rs", ".md"), "DIR"/"SYMLINK"/"FILE" for
     /// the rest. Populated lazily on `prefetch_icons` after each navigate.
     pub icon_cache: HashMap<String, Bitmap>,
+    /// Cache of magic-detected types keyed by `(path, mtime_unix)`. Empty
+    /// string = "we tried, no match". Populated capped at 200 entries
+    /// per navigate to avoid blocking large folders for too long.
+    pub magic_cache: HashMap<(PathBuf, i64), String>,
     pointer_dips: Option<FPoint>,
     modifiers: ModifiersState,
 
@@ -235,6 +240,7 @@ impl App {
             show_hidden: false,
             ant_trail: AntTrail::new(),
             icon_cache: HashMap::new(),
+            magic_cache: HashMap::new(),
             pointer_dips: None,
             modifiers: ModifiersState::empty(),
             tokens: Tokens::for_theme(detect_theme()),
@@ -337,6 +343,38 @@ impl App {
         self.reveal_in_tree(&path);
         self.sync_window_title();
         self.prefetch_icons();
+        self.prefetch_magic();
+    }
+
+    /// Walk the active tab's entries, fill in `display_magic` for files
+    /// that don't have it yet. Reads bytes from disk; capped at 200
+    /// per call so huge folders don't block the UI for too long. The
+    /// rest stay empty until next refresh / scroll.
+    fn prefetch_magic(&mut self) {
+        const PER_CALL_CAP: usize = 200;
+        let cur_dir = self.tabs[self.active].current_dir.clone();
+        let mut detections = 0usize;
+        for entry in self.tabs[self.active].entries.iter_mut() {
+            if !entry.display_magic.is_empty() {
+                continue;
+            }
+            if !matches!(entry.kind, EntryKind::File) {
+                continue;
+            }
+            let path = cur_dir.join(&entry.name);
+            let key = (path.clone(), entry.mtime_unix);
+            if let Some(cached) = self.magic_cache.get(&key) {
+                entry.display_magic = cached.clone();
+                continue;
+            }
+            if detections >= PER_CALL_CAP {
+                break;
+            }
+            detections += 1;
+            let label = detect_magic(&path).map(|s| s.to_string()).unwrap_or_default();
+            self.magic_cache.insert(key, label.clone());
+            entry.display_magic = label;
+        }
     }
 
     /// Walk the active tab's entries, fetch+cache any extensions we
@@ -381,6 +419,7 @@ impl App {
     /// Re-enumerate the active tab without resetting scroll, preserving
     /// the cursor on the same entry name when possible. Used by F5 and
     /// after side-effects (Trash, future copy/move).
+    #[allow(clippy::collapsible_else_if)]
     pub fn refresh_active_tab(&mut self) {
         let cursor_name = {
             let t = &self.tabs[self.active];
@@ -412,6 +451,7 @@ impl App {
         // Tree might have a stale view of the current folder's contents.
         // Mark unloaded so a future expand re-enumerates.
         self.tree.invalidate(id);
+        self.prefetch_magic();
     }
 
     pub fn toggle_hidden(&mut self) {

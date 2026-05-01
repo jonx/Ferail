@@ -15,7 +15,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use feraille_core::{EntryKind, EnumerationHandle, FileEntry, FsBackend, NodeId};
 
 mod icons;
+mod magic;
 pub use icons::fetch_icon_rgba;
+pub use magic::detect_magic;
 
 const ROOT_NODE_RAW: u64 = 1;
 
@@ -124,6 +126,7 @@ impl FsBackend for NativeFs {
                 display_size,
                 display_mtime,
                 display_kind,
+                display_magic: String::new(),
             });
         }
         // Directories first, then case-insensitive name.
