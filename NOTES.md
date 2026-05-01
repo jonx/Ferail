@@ -142,6 +142,16 @@ User said "continue" — pushing iter-3 further.
 
 Verified in `/tmp/feraille-trail.png`: visited 9 paths total in the script, with Source 3× and Feraille 5×. The strip is brightest on Feraille, softer on Source, faint on jkn and Documents. Subtle enough to not interfere with normal scanning.
 
+### Iter-3.4 — trackpad scroll routing
+
+User asked for trackpad support. Discovered the existing `MouseWheel` handler already accepts `MouseScrollDelta::PixelDelta` (trackpad / high-precision wheels) — the actual bug was that all scroll events routed to the file list regardless of where the pointer was. Trackpad-scrolling over the tree was a no-op.
+
+Fix: route scroll events based on `pointer_dips`. If the pointer is over the tree pane, the tree scrolls; if over the list pane, the list scrolls; otherwise (breadcrumb, tabstrip, status bar) it's a no-op. Matches Finder behavior.
+
+Also documented the sign convention inline (positive winit delta = "forward" / content moves up; we invert because `scroll_offset` is "DIPs below origin"). winit's `PixelDelta` on macOS is already in logical pixels, so no DPI math is needed.
+
+Other touchpad gestures (`TouchpadMagnify`, `TouchpadPressure`, `SmartMagnify`) are unused for now. Pinch-zoom is most plausibly a treemap interaction (iter-7); force-touch could trigger Quick Look preview when the macOS shell crate lands.
+
 ### Iter-3 done; deliberate stop
 
 Pausing autonomous work here. The user is offline and asked me to make my own choices "without overengineering." Iter-3.1 (file actions) and 3.2 (icon hues + title sync) are substantive shipped wins that turn the app from a viewer into something you'd use.

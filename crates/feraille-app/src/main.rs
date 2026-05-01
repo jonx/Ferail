@@ -823,14 +823,41 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                // PixelDelta arrives from trackpad / high-precision wheels in
+                // logical pixels — pass through. LineDelta is coarse "lines"
+                // from a notched wheel; multiply by ~2 rows. Sign: positive
+                // delta from winit means scroll forward / content-up; we
+                // invert because `scroll_offset` is "DIPs below origin",
+                // increasing as content moves up.
                 let dy = match delta {
                     MouseScrollDelta::LineDelta(_, y) => -y * 56.0,
                     MouseScrollDelta::PixelDelta(p) => -(p.y as f32),
                 };
-                let count = self.tabs[self.active].entries.len();
-                let viewport_h = self.list_inner_rect().size.height;
-                self.list.scroll_by(dy, count, viewport_h);
-                self.request_redraw();
+                // Route to whichever pane the pointer is over. macOS Finder
+                // does the same — scrolling over the sidebar scrolls the
+                // sidebar, not the file pane. If we don't know where the
+                // pointer is (e.g. the trackpad fired with no prior
+                // CursorMoved), fall back to the file list.
+                let target = match self.pointer_dips {
+                    Some(p) if self.tree_rect().contains(p) => ScrollTarget::Tree,
+                    Some(p) if self.list_pane_rect().contains(p) => ScrollTarget::List,
+                    Some(_) => ScrollTarget::None,
+                    None => ScrollTarget::List,
+                };
+                match target {
+                    ScrollTarget::Tree => {
+                        let viewport_h = self.tree_rect().size.height;
+                        self.tree.scroll_by(dy, viewport_h);
+                        self.request_redraw();
+                    }
+                    ScrollTarget::List => {
+                        let count = self.tabs[self.active].entries.len();
+                        let viewport_h = self.list_inner_rect().size.height;
+                        self.list.scroll_by(dy, count, viewport_h);
+                        self.request_redraw();
+                    }
+                    ScrollTarget::None => {}
+                }
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
@@ -933,6 +960,13 @@ fn map_named_to_textinput(named: NamedKey) -> Option<TextInputKey> {
         NamedKey::Escape => TextInputKey::Escape,
         _ => return None,
     })
+}
+
+#[derive(Clone, Copy)]
+enum ScrollTarget {
+    Tree,
+    List,
+    None,
 }
 
 fn filter_hidden(entries: &mut Vec<FileEntry>, show_hidden: bool) {
