@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use feraille_core::{EntryKind, FileEntry, NodeId};
 use feraille_design::{FontWeight, Tokens};
-use feraille_render::{Point, Rect, Renderer, TextStyle};
+use feraille_render::{Bitmap, Point, Rect, Renderer, TextStyle};
 
 use crate::primitives::focus_ring;
 
@@ -164,6 +164,7 @@ impl FileTree {
         tokens: &Tokens,
         painter: &mut dyn Renderer,
         heat_for: impl Fn(NodeId) -> f32,
+        dir_icon: Option<&Bitmap>,
     ) {
         painter.fill_rect(bounds, tokens.bg.layer2);
         if self.visible.is_empty() {
@@ -210,7 +211,7 @@ impl FileTree {
                     strip,
                 );
             }
-            paint_row(node, row_rect, tokens, painter);
+            paint_row(node, row_rect, dir_icon, tokens, painter);
         }
 
         // FocusRing overlay on selected row when focused.
@@ -365,15 +366,18 @@ impl FileTree {
     }
 }
 
-fn paint_row(node: &Node, row: Rect, tokens: &Tokens, painter: &mut dyn Renderer) {
+fn paint_row(
+    node: &Node,
+    row: Rect,
+    dir_icon: Option<&Bitmap>,
+    tokens: &Tokens,
+    painter: &mut dyn Renderer,
+) {
     let indent = node.depth as f32 * INDENT_PER_LEVEL;
     let mut x = row.left() + 8.0 + indent;
     let text_y = row.top() + (ROW_HEIGHT - tokens.text.md) / 2.0 - 1.0;
 
-    // Chevron (only if has children or unloaded).
-    // Use BLACK TRIANGLE code points (U+25B6 / U+25BC) which Arial
-    // ships with; the small triangles (U+25B8 / U+25BE) aren't always
-    // present and silently fall back to .notdef.
+    // Chevron — full-triangle code points; small variants aren't in Arial.
     let chevron_x = x;
     let chevron_glyph = if node.expanded { "\u{25BC}" } else { "\u{25B6}" };
     painter.draw_text(
@@ -387,9 +391,14 @@ fn paint_row(node: &Node, row: Rect, tokens: &Tokens, painter: &mut dyn Renderer
     );
     x += CHEVRON_W;
 
-    // Folder icon.
+    // Folder icon — system bitmap if cached, else accent square.
     let icon_y = row.top() + (ROW_HEIGHT - ICON_SIZE) / 2.0;
-    painter.fill_rect(Rect::new(x, icon_y, ICON_SIZE, ICON_SIZE), tokens.accent.fill);
+    let icon_rect = Rect::new(x, icon_y, ICON_SIZE, ICON_SIZE);
+    if let Some(bitmap) = dir_icon {
+        painter.draw_bitmap(icon_rect, bitmap);
+    } else {
+        painter.fill_rect(icon_rect, tokens.accent.fill);
+    }
     x += ICON_SIZE + tokens.space.xs;
 
     // Label.

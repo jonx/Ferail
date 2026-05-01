@@ -632,9 +632,11 @@ impl App {
         // Tabstrip — topmost element (the OS title bar sits above us).
         self.tabstrip.paint(tabstrip_rect, &tab_infos, active, tokens, renderer);
 
-        // Tree pane — paint with ant-trail heat overlay.
+        // Tree pane — paint with ant-trail heat overlay + cached folder icon.
         let trail = &self.ant_trail;
-        self.tree.paint(tree_rect, tokens, renderer, |id| trail.heat(id));
+        let dir_icon = self.icon_cache.get("DIR");
+        self.tree
+            .paint(tree_rect, tokens, renderer, |id| trail.heat(id), dir_icon);
 
         // Breadcrumb
         self.breadcrumb.paint(breadcrumb_rect, tokens, renderer);
