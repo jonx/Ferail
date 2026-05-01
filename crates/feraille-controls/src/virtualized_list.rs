@@ -76,6 +76,8 @@ pub struct VirtualizedList {
     pub scroll_offset: f32,
     /// Whether this list owns keyboard focus (changes selection-fill color).
     pub focused: bool,
+    /// Currently hovered row index, set by host on `CursorMoved`.
+    pub hover: Option<usize>,
 }
 
 impl Default for VirtualizedList {
@@ -86,7 +88,24 @@ impl Default for VirtualizedList {
 
 impl VirtualizedList {
     pub fn new() -> Self {
-        Self { row_height: 28.0, scroll_offset: 0.0, focused: true }
+        Self { row_height: 28.0, scroll_offset: 0.0, focused: true, hover: None }
+    }
+
+    /// Update the hover row from a pointer position. Returns whether the
+    /// hover index changed (so the host can request a redraw).
+    pub fn update_hover(
+        &mut self,
+        bounds: Rect,
+        point: Option<Point>,
+        item_count: usize,
+    ) -> bool {
+        let next = point.and_then(|p| self.index_at(bounds, p, item_count));
+        if next != self.hover {
+            self.hover = next;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn paint(
@@ -125,6 +144,8 @@ impl VirtualizedList {
                     tokens.accent.subtle_inactive
                 };
                 painter.fill_rect(row_rect, fill);
+            } else if self.hover == Some(i) {
+                painter.fill_rect(row_rect, tokens.bg.layer3);
             }
 
             paint_row(&items[i], row_rect, tokens, painter);

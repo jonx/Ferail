@@ -24,7 +24,7 @@ pub struct Args {
     pub height: Option<u32>,
     pub scale: Option<f32>,
     pub theme: Option<Theme>,
-    pub navigate: Option<PathBuf>,
+    pub navigate: Vec<PathBuf>,
     pub new_tabs: Vec<PathBuf>,
     pub expand: Vec<PathBuf>,
     pub select_row: Option<usize>,
@@ -52,7 +52,11 @@ pub fn parse_args() -> Args {
                     _ => None,
                 });
             }
-            "--navigate" => args.navigate = iter.next().map(PathBuf::from),
+            "--navigate" => {
+                if let Some(p) = iter.next() {
+                    args.navigate.push(PathBuf::from(p));
+                }
+            }
             "--new-tab" => {
                 if let Some(p) = iter.next() {
                     args.new_tabs.push(PathBuf::from(p));
@@ -130,7 +134,9 @@ pub fn run(args: Args) -> Result<()> {
     app.set_dimensions(width_px, height_px, scale);
     app.show_hidden = args.show_hidden;
 
-    if let Some(p) = args.navigate.as_deref() {
+    // Each --navigate is applied in order, so repeating one (or chaining
+    // several) seeds the ant trail with realistic visit counts.
+    for p in &args.navigate {
         app.navigate(canonicalize_or_passthrough(p));
     }
     for p in &args.new_tabs {

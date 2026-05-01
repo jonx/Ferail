@@ -158,7 +158,13 @@ impl FileTree {
         }
     }
 
-    pub fn paint(&self, bounds: Rect, tokens: &Tokens, painter: &mut dyn Renderer) {
+    pub fn paint(
+        &self,
+        bounds: Rect,
+        tokens: &Tokens,
+        painter: &mut dyn Renderer,
+        heat_for: impl Fn(NodeId) -> f32,
+    ) {
         painter.fill_rect(bounds, tokens.bg.layer2);
         if self.visible.is_empty() {
             return;
@@ -187,6 +193,22 @@ impl FileTree {
                 painter.fill_rect(row_rect, bg);
             } else if is_hover {
                 painter.fill_rect(row_rect, tokens.bg.layer3);
+            }
+            // Ant-trail heat indicator: 2-DIP strip at the row's left edge.
+            // Alpha modulated by visits; never-visited nodes are invisible.
+            let heat = heat_for(id);
+            if heat > 0.0 {
+                let alpha = (heat * 180.0).clamp(20.0, 200.0) as u8;
+                let strip = feraille_design::Color {
+                    r: tokens.accent.fill.r,
+                    g: tokens.accent.fill.g,
+                    b: tokens.accent.fill.b,
+                    a: alpha,
+                };
+                painter.fill_rect(
+                    Rect::new(row_rect.left(), row_rect.top(), 2.0, row_rect.size.height),
+                    strip,
+                );
             }
             paint_row(node, row_rect, tokens, painter);
         }

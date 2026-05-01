@@ -22,7 +22,7 @@ use feraille_controls::{
     BreadcrumbBar, BreadcrumbEvent, FileTree, Selection, TabInfo, TabStrip, TabStripEvent,
     TreeEvent, VirtualizedList,
 };
-use feraille_core::{EntryKind, FileEntry, FsBackend, NodeId};
+use feraille_core::{AntTrail, EntryKind, FileEntry, FsBackend, NodeId};
 use feraille_design::{FontWeight, Theme, Tokens};
 use feraille_fs_native::{home_dir, list_volumes, move_to_trash, open_with_default, NativeFs};
 
@@ -90,6 +90,7 @@ pub struct App {
     pub tree: FileTree,
     pub splitter_x: f32,
     pub show_hidden: bool,
+    pub ant_trail: AntTrail,
     pointer_dips: Option<FPoint>,
     modifiers: ModifiersState,
 
@@ -223,6 +224,7 @@ impl App {
             tree,
             splitter_x: SIDEBAR_DEFAULT,
             show_hidden: false,
+            ant_trail: AntTrail::new(),
             pointer_dips: None,
             modifiers: ModifiersState::empty(),
             tokens: Tokens::for_theme(detect_theme()),
@@ -291,6 +293,7 @@ impl App {
 
     pub fn navigate(&mut self, path: PathBuf) {
         let id = self.fs.id_for_path(&path);
+        self.ant_trail.record(id);
         let mut handle = self.fs.enumerate(id);
         filter_hidden(&mut handle.initial, self.show_hidden);
         let tab = &mut self.tabs[self.active];
@@ -558,8 +561,9 @@ impl App {
         // Tabstrip — topmost element (the OS title bar sits above us).
         self.tabstrip.paint(tabstrip_rect, &tab_infos, active, tokens, renderer);
 
-        // Tree pane (replaces sidebar)
-        self.tree.paint(tree_rect, tokens, renderer);
+        // Tree pane — paint with ant-trail heat overlay.
+        let trail = &self.ant_trail;
+        self.tree.paint(tree_rect, tokens, renderer, |id| trail.heat(id));
 
         // Breadcrumb
         self.breadcrumb.paint(breadcrumb_rect, tokens, renderer);
@@ -735,6 +739,10 @@ impl ApplicationHandler for App {
                     if self.tree.update_hover(self.tree_rect(), Some(p)) {
                         redraw = true;
                     }
+                    let count = self.tabs[self.active].entries.len();
+                    if self.list.update_hover(self.list_inner_rect(), Some(p), count) {
+                        redraw = true;
+                    }
                 }
                 if redraw {
                     self.request_redraw();
@@ -744,6 +752,8 @@ impl ApplicationHandler for App {
                 self.pointer_dips = None;
                 self.breadcrumb.update_hover(self.breadcrumb_rect(), None);
                 self.tree.update_hover(self.tree_rect(), None);
+                let count = self.tabs[self.active].entries.len();
+                self.list.update_hover(self.list_inner_rect(), None, count);
                 self.request_redraw();
             }
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {

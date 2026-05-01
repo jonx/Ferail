@@ -59,3 +59,38 @@ pub trait FsBackend: Send + Sync {
 pub struct EnumerationHandle {
     pub initial: Vec<FileEntry>,
 }
+
+/// Folder usage heat — how many times the user has navigated into a node.
+/// Iter-3 keeps this in-memory; iter-6 persists it to SQLite (matching
+/// Ferail's predecessor implementation). Heat is reported normalized to
+/// the most-visited node so a single very-busy folder doesn't washed out
+/// the rest.
+#[derive(Default, Clone, Debug)]
+pub struct AntTrail {
+    visits: std::collections::HashMap<NodeId, u32>,
+    max: u32,
+}
+
+impl AntTrail {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record(&mut self, id: NodeId) {
+        let v = self.visits.entry(id).or_insert(0);
+        *v += 1;
+        if *v > self.max {
+            self.max = *v;
+        }
+    }
+
+    /// 0.0..=1.0 normalized heat. Log-scaled so a 10-visit folder isn't
+    /// 10× brighter than a 5-visit one. Returns 0.0 for never-visited.
+    pub fn heat(&self, id: NodeId) -> f32 {
+        let Some(&v) = self.visits.get(&id) else { return 0.0 };
+        if self.max <= 1 {
+            return 1.0;
+        }
+        ((v as f32 + 1.0).log2() / (self.max as f32 + 1.0).log2()).clamp(0.0, 1.0)
+    }
+}

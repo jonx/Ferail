@@ -110,13 +110,16 @@ the drag preview (that's in `feraille-controls`).
 
 | # | Adds | Removes |
 |---|---|---|
-| 1 | workspace, specs, soft renderer, virtualized list, fake data | — |
-| 2 (current) | Zed-aligned tokens, glyph cache, real $HOME FS, Selection model, Scrollbar, Splitter, FocusRing overlay, Sidebar (transient), App v1 — then BreadcrumbBar (read-only), TabStrip + per-tab state, minimal FileTree, App v2 | per-frame allocation, fake_item, Sidebar (replaced by FileTree) |
-| 2.5 | TextInput, Breadcrumb edit mode, marquee/Ctrl-click selection, mouse range select | — |
-| 3 | `feraille-render-d2d` Windows backend or wgpu/Vello GPU, threading + change-watching for FS, native macOS chrome (transparent titlebar, vibrancy) | soft renderer becomes dev-only |
-| 4 | macOS shell crate: drag-drop via NSPasteboard, context menu via NSMenu, file ops via FileManager | — |
-| 5 | Ant trail (folder usage heat) | — |
-| 6 | Search box + filter chips, Magic file detection (port from Ferail) | — |
+| 1 | workspace, specs, soft renderer, virtualized list of fake rows | — |
+| 2 | Zed-aligned tokens, glyph cache, real $HOME FS, Selection, Scrollbar, Splitter, FocusRing overlay, Sidebar (transient), then BreadcrumbBar (read-only), TabStrip + per-tab state, minimal FileTree, App v2 | per-frame alloc, fake_item, Sidebar (replaced by FileTree) |
+| 2.5 | TextInput, Breadcrumb edit mode (Cmd+L) | — |
+| 2.6 | Headless screenshot CLI (`--screenshot`), scrollbar contrast fix, chevron glyph fix | — |
+| 2.7 | Standalone header removed, tree reveal-on-navigate + auto-scroll, fold/unfold redraw + perf bug fixed | redundant header strip |
+| 3 (current) | Open-file (Enter), F5 refresh, Ctrl+H / Cmd+Shift+. hidden toggle, Delete to ~/.Trash, file-type icon hue, OS window-title sync | — |
+| 3.5+ | List row hover feedback, in-memory ant trail (folder visits), F2 inline rename, Cmd+F search/filter, clipboard ops, tabs persistence | — |
+| 4 | macOS shell crate: NSPasteboard drag/drop, NSWorkspace recycle, NSMenu context menu, native title bar (transparent + vibrancy + traffic-light positioning) | rename-to-Trash fallback |
+| 5 | wgpu/Vello GPU renderer; threaded + change-watching FS via FSEvents | sync FS enumeration |
+| 6 | Persisted ant trail (SQLite), magic file detection (port Ferail's type DB) | in-memory trail |
 | 7 | Disk-usage treemap (port from Ferail) | — |
 | 8 | Windows shell crate: IContextMenu, IDataObject DnD, IFileOperation | — |
 
