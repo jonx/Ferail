@@ -76,6 +76,11 @@ pub struct Tab {
     pub entries: Vec<FileEntry>,
     pub selection: Selection,
     pub list_scroll: f32,
+    /// Per-tab navigation history. `history_index` points at the
+    /// current location. `navigate()` truncates forward then pushes;
+    /// back/forward only move the index.
+    pub history: Vec<PathBuf>,
+    pub history_index: usize,
 }
 
 impl Tab {
@@ -154,6 +159,8 @@ impl App {
             entries: Vec::new(),
             selection: Selection::new(),
             list_scroll: 0.0,
+            history: Vec::new(),
+            history_index: 0,
         });
         self.active = new_index;
         self.list.scroll_offset = 0.0;
@@ -201,6 +208,26 @@ impl App {
     pub fn enter_breadcrumb_edit_mode(&mut self) {
         let path = self.tabs[self.active].current_dir.clone();
         self.breadcrumb.enter_edit_mode(&path);
+    }
+
+    /// Copy the cursor entry's full path to the system clipboard.
+    pub fn copy_cursor_path(&self) {
+        let tab = &self.tabs[self.active];
+        let Some(idx) = tab.selection.cursor() else { return };
+        let Some(entry) = tab.entries.get(idx) else { return };
+        let path = tab.current_dir.join(&entry.name);
+        if let Some(s) = path.to_str() {
+            feraille_shell_mac::copy_to_clipboard(s);
+        }
+    }
+
+    /// Open Finder with the cursor entry selected.
+    pub fn reveal_cursor_in_finder(&self) {
+        let tab = &self.tabs[self.active];
+        let Some(idx) = tab.selection.cursor() else { return };
+        let Some(entry) = tab.entries.get(idx) else { return };
+        let path = tab.current_dir.join(&entry.name);
+        feraille_shell_mac::reveal_in_finder(&path);
     }
 
     pub fn toggle_properties(&mut self) {
@@ -377,6 +404,8 @@ impl App {
             entries: Vec::new(),
             selection: Selection::new(),
             list_scroll: 0.0,
+            history: Vec::new(),
+            history_index: 0,
         };
 
         let mut a = Self {
@@ -484,6 +513,49 @@ impl App {
     }
 
     pub fn navigate(&mut self, path: PathBuf) {
+        // Truncate forward stack and push, unless we're already on the path.
+        {
+            let tab = &mut self.tabs[self.active];
+            if tab.history_index + 1 < tab.history.len() {
+                tab.history.truncate(tab.history_index + 1);
+            }
+            if tab.history.last() != Some(&path) {
+                tab.history.push(path.clone());
+                tab.history_index = tab.history.len().saturating_sub(1);
+            }
+        }
+        self.goto_path(path);
+    }
+
+    /// Move the active tab's `history_index` backward and re-enumerate.
+    pub fn navigate_back(&mut self) {
+        let path = {
+            let tab = &mut self.tabs[self.active];
+            if tab.history_index == 0 {
+                return;
+            }
+            tab.history_index -= 1;
+            tab.history[tab.history_index].clone()
+        };
+        self.goto_path(path);
+    }
+
+    /// Move the active tab's `history_index` forward and re-enumerate.
+    pub fn navigate_forward(&mut self) {
+        let path = {
+            let tab = &mut self.tabs[self.active];
+            if tab.history_index + 1 >= tab.history.len() {
+                return;
+            }
+            tab.history_index += 1;
+            tab.history[tab.history_index].clone()
+        };
+        self.goto_path(path);
+    }
+
+    /// Internal: re-enumerate `path` and update view state. Does NOT
+    /// touch the history vector; callers manage that.
+    fn goto_path(&mut self, path: PathBuf) {
         let id = self.fs.id_for_path(&path);
         self.ant_trail.record(id);
         let mut handle = self.fs.enumerate(id);
@@ -762,6 +834,8 @@ impl App {
             entries: Vec::new(),
             selection: Selection::new(),
             list_scroll: 0.0,
+            history: Vec::new(),
+            history_index: 0,
         });
         self.active = new_index;
         self.list.scroll_offset = 0.0;
@@ -1268,6 +1342,33 @@ impl ApplicationHandler for App {
                         self.request_redraw();
                         return;
                     }
+                    // Cmd+[ / Cmd+] → back / forward (Finder convention).
+                    if mod_held && t == "[" {
+                        self.navigate_back();
+                        self.request_redraw();
+                        return;
+                    }
+                    if mod_held && t == "]" {
+                        self.navigate_forward();
+                        self.request_redraw();
+                        return;
+                    }
+                    // Cmd+Shift+C / Ctrl+Shift+C → copy cursor path.
+                    if mod_held
+                        && self.modifiers.shift_key()
+                        && (t == "C" || t == "c")
+                    {
+                        self.copy_cursor_path();
+                        return;
+                    }
+                    // Cmd+Opt+R / Ctrl+Alt+R → reveal in Finder.
+                    if mod_held
+                        && self.modifiers.alt_key()
+                        && (t == "r" || t == "R" || t.is_empty())
+                    {
+                        self.reveal_cursor_in_finder();
+                        return;
+                    }
                 }
 
                 let count = self.tabs[self.active].entries.len();
@@ -1281,6 +1382,14 @@ impl ApplicationHandler for App {
                         } else {
                             event_loop.exit();
                         }
+                    }
+                    // Alt+Left / Alt+Right → back / forward (alternative
+                    // to Cmd+[/]).
+                    Key::Named(NamedKey::ArrowLeft) if self.modifiers.alt_key() => {
+                        self.navigate_back();
+                    }
+                    Key::Named(NamedKey::ArrowRight) if self.modifiers.alt_key() => {
+                        self.navigate_forward();
                     }
                     Key::Named(NamedKey::ArrowDown) => sel.move_cursor(1, count),
                     Key::Named(NamedKey::ArrowUp) => sel.move_cursor(-1, count),

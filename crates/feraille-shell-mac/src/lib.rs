@@ -25,6 +25,32 @@ pub fn begin_drag(_window: &winit::window::Window, _paths: &[&std::path::Path]) 
     false
 }
 
+/// Place a string on the system clipboard.
+#[cfg(target_os = "macos")]
+pub fn copy_to_clipboard(text: &str) {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    use objc2_foundation::NSString;
+    unsafe {
+        let pb = NSPasteboard::generalPasteboard();
+        pb.clearContents();
+        let ns_text = NSString::from_str(text);
+        let _ = pb.setString_forType(&ns_text, NSPasteboardTypeString);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn copy_to_clipboard(_text: &str) {}
+
+/// Open Finder with `path` selected. macOS: shells out to `open -R`.
+/// Non-macOS: no-op.
+#[cfg(target_os = "macos")]
+pub fn reveal_in_finder(path: &std::path::Path) {
+    let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn reveal_in_finder(_path: &std::path::Path) {}
+
 /// Width to reserve at the leading edge of the tabstrip so the OS
 /// traffic-light buttons (close / minimize / zoom) don't overlap our
 /// content. Standard macOS layout puts the leftmost button at ~10 DIPs
