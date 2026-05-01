@@ -306,15 +306,18 @@ fn paint_row(node: &Node, row: Rect, tokens: &Tokens, painter: &mut dyn Renderer
     let text_y = row.top() + (ROW_HEIGHT - tokens.text.md) / 2.0 - 1.0;
 
     // Chevron (only if has children or unloaded).
+    // Use BLACK TRIANGLE code points (U+25B6 / U+25BC) which Arial
+    // ships with; the small triangles (U+25B8 / U+25BE) aren't always
+    // present and silently fall back to .notdef.
     let chevron_x = x;
-    let chevron_glyph = if node.expanded { "\u{25BE}" } else { "\u{25B8}" };
+    let chevron_glyph = if node.expanded { "\u{25BC}" } else { "\u{25B6}" };
     painter.draw_text(
-        Point::new(chevron_x + 1.0, text_y),
+        Point::new(chevron_x + 1.0, text_y + 1.0),
         chevron_glyph,
         TextStyle {
-            size: tokens.text.md,
+            size: tokens.text.sm,
             weight: FontWeight::Regular,
-            color: tokens.fg.disabled,
+            color: tokens.fg.secondary,
         },
     );
     x += CHEVRON_W;

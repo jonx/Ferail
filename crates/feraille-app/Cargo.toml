@@ -20,3 +20,4 @@ feraille-shell-win32.workspace = true
 winit.workspace = true
 softbuffer.workspace = true
 anyhow.workspace = true
+png = "0.17"

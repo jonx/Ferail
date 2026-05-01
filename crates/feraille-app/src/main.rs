@@ -22,9 +22,11 @@ use feraille_controls::{
     BreadcrumbBar, BreadcrumbEvent, FileTree, Selection, TabInfo, TabStrip, TabStripEvent,
     TreeEvent, VirtualizedList,
 };
-use feraille_core::{EntryKind, FileEntry, FsBackend};
+use feraille_core::{EntryKind, FileEntry, FsBackend, NodeId};
 use feraille_design::{FontWeight, Theme, Tokens};
 use feraille_fs_native::{home_dir, list_volumes, NativeFs};
+
+mod screenshot;
 use feraille_render::{Point as FPoint, Rect as FRect, Renderer, SoftRenderer, TextStyle};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
@@ -43,6 +45,10 @@ const SIDEBAR_MIN: f32 = 160.0;
 const SIDEBAR_MAX: f32 = 480.0;
 
 fn main() -> Result<()> {
+    let args = screenshot::parse_args();
+    if args.screenshot.is_some() {
+        return screenshot::run(args);
+    }
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = App::new();
@@ -50,11 +56,11 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-struct Tab {
-    current_dir: PathBuf,
-    entries: Vec<FileEntry>,
-    selection: Selection,
-    list_scroll: f32,
+pub struct Tab {
+    pub current_dir: PathBuf,
+    pub entries: Vec<FileEntry>,
+    pub selection: Selection,
+    pub list_scroll: f32,
 }
 
 impl Tab {
@@ -67,33 +73,109 @@ impl Tab {
     }
 }
 
-struct App {
+pub struct App {
     window: Option<Rc<Window>>,
     sb_context: Option<softbuffer::Context<Rc<Window>>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     renderer: Option<SoftRenderer>,
 
-    fs: Arc<NativeFs>,
-    tabs: Vec<Tab>,
-    active: usize,
+    pub fs: Arc<NativeFs>,
+    pub tabs: Vec<Tab>,
+    pub active: usize,
 
-    list: VirtualizedList,
-    scrollbar: Scrollbar,
-    splitter: Splitter,
-    tabstrip: TabStrip,
-    breadcrumb: BreadcrumbBar,
-    tree: FileTree,
-    splitter_x: f32,
+    pub list: VirtualizedList,
+    pub scrollbar: Scrollbar,
+    pub splitter: Splitter,
+    pub tabstrip: TabStrip,
+    pub breadcrumb: BreadcrumbBar,
+    pub tree: FileTree,
+    pub splitter_x: f32,
     pointer_dips: Option<FPoint>,
     modifiers: ModifiersState,
 
-    tokens: Tokens,
-    width: u32,
-    height: u32,
-    scale_factor: f32,
+    pub tokens: Tokens,
+    pub width: u32,
+    pub height: u32,
+    pub scale_factor: f32,
 }
 
 impl App {
+    /// Build an `App` configured for headless screenshot use. No window
+    /// is opened; the caller sets dimensions and applies scripted state
+    /// before calling `paint_to`.
+    pub fn new_for_headless(theme: Theme) -> Self {
+        let mut a = Self::new();
+        a.tokens = Tokens::for_theme(theme);
+        a
+    }
+
+    pub fn set_dimensions(&mut self, width: u32, height: u32, scale: f32) {
+        self.width = width.max(1);
+        self.height = height.max(1);
+        self.scale_factor = scale.max(0.5);
+    }
+
+    pub fn new_tab_at(&mut self, path: PathBuf) {
+        self.tabs[self.active].list_scroll = self.list.scroll_offset;
+        let new_index = self.tabs.len();
+        self.tabs.push(Tab {
+            current_dir: path.clone(),
+            entries: Vec::new(),
+            selection: Selection::new(),
+            list_scroll: 0.0,
+        });
+        self.active = new_index;
+        self.list.scroll_offset = 0.0;
+        self.navigate(path);
+    }
+
+    pub fn switch_to_tab(&mut self, idx: usize) {
+        self.switch_tab(idx);
+    }
+
+    pub fn set_splitter(&mut self, x: f32) {
+        self.splitter_x = x.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+    }
+
+    pub fn set_scroll(&mut self, y: f32) {
+        let viewport_h = self.list_inner_rect().size.height;
+        let count = self.tabs[self.active].entries.len();
+        self.list.scroll_by(
+            y - self.list.scroll_offset,
+            count,
+            viewport_h,
+        );
+    }
+
+    pub fn select_row(&mut self, idx: usize) {
+        let count = self.tabs[self.active].entries.len();
+        if idx < count {
+            self.tabs[self.active].selection.set_cursor(idx);
+            let viewport_h = self.list_inner_rect().size.height;
+            self.list.ensure_visible(idx, viewport_h);
+        }
+    }
+
+    pub fn select_name(&mut self, name: &str) {
+        let idx = self.tabs[self.active]
+            .entries
+            .iter()
+            .position(|e| e.name == name);
+        if let Some(i) = idx {
+            self.select_row(i);
+        }
+    }
+
+    pub fn enter_breadcrumb_edit_mode(&mut self) {
+        let path = self.tabs[self.active].current_dir.clone();
+        self.breadcrumb.enter_edit_mode(&path);
+    }
+
+    /// Resolve a path → NodeId via the FS (allocating an ID if new).
+    pub fn id_for_path(&self, path: &Path) -> NodeId {
+        self.fs.id_for_path(path)
+    }
+
     fn new() -> Self {
         let fs = Arc::new(NativeFs::new());
         let home = home_dir();
@@ -205,7 +287,7 @@ impl App {
         self.tabs[self.active].entries.len() as f32 * self.list.row_height
     }
 
-    fn navigate(&mut self, path: PathBuf) {
+    pub fn navigate(&mut self, path: PathBuf) {
         let id = self.fs.id_for_path(&path);
         let handle = self.fs.enumerate(id);
         let tab = &mut self.tabs[self.active];
@@ -307,8 +389,9 @@ impl App {
         }
     }
 
-    fn render(&mut self) {
-        // Pre-compute layout + status text *before* mutably borrowing surface/renderer.
+    /// Pure paint into a renderer. No window/surface dependency. Used by
+    /// both the GUI present path and the headless screenshot path.
+    pub fn paint_to(&mut self, renderer: &mut dyn Renderer) {
         let tabstrip_rect = self.tabstrip_rect();
         let tree_rect = self.tree_rect();
         let breadcrumb_rect = self.breadcrumb_rect();
@@ -322,14 +405,6 @@ impl App {
             self.tabs.iter().map(|t| TabInfo { label: t.label() }).collect();
         let active = self.active;
         let splitter_x = self.splitter_x;
-
-        let Some(surface) = self.surface.as_mut() else { return };
-        let Some(renderer) = self.renderer.as_mut() else { return };
-        let Some(w_nz) = NonZeroU32::new(self.width) else { return };
-        let Some(h_nz) = NonZeroU32::new(self.height) else { return };
-        if surface.resize(w_nz, h_nz).is_err() {
-            return;
-        }
         let viewport = renderer.viewport();
         let tokens = &self.tokens;
 
@@ -397,15 +472,41 @@ impl App {
             },
         );
 
-        let pixels = renderer.pixels();
-        let mut buffer = match surface.buffer_mut() {
-            Ok(b) => b,
-            Err(_) => return,
+    }
+
+    fn render(&mut self) {
+        // Take the renderer + surface out of self so we can borrow self mutably
+        // during paint without aliasing.
+        let Some(mut renderer) = self.renderer.take() else { return };
+        let Some(mut surface) = self.surface.take() else {
+            self.renderer = Some(renderer);
+            return;
         };
-        for (dst, src) in buffer.iter_mut().zip(pixels.iter()) {
-            *dst = *src & 0x00FF_FFFF;
+        let Some(w_nz) = NonZeroU32::new(self.width) else {
+            self.renderer = Some(renderer);
+            self.surface = Some(surface);
+            return;
+        };
+        let Some(h_nz) = NonZeroU32::new(self.height) else {
+            self.renderer = Some(renderer);
+            self.surface = Some(surface);
+            return;
+        };
+        if surface.resize(w_nz, h_nz).is_err() {
+            self.renderer = Some(renderer);
+            self.surface = Some(surface);
+            return;
         }
-        let _ = buffer.present();
+        self.paint_to(&mut renderer);
+        let pixels = renderer.pixels();
+        if let Ok(mut buffer) = surface.buffer_mut() {
+            for (dst, src) in buffer.iter_mut().zip(pixels.iter()) {
+                *dst = *src & 0x00FF_FFFF;
+            }
+            let _ = buffer.present();
+        }
+        self.renderer = Some(renderer);
+        self.surface = Some(surface);
     }
 }
 

@@ -47,8 +47,10 @@ impl Scrollbar {
             return;
         }
         let thumb = self.thumb_rect(bounds, content_size, viewport_size, scroll_offset);
-        // No track fill — Zed-style. Just the thumb.
-        painter.fill_rect(thumb, tokens.fg.disabled);
+        // No track fill — Zed-style. `fg.secondary` reads cleanly on
+        // both light and dark surfaces; `border.default` was too faint
+        // on white.
+        painter.fill_rect(thumb, tokens.fg.secondary);
     }
 
     fn thumb_rect(

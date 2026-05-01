@@ -67,6 +67,21 @@ All 17 planned steps closed:
 - Tab completion in the path edit field — not implemented; user types the full path. Iter-3 with `FsBackend::complete()`.
 - Tree doesn't auto-reveal the current path after navigating from breadcrumb / file-pane Enter. Visible only if the user expanded that branch via the tree itself. Iter-3 with `tree.reveal_path(path)`.
 
+### Iter-2.6 shipped — headless screenshot CLI
+
+Added `--screenshot` mode to the binary so I (and any future contributor) can render the UI to PNG without opening a window. State is driven via flags (`--navigate`, `--expand`, `--select-name`, `--splitter`, `--scroll`, `--theme`, `--edit-mode`, etc.). Mouse drags and animations skipped by design — every state worth screenshotting can be set declaratively.
+
+Implementation:
+- New `crates/feraille-app/src/screenshot.rs` (~250 LOC: hand-rolled arg parser + headless render flow + PNG encode via the `png` crate).
+- `App::render` refactored to take/replace its `SoftRenderer` and `softbuffer::Surface` so a separate `App::paint_to(&mut dyn Renderer)` can be called in the GUI path or headlessly. No more interleaving of paint and present.
+- `App` got a focused `pub` API of state setters: `new_for_headless`, `set_dimensions`, `new_tab_at`, `switch_to_tab`, `set_splitter`, `set_scroll`, `select_row`, `select_name`, `enter_breadcrumb_edit_mode`. Internal control state (`tabs`, `tree`, etc.) became `pub` for the same reason — same-binary access only, not exported.
+
+What it caught immediately:
+- **Scrollbar thumb was painted in `fg.disabled` (#B0B0B0)** — invisible against the white file pane. Bumped to `fg.secondary`. I would not have noticed without the screenshot tool.
+- Tree chevrons used U+25B8/U+25BE (the *small* triangles) which Arial doesn't ship — switched to U+25B6/U+25BC. Confirmed visible in the screenshot.
+
+Sample screenshots were taken to /tmp/feraille-{home,fixed,light-selected,dark,tree}.png during dev.
+
 ## Trade-offs made under time pressure
 
 - **Sync FS enumeration this iter.** The `FsBackend` trait already encodes streamed batches; iter-2 fills it with a single sync batch. Threading + change-watching land in iter-3 with the macOS shell crate.

@@ -78,6 +78,26 @@ any `/Volumes/*` mounts.
 - `FERAILLE_THEME=dark cargo run` → dark mode.
 - Esc → quit.
 
+## Screenshot CLI
+
+For UI verification without manual interaction, the binary supports a
+headless screenshot mode:
+
+```sh
+cargo run --bin feraille -- \
+    --screenshot out.png \
+    --width 1180 --height 760 --scale 2.0 \
+    --theme dark \
+    --navigate ~/Source/Feraille \
+    --expand ~/Source --expand ~/Source/Feraille \
+    --select-name Cargo.toml \
+    --splitter 240
+```
+
+Run `cargo run --bin feraille -- --help` for the full flag list. Mouse
+drags and animations aren't scriptable — anything visual that depends on
+those needs the GUI binary.
+
 ## Targets
 
 | Target | Status |
