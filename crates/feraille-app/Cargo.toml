@@ -1,0 +1,22 @@
+[package]
+name = "feraille-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Feraille — Windows file explorer (binary)"
+
+[[bin]]
+name = "feraille"
+path = "src/main.rs"
+
+[dependencies]
+feraille-core.workspace = true
+feraille-design.workspace = true
+feraille-render.workspace = true
+feraille-controls.workspace = true
+feraille-fs-native.workspace = true
+feraille-shell-win32.workspace = true
+
+winit.workspace = true
+softbuffer.workspace = true
+anyhow.workspace = true

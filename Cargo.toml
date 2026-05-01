@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/feraille-core",
+    "crates/feraille-design",
+    "crates/feraille-render",
+    "crates/feraille-controls",
+    "crates/feraille-fs-native",
+    "crates/feraille-shell-win32",
+    "crates/feraille-app",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.78"
+
+[workspace.dependencies]
+feraille-core         = { path = "crates/feraille-core" }
+feraille-design       = { path = "crates/feraille-design" }
+feraille-render       = { path = "crates/feraille-render" }
+feraille-controls     = { path = "crates/feraille-controls" }
+feraille-fs-native    = { path = "crates/feraille-fs-native" }
+feraille-shell-win32  = { path = "crates/feraille-shell-win32" }
+
+# External
+winit       = "0.30"
+softbuffer  = "0.4"
+ab_glyph    = "0.2"
+anyhow      = "1"
+
+[profile.dev]
+# Text rasterization is sluggish at -Copt-level=0 — keep some optimization in dev.
+opt-level = 1
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
