@@ -5,7 +5,7 @@
 //! coverage bitmap is reused. Eviction is FIFO at 2048 entries; LRU is
 //! correct but unnecessary at our working-set size.
 
-use crate::{Point, Rect, Renderer, Size, TextStyle};
+use crate::{Bitmap, Point, Rect, Renderer, Size, TextStyle};
 use ab_glyph::{Font, FontVec, Glyph, GlyphId, PxScale, ScaleFont};
 use feraille_design::Color;
 use std::collections::{HashMap, VecDeque};
@@ -311,6 +311,60 @@ impl Renderer for SoftRenderer {
         }
         let line_height_px = scaled.ascent() - scaled.descent() + scaled.line_gap();
         Size::new(width_px / s, line_height_px / s)
+    }
+
+    fn draw_bitmap(&mut self, rect: Rect, bitmap: &Bitmap) {
+        if bitmap.width == 0 || bitmap.height == 0 {
+            return;
+        }
+        let clip = self.current_clip();
+        let clipped = rect.intersect(clip);
+        if clipped.size.width <= 0.0 || clipped.size.height <= 0.0 {
+            return;
+        }
+        let s = self.scale_factor;
+        let dst_l = (rect.left() * s).round() as i32;
+        let dst_t = (rect.top() * s).round() as i32;
+        let dst_r = (rect.right() * s).round() as i32;
+        let dst_b = (rect.bottom() * s).round() as i32;
+        let dst_w = (dst_r - dst_l).max(1);
+        let dst_h = (dst_b - dst_t).max(1);
+        let clip_l = (clipped.left() * s).round() as i32;
+        let clip_t = (clipped.top() * s).round() as i32;
+        let clip_r = (clipped.right() * s).round() as i32;
+        let clip_b = (clipped.bottom() * s).round() as i32;
+        let l = dst_l.max(clip_l).max(0);
+        let t = dst_t.max(clip_t).max(0);
+        let r = dst_r.min(clip_r).min(self.width as i32);
+        let b = dst_b.min(clip_b).min(self.height as i32);
+        if r <= l || b <= t {
+            return;
+        }
+        let stride = self.width as usize;
+        let bw = bitmap.width as i32;
+        let bh = bitmap.height as i32;
+        for y in t..b {
+            // Nearest-neighbor sample y in source.
+            let sy = (((y - dst_t) as i64) * (bh as i64) / (dst_h as i64))
+                .clamp(0, (bh - 1) as i64) as usize;
+            let src_row = sy * (bitmap.width as usize) * 4;
+            let dst_row = (y as usize) * stride;
+            for x in l..r {
+                let sx = (((x - dst_l) as i64) * (bw as i64) / (dst_w as i64))
+                    .clamp(0, (bw - 1) as i64) as usize;
+                let off = src_row + sx * 4;
+                let sr = bitmap.rgba[off] as u32;
+                let sg = bitmap.rgba[off + 1] as u32;
+                let sb = bitmap.rgba[off + 2] as u32;
+                let sa = bitmap.rgba[off + 3] as u32;
+                if sa == 0 {
+                    continue;
+                }
+                let packed = (sa << 24) | (sr << 16) | (sg << 8) | sb;
+                let idx = dst_row + x as usize;
+                self.pixels[idx] = blend_argb(self.pixels[idx], packed);
+            }
+        }
     }
 
     fn push_clip(&mut self, rect: Rect) {

@@ -14,6 +14,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use feraille_core::{EntryKind, EnumerationHandle, FileEntry, FsBackend, NodeId};
 
+mod icons;
+pub use icons::fetch_icon_rgba;
+
 const ROOT_NODE_RAW: u64 = 1;
 
 pub struct NativeFs {

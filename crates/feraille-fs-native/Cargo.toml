@@ -7,3 +7,19 @@ description = "Cross-platform std::fs implementation of feraille-core::FsBackend
 
 [dependencies]
 feraille-core.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", features = [
+    "NSString",
+    "NSGeometry",
+    "NSValue",
+] }
+objc2-app-kit = { version = "0.2", features = [
+    "NSWorkspace",
+    "NSImage",
+    "NSBitmapImageRep",
+    "NSImageRep",
+    "NSGraphics",
+    "NSGraphicsContext",
+] }

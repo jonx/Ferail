@@ -168,6 +168,26 @@ What's deliberately not in iter-3.5:
 - **Configurable column visibility.** Right-click header → toggle which columns show. Wants the context menu host that lands with the macOS shell crate.
 - **Per-tab sort.** Currently sort is global on the list (one VirtualizedList instance, shared across tabs). Per-tab is nicer (Documents sorted by date, Source sorted by name, …); easy to lift if asked.
 
+### Iter-3.6 — real macOS icons via NSWorkspace
+
+User: "let's work on the icons now and try to get those from the system?"
+
+Three changes lined up:
+
+- **`Renderer::draw_bitmap(rect, &Bitmap)`** plus a new `Bitmap` type in `feraille-render`. RGBA8 row-major, straight (not premultiplied). `SoftRenderer` impl does nearest-neighbor scaling and alpha blits over the existing buffer. Pure pixels — no platform deps.
+- **`feraille-fs-native::fetch_icon_rgba`** (cfg(target_os = "macos")) — calls `NSWorkspace.iconForFile:`, allocates an `NSBitmapImageRep`, draws into it via `NSGraphicsContext`, reads `.bitmapData()`. Returns `(Vec<u8>, w, h)`. Other OSes return `None` (Windows shell extract lands with the Win32 shell crate).
+- **App icon cache**: `HashMap<String, Bitmap>` keyed by `cache_key_for(entry)` — extension for files (".rs", ".md"), `"DIR"` / `"SYMLINK"` / `"FILE"` for the rest. `prefetch_icons` runs after every navigate; visible rows fetch synchronously on first hit (~1ms each) and reuse from cache forever after. `VirtualizedList::paint` takes an `icon_for` closure; falls back to the colored-square placeholder when the cache misses.
+
+Two debugging gotchas worth remembering:
+
+1. **`NSBitmapImageRep::alloc()`** needed `use objc2::ClassType` to bring the trait method into scope — wasn't obvious from the error.
+2. **`+saveGraphicsState` / `+restoreGraphicsState`** (the *class* methods, not instance) aren't bound by `objc2-app-kit 0.2`. Reach for them via `msg_send![class, saveGraphicsState]`.
+3. **First attempt set `NSBitmapFormat::AlphaNonpremultiplied`** — `graphicsContextWithBitmapImageRep` silently returned nil. Apple requires premultiplied alpha for drawing. Fix: use `NSBitmapFormat::empty()` (= 0 = default = premultiplied RGBA) and undo the premult on the read side.
+
+The screenshot tool paid back immediately — without it, this would have taken an order of magnitude longer to debug. The "graphicsContextWithBitmapImageRep returned nil" message led straight to the right StackOverflow / Apple docs answer.
+
+Tree pane still shows colored squares — `FileTree::paint` doesn't take the icon callback yet. Iter-3.7 is the obvious follow-up.
+
 ### Iter-3 done; deliberate stop
 
 Pausing autonomous work here. The user is offline and asked me to make my own choices "without overengineering." Iter-3.1 (file actions) and 3.2 (icon hues + title sync) are substantive shipped wins that turn the app from a viewer into something you'd use.

@@ -12,7 +12,7 @@ use std::cmp::Ordering;
 
 use feraille_core::{EntryKind, FileEntry};
 use feraille_design::{Color, FontWeight, Tokens};
-use feraille_render::{Point, Rect, Renderer, TextStyle};
+use feraille_render::{Bitmap, Point, Rect, Renderer, TextStyle};
 
 use crate::primitives::focus_ring;
 use crate::selection::Selection;
@@ -231,11 +231,12 @@ impl VirtualizedList {
         }
     }
 
-    pub fn paint(
+    pub fn paint<'a>(
         &self,
         bounds: Rect,
         items: &[FileEntry],
         selection: &Selection,
+        icon_for: impl Fn(&FileEntry) -> Option<&'a Bitmap>,
         tokens: &Tokens,
         painter: &mut dyn Renderer,
     ) {
@@ -270,7 +271,8 @@ impl VirtualizedList {
                 painter.fill_rect(row_rect, tokens.bg.layer3);
             }
 
-            paint_row(&items[i], row_rect, &layout, &self.columns, tokens, painter);
+            let icon = icon_for(&items[i]);
+            paint_row(&items[i], row_rect, &layout, &self.columns, icon, tokens, painter);
         }
 
         if self.focused {
@@ -371,18 +373,24 @@ fn paint_row(
     row_rect: Rect,
     layout: &[(ColumnId, f32, f32)],
     columns: &[Column],
+    icon: Option<&Bitmap>,
     tokens: &Tokens,
     painter: &mut dyn Renderer,
 ) {
     let icon_size = 16.0;
     let icon_x = row_rect.left() + tokens.space.md;
     let icon_y = row_rect.top() + (row_rect.size.height - icon_size) / 2.0;
-    let icon_color = if matches!(entry.kind, EntryKind::Symlink) {
-        tokens.fg.secondary
+    let icon_rect = Rect::new(icon_x, icon_y, icon_size, icon_size);
+    if let Some(bitmap) = icon {
+        painter.draw_bitmap(icon_rect, bitmap);
     } else {
-        icon_color_for_file(entry, tokens)
-    };
-    painter.fill_rect(Rect::new(icon_x, icon_y, icon_size, icon_size), icon_color);
+        let icon_color = if matches!(entry.kind, EntryKind::Symlink) {
+            tokens.fg.secondary
+        } else {
+            icon_color_for_file(entry, tokens)
+        };
+        painter.fill_rect(icon_rect, icon_color);
+    }
 
     let row_h = row_rect.size.height;
     let text_y = row_rect.top() + (row_h - tokens.text.md) / 2.0 - 1.0;

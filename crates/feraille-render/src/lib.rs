@@ -87,6 +87,22 @@ impl TextStyle {
     }
 }
 
+/// RGBA8888 bitmap (straight, not premultiplied), row-major. Used for
+/// platform-fetched icons (macOS NSWorkspace, Windows shell extract).
+#[derive(Clone, Debug)]
+pub struct Bitmap {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+impl Bitmap {
+    pub fn new(width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        debug_assert_eq!(rgba.len(), (width as usize) * (height as usize) * 4);
+        Self { width, height, rgba }
+    }
+}
+
 pub trait Renderer {
     fn viewport(&self) -> Size;
     fn scale_factor(&self) -> f32;
@@ -94,6 +110,9 @@ pub trait Renderer {
     fn stroke_rect(&mut self, rect: Rect, width: f32, color: Color);
     fn draw_text(&mut self, pos: Point, text: &str, style: TextStyle);
     fn measure_text(&self, text: &str, style: TextStyle) -> Size;
+    /// Draw `bitmap` into `rect` (DIPs). Scales nearest-neighbor when sizes
+    /// don't match. Blits with alpha against the existing buffer contents.
+    fn draw_bitmap(&mut self, rect: Rect, bitmap: &Bitmap);
     fn push_clip(&mut self, rect: Rect);
     fn pop_clip(&mut self);
 }

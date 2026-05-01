@@ -24,10 +24,15 @@ use feraille_controls::{
 };
 use feraille_core::{AntTrail, EntryKind, FileEntry, FsBackend, NodeId};
 use feraille_design::{FontWeight, Theme, Tokens};
-use feraille_fs_native::{home_dir, list_volumes, move_to_trash, open_with_default, NativeFs};
+use feraille_fs_native::{
+    fetch_icon_rgba, home_dir, list_volumes, move_to_trash, open_with_default, NativeFs,
+};
 
 mod screenshot;
-use feraille_render::{Point as FPoint, Rect as FRect, Renderer, SoftRenderer, TextStyle};
+use feraille_render::{
+    Bitmap, Point as FPoint, Rect as FRect, Renderer, SoftRenderer, TextStyle,
+};
+use std::collections::HashMap;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
@@ -91,6 +96,10 @@ pub struct App {
     pub splitter_x: f32,
     pub show_hidden: bool,
     pub ant_trail: AntTrail,
+    /// Cache of NSWorkspace-fetched icons keyed by `cache_key_for(entry)`
+    /// — extension for files (".rs", ".md"), "DIR"/"SYMLINK"/"FILE" for
+    /// the rest. Populated lazily on `prefetch_icons` after each navigate.
+    pub icon_cache: HashMap<String, Bitmap>,
     pointer_dips: Option<FPoint>,
     modifiers: ModifiersState,
 
@@ -225,6 +234,7 @@ impl App {
             splitter_x: SIDEBAR_DEFAULT,
             show_hidden: false,
             ant_trail: AntTrail::new(),
+            icon_cache: HashMap::new(),
             pointer_dips: None,
             modifiers: ModifiersState::empty(),
             tokens: Tokens::for_theme(detect_theme()),
@@ -326,6 +336,36 @@ impl App {
         self.breadcrumb.set_path(&path);
         self.reveal_in_tree(&path);
         self.sync_window_title();
+        self.prefetch_icons();
+    }
+
+    /// Walk the active tab's entries, fetch+cache any extensions we
+    /// haven't seen before. Synchronous on the navigate path; ~1ms per
+    /// new extension on a warm Launch Services cache. Iter-5 will move
+    /// to a worker.
+    fn prefetch_icons(&mut self) {
+        let icon_size_px = (16.0 * self.scale_factor).round().max(16.0) as u32;
+        let cur_dir = self.tabs[self.active].current_dir.clone();
+        let to_fetch: Vec<(String, PathBuf)> = self.tabs[self.active]
+            .entries
+            .iter()
+            .filter_map(|e| {
+                let key = cache_key_for(e);
+                if self.icon_cache.contains_key(&key) {
+                    None
+                } else {
+                    Some((key, cur_dir.join(&e.name)))
+                }
+            })
+            .collect();
+        for (key, path) in to_fetch {
+            if self.icon_cache.contains_key(&key) {
+                continue;
+            }
+            if let Some((rgba, w, h)) = fetch_icon_rgba(&path, icon_size_px) {
+                self.icon_cache.insert(key, Bitmap::new(w, h, rgba));
+            }
+        }
     }
 
     fn sync_window_title(&self) {
@@ -604,7 +644,15 @@ impl App {
 
         // List + scrollbar
         let tab = &self.tabs[self.active];
-        self.list.paint(list_inner, &tab.entries, &tab.selection, tokens, renderer);
+        let icon_cache = &self.icon_cache;
+        self.list.paint(
+            list_inner,
+            &tab.entries,
+            &tab.selection,
+            |entry| icon_cache.get(&cache_key_for(entry)),
+            tokens,
+            renderer,
+        );
         self.scrollbar.paint(
             scrollbar_rect,
             content_h,
@@ -1011,6 +1059,17 @@ enum ScrollTarget {
     Tree,
     List,
     None,
+}
+
+fn cache_key_for(entry: &FileEntry) -> String {
+    match entry.kind {
+        EntryKind::Directory => "DIR".to_string(),
+        EntryKind::Symlink => "SYMLINK".to_string(),
+        EntryKind::File => match entry.name.rsplit_once('.') {
+            Some((_, ext)) if !ext.is_empty() => format!(".{}", ext.to_lowercase()),
+            _ => "FILE".to_string(),
+        },
+    }
 }
 
 fn filter_hidden(entries: &mut Vec<FileEntry>, show_hidden: bool) {
