@@ -944,6 +944,11 @@ impl ApplicationHandler for App {
                 return;
             }
         };
+        // Apply native chrome (transparent titlebar + traffic-light handling
+        // on macOS; no-op elsewhere). Returned value is the leading-edge
+        // inset to reserve in the tabstrip.
+        self.tabstrip.inset_left = feraille_shell_mac::apply_native_chrome(&window);
+
         let scale = window.scale_factor() as f32;
         let size = window.inner_size();
         self.width = size.width.max(1);

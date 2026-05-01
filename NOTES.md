@@ -210,6 +210,25 @@ Modal "Get Info" overlay:
 
 What's not here: large 64×64 icon (would want a separate cache key with size_px), live updates if the file changes, click-outside-only-to-close (currently any click closes), property editing (rename + permissions). All iter-3.10+.
 
+### Iter-4.1 — macOS native chrome (transparent titlebar + traffic-light inset)
+
+First slice of the macOS shell crate. New crate `feraille-shell-mac` exposes:
+- `apply_native_chrome(window) -> f32` — sets `titlebarAppearsTransparent`, `titleVisibility = NSWindowTitleHidden`, adds `NSWindowStyleMask::FullSizeContentView` to the window. Returns the leading-edge inset (DIPs) the host should reserve for traffic-light buttons. Returns `0.0` on non-macOS.
+- `TRAFFIC_LIGHT_INSET` constant (78.0).
+
+Cocoa interop notes (logged for future reference):
+- `winit 0.30` dropped `WindowExtMacOS::ns_window()` — must use `raw-window-handle 0.6` to extract `RawWindowHandle::AppKit { ns_view }`, then `NSView::window()` to reach `NSWindow`.
+- `NSWindowTitleVisibility` constants are *prefixed* in `objc2-app-kit 0.2`: `NSWindowTitleHidden`, not `Hidden`. Same pattern likely holds elsewhere.
+
+`TabStrip` got a `pub inset_left: f32` field; layout, hit-test, and hover all skip the leading inset. App sets it from the value returned by `apply_native_chrome`. Screenshot CLI got `--mac-chrome` to simulate the inset for headless verification (since the real chrome only affects the live NSWindow).
+
+Verified `/tmp/feraille-mac-chrome.png`: the active "Feraille" tab is clearly offset to the right of where the traffic-light buttons will land. Visual confirmation of the live chrome requires running the GUI binary on the actual Mac.
+
+What's not in iter-4.1:
+- **Vibrancy** (`NSVisualEffectView` for the sidebar) — needs Cocoa view-hierarchy interop with our soft-rendered window. iter-4.4 territory.
+- **Traffic-light repositioning** — Apple positions them automatically; we don't override.
+- **Window movement when dragging anywhere on the chrome** — would need `setMovableByWindowBackground` plus careful hit-test handoff. Defer.
+
 ### Iter-3 done; deliberate stop
 
 Pausing autonomous work here. The user is offline and asked me to make my own choices "without overengineering." Iter-3.1 (file actions) and 3.2 (icon hues + title sync) are substantive shipped wins that turn the app from a viewer into something you'd use.

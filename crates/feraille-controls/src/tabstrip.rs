@@ -35,6 +35,9 @@ pub enum TabStripEvent {
 
 pub struct TabStrip {
     pub hover: Option<TabHit>,
+    /// Leading-edge inset (DIPs). Hosts reserve room here for OS
+    /// traffic-light buttons on macOS; zero otherwise.
+    pub inset_left: f32,
 }
 
 impl Default for TabStrip {
@@ -45,7 +48,7 @@ impl Default for TabStrip {
 
 impl TabStrip {
     pub fn new() -> Self {
-        Self { hover: None }
+        Self { hover: None, inset_left: 0.0 }
     }
 
     pub fn paint(
@@ -63,8 +66,10 @@ impl TabStrip {
             tokens.border.subtle,
         );
 
-        let tab_w = compute_tab_width(bounds.size.width, tabs.len());
-        let mut x = bounds.left();
+        let inner_left = bounds.left() + self.inset_left;
+        let inner_width = (bounds.size.width - self.inset_left).max(0.0);
+        let tab_w = compute_tab_width(inner_width, tabs.len());
+        let mut x = inner_left;
         for (i, tab) in tabs.iter().enumerate() {
             let tab_rect = Rect::new(x, bounds.top(), tab_w, bounds.size.height);
             let is_active = i == active;
@@ -185,8 +190,13 @@ impl TabStrip {
         if !bounds.contains(point) {
             return None;
         }
-        let tab_w = compute_tab_width(bounds.size.width, tabs.len());
-        let mut x = bounds.left();
+        let inner_left = bounds.left() + self.inset_left;
+        let inner_width = (bounds.size.width - self.inset_left).max(0.0);
+        if point.x < inner_left {
+            return None;
+        }
+        let tab_w = compute_tab_width(inner_width, tabs.len());
+        let mut x = inner_left;
         for (i, _tab) in tabs.iter().enumerate() {
             let tab_rect = Rect::new(x, bounds.top(), tab_w, bounds.size.height);
             if tab_rect.contains(point) {

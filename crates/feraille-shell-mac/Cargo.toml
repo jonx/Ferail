@@ -1,0 +1,19 @@
+[package]
+name = "feraille-shell-mac"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "macOS shell integration for Feraille (chrome, drag-drop, NSMenu)"
+
+[dependencies]
+winit.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", features = [] }
+objc2-app-kit = { version = "0.2", features = [
+    "NSWindow",
+    "NSResponder",
+    "NSView",
+] }
+raw-window-handle = "0.6"

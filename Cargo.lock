@@ -408,6 +408,7 @@ dependencies = [
  "feraille-design",
  "feraille-fs-native",
  "feraille-render",
+ "feraille-shell-mac",
  "feraille-shell-win32",
  "png",
  "softbuffer",
@@ -447,6 +448,17 @@ version = "0.0.1"
 dependencies = [
  "ab_glyph",
  "feraille-design",
+]
+
+[[package]]
+name = "feraille-shell-mac"
+version = "0.0.1"
+dependencies = [
+ "objc2 0.5.2",
+ "objc2-app-kit",
+ "objc2-foundation 0.2.2",
+ "raw-window-handle",
+ "winit",
 ]
 
 [[package]]

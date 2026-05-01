@@ -117,7 +117,7 @@ the drag preview (that's in `feraille-controls`).
 | 2.7 | Standalone header removed, tree reveal-on-navigate + auto-scroll, fold/unfold redraw + perf bug fixed | redundant header strip |
 | 3 (current) | Open-file (Enter), F5 refresh, Ctrl+H / Cmd+Shift+. hidden toggle, Delete to ~/.Trash, file-type icon hue, OS window-title sync | — |
 | 3.5+ | List row hover feedback, in-memory ant trail (folder visits), F2 inline rename, Cmd+F search/filter, clipboard ops, tabs persistence | — |
-| 4 | macOS shell crate: NSPasteboard drag/drop, NSWorkspace recycle, NSMenu context menu, native title bar (transparent + vibrancy + traffic-light positioning) | rename-to-Trash fallback |
+| 4 (current) | macOS shell crate: 4.1 native chrome (transparent titlebar + traffic-light inset). 4.2+: NSPasteboard drag/drop, NSMenu context menu, NSVisualEffectView vibrancy, NSWorkspace recycle | rename-to-Trash fallback (4.2+) |
 | 5 | wgpu/Vello GPU renderer; threaded + change-watching FS via FSEvents | sync FS enumeration |
 | 6 | Persisted ant trail (SQLite), magic file detection (port Ferail's type DB) | in-memory trail |
 | 7 | Disk-usage treemap (port from Ferail) | — |

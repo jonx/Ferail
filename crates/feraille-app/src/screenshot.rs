@@ -36,6 +36,7 @@ pub struct Args {
     pub show_hidden: bool,
     pub sort: Option<(String, bool)>, // (column_name, ascending)
     pub properties: bool,             // open Get-Info panel for the selected row
+    pub mac_chrome: bool,             // simulate macOS native chrome (traffic-light inset on tabstrip)
 }
 
 pub fn parse_args() -> Args {
@@ -76,6 +77,7 @@ pub fn parse_args() -> Args {
             "--tab" => args.tab = iter.next().and_then(|s| s.parse().ok()),
             "--edit-mode" => args.edit_mode = true,
             "--properties" => args.properties = true,
+            "--mac-chrome" => args.mac_chrome = true,
             "--show-hidden" => args.show_hidden = true,
             "--sort" => {
                 let raw = iter.next().unwrap_or_default();
@@ -194,6 +196,9 @@ pub fn run(args: Args) -> Result<()> {
     }
     if args.properties {
         app.toggle_properties();
+    }
+    if args.mac_chrome {
+        app.tabstrip.inset_left = feraille_shell_mac::TRAFFIC_LIGHT_INSET;
     }
 
     let font_bytes = load_default_font().context("load default font")?;
