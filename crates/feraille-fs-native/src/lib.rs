@@ -140,6 +140,103 @@ pub fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// Hand `path` to the OS for default-app open. macOS: `open(1)`. Windows:
+/// `cmd /C start`. Linux: `xdg-open`. Returns `Err` only if the launcher
+/// itself failed to start; we can't tell whether the OS chose to do
+/// anything useful with it.
+#[cfg(target_os = "macos")]
+pub fn open_with_default(path: &Path) -> std::io::Result<()> {
+    std::process::Command::new("open").arg(path).spawn().map(|_| ())
+}
+
+#[cfg(target_os = "windows")]
+pub fn open_with_default(path: &Path) -> std::io::Result<()> {
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "", path.to_string_lossy().as_ref()])
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub fn open_with_default(path: &Path) -> std::io::Result<()> {
+    std::process::Command::new("xdg-open").arg(path).spawn().map(|_| ())
+}
+
+/// Move `path` into the user's Trash. macOS: rename into `~/.Trash`,
+/// resolving collisions by suffixing ` 2`, ` 3`, … Returns the final
+/// path if successful.
+///
+/// This intentionally avoids `NSWorkspace.recycle` for now — that
+/// requires Objective-C bridging that lives in the macOS shell crate
+/// (iter-4). The `~/.Trash` rename approach matches what the OS does
+/// for files within the boot volume; it falls back to outright delete
+/// on cross-volume errors.
+#[cfg(target_os = "macos")]
+pub fn move_to_trash(path: &Path) -> std::io::Result<PathBuf> {
+    let home = home_dir();
+    let trash = home.join(".Trash");
+    if !trash.is_dir() {
+        std::fs::create_dir_all(&trash)?;
+    }
+    let name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no file name"))?;
+    let mut target = trash.join(name);
+    if target.exists() {
+        let stem = target.file_stem().map(|s| s.to_string_lossy().into_owned());
+        let ext = target.extension().map(|s| s.to_string_lossy().into_owned());
+        for n in 2..1000 {
+            let candidate = match (&stem, &ext) {
+                (Some(s), Some(e)) => trash.join(format!("{s} {n}.{e}")),
+                (Some(s), None) => trash.join(format!("{s} {n}")),
+                (None, _) => trash.join(format!("trash-{n}")),
+            };
+            if !candidate.exists() {
+                target = candidate;
+                break;
+            }
+        }
+    }
+    match std::fs::rename(path, &target) {
+        Ok(_) => Ok(target),
+        Err(e) if e.raw_os_error() == Some(libc_exdev()) => {
+            // Cross-volume — fall back to copy + remove.
+            copy_then_remove(path, &target)?;
+            Ok(target)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn move_to_trash(path: &Path) -> std::io::Result<PathBuf> {
+    // Conservative on non-macOS — refuse rather than silently delete.
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        format!("move_to_trash not implemented on this OS for {}", path.display()),
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn libc_exdev() -> i32 {
+    // EXDEV — cross-device link. Hard-coded to avoid pulling `libc` for one constant.
+    18
+}
+
+#[cfg(target_os = "macos")]
+fn copy_then_remove(src: &Path, dst: &Path) -> std::io::Result<()> {
+    if src.is_dir() {
+        // Defer recursive copy to iter-4 with the macOS shell crate.
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "cross-volume directory move not yet supported",
+        ));
+    }
+    std::fs::copy(src, dst)?;
+    std::fs::remove_file(src)?;
+    Ok(())
+}
+
 /// Returns `(display_name, path)` pairs for every directory under `/Volumes`
 /// (macOS). Empty on Linux/Windows for now.
 pub fn list_volumes() -> Vec<(String, PathBuf)> {

@@ -24,7 +24,7 @@ use feraille_controls::{
 };
 use feraille_core::{EntryKind, FileEntry, FsBackend, NodeId};
 use feraille_design::{FontWeight, Theme, Tokens};
-use feraille_fs_native::{home_dir, list_volumes, NativeFs};
+use feraille_fs_native::{home_dir, list_volumes, move_to_trash, open_with_default, NativeFs};
 
 mod screenshot;
 use feraille_render::{Point as FPoint, Rect as FRect, Renderer, SoftRenderer, TextStyle};
@@ -89,6 +89,7 @@ pub struct App {
     pub breadcrumb: BreadcrumbBar,
     pub tree: FileTree,
     pub splitter_x: f32,
+    pub show_hidden: bool,
     pointer_dips: Option<FPoint>,
     modifiers: ModifiersState,
 
@@ -220,6 +221,7 @@ impl App {
             breadcrumb,
             tree,
             splitter_x: SIDEBAR_DEFAULT,
+            show_hidden: false,
             pointer_dips: None,
             modifiers: ModifiersState::empty(),
             tokens: Tokens::for_theme(detect_theme()),
@@ -288,7 +290,8 @@ impl App {
 
     pub fn navigate(&mut self, path: PathBuf) {
         let id = self.fs.id_for_path(&path);
-        let handle = self.fs.enumerate(id);
+        let mut handle = self.fs.enumerate(id);
+        filter_hidden(&mut handle.initial, self.show_hidden);
         let tab = &mut self.tabs[self.active];
         tab.entries = handle.initial;
         tab.current_dir = path.clone();
@@ -300,6 +303,67 @@ impl App {
         self.list.scroll_offset = 0.0;
         self.breadcrumb.set_path(&path);
         self.reveal_in_tree(&path);
+    }
+
+    /// Re-enumerate the active tab without resetting scroll, preserving
+    /// the cursor on the same entry name when possible. Used by F5 and
+    /// after side-effects (Trash, future copy/move).
+    pub fn refresh_active_tab(&mut self) {
+        let cursor_name = {
+            let t = &self.tabs[self.active];
+            t.selection
+                .cursor()
+                .and_then(|i| t.entries.get(i))
+                .map(|e| e.name.clone())
+        };
+        let scroll = self.list.scroll_offset;
+        let path = self.tabs[self.active].current_dir.clone();
+        let id = self.fs.id_for_path(&path);
+        let mut handle = self.fs.enumerate(id);
+        filter_hidden(&mut handle.initial, self.show_hidden);
+        let tab = &mut self.tabs[self.active];
+        tab.entries = handle.initial;
+        if let Some(name) = cursor_name {
+            if let Some(idx) = tab.entries.iter().position(|e| e.name == name) {
+                tab.selection.set_cursor(idx);
+            } else if !tab.entries.is_empty() {
+                tab.selection.set_cursor(0);
+            } else {
+                tab.selection = Selection::new();
+            }
+        } else if !tab.entries.is_empty() {
+            tab.selection.set_cursor(0);
+        }
+        self.list.scroll_offset = scroll;
+        // Tree might have a stale view of the current folder's contents.
+        // Mark unloaded so a future expand re-enumerates.
+        self.tree.invalidate(id);
+    }
+
+    pub fn toggle_hidden(&mut self) {
+        self.show_hidden = !self.show_hidden;
+        self.refresh_active_tab();
+    }
+
+    pub fn delete_at_cursor_to_trash(&mut self) {
+        let (cur_dir, name) = {
+            let t = &self.tabs[self.active];
+            let Some(idx) = t.selection.cursor() else { return };
+            let Some(entry) = t.entries.get(idx) else { return };
+            (t.current_dir.clone(), entry.name.clone())
+        };
+        let target = cur_dir.join(&name);
+        match move_to_trash(&target) {
+            Ok(_) => self.refresh_active_tab(),
+            Err(e) => {
+                // Iter-4 will surface this in a Toast / ErrorState; for now,
+                // log to stderr so it's visible during dev runs.
+                eprintln!(
+                    "move_to_trash({}) failed: {e} — file remains on disk",
+                    target.display()
+                );
+            }
+        }
     }
 
     /// Walk the tree from the appropriate root down to `path`, expanding
@@ -333,7 +397,8 @@ impl App {
                     // Cached — just mark expanded; don't touch the FS.
                     self.tree.ensure_expanded(id);
                 } else {
-                    let handle = self.fs.enumerate(id);
+                    let mut handle = self.fs.enumerate(id);
+                    filter_hidden(&mut handle.initial, self.show_hidden);
                     self.tree.populate_children(id, &handle.initial);
                 }
             }
@@ -365,15 +430,20 @@ impl App {
     }
 
     fn open_at_cursor(&mut self) {
-        let (cur_dir, cursor_idx, kind, name) = {
+        let (cur_dir, kind, name) = {
             let t = &self.tabs[self.active];
             let Some(idx) = t.selection.cursor() else { return };
             let Some(entry) = t.entries.get(idx) else { return };
-            (t.current_dir.clone(), idx, entry.kind, entry.name.clone())
+            (t.current_dir.clone(), entry.kind, entry.name.clone())
         };
-        let _ = cursor_idx;
-        if matches!(kind, EntryKind::Directory) {
-            self.navigate(cur_dir.join(name));
+        let path = cur_dir.join(&name);
+        match kind {
+            EntryKind::Directory => self.navigate(path),
+            EntryKind::File | EntryKind::Symlink => {
+                if let Err(e) = open_with_default(&path) {
+                    eprintln!("open_with_default({}) failed: {e}", path.display());
+                }
+            }
         }
     }
 
@@ -438,7 +508,8 @@ impl App {
                 }
             }
             TreeEvent::ExpandRequested(id) => {
-                let handle = self.fs.enumerate(id);
+                let mut handle = self.fs.enumerate(id);
+                filter_hidden(&mut handle.initial, self.show_hidden);
                 self.tree.populate_children(id, &handle.initial);
             }
         }
@@ -783,6 +854,21 @@ impl ApplicationHandler for App {
                     }
                 }
 
+                // Hidden-files toggle:
+                //  - Ctrl+H (Linux/Windows convention)
+                //  - Cmd+Shift+. (macOS convention used by Finder)
+                if let Some(t) = text.as_deref() {
+                    let ctrl_h = (t == "h" || t == "H") && self.modifiers.control_key();
+                    let cmd_shift_dot = t == "."
+                        && self.modifiers.super_key()
+                        && self.modifiers.shift_key();
+                    if ctrl_h || cmd_shift_dot {
+                        self.toggle_hidden();
+                        self.request_redraw();
+                        return;
+                    }
+                }
+
                 let count = self.tabs[self.active].entries.len();
                 let viewport_h = self.list_inner_rect().size.height;
                 let page = (viewport_h / self.list.row_height) as i64;
@@ -797,6 +883,8 @@ impl ApplicationHandler for App {
                     Key::Named(NamedKey::End) => sel.move_cursor(count as i64, count),
                     Key::Named(NamedKey::Enter) => self.open_at_cursor(),
                     Key::Named(NamedKey::Backspace) => self.navigate_parent(),
+                    Key::Named(NamedKey::F5) => self.refresh_active_tab(),
+                    Key::Named(NamedKey::Delete) => self.delete_at_cursor_to_trash(),
                     _ => {}
                 }
                 if let Some(idx) = self.tabs[self.active].selection.cursor() {
@@ -822,6 +910,12 @@ fn map_named_to_textinput(named: NamedKey) -> Option<TextInputKey> {
         NamedKey::Escape => TextInputKey::Escape,
         _ => return None,
     })
+}
+
+fn filter_hidden(entries: &mut Vec<FileEntry>, show_hidden: bool) {
+    if !show_hidden {
+        entries.retain(|e| !e.name.starts_with('.'));
+    }
 }
 
 fn detect_theme() -> Theme {

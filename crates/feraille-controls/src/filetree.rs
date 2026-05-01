@@ -291,6 +291,19 @@ impl FileTree {
         self.nodes.get(&id).map(|n| n.children_loaded).unwrap_or(false)
     }
 
+    /// Drop cached children for `id` so a future expand re-enumerates.
+    /// Used after side-effects (delete-to-Trash, future copy/move) where
+    /// the on-disk children may have changed without our knowledge.
+    pub fn invalidate(&mut self, id: NodeId) {
+        if let Some(n) = self.nodes.get_mut(&id) {
+            n.children.clear();
+            n.children_loaded = false;
+            // Stay expanded if we already were — re-fetch lazily on next
+            // expand attempt. Currently no proactive re-enumerate.
+        }
+        self.recompute_visible();
+    }
+
     /// Whether the node currently exists in the tree (used as roots or
     /// reachable through expanded ancestors).
     pub fn contains(&self, id: NodeId) -> bool {

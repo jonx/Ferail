@@ -112,6 +112,19 @@ Same class of bug existed for cached-unfold (chevron toggle on a previously-load
 
 The right takeaway: anywhere we have "control mutated state but emitted no event," the API has to signal that distinctly — empty event vec is overloaded otherwise.
 
+### Iter-3.1 — table-stakes file-explorer actions
+
+The app was a viewer until iter-3. iter-3.1 adds the four keystrokes that turn it into something you'd actually use:
+
+- **Enter on a file** — `feraille_fs_native::open_with_default` shells out to `open` (macOS), `cmd /C start` (Windows), `xdg-open` (Linux). Enter on a directory still navigates.
+- **F5** — `App::refresh_active_tab` re-enumerates the current folder, preserving the cursor on the same entry name when possible. Also invalidates the tree's cached children for that node so a future expand re-fetches.
+- **Ctrl+H or Cmd+Shift+.** — toggles `App::show_hidden`. The hidden filter applies at the call sites of `fs.enumerate` (file pane + tree) so re-toggling refreshes both.
+- **Delete** — `feraille_fs_native::move_to_trash` renames the file into `~/.Trash` with collision suffixing (`name 2`, `name 3`, …). Falls back to copy+remove on cross-volume errors. Refuses on non-macOS for now (iter-4 with the macOS shell crate replaces the rename approach with `NSWorkspace.recycle`).
+
+Architectural note: `move_to_trash` deliberately doesn't go through Cocoa yet — bridging `NSWorkspace` lives behind the macOS shell crate boundary that lands in iter-4. The rename-to-`~/.Trash` approach is what the OS does for files within the boot volume; it's not what Trash actually wants for cross-volume files (those need `NSURL.trash`), but iter-3 doesn't need the perfect answer.
+
+Slow-AI receipts: this iter consciously *did not* add the F2 inline-rename, copy-path-to-clipboard, or new-folder actions. Each requires either a rename overlay over the list row (significant new infrastructure) or a clipboard dependency. Both pay back later — they don't pay back yet.
+
 ## Trade-offs made under time pressure
 
 - **Sync FS enumeration this iter.** The `FsBackend` trait already encodes streamed batches; iter-2 fills it with a single sync batch. Threading + change-watching land in iter-3 with the macOS shell crate.

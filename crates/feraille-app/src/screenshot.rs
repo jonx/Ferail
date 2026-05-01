@@ -33,6 +33,7 @@ pub struct Args {
     pub scroll: Option<f32>,
     pub tab: Option<usize>,
     pub edit_mode: bool,
+    pub show_hidden: bool,
 }
 
 pub fn parse_args() -> Args {
@@ -68,6 +69,7 @@ pub fn parse_args() -> Args {
             "--scroll" => args.scroll = iter.next().and_then(|s| s.parse().ok()),
             "--tab" => args.tab = iter.next().and_then(|s| s.parse().ok()),
             "--edit-mode" => args.edit_mode = true,
+            "--show-hidden" => args.show_hidden = true,
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -126,6 +128,7 @@ pub fn run(args: Args) -> Result<()> {
     // Build app + drive state.
     let mut app = App::new_for_headless(args.theme.unwrap_or(Theme::Light));
     app.set_dimensions(width_px, height_px, scale);
+    app.show_hidden = args.show_hidden;
 
     if let Some(p) = args.navigate.as_deref() {
         app.navigate(canonicalize_or_passthrough(p));
