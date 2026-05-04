@@ -13,7 +13,7 @@ pub mod tabstrip;
 pub mod virtualized_list;
 
 pub use breadcrumb::{BreadcrumbBar, BreadcrumbEvent};
-pub use filetree::{FileTree, Section, SectionKind, TreeEvent};
+pub use filetree::{FileTree, Section, SectionKind, TreeContextTarget, TreeEvent};
 pub use selection::{Selection, SelectionSet};
 pub use sidebar::{Sidebar, SidebarEvent};
 pub use tabstrip::{TabHit, TabInfo, TabStrip, TabStripEvent};

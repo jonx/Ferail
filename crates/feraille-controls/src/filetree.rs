@@ -11,12 +11,17 @@
 //! Spec: `specs/controls/03-explorer-controls.md` §2.
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use feraille_core::{EntryKind, FileEntry, NodeId};
 use feraille_design::{FontWeight, Tokens};
 use feraille_render::{Bitmap, Point, Rect, Renderer, TextStyle};
 
 use crate::primitives::focus_ring;
+
+/// Idle window after which the type-ahead buffer resets. Matches
+/// `specs/ux/02-selection.md`.
+const TYPE_AHEAD_RESET: Duration = Duration::from_millis(800);
 
 const ROW_HEIGHT: f32 = 24.0;
 const HEADER_HEIGHT: f32 = 26.0;
@@ -30,6 +35,9 @@ struct Node {
     expanded: bool,
     children_loaded: bool,
     children: Vec<NodeId>,
+    /// Recorded on `populate_children` so Left-arrow can walk up the tree
+    /// without an extra reverse-index. `None` for section roots.
+    parent: Option<NodeId>,
 }
 
 impl SectionKind {
@@ -88,6 +96,15 @@ pub enum TreeEvent {
     ExpandRequested(NodeId),
 }
 
+/// Section + node identification for the host's right-click menu.
+/// `kind` lets the host pick context-menu items (e.g. "Remove from
+/// Favorites" only when `Favorites`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TreeContextTarget {
+    pub kind: SectionKind,
+    pub id: NodeId,
+}
+
 pub struct FileTree {
     nodes: HashMap<NodeId, Node>,
     sections: Vec<Section>,
@@ -98,6 +115,10 @@ pub struct FileTree {
     pub selected: Option<NodeId>,
     pub focused: bool,
     pub hover_index: Option<usize>,
+    /// Type-ahead state. Buffer accumulates while keypresses arrive
+    /// faster than `TYPE_AHEAD_RESET`; cleared on idle.
+    type_ahead: String,
+    type_ahead_last: Option<Instant>,
 }
 
 impl Default for FileTree {
@@ -116,6 +137,8 @@ impl FileTree {
             selected: None,
             focused: false,
             hover_index: None,
+            type_ahead: String::new(),
+            type_ahead_last: None,
         }
     }
 
@@ -135,6 +158,7 @@ impl FileTree {
                     expanded: false,
                     children_loaded: false,
                     children: Vec::new(),
+                    parent: None,
                 });
                 if !section.entries.contains(&id) {
                     section.entries.push(id);
@@ -155,12 +179,20 @@ impl FileTree {
             if !matches!(e.kind, EntryKind::Directory) {
                 continue;
             }
-            self.nodes.entry(e.id).or_insert_with(|| Node {
-                label: e.name.clone(),
-                expanded: false,
-                children_loaded: false,
-                children: Vec::new(),
-            });
+            self.nodes
+                .entry(e.id)
+                .and_modify(|n| {
+                    if n.parent.is_none() {
+                        n.parent = Some(parent);
+                    }
+                })
+                .or_insert_with(|| Node {
+                    label: e.name.clone(),
+                    expanded: false,
+                    children_loaded: false,
+                    children: Vec::new(),
+                    parent: Some(parent),
+                });
             child_ids.push(e.id);
         }
         if let Some(n) = self.nodes.get_mut(&parent) {
@@ -384,6 +416,235 @@ impl FileTree {
 
     pub fn select(&mut self, id: NodeId) {
         self.selected = Some(id);
+    }
+
+    /// Position of the currently-selected node within `visible`, if it
+    /// is a `TreeRow::Node` (header rows can never be "selected").
+    fn selected_visible_index(&self) -> Option<usize> {
+        let id = self.selected?;
+        self.visible
+            .iter()
+            .position(|r| matches!(r, TreeRow::Node { id: nid, .. } if *nid == id))
+    }
+
+    /// Find the next `TreeRow::Node` index in `direction` (+1 / -1)
+    /// starting from `from`, skipping headers. Returns `None` if there
+    /// is no Node row in that direction.
+    fn next_node_index(&self, from: Option<usize>, direction: i32) -> Option<usize> {
+        if self.visible.is_empty() {
+            return None;
+        }
+        let len = self.visible.len() as i32;
+        let mut i = match (from, direction.signum()) {
+            (Some(f), 1) => f as i32 + 1,
+            (Some(f), -1) => f as i32 - 1,
+            (None, 1) | (None, 0) => 0,
+            (None, -1) => len - 1,
+            _ => 0,
+        };
+        let step = if direction >= 0 { 1 } else { -1 };
+        while i >= 0 && i < len {
+            if matches!(self.visible[i as usize], TreeRow::Node { .. }) {
+                return Some(i as usize);
+            }
+            i += step;
+        }
+        None
+    }
+
+    /// Move selection by `delta` rows (skipping headers). Updates scroll
+    /// to keep the new selection visible. No-op if `visible` has no
+    /// Node rows. Returns `true` if the selection changed.
+    pub fn move_cursor(&mut self, delta: i32, viewport_h: f32) -> bool {
+        let cur = self.selected_visible_index();
+        let target = if delta > 0 {
+            self.next_node_index(cur, 1)
+        } else if delta < 0 {
+            self.next_node_index(cur, -1)
+        } else {
+            return false;
+        };
+        match target.and_then(|i| match &self.visible[i] {
+            TreeRow::Node { id, .. } => Some(*id),
+            _ => None,
+        }) {
+            Some(id) if Some(id) != self.selected => {
+                self.selected = Some(id);
+                self.ensure_visible(id, viewport_h);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Jump to the first / last Node row.
+    pub fn move_to_first(&mut self, viewport_h: f32) -> bool {
+        if let Some(i) = self.next_node_index(None, 1) {
+            if let TreeRow::Node { id, .. } = self.visible[i] {
+                self.selected = Some(id);
+                self.ensure_visible(id, viewport_h);
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn move_to_last(&mut self, viewport_h: f32) -> bool {
+        if let Some(i) = self.next_node_index(None, -1) {
+            if let TreeRow::Node { id, .. } = self.visible[i] {
+                self.selected = Some(id);
+                self.ensure_visible(id, viewport_h);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Left-arrow semantics (VS Code style): if the selected node is
+    /// expanded, collapse it; otherwise jump to its parent. `Activate`
+    /// is *not* fired — Left only affects tree shape and cursor.
+    pub fn collapse_or_parent(&mut self, viewport_h: f32) -> bool {
+        let Some(id) = self.selected else { return false };
+        let (expanded, parent) = match self.nodes.get(&id) {
+            Some(n) => (n.expanded, n.parent),
+            None => return false,
+        };
+        if expanded {
+            if let Some(n) = self.nodes.get_mut(&id) {
+                n.expanded = false;
+            }
+            self.recompute_visible();
+            return true;
+        }
+        if let Some(p) = parent {
+            if self.nodes.contains_key(&p) {
+                self.selected = Some(p);
+                self.ensure_visible(p, viewport_h);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Right-arrow semantics: if the selected expandable node is
+    /// collapsed, expand it (firing `ExpandRequested` if children aren't
+    /// loaded). If already expanded with children, move to first child.
+    pub fn expand_or_first_child(&mut self, viewport_h: f32) -> Option<TreeEvent> {
+        let id = self.selected?;
+        let (expanded, has_children, expandable) = {
+            let n = self.nodes.get(&id)?;
+            // A node is "expandable" in the keyboard sense if it sits in
+            // an expandable section; we approximate by checking the
+            // visible row (since `Node.expandable` flag isn't on the
+            // struct).
+            let expandable = self
+                .visible
+                .iter()
+                .find_map(|r| match r {
+                    TreeRow::Node { id: nid, expandable, .. } if *nid == id => Some(*expandable),
+                    _ => None,
+                })
+                .unwrap_or(false);
+            (n.expanded, !n.children.is_empty(), expandable)
+        };
+        if !expandable {
+            return None;
+        }
+        if !expanded {
+            return self.toggle_expand(id);
+        }
+        if has_children {
+            let first = self.nodes.get(&id).and_then(|n| n.children.first().copied());
+            if let Some(c) = first {
+                self.selected = Some(c);
+                self.ensure_visible(c, viewport_h);
+            }
+        }
+        None
+    }
+
+    /// Enter / Return on the selected node — Activate.
+    pub fn activate_selected(&self) -> Option<TreeEvent> {
+        self.selected.map(TreeEvent::Activate)
+    }
+
+    /// Push one type-ahead character. Returns `true` if a match was
+    /// found and selection advanced. Buffer auto-resets after
+    /// `TYPE_AHEAD_RESET` of idle time.
+    pub fn type_ahead_push(&mut self, ch: char, viewport_h: f32) -> bool {
+        let now = Instant::now();
+        let stale = self
+            .type_ahead_last
+            .map(|t| now.duration_since(t) > TYPE_AHEAD_RESET)
+            .unwrap_or(true);
+        if stale {
+            self.type_ahead.clear();
+        }
+        self.type_ahead_last = Some(now);
+        for c in ch.to_lowercase() {
+            self.type_ahead.push(c);
+        }
+        let needle = self.type_ahead.clone();
+        let cur = self.selected_visible_index();
+        // Start scanning from `cur + 1` for a single new char (cycling
+        // through duplicates), or from `cur` when refining a multi-char
+        // buffer (so the first additional char can match the same row).
+        let start = match (cur, needle.chars().count()) {
+            (Some(i), 1) => (i + 1) % self.visible.len().max(1),
+            (Some(i), _) => i,
+            _ => 0,
+        };
+        let len = self.visible.len();
+        for offset in 0..len {
+            let i = (start + offset) % len;
+            if let TreeRow::Node { id, .. } = self.visible[i] {
+                if let Some(node) = self.nodes.get(&id) {
+                    if node.label.to_lowercase().starts_with(&needle) {
+                        self.selected = Some(id);
+                        self.ensure_visible(id, viewport_h);
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    pub fn type_ahead_clear(&mut self) {
+        self.type_ahead.clear();
+        self.type_ahead_last = None;
+    }
+
+    /// Right-click on a tree row: select the node and return the
+    /// section + id so the host can build a context menu. Header rows
+    /// return `None`. Outside the tree returns `None`.
+    pub fn right_click(&mut self, bounds: Rect, point: Point) -> Option<TreeContextTarget> {
+        let idx = self.index_at(bounds, point)?;
+        let row = self.visible.get(idx)?.clone();
+        let TreeRow::Node { id, .. } = row else {
+            return None;
+        };
+        // Find the section this index falls into by walking visible rows.
+        let kind = self.section_kind_at(idx)?;
+        self.selected = Some(id);
+        Some(TreeContextTarget { kind, id })
+    }
+
+    fn section_kind_at(&self, idx: usize) -> Option<SectionKind> {
+        let mut current: Option<SectionKind> = None;
+        for (i, row) in self.visible.iter().enumerate() {
+            match row {
+                TreeRow::Header { kind, .. } => current = Some(*kind),
+                TreeRow::Node { .. } => {
+                    if i == idx {
+                        // Recents has no header — default to Recents
+                        // when no header has been seen yet.
+                        return Some(current.unwrap_or(SectionKind::Recents));
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub fn is_loaded(&self, id: NodeId) -> bool {

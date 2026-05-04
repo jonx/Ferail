@@ -44,6 +44,13 @@ use winit::window::{Window, WindowId};
 const DRAG_THRESHOLD_DIPS: f32 = 4.0;
 const DRAG_DELAY_MS: u128 = 100;
 
+/// Which pane currently owns keyboard focus. F6 cycles between them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FocusedPane {
+    Tree,
+    List,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct DragWatch {
     start: FPoint,
@@ -153,6 +160,7 @@ pub struct App {
     pub tabstrip: TabStrip,
     pub breadcrumb: BreadcrumbBar,
     pub tree: FileTree,
+    pub focused_pane: FocusedPane,
     pub splitter_x: f32,
     pub show_hidden: bool,
     pub ant_trail: AntTrail,
@@ -275,6 +283,92 @@ impl App {
         if let Some(s) = path.to_str() {
             feraille_shell_mac::copy_to_clipboard(s);
         }
+    }
+
+    /// Set the focused pane and propagate to the controls' visual state.
+    pub fn set_focused_pane(&mut self, pane: FocusedPane) {
+        if self.focused_pane == pane {
+            return;
+        }
+        self.focused_pane = pane;
+        self.tree.focused = matches!(pane, FocusedPane::Tree);
+        self.list.focused = matches!(pane, FocusedPane::List);
+        // Reset type-ahead when leaving the tree.
+        if !self.tree.focused {
+            self.tree.type_ahead_clear();
+        }
+    }
+
+    /// F6 cycles between Tree and List. Headerless / non-focusable
+    /// panes (breadcrumb, tabstrip) are not in the cycle — they take
+    /// focus only via mouse.
+    pub fn cycle_focus(&mut self) {
+        let next = match self.focused_pane {
+            FocusedPane::Tree => FocusedPane::List,
+            FocusedPane::List => FocusedPane::Tree,
+        };
+        self.set_focused_pane(next);
+    }
+
+    /// Pin a path to Favorites if not already present, or remove it.
+    /// Triggers a `rebuild_tree_sections` so the tree reflects the
+    /// change.
+    pub fn pin_path(&mut self, path: PathBuf) {
+        if !self.pinned_paths.contains(&path) {
+            self.pinned_paths.push(path);
+            self.rebuild_tree_sections();
+        }
+    }
+
+    pub fn unpin_path(&mut self, path: &Path) {
+        let before = self.pinned_paths.len();
+        self.pinned_paths.retain(|p| p != path);
+        if self.pinned_paths.len() != before {
+            self.rebuild_tree_sections();
+        }
+    }
+
+    /// Right-click on the tree pane: build the section-appropriate menu
+    /// and act on the user's choice. Mirrors `show_context_menu_at` for
+    /// the list pane but with different actions.
+    fn show_tree_context_menu_at(&mut self, p: FPoint) {
+        let Some(target) = self.tree.right_click(self.tree_rect(), p) else {
+            return;
+        };
+        self.set_focused_pane(FocusedPane::Tree);
+        let Some(window) = self.window.as_ref().cloned() else {
+            return;
+        };
+        let path = match self.fs.path_for(target.id) {
+            Some(p) => p,
+            None => return,
+        };
+        let in_favorites = matches!(target.kind, SectionKind::Favorites);
+        let pin_label = if in_favorites {
+            "Remove from Favorites"
+        } else {
+            "Pin to Favorites"
+        };
+        let titles = ["Open", "Reveal in Finder", "Copy Path", "", pin_label];
+        let choice = feraille_shell_mac::show_context_menu(&window, &titles, (p.x, p.y));
+        match choice {
+            Some(0) => self.navigate(path.clone()),
+            Some(1) => feraille_shell_mac::reveal_in_finder(&path),
+            Some(2) => {
+                if let Some(s) = path.to_str() {
+                    feraille_shell_mac::copy_to_clipboard(s);
+                }
+            }
+            Some(4) => {
+                if in_favorites {
+                    self.unpin_path(&path);
+                } else {
+                    self.pin_path(path);
+                }
+            }
+            _ => {}
+        }
+        self.request_redraw();
     }
 
     /// Right-click handler: select the row and show a context menu at
@@ -836,6 +930,7 @@ impl App {
             tabstrip: TabStrip::new(),
             breadcrumb,
             tree,
+            focused_pane: FocusedPane::List,
             splitter_x: SIDEBAR_DEFAULT,
             show_hidden: false,
             ant_trail: AntTrail::new(),
@@ -1936,6 +2031,7 @@ impl ApplicationHandler<AppEvent> for App {
                 // this click; redraw" (e.g. fold of cached expanded folder
                 // mutates state but emits no event). `None` = missed.
                 if let Some(tree_events) = self.tree.click(self.tree_rect(), p) {
+                    self.set_focused_pane(FocusedPane::Tree);
                     for ev in tree_events {
                         self.handle_tree_event(ev);
                     }
@@ -1947,6 +2043,7 @@ impl ApplicationHandler<AppEvent> for App {
                     self.list
                         .index_at(inner, p, self.tabs[self.active].entries.len())
                 {
+                    self.set_focused_pane(FocusedPane::List);
                     self.tabs[self.active].selection.set_cursor(idx);
                     // Arm drag-out: a small motion + delay after mouse-down
                     // on a row promotes to a system drag.
@@ -1964,7 +2061,11 @@ impl ApplicationHandler<AppEvent> for App {
                 ..
             } => {
                 let Some(p) = self.pointer_dips else { return };
-                self.show_context_menu_at(p);
+                if self.tree_rect().contains(p) {
+                    self.show_tree_context_menu_at(p);
+                } else {
+                    self.show_context_menu_at(p);
+                }
             }
             WindowEvent::MouseInput {
                 state: ElementState::Released,
@@ -2172,6 +2273,73 @@ impl ApplicationHandler<AppEvent> for App {
                         self.request_redraw();
                         return;
                     }
+                }
+
+                // F6 cycles focus between Tree and List regardless of
+                // which pane currently owns focus.
+                if matches!(logical_key, Key::Named(NamedKey::F6)) {
+                    self.cycle_focus();
+                    self.request_redraw();
+                    return;
+                }
+
+                // Tree-pane keyboard routing: when the tree owns focus,
+                // arrow keys / Home / End / Enter / type-ahead drive the
+                // tree, not the list.
+                if matches!(self.focused_pane, FocusedPane::Tree) {
+                    let tree_h = self.tree_rect().size.height;
+                    let mut redraw = false;
+                    let mut tree_event: Option<TreeEvent> = None;
+                    match &logical_key {
+                        Key::Named(NamedKey::Escape) => {
+                            self.set_focused_pane(FocusedPane::List);
+                            redraw = true;
+                        }
+                        Key::Named(NamedKey::ArrowDown) => {
+                            redraw |= self.tree.move_cursor(1, tree_h);
+                        }
+                        Key::Named(NamedKey::ArrowUp) => {
+                            redraw |= self.tree.move_cursor(-1, tree_h);
+                        }
+                        Key::Named(NamedKey::Home) => {
+                            redraw |= self.tree.move_to_first(tree_h);
+                        }
+                        Key::Named(NamedKey::End) => {
+                            redraw |= self.tree.move_to_last(tree_h);
+                        }
+                        Key::Named(NamedKey::ArrowLeft) => {
+                            redraw |= self.tree.collapse_or_parent(tree_h);
+                        }
+                        Key::Named(NamedKey::ArrowRight) => {
+                            tree_event = self.tree.expand_or_first_child(tree_h);
+                            redraw = true;
+                        }
+                        Key::Named(NamedKey::Enter) => {
+                            tree_event = self.tree.activate_selected();
+                            redraw = true;
+                        }
+                        _ => {
+                            // Type-ahead: a single printable character with
+                            // no Cmd/Ctrl/Alt held.
+                            let mods = self.modifiers;
+                            if !mods.super_key() && !mods.control_key() && !mods.alt_key() {
+                                if let Some(t) = text.as_deref() {
+                                    if let Some(ch) = t.chars().next() {
+                                        if !ch.is_control() {
+                                            redraw |= self.tree.type_ahead_push(ch, tree_h);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(ev) = tree_event {
+                        self.handle_tree_event(ev);
+                    }
+                    if redraw {
+                        self.request_redraw();
+                    }
+                    return;
                 }
 
                 let count = self.tabs[self.active].entries.len();
