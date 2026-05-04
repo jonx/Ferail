@@ -101,4 +101,13 @@ impl AntTrail {
         }
         ((v as f32 + 1.0).log2() / (self.max as f32 + 1.0).log2()).clamp(0.0, 1.0)
     }
+
+    /// Up to `n` most-visited NodeIds, descending by visit count.
+    /// Ties broken by NodeId order. Used by the tree to populate the
+    /// "Recents" section.
+    pub fn most_visited(&self, n: usize) -> Vec<NodeId> {
+        let mut v: Vec<(NodeId, u32)> = self.visits.iter().map(|(k, c)| (*k, *c)).collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        v.into_iter().take(n).map(|(id, _)| id).collect()
+    }
 }

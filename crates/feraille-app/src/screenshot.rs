@@ -34,9 +34,14 @@ pub struct Args {
     pub tab: Option<usize>,
     pub edit_mode: bool,
     pub show_hidden: bool,
+    pub filter: Option<String>, // current-folder name/kind/magic filter
+    pub search: bool,           // open the filter dialog
+    pub preview: bool,          // show the preview pane
     pub sort: Option<(String, bool)>, // (column_name, ascending)
     pub properties: bool,             // open Get-Info panel for the selected row
-    pub mac_chrome: bool,             // simulate macOS native chrome (traffic-light inset on tabstrip)
+    pub mac_chrome: bool, // simulate macOS native chrome (traffic-light inset on tabstrip)
+    pub rename: bool,     // open the rename dialog with the cursor entry
+    pub new_folder: bool, // open the new-folder dialog
 }
 
 pub fn parse_args() -> Args {
@@ -78,7 +83,12 @@ pub fn parse_args() -> Args {
             "--edit-mode" => args.edit_mode = true,
             "--properties" => args.properties = true,
             "--mac-chrome" => args.mac_chrome = true,
+            "--rename" => args.rename = true,
+            "--new-folder" => args.new_folder = true,
             "--show-hidden" => args.show_hidden = true,
+            "--filter" => args.filter = iter.next(),
+            "--search" => args.search = true,
+            "--preview" => args.preview = true,
             "--sort" => {
                 let raw = iter.next().unwrap_or_default();
                 let (col, asc) = if let Some(c) = raw.strip_suffix("-desc") {
@@ -120,13 +130,27 @@ OPTIONS
   --select-name <name>     Set cursor to first row whose name equals <name>.
   --splitter <x>           Move splitter to x DIPs (clamped to min/max).
   --scroll <y>             Scroll list to y DIPs.
+  --sort <column[-desc]>   Sort by name, size, kind, modified/mtime, or magic.
+                           Add -desc for descending order.
+  --show-hidden            Include dotfiles / hidden entries.
+  --filter <text>          Filter current folder by name, kind, or magic text.
+  --search                 Open the filter dialog using the current filter.
+  --preview                Show the selected-item preview pane.
   --edit-mode              Put breadcrumb in edit mode (for screenshotting).
+  --properties             Open the Get Info panel for the selected row.
+  --rename                 Open the rename dialog for the selected row.
+  --new-folder             Open the new-folder dialog.
+  --mac-chrome             Simulate macOS traffic-light inset in the tabstrip.
   -h, --help               Print this help.
 
 EXAMPLES
   feraille --screenshot home.png --navigate ~ --width 1400 --height 900
   feraille --screenshot tree.png --expand ~/Source/Feraille --select-name Cargo.toml
   feraille --screenshot dark.png --theme dark --navigate ~/Documents
+  feraille --screenshot props.png --navigate ~/Source/Feraille --select-name Cargo.toml --properties
+  feraille --screenshot rename.png --navigate ~/Source/Feraille --select-name README.md --rename
+  feraille --screenshot search.png --navigate ~/Source/Feraille --filter toml --search
+  feraille --screenshot preview.png --navigate ~/Source/Feraille --select-name Cargo.toml --preview
 "
     );
 }
@@ -167,6 +191,7 @@ pub fn run(args: Args) -> Result<()> {
             "name" => Some(feraille_controls::ColumnId::Name),
             "size" => Some(feraille_controls::ColumnId::Size),
             "kind" => Some(feraille_controls::ColumnId::Kind),
+            "magic" => Some(feraille_controls::ColumnId::Magic),
             "modified" | "mtime" => Some(feraille_controls::ColumnId::Modified),
             _ => None,
         };
@@ -174,7 +199,10 @@ pub fn run(args: Args) -> Result<()> {
             // toggle_sort flips when re-clicking the same column, so set
             // ascending explicitly afterward.
             app.list.toggle_sort(id);
-            app.list.sort = feraille_controls::SortKey { column: id, ascending: asc };
+            app.list.sort = feraille_controls::SortKey {
+                column: id,
+                ascending: asc,
+            };
             let key = app.list.sort;
             feraille_controls::sort_entries(&mut app.tabs[app.active].entries, key);
         }
@@ -184,6 +212,9 @@ pub fn run(args: Args) -> Result<()> {
     }
     if let Some(y) = args.scroll {
         app.set_scroll(y);
+    }
+    if let Some(filter) = args.filter.clone() {
+        app.set_filter_text(filter);
     }
     if let Some(row) = args.select_row {
         app.select_row(row);
@@ -199,6 +230,18 @@ pub fn run(args: Args) -> Result<()> {
     }
     if args.mac_chrome {
         app.tabstrip.inset_left = feraille_shell_mac::TRAFFIC_LIGHT_INSET;
+    }
+    if args.rename {
+        app.open_rename();
+    }
+    if args.new_folder {
+        app.open_new_folder();
+    }
+    if args.search {
+        app.open_search();
+    }
+    if args.preview {
+        app.set_preview_visible(true);
     }
 
     let font_bytes = load_default_font().context("load default font")?;
@@ -249,4 +292,3 @@ fn write_png(path: &Path, pixels: &[u32], width: u32, height: u32) -> Result<()>
         .with_context(|| format!("write image data for {}", path.display()))?;
     Ok(())
 }
-
