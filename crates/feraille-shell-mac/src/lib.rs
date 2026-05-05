@@ -29,6 +29,33 @@ pub fn install_app_menu(app_name: &str, tagline: &str, version: &str, copyright:
 #[cfg(not(target_os = "macos"))]
 pub fn install_app_menu(_app_name: &str, _tagline: &str, _version: &str, _copyright: &str) {}
 
+/// Register the host-app callback for Feraille-owned menu commands.
+/// Fires on the main thread with the [`feraille_core::commands::CommandId`]
+/// of the picked item. Pass `None` to clear. No-op on non-macOS.
+#[cfg(target_os = "macos")]
+pub fn register_command_callback(
+    cb: Option<Box<dyn Fn(feraille_core::commands::CommandId) + 'static>>,
+) {
+    app_menu::register_command_callback(cb);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn register_command_callback(
+    _cb: Option<Box<dyn Fn(feraille_core::commands::CommandId) + 'static>>,
+) {
+}
+
+/// Show the standard About panel using the dictionary configured by
+/// [`install_app_menu`]. The host app calls this in response to the
+/// `app.about` command. No-op on non-macOS.
+#[cfg(target_os = "macos")]
+pub fn show_about_panel() {
+    app_menu::show_about_panel();
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_about_panel() {}
+
 /// Show a context menu at `cursor_dips` (relative to the window's content
 /// view) with the given titles. Returns the 0-based index of the selected
 /// item, or `None` on dismiss. Empty title strings render as separators.

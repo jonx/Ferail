@@ -3,6 +3,8 @@
 //! convention, not the compiler — if you find yourself reaching for `windows`
 //! or `winit` here, stop.
 
+pub mod commands;
+
 use std::num::NonZeroU64;
 
 /// Stable identifier for a tree/list node. Opaque to the UI; the FS layer

@@ -25,6 +25,7 @@ use feraille_controls::{
     sort_entries, BreadcrumbBar, BreadcrumbEvent, FileTree, Section, SectionKind, Selection,
     TabInfo, TabStrip, TabStripEvent, TreeEvent, VirtualizedList,
 };
+use feraille_core::commands::CommandId;
 use feraille_core::{AntTrail, EntryKind, EnumerationError, FileEntry, FsBackend, NodeId};
 use feraille_design::{FontWeight, Theme, Tokens};
 use feraille_fs_native::{
@@ -105,6 +106,10 @@ enum AppEvent {
     IconChunkTick {
         generation: u64,
     },
+    /// User invoked a Feraille-owned command (menu / future command
+    /// palette / future remappable shortcut). Dispatched to the
+    /// matching App method by id in `user_event`.
+    Command(CommandId),
 }
 
 #[derive(Clone, Debug)]
@@ -1764,7 +1769,7 @@ impl App {
         }
     }
 
-    fn navigate_parent(&mut self) {
+    pub fn navigate_parent(&mut self) {
         let parent = self.tabs[self.active]
             .current_dir
             .parent()
@@ -2070,14 +2075,25 @@ impl ApplicationHandler<AppEvent> for App {
         let icon_result = feraille_shell_mac::set_app_icon_from_png_bytes(APP_ICON_PNG);
         log_info!(56, "set_app_icon: {:?}", icon_result);
 
-        // Install the app menu bar (App / Edit / Window submenus, About
-        // panel options). Idempotent if resumed() ever fires twice.
+        // Install the app menu bar (App / File / Edit / View / Go /
+        // Window submenus, About panel options). Idempotent if
+        // resumed() ever fires twice.
         feraille_shell_mac::install_app_menu(
             "Feraille",
             "The file explorer that runs wild",
             env!("CARGO_PKG_VERSION"),
             "© 2026 Feraille Project · MIT OR Apache-2.0",
         );
+
+        // Bridge menu-driven commands back into our event loop. The
+        // closure runs on the main thread (AppKit guarantees menu
+        // dispatch happens there); it just forwards the CommandId via
+        // the proxy and lets `user_event` do the actual work.
+        if let Some(proxy) = self.event_proxy.clone() {
+            feraille_shell_mac::register_command_callback(Some(Box::new(move |id| {
+                let _ = proxy.send_event(AppEvent::Command(id));
+            })));
+        }
 
         let scale = window.scale_factor() as f32;
         let size = window.inner_size();
@@ -2196,6 +2212,27 @@ impl ApplicationHandler<AppEvent> for App {
                         generation: self.icon_generation,
                     });
                 }
+            }
+            AppEvent::Command(id) => {
+                log_info!(58, "command: {:?}", id);
+                match id.0 {
+                    "app.about" => feraille_shell_mac::show_about_panel(),
+                    "app.settings" => {
+                        // Real Settings window lands separately. The
+                        // catalogue entry, menu item, and Cmd+,
+                        // shortcut all exist; the action is a no-op
+                        // until the UI is wired.
+                    }
+                    "file.new_tab" => self.new_tab_at(home_dir()),
+                    "file.get_info" => self.toggle_properties(),
+                    "view.toggle_hidden" => self.toggle_hidden(),
+                    "go.back" => self.navigate_back(),
+                    "go.forward" => self.navigate_forward(),
+                    "go.parent" => self.navigate_parent(),
+                    "go.home" => self.navigate(home_dir()),
+                    other => log_warn!(58, "unknown command id: {:?}", other),
+                }
+                self.request_redraw();
             }
         }
     }

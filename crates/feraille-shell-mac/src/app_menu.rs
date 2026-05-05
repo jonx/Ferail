@@ -1,21 +1,22 @@
 //! Application menu bar (`NSApp.mainMenu`) and the standard About panel.
 //!
-//! Built once at startup via [`install_app_menu`]. About panel content
-//! is supplied via `orderFrontStandardAboutPanelWithOptions:` so the
-//! unbundled cargo-run binary still renders a Finder-style About panel
-//! with our app name, tagline, version, and copyright — same look as
-//! `NSApp.orderFrontStandardAboutPanel:` would give a properly bundled
-//! `.app`.
+//! Built once at startup via [`install_app_menu`]. Menu items for
+//! Feraille-owned actions are emitted from
+//! [`feraille_core::commands::all_commands`] — the menu is a *view*
+//! over the command catalogue. Picking an item fires
+//! [`register_command_callback`]'s registered closure with the
+//! corresponding [`CommandId`]; the host app routes from there.
 //!
-//! The first pass deliberately stays small: App / Edit / Window
-//! submenus, with custom selectors only for About and Settings. Hide /
-//! Quit / Cut / Copy / Paste / Minimize / Zoom / Close use built-in
-//! AppKit selectors that ride the responder chain — no plumbing
-//! needed. File / View / Go menus belong to the Feraille app layer
-//! (they need to call into `App` state) and land in a follow-up.
+//! Built-in AppKit actions (Hide / Quit / Cut / Copy / Minimize /
+//! Zoom / Close) ride the responder chain unchanged — they are
+//! deliberately NOT in the catalogue and are emitted here with their
+//! AppKit selectors hard-coded.
 
 use std::cell::RefCell;
 
+use feraille_core::commands::{
+    all_commands, Category, CommandId, CommandSpec, Shortcut,
+};
 use objc2::declare_class;
 use objc2::msg_send;
 use objc2::msg_send_id;
@@ -27,24 +28,36 @@ use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSMenu, NSMenuItem};
 use objc2_foundation::{MainThreadMarker, NSDictionary, NSObject, NSObjectProtocol, NSString};
 
 thread_local! {
-    /// Pre-built dictionary passed to `orderFrontStandardAboutPanelWithOptions:`
-    /// when the user clicks About. Built once in [`install_app_menu`] and
-    /// looked up from the menu-action selector below.
+    /// Pre-built dictionary passed to `orderFrontStandardAboutPanelWithOptions:`.
+    /// Built once in [`install_app_menu`].
     static ABOUT_OPTIONS: RefCell<Option<Retained<NSDictionary<NSString, NSString>>>> =
         const { RefCell::new(None) };
 
-    /// Owned reference to the menu's action target. NSMenuItem's
-    /// `setTarget:` does **not** retain — the target is held as
-    /// `weak_unsafe`, so without this the menu items go disabled the
-    /// moment `install_app_menu` returns and our `Retained` drops.
+    /// Owned reference to the menu's action target. NSMenuItem holds
+    /// targets weakly; without this our `Retained` would drop and the
+    /// items would go disabled.
     static APP_MENU_TARGET: RefCell<Option<Retained<AppMenuTarget>>> =
+        const { RefCell::new(None) };
+
+    /// Index into [`all_commands()`] for each NSMenuItem we emit. The
+    /// item carries `setTag(idx)`; the dispatch selector uses the tag
+    /// to look up the command's [`CommandId`] here, then fires the
+    /// registered callback. Built once at install time so the lookup
+    /// doesn't depend on ordering of `all_commands()` at runtime.
+    static TAG_TO_COMMAND: RefCell<Vec<CommandId>> = const { RefCell::new(Vec::new()) };
+
+    /// Callback registered by the host app. `Box<dyn Fn>` so the host
+    /// can close over an `EventLoopProxy` or whatever it needs to
+    /// reach its main state.
+    static COMMAND_CALLBACK: RefCell<Option<Box<dyn Fn(CommandId) + 'static>>> =
         const { RefCell::new(None) };
 }
 
 declare_class!(
-    /// Tiny Objective-C target subclass that backs the About and Settings
-    /// menu items. Selectors land here, then bridge back into AppKit
-    /// (About) or no-op (Settings, until a real Settings window exists).
+    /// Tiny Objective-C target subclass behind the app menu. One
+    /// dispatch selector for every Feraille-owned command (looked up
+    /// by tag); a separate selector for About because that one stays
+    /// purely AppKit-local.
     pub struct AppMenuTarget;
 
     unsafe impl ClassType for AppMenuTarget {
@@ -58,37 +71,19 @@ declare_class!(
     }
 
     unsafe impl AppMenuTarget {
-        #[method(showAbout:)]
-        fn show_about(&self, _sender: &NSMenuItem) {
-            let mtm = MainThreadMarker::from(self);
-            let app = NSApplication::sharedApplication(mtm);
-            ABOUT_OPTIONS.with(|cell| {
-                if let Some(opts) = cell.borrow().as_ref() {
-                    // Bypass the typed binding (which wants
-                    // NSDictionary<NSAboutPanelOptionKey, AnyObject>):
-                    // our dict is NSDictionary<NSString, NSString>, and
-                    // NSAboutPanelOptionKey is a typedef for NSString so
-                    // it's interchangeable at the obj-c runtime level.
-                    let dict_ref: &NSDictionary<NSString, NSString> = opts.as_ref();
-                    unsafe {
-                        let _: () = msg_send![
-                            &*app,
-                            orderFrontStandardAboutPanelWithOptions: dict_ref,
-                        ];
-                    }
-                } else {
-                    // Defensive: if install_app_menu wasn't called, fall
-                    // back to the bare About panel. Better than nothing.
-                    unsafe { app.orderFrontStandardAboutPanel(None) };
+        /// Dispatch a Feraille-owned command. The sender's tag is the
+        /// index into `TAG_TO_COMMAND`; we hand the resolved id to
+        /// whatever closure the host registered.
+        #[method(actCommand:)]
+        fn act_command(&self, sender: &NSMenuItem) {
+            let tag = unsafe { sender.tag() } as usize;
+            let id = TAG_TO_COMMAND.with(|t| t.borrow().get(tag).copied());
+            let Some(id) = id else { return };
+            COMMAND_CALLBACK.with(|cell| {
+                if let Some(cb) = cell.borrow().as_ref() {
+                    cb(id);
                 }
             });
-        }
-
-        #[method(showSettings:)]
-        fn show_settings(&self, _sender: &NSMenuItem) {
-            // Iter-5.7+ will open a real Settings window. The menu entry
-            // exists today so the Cmd+, shortcut and the menu structure
-            // are in place; clicking is a no-op for now.
         }
     }
 );
@@ -102,33 +97,70 @@ impl AppMenuTarget {
     }
 }
 
-/// Install the application menu bar. Call once at startup, after
-/// [`crate::set_app_icon_from_png_bytes`] has set the icon (so the
-/// About panel inherits it via `NSImage(named: "NSApplicationIcon")`).
-///
-/// `tagline` is the short subtitle line under the app name in the
-/// About panel (Finder uses "The Macintosh Desktop Experience"). The
-/// panel also shows "{name} version {version}" automatically when
-/// `version` is supplied.
+/// Replace the host app's command callback. Pass `None` to clear.
+/// Fired on the main thread when the user picks a menu item that
+/// maps to a Feraille-owned [`CommandId`].
+pub fn register_command_callback(cb: Option<Box<dyn Fn(CommandId) + 'static>>) {
+    COMMAND_CALLBACK.with(|cell| *cell.borrow_mut() = cb);
+}
+
+/// Show the standard About panel using the dictionary configured by
+/// [`install_app_menu`]. Falls back to the bare panel if
+/// `install_app_menu` hasn't run.
+pub fn show_about_panel() {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    ABOUT_OPTIONS.with(|cell| {
+        if let Some(opts) = cell.borrow().as_ref() {
+            let dict_ref: &NSDictionary<NSString, NSString> = opts.as_ref();
+            unsafe {
+                let _: () = msg_send![
+                    &*app,
+                    orderFrontStandardAboutPanelWithOptions: dict_ref,
+                ];
+            }
+        } else {
+            unsafe { app.orderFrontStandardAboutPanel(None) };
+        }
+    });
+}
+
+/// Install the application menu bar. Call once at startup, on the
+/// main thread, after [`crate::set_app_icon_from_png_bytes`].
 pub fn install_app_menu(app_name: &str, tagline: &str, version: &str, copyright: &str) {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
 
-    // Build the About options dictionary once and stash it where the
-    // menu-action selector can find it.
-    let about_options = build_about_options(app_name, tagline, version, copyright);
-    ABOUT_OPTIONS.with(|cell| *cell.borrow_mut() = Some(about_options));
+    ABOUT_OPTIONS.with(|cell| {
+        *cell.borrow_mut() = Some(build_about_options(app_name, tagline, version, copyright));
+    });
 
     let target = AppMenuTarget::new(mtm);
-    // Keep `target` alive for the program's lifetime — NSMenuItem holds
-    // its target as a weak reference, so the menu items would go
-    // disabled the moment this Retained dropped.
     APP_MENU_TARGET.with(|cell| *cell.borrow_mut() = Some(target.clone()));
 
+    // Reset & rebuild the tag map alongside the menu so tags and
+    // command lookups stay in sync.
+    TAG_TO_COMMAND.with(|cell| cell.borrow_mut().clear());
+
     let main_menu = NSMenu::new(mtm);
+
+    // App submenu — App-category commands, then standard AppKit items.
     main_menu.addItem(&build_app_submenu(mtm, &target, app_name));
+    // File / View / Go / Edit / Window — pulled from the catalogue
+    // (or hard-coded for built-in selectors).
+    if let Some(item) = build_category_submenu(mtm, &target, Category::File, "File") {
+        main_menu.addItem(&item);
+    }
     main_menu.addItem(&build_edit_submenu(mtm));
+    if let Some(item) = build_category_submenu(mtm, &target, Category::View, "View") {
+        main_menu.addItem(&item);
+    }
+    if let Some(item) = build_category_submenu(mtm, &target, Category::Go, "Go") {
+        main_menu.addItem(&item);
+    }
     main_menu.addItem(&build_window_submenu(mtm));
 
     let app = NSApplication::sharedApplication(mtm);
@@ -141,13 +173,6 @@ fn build_about_options(
     version: &str,
     copyright: &str,
 ) -> Retained<NSDictionary<NSString, NSString>> {
-    // Standard keys consumed by `orderFrontStandardAboutPanelWithOptions:`.
-    // Layout in the resulting About panel:
-    //   ApplicationIcon  ← inherited from NSImage("NSApplicationIcon")
-    //   ApplicationName       (bold, large)
-    //   ApplicationVersion    (subtitle line — we use it for the tagline)
-    //   "{ApplicationName} version {Version}"
-    //   Copyright             (smaller footer line)
     let key_name = NSString::from_str("ApplicationName");
     let key_app_version = NSString::from_str("ApplicationVersion");
     let key_version = NSString::from_str("Version");
@@ -159,9 +184,6 @@ fn build_about_options(
     let val_copyright = NSString::from_str(copyright);
 
     let keys: [&NSString; 4] = [&key_name, &key_app_version, &key_version, &key_copyright];
-    // `from_slice` would require `IsRetainable`, which NSString doesn't
-    // satisfy because it has a mutable subclass (NSMutableString).
-    // `from_vec` only needs `Message`, so move ownership in.
     let values: Vec<Retained<NSString>> =
         vec![val_name, val_app_version, val_version, val_copyright];
 
@@ -176,53 +198,77 @@ fn build_app_submenu(
     unsafe {
         let item = NSMenuItem::new(mtm);
         let submenu = NSMenu::new(mtm);
-        // The submenu's title is conventionally the app name; on the
-        // menu bar this is the bold first entry.
         submenu.setTitle(&NSString::from_str(app_name));
 
-        // About Feraille
-        let about_title = format!("About {app_name}");
-        let about = make_item(mtm, &about_title, sel!(showAbout:), "");
-        about.setTarget(Some(target));
-        submenu.addItem(&about);
+        // Catalogue-driven entries (About, Settings).
+        for spec in all_commands().iter().filter(|s| s.category == Category::App) {
+            submenu.addItem(&build_command_item(mtm, target, spec));
+        }
 
         submenu.addItem(&NSMenuItem::separatorItem(mtm));
 
-        // Settings… (Cmd+,)
-        let settings = make_item(mtm, "Settings…", sel!(showSettings:), ",");
-        settings.setTarget(Some(target));
-        submenu.addItem(&settings);
-
-        submenu.addItem(&NSMenuItem::separatorItem(mtm));
-
-        // Hide Feraille (Cmd+H) — first responder via NSApplication.
+        // Built-in AppKit items below: hide/show/quit ride the
+        // responder chain via NSApplication's selectors.
         let hide_title = format!("Hide {app_name}");
-        submenu.addItem(&make_item(mtm, &hide_title, sel!(hide:), "h"));
+        submenu.addItem(&make_responder_item(mtm, &hide_title, sel!(hide:), "h", None));
 
-        // Hide Others (Cmd+Option+H)
-        let hide_others = make_item(mtm, "Hide Others", sel!(hideOtherApplications:), "h");
-        hide_others.setKeyEquivalentModifierMask(
-            NSEventModifierFlags::NSEventModifierFlagCommand
-                | NSEventModifierFlags::NSEventModifierFlagOption,
+        let hide_others = make_responder_item(
+            mtm,
+            "Hide Others",
+            sel!(hideOtherApplications:),
+            "h",
+            Some(NSEventModifierFlags::NSEventModifierFlagCommand
+                | NSEventModifierFlags::NSEventModifierFlagOption),
         );
         submenu.addItem(&hide_others);
 
-        // Show All
-        submenu.addItem(&make_item(
+        submenu.addItem(&make_responder_item(
             mtm,
             "Show All",
             sel!(unhideAllApplications:),
             "",
+            None,
         ));
 
         submenu.addItem(&NSMenuItem::separatorItem(mtm));
 
-        // Quit Feraille (Cmd+Q)
         let quit_title = format!("Quit {app_name}");
-        submenu.addItem(&make_item(mtm, &quit_title, sel!(terminate:), "q"));
+        submenu.addItem(&make_responder_item(
+            mtm,
+            &quit_title,
+            sel!(terminate:),
+            "q",
+            None,
+        ));
 
         item.setSubmenu(Some(&submenu));
         item
+    }
+}
+
+fn build_category_submenu(
+    mtm: MainThreadMarker,
+    target: &AppMenuTarget,
+    category: Category,
+    title: &str,
+) -> Option<Retained<NSMenuItem>> {
+    let cmds: Vec<&CommandSpec> = all_commands()
+        .iter()
+        .filter(|s| s.category == category)
+        .collect();
+    if cmds.is_empty() {
+        return None;
+    }
+
+    unsafe {
+        let item = NSMenuItem::new(mtm);
+        let submenu = NSMenu::new(mtm);
+        submenu.setTitle(&NSString::from_str(title));
+        for spec in cmds {
+            submenu.addItem(&build_command_item(mtm, target, spec));
+        }
+        item.setSubmenu(Some(&submenu));
+        Some(item)
     }
 }
 
@@ -232,26 +278,33 @@ fn build_edit_submenu(mtm: MainThreadMarker) -> Retained<NSMenuItem> {
         let submenu = NSMenu::new(mtm);
         submenu.setTitle(&NSString::from_str("Edit"));
 
-        // All entries here ride the first-responder chain so they "just
-        // work" for our text inputs and any future content that wires
-        // standard editing selectors.
-        submenu.addItem(&make_item(mtm, "Undo", sel!(undo:), "z"));
-        let redo = make_item(mtm, "Redo", sel!(redo:), "z");
-        redo.setKeyEquivalentModifierMask(
-            NSEventModifierFlags::NSEventModifierFlagCommand
-                | NSEventModifierFlags::NSEventModifierFlagShift,
-        );
-        submenu.addItem(&redo);
+        submenu.addItem(&make_responder_item(mtm, "Undo", sel!(undo:), "z", None));
+        submenu.addItem(&make_responder_item(
+            mtm,
+            "Redo",
+            sel!(redo:),
+            "z",
+            Some(
+                NSEventModifierFlags::NSEventModifierFlagCommand
+                    | NSEventModifierFlags::NSEventModifierFlagShift,
+            ),
+        ));
 
         submenu.addItem(&NSMenuItem::separatorItem(mtm));
 
-        submenu.addItem(&make_item(mtm, "Cut", sel!(cut:), "x"));
-        submenu.addItem(&make_item(mtm, "Copy", sel!(copy:), "c"));
-        submenu.addItem(&make_item(mtm, "Paste", sel!(paste:), "v"));
+        submenu.addItem(&make_responder_item(mtm, "Cut", sel!(cut:), "x", None));
+        submenu.addItem(&make_responder_item(mtm, "Copy", sel!(copy:), "c", None));
+        submenu.addItem(&make_responder_item(mtm, "Paste", sel!(paste:), "v", None));
 
         submenu.addItem(&NSMenuItem::separatorItem(mtm));
 
-        submenu.addItem(&make_item(mtm, "Select All", sel!(selectAll:), "a"));
+        submenu.addItem(&make_responder_item(
+            mtm,
+            "Select All",
+            sel!(selectAll:),
+            "a",
+            None,
+        ));
 
         item.setSubmenu(Some(&submenu));
         item
@@ -264,28 +317,83 @@ fn build_window_submenu(mtm: MainThreadMarker) -> Retained<NSMenuItem> {
         let submenu = NSMenu::new(mtm);
         submenu.setTitle(&NSString::from_str("Window"));
 
-        // Minimize (Cmd+M), Zoom — performMiniaturize:/performZoom: are
-        // NSWindow responder methods.
-        submenu.addItem(&make_item(mtm, "Minimize", sel!(performMiniaturize:), "m"));
-        submenu.addItem(&make_item(mtm, "Zoom", sel!(performZoom:), ""));
+        submenu.addItem(&make_responder_item(
+            mtm,
+            "Minimize",
+            sel!(performMiniaturize:),
+            "m",
+            None,
+        ));
+        submenu.addItem(&make_responder_item(
+            mtm,
+            "Zoom",
+            sel!(performZoom:),
+            "",
+            None,
+        ));
 
         submenu.addItem(&NSMenuItem::separatorItem(mtm));
 
-        // Close Window (Cmd+W)
-        submenu.addItem(&make_item(mtm, "Close Window", sel!(performClose:), "w"));
+        submenu.addItem(&make_responder_item(
+            mtm,
+            "Close Window",
+            sel!(performClose:),
+            "w",
+            None,
+        ));
 
         item.setSubmenu(Some(&submenu));
         item
     }
 }
 
-/// Build a basic NSMenuItem with default modifier mask (Command only).
-/// Caller can override the mask after construction if needed.
-unsafe fn make_item(
+/// Build a Feraille-owned menu item: looks up the spec, sets the
+/// title, the tag (index into `TAG_TO_COMMAND`), the key equivalent
+/// from the spec's default shortcut, and routes the click through
+/// `actCommand:` on `target`.
+unsafe fn build_command_item(
+    mtm: MainThreadMarker,
+    target: &AppMenuTarget,
+    spec: &CommandSpec,
+) -> Retained<NSMenuItem> {
+    // Push into the tag table; the index becomes the menu item's tag.
+    let tag = TAG_TO_COMMAND.with(|cell| {
+        let mut v = cell.borrow_mut();
+        let idx = v.len();
+        v.push(spec.id);
+        idx
+    });
+
+    let title = NSString::from_str(spec.title);
+    let (key, mask) = match spec.default_shortcut {
+        Some(sc) => (translate_key(sc.key), Some(translate_modifiers(&sc))),
+        None => (String::new(), None),
+    };
+    let key_ns = NSString::from_str(&key);
+
+    let item: Retained<NSMenuItem> = msg_send_id![
+        mtm.alloc::<NSMenuItem>(),
+        initWithTitle: &*title,
+        action: Some(sel!(actCommand:)),
+        keyEquivalent: &*key_ns,
+    ];
+    item.setTag(tag as isize);
+    item.setTarget(Some(target));
+    if let Some(m) = mask {
+        item.setKeyEquivalentModifierMask(m);
+    }
+    item
+}
+
+/// Build an item that targets the responder chain — no Feraille
+/// callback, just AppKit's first-responder dispatch. Used for built-in
+/// selectors (Hide, Cut, Minimize, …).
+unsafe fn make_responder_item(
     mtm: MainThreadMarker,
     title: &str,
     action: objc2::runtime::Sel,
     key: &str,
+    mask: Option<NSEventModifierFlags>,
 ) -> Retained<NSMenuItem> {
     let title_ns = NSString::from_str(title);
     let key_ns = NSString::from_str(key);
@@ -295,5 +403,38 @@ unsafe fn make_item(
         action: Some(action),
         keyEquivalent: &*key_ns,
     ];
+    if let Some(m) = mask {
+        item.setKeyEquivalentModifierMask(m);
+    }
     item
+}
+
+/// Translate the catalogue's neutral key DSL ("T", "Up", ".") into a
+/// macOS NSMenuItem key equivalent string. Named keys map to the
+/// Unicode code points AppKit recognises in `keyEquivalent`.
+fn translate_key(key: &'static str) -> String {
+    match key {
+        // Arrow keys (NSUpArrowFunctionKey / NSDownArrowFunctionKey / …).
+        "Up" => "\u{F700}".to_string(),
+        "Down" => "\u{F701}".to_string(),
+        "Left" => "\u{F702}".to_string(),
+        "Right" => "\u{F703}".to_string(),
+        // Single-char keys: lowercase so the modifier mask, not the
+        // case, drives whether Shift is required.
+        other => other.to_lowercase(),
+    }
+}
+
+fn translate_modifiers(sc: &Shortcut) -> NSEventModifierFlags {
+    let mut m = NSEventModifierFlags::empty();
+    if sc.primary {
+        m |= NSEventModifierFlags::NSEventModifierFlagCommand;
+    }
+    if sc.shift {
+        m |= NSEventModifierFlags::NSEventModifierFlagShift;
+    }
+    if sc.alt {
+        m |= NSEventModifierFlags::NSEventModifierFlagOption;
+    }
+    m
 }

@@ -47,6 +47,15 @@ I/O while painting or handling immediate interaction.
   new `VirtualizedList::row_name_rect`; ESC cancels, Enter or
   click-outside commits, scroll-offscreen auto-cancels. The modal rename
   dialog stays for tree-pane / context-menu invocation.
+- Iter-5.8: command-name registry as the load-bearing identity. New
+  `feraille_core::commands` module with `CommandId`, `Shortcut`, and a
+  static catalogue (`app.about`, `app.settings`, `file.new_tab`,
+  `file.get_info`, `view.toggle_hidden`, `go.back/forward/parent/home`).
+  NSMenu items are emitted from the catalogue; clicking fires a
+  registered callback with the `CommandId`, which `App::user_event`
+  dispatches to existing methods. Shortcuts become *one* of several
+  possible bindings instead of the action's identity, opening the door
+  to user-remappable bindings, a command palette, and scripting.
 
 ## Important Bug Lesson: Magic Sniffing Hang
 

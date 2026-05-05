@@ -6,6 +6,7 @@ license.workspace = true
 description = "macOS shell integration for Feraille (chrome, drag-drop, NSMenu)"
 
 [dependencies]
+feraille-core.workspace = true
 winit.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
