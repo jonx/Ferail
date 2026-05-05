@@ -37,10 +37,30 @@ after the user moved on, drop it.
 - Tree unfold froze once because navigation called synchronous magic sniffing,
   which blocked in `read()`. Magic detection now runs on a worker and returns
   through winit user events. Do not reintroduce synchronous I/O on navigation.
-- Icon prefetch is still synchronous in the app path. Treat it as a known risk:
-  either keep it tiny and cached or move it behind the same worker pattern.
+- Icon prefetch (iter-5.6) is now chunked across event-loop ticks via
+  `IconChunkTick`. NSWorkspace.iconForFile: is main-thread only, so the work
+  itself can't move to a worker; the chunking yields between batches. Don't
+  put it back into a synchronous loop.
 - The filesystem trait still returns an eager batch in places. Future work is
   streaming enumeration with cancellation.
+
+## Cross-Reference: Ferail (the Windows predecessor)
+
+The original Windows project lives at `/Users/jkn/Source/Ferail`. Most
+features in Feraille started life there and were simplified during the
+port — sometimes deliberately, sometimes because the macOS analogue
+hadn't been figured out yet. **When the user says a feature "was more
+advanced in Ferail" or seems regressed, go read the corresponding code
+and docs there before redesigning from scratch.** Useful entry points:
+
+- `/Users/jkn/Source/Ferail/CLAUDE.md` — the operating manual for that repo.
+- `/Users/jkn/Source/Ferail/docs/` — design, notes, done-list, testing overlays.
+- `/Users/jkn/Source/Ferail/crates/` — the source the port came from.
+
+Treat Ferail as a reference implementation, not a blueprint: copy the
+intent and the lessons, not the Win32-specific shape. The mapping from
+Ferail docs to Feraille docs is in
+[docs/porting/FERAIL_DOCS_MAP.md](docs/porting/FERAIL_DOCS_MAP.md).
 
 ## Architecture Invariants
 
@@ -93,6 +113,19 @@ Never copy a Windows implementation shape just because the old doc said it.
 - UX behavior specs: [specs/ux](specs/ux)
 - Control/render specs: [specs/controls](specs/controls)
 - Chronological shipped notes: [NOTES.md](NOTES.md)
+- Free-form open risks and "look into later" items: [todo.md](todo.md)
+
+## Logging
+
+Stderr logging lives in [crates/feraille-app/src/obs.rs](crates/feraille-app/src/obs.rs).
+Each `log_info!` / `log_warn!` / `log_error!` call carries an integer ID
+(by convention, the iteration number — iter-5.6 calls use `56`). Lines
+with `id < obs::LOG_THRESHOLD` are silently dropped.
+
+When starting a new iteration, **bump `LOG_THRESHOLD`** to suppress old
+diagnostic noise without deleting the call sites, and tag new log calls
+with the new iter number. Crash diagnostics (startup banner, panic hook,
+worker-panic line) bypass the macros and always print.
 
 ## Verification
 
@@ -104,11 +137,9 @@ Before finishing code changes:
   and inspect it.
 - Do not run whole-repo formatters casually; this repo may have local dirty work.
 
-## Current Known Risks
+## Open backlog
 
-- Eager filesystem enumeration still violates the final performance model for
-  very large or slow folders.
-- Icon fetching can still touch AppKit/NSWorkspace near navigation.
-- TextInput lacks full IME/composition support.
-- Preview pane is metadata-only; real previews must be async and cancellable.
-- Delete-to-Trash is still a fallback, not final `NSWorkspace` trash semantics.
+Free-form risks, gaps, and "look into later" items live in
+[todo.md](todo.md). Don't crowd this file with them — keep CLAUDE.md
+focused on operating rules. When something on that list ships, delete
+it; the commit and NOTES.md entry are the record.

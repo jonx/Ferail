@@ -32,7 +32,36 @@ use feraille_fs_native::{
     NativeFs,
 };
 
+mod obs;
 mod screenshot;
+
+/// Iteration-tagged logging. The first argument is an ID number; lines
+/// with `id < obs::LOG_THRESHOLD` are silently dropped. Bump `LOG_THRESHOLD`
+/// each iteration to suppress stale diagnostic noise without deleting code.
+/// Crash diagnostics (panic hook, startup banner, worker-panic line) bypass
+/// these macros and are always printed.
+macro_rules! log_info {
+    ($id:expr, $($arg:tt)*) => {
+        if $id >= $crate::obs::LOG_THRESHOLD {
+            $crate::obs::line("info", format_args!($($arg)*))
+        }
+    };
+}
+macro_rules! log_warn {
+    ($id:expr, $($arg:tt)*) => {
+        if $id >= $crate::obs::LOG_THRESHOLD {
+            $crate::obs::line("warn", format_args!($($arg)*))
+        }
+    };
+}
+macro_rules! log_error {
+    ($id:expr, $($arg:tt)*) => {
+        if $id >= $crate::obs::LOG_THRESHOLD {
+            $crate::obs::line("error", format_args!($($arg)*))
+        }
+    };
+}
+
 use feraille_render::{Bitmap, Point as FPoint, Rect as FRect, Renderer, SoftRenderer, TextStyle};
 use std::collections::HashMap;
 use winit::application::ApplicationHandler;
@@ -116,8 +145,10 @@ const SIDEBAR_MIN: f32 = 160.0;
 const SIDEBAR_MAX: f32 = 480.0;
 
 fn main() -> Result<()> {
+    obs::init();
     let args = screenshot::parse_args();
     if args.screenshot.is_some() {
+        log_info!(56, "headless screenshot path");
         return screenshot::run(args);
     }
     let event_loop = EventLoop::<AppEvent>::with_user_event().build()?;
@@ -125,7 +156,13 @@ fn main() -> Result<()> {
     let mut app = App::new();
     app.event_proxy = Some(event_loop.create_proxy());
     app.start_magic_prefetch();
-    event_loop.run_app(&mut app)?;
+    log_info!(56, "event loop starting");
+    let result = event_loop.run_app(&mut app);
+    if let Err(e) = &result {
+        log_error!(56, "event loop returned error: {e}");
+    }
+    log_info!(56, "event loop exited");
+    result?;
     Ok(())
 }
 
@@ -516,7 +553,8 @@ impl App {
                 }
                 let from = cur_dir.join(&original_name);
                 if let Err(e) = std::fs::rename(&from, &target_path) {
-                    eprintln!(
+                    log_error!(
+                        56,
                         "rename({}, {}) failed: {e}",
                         from.display(),
                         target_path.display()
@@ -533,7 +571,7 @@ impl App {
             }
             DialogMode::NewFolder => {
                 if let Err(e) = std::fs::create_dir(&target_path) {
-                    eprintln!("create_dir({}) failed: {e}", target_path.display());
+                    log_error!(56, "create_dir({}) failed: {e}", target_path.display());
                     return;
                 }
                 self.refresh_active_tab();
@@ -1284,12 +1322,23 @@ impl App {
     /// Internal: re-enumerate `path` and update view state. Does NOT
     /// touch the history vector; callers manage that.
     fn goto_path(&mut self, path: PathBuf) {
+        let t0 = std::time::Instant::now();
         let id = self.fs.id_for_path(&path);
         self.ant_trail.record(id);
         // Rebuild sections so Recents reflects the latest visit.
         self.rebuild_tree_sections();
         let mut handle = self.fs.enumerate(id);
+        let entry_count = handle.initial.len();
         filter_hidden(&mut handle.initial, self.show_hidden);
+        let visible_count = handle.initial.len();
+        if let Some(err) = &handle.error {
+            log_warn!(
+                56,
+                "navigate -> {} failed to enumerate: {:?}",
+                path.display(),
+                err
+            );
+        }
         let tab = &mut self.tabs[self.active];
         tab.all_entries = handle.initial;
         tab.error = handle.error;
@@ -1300,6 +1349,14 @@ impl App {
         self.breadcrumb.set_path(&path);
         self.reveal_in_tree(&path);
         self.sync_window_title();
+        log_info!(
+            56,
+            "navigate -> {} ({} entries, {} visible after hidden-filter, enumerate={:.1}ms)",
+            path.display(),
+            entry_count,
+            visible_count,
+            t0.elapsed().as_secs_f64() * 1000.0,
+        );
         self.prefetch_icons();
         self.start_magic_prefetch();
     }
@@ -1344,6 +1401,13 @@ impl App {
             return;
         };
 
+        log_info!(
+            56,
+            "icon prefetch: {} keys queued (chunk={}, size={}px)",
+            queue.len(),
+            ICON_CHUNK_SIZE,
+            icon_size_px
+        );
         self.icon_generation = self.icon_generation.wrapping_add(1);
         self.icon_queue = queue;
         self.icon_size_px = icon_size_px;
@@ -1426,7 +1490,14 @@ impl App {
         }
         self.magic_progress = Some(self.progress.start_indeterminate());
 
-        std::thread::spawn(move || {
+        log_info!(
+            56,
+            "magic prefetch: {} candidates (gen={})",
+            candidates.len(),
+            generation
+        );
+
+        obs::spawn_logged("magic-prefetch", move || {
             let results = candidates
                 .into_iter()
                 .map(|(name, mtime_unix, path)| MagicResult {
@@ -1507,7 +1578,8 @@ impl App {
             Err(e) => {
                 // Iter-4 will surface this in a Toast / ErrorState; for now,
                 // log to stderr so it's visible during dev runs.
-                eprintln!(
+                log_error!(
+                    56,
                     "move_to_trash({}) failed: {e} — file remains on disk",
                     target.display()
                 );
@@ -1594,7 +1666,7 @@ impl App {
             EntryKind::Directory => self.navigate(path),
             EntryKind::File | EntryKind::Symlink => {
                 if let Err(e) = open_with_default(&path) {
-                    eprintln!("open_with_default({}) failed: {e}", path.display());
+                    log_error!(56, "open_with_default({}) failed: {e}", path.display());
                 }
             }
         }
@@ -1855,7 +1927,7 @@ impl ApplicationHandler<AppEvent> for App {
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Rc::new(w),
             Err(e) => {
-                eprintln!("create_window: {e}");
+                log_error!(56, "create_window failed: {e}");
                 event_loop.exit();
                 return;
             }
@@ -1863,7 +1935,7 @@ impl ApplicationHandler<AppEvent> for App {
         let context = match softbuffer::Context::new(window.clone()) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Context: {e}");
+                log_error!(56, "softbuffer Context::new failed: {e}");
                 event_loop.exit();
                 return;
             }
@@ -1871,7 +1943,7 @@ impl ApplicationHandler<AppEvent> for App {
         let surface = match softbuffer::Surface::new(&context, window.clone()) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Surface: {e}");
+                log_error!(56, "softbuffer Surface::new failed: {e}");
                 event_loop.exit();
                 return;
             }
@@ -1889,11 +1961,19 @@ impl ApplicationHandler<AppEvent> for App {
         let font_bytes = match load_default_font() {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("font: {e:#}");
+                log_error!(56, "load_default_font failed: {e:#}");
                 event_loop.exit();
                 return;
             }
         };
+        log_info!(
+            56,
+            "window resumed: {}x{} @{:.2}x scale, font loaded ({} KiB)",
+            self.width.max(1),
+            self.height.max(1),
+            scale,
+            font_bytes.len() / 1024,
+        );
         self.window = Some(window);
         self.sb_context = Some(context);
         self.surface = Some(surface);
@@ -1915,8 +1995,20 @@ impl ApplicationHandler<AppEvent> for App {
                 if generation != self.magic_generation
                     || self.tabs[self.active].current_dir != dir
                 {
+                    log_info!(
+                        56,
+                        "magic batch dropped (stale gen={} != current={})",
+                        generation,
+                        self.magic_generation
+                    );
                     return;
                 }
+                log_info!(
+                    56,
+                    "magic batch applied: {} results (gen={})",
+                    results.len(),
+                    generation
+                );
                 if let Some(id) = self.magic_progress.take() {
                     self.progress.complete(id);
                 }
@@ -1971,6 +2063,7 @@ impl ApplicationHandler<AppEvent> for App {
                 if self.icon_queue.is_empty() {
                     if let Some(id) = self.icon_progress.take() {
                         self.progress.complete(id);
+                        log_info!(56, "icon prefetch: complete (gen={})", self.icon_generation);
                     }
                 } else if let Some(proxy) = self.event_proxy.clone() {
                     let _ = proxy.send_event(AppEvent::IconChunkTick {
