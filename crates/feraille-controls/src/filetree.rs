@@ -23,11 +23,17 @@ use crate::primitives::focus_ring;
 /// `specs/ux/02-selection.md`.
 const TYPE_AHEAD_RESET: Duration = Duration::from_millis(800);
 
+/// Hover dwell before a tooltip appears for a truncated label.
+const TOOLTIP_DELAY: Duration = Duration::from_millis(600);
+
 const ROW_HEIGHT: f32 = 24.0;
 const HEADER_HEIGHT: f32 = 26.0;
 const INDENT_PER_LEVEL: f32 = 16.0;
 const CHEVRON_W: f32 = 14.0;
 const ICON_SIZE: f32 = 14.0;
+const ELLIPSIS: &str = "\u{2026}";
+const TOOLTIP_PAD_X: f32 = 8.0;
+const TOOLTIP_PAD_Y: f32 = 4.0;
 
 #[derive(Clone, Debug)]
 struct Node {
@@ -119,6 +125,9 @@ pub struct FileTree {
     /// faster than `TYPE_AHEAD_RESET`; cleared on idle.
     type_ahead: String,
     type_ahead_last: Option<Instant>,
+    /// When the cursor first entered `hover_index`. Used to delay
+    /// tooltip appearance.
+    hover_since: Option<Instant>,
 }
 
 impl Default for FileTree {
@@ -139,6 +148,7 @@ impl FileTree {
             hover_index: None,
             type_ahead: String::new(),
             type_ahead_last: None,
+            hover_since: None,
         }
     }
 
@@ -310,6 +320,7 @@ impl FileTree {
                     } else if is_hover {
                         painter.fill_rect(row_rect, tokens.bg.layer3);
                     }
+                    paint_indent_guides(row_rect, *depth, tokens, painter);
                     let heat = heat_for(id);
                     if heat > 0.0 {
                         let alpha = (heat * 180.0).clamp(20.0, 200.0) as u8;
@@ -337,6 +348,63 @@ impl FileTree {
             focus_ring::paint(rect, tokens, painter);
         }
         painter.pop_clip();
+
+        // Tooltip overlay for hovered, truncated labels. Drawn outside
+        // the tree clip so it can cap at the pane boundary cleanly.
+        self.paint_tooltip(bounds, tokens, painter);
+    }
+
+    fn paint_tooltip(&self, bounds: Rect, tokens: &Tokens, painter: &mut dyn Renderer) {
+        let Some(idx) = self.hover_index else { return };
+        let Some(since) = self.hover_since else { return };
+        if since.elapsed() < TOOLTIP_DELAY {
+            return;
+        }
+        let row = match self.visible.get(idx).cloned() {
+            Some(r) => r,
+            None => return,
+        };
+        let (id, depth, expandable) = match row {
+            TreeRow::Node { id, depth, expandable } => (id, depth, expandable),
+            TreeRow::Header { .. } => return,
+        };
+        let Some(node) = self.nodes.get(&id) else { return };
+        let Some(row_rect) = self.row_rect(bounds, idx) else { return };
+
+        let style = TextStyle {
+            size: tokens.text.md,
+            weight: FontWeight::Regular,
+            color: tokens.fg.primary,
+        };
+        let label_x = label_left(row_rect, depth, expandable, tokens);
+        let max_w = (row_rect.right() - label_x).max(0.0);
+        let full_w = painter.measure_text(&node.label, style).width;
+        if full_w <= max_w + 0.5 {
+            // Not truncated — no tooltip.
+            return;
+        }
+
+        // Position tooltip to the right of the row, vertically aligned.
+        // Cap right edge at the pane boundary; if it would overflow,
+        // fall back to anchoring at the pane's right edge minus the
+        // tooltip width so the user still sees the full name.
+        let tip_w = full_w + TOOLTIP_PAD_X * 2.0;
+        let tip_h = tokens.text.md + TOOLTIP_PAD_Y * 2.0 + 2.0;
+        let preferred_x = row_rect.left() + 8.0;
+        let mut tip_x = preferred_x;
+        if tip_x + tip_w > bounds.right() {
+            tip_x = (bounds.right() - tip_w).max(bounds.left());
+        }
+        let tip_y = (row_rect.bottom() + 2.0).min(bounds.bottom() - tip_h);
+        let tip_rect = Rect::new(tip_x, tip_y, tip_w, tip_h);
+        painter.fill_rect(tip_rect, tokens.bg.layer1);
+        painter.stroke_rect(tip_rect, 1.0, tokens.border.default);
+        let text_y = tip_y + (tip_h - tokens.text.md) / 2.0 - 1.0;
+        painter.draw_text(
+            Point::new(tip_x + TOOLTIP_PAD_X, text_y),
+            &node.label,
+            style,
+        );
     }
 
     /// Click handling. Headers are no-ops; node clicks behave as before
@@ -403,10 +471,23 @@ impl FileTree {
         let new_hover = point.and_then(|p| self.index_at(bounds, p));
         if new_hover != self.hover_index {
             self.hover_index = new_hover;
+            self.hover_since = if new_hover.is_some() {
+                Some(Instant::now())
+            } else {
+                None
+            };
             true
         } else {
             false
         }
+    }
+
+    /// Whether the host should request a redraw after the tooltip-delay
+    /// elapses. The host calls this on its event-tick or animation
+    /// timer; if `true`, schedule a redraw `TOOLTIP_DELAY` after
+    /// `hover_since`.
+    pub fn pending_tooltip(&self) -> Option<Instant> {
+        self.hover_since.map(|t| t + TOOLTIP_DELAY)
     }
 
     pub fn scroll_by(&mut self, delta: f32, viewport_h: f32) {
@@ -739,6 +820,73 @@ fn paint_header(label: &str, row: Rect, tokens: &Tokens, painter: &mut dyn Rende
     );
 }
 
+/// X coordinate where the label text starts for a row at `depth`.
+/// Mirrors the layout in `paint_row` (kept in sync by both reading the
+/// same constants).
+fn label_left(row: Rect, depth: u8, expandable: bool, tokens: &Tokens) -> f32 {
+    let indent = depth as f32 * INDENT_PER_LEVEL;
+    let mut x = row.left() + 8.0 + indent;
+    if expandable {
+        x += CHEVRON_W;
+    }
+    x += ICON_SIZE + tokens.space.xs;
+    x
+}
+
+/// Draw 1-DIP vertical guides at each ancestor depth, sitting in the
+/// gutter between the indent and the chevron. Color is `border.subtle`
+/// — visible but quiet. Skipped at depth 0 (no guide for root rows).
+fn paint_indent_guides(row: Rect, depth: u8, tokens: &Tokens, painter: &mut dyn Renderer) {
+    if depth == 0 {
+        return;
+    }
+    // Each guide sits at the left edge of *its* indent column. So
+    // depth=1's guide is at column 0's right edge, etc. We draw one
+    // guide per ancestor (i.e. for depth=N, draw N guides).
+    for d in 0..depth {
+        let x = row.left() + 8.0 + d as f32 * INDENT_PER_LEVEL + INDENT_PER_LEVEL / 2.0;
+        painter.fill_rect(
+            Rect::new(x, row.top(), 1.0, row.size.height),
+            tokens.border.default,
+        );
+    }
+}
+
+/// Truncate `label` so that `label + "…"` fits within `max_width` DIPs
+/// when measured under `style`. Returns `(text_to_draw, was_truncated)`.
+/// Uses a coarse byte scan rather than grapheme clusters — fine for
+/// filenames where boundary cases are rare.
+fn truncate_to_width(
+    label: &str,
+    max_width: f32,
+    style: TextStyle,
+    painter: &dyn Renderer,
+) -> (String, bool) {
+    if max_width <= 0.0 {
+        return (String::new(), !label.is_empty());
+    }
+    let full = painter.measure_text(label, style).width;
+    if full <= max_width {
+        return (label.to_string(), false);
+    }
+    let ellipsis_w = painter.measure_text(ELLIPSIS, style).width;
+    let target = (max_width - ellipsis_w).max(0.0);
+    // Walk char boundaries from start, accumulating until we'd exceed
+    // `target`. We re-measure progressively — a few hundred chars at
+    // worst, and the cache keeps it cheap.
+    let mut cut = 0usize;
+    for (i, _) in label.char_indices() {
+        let w = painter.measure_text(&label[..i], style).width;
+        if w > target {
+            break;
+        }
+        cut = i;
+    }
+    let mut out = label[..cut].trim_end().to_string();
+    out.push_str(ELLIPSIS);
+    (out, true)
+}
+
 fn paint_row(
     node: &Node,
     row: Rect,
@@ -776,13 +924,12 @@ fn paint_row(
     }
     x += ICON_SIZE + tokens.space.xs;
 
-    painter.draw_text(
-        Point::new(x, text_y),
-        &node.label,
-        TextStyle {
-            size: tokens.text.md,
-            weight: FontWeight::Regular,
-            color: tokens.fg.primary,
-        },
-    );
+    let style = TextStyle {
+        size: tokens.text.md,
+        weight: FontWeight::Regular,
+        color: tokens.fg.primary,
+    };
+    let max_w = (row.right() - x - 4.0).max(0.0);
+    let (text, _truncated) = truncate_to_width(&node.label, max_w, style, painter);
+    painter.draw_text(Point::new(x, text_y), &text, style);
 }
