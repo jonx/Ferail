@@ -454,6 +454,7 @@ dependencies = [
 name = "feraille-shell-mac"
 version = "0.0.1"
 dependencies = [
+ "feraille-core",
  "objc2 0.5.2",
  "objc2-app-kit",
  "objc2-foundation 0.2.2",
