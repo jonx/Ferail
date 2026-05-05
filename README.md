@@ -50,7 +50,7 @@ or drag/drop.
 ## Running
 
 ```sh
-cargo run --bin Feraille
+cargo run
 ```
 
 Useful bindings:
@@ -73,7 +73,7 @@ Useful bindings:
 The binary can render deterministic PNGs without opening a window:
 
 ```sh
-cargo run --bin Feraille -- \
+cargo run -- \
   --screenshot /tmp/feraille.png \
   --navigate ~/Source/Feraille \
   --width 1400 --height 900 \
