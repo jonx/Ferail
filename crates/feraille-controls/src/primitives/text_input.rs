@@ -61,6 +61,13 @@ impl TextInput {
         }
     }
 
+    /// Approximate rendered width of the current value at `char_size` DIPs.
+    /// Same heuristic the renderer uses internally so callers that want
+    /// a snug editor box (e.g. inline rename) can size to fit content.
+    pub fn measured_width(&self, char_size: f32) -> f32 {
+        approx_text_width(&self.value(), char_size)
+    }
+
     pub fn handle_key(&mut self, key: TextInputKey) -> Option<TextInputEvent> {
         match key {
             TextInputKey::Backspace if self.cursor > 0 => {

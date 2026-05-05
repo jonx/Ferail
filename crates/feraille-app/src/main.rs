@@ -558,20 +558,25 @@ impl App {
 
     /// Commit the in-row rename. On filesystem error, the state is
     /// preserved so the user can correct and retry.
+    ///
+    /// **Whitespace is preserved verbatim.** Filenames legitimately may
+    /// contain leading, trailing, or interior spaces; a previous version
+    /// silently `.trim()`-ed and lost user intent. Only a literally empty
+    /// (zero-length) value is rejected — that always means "user pressed
+    /// Enter on a cleared field" and should leave the file alone.
     fn commit_inline_rename(&mut self) {
         let Some(state) = self.inline_rename.take() else {
             return;
         };
-        let value = state.input.value();
-        let new_name = value.trim();
+        let new_name = state.input.value();
         if new_name.is_empty() || new_name == state.original_name {
-            // No-op: nothing to commit.
+            // No-op: empty value or unchanged name.
             self.inline_rename_rect = None;
             return;
         }
         let cur_dir = self.tabs[self.active].current_dir.clone();
         let from = cur_dir.join(&state.original_name);
-        let to = cur_dir.join(new_name);
+        let to = cur_dir.join(&new_name);
         if let Err(e) = std::fs::rename(&from, &to) {
             log_error!(
                 57,
@@ -590,10 +595,9 @@ impl App {
             state.original_name,
             new_name
         );
-        let new_name_owned = new_name.to_string();
         self.refresh_active_tab();
         let tab = &mut self.tabs[self.active];
-        if let Some(idx) = tab.entries.iter().position(|e| e.name == new_name_owned) {
+        if let Some(idx) = tab.entries.iter().position(|e| e.name == new_name) {
             tab.selection.set_cursor(idx);
         }
         self.inline_rename_rect = None;
@@ -648,16 +652,18 @@ impl App {
 
     fn submit_dialog(&mut self) {
         let Some(d) = self.dialog.take() else { return };
+        // Preserve whitespace verbatim — filenames may contain legitimate
+        // leading/trailing/internal spaces. Only reject a literally empty
+        // value (Enter on a cleared field).
         let value = d.input.value();
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
+        if value.is_empty() {
             return;
         }
         let cur_dir = self.tabs[self.active].current_dir.clone();
-        let target_path = cur_dir.join(trimmed);
+        let target_path = cur_dir.join(&value);
         match d.mode {
             DialogMode::Rename { original_name } => {
-                if trimmed == original_name {
+                if value == original_name {
                     return; // no-op
                 }
                 let from = cur_dir.join(&original_name);
@@ -672,10 +678,8 @@ impl App {
                     return;
                 }
                 self.refresh_active_tab();
-                // Try to keep cursor on the renamed entry.
-                let new_name = trimmed.to_string();
                 let tab = &mut self.tabs[self.active];
-                if let Some(idx) = tab.entries.iter().position(|e| e.name == new_name) {
+                if let Some(idx) = tab.entries.iter().position(|e| e.name == value) {
                     tab.selection.set_cursor(idx);
                 }
             }
@@ -687,7 +691,7 @@ impl App {
                 }
                 self.refresh_active_tab();
                 let tab = &mut self.tabs[self.active];
-                if let Some(idx) = tab.entries.iter().position(|e| e.name == trimmed) {
+                if let Some(idx) = tab.entries.iter().position(|e| e.name == value) {
                     tab.selection.set_cursor(idx);
                 }
             }
@@ -1941,15 +1945,27 @@ impl App {
         }
 
         // Inline rename overlay — anchored to the row's name column.
+        // The editor box hugs the text width so there's no big empty
+        // span after the name that visually reads as trailing space.
         // Auto-cancel if the row scrolled offscreen.
         let inline_rect = self
             .inline_rename
             .as_ref()
             .and_then(|state| self.list.row_name_rect(list_inner, state.row_idx));
         match (inline_rect, self.inline_rename.as_ref()) {
-            (Some(rect), Some(state)) => {
-                state.input.paint(rect, true, tokens, renderer);
-                self.inline_rename_rect = Some(rect);
+            (Some(name_rect), Some(state)) => {
+                let measured = state.input.measured_width(tokens.text.md);
+                // 8 DIPs of left padding from TextInput::paint, plus
+                // a little breathing room on the right for the caret.
+                let snug_w = (measured + 24.0).clamp(80.0, name_rect.size.width);
+                let edit_rect = FRect::new(
+                    name_rect.left(),
+                    name_rect.top(),
+                    snug_w,
+                    name_rect.size.height,
+                );
+                state.input.paint(edit_rect, true, tokens, renderer);
+                self.inline_rename_rect = Some(edit_rect);
             }
             (None, Some(_)) => {
                 // Row scrolled offscreen — auto-cancel.

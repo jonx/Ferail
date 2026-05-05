@@ -50,6 +50,28 @@ delete it; the commit + NOTES.md entry is the record.
 
 ### Other gaps that matter today
 
+- **Flag unusual filenames in the UI.** Filenames are arbitrary byte
+  sequences (within fs encoding rules), and some characters are
+  visually invisible or ambiguous. The list and the rename editor
+  should call them out so the user notices what they're dealing with
+  — pre-rename and on the row itself. Cases to surface:
+  - **Trailing or leading whitespace** (` foo` / `foo `) — easy to
+    type by accident, invisible in monospace columns.
+  - **Hidden / zero-width unicode** — ZWSP (U+200B), ZWNJ, BOM (U+FEFF),
+    soft hyphen, RTL/LTR marks, U+202E override, etc.
+  - **Control characters** — anything `< U+0020` plus DEL.
+  - **Look-alike Cyrillic/Greek/etc.** — `а` (U+0430) vs `a` (U+0061).
+    Probably out of scope for v1; ZWSP / trailing space first.
+  - **Combining-character soup** — long combiner sequences that aren't
+    obvious from the rendered glyph.
+
+  Surface ideas: a small pill or icon on the row when the name has
+  any of these; in the rename editor, render whitespace as a visible
+  glyph (·) and combiners as their codepoint. Prereq: pre-rename we
+  should also *show* the name as it actually is so the user knows
+  what they're starting from. Inline rename already preserves
+  whitespace verbatim post iter-5.7.5; this is the visibility half.
+
 - **Drop targets** (drag-into-folder, drag-into-tree, drag-into-tab).
   Drag-out is done; the inverse pasteboard handling is the missing
   half of file-manager drag-drop.
