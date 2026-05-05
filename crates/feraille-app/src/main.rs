@@ -156,7 +156,6 @@ fn main() -> Result<()> {
         log_info!(56, "headless screenshot path");
         return screenshot::run(args);
     }
-    feraille_shell_mac::set_app_icon_from_png_bytes(APP_ICON_PNG);
     let event_loop = EventLoop::<AppEvent>::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = App::new();
@@ -1958,6 +1957,11 @@ impl ApplicationHandler<AppEvent> for App {
         // on macOS; no-op elsewhere). Returned value is the leading-edge
         // inset to reserve in the tabstrip.
         self.tabstrip.inset_left = feraille_shell_mac::apply_native_chrome(&window);
+
+        // Replace the dock/About icon. Must run after winit has built
+        // NSApplication (i.e. not from main()), hence here in resumed().
+        let icon_result = feraille_shell_mac::set_app_icon_from_png_bytes(APP_ICON_PNG);
+        log_info!(56, "set_app_icon: {:?}", icon_result);
 
         let scale = window.scale_factor() as f32;
         let size = window.inner_size();

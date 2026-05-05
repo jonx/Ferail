@@ -83,17 +83,36 @@ pub fn reveal_in_finder(_path: &std::path::Path) {}
 /// Silently no-ops on non-macOS, and on macOS if the PNG can't be
 /// decoded into an `NSImage`. Must be called on the main thread (the
 /// usual app-startup constraint).
+/// Result of [`set_app_icon_from_png_bytes`], for callers that want to
+/// log success vs. failure.
+#[derive(Debug)]
+pub enum SetIconResult {
+    /// Icon was decoded and assigned to NSApplication.
+    Ok,
+    /// Not on macOS; no-op stub.
+    NotMacOs,
+    /// Called off the main thread; refused.
+    NotMainThread,
+    /// `NSImage initWithData:` returned nil — PNG decode failed.
+    DecodeFailed,
+}
+
+/// Replace the running process's dock/app icon with the image decoded
+/// from `png_bytes`. Useful when the binary is launched outside an .app
+/// bundle (cargo run, debugger) where macOS would otherwise show the
+/// generic executable icon.
+///
+/// Must be called on the main thread, **after** winit has built its
+/// event loop (which initialises `NSApplication`). Calling from
+/// `ApplicationHandler::resumed` is the safe place.
 #[cfg(target_os = "macos")]
-pub fn set_app_icon_from_png_bytes(png_bytes: &[u8]) {
+pub fn set_app_icon_from_png_bytes(png_bytes: &[u8]) -> SetIconResult {
     use objc2::ClassType;
     use objc2_app_kit::{NSApplication, NSImage};
-    use objc2_foundation::{MainThreadMarker, NSData};
+    use objc2_foundation::{MainThreadMarker, NSData, NSString};
 
-    // sharedApplication() requires a main-thread marker; we are called
-    // from app startup which runs on the main thread. If somehow we
-    // aren't, bail rather than fault.
     let Some(mtm) = MainThreadMarker::new() else {
-        return;
+        return SetIconResult::NotMainThread;
     };
     unsafe {
         let data = NSData::dataWithBytes_length(
@@ -102,15 +121,26 @@ pub fn set_app_icon_from_png_bytes(png_bytes: &[u8]) {
         );
         let alloc = NSImage::alloc();
         let Some(img) = NSImage::initWithData(alloc, &data) else {
-            return;
+            return SetIconResult::DecodeFailed;
         };
+        // Drives dock + cmd-tab switcher.
         let app = NSApplication::sharedApplication(mtm);
         app.setApplicationIconImage(Some(&img));
+        // Drives the standard About panel and any other consumer of
+        // NSImage(named: "NSApplicationIcon"). Without this, About falls
+        // back to whatever the bundle / Finder thinks the executable's
+        // icon is — for an unbundled cargo-run binary, the generic
+        // folder/exec glyph.
+        let name = NSString::from_str("NSApplicationIcon");
+        img.setName(Some(&name));
     }
+    SetIconResult::Ok
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn set_app_icon_from_png_bytes(_png_bytes: &[u8]) {}
+pub fn set_app_icon_from_png_bytes(_png_bytes: &[u8]) -> SetIconResult {
+    SetIconResult::NotMacOs
+}
 
 /// Width to reserve at the leading edge of the tabstrip so the OS
 /// traffic-light buttons (close / minimize / zoom) don't overlap our

@@ -33,6 +33,21 @@ When an item ships, delete it (the commit + NOTES.md entry is the record).
   also surface to the user (rename failure, create_dir failure, trash
   failure). Currently visible only in stderr.
 
+## Branding / packaging
+
+- **Rework the app icon to macOS conventions.** The current icon
+  ([crates/feraille-app/resources/feraille.png](crates/feraille-app/resources/feraille.png))
+  is the Windows-shaped folder reused from Ferail. Macs expect the
+  standard squircle silhouette — a square with rounded borders, full-bleed
+  background, content centred — at 1024×1024 with the canonical macOS
+  rounding radius. Generate `.iconset` folder and `iconutil` it into
+  `feraille.icns` for eventual `.app` bundling.
+- **Ship as a real .app bundle.** Without `Info.plist` + `Contents/
+  Resources/AppIcon.icns`, the dock/About icon has to be set at runtime
+  (currently via `feraille_shell_mac::set_app_icon_from_png_bytes`) and
+  the binary identifies as a generic exec to launch services. cargo-bundle
+  or a hand-rolled bundle script is the fix.
+
 ## Notes from the porting effort
 
 - The "Source" column in [docs/FEATURE_LEDGER.md](docs/FEATURE_LEDGER.md)
