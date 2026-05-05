@@ -98,11 +98,14 @@ Rule reinforced: no filesystem reads on the UI hot path.
   UI thread because the API is main-thread only.
 - Preview pane is metadata-only.
 - Context menu is a hardcoded slice, not final NSMenu/services behavior.
-- Trash is a fallback, not final `NSWorkspace` trash.
 - NodeStore identity model is not fully ported.
 - Status progress/task aggregation is not implemented.
 - Persistent Ant Trail, metadata DB, disk usage, duplicate finder, and full
   preview providers are pending.
+- Keyboard handler still hard-codes (key, modifier) → method calls; iter-5.8
+  catalogue exists but the keyboard side hasn't been migrated yet.
+
+See [todo.md](todo.md) for the structured near-term / later split.
 
 ## Docs Rebuild
 

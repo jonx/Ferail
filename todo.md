@@ -6,35 +6,94 @@ Free-form list of things to look into later. Not a roadmap (see
 structured. This file is for the unstructured "remember to revisit X"
 notes that would otherwise crowd CLAUDE.md or rot in code comments.
 
-When an item ships, delete it (the commit + NOTES.md entry is the record).
+Two buckets: **Near-term** for items that would meaningfully improve
+the app in the next handful of iters, and **Later** for architectural
+or speculative work that needs design before code. When an item ships,
+delete it; the commit + NOTES.md entry is the record.
 
-## Architectural risks
+## Near-term
 
-- **Eager filesystem enumeration.** Still synchronous in the `enumerate`
-  path; the biggest known violation of the performance model for large
-  or slow folders. Spec drafted in
-  [docs/features/STREAMING_ENUMERATION.md](docs/features/STREAMING_ENUMERATION.md);
-  implementation is multi-iter and should not begin without a fresh
-  review of the spec first.
+### Command system follow-throughs (iter-5.8 unlocks)
+
+- **Migrate keyboard handler to dispatch via `CommandId`.** The
+  keyboard match in [crates/feraille-app/src/main.rs](crates/feraille-app/src/main.rs)
+  still hard-codes the (key, modifier) → method calls that the menu
+  bar already routes through `feraille_core::commands`. Convert that
+  match to translate keystrokes into `CommandId`s and dispatch through
+  the same `AppEvent::Command` arm — single source of truth, sets up
+  user-remappable bindings later. Pure refactor.
+- **Extend the catalogue with existing keyboard-only commands.** All
+  these have App methods + keybindings but no menu/catalogue entry:
+  - `file.refresh` (F5)
+  - `file.new_folder` (Cmd+Shift+N)
+  - `file.copy_path` (Cmd+Shift+C)
+  - `file.reveal_in_finder` (Cmd+Opt+R)
+  - `file.move_to_trash` (Cmd+Backspace / Delete)
+  - `view.toggle_preview` (Cmd+P)
+  - `window.next_tab` / `window.prev_tab` (Cmd+}/Cmd+{)
+
+  Adding them = automatic menu items + future command-palette entries
+  + future remap, no extra wiring.
+- **`file.close_tab` with `validateMenuItem:`.** Cmd+W today closes
+  the window via the Window submenu's built-in selector. Match Finder
+  by adding `file.close_tab` (Cmd+W) that no-ops when only one tab
+  exists, letting AppKit fall through to Close Window. Needs the
+  AppMenuTarget to read tab count — add a thread-local snapshot the
+  app updates on tab open/close.
+- **Settings window.** The `app.settings` command and Cmd+, exist but
+  the action is inert. A first cut just opens a small modal panel
+  showing current settings (theme, hidden files, splitter size). The
+  storage layer can land later.
+- **Help submenu.** At minimum, "Feraille on GitHub" → `open` URL.
+  Optional: keyboard-shortcuts cheat sheet generated from the
+  catalogue.
+
+### Other gaps that matter today
+
+- **Drop targets** (drag-into-folder, drag-into-tree, drag-into-tab).
+  Drag-out is done; the inverse pasteboard handling is the missing
+  half of file-manager drag-drop.
 - **TextInput IME / composition.** No full input-method-editor support
   yet. Will matter for non-Latin keyboards and Asian-language naming.
+- **Volume display name.** [crates/feraille-app/src/main.rs:1053](crates/feraille-app/src/main.rs#L1053)
+  still parses the path; fetch the real macOS volume label.
 
-## Feature gaps
+## Later
 
-- **Delete-to-Trash.** Currently a fallback `~/.Trash` move. Replace with
-  `NSWorkspace`'s real trash semantics (undo support, audible feedback).
-- **Preview pane.** Metadata-only today. Real previews (text/image/PDF/
-  Quick Look) need async cancellable workers.
-- **Inline rename.** Modal dialog exists; in-row rename remains.
-- **Drop targets.** Drag-out is done; drop-into-folder/tab/tree isn't.
-- **Volume display name.** `crates/feraille-app/src/main.rs:1053` —
-  fetch real macOS volume label rather than parsing the path.
+### Architectural
 
-## Diagnostics / tooling
+- **Streaming filesystem enumeration with cancellation.** Eager batch
+  enumerate is the biggest performance gap for large or slow folders.
+  Spec drafted in [docs/features/STREAMING_ENUMERATION.md](docs/features/STREAMING_ENUMERATION.md);
+  implementation is multi-iter and should not begin without a fresh
+  review of the spec first.
+- **NodeStore identity model port.** Stable-id mapping that survives
+  rename / move / mount changes — the durable substrate for ant trail,
+  selection, and external watcher events. Deferred until streaming
+  enumeration is in place; the two designs are coupled.
+- **Status progress / task aggregation.** A central in-flight-task
+  view (count, bytes, ETA) shared by enumeration, prefetch, copy,
+  trash, search. Today the `ProgressStrip` is single-task and per-call.
 
-- **Toast / ErrorState surface.** Multiple `log_error!` sites today should
-  also surface to the user (rename failure, create_dir failure, trash
-  failure). Currently visible only in stderr.
+### Feature surfaces (need design before code)
+
+- **Real previews.** Text / image / PDF / Quick Look. Each is an
+  async cancellable provider that returns a renderable bitmap or text
+  buffer. Quick Look in particular is its own AppKit subsystem.
+- **Persistent Ant Trail + metadata DB.** SQLite for ant-trail
+  history, magic cache, recent folders, thumbnails. Per-user
+  database; needs schema and migration plan.
+- **Disk usage.** Per-folder size pipeline, off-thread, cache-keyed
+  by folder identity + mtime / change token.
+- **Duplicate finder.** Size → partial-hash → full-hash funnel, all
+  off-thread.
+- **Command palette UI.** Fuzzy search over `all_commands()`. Needs a
+  modal control + scoring algorithm + keybinding system to invoke it.
+- **User-overridable key bindings.** Config file format (JSON / TOML /
+  whatever the rest of the app picks), override layer on top of
+  `default_shortcut`, per-OS sections.
+- **Plugin / scripting surface.** Letting external scripts register or
+  invoke commands by id. Needs a sandbox / IPC story; far future.
 
 ## Branding / packaging
 
