@@ -34,10 +34,10 @@ delete it; the commit + NOTES.md entry is the record.
 
   Adding them = automatic menu items + future command-palette entries
   + future remap, no extra wiring.
-- **Settings window.** The `app.settings` command and Cmd+, exist but
-  the action is inert. A first cut just opens a small modal panel
-  showing current settings (theme, hidden files, splitter size). The
-  storage layer can land later.
+- **Settings window — real one.** Iter-5.11 ships an NSAlert
+  placeholder that prints current state. Replace with a proper modal
+  panel (theme picker, hidden-files toggle, sidebar-width slider,
+  …) backed by a config file so changes persist across runs.
 - **Help submenu.** At minimum, "Feraille on GitHub" → `open` URL.
   Optional: keyboard-shortcuts cheat sheet generated from the
   catalogue.

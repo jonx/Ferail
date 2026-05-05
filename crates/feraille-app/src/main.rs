@@ -1550,11 +1550,7 @@ impl App {
         log_info!(59, "command: {:?}", id);
         match id.0 {
             "app.about" => feraille_shell_mac::show_about_panel(),
-            "app.settings" => {
-                // Real Settings window is iter-5.11. Catalogue entry,
-                // menu item, and Cmd+, all exist; action is a no-op
-                // until the UI is wired.
-            }
+            "app.settings" => self.show_settings_placeholder(),
             "file.new_tab" => self.new_tab_at(home_dir()),
             "file.close_tab" => self.close_active_tab(),
             "file.new_folder" => self.open_new_folder(),
@@ -2098,6 +2094,27 @@ impl App {
     /// entry and Cmd+W falls through to Close Window.
     pub fn close_active_tab(&mut self) {
         self.close_tab(self.active);
+    }
+
+    /// Compose the current-state summary and pop the Settings
+    /// placeholder NSAlert. iter-5.11 stub for `app.settings` (Cmd+,)
+    /// — gives the user something visible without committing to a
+    /// real Settings UI yet.
+    pub fn show_settings_placeholder(&self) {
+        let theme = match self.tokens.theme {
+            feraille_design::Theme::Light => "Light",
+            feraille_design::Theme::Dark => "Dark",
+        };
+        let body = format!(
+            "Theme: {theme}\n\
+             Hidden files: {}\n\
+             Sidebar width: {:.0} DIPs\n\
+             Tabs open: {}",
+            if self.show_hidden { "shown" } else { "hidden" },
+            self.splitter_x,
+            self.tabs.len(),
+        );
+        feraille_shell_mac::show_settings_placeholder(&body);
     }
 
     fn handle_tree_event(&mut self, ev: TreeEvent) {

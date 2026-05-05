@@ -106,6 +106,11 @@ I/O while painting or handling immediate interaction.
   through to Close Window in the Window submenu. Host updates the
   snapshot via `feraille_shell_mac::set_tab_count` on every tab open
   / close and at startup. Mirrors Finder's Cmd+W behaviour.
+- Iter-5.11: `app.settings` (Cmd+,) opens a placeholder NSAlert that
+  shows current state (theme, hidden-files, sidebar width, tab count)
+  and notes that a real Settings window lands later. Native AppKit
+  modal — no Feraille soft-rendered chrome. Makes Cmd+, do something
+  visible without forcing a Settings UI design pass yet.
 
 ## Important Bug Lesson: Magic Sniffing Hang
 

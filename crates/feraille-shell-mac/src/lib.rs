@@ -68,6 +68,39 @@ pub fn set_tab_count(n: usize) {
 #[cfg(not(target_os = "macos"))]
 pub fn set_tab_count(_n: usize) {}
 
+/// Show a placeholder Settings panel as a native NSAlert. Lets the
+/// `app.settings` command (Cmd+,) do something visible without us
+/// having to commit to a Settings UI design yet — the alert says
+/// what the current state is and that a real panel is coming.
+///
+/// `body` is the multi-line summary of current state; the host
+/// composes it (theme, hidden files, splitter, etc.) so the shell
+/// crate doesn't need to know app internals.
+#[cfg(target_os = "macos")]
+pub fn show_settings_placeholder(body: &str) {
+    use objc2_app_kit::{NSAlert, NSAlertStyle};
+    use objc2_foundation::{MainThreadMarker, NSString};
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    unsafe {
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(&NSString::from_str("Settings"));
+        let info = format!(
+            "{body}\n\nA proper Settings window lands in a future iter; \
+             this is a placeholder so Cmd+, isn't a no-op."
+        );
+        alert.setInformativeText(&NSString::from_str(&info));
+        alert.setAlertStyle(NSAlertStyle::Informational);
+        alert.addButtonWithTitle(&NSString::from_str("OK"));
+        let _ = alert.runModal();
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_settings_placeholder(_body: &str) {}
+
 /// Show a context menu at `cursor_dips` (relative to the window's content
 /// view) with the given titles. Returns the 0-based index of the selected
 /// item, or `None` on dismiss. Empty title strings render as separators.
