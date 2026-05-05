@@ -56,6 +56,18 @@ pub fn show_about_panel() {
 #[cfg(not(target_os = "macos"))]
 pub fn show_about_panel() {}
 
+/// Update the menu's snapshot of the host's tab count. Used by
+/// `validateMenuItem:` to enable / disable `file.close_tab`. Call
+/// from the host whenever the tab count changes (open / close /
+/// initial state). No-op on non-macOS.
+#[cfg(target_os = "macos")]
+pub fn set_tab_count(n: usize) {
+    app_menu::set_tab_count(n);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_tab_count(_n: usize) {}
+
 /// Show a context menu at `cursor_dips` (relative to the window's content
 /// view) with the given titles. Returns the 0-based index of the selected
 /// item, or `None` on dismiss. Empty title strings render as separators.

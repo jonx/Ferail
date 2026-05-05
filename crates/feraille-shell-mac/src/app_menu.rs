@@ -12,7 +12,7 @@
 //! deliberately NOT in the catalogue and are emitted here with their
 //! AppKit selectors hard-coded.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use feraille_core::commands::{
     all_commands, Category, CommandId, CommandSpec, Shortcut,
@@ -51,6 +51,14 @@ thread_local! {
     /// reach its main state.
     static COMMAND_CALLBACK: RefCell<Option<Box<dyn Fn(CommandId) + 'static>>> =
         const { RefCell::new(None) };
+
+    /// Snapshot of the host app's tab count. Read by `validateMenuItem:`
+    /// to grey out `file.close_tab` when only one tab is open — letting
+    /// AppKit's Cmd+W key-equivalent dispatch fall through to
+    /// `Close Window` in the Window submenu (which uses NSWindow's
+    /// built-in `performClose:`). The host calls `set_tab_count()` on
+    /// every tab open / close.
+    static TAB_COUNT: Cell<usize> = const { Cell::new(1) };
 }
 
 declare_class!(
@@ -85,6 +93,26 @@ declare_class!(
                 }
             });
         }
+
+        /// Per-item enable/disable. AppKit calls this for any item
+        /// whose target+action point at us; returning `false` greys
+        /// the item out *and* takes its key equivalent out of the
+        /// dispatch chain so other matching items get a chance.
+        ///
+        /// Today we only conditionally-disable `file.close_tab`: when
+        /// there's a single tab open, Cmd+W falls through to the
+        /// Window submenu's Close Window. Everything else stays
+        /// enabled.
+        #[method(validateMenuItem:)]
+        fn validate_menu_item(&self, item: &NSMenuItem) -> objc2::runtime::Bool {
+            let tag = unsafe { item.tag() } as usize;
+            let id = TAG_TO_COMMAND.with(|t| t.borrow().get(tag).copied());
+            let enabled = match id.map(|i| i.0) {
+                Some("file.close_tab") => TAB_COUNT.with(|c| c.get()) > 1,
+                _ => true,
+            };
+            objc2::runtime::Bool::new(enabled)
+        }
     }
 );
 
@@ -102,6 +130,15 @@ impl AppMenuTarget {
 /// maps to a Feraille-owned [`CommandId`].
 pub fn register_command_callback(cb: Option<Box<dyn Fn(CommandId) + 'static>>) {
     COMMAND_CALLBACK.with(|cell| *cell.borrow_mut() = cb);
+}
+
+/// Update the snapshot of the active window's tab count. Read by
+/// `validateMenuItem:` to grey out `file.close_tab` when there's
+/// only one tab. Call from the host app whenever a tab opens /
+/// closes / is set on first show. No-op if `install_app_menu`
+/// hasn't run yet.
+pub fn set_tab_count(n: usize) {
+    TAB_COUNT.with(|c| c.set(n));
 }
 
 /// Show the standard About panel using the dictionary configured by

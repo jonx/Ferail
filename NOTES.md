@@ -99,6 +99,13 @@ I/O while painting or handling immediate interaction.
   `EnumerationService` had the same worker + channel + generation
   shape, but with no cancel flag and PostMessageW dispatch — confirmed
   the design and avoided its known gaps.
+- Iter-5.10: `file.close_tab` (Cmd+W) joins the catalogue with
+  `validateMenuItem:` semantics. `AppMenuTarget` gains a per-item
+  validate selector that reads a `TAB_COUNT` thread-local snapshot;
+  when there's only one tab Close Tab is greyed out and Cmd+W falls
+  through to Close Window in the Window submenu. Host updates the
+  snapshot via `feraille_shell_mac::set_tab_count` on every tab open
+  / close and at startup. Mirrors Finder's Cmd+W behaviour.
 
 ## Important Bug Lesson: Magic Sniffing Hang
 
@@ -119,8 +126,6 @@ Rule reinforced: no filesystem reads on the UI hot path.
 
 ## Current Known Gaps
 
-- Directory enumeration is still eager in places and must become streaming and
-  cancellable.
 - Icon fetching is now chunked on the main thread (iter-5.6); it no longer
   blocks navigation, but `NSWorkspace.iconForFile:` itself still runs on the
   UI thread because the API is main-thread only.
@@ -130,8 +135,6 @@ Rule reinforced: no filesystem reads on the UI hot path.
 - Status progress/task aggregation is not implemented.
 - Persistent Ant Trail, metadata DB, disk usage, duplicate finder, and full
   preview providers are pending.
-- Keyboard handler still hard-codes (key, modifier) → method calls; iter-5.8
-  catalogue exists but the keyboard side hasn't been migrated yet.
 
 See [todo.md](todo.md) for the structured near-term / later split.
 

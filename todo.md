@@ -34,12 +34,6 @@ delete it; the commit + NOTES.md entry is the record.
 
   Adding them = automatic menu items + future command-palette entries
   + future remap, no extra wiring.
-- **`file.close_tab` with `validateMenuItem:`.** Cmd+W today closes
-  the window via the Window submenu's built-in selector. Match Finder
-  by adding `file.close_tab` (Cmd+W) that no-ops when only one tab
-  exists, letting AppKit fall through to Close Window. Needs the
-  AppMenuTarget to read tab count — add a thread-local snapshot the
-  app updates on tab open/close.
 - **Settings window.** The `app.settings` command and Cmd+, exist but
   the action is inert. A first cut just opens a small modal panel
   showing current settings (theme, hidden files, splitter size). The

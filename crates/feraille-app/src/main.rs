@@ -424,6 +424,7 @@ impl App {
         self.active = new_index;
         self.list.scroll_offset = 0.0;
         self.navigate(path);
+        feraille_shell_mac::set_tab_count(self.tabs.len());
     }
 
     pub fn switch_to_tab(&mut self, idx: usize) {
@@ -1555,6 +1556,7 @@ impl App {
                 // until the UI is wired.
             }
             "file.new_tab" => self.new_tab_at(home_dir()),
+            "file.close_tab" => self.close_active_tab(),
             "file.new_folder" => self.open_new_folder(),
             "file.get_info" => self.toggle_properties(),
             "file.move_to_trash" => self.delete_at_cursor_to_trash(),
@@ -2069,6 +2071,7 @@ impl App {
         self.active = new_index;
         self.list.scroll_offset = 0.0;
         self.navigate(path);
+        feraille_shell_mac::set_tab_count(self.tabs.len());
     }
 
     fn close_tab(&mut self, idx: usize) {
@@ -2086,6 +2089,15 @@ impl App {
         self.breadcrumb.set_path(&path);
         let id = self.fs.id_for_path(&path);
         self.tree.select(id);
+        feraille_shell_mac::set_tab_count(self.tabs.len());
+    }
+
+    /// Wrapper used by the catalogue's `file.close_tab` command. Closes
+    /// the active tab; the underlying [`close_tab`] no-ops at one tab,
+    /// at which point AppKit's `validateMenuItem:` greys out the menu
+    /// entry and Cmd+W falls through to Close Window.
+    pub fn close_active_tab(&mut self) {
+        self.close_tab(self.active);
     }
 
     fn handle_tree_event(&mut self, ev: TreeEvent) {
@@ -2378,6 +2390,11 @@ impl ApplicationHandler<AppEvent> for App {
                 let _ = proxy.send_event(AppEvent::Command(id));
             })));
         }
+
+        // Seed the menu's tab-count snapshot so file.close_tab is
+        // initially correctly enabled/disabled. Subsequent open/close
+        // calls update it directly.
+        feraille_shell_mac::set_tab_count(self.tabs.len());
 
         let scale = window.scale_factor() as f32;
         let size = window.inner_size();

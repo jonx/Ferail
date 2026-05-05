@@ -107,6 +107,12 @@ const CATALOGUE: &[CommandSpec] = &[
         default_shortcut: Some(Shortcut::primary("T")),
     },
     CommandSpec {
+        id: CommandId("file.close_tab"),
+        title: "Close Tab",
+        category: Category::File,
+        default_shortcut: Some(Shortcut::primary("W")),
+    },
+    CommandSpec {
         id: CommandId("file.new_folder"),
         title: "New Folder",
         category: Category::File,
