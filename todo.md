@@ -12,7 +12,10 @@ When an item ships, delete it (the commit + NOTES.md entry is the record).
 
 - **Eager filesystem enumeration.** Still synchronous in the `enumerate`
   path; the biggest known violation of the performance model for large
-  or slow folders. Streaming + cancellation is a Stage-2 design pass.
+  or slow folders. Spec drafted in
+  [docs/features/STREAMING_ENUMERATION.md](docs/features/STREAMING_ENUMERATION.md);
+  implementation is multi-iter and should not begin without a fresh
+  review of the spec first.
 - **TextInput IME / composition.** No full input-method-editor support
   yet. Will matter for non-Latin keyboards and Asian-language naming.
 

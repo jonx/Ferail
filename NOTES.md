@@ -57,6 +57,11 @@ I/O while painting or handling immediate interaction.
   `log_error!` sites (rename / create_dir / trash / open_with_default /
   inline rename) now also push an error toast so failures are visible
   in-app, not stderr-only.
+- Iter-5.7.4: streaming-enumeration spec drafted at
+  [docs/features/STREAMING_ENUMERATION.md](docs/features/STREAMING_ENUMERATION.md).
+  Trait shape, caller contract, worker shape, batch size, cancellation
+  semantics, and migration plan. Single-batch wrapper is the safe first
+  shipping step. No code yet — implementation is a multi-iter project.
 - Iter-5.8: command-name registry as the load-bearing identity. New
   `feraille_core::commands` module with `CommandId`, `Shortcut`, and a
   static catalogue (`app.about`, `app.settings`, `file.new_tab`,

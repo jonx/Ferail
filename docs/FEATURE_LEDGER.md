@@ -67,7 +67,7 @@ Status labels:
 | Feature | Ferail source | Feraille status | Notes |
 |---|---|---:|---|
 | Paint is read-only | `CLAUDE.md`, `LAZY_TEXT_DISPLAY.md` | Policy | See [UI_NONBLOCKING.md](UI_NONBLOCKING.md). Must be enforced continuously. |
-| Async enumeration | `todo.md`, `SPECS.md` | Todo | Current eager enumerate is the biggest architectural gap. |
+| Async enumeration | `todo.md`, `SPECS.md`, [features/STREAMING_ENUMERATION.md](features/STREAMING_ENUMERATION.md) | Spec | Spec drafted iter-5.7.4. Implementation pending. |
 | Cancellation tokens | `todo.md` | Todo | Needed for enumeration, preview, search, thumbnails, disk usage. |
 | Lazy display metadata | `LAZY_TEXT_DISPLAY.md` | Partial | Current `FileEntry` caches display strings. NodeStore-style identity is Todo. |
 | Status progress | `STATUSBARPROGRESSCONTROL.md` | Todo | Needed once long-running workers land. |
