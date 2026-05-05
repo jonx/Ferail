@@ -24,7 +24,7 @@ use feraille_controls::{
     sort_entries, BreadcrumbBar, BreadcrumbEvent, FileTree, Section, SectionKind, Selection,
     TabInfo, TabStrip, TabStripEvent, TreeEvent, VirtualizedList,
 };
-use feraille_core::{AntTrail, EntryKind, FileEntry, FsBackend, NodeId};
+use feraille_core::{AntTrail, EntryKind, EnumerationError, FileEntry, FsBackend, NodeId};
 use feraille_design::{FontWeight, Theme, Tokens};
 use feraille_fs_native::{
     detect_magic, fetch_icon_rgba, home_dir, list_volumes, move_to_trash, open_with_default,
@@ -127,6 +127,12 @@ pub struct Tab {
     pub filter_text: String,
     pub selection: Selection,
     pub list_scroll: f32,
+    /// `Some` when the last enumeration of `current_dir` failed.
+    /// Surfaces in the file pane as an empty-state message — most
+    /// commonly the macOS TCC permission prompt for ~/Documents,
+    /// ~/Desktop, ~/Downloads when a sandboxed launcher hasn't been
+    /// granted access.
+    pub error: Option<EnumerationError>,
     /// Per-tab navigation history. `history_index` points at the
     /// current location. `navigate()` truncates forward then pushes;
     /// back/forward only move the index.
@@ -222,6 +228,7 @@ impl App {
             filter_text: String::new(),
             selection: Selection::new(),
             list_scroll: 0.0,
+            error: None,
             history: Vec::new(),
             history_index: 0,
         });
@@ -912,6 +919,7 @@ impl App {
             filter_text: String::new(),
             selection: Selection::new(),
             list_scroll: 0.0,
+            error: None,
             history: Vec::new(),
             history_index: 0,
         };
@@ -1252,6 +1260,7 @@ impl App {
         filter_hidden(&mut handle.initial, self.show_hidden);
         let tab = &mut self.tabs[self.active];
         tab.all_entries = handle.initial;
+        tab.error = handle.error;
         tab.filter_text.clear();
         tab.current_dir = path.clone();
         tab.list_scroll = 0.0;
@@ -1560,6 +1569,7 @@ impl App {
             filter_text: String::new(),
             selection: Selection::new(),
             list_scroll: 0.0,
+            error: None,
             history: Vec::new(),
             history_index: 0,
         });
@@ -1670,6 +1680,12 @@ impl App {
             tokens,
             renderer,
         );
+        // If enumeration failed (TCC permission denied / not found / I/O),
+        // overlay a centered explanation panel so the user understands
+        // why the list is empty.
+        if let Some(err) = self.tabs[self.active].error.clone() {
+            paint_empty_state(list_inner, &err, &self.tabs[self.active].current_dir, tokens, renderer);
+        }
         if self.preview_visible {
             self.paint_preview_pane(preview_rect, tokens, renderer);
         }
@@ -2458,6 +2474,68 @@ fn filter_entries(entries: &[FileEntry], filter_text: &str) -> Vec<FileEntry> {
         })
         .cloned()
         .collect()
+}
+
+/// Centered message in the file pane when `enumerate` failed. Most
+/// commonly TCC permission-denied for ~/Documents, ~/Desktop, or
+/// ~/Downloads when a sandboxed launcher hasn't been granted access.
+fn paint_empty_state(
+    rect: FRect,
+    error: &EnumerationError,
+    path: &Path,
+    tokens: &Tokens,
+    painter: &mut dyn Renderer,
+) {
+    if rect.size.width <= 0.0 || rect.size.height <= 0.0 {
+        return;
+    }
+    let (heading, body) = match error {
+        EnumerationError::PermissionDenied => (
+            "macOS denied access to this folder",
+            format!(
+                "Grant access in System Settings \u{2192} Privacy & Security \u{2192} Files and Folders, \
+or run Feraille from outside a sandboxed launcher.\n\nPath: {}",
+                path.display()
+            ),
+        ),
+        EnumerationError::NotFound => (
+            "This folder is gone",
+            format!("It may have been moved or deleted.\n\nPath: {}", path.display()),
+        ),
+        EnumerationError::Other(msg) => (
+            "Couldn't read this folder",
+            format!("{msg}\n\nPath: {}", path.display()),
+        ),
+    };
+
+    let head_style = TextStyle {
+        size: tokens.text.lg,
+        weight: FontWeight::SemiBold,
+        color: tokens.fg.primary,
+    };
+    let body_style = TextStyle {
+        size: tokens.text.sm,
+        weight: FontWeight::Regular,
+        color: tokens.fg.secondary,
+    };
+    // Wrap body text by hand on each '\n'; further visual wrapping is
+    // unnecessary at typical pane widths.
+    let body_lines: Vec<&str> = body.split('\n').collect();
+    let line_h = tokens.text.sm + 6.0;
+    let block_h = tokens.text.lg + 12.0 + body_lines.len() as f32 * line_h;
+    let center_y = rect.top() + (rect.size.height - block_h).max(0.0) / 2.0;
+
+    let head_w = painter.measure_text(heading, head_style).width;
+    let head_x = rect.left() + (rect.size.width - head_w).max(0.0) / 2.0;
+    painter.draw_text(FPoint::new(head_x, center_y), heading, head_style);
+
+    let mut y = center_y + tokens.text.lg + 12.0;
+    for line in &body_lines {
+        let w = painter.measure_text(line, body_style).width;
+        let x = rect.left() + (rect.size.width - w).max(0.0) / 2.0;
+        painter.draw_text(FPoint::new(x, y), line, body_style);
+        y += line_h;
+    }
 }
 
 fn detect_theme() -> Theme {

@@ -62,10 +62,28 @@ pub trait FsBackend: Send + Sync {
     fn enumerate(&self, node: NodeId) -> EnumerationHandle;
 }
 
+/// Why an enumeration failed to produce a complete listing. UI surfaces
+/// this as an empty-state when `initial` is empty.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EnumerationError {
+    /// macOS TCC / Unix EACCES — the user can grant access via System
+    /// Settings → Privacy & Security → Files and Folders (macOS) or by
+    /// running with appropriate permissions (Linux).
+    PermissionDenied,
+    /// Path doesn't exist or has been moved/deleted.
+    NotFound,
+    /// Other I/O error. The string is a human-readable hint, not a
+    /// programmable code.
+    Other(String),
+}
+
 /// Opaque handle to a streamed enumeration. Real impl pushes batches over a
-/// channel; the slice's stub returns one synchronous batch.
+/// channel; the slice's stub returns one synchronous batch. `error` is
+/// `Some` only on hard failure — partial listings are not currently
+/// represented (would land alongside async enumeration).
 pub struct EnumerationHandle {
     pub initial: Vec<FileEntry>,
+    pub error: Option<EnumerationError>,
 }
 
 /// Folder usage heat — how many times the user has navigated into a node.

@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use feraille_core::{EntryKind, EnumerationHandle, FileEntry, FsBackend, NodeId};
+use feraille_core::{
+    EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId,
+};
 
 mod icons;
 mod magic;
@@ -74,11 +76,24 @@ impl Default for NativeFs {
 impl FsBackend for NativeFs {
     fn enumerate(&self, node: NodeId) -> EnumerationHandle {
         let Some(path) = self.path_for(node) else {
-            return EnumerationHandle { initial: Vec::new() };
+            return EnumerationHandle {
+                initial: Vec::new(),
+                error: Some(EnumerationError::NotFound),
+            };
         };
         let read_dir = match std::fs::read_dir(&path) {
             Ok(rd) => rd,
-            Err(_) => return EnumerationHandle { initial: Vec::new() },
+            Err(e) => {
+                let kind = match e.kind() {
+                    std::io::ErrorKind::PermissionDenied => EnumerationError::PermissionDenied,
+                    std::io::ErrorKind::NotFound => EnumerationError::NotFound,
+                    _ => EnumerationError::Other(e.to_string()),
+                };
+                return EnumerationHandle {
+                    initial: Vec::new(),
+                    error: Some(kind),
+                };
+            }
         };
         let mut entries: Vec<FileEntry> = Vec::new();
         for dirent in read_dir.flatten() {
@@ -138,7 +153,7 @@ impl FsBackend for NativeFs {
             (_, EntryKind::Directory) => std::cmp::Ordering::Greater,
             _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         });
-        EnumerationHandle { initial: entries }
+        EnumerationHandle { initial: entries, error: None }
     }
 }
 
