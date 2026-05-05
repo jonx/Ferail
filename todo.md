@@ -46,7 +46,22 @@ When an item ships, delete it (the commit + NOTES.md entry is the record).
   Resources/AppIcon.icns`, the dock/About icon has to be set at runtime
   (currently via `feraille_shell_mac::set_app_icon_from_png_bytes`) and
   the binary identifies as a generic exec to launch services. cargo-bundle
-  or a hand-rolled bundle script is the fix.
+  or a hand-rolled bundle script is the fix. Triggers that flip this
+  from "nice-to-have" to "needed":
+  - **TCC identity matters.** When the Documents/Desktop/Downloads
+    permission grants need to stick across runs (today every cargo build
+    re-prompts because the binary changes), a stable bundle ID is the fix.
+  - **File associations.** "Open With Feraille" on a file from Finder
+    requires the bundle to advertise UTIs in `Info.plist`.
+  - **Code signing / Gatekeeper.** Anything we want to share with another
+    Mac needs a signed bundle, otherwise it's quarantined.
+  - **Drag-and-drop from Finder with full UTIs.** Bundle declares which
+    document types it accepts.
+
+  Until then, keep `cargo run` as the dev path. When we bundle, expect:
+  dev cycle becomes `cargo build && open .../Feraille.app` (or a tools/
+  script); stderr disappears unless launched via `open -a` from a terminal;
+  TCC grants tied to the bundle ID instead of the binary path.
 
 ## Notes from the porting effort
 

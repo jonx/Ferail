@@ -133,7 +133,7 @@ Before finishing code changes:
 
 - Run `cargo check`.
 - Run `cargo test` unless the change is docs-only.
-- For UI changes, render at least one screenshot with `cargo run --bin feraille -- --screenshot ...`
+- For UI changes, render at least one screenshot with `cargo run --bin Feraille -- --screenshot ...`
   and inspect it.
 - Do not run whole-repo formatters casually; this repo may have local dirty work.
 

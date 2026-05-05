@@ -3,10 +3,13 @@ name = "feraille-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Feraille — Windows file explorer (binary)"
+description = "Feraille — macOS file explorer (binary)"
 
 [[bin]]
-name = "feraille"
+# Capitalised so macOS shows "Feraille" in the menu bar / About / dock
+# tooltip. Without an .app bundle, NSApplication uses the executable
+# basename as the process name; lowercase looked unprofessional.
+name = "Feraille"
 path = "src/main.rs"
 
 [dependencies]

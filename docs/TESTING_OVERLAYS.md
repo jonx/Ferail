@@ -8,7 +8,7 @@ overlays that make performance and async behavior visible.
 Use the binary's screenshot mode:
 
 ```sh
-cargo run --bin feraille -- \
+cargo run --bin Feraille -- \
   --screenshot /tmp/feraille.png \
   --navigate ~/Source/Feraille \
   --width 1400 --height 900

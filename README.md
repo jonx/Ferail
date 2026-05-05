@@ -50,7 +50,7 @@ or drag/drop.
 ## Running
 
 ```sh
-cargo run --bin feraille
+cargo run --bin Feraille
 ```
 
 Useful bindings:
@@ -73,7 +73,7 @@ Useful bindings:
 The binary can render deterministic PNGs without opening a window:
 
 ```sh
-cargo run --bin feraille -- \
+cargo run --bin Feraille -- \
   --screenshot /tmp/feraille.png \
   --navigate ~/Source/Feraille \
   --width 1400 --height 900 \
@@ -84,7 +84,7 @@ cargo run --bin feraille -- \
 Run:
 
 ```sh
-cargo run --bin feraille -- --help
+cargo run --bin Feraille -- --help
 ```
 
 The CLI is the preferred way to verify visual changes in this repo. See
