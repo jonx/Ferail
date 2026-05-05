@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use feraille_controls::primitives::{
+    progress_strip::{ProgressStrip, ProgressTaskId},
     scrollbar::Scrollbar,
     splitter::Splitter,
     text_input::{TextInput, TextInputEvent, TextInputKey},
@@ -167,6 +168,13 @@ pub struct App {
     pub breadcrumb: BreadcrumbBar,
     pub tree: FileTree,
     pub focused_pane: FocusedPane,
+    /// Footer progress strip — debounced; visible during long-running
+    /// background work (magic prefetch, future async enumeration).
+    pub progress: ProgressStrip,
+    /// In-flight magic-prefetch task. `Some` between `start_magic_prefetch`
+    /// and the matching `MagicBatch` event. Stale tasks are completed
+    /// silently when generation rolls over.
+    magic_progress: Option<ProgressTaskId>,
     pub splitter_x: f32,
     pub show_hidden: bool,
     pub ant_trail: AntTrail,
@@ -939,6 +947,8 @@ impl App {
             breadcrumb,
             tree,
             focused_pane: FocusedPane::List,
+            progress: ProgressStrip::new(),
+            magic_progress: None,
             splitter_x: SIDEBAR_DEFAULT,
             show_hidden: false,
             ant_trail: AntTrail::new(),
@@ -1359,6 +1369,14 @@ impl App {
             return;
         }
 
+        // If a previous prefetch is still in flight, cancel its progress
+        // (its `MagicBatch` may still arrive but the generation gate
+        // will drop it).
+        if let Some(prev) = self.magic_progress.take() {
+            self.progress.cancel(prev);
+        }
+        self.magic_progress = Some(self.progress.start_indeterminate());
+
         std::thread::spawn(move || {
             let results = candidates
                 .into_iter()
@@ -1714,6 +1732,14 @@ impl App {
             FRect::new(0.0, viewport.height - STATUS_H, viewport.width, 1.0),
             tokens.border.subtle,
         );
+        // Progress strip overlays the top edge of the status bar.
+        let now = std::time::Instant::now();
+        self.progress.paint(
+            FRect::new(0.0, viewport.height - STATUS_H, viewport.width, 2.0),
+            now,
+            tokens,
+            renderer,
+        );
         renderer.draw_text(
             FPoint::new(
                 tokens.space.md,
@@ -1763,6 +1789,12 @@ impl App {
         }
         self.renderer = Some(renderer);
         self.surface = Some(surface);
+        // Drive progress-strip animation: if the strip is still active,
+        // request another redraw so the comet keeps moving. Self-driven
+        // via winit's redraw queue rather than a timer thread.
+        if self.progress.next_wakeup(std::time::Instant::now()).is_some() {
+            self.request_redraw();
+        }
     }
 }
 
@@ -1835,6 +1867,9 @@ impl ApplicationHandler<AppEvent> for App {
                     || self.tabs[self.active].current_dir != dir
                 {
                     return;
+                }
+                if let Some(id) = self.magic_progress.take() {
+                    self.progress.complete(id);
                 }
 
                 let cursor_name = self.cursor_entry_name();

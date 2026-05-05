@@ -42,6 +42,9 @@ pub struct Args {
     pub mac_chrome: bool, // simulate macOS native chrome (traffic-light inset on tabstrip)
     pub rename: bool,     // open the rename dialog with the cursor entry
     pub new_folder: bool, // open the new-folder dialog
+    /// Force-show the footer ProgressStrip (ignoring debounce). Used to
+    /// verify the visual under deterministic conditions.
+    pub simulate_progress: Option<f32>,
 }
 
 pub fn parse_args() -> Args {
@@ -85,6 +88,13 @@ pub fn parse_args() -> Args {
             "--mac-chrome" => args.mac_chrome = true,
             "--rename" => args.rename = true,
             "--new-folder" => args.new_folder = true,
+            "--simulate-progress" => {
+                args.simulate_progress = Some(
+                    iter.next()
+                        .and_then(|v| v.parse::<f32>().ok())
+                        .unwrap_or(-1.0),
+                );
+            }
             "--show-hidden" => args.show_hidden = true,
             "--filter" => args.filter = iter.next(),
             "--search" => args.search = true,
@@ -242,6 +252,15 @@ pub fn run(args: Args) -> Result<()> {
     }
     if args.preview {
         app.set_preview_visible(true);
+    }
+    if let Some(p) = args.simulate_progress {
+        if p < 0.0 {
+            let _ = app.progress.start_indeterminate();
+        } else {
+            let _ = app.progress.start_determinate(p);
+        }
+        // Bypass the 50ms debounce so the strip shows in the screenshot.
+        std::thread::sleep(std::time::Duration::from_millis(60));
     }
 
     let font_bytes = load_default_font().context("load default font")?;

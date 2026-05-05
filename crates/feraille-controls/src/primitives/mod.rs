@@ -5,6 +5,7 @@
 //! `loading_spinner`, `progress_bar`, `toast`, `overlay`.
 
 pub mod focus_ring;
+pub mod progress_strip;
 pub mod scrollbar;
 pub mod splitter;
 pub mod text_input;
