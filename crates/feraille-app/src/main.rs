@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use feraille_controls::primitives::{
+    panel::ModalPanel,
     progress_strip::{ProgressStrip, ProgressTaskId},
     scrollbar::Scrollbar,
     splitter::Splitter,
@@ -862,21 +863,17 @@ impl App {
         let Some(d) = self.dialog.as_ref() else {
             return;
         };
-        // Backdrop
-        renderer.fill_rect(
-            FRect::new(0.0, 0.0, viewport.width, viewport.height),
-            feraille_design::Color::rgba(0, 0, 0, 90),
-        );
-        let panel_w = 420.0;
-        let panel_h = 140.0;
-        let panel_x = ((viewport.width - panel_w) / 2.0).round();
-        let panel_y = ((viewport.height - panel_h) / 2.0).round();
-        let panel = FRect::new(panel_x, panel_y, panel_w, panel_h);
-        renderer.fill_rect(panel, tokens.bg.layer1);
-        renderer.stroke_rect(panel, 1.0, tokens.border.default);
-        let pad = tokens.space.lg;
+        let (panel, body) = ModalPanel {
+            viewport: FRect::new(0.0, 0.0, viewport.width, viewport.height),
+            width: 420.0,
+            height: 140.0,
+            top_offset_fraction: None,
+            backdrop_alpha: 90,
+            padding: tokens.space.lg,
+        }
+        .paint(tokens, renderer);
         renderer.draw_text(
-            FPoint::new(panel.left() + pad, panel.top() + pad),
+            FPoint::new(body.left(), body.top()),
             d.mode.title(),
             TextStyle {
                 size: tokens.text.lg,
@@ -884,16 +881,11 @@ impl App {
                 color: tokens.fg.primary,
             },
         );
-        let input_y = panel.top() + pad + tokens.text.lg + tokens.space.md;
-        let input_rect = FRect::new(
-            panel.left() + pad,
-            input_y,
-            panel.size.width - pad * 2.0,
-            32.0,
-        );
+        let input_y = body.top() + tokens.text.lg + tokens.space.md;
+        let input_rect = FRect::new(body.left(), input_y, body.size.width, 32.0);
         d.input.paint(input_rect, true, tokens, renderer);
         renderer.draw_text(
-            FPoint::new(panel.left() + pad, panel.bottom() - pad - tokens.text.xs),
+            FPoint::new(body.left(), panel.bottom() - tokens.space.lg - tokens.text.xs),
             "Enter to confirm \u{00B7} Esc to cancel",
             TextStyle {
                 size: tokens.text.xs,
@@ -912,20 +904,17 @@ impl App {
         let Some(input) = self.search.as_ref() else {
             return;
         };
-        renderer.fill_rect(
-            FRect::new(0.0, 0.0, viewport.width, viewport.height),
-            feraille_design::Color::rgba(0, 0, 0, 70),
-        );
-        let panel_w = 520.0;
-        let panel_h = 132.0;
-        let panel_x = ((viewport.width - panel_w) / 2.0).round();
-        let panel_y = (viewport.height * 0.18).round();
-        let panel = FRect::new(panel_x, panel_y, panel_w, panel_h);
-        renderer.fill_rect(panel, tokens.bg.layer1);
-        renderer.stroke_rect(panel, 1.0, tokens.border.default);
-        let pad = tokens.space.lg;
+        let (panel, body) = ModalPanel {
+            viewport: FRect::new(0.0, 0.0, viewport.width, viewport.height),
+            width: 520.0,
+            height: 132.0,
+            top_offset_fraction: Some(0.18),
+            backdrop_alpha: 70,
+            padding: tokens.space.lg,
+        }
+        .paint(tokens, renderer);
         renderer.draw_text(
-            FPoint::new(panel.left() + pad, panel.top() + pad),
+            FPoint::new(body.left(), body.top()),
             "Filter",
             TextStyle {
                 size: tokens.text.lg,
@@ -934,14 +923,14 @@ impl App {
             },
         );
         let input_rect = FRect::new(
-            panel.left() + pad,
-            panel.top() + pad + tokens.text.lg + tokens.space.md,
-            panel.size.width - pad * 2.0,
+            body.left(),
+            body.top() + tokens.text.lg + tokens.space.md,
+            body.size.width,
             32.0,
         );
         input.paint(input_rect, true, tokens, renderer);
         renderer.draw_text(
-            FPoint::new(panel.left() + pad, panel.bottom() - pad - tokens.text.xs),
+            FPoint::new(body.left(), panel.bottom() - tokens.space.lg - tokens.text.xs),
             "Type to filter current folder \u{00B7} Enter to close \u{00B7} Esc to dismiss",
             TextStyle {
                 size: tokens.text.xs,
@@ -1090,20 +1079,15 @@ impl App {
             return;
         };
 
-        // Backdrop dim
-        renderer.fill_rect(
-            FRect::new(0.0, 0.0, viewport.width, viewport.height),
-            feraille_design::Color::rgba(0, 0, 0, 90),
-        );
-
-        // Panel rect
-        let panel_w = 480.0;
-        let panel_h = 380.0;
-        let panel_x = ((viewport.width - panel_w) / 2.0).round();
-        let panel_y = ((viewport.height - panel_h) / 2.0).round();
-        let panel = FRect::new(panel_x, panel_y, panel_w, panel_h);
-        renderer.fill_rect(panel, tokens.bg.layer1);
-        renderer.stroke_rect(panel, 1.0, tokens.border.default);
+        let (panel, _body) = ModalPanel {
+            viewport: FRect::new(0.0, 0.0, viewport.width, viewport.height),
+            width: 480.0,
+            height: 380.0,
+            top_offset_fraction: None,
+            backdrop_alpha: 90,
+            padding: tokens.space.xl,
+        }
+        .paint(tokens, renderer);
 
         renderer.push_clip(panel);
 
