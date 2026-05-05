@@ -82,6 +82,23 @@ I/O while painting or handling immediate interaction.
   (keyboard). Alternates that don't fit the one-shortcut-per-command
   model (Ctrl+H, bare Backspace / Delete, Alt+arrows) now redirect
   to dispatch instead of duplicating method calls.
+- Iter-5.9 (cont.): streaming directory enumeration shipped alongside
+  the catalogue migration. Per the spec at
+  [docs/features/STREAMING_ENUMERATION.md](docs/features/STREAMING_ENUMERATION.md):
+  `NativeFs::enumerate_streaming` is a worker-side function that reads
+  `std::fs::read_dir`, accumulates `FileEntry` rows into 256-row
+  batches, and invokes a callback per batch with cancellation between
+  entries. `feraille-app` owns the threading and event-loop dispatch:
+  new `start_enumeration` spawns via `obs::spawn_logged`, posts
+  `AppEvent::EnumerationBatch` per batch and `EnumerationDone` at the
+  end, both gated on a generation token. `goto_path` and
+  `refresh_active_tab` migrated; tree-pane callers untouched (small
+  folders, no benefit). Per-batch the visible list re-filters and
+  re-sorts; scroll/cursor preserved across batches when refreshing
+  (F5), reset when navigating. Surveyed Ferail first — its
+  `EnumerationService` had the same worker + channel + generation
+  shape, but with no cancel flag and PostMessageW dispatch — confirmed
+  the design and avoided its known gaps.
 
 ## Important Bug Lesson: Magic Sniffing Hang
 
