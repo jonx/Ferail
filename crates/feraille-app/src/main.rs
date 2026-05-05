@@ -1963,6 +1963,15 @@ impl ApplicationHandler<AppEvent> for App {
         let icon_result = feraille_shell_mac::set_app_icon_from_png_bytes(APP_ICON_PNG);
         log_info!(56, "set_app_icon: {:?}", icon_result);
 
+        // Install the app menu bar (App / Edit / Window submenus, About
+        // panel options). Idempotent if resumed() ever fires twice.
+        feraille_shell_mac::install_app_menu(
+            "Feraille",
+            "The file explorer that runs wild",
+            env!("CARGO_PKG_VERSION"),
+            "© 2026 Feraille Project · MIT OR Apache-2.0",
+        );
+
         let scale = window.scale_factor() as f32;
         let size = window.inner_size();
         self.width = size.width.max(1);

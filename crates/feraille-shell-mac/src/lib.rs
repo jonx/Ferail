@@ -10,10 +10,24 @@
 //! this crate unconditionally.
 
 #[cfg(target_os = "macos")]
+mod app_menu;
+
+#[cfg(target_os = "macos")]
 mod drag;
 
 #[cfg(target_os = "macos")]
 mod menu;
+
+/// Install the application menu bar (`NSApp.mainMenu`) and configure the
+/// standard About panel content. Call once at startup, on the main thread,
+/// after [`set_app_icon_from_png_bytes`]. No-op on non-macOS.
+#[cfg(target_os = "macos")]
+pub fn install_app_menu(app_name: &str, tagline: &str, version: &str, copyright: &str) {
+    app_menu::install_app_menu(app_name, tagline, version, copyright);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn install_app_menu(_app_name: &str, _tagline: &str, _version: &str, _copyright: &str) {}
 
 /// Show a context menu at `cursor_dips` (relative to the window's content
 /// view) with the given titles. Returns the 0-based index of the selected
