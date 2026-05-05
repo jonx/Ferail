@@ -75,6 +75,43 @@ pub fn reveal_in_finder(path: &std::path::Path) {
 #[cfg(not(target_os = "macos"))]
 pub fn reveal_in_finder(_path: &std::path::Path) {}
 
+/// Replace the running process's dock/app icon with the image decoded
+/// from `png_bytes`. Useful when the binary is launched outside an .app
+/// bundle (cargo run, debugger) where macOS would otherwise show the
+/// generic executable icon.
+///
+/// Silently no-ops on non-macOS, and on macOS if the PNG can't be
+/// decoded into an `NSImage`. Must be called on the main thread (the
+/// usual app-startup constraint).
+#[cfg(target_os = "macos")]
+pub fn set_app_icon_from_png_bytes(png_bytes: &[u8]) {
+    use objc2::ClassType;
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::{MainThreadMarker, NSData};
+
+    // sharedApplication() requires a main-thread marker; we are called
+    // from app startup which runs on the main thread. If somehow we
+    // aren't, bail rather than fault.
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    unsafe {
+        let data = NSData::dataWithBytes_length(
+            png_bytes.as_ptr() as *mut std::ffi::c_void,
+            png_bytes.len(),
+        );
+        let alloc = NSImage::alloc();
+        let Some(img) = NSImage::initWithData(alloc, &data) else {
+            return;
+        };
+        let app = NSApplication::sharedApplication(mtm);
+        app.setApplicationIconImage(Some(&img));
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_app_icon_from_png_bytes(_png_bytes: &[u8]) {}
+
 /// Width to reserve at the leading edge of the tabstrip so the OS
 /// traffic-light buttons (close / minimize / zoom) don't overlap our
 /// content. Standard macOS layout puts the leftmost button at ~10 DIPs

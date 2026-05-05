@@ -15,6 +15,7 @@ objc2-foundation = { version = "0.2", features = [
     "NSArray",
     "NSGeometry",
     "NSString",
+    "NSData",
 ] }
 objc2-app-kit = { version = "0.2", features = [
     "NSWindow",

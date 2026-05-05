@@ -144,6 +144,11 @@ const SIDEBAR_DEFAULT: f32 = 220.0;
 const SIDEBAR_MIN: f32 = 160.0;
 const SIDEBAR_MAX: f32 = 480.0;
 
+/// Embedded dock/app icon. Reused from the Windows predecessor (Ferail)
+/// — the colourful folder with "Fe". Set at runtime via NSApplication so
+/// `cargo run` builds (no .app bundle) get the real icon in the dock.
+const APP_ICON_PNG: &[u8] = include_bytes!("../resources/feraille.png");
+
 fn main() -> Result<()> {
     obs::init();
     let args = screenshot::parse_args();
@@ -151,6 +156,7 @@ fn main() -> Result<()> {
         log_info!(56, "headless screenshot path");
         return screenshot::run(args);
     }
+    feraille_shell_mac::set_app_icon_from_png_bytes(APP_ICON_PNG);
     let event_loop = EventLoop::<AppEvent>::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = App::new();
