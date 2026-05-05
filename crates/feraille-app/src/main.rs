@@ -12,6 +12,7 @@
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -31,7 +32,7 @@ use feraille_core::{AntTrail, EntryKind, EnumerationError, FileEntry, FsBackend,
 use feraille_design::{FontWeight, Theme, Tokens};
 use feraille_fs_native::{
     detect_magic, fetch_icon_rgba, home_dir, list_volumes, move_to_trash, open_with_default,
-    NativeFs,
+    NativeFs, DEFAULT_ENUMERATION_BATCH,
 };
 
 mod obs;
@@ -111,6 +112,23 @@ enum AppEvent {
     /// palette / future remappable shortcut). Dispatched to the
     /// matching App method by id in `user_event`.
     Command(CommandId),
+    /// Streaming-enumeration batch: append `entries` to the active
+    /// tab if `generation` and `dir` still match the in-flight
+    /// listing. Stale batches are dropped at the gate in `user_event`.
+    EnumerationBatch {
+        generation: u64,
+        dir: PathBuf,
+        entries: Vec<FileEntry>,
+    },
+    /// Final marker for a streamed enumeration. Always sent before
+    /// the worker exits (even on cancellation, where `error` is
+    /// `None`). On hard failure mid-stream, `error` carries the
+    /// reason and any rows already delivered remain visible.
+    EnumerationDone {
+        generation: u64,
+        dir: PathBuf,
+        error: Option<EnumerationError>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -165,6 +183,66 @@ const SIDEBAR_MAX: f32 = 480.0;
 /// — the colourful folder with "Fe". Set at runtime via NSApplication so
 /// `cargo run` builds (no .app bundle) get the real icon in the dock.
 const APP_ICON_PNG: &[u8] = include_bytes!("../resources/feraille.png");
+
+/// Walk the command catalogue and try to match the current keystroke
+/// against every command's `default_shortcut`. Returns the matching
+/// `CommandId` or `None`. This is the iter-5.9 unification: changing
+/// a binding lives in `feraille_core::commands`, not in two parallel
+/// match tables.
+///
+/// Cross-platform note: `primary` matches when either `super` (Cmd
+/// on macOS) or `control` is held — preserves the keyboard handler's
+/// macOS-friendly-but-Linux-tolerant behaviour from before iter-5.9.
+fn keystroke_to_command(logical: &Key, mods: ModifiersState) -> Option<CommandId> {
+    let primary = mods.super_key() || mods.control_key();
+    let shift = mods.shift_key();
+    let alt = mods.alt_key();
+
+    for spec in feraille_core::commands::all_commands() {
+        let Some(sc) = &spec.default_shortcut else {
+            continue;
+        };
+        if sc.primary != primary || sc.shift != shift || sc.alt != alt {
+            continue;
+        }
+        if matches_shortcut_key(sc.key, logical) {
+            return Some(spec.id);
+        }
+    }
+    None
+}
+
+fn matches_shortcut_key(spec_key: &str, logical: &Key) -> bool {
+    match (spec_key, logical) {
+        ("F1", Key::Named(NamedKey::F1)) => true,
+        ("F2", Key::Named(NamedKey::F2)) => true,
+        ("F3", Key::Named(NamedKey::F3)) => true,
+        ("F4", Key::Named(NamedKey::F4)) => true,
+        ("F5", Key::Named(NamedKey::F5)) => true,
+        ("F6", Key::Named(NamedKey::F6)) => true,
+        ("F7", Key::Named(NamedKey::F7)) => true,
+        ("F8", Key::Named(NamedKey::F8)) => true,
+        ("F9", Key::Named(NamedKey::F9)) => true,
+        ("F10", Key::Named(NamedKey::F10)) => true,
+        ("F11", Key::Named(NamedKey::F11)) => true,
+        ("F12", Key::Named(NamedKey::F12)) => true,
+        ("Up", Key::Named(NamedKey::ArrowUp)) => true,
+        ("Down", Key::Named(NamedKey::ArrowDown)) => true,
+        ("Left", Key::Named(NamedKey::ArrowLeft)) => true,
+        ("Right", Key::Named(NamedKey::ArrowRight)) => true,
+        ("Backspace", Key::Named(NamedKey::Backspace)) => true,
+        ("Delete", Key::Named(NamedKey::Delete)) => true,
+        ("Tab", Key::Named(NamedKey::Tab)) => true,
+        ("Enter", Key::Named(NamedKey::Enter)) => true,
+        ("Escape", Key::Named(NamedKey::Escape)) => true,
+        // Single-character keys: the catalogue's "T" / "[" / "." etc.
+        // matches `Key::Character` case-insensitively, so the catalogue
+        // can use the visually-natural case ("T") without forcing the
+        // user to hold Shift.
+        (other, Key::Character(c)) => c.eq_ignore_ascii_case(other),
+        _ => false,
+    }
+}
 
 fn main() -> Result<()> {
     obs::init();
@@ -281,6 +359,23 @@ pub struct App {
     icon_queue: Vec<(String, PathBuf)>,
     icon_generation: u64,
     icon_progress: Option<ProgressTaskId>,
+    /// Generation counter for in-flight directory enumerations. Bumped
+    /// at every `start_enumeration`; results are gated on equality.
+    enumeration_generation: u64,
+    /// Cancel flag for the in-flight enumeration worker, or `None` if
+    /// idle. Setting it stops the worker after its next batch.
+    enumeration_cancel: Option<Arc<AtomicBool>>,
+    /// `ProgressStrip` token for the in-flight enumeration; cancelled
+    /// when superseded, completed when the final batch lands.
+    enumeration_progress: Option<ProgressTaskId>,
+    /// Cursor name to preserve across in-flight batches. Set by
+    /// `refresh_active_tab` so F5 keeps the cursor on the same file;
+    /// `None` for plain navigation (cursor goes to row 0 of the first
+    /// arriving batch and follows the user's pick afterwards).
+    enumeration_preserve_cursor: Option<String>,
+    /// Scroll offset to restore on each batch. Non-zero only via the
+    /// refresh path; navigate resets to 0.
+    enumeration_preserve_scroll: f32,
     /// Pixel size for in-flight icon fetches; captured once at prefetch
     /// start so chunks stay consistent if the scale factor changes mid-run.
     icon_size_px: u32,
@@ -409,6 +504,35 @@ impl App {
             FocusedPane::List => FocusedPane::Tree,
         };
         self.set_focused_pane(next);
+    }
+
+    /// Put the breadcrumb into edit mode pre-filled with the active
+    /// tab's current directory.
+    pub fn open_breadcrumb_edit(&mut self) {
+        let path = self.tabs[self.active].current_dir.clone();
+        self.breadcrumb.enter_edit_mode(&path);
+    }
+
+    /// Activate the next tab, wrapping at the end. No-op when only one
+    /// tab is open.
+    pub fn next_tab(&mut self) {
+        let n = self.tabs.len();
+        if n <= 1 {
+            return;
+        }
+        let next = (self.active + 1) % n;
+        self.switch_tab(next);
+    }
+
+    /// Activate the previous tab, wrapping at the start. No-op when
+    /// only one tab is open.
+    pub fn prev_tab(&mut self) {
+        let n = self.tabs.len();
+        if n <= 1 {
+            return;
+        }
+        let prev = if self.active == 0 { n - 1 } else { self.active - 1 };
+        self.switch_tab(prev);
     }
 
     /// Pin a path to Favorites if not already present, or remove it.
@@ -1139,6 +1263,11 @@ impl App {
             icon_generation: 0,
             icon_progress: None,
             icon_size_px: 16,
+            enumeration_generation: 0,
+            enumeration_cancel: None,
+            enumeration_progress: None,
+            enumeration_preserve_cursor: None,
+            enumeration_preserve_scroll: 0.0,
             drag_watch: None,
             pointer_dips: None,
             modifiers: ModifiersState::empty(),
@@ -1411,6 +1540,42 @@ impl App {
         self.goto_path(path);
     }
 
+    /// Single dispatcher for every Feraille-owned command. Both the
+    /// menu bar (via `AppEvent::Command`) and the keyboard handler
+    /// route here, so adding / renaming / rebinding a shortcut never
+    /// needs to update two parallel matches. Unknown ids log and
+    /// no-op — useful for catching catalogue/dispatch drift.
+    pub fn dispatch_command(&mut self, id: CommandId) {
+        log_info!(59, "command: {:?}", id);
+        match id.0 {
+            "app.about" => feraille_shell_mac::show_about_panel(),
+            "app.settings" => {
+                // Real Settings window is iter-5.11. Catalogue entry,
+                // menu item, and Cmd+, all exist; action is a no-op
+                // until the UI is wired.
+            }
+            "file.new_tab" => self.new_tab_at(home_dir()),
+            "file.new_folder" => self.open_new_folder(),
+            "file.get_info" => self.toggle_properties(),
+            "file.move_to_trash" => self.delete_at_cursor_to_trash(),
+            "file.copy_path" => self.copy_cursor_path(),
+            "file.reveal_in_finder" => self.reveal_cursor_in_finder(),
+            "file.refresh" => self.refresh_active_tab(),
+            "view.search" => self.open_search(),
+            "view.edit_breadcrumb" => self.open_breadcrumb_edit(),
+            "view.toggle_preview" => self.toggle_preview(),
+            "view.toggle_hidden" => self.toggle_hidden(),
+            "go.back" => self.navigate_back(),
+            "go.forward" => self.navigate_forward(),
+            "go.parent" => self.navigate_parent(),
+            "go.home" => self.navigate(home_dir()),
+            "window.next_tab" => self.next_tab(),
+            "window.prev_tab" => self.prev_tab(),
+            other => log_warn!(59, "unknown command id: {:?}", other),
+        }
+        self.request_redraw();
+    }
+
     /// Move the active tab's `history_index` backward and re-enumerate.
     pub fn navigate_back(&mut self) {
         let path = {
@@ -1440,43 +1605,115 @@ impl App {
     /// Internal: re-enumerate `path` and update view state. Does NOT
     /// touch the history vector; callers manage that.
     fn goto_path(&mut self, path: PathBuf) {
-        let t0 = std::time::Instant::now();
         let id = self.fs.id_for_path(&path);
         self.ant_trail.record(id);
         // Rebuild sections so Recents reflects the latest visit.
         self.rebuild_tree_sections();
-        let mut handle = self.fs.enumerate(id);
-        let entry_count = handle.initial.len();
-        filter_hidden(&mut handle.initial, self.show_hidden);
-        let visible_count = handle.initial.len();
-        if let Some(err) = &handle.error {
-            log_warn!(
-                56,
-                "navigate -> {} failed to enumerate: {:?}",
-                path.display(),
-                err
-            );
-        }
+        // Reset list state synchronously so paint sees a coherent
+        // "navigating" view; entries arrive over time via
+        // EnumerationBatch events.
         let tab = &mut self.tabs[self.active];
-        tab.all_entries = handle.initial;
-        tab.error = handle.error;
+        tab.all_entries.clear();
+        tab.entries.clear();
+        tab.error = None;
         tab.filter_text.clear();
         tab.current_dir = path.clone();
         tab.list_scroll = 0.0;
+        self.list.scroll_offset = 0.0;
         self.rebuild_visible_entries(None, false);
         self.breadcrumb.set_path(&path);
         self.reveal_in_tree(&path);
         self.sync_window_title();
+        self.start_enumeration(path, None, 0.0);
+        // prefetch_icons + start_magic_prefetch fire after the
+        // enumeration completes, in `AppEvent::EnumerationDone`. Calling
+        // them here would no-op (entries are still empty).
+    }
+
+    /// Spawn a worker that streams the active tab's directory listing
+    /// in batches of `DEFAULT_ENUMERATION_BATCH`. Cancels any prior
+    /// in-flight enumeration. The `preserve_cursor` and `preserve_scroll`
+    /// arguments survive the refresh: F5 sets them so the user's cursor
+    /// and scroll position stay stable across batches; navigation
+    /// passes `None`/`0.0` so the new listing presents at the top.
+    ///
+    /// Headless callers (no event proxy, e.g. screenshot CLI) fall
+    /// back to the eager path so generated images contain rows.
+    fn start_enumeration(
+        &mut self,
+        path: PathBuf,
+        preserve_cursor: Option<String>,
+        preserve_scroll: f32,
+    ) {
+        let id = self.fs.id_for_path(&path);
+
+        let Some(proxy) = self.event_proxy.clone() else {
+            // Headless — synchronous fallback so screenshots are stable.
+            // Mirrors what AppEvent::EnumerationDone does in the live
+            // path: populate, rebuild visible, kick the prefetches.
+            let mut handle = self.fs.enumerate(id);
+            filter_hidden(&mut handle.initial, self.show_hidden);
+            let tab = &mut self.tabs[self.active];
+            tab.all_entries = handle.initial;
+            tab.error = handle.error;
+            self.rebuild_visible_entries(preserve_cursor, preserve_scroll > 0.0);
+            if preserve_scroll > 0.0 {
+                self.list.scroll_offset = preserve_scroll;
+            }
+            self.prefetch_icons();
+            self.start_magic_prefetch();
+            return;
+        };
+
+        // Cancel previous enumeration: flip its flag so the worker
+        // exits at the next checkpoint, drop its progress token.
+        if let Some(prev) = self.enumeration_cancel.take() {
+            prev.store(true, Ordering::Relaxed);
+        }
+        if let Some(prev_id) = self.enumeration_progress.take() {
+            self.progress.cancel(prev_id);
+        }
+
+        self.enumeration_generation = self.enumeration_generation.wrapping_add(1);
+        let generation = self.enumeration_generation;
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.enumeration_cancel = Some(cancel.clone());
+        self.enumeration_progress = Some(self.progress.start_indeterminate());
+        self.enumeration_preserve_cursor = preserve_cursor;
+        self.enumeration_preserve_scroll = preserve_scroll;
+
         log_info!(
-            56,
-            "navigate -> {} ({} entries, {} visible after hidden-filter, enumerate={:.1}ms)",
-            path.display(),
-            entry_count,
-            visible_count,
-            t0.elapsed().as_secs_f64() * 1000.0,
+            59,
+            "enumeration: starting (gen={}, dir={})",
+            generation,
+            path.display()
         );
-        self.prefetch_icons();
-        self.start_magic_prefetch();
+
+        let fs = self.fs.clone();
+        let dir_for_worker = path.clone();
+        let dir_for_done = path;
+        obs::spawn_logged("enumerate", move || {
+            let proxy_for_done = proxy.clone();
+            let dir_for_batches = dir_for_worker.clone();
+            let mut on_batch = |batch: Vec<FileEntry>| {
+                let _ = proxy.send_event(AppEvent::EnumerationBatch {
+                    generation,
+                    dir: dir_for_batches.clone(),
+                    entries: batch,
+                });
+            };
+            let error = fs.enumerate_streaming(
+                &dir_for_worker,
+                DEFAULT_ENUMERATION_BATCH,
+                &cancel,
+                &mut on_batch,
+            );
+            let _ = proxy_for_done.send_event(AppEvent::EnumerationDone {
+                generation,
+                dir: dir_for_done,
+                error,
+            });
+        });
     }
 
     /// Build a deduped queue of icon fetches for the active tab and post
@@ -1657,16 +1894,15 @@ impl App {
         let scroll = self.list.scroll_offset;
         let path = self.tabs[self.active].current_dir.clone();
         let id = self.fs.id_for_path(&path);
-        let mut handle = self.fs.enumerate(id);
-        filter_hidden(&mut handle.initial, self.show_hidden);
+        // Wipe in place; new entries will arrive via EnumerationBatch.
         let tab = &mut self.tabs[self.active];
-        tab.all_entries = handle.initial;
-        self.rebuild_visible_entries(cursor_name, true);
-        self.list.scroll_offset = scroll;
+        tab.all_entries.clear();
+        tab.entries.clear();
+        tab.error = None;
         // Tree might have a stale view of the current folder's contents.
         // Mark unloaded so a future expand re-enumerates.
         self.tree.invalidate(id);
-        self.start_magic_prefetch();
+        self.start_enumeration(path, cursor_name, scroll);
     }
 
     pub fn toggle_hidden(&mut self) {
@@ -2261,25 +2497,77 @@ impl ApplicationHandler<AppEvent> for App {
                     });
                 }
             }
-            AppEvent::Command(id) => {
-                log_info!(58, "command: {:?}", id);
-                match id.0 {
-                    "app.about" => feraille_shell_mac::show_about_panel(),
-                    "app.settings" => {
-                        // Real Settings window lands separately. The
-                        // catalogue entry, menu item, and Cmd+,
-                        // shortcut all exist; the action is a no-op
-                        // until the UI is wired.
-                    }
-                    "file.new_tab" => self.new_tab_at(home_dir()),
-                    "file.get_info" => self.toggle_properties(),
-                    "view.toggle_hidden" => self.toggle_hidden(),
-                    "go.back" => self.navigate_back(),
-                    "go.forward" => self.navigate_forward(),
-                    "go.parent" => self.navigate_parent(),
-                    "go.home" => self.navigate(home_dir()),
-                    other => log_warn!(58, "unknown command id: {:?}", other),
+            AppEvent::Command(id) => self.dispatch_command(id),
+            AppEvent::EnumerationBatch {
+                generation,
+                dir,
+                mut entries,
+            } => {
+                if generation != self.enumeration_generation
+                    || self.tabs[self.active].current_dir != dir
+                {
+                    return;
                 }
+                filter_hidden(&mut entries, self.show_hidden);
+                let tab = &mut self.tabs[self.active];
+                tab.all_entries.extend(entries);
+                let cursor_name = self
+                    .enumeration_preserve_cursor
+                    .clone()
+                    .or_else(|| self.cursor_entry_name());
+                let preserve_scroll = self.enumeration_preserve_scroll > 0.0;
+                let saved_scroll = self.enumeration_preserve_scroll;
+                self.rebuild_visible_entries(cursor_name, preserve_scroll);
+                if preserve_scroll {
+                    self.list.scroll_offset = saved_scroll;
+                }
+                self.request_redraw();
+            }
+            AppEvent::EnumerationDone {
+                generation,
+                dir,
+                error,
+            } => {
+                if generation != self.enumeration_generation {
+                    log_info!(
+                        59,
+                        "enumeration done dropped (stale gen={} != {})",
+                        generation,
+                        self.enumeration_generation
+                    );
+                    return;
+                }
+                if self.tabs[self.active].current_dir != dir {
+                    return;
+                }
+                if let Some(id) = self.enumeration_progress.take() {
+                    self.progress.complete(id);
+                }
+                self.enumeration_cancel = None;
+                self.enumeration_preserve_cursor = None;
+                self.enumeration_preserve_scroll = 0.0;
+                let entry_count = self.tabs[self.active].all_entries.len();
+                if let Some(err) = error {
+                    log_warn!(
+                        59,
+                        "enumeration error after {} rows: {:?}",
+                        entry_count,
+                        err
+                    );
+                    self.tabs[self.active].error = Some(err.clone());
+                    if entry_count == 0 {
+                        // No rows arrived — empty-state panel takes over;
+                        // toast would be redundant.
+                    } else {
+                        self.toast_error(format!("Listing error: {err:?}"));
+                    }
+                } else {
+                    log_info!(59, "enumeration done: {} rows (gen={})", entry_count, generation);
+                }
+                // Both prefetches read the populated listing; fire now
+                // that the enumeration has settled.
+                self.prefetch_icons();
+                self.start_magic_prefetch();
                 self.request_redraw();
             }
         }
@@ -2689,80 +2977,38 @@ impl ApplicationHandler<AppEvent> for App {
                     return;
                 }
 
-                // Ctrl+L / Cmd+L → enter breadcrumb edit mode.
-                if let Some(t) = text.as_deref() {
-                    let mod_held = self.modifiers.control_key() || self.modifiers.super_key();
-                    if (t == "l" || t == "L") && mod_held {
-                        let path = self.tabs[self.active].current_dir.clone();
-                        self.breadcrumb.enter_edit_mode(&path);
-                        self.request_redraw();
-                        return;
-                    }
-                    if (t == "f" || t == "F") && mod_held {
-                        self.open_search();
-                        self.request_redraw();
-                        return;
-                    }
-                    if (t == "p" || t == "P") && mod_held {
-                        self.toggle_preview();
-                        self.request_redraw();
-                        return;
-                    }
+                // Catalogue-driven dispatch for global app shortcuts.
+                // The translator walks `feraille_core::commands` and
+                // returns the first command whose `default_shortcut`
+                // matches; rebinding a key lives in the catalogue, not
+                // in this handler. See `keystroke_to_command` above.
+                if let Some(id) = keystroke_to_command(&logical_key, self.modifiers) {
+                    self.dispatch_command(id);
+                    return;
                 }
 
-                // Hidden-files toggle:
-                //  - Ctrl+H (Linux/Windows convention)
-                //  - Cmd+Shift+. (macOS convention used by Finder)
+                // Alternates that don't fit the single-shortcut-per-command
+                // model. All redirect to `dispatch_command` so behaviour
+                // stays unified with menus / future palette.
+                //
+                //   Ctrl+H        → view.toggle_hidden  (Linux convention;
+                //                   catalogue's primary binding is Cmd+Shift+.)
+                //   F6            → view.cycle_focus    (pane navigation;
+                //                   not in catalogue — it's not a user-facing
+                //                   command in the discoverable sense)
                 if let Some(t) = text.as_deref() {
-                    let ctrl_h = (t == "h" || t == "H") && self.modifiers.control_key();
-                    let cmd_shift_dot =
-                        t == "." && self.modifiers.super_key() && self.modifiers.shift_key();
-                    if ctrl_h || cmd_shift_dot {
-                        self.toggle_hidden();
-                        self.request_redraw();
-                        return;
-                    }
-                    // Cmd+I (macOS Finder) / Ctrl+I → file properties panel.
-                    let mod_held = self.modifiers.super_key() || self.modifiers.control_key();
-                    if (t == "i" || t == "I") && mod_held {
-                        self.toggle_properties();
-                        self.request_redraw();
-                        return;
-                    }
-                    // Cmd+[ / Cmd+] → back / forward (Finder convention).
-                    if mod_held && t == "[" {
-                        self.navigate_back();
-                        self.request_redraw();
-                        return;
-                    }
-                    if mod_held && t == "]" {
-                        self.navigate_forward();
-                        self.request_redraw();
-                        return;
-                    }
-                    // Cmd+Shift+C / Ctrl+Shift+C → copy cursor path.
-                    if mod_held && self.modifiers.shift_key() && (t == "C" || t == "c") {
-                        self.copy_cursor_path();
-                        return;
-                    }
-                    // Cmd+Opt+R / Ctrl+Alt+R → reveal in Finder.
-                    if mod_held
-                        && self.modifiers.alt_key()
-                        && (t == "r" || t == "R" || t.is_empty())
+                    if (t == "h" || t == "H")
+                        && self.modifiers.control_key()
+                        && !self.modifiers.super_key()
                     {
-                        self.reveal_cursor_in_finder();
-                        return;
-                    }
-                    // Cmd+Shift+N / Ctrl+Shift+N → new folder dialog.
-                    if mod_held && self.modifiers.shift_key() && (t == "N" || t == "n") {
-                        self.open_new_folder();
-                        self.request_redraw();
+                        self.dispatch_command(CommandId("view.toggle_hidden"));
                         return;
                     }
                 }
 
                 // F6 cycles focus between Tree and List regardless of
-                // which pane currently owns focus.
+                // which pane currently owns focus. Stays out of the
+                // catalogue: pane focus is not a discoverable command.
                 if matches!(logical_key, Key::Named(NamedKey::F6)) {
                     self.cycle_focus();
                     self.request_redraw();
@@ -2840,13 +3086,13 @@ impl ApplicationHandler<AppEvent> for App {
                             event_loop.exit();
                         }
                     }
-                    // Alt+Left / Alt+Right → back / forward (alternative
-                    // to Cmd+[/]).
+                    // Alt+Left / Alt+Right → back / forward (alternate
+                    // bindings to the catalogue's Cmd+[ / Cmd+]).
                     Key::Named(NamedKey::ArrowLeft) if self.modifiers.alt_key() => {
-                        self.navigate_back();
+                        self.dispatch_command(CommandId("go.back"));
                     }
                     Key::Named(NamedKey::ArrowRight) if self.modifiers.alt_key() => {
-                        self.navigate_forward();
+                        self.dispatch_command(CommandId("go.forward"));
                     }
                     Key::Named(NamedKey::ArrowDown) => sel.move_cursor(1, count),
                     Key::Named(NamedKey::ArrowUp) => sel.move_cursor(-1, count),
@@ -2855,9 +3101,20 @@ impl ApplicationHandler<AppEvent> for App {
                     Key::Named(NamedKey::Home) => sel.move_cursor(-(count as i64), count),
                     Key::Named(NamedKey::End) => sel.move_cursor(count as i64, count),
                     Key::Named(NamedKey::Enter) => self.open_at_cursor(),
-                    Key::Named(NamedKey::Backspace) => self.navigate_parent(),
-                    Key::Named(NamedKey::F5) => self.refresh_active_tab(),
-                    Key::Named(NamedKey::Delete) => self.delete_at_cursor_to_trash(),
+                    // Bare Backspace / Delete are friendly single-key
+                    // alternates to the catalogue's Cmd+Up / Cmd+Backspace.
+                    Key::Named(NamedKey::Backspace) => {
+                        self.dispatch_command(CommandId("go.parent"));
+                    }
+                    Key::Named(NamedKey::Delete) => {
+                        self.dispatch_command(CommandId("file.move_to_trash"));
+                    }
+                    // F5 is in the catalogue and the translator catches
+                    // it before this match runs; this arm only fires on
+                    // F5+modifier combinations not in the catalogue.
+                    Key::Named(NamedKey::F5) => {
+                        self.dispatch_command(CommandId("file.refresh"));
+                    }
                     Key::Named(NamedKey::F2) => {
                         if matches!(self.focused_pane, FocusedPane::List) {
                             self.start_inline_rename();

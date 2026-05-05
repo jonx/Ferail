@@ -24,7 +24,7 @@ use std::time::Instant;
 /// New log calls should be tagged with the current iter (e.g. iter-5.7 →
 /// `57`). Crash-diagnostic output (startup banner, panic hook, worker
 /// panic line) does **not** flow through the macros and is always printed.
-pub const LOG_THRESHOLD: u32 = 58;
+pub const LOG_THRESHOLD: u32 = 59;
 
 static START: OnceLock<Instant> = OnceLock::new();
 

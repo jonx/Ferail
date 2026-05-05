@@ -161,7 +161,7 @@ pub fn install_app_menu(app_name: &str, tagline: &str, version: &str, copyright:
     if let Some(item) = build_category_submenu(mtm, &target, Category::Go, "Go") {
         main_menu.addItem(&item);
     }
-    main_menu.addItem(&build_window_submenu(mtm));
+    main_menu.addItem(&build_window_submenu(mtm, &target));
 
     let app = NSApplication::sharedApplication(mtm);
     app.setMainMenu(Some(&main_menu));
@@ -311,12 +311,26 @@ fn build_edit_submenu(mtm: MainThreadMarker) -> Retained<NSMenuItem> {
     }
 }
 
-fn build_window_submenu(mtm: MainThreadMarker) -> Retained<NSMenuItem> {
+fn build_window_submenu(mtm: MainThreadMarker, target: &AppMenuTarget) -> Retained<NSMenuItem> {
     unsafe {
         let item = NSMenuItem::new(mtm);
         let submenu = NSMenu::new(mtm);
         submenu.setTitle(&NSString::from_str("Window"));
 
+        // Catalogue-driven entries first (next/prev tab).
+        let cat_cmds: Vec<&CommandSpec> = all_commands()
+            .iter()
+            .filter(|s| s.category == Category::Window)
+            .collect();
+        let had_cat = !cat_cmds.is_empty();
+        for spec in cat_cmds {
+            submenu.addItem(&build_command_item(mtm, target, spec));
+        }
+        if had_cat {
+            submenu.addItem(&NSMenuItem::separatorItem(mtm));
+        }
+
+        // Built-in AppKit items.
         submenu.addItem(&make_responder_item(
             mtm,
             "Minimize",
@@ -409,9 +423,10 @@ unsafe fn make_responder_item(
     item
 }
 
-/// Translate the catalogue's neutral key DSL ("T", "Up", ".") into a
-/// macOS NSMenuItem key equivalent string. Named keys map to the
-/// Unicode code points AppKit recognises in `keyEquivalent`.
+/// Translate the catalogue's neutral key DSL ("T", "Up", ".", "F5",
+/// "Backspace") into a macOS NSMenuItem key equivalent string. Named
+/// keys map to the Unicode code points AppKit recognises in
+/// `keyEquivalent`.
 fn translate_key(key: &'static str) -> String {
     match key {
         // Arrow keys (NSUpArrowFunctionKey / NSDownArrowFunctionKey / …).
@@ -419,6 +434,25 @@ fn translate_key(key: &'static str) -> String {
         "Down" => "\u{F701}".to_string(),
         "Left" => "\u{F702}".to_string(),
         "Right" => "\u{F703}".to_string(),
+        // Function keys (NSF1FunctionKey = U+F704 .. NSF12FunctionKey = U+F70F).
+        "F1" => "\u{F704}".to_string(),
+        "F2" => "\u{F705}".to_string(),
+        "F3" => "\u{F706}".to_string(),
+        "F4" => "\u{F707}".to_string(),
+        "F5" => "\u{F708}".to_string(),
+        "F6" => "\u{F709}".to_string(),
+        "F7" => "\u{F70A}".to_string(),
+        "F8" => "\u{F70B}".to_string(),
+        "F9" => "\u{F70C}".to_string(),
+        "F10" => "\u{F70D}".to_string(),
+        "F11" => "\u{F70E}".to_string(),
+        "F12" => "\u{F70F}".to_string(),
+        // Editing keys.
+        "Backspace" => "\u{0008}".to_string(),
+        "Delete" => "\u{F728}".to_string(),
+        "Tab" => "\u{0009}".to_string(),
+        "Enter" => "\u{000D}".to_string(),
+        "Escape" => "\u{001B}".to_string(),
         // Single-char keys: lowercase so the modifier mask, not the
         // case, drives whether Shift is required.
         other => other.to_lowercase(),

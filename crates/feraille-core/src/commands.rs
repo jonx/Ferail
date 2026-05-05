@@ -60,6 +60,22 @@ impl Shortcut {
             alt: false,
         }
     }
+    pub const fn primary_alt(key: &'static str) -> Self {
+        Self {
+            key,
+            primary: true,
+            shift: false,
+            alt: true,
+        }
+    }
+    pub const fn bare(key: &'static str) -> Self {
+        Self {
+            key,
+            primary: false,
+            shift: false,
+            alt: false,
+        }
+    }
 }
 
 pub struct CommandSpec {
@@ -91,12 +107,60 @@ const CATALOGUE: &[CommandSpec] = &[
         default_shortcut: Some(Shortcut::primary("T")),
     },
     CommandSpec {
+        id: CommandId("file.new_folder"),
+        title: "New Folder",
+        category: Category::File,
+        default_shortcut: Some(Shortcut::primary_shift("N")),
+    },
+    CommandSpec {
         id: CommandId("file.get_info"),
         title: "Get Info",
         category: Category::File,
         default_shortcut: Some(Shortcut::primary("I")),
     },
+    CommandSpec {
+        id: CommandId("file.move_to_trash"),
+        title: "Move to Trash",
+        category: Category::File,
+        default_shortcut: Some(Shortcut::primary("Backspace")),
+    },
+    CommandSpec {
+        id: CommandId("file.copy_path"),
+        title: "Copy Path",
+        category: Category::File,
+        default_shortcut: Some(Shortcut::primary_shift("C")),
+    },
+    CommandSpec {
+        id: CommandId("file.reveal_in_finder"),
+        title: "Reveal in Finder",
+        category: Category::File,
+        default_shortcut: Some(Shortcut::primary_alt("R")),
+    },
+    CommandSpec {
+        id: CommandId("file.refresh"),
+        title: "Refresh",
+        category: Category::File,
+        default_shortcut: Some(Shortcut::bare("F5")),
+    },
     // View
+    CommandSpec {
+        id: CommandId("view.search"),
+        title: "Find",
+        category: Category::View,
+        default_shortcut: Some(Shortcut::primary("F")),
+    },
+    CommandSpec {
+        id: CommandId("view.edit_breadcrumb"),
+        title: "Edit Path",
+        category: Category::View,
+        default_shortcut: Some(Shortcut::primary("L")),
+    },
+    CommandSpec {
+        id: CommandId("view.toggle_preview"),
+        title: "Show Preview Pane",
+        category: Category::View,
+        default_shortcut: Some(Shortcut::primary("P")),
+    },
     CommandSpec {
         id: CommandId("view.toggle_hidden"),
         title: "Show Hidden Files",
@@ -127,6 +191,19 @@ const CATALOGUE: &[CommandSpec] = &[
         title: "Home",
         category: Category::Go,
         default_shortcut: Some(Shortcut::primary_shift("H")),
+    },
+    // Window
+    CommandSpec {
+        id: CommandId("window.next_tab"),
+        title: "Next Tab",
+        category: Category::Window,
+        default_shortcut: Some(Shortcut::primary_shift("]")),
+    },
+    CommandSpec {
+        id: CommandId("window.prev_tab"),
+        title: "Previous Tab",
+        category: Category::Window,
+        default_shortcut: Some(Shortcut::primary_shift("[")),
     },
 ];
 

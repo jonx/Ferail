@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -70,6 +71,116 @@ impl NativeFs {
 impl Default for NativeFs {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Default batch size for streaming enumeration — see
+/// [`NativeFs::enumerate_streaming`]. 256 is the spec target; tune via
+/// the screenshot timing pass before changing.
+pub const DEFAULT_ENUMERATION_BATCH: usize = 256;
+
+impl NativeFs {
+    /// Stream entries from `path` in batches of up to `batch_size`,
+    /// invoking `on_batch` each time the buffer fills or `read_dir`
+    /// drains. Pure-function: returns `Some(error)` on hard failure
+    /// (typically the initial `read_dir` open) and `None` on either
+    /// successful completion or cooperative cancellation.
+    ///
+    /// `cancel` is checked between entries and (lazily) between batches.
+    /// Setting it stops the worker after the next iteration; whatever's
+    /// already buffered gets flushed via `on_batch` before returning so
+    /// the caller can apply partial results.
+    ///
+    /// This is the worker-thread half of the streaming-enumeration
+    /// design ([docs/features/STREAMING_ENUMERATION.md]). The host
+    /// (`feraille-app`) owns thread spawning + event-loop dispatch.
+    pub fn enumerate_streaming(
+        &self,
+        path: &Path,
+        batch_size: usize,
+        cancel: &AtomicBool,
+        mut on_batch: impl FnMut(Vec<FileEntry>),
+    ) -> Option<EnumerationError> {
+        let read_dir = match std::fs::read_dir(path) {
+            Ok(rd) => rd,
+            Err(e) => return Some(map_io_error(&e)),
+        };
+        let mut buffer: Vec<FileEntry> = Vec::with_capacity(batch_size);
+        for dirent in read_dir.flatten() {
+            if cancel.load(Ordering::Relaxed) {
+                if !buffer.is_empty() {
+                    on_batch(std::mem::take(&mut buffer));
+                }
+                return None;
+            }
+            let Some(entry) = self.dirent_to_file_entry(&dirent) else {
+                continue;
+            };
+            buffer.push(entry);
+            if buffer.len() >= batch_size {
+                on_batch(std::mem::take(&mut buffer));
+                buffer.reserve(batch_size);
+            }
+        }
+        if !buffer.is_empty() {
+            on_batch(buffer);
+        }
+        None
+    }
+
+    /// Build a `FileEntry` from a single `DirEntry`. Returns `None` for
+    /// names that aren't valid UTF-8 or whose metadata can't be read —
+    /// matching the existing eager `enumerate` policy of skipping them
+    /// rather than failing the whole listing.
+    fn dirent_to_file_entry(&self, dirent: &std::fs::DirEntry) -> Option<FileEntry> {
+        let child_path = dirent.path();
+        let name = child_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(str::to_owned)?;
+        let metadata = dirent.metadata().ok()?;
+        let ft = metadata.file_type();
+        let kind = if ft.is_dir() {
+            EntryKind::Directory
+        } else if ft.is_symlink() {
+            EntryKind::Symlink
+        } else {
+            EntryKind::File
+        };
+        let size = metadata.len();
+        let mtime_unix = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let display_size = if matches!(kind, EntryKind::Directory) {
+            String::new()
+        } else {
+            humanize_bytes(size)
+        };
+        let display_mtime = humanize_mtime(mtime_unix);
+        let display_kind = describe_kind(kind, &name);
+        let id = self.id_for_path(&child_path);
+        Some(FileEntry {
+            id,
+            name,
+            kind,
+            size,
+            mtime_unix,
+            display_size,
+            display_mtime,
+            display_kind,
+            display_magic: String::new(),
+        })
+    }
+}
+
+fn map_io_error(e: &std::io::Error) -> EnumerationError {
+    match e.kind() {
+        std::io::ErrorKind::PermissionDenied => EnumerationError::PermissionDenied,
+        std::io::ErrorKind::NotFound => EnumerationError::NotFound,
+        _ => EnumerationError::Other(e.to_string()),
     }
 }
 

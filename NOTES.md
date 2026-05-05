@@ -71,6 +71,17 @@ I/O while painting or handling immediate interaction.
   dispatches to existing methods. Shortcuts become *one* of several
   possible bindings instead of the action's identity, opening the door
   to user-remappable bindings, a command palette, and scripting.
+- Iter-5.9: command catalogue grows to cover every existing keyboard
+  shortcut, and the keyboard handler is migrated to dispatch through
+  it. Ten new commands (`file.refresh`, `file.new_folder`,
+  `file.move_to_trash`, `file.copy_path`, `file.reveal_in_finder`,
+  `view.search`, `view.edit_breadcrumb`, `view.toggle_preview`,
+  `window.next_tab`, `window.prev_tab`) appear automatically as menu
+  items. `App::dispatch_command` is the single entry point reached
+  from both `AppEvent::Command` (menu) and `keystroke_to_command`
+  (keyboard). Alternates that don't fit the one-shortcut-per-command
+  model (Ctrl+H, bare Backspace / Delete, Alt+arrows) now redirect
+  to dispatch instead of duplicating method calls.
 
 ## Important Bug Lesson: Magic Sniffing Hang
 
