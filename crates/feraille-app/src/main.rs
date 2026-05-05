@@ -120,6 +120,17 @@ pub struct TextDialog {
     pub input: TextInput,
 }
 
+/// State for inline (in-row) rename. Lives until the user hits
+/// Enter (commit), Escape (cancel), clicks outside, or scrolls the row
+/// off-screen. The row index references the active tab's `entries`
+/// at edit-start; it stays stable because we don't refresh the tab
+/// while editing.
+pub struct InlineRenameState {
+    pub row_idx: usize,
+    pub original_name: String,
+    pub input: TextInput,
+}
+
 #[derive(Clone)]
 pub enum DialogMode {
     Rename { original_name: String },
@@ -238,6 +249,11 @@ pub struct App {
     pub properties_target: Option<usize>,
     /// Modal text dialog for rename / new-folder. `Some` while open.
     pub dialog: Option<TextDialog>,
+    /// In-row rename state. `Some` while a list row is being edited.
+    pub inline_rename: Option<InlineRenameState>,
+    /// Last-painted rect of the inline-rename overlay, used for
+    /// click-outside detection. Cleared when editing ends.
+    inline_rename_rect: Option<FRect>,
     /// Find/filter dialog. While open, text input updates the visible list live.
     pub search: Option<TextInput>,
     pub preview_visible: bool,
@@ -508,6 +524,75 @@ impl App {
             },
             input: TextInput::new(&name),
         });
+    }
+
+    /// Start in-row rename for the cursor row of the active tab. Falls
+    /// back silently if no row is selected.
+    pub fn start_inline_rename(&mut self) {
+        let tab = &self.tabs[self.active];
+        let Some(idx) = tab.selection.cursor() else {
+            return;
+        };
+        let Some(entry) = tab.entries.get(idx) else {
+            return;
+        };
+        let original_name = entry.name.clone();
+        let input = TextInput::new(&original_name);
+        self.inline_rename = Some(InlineRenameState {
+            row_idx: idx,
+            original_name: original_name.clone(),
+            input,
+        });
+        log_info!(57, "inline rename: editing row {} ('{}')", idx, original_name);
+    }
+
+    /// Commit the in-row rename. On filesystem error, the state is
+    /// preserved so the user can correct and retry.
+    fn commit_inline_rename(&mut self) {
+        let Some(state) = self.inline_rename.take() else {
+            return;
+        };
+        let value = state.input.value();
+        let new_name = value.trim();
+        if new_name.is_empty() || new_name == state.original_name {
+            // No-op: nothing to commit.
+            self.inline_rename_rect = None;
+            return;
+        }
+        let cur_dir = self.tabs[self.active].current_dir.clone();
+        let from = cur_dir.join(&state.original_name);
+        let to = cur_dir.join(new_name);
+        if let Err(e) = std::fs::rename(&from, &to) {
+            log_error!(
+                57,
+                "inline rename({}, {}) failed: {e}",
+                from.display(),
+                to.display()
+            );
+            // Restore so the user can correct and retry.
+            self.inline_rename = Some(state);
+            return;
+        }
+        log_info!(
+            57,
+            "inline rename committed: {} -> {}",
+            state.original_name,
+            new_name
+        );
+        let new_name_owned = new_name.to_string();
+        self.refresh_active_tab();
+        let tab = &mut self.tabs[self.active];
+        if let Some(idx) = tab.entries.iter().position(|e| e.name == new_name_owned) {
+            tab.selection.set_cursor(idx);
+        }
+        self.inline_rename_rect = None;
+    }
+
+    fn cancel_inline_rename(&mut self) {
+        if self.inline_rename.take().is_some() {
+            log_info!(57, "inline rename cancelled");
+        }
+        self.inline_rename_rect = None;
     }
 
     pub fn open_new_folder(&mut self) {
@@ -1016,6 +1101,8 @@ impl App {
             pinned_paths,
             properties_target: None,
             dialog: None,
+            inline_rename: None,
+            inline_rename_rect: None,
             search: None,
             preview_visible: false,
             icon_cache: HashMap::new(),
@@ -1830,6 +1917,26 @@ impl App {
         if let Some(err) = self.tabs[self.active].error.clone() {
             paint_empty_state(list_inner, &err, &self.tabs[self.active].current_dir, tokens, renderer);
         }
+
+        // Inline rename overlay — anchored to the row's name column.
+        // Auto-cancel if the row scrolled offscreen.
+        let inline_rect = self
+            .inline_rename
+            .as_ref()
+            .and_then(|state| self.list.row_name_rect(list_inner, state.row_idx));
+        match (inline_rect, self.inline_rename.as_ref()) {
+            (Some(rect), Some(state)) => {
+                state.input.paint(rect, true, tokens, renderer);
+                self.inline_rename_rect = Some(rect);
+            }
+            (None, Some(_)) => {
+                // Row scrolled offscreen — auto-cancel.
+                self.inline_rename = None;
+                self.inline_rename_rect = None;
+            }
+            _ => {}
+        }
+
         if self.preview_visible {
             self.paint_preview_pane(preview_rect, tokens, renderer);
         }
@@ -2211,6 +2318,26 @@ impl ApplicationHandler<AppEvent> for App {
             } => {
                 let Some(p) = self.pointer_dips else { return };
 
+                // Inline rename — click inside the editor: stay editing
+                // (consume so the click doesn't fall through to selection).
+                // Click outside: commit. Either way, the click is consumed
+                // for v1 — Finder commits and lets the click through, but
+                // that complicates "click another row to edit it" which
+                // we'd rather defer.
+                if self.inline_rename.is_some() {
+                    let inside = self
+                        .inline_rename_rect
+                        .map(|r| r.contains(p))
+                        .unwrap_or(false);
+                    if inside {
+                        self.request_redraw();
+                        return;
+                    }
+                    self.commit_inline_rename();
+                    self.request_redraw();
+                    return;
+                }
+
                 // Properties panel — when open, any click closes it.
                 // (Iter-3.10 can refine to "click-outside-only" if useful.)
                 if self.properties_target.is_some() {
@@ -2374,6 +2501,38 @@ impl ApplicationHandler<AppEvent> for App {
                     },
                 ..
             } => {
+                // Inline rename — route input to its TextInput. Submit on
+                // Enter, cancel on Escape; everything else (printable text,
+                // arrow keys, backspace) goes through the input.
+                if self.inline_rename.is_some() {
+                    if let Key::Named(named) = &logical_key {
+                        if let Some(tk) = map_named_to_textinput(*named) {
+                            let event = self
+                                .inline_rename
+                                .as_mut()
+                                .expect("checked")
+                                .input
+                                .handle_key(tk);
+                            match event {
+                                Some(TextInputEvent::Submit(_)) => self.commit_inline_rename(),
+                                Some(TextInputEvent::Cancel) => self.cancel_inline_rename(),
+                                None => {}
+                            }
+                            self.request_redraw();
+                            return;
+                        }
+                    }
+                    if let Some(t) = text.as_deref() {
+                        self.inline_rename
+                            .as_mut()
+                            .expect("checked")
+                            .input
+                            .handle_text(t);
+                        self.request_redraw();
+                    }
+                    return;
+                }
+
                 // Modal text dialog — route all input there, swallow others.
                 if let Some(d) = self.dialog.as_mut() {
                     if let Key::Named(named) = &logical_key {
@@ -2614,7 +2773,13 @@ impl ApplicationHandler<AppEvent> for App {
                     Key::Named(NamedKey::Backspace) => self.navigate_parent(),
                     Key::Named(NamedKey::F5) => self.refresh_active_tab(),
                     Key::Named(NamedKey::Delete) => self.delete_at_cursor_to_trash(),
-                    Key::Named(NamedKey::F2) => self.open_rename(),
+                    Key::Named(NamedKey::F2) => {
+                        if matches!(self.focused_pane, FocusedPane::List) {
+                            self.start_inline_rename();
+                        } else {
+                            self.open_rename();
+                        }
+                    }
                     _ => {}
                 }
                 if let Some(idx) = self.tabs[self.active].selection.cursor() {

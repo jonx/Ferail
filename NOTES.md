@@ -42,6 +42,11 @@ I/O while painting or handling immediate interaction.
   main-thread-only, so worker pattern doesn't apply). `IconChunkTick`
   events drain 4 keys at a time with generation tokens; the
   `ProgressStrip` reflects in-flight state.
+- Iter-5.7.1: inline (in-row) rename in the list pane. F2 on the list
+  starts a `TextInput` overlay anchored to the row's Name column via the
+  new `VirtualizedList::row_name_rect`; ESC cancels, Enter or
+  click-outside commits, scroll-offscreen auto-cancels. The modal rename
+  dialog stays for tree-pane / context-menu invocation.
 
 ## Important Bug Lesson: Magic Sniffing Hang
 

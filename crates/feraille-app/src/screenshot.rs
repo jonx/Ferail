@@ -41,6 +41,7 @@ pub struct Args {
     pub properties: bool,             // open Get-Info panel for the selected row
     pub mac_chrome: bool, // simulate macOS native chrome (traffic-light inset on tabstrip)
     pub rename: bool,     // open the rename dialog with the cursor entry
+    pub inline_rename: bool, // start in-row rename for the cursor entry
     pub new_folder: bool, // open the new-folder dialog
     /// Force-show the footer ProgressStrip (ignoring debounce). Used to
     /// verify the visual under deterministic conditions.
@@ -87,6 +88,7 @@ pub fn parse_args() -> Args {
             "--properties" => args.properties = true,
             "--mac-chrome" => args.mac_chrome = true,
             "--rename" => args.rename = true,
+            "--inline-rename" => args.inline_rename = true,
             "--new-folder" => args.new_folder = true,
             "--simulate-progress" => {
                 args.simulate_progress = Some(
@@ -148,7 +150,8 @@ OPTIONS
   --preview                Show the selected-item preview pane.
   --edit-mode              Put breadcrumb in edit mode (for screenshotting).
   --properties             Open the Get Info panel for the selected row.
-  --rename                 Open the rename dialog for the selected row.
+  --rename                 Open the modal rename dialog for the selected row.
+  --inline-rename          Start in-row rename for the selected row.
   --new-folder             Open the new-folder dialog.
   --mac-chrome             Simulate macOS traffic-light inset in the tabstrip.
   -h, --help               Print this help.
@@ -243,6 +246,9 @@ pub fn run(args: Args) -> Result<()> {
     }
     if args.rename {
         app.open_rename();
+    }
+    if args.inline_rename {
+        app.start_inline_rename();
     }
     if args.new_folder {
         app.open_new_folder();

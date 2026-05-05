@@ -341,6 +341,22 @@ impl VirtualizedList {
         None
     }
 
+    /// Rect of the Name column for `row_idx` given the list bounds and
+    /// current `scroll_offset`. Returns `None` when the row is offscreen.
+    /// Used by inline rename to anchor a `TextInput` overlay over the
+    /// row's name; if the row scrolls out of view the caller can treat
+    /// `None` as "auto-cancel."
+    pub fn row_name_rect(&self, bounds: Rect, row_idx: usize) -> Option<Rect> {
+        let row_top = bounds.top() + (row_idx as f32 * self.row_height) - self.scroll_offset;
+        let row_bottom = row_top + self.row_height;
+        if row_bottom <= bounds.top() || row_top >= bounds.bottom() {
+            return None;
+        }
+        let layout = self.column_layout(bounds);
+        let (_, name_x, name_w) = *layout.first()?;
+        Some(Rect::new(name_x, row_top, name_w, self.row_height))
+    }
+
     /// Toggle sort: clicking the active column flips ascending; clicking a
     /// different column makes it the new sort, ascending.
     pub fn toggle_sort(&mut self, id: ColumnId) {
