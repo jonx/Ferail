@@ -20,6 +20,7 @@ use feraille_controls::primitives::{
     scrollbar::Scrollbar,
     splitter::Splitter,
     text_input::{TextInput, TextInputEvent, TextInputKey},
+    toast::{Toast, ToastKind, ToastStack},
 };
 use feraille_controls::{
     sort_entries, BreadcrumbBar, BreadcrumbEvent, FileTree, Section, SectionKind, Selection,
@@ -259,6 +260,10 @@ pub struct App {
     /// Last-painted rect of the inline-rename overlay, used for
     /// click-outside detection. Cleared when editing ends.
     inline_rename_rect: Option<FRect>,
+    /// Transient bottom-right notifications. `log_error!` sites that
+    /// matter to the user also push into this stack so they're visible
+    /// in-app, not just on stderr.
+    pub toasts: ToastStack,
     /// Find/filter dialog. While open, text input updates the visible list live.
     pub search: Option<TextInput>,
     pub preview_visible: bool,
@@ -574,6 +579,7 @@ impl App {
                 from.display(),
                 to.display()
             );
+            self.toast_error(format!("Rename failed: {e}"));
             // Restore so the user can correct and retry.
             self.inline_rename = Some(state);
             return;
@@ -598,6 +604,14 @@ impl App {
             log_info!(57, "inline rename cancelled");
         }
         self.inline_rename_rect = None;
+    }
+
+    /// Push a user-facing error toast. Pair with the matching
+    /// `log_error!` so the message is also captured on stderr for
+    /// crash investigation.
+    fn toast_error(&mut self, message: impl Into<String>) {
+        self.toasts.push(Toast::new(ToastKind::Error, message));
+        self.request_redraw();
     }
 
     pub fn open_new_folder(&mut self) {
@@ -649,11 +663,12 @@ impl App {
                 let from = cur_dir.join(&original_name);
                 if let Err(e) = std::fs::rename(&from, &target_path) {
                     log_error!(
-                        56,
+                        57,
                         "rename({}, {}) failed: {e}",
                         from.display(),
                         target_path.display()
                     );
+                    self.toast_error(format!("Rename failed: {e}"));
                     return;
                 }
                 self.refresh_active_tab();
@@ -666,7 +681,8 @@ impl App {
             }
             DialogMode::NewFolder => {
                 if let Err(e) = std::fs::create_dir(&target_path) {
-                    log_error!(56, "create_dir({}) failed: {e}", target_path.display());
+                    log_error!(57, "create_dir({}) failed: {e}", target_path.display());
+                    self.toast_error(format!("Couldn't create folder: {e}"));
                     return;
                 }
                 self.refresh_active_tab();
@@ -1108,6 +1124,7 @@ impl App {
             dialog: None,
             inline_rename: None,
             inline_rename_rect: None,
+            toasts: ToastStack::new(),
             search: None,
             preview_visible: false,
             icon_cache: HashMap::new(),
@@ -1673,13 +1690,12 @@ impl App {
         match move_to_trash(&target) {
             Ok(_) => self.refresh_active_tab(),
             Err(e) => {
-                // Iter-4 will surface this in a Toast / ErrorState; for now,
-                // log to stderr so it's visible during dev runs.
                 log_error!(
-                    56,
+                    57,
                     "move_to_trash({}) failed: {e} — file remains on disk",
                     target.display()
                 );
+                self.toast_error(format!("Couldn't move to Trash: {e}"));
             }
         }
     }
@@ -1763,7 +1779,8 @@ impl App {
             EntryKind::Directory => self.navigate(path),
             EntryKind::File | EntryKind::Symlink => {
                 if let Err(e) = open_with_default(&path) {
-                    log_error!(56, "open_with_default({}) failed: {e}", path.display());
+                    log_error!(57, "open_with_default({}) failed: {e}", path.display());
+                    self.toast_error(format!("Couldn't open: {e}"));
                 }
             }
         }
@@ -1961,6 +1978,21 @@ impl App {
         // Modal text dialog (rename / new-folder) above everything.
         if self.dialog.is_some() {
             self.paint_dialog(tokens, viewport, renderer);
+        }
+
+        // Toasts — bottom-right of the file pane area, above the status
+        // bar. Pruned at the start of the frame so expired entries don't
+        // burn a paint cycle.
+        let toast_now = std::time::Instant::now();
+        self.toasts.prune(toast_now);
+        if !self.toasts.is_empty() {
+            let toast_area = FRect::new(
+                splitter_x,
+                breadcrumb_rect.bottom(),
+                viewport.width - splitter_x,
+                viewport.height - breadcrumb_rect.bottom() - STATUS_H,
+            );
+            self.toasts.paint(toast_area, tokens, renderer);
         }
 
         // Status

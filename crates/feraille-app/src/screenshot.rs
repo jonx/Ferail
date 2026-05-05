@@ -43,6 +43,7 @@ pub struct Args {
     pub rename: bool,     // open the rename dialog with the cursor entry
     pub inline_rename: bool, // start in-row rename for the cursor entry
     pub new_folder: bool, // open the new-folder dialog
+    pub simulate_toast: Option<String>, // push a fake error toast
     /// Force-show the footer ProgressStrip (ignoring debounce). Used to
     /// verify the visual under deterministic conditions.
     pub simulate_progress: Option<f32>,
@@ -90,6 +91,7 @@ pub fn parse_args() -> Args {
             "--rename" => args.rename = true,
             "--inline-rename" => args.inline_rename = true,
             "--new-folder" => args.new_folder = true,
+            "--simulate-toast" => args.simulate_toast = iter.next(),
             "--simulate-progress" => {
                 args.simulate_progress = Some(
                     iter.next()
@@ -152,6 +154,7 @@ OPTIONS
   --properties             Open the Get Info panel for the selected row.
   --rename                 Open the modal rename dialog for the selected row.
   --inline-rename          Start in-row rename for the selected row.
+  --simulate-toast <text>  Push an error toast with the given message.
   --new-folder             Open the new-folder dialog.
   --mac-chrome             Simulate macOS traffic-light inset in the tabstrip.
   -h, --help               Print this help.
@@ -252,6 +255,12 @@ pub fn run(args: Args) -> Result<()> {
     }
     if args.new_folder {
         app.open_new_folder();
+    }
+    if let Some(text) = args.simulate_toast.clone() {
+        app.toasts.push(feraille_controls::primitives::toast::Toast::new(
+            feraille_controls::primitives::toast::ToastKind::Error,
+            text,
+        ));
     }
     if args.search {
         app.open_search();

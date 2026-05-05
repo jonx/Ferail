@@ -47,6 +47,16 @@ I/O while painting or handling immediate interaction.
   new `VirtualizedList::row_name_rect`; ESC cancels, Enter or
   click-outside commits, scroll-offscreen auto-cancels. The modal rename
   dialog stays for tree-pane / context-menu invocation.
+- Iter-5.7.2: real Trash semantics via
+  `NSFileManager.trashItemAtURL:resultingItemURL:error:`. Cmd+Z undo
+  from Finder, audible feedback, per-volume `.Trashes` for non-boot
+  volumes. The `~/.Trash` rename + cross-volume copy fallback is gone;
+  failures now error visibly instead of silently delete-on-cross-volume.
+- Iter-5.7.3: Toast primitive (`feraille-controls/primitives/toast.rs`)
+  with bounded stack, fade-out, and bottom-right paint. User-facing
+  `log_error!` sites (rename / create_dir / trash / open_with_default /
+  inline rename) now also push an error toast so failures are visible
+  in-app, not stderr-only.
 - Iter-5.8: command-name registry as the load-bearing identity. New
   `feraille_core::commands` module with `CommandId`, `Shortcut`, and a
   static catalogue (`app.about`, `app.settings`, `file.new_tab`,

@@ -9,3 +9,4 @@ pub mod progress_strip;
 pub mod scrollbar;
 pub mod splitter;
 pub mod text_input;
+pub mod toast;
