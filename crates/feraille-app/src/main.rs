@@ -174,7 +174,15 @@ const TABSTRIP_H: f32 = 32.0;
 const BREADCRUMB_H: f32 = 32.0;
 const STATUS_H: f32 = 24.0;
 const SCROLLBAR_W: f32 = 10.0;
-const PREVIEW_W: f32 = 320.0;
+/// Default preview-pane width when first shown.
+const PREVIEW_W_DEFAULT: f32 = 320.0;
+/// Minimum preview width when the user drags the splitter narrow.
+/// Below this the panel can't fit a label + value column comfortably.
+const PREVIEW_W_MIN: f32 = 220.0;
+/// Maximum preview width as an absolute upper bound. The splitter is
+/// also clamped against a fraction of the file-pane area at drag time
+/// so the file pane never collapses below ~200 DIPs.
+const PREVIEW_W_MAX: f32 = 600.0;
 const SIDEBAR_DEFAULT: f32 = 220.0;
 const SIDEBAR_MIN: f32 = 160.0;
 const SIDEBAR_MAX: f32 = 480.0;
@@ -311,6 +319,10 @@ pub struct App {
     pub list: VirtualizedList,
     pub scrollbar: Scrollbar,
     pub splitter: Splitter,
+    /// Splitter between file pane and preview pane. `min` / `max` are
+    /// updated per drag based on current viewport width since the
+    /// allowed range depends on layout.
+    pub preview_splitter: Splitter,
     pub tabstrip: TabStrip,
     pub breadcrumb: BreadcrumbBar,
     pub tree: FileTree,
@@ -323,6 +335,10 @@ pub struct App {
     /// silently when generation rolls over.
     magic_progress: Option<ProgressTaskId>,
     pub splitter_x: f32,
+    /// Width of the preview pane in DIPs when it's visible. Persists
+    /// across `preview_visible` toggles so reopening the pane restores
+    /// the user's last-set width.
+    pub preview_width: f32,
     pub show_hidden: bool,
     pub ant_trail: AntTrail,
     /// Paths the user has pinned to the tree's Favorites section. In-
@@ -1239,6 +1255,10 @@ impl App {
             list: VirtualizedList::new(),
             scrollbar: Scrollbar::new(),
             splitter: Splitter::new(SIDEBAR_MIN, SIDEBAR_MAX),
+            // Preview splitter min/max are recomputed per drag from the
+            // current viewport — placeholder values here are overwritten
+            // before any drag begins.
+            preview_splitter: Splitter::new(0.0, 0.0),
             tabstrip: TabStrip::new(),
             breadcrumb,
             tree,
@@ -1246,6 +1266,7 @@ impl App {
             progress: ProgressStrip::new(),
             magic_progress: None,
             splitter_x: SIDEBAR_DEFAULT,
+            preview_width: PREVIEW_W_DEFAULT,
             show_hidden: false,
             ant_trail: AntTrail::new(),
             pinned_paths,
@@ -1431,13 +1452,23 @@ impl App {
         )
     }
 
+    /// Effective preview width given the current viewport: clamped so
+    /// the file pane never collapses below ~200 DIPs and the preview
+    /// itself respects [`PREVIEW_W_MIN`] / [`PREVIEW_W_MAX`].
+    fn effective_preview_width(&self) -> f32 {
+        if !self.preview_visible {
+            return 0.0;
+        }
+        let (w, _) = self.viewport_size_dips();
+        let available = (w - self.splitter_x).max(0.0);
+        let cap_by_pane = (available - 200.0).max(PREVIEW_W_MIN);
+        self.preview_width
+            .clamp(PREVIEW_W_MIN, PREVIEW_W_MAX.min(cap_by_pane))
+    }
+
     fn list_pane_rect(&self) -> FRect {
         let (w, h) = self.viewport_size_dips();
-        let preview_w = if self.preview_visible {
-            PREVIEW_W.min((w - self.splitter_x).max(0.0) * 0.42)
-        } else {
-            0.0
-        };
+        let preview_w = self.effective_preview_width();
         FRect::new(
             self.splitter_x,
             self.body_top() + BREADCRUMB_H,
@@ -1451,14 +1482,24 @@ impl App {
             return FRect::new(0.0, 0.0, 0.0, 0.0);
         }
         let (w, h) = self.viewport_size_dips();
-        let available = (w - self.splitter_x).max(0.0);
-        let preview_w = PREVIEW_W.min(available * 0.42);
+        let preview_w = self.effective_preview_width();
         FRect::new(
             w - preview_w,
             self.body_top() + BREADCRUMB_H,
             preview_w,
             (h - self.body_top() - BREADCRUMB_H - STATUS_H).max(0.0),
         )
+    }
+
+    /// Absolute x in DIPs of the preview-pane splitter (the line
+    /// between file pane and preview). Returns `None` when the preview
+    /// pane is hidden.
+    fn preview_splitter_x(&self) -> Option<f32> {
+        if !self.preview_visible {
+            return None;
+        }
+        let (w, _) = self.viewport_size_dips();
+        Some(w - self.effective_preview_width())
     }
 
     fn header_rect(&self) -> FRect {
@@ -2244,9 +2285,14 @@ impl App {
             self.paint_preview_pane(preview_rect, tokens, renderer);
         }
 
-        // Splitter
+        // Splitter (sidebar | file pane).
         self.splitter
             .paint(splitter_x, splitter_container, tokens, renderer);
+        // Splitter (file pane | preview pane), when the preview is shown.
+        if let Some(px) = self.preview_splitter_x() {
+            self.preview_splitter
+                .paint(px, splitter_container, tokens, renderer);
+        }
 
         // Properties panel — overlay over everything else when open.
         if self.properties_target.is_some() {
@@ -2673,6 +2719,12 @@ impl ApplicationHandler<AppEvent> for App {
                         self.splitter_x = pos;
                         redraw = true;
                     }
+                } else if self.preview_splitter.is_dragging() {
+                    if let Some(pos) = self.preview_splitter.position_for_drag(p) {
+                        let (w, _) = self.viewport_size_dips();
+                        self.preview_width = (w - pos).clamp(PREVIEW_W_MIN, PREVIEW_W_MAX);
+                        redraw = true;
+                    }
                 } else {
                     if self.tabstrip.update_hover(
                         self.tabstrip_rect(),
@@ -2704,6 +2756,16 @@ impl ApplicationHandler<AppEvent> for App {
                     if self.list.update_header_hover(self.header_rect(), Some(p)) {
                         redraw = true;
                     }
+                    // Splitter hover affordance.
+                    let container = self.splitter_container();
+                    if self.splitter.update_hover(self.splitter_x, container, Some(p)) {
+                        redraw = true;
+                    }
+                    if let Some(px) = self.preview_splitter_x() {
+                        if self.preview_splitter.update_hover(px, container, Some(p)) {
+                            redraw = true;
+                        }
+                    }
                 }
                 if redraw {
                     self.request_redraw();
@@ -2716,6 +2778,11 @@ impl ApplicationHandler<AppEvent> for App {
                 let count = self.tabs[self.active].entries.len();
                 self.list.update_hover(self.list_inner_rect(), None, count);
                 self.list.update_header_hover(self.header_rect(), None);
+                let container = self.splitter_container();
+                self.splitter.update_hover(self.splitter_x, container, None);
+                if let Some(px) = self.preview_splitter_x() {
+                    self.preview_splitter.update_hover(px, container, None);
+                }
                 self.request_redraw();
             }
             WindowEvent::MouseInput {
@@ -2761,6 +2828,21 @@ impl ApplicationHandler<AppEvent> for App {
                 {
                     self.request_redraw();
                     return;
+                }
+                // Preview-pane splitter — only present when preview is
+                // visible. Update min/max from current viewport so the
+                // pane can't collapse the file pane below ~200 DIPs.
+                if let Some(px) = self.preview_splitter_x() {
+                    let (w, _) = self.viewport_size_dips();
+                    self.preview_splitter.min = (w - PREVIEW_W_MAX).max(self.splitter_x + 200.0);
+                    self.preview_splitter.max = w - PREVIEW_W_MIN;
+                    if self
+                        .preview_splitter
+                        .begin_drag_at(px, self.splitter_container(), p)
+                    {
+                        self.request_redraw();
+                        return;
+                    }
                 }
                 // Column header — toggle sort.
                 if let Some(id) = self.list.header_column_at(self.header_rect(), p) {
@@ -2854,6 +2936,10 @@ impl ApplicationHandler<AppEvent> for App {
                 }
                 if self.splitter.is_dragging() {
                     self.splitter.end_drag();
+                    self.request_redraw();
+                }
+                if self.preview_splitter.is_dragging() {
+                    self.preview_splitter.end_drag();
                     self.request_redraw();
                 }
                 self.drag_watch = None;

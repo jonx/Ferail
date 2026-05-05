@@ -19,6 +19,7 @@ pub struct Splitter {
     /// Max position (DIPs from container left).
     pub max: f32,
     drag: Option<DragState>,
+    hovered: bool,
 }
 
 struct DragState {
@@ -28,11 +29,15 @@ struct DragState {
 
 impl Splitter {
     pub fn new(min: f32, max: f32) -> Self {
-        Self { min, max, drag: None }
+        Self { min, max, drag: None, hovered: false }
     }
 
     pub fn is_dragging(&self) -> bool {
         self.drag.is_some()
+    }
+
+    pub fn is_hovered(&self) -> bool {
+        self.hovered
     }
 
     /// 6-DIP-wide hit zone centred on `position`.
@@ -40,18 +45,55 @@ impl Splitter {
         Rect::new(position - HIT_WIDTH / 2.0, container.top(), HIT_WIDTH, container.size.height)
     }
 
-    /// Paint the 1-DIP rule at `position` over the full container height.
+    /// Update hover state from the latest cursor position. Returns true
+    /// if the hover state changed (caller can request redraw on change).
+    /// Pass `None` when the cursor leaves the window or the splitter's
+    /// container.
+    pub fn update_hover(&mut self, position: f32, container: Rect, point: Option<Point>) -> bool {
+        let next = point
+            .map(|p| Self::hit_rect(position, container).contains(p))
+            .unwrap_or(false);
+        let changed = next != self.hovered;
+        self.hovered = next;
+        changed
+    }
+
+    /// Paint the rule at `position` over the full container height.
+    /// Idle: 1-DIP subtle rule.
+    /// Hovered or dragging: stronger colour + a small grab-handle of
+    /// three dots in the vertical centre so the user can see where to
+    /// click. Spec §7 keeps the visible rule narrow; the dots are an
+    /// affordance hint rather than a wider rule.
     pub fn paint(&self, position: f32, container: Rect, tokens: &Tokens, painter: &mut dyn Renderer) {
         let rule_x = position - RULE_WIDTH / 2.0;
-        let color = if self.is_dragging() {
+        let active = self.is_dragging() || self.hovered;
+        let rule_color = if self.is_dragging() {
             tokens.border.focus
+        } else if self.hovered {
+            tokens.border.default
         } else {
             tokens.border.subtle
         };
         painter.fill_rect(
             Rect::new(rule_x, container.top(), RULE_WIDTH, container.size.height),
-            color,
+            rule_color,
         );
+        if active {
+            let handle_color = if self.is_dragging() {
+                tokens.border.focus
+            } else {
+                tokens.fg.secondary
+            };
+            let cy = container.top() + container.size.height / 2.0;
+            let dot = 2.0_f32;
+            for i in -1..=1 {
+                let dy = i as f32 * (dot + 3.0);
+                painter.fill_rect(
+                    Rect::new(position - dot / 2.0, cy + dy - dot / 2.0, dot, dot),
+                    handle_color,
+                );
+            }
+        }
     }
 
     pub fn begin_drag_at(&mut self, position: f32, container: Rect, point: Point) -> bool {
