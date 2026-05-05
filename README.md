@@ -1,119 +1,103 @@
 # Feraille
 
-A blazing-fast Windows file explorer, written in Rust.
+Feraille is a blazing-fast macOS file explorer written in Rust. It is the
+Mac port and UI rewrite of the Windows project `../Ferail`, but it is not a
+skin of the old app: the UI is rebuilt around Feraille's own renderer/control
+stack, with the same feature ambition and stricter responsiveness rules.
 
-> **Status:** iter-2 shipped. Real macOS browser of $HOME with Zed-aligned
-> tokens, glyph-cached soft renderer, Selection model, virtualized list +
-> scrollbar + splitter + focus ring, multi-tab state, breadcrumb (read-only
-> segments), and a minimal lazy-loading FileTree. Drag/drop, context menu,
-> native macOS chrome, GPU renderer, and shell-side features land in
-> iter-3+ per [CLAUDE.md](CLAUDE.md).
+The prime directive is simple:
 
-## Why
+> The UI must never stop. Paint, hit-testing, scrolling, hover, and text input
+> must never perform filesystem, shell, database, network, thumbnail, preview,
+> or magic-sniffing I/O.
 
-Existing options bottom out somewhere:
+## Current State
 
-- **Windows Explorer** is fast on huge folders but visually stagnant and
-  closed.
-- **Files App** (WinUI 3) looks great but is *slower* than Explorer at
-  scale.
-- **Total Commander / Directory Opus** are fast and powerful but show their
-  age visually.
+The app already has a usable Finder-style shell:
 
-Feraille is the "and": Explorer's speed, Files App's polish, an open codebase
-to extend.
+- Home and `/Volumes` navigation through tree, breadcrumb, tabs, and list.
+- Virtualized file list with columns, sorting, hover, status bar, and scrollbar.
+- Breadcrumb edit mode with `Cmd+L` / `Ctrl+L`.
+- Open file, refresh, show hidden files, delete to Trash fallback.
+- macOS system icons through `NSWorkspace`.
+- macOS chrome inset, context menu slice, drag-out slice, reveal in Finder,
+  copy path, rename dialog, new-folder dialog, search/filter dialog, preview
+  info pane, and in-memory Ant Trail heat.
+- Magic sniffing is off the UI thread and feeds the Magic column when ready.
+- Headless screenshot CLI for visual verification.
 
-## Architecture (one-line)
+The feature parity ledger lives in [docs/FEATURE_LEDGER.md](docs/FEATURE_LEDGER.md).
+The Ferail source-doc mapping lives in [docs/porting/FERAIL_DOCS_MAP.md](docs/porting/FERAIL_DOCS_MAP.md).
 
-UI talks to a **filesystem trait**, not to platform APIs. Shell glue (Win32
-COM, IShellFolder, IContextMenu, IFileOperation) lives in one crate behind
-that trait. Controls render via a **renderer trait** with a software backend
-for dev iteration on macOS and a Direct2D backend for production on Windows.
+## Architecture
 
+```text
+feraille-app                  binary; owns window, event loop, app state
+   |-- feraille-controls      primitives and explorer controls
+   |-- feraille-design        tokens and visual constants
+   |-- feraille-render        renderer trait and soft renderer
+   |-- feraille-core          shared model types, NodeId, FileEntry, AntTrail
+   |-- feraille-fs-native     native filesystem and metadata helpers
+   |-- feraille-shell-mac     Cocoa/AppKit shell integrations
+   `-- feraille-shell-win32   placeholder/future Windows shell integrations
 ```
-feraille-app                  binary; owns window + state
-   ├── feraille-controls      primitives + explorer controls (this crate is the "spec implemented")
-   │     ├── feraille-design  design tokens (no rendering deps)
-   │     └── feraille-render  Renderer trait + soft backend (D2D backend lands later)
-   ├── feraille-core          NodeId, FileEntry, FsBackend trait — UI knows nothing about Win32
-   ├── feraille-fs-native     std::fs implementation of FsBackend (cross-platform)
-   └── feraille-shell-win32   Windows shell glue (no-op on macOS)
-```
 
-Direction of dependency is one-way. `feraille-controls` does not know what
-a path is; `feraille-shell-win32` does not know what a control is.
-
-## Specs
-
-The project is **spec-driven**. Read these before changing UI code:
-
-- [specs/controls/](specs/controls/) — design tokens, primitives, explorer
-  controls, the interactive state machine.
-- [specs/ux/](specs/ux/) — navigation, selection, keyboard, drag-drop,
-  performance budgets, error/empty states.
-
-If you find yourself wanting to add a UI behavior that contradicts a spec,
-edit the spec first.
+Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before moving feature
+boundaries. Read [docs/UI_NONBLOCKING.md](docs/UI_NONBLOCKING.md) before
+touching paint, navigation, enumeration, preview, icons, magic, context menus,
+or drag/drop.
 
 ## Running
 
-You'll need Rust stable (1.78+).
-
 ```sh
-cd Feraille
 cargo run --bin feraille
 ```
 
-A window opens with header / tabstrip / [tree | breadcrumb / list] / status.
-$HOME is enumerated on launch; the FileTree shows it as a root alongside
-any `/Volumes/*` mounts.
+Useful bindings:
 
-- Click a tree row → expand/select; chevron → expand without selecting.
-- Click a breadcrumb segment → navigate to that ancestor.
-- Click "+" in tabstrip → new tab; click X on tab hover → close.
-- Drag the splitter → resize tree pane.
-- Drag the scrollbar thumb → scroll the file pane.
-- ↑/↓ / PgUp/PgDn / Home/End — keyboard navigation in the file pane.
-- Enter on a directory row → open it. Backspace → parent.
-- `FERAILLE_THEME=dark cargo run` → dark mode.
-- Esc → quit.
+- `Enter`: open selected folder/file.
+- `Backspace`: parent folder.
+- `Cmd+L` / `Ctrl+L`: edit path.
+- `Cmd+F` / `Ctrl+F`: filter current folder.
+- `Cmd+P` / `Ctrl+P`: toggle preview info pane.
+- `Cmd+I` / `Ctrl+I`: Get Info panel.
+- `F2`: rename dialog.
+- `Cmd+Shift+N` / `Ctrl+Shift+N`: new folder dialog.
+- `Cmd+Shift+C` / `Ctrl+Shift+C`: copy path.
+- `Cmd+R` / `Ctrl+R`: reveal in Finder.
+- `F5`: refresh.
+- `Cmd+Shift+.` / `Ctrl+H`: show/hide hidden files.
 
 ## Screenshot CLI
 
-For UI verification without manual interaction, the binary supports a
-headless screenshot mode:
+The binary can render deterministic PNGs without opening a window:
 
 ```sh
 cargo run --bin feraille -- \
-    --screenshot out.png \
-    --width 1180 --height 760 --scale 2.0 \
-    --theme dark \
-    --navigate ~/Source/Feraille \
-    --expand ~/Source --expand ~/Source/Feraille \
-    --select-name Cargo.toml \
-    --splitter 240
+  --screenshot /tmp/feraille.png \
+  --navigate ~/Source/Feraille \
+  --width 1400 --height 900 \
+  --select-name Cargo.toml \
+  --preview
 ```
 
-Run `cargo run --bin feraille -- --help` for the full flag list. Mouse
-drags and animations aren't scriptable — anything visual that depends on
-those needs the GUI binary.
+Run:
 
-## Targets
+```sh
+cargo run --bin feraille -- --help
+```
 
-| Target | Status |
-|---|---|
-| `aarch64-apple-darwin` (dev mode, soft renderer) | working |
-| `x86_64-apple-darwin` (dev mode, soft renderer) | should work, untested |
-| `x86_64-pc-windows-msvc` (production, D2D renderer) | rustup target installed; `cargo-xwin` cross-compile + D2D backend in iteration 3 |
+The CLI is the preferred way to verify visual changes in this repo. See
+[docs/TESTING_OVERLAYS.md](docs/TESTING_OVERLAYS.md) for planned debug states
+and visual overlays.
 
-## Inspiration vs. dependency
+## Specs
 
-We studied the structure of [Zed's GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui)
-— its `uniform_list`, scrollbar, and DirectX renderer — but copied no code
-from it. Feraille has zero GPUI dependency. The reasons are in the
-conversation log and `specs/controls/00-overview.md`: GPUI is pre-1.0,
-Zed-coupled, and gives us the easy half (rendering primitives) while not
-solving the hard half (shell integration).
+- [specs/ux](specs/ux) covers product behavior and performance.
+- [specs/controls](specs/controls) covers tokens, primitives, controls, and
+  state machines.
+- [docs/features](docs/features) contains cleaned, Mac-aware reconstructions
+  of the major Ferail feature notes.
 
 ## License
 

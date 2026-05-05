@@ -46,7 +46,10 @@ pub struct Icon {
 
 **Rendering:** SVG path is parsed once at startup into a flat list of fill/stroke commands; per-frame, only the tint color changes. The path cache is in `feraille-design::icons`.
 
-For platform shell icons (file thumbnails, drive glyphs), the control delegates to the host — see `IconName::ShellHandle(u32)`. The handle is opaque; on Windows it's an `IShellItemImageFactory` token, on dev mode it's a placeholder rectangle.
+For platform shell icons (file thumbnails, volume glyphs), the control delegates
+to the host. The handle/data is opaque to the control; on macOS it may come from
+`NSWorkspace`, and on future Windows builds it may come from shell image
+factories.
 
 ---
 
@@ -64,7 +67,7 @@ pub struct Button<'a> {
     variant: ButtonVariant,
     state: ButtonState,          // owner-controlled: Enabled | Disabled | Busy
     on_press: Callback,
-    keyboard_hint: Option<&'a str>, // e.g. "Ctrl+N"
+    keyboard_hint: Option<&'a str>, // e.g. "Cmd+N"
 }
 ```
 
@@ -105,8 +108,9 @@ pub struct TextInput<'a> {
 **Interaction:**
 - Caret blink: 530ms half-period, paused while typing.
 - Selection: shift+arrow, double-click word, triple-click line.
-- IME: composition rectangle drawn beneath caret (Windows: WM_IME_COMPOSITION; macOS dev: `NSTextInputClient`).
-- Clipboard: Ctrl+C/X/V (Cmd on macOS).
+- IME: composition rectangle drawn beneath caret. On macOS this ultimately
+  integrates with `NSTextInputClient`.
+- Clipboard: Cmd+C/X/V on macOS, Ctrl+C/X/V on future non-Mac targets.
 - Esc fires `on_cancel`; Enter fires `on_submit`.
 
 **Inspiration:** GPUI's text-input handling lives in `crates/gpui/src/input.rs` — particularly the IME composition state machine. Worth studying, not copying.
@@ -268,7 +272,9 @@ These have no obvious chrome but the system breaks without them.
 
 ## ResizeHandle
 
-A 4-DIP-wide invisible region around the *window* edges (and corners) that cursor-hints and hands the drag to the OS via `WM_NCHITTEST`. Distinct from Splitter (which moves layout) — ResizeHandle moves the OS window. On macOS dev mode, it's free (system handles).
+A 4-DIP-wide invisible region around custom window edges/corners when the app
+owns resize hit testing. Distinct from Splitter, which moves app layout. On
+standard macOS windows the system handles this.
 
 ## LoadingSpinner
 

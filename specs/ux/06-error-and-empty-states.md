@@ -1,122 +1,60 @@
-# Error and Empty States
+# Error And Empty States
 
-The most-skipped category in spec docs and the most-encountered category in real use. Every state below has its own visual treatment, defined here, not invented per-screen.
+Error states must preserve control. The user should always be able to navigate
+away, retry, close a panel, or keep working in another tab.
 
-## Empty: folder has no items
+## Empty Folder
 
-**When:** enumeration completed, returned zero items.
-
-**Visual:** centered EmptyState primitive (see [02-primitives.md](../controls/02-primitives.md)).
-- Icon: empty-folder glyph.
 - Title: "This folder is empty"
-- Body: "Drop a file here to add it"
-- Action: none.
+- Body: show the path subtly.
+- Actions: New Folder, Paste if clipboard has file URLs.
 
-The pane *itself* is still a drop target — the EmptyState text reinforces this affordance.
+## Empty Filter
 
-## Empty: search returned nothing
+- Title: "No matches"
+- Body: show the current filter.
+- Actions: Clear Filter.
 
-**When:** search box has a value, results are empty.
+## Loading
 
-**Visual:** EmptyState with:
-- Icon: search-with-slash glyph.
-- Title: "No matches for "{query}""
-- Body: "Try removing a filter, or {searchSubdirsLink}"
-- Action: "Search subfolders" (kicks off recursive search if enabled).
+If a task exceeds the instant path:
 
-Filter chips remain visible above the EmptyState so the user can see why they got nothing.
+- Keep existing content if present.
+- Show partial results as they stream.
+- Show progress in the status bar.
+- Do not cover the file list with a blocking spinner.
 
-## Empty: tab just opened, no folder selected
+## Permission Denied
 
-**When:** new tab, no navigation yet.
+- Title: "You do not have access to this folder"
+- Actions: Retry, Reveal Parent, Open in Terminal.
+- Keep history intact.
 
-**Visual:** "Recent" view — a grid of the last 12 visited folders, plus pinned items. This is a v1.5 feature; in v1 the new-tab default is the user's home folder.
+## Missing Folder Or Ejected Volume
 
-## Loading: long enumeration
+- Title: "This folder is no longer available"
+- Actions: Go to Parent, Retry.
+- Do not auto-navigate unless the user chooses an action.
 
-**When:** enumeration > 50 ms but < 4 s.
+## Network Or Cloud Delay
 
-**Visual:** *no full-screen blocker.* The list paints partial results as they stream. A thin indeterminate ProgressBar appears at the bottom edge of the file pane (above the status bar). It vanishes on completion.
+- Show a nonblocking loading/progress state.
+- Allow navigation away.
+- Drop stale results if they arrive later.
+- Do not fault cloud files into local storage unless the user started a content
+  operation that clearly needs it.
 
-Status bar shows "Loading: 1,243 of ?".
+## Partial Failure
 
-## Loading: very long enumeration
+If some children enumerate and some fail:
 
-**When:** enumeration > 4 s.
+- Show the successful items.
+- Put a concise warning in status/toast.
+- Details can open a panel later.
 
-**Visual:** same partial-results streaming. Status bar adds "(this is taking a while; press Esc to cancel)". Esc cancels enumeration cleanly — leaves whatever was loaded so far.
+## Crash/Worker Failure
 
-## Error: folder doesn't exist
-
-**When:** navigated to a path that returned `ERROR_PATH_NOT_FOUND` or equivalent.
-
-**Visual:** ErrorState primitive.
-- Icon: warning glyph (`status.warning`).
-- Title: "This folder no longer exists"
-- Body: "It may have been moved or deleted."
-- Actions: "Go to parent" (primary), "Refresh" (secondary).
-
-Address bar remains editable so the user can type a different path.
-
-## Error: permission denied
-
-**When:** enumeration returned `ERROR_ACCESS_DENIED` or equivalent.
-
-**Visual:**
-- Icon: lock glyph (`status.danger`).
-- Title: "You don't have access to this folder"
-- Body: "Take ownership or sign in as a user with permission."
-- Actions: "Take ownership" (primary, invokes shell ownership flow on Windows), "Open in Terminal" (secondary, drops into elevated shell).
-
-## Error: drive not ready
-
-**When:** drive ejected, removable not inserted, network share unreachable.
-
-**Visual:**
-- Icon: drive-with-slash glyph.
-- Title: contextual: "{drive letter}: is not ready" or "Can't reach {server}"
-- Body: "Insert the drive and try again." or "Check your network connection."
-- Action: "Retry" (primary), "Go to parent" (secondary).
-
-The error appears *after* a 4-second timeout on the actual I/O — before that, we show a LoadingSpinner.
-
-## Error: enumeration partially failed
-
-**When:** some items enumerated successfully, but the OS reported an error mid-stream (e.g. one subfolder is corrupt).
-
-**Visual:** the items that *did* enumerate are shown normally. A non-blocking Toast at the bottom-right: "Couldn't read 3 items in this folder." with a "Details" action linking to a side panel listing the failures.
-
-This is a v1.5 feature; in v1 we just show what we got and silently log the rest.
-
-## Generic crash recovery
-
-**When:** the app's own state ended up wedged (a panic on a worker thread, an inconsistency that triggered a debug assertion in release).
-
-**Visual:** never. We do not show "Oops!" screens. We:
-1. Log the failure with full context.
-2. Restore the affected pane's state from the last known-good snapshot (per-tab snapshots taken on every successful navigation).
-3. Show a Toast: "Something went wrong; restored your previous folder."
-
-The app continues. We never throw the whole window away.
-
-## Visual contract
-
-All ErrorState and EmptyState renderings:
-- Centered horizontally and vertically in their host pane.
-- Max content width: 320 DIPs.
-- Icon size: 48 DIPs.
-- Title: `text.xl`, `weight.semibold`, `fg.primary`.
-- Body: `text.md`, `fg.secondary`, max 2 lines, line-height 1.5.
-- Action buttons: aligned center, primary first, gap `space.sm`.
-- Icon-to-title gap `space.md`, title-to-body gap `space.xs`, body-to-actions gap `space.lg`.
-
-The component should look the same whether it's an "empty" or an "error" — only the icon and copy change. This is on purpose: users learn the visual once.
-
-## Copy guidelines
-
-- Title is what *happened*, not why. ("This folder no longer exists" — not "Path not found.")
-- Body explains why or what to try.
-- Actions are imperatives starting with a verb.
-- Never use "An error occurred" or "Something went wrong" as a title — those are body lines, if at all.
-- Never use exclamation marks.
-- Never apologize ("Sorry, …"). The user came to do work; sympathy is friction.
+- Log enough context.
+- Keep app state usable if possible.
+- Surface a toast/status message.
+- Never spin or retry forever on the UI thread.

@@ -1,75 +1,72 @@
 # Navigation
 
-## The four ways in
+Navigation must feel instantaneous even when enumeration is still running.
 
-A user reaches a folder by exactly one of these paths. All four must feel instantaneous.
+## Ways In
 
-### 1. Tree (left pane)
-- Single click on a node: navigate the active tab to that folder.
-- Single click on a chevron: toggle expand without navigating.
-- Double-click on a node: navigate **and** expand.
-- Right-click: context menu (shell on Windows).
-- Drag a folder from the file pane onto a tree node: move (or copy with Ctrl).
+### Tree
 
-### 2. Breadcrumb (address bar)
-- Click a segment: navigate to that ancestor.
-- Click the chevron between segments: dropdown listing siblings of the next segment.
-- Click empty rail or press `Ctrl+L` / `F4`: enter edit mode (path text input).
-- Edit mode: Enter navigates, Esc cancels and returns to breadcrumb.
+- Click row: navigate and expand if needed.
+- Click chevron: expand/collapse without changing folder when possible.
+- Tree scroll is independent from list scroll.
+- First expand may schedule enumeration; cached expand is instant.
 
-### 3. File pane (double-click into a folder)
-- Double-click row: open. If folder → navigate; if file → OS handles ("Open with default").
-- Enter on a selected folder row: same as double-click.
-- Backspace: navigate to parent.
+### Breadcrumb
 
-### 4. Tabs
-- Each tab has its own independent navigation state (current folder, history, scroll, selection).
-- `Ctrl+T` new tab (opens at the active tab's current folder).
-- `Ctrl+W` close active tab. If last tab, close the window.
-- `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle.
-- `Ctrl+1..9` jump to tab N.
-- Drag a tab horizontally → reorder. Drag downward off the strip → detach (v2).
+- Click segment: navigate to ancestor.
+- `Cmd+L` / `Ctrl+L`: edit full path.
+- Enter submits.
+- Esc cancels edit mode.
+- Future: segment dropdowns and tab completion.
 
-## History (per-tab)
+### File List
 
-Each tab maintains a **stack** of recently visited folders.
+- Enter on folder: navigate.
+- Enter on file: open with default app.
+- Backspace: parent folder.
+- Double-click should match Enter behavior when implemented.
 
-- `Alt+Left` / mouse button 4: back.
-- `Alt+Right` / mouse button 5: forward.
-- `Alt+Up` / `Backspace`: parent.
+### Tabs
 
-Going *back* and then navigating somewhere new **truncates** the forward stack. Standard browser semantics — nothing exotic.
+- Each tab owns current folder, history, scroll, selection, filter.
+- New tab opens at active folder.
+- Future: tab persistence, reordering, detach, recent-folder new tab.
 
-## Address-bar edit mode rules
+## History
 
-- Tab completion: completes the current segment to the longest common prefix; subsequent Tabs cycle through matches.
-- Pasting a path with quotes: strip them.
-- Pasting a path with environment variables: expand `%USERPROFILE%`, `%APPDATA%`, etc., before navigating.
-- Pasting a network path `\\server\share`: navigate, with a 4-second visible "Connecting…" status if not immediate.
-- Pasting an HTTP URL: do **not** navigate; copy to clipboard with a toast "Looks like a URL — copied to clipboard."
+Per-tab history follows browser semantics:
 
-## Special locations (Windows)
+- Back/forward move through committed folder visits.
+- New navigation after Back truncates the forward stack.
+- Parent navigation commits normally.
 
-These appear under "This PC" / "Quick Access":
+## Special Locations
 
-- Drives (with usage indicator on hover).
-- User folders: Desktop, Documents, Downloads, Pictures, Music, Videos.
-- Quick Access pinned items (from `%APPDATA%\Microsoft\Windows\Recent\AutomaticDestinations`).
+Current:
+
+- Home.
+- Visible home subfolders.
+- `/Volumes` mounts.
+
+Target:
+
+- Finder Favorites.
+- iCloud Drive.
+- Desktop/Documents/Downloads/Pictures/Music/Movies.
+- External volumes.
 - Network locations.
-- WSL distributions (under "Linux").
+- Recent folders.
 
-These are exposed by [feraille-shell-win32](../../crates/feraille-shell-win32) via the shell namespace; the UI doesn't synthesize them.
+## Nonblocking Requirements
 
-On macOS dev mode, the tree shows: Home, Desktop, Documents, Downloads, plus `/Volumes/`. Just enough to test the UI.
+- Navigation commit updates chrome immediately.
+- Enumeration, magic, icons, preview, and folder-size work happen after commit.
+- Results are ignored if they return for an old folder/generation.
+- Slow network/cloud folders show partial/loading/error state, not a frozen app.
 
-## What we deliberately *don't* do
+## Deliberate Non-Features
 
-- **No animated transition between folders.** A new folder paints instantly. Animation here is exactly the kind of "delight" that makes the tool feel slow.
-- **No automatic sort persistence per folder.** Sort is a tab attribute, not a folder attribute. (Explorer persists per-folder; users find it confusing more often than helpful.)
-- **No "loading…" placeholder for the file list.** If enumeration is < 50 ms (typical for local SSD), we just paint the result. If > 50 ms, we paint partial results as they stream in (see performance spec).
-
-## Failure modes
-
-- **Folder doesn't exist** (deleted, drive ejected): show ErrorState with "This folder no longer exists. Go to parent" (action), keep the address bar editable. Don't auto-navigate.
-- **Permission denied:** show ErrorState with "You don't have access to this folder. Take ownership" (action invokes the shell's standard ownership flow). Keep history intact.
-- **Network share unreachable:** ErrorState with retry button. Don't block the UI thread waiting for SMB timeout — the enumeration runs on a worker, and the UI shows a LoadingSpinner until 4 seconds, then switches to ErrorState.
+- No transition animation between folders.
+- No blocking "loading" modal.
+- No full folder scan before first paint.
+- No automatic per-folder sort persistence until there is a clear user value.

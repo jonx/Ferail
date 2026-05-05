@@ -26,11 +26,11 @@ This is the same idea Zed uses for its file picker / search panel — see `crate
 | Gesture | Effect |
 |---|---|
 | Click row | `set = Single(row)`, `anchor = row`, `cursor = row` |
-| Ctrl+click row | toggle `row` in `set` (Single → Discrete{anchor, row}); `cursor = row`; `anchor` unchanged |
+| Cmd+click row | toggle `row` in `set` (Single -> Discrete{anchor, row}); `cursor = row`; `anchor` unchanged |
 | Shift+click row | `set = Range { from: anchor, to: row }`; `cursor = row` |
-| Ctrl+Shift+click row | extend Discrete by union with [anchor..row]; `cursor = row` |
+| Cmd+Shift+click row | extend Discrete by union with [anchor..row]; `cursor = row` |
 | Drag in empty space | marquee/lasso: `set = Discrete(rows intersecting rect)`; updates live during drag |
-| Ctrl+drag in empty space | additive marquee: union with existing `set` |
+| Cmd+drag in empty space | additive marquee: union with existing `set` |
 | Click in empty space | clears: `set = None` |
 | Drag a *selected* row | start drag-out (DnD source); selection unchanged |
 | Drag an *unselected* row | first replace selection with `Single(row)`, then start drag-out |
@@ -41,16 +41,16 @@ This is the same idea Zed uses for its file picker / search panel — see `crate
 |---|---|
 | ↑ / ↓ | move `cursor` by 1; if no modifier, `set = Single(cursor)`, `anchor = cursor` |
 | Shift+↑/↓ | move `cursor` by 1; `set = Range { from: anchor, to: cursor }` |
-| Ctrl+↑/↓ | move `cursor` by 1 *without* changing `set` (focus-only) |
+| Cmd+↑/↓ | move `cursor` by 1 *without* changing `set` (focus-only) |
 | Page Up / Down | move `cursor` by viewport; selection follows the same modifier rules as ↑/↓ |
 | Home / End | first / last; same modifier rules |
 | Space | when `cursor != None`: toggle `cursor` in `set` |
-| Ctrl+A | `set = Range { from: first, to: last }` |
+| Cmd+A | `set = Range { from: first, to: last }` |
 | Esc | `set = None`, `anchor = None`. `cursor` remains. |
 
 ## Type-ahead and selection
 
-Type-ahead jumps the **cursor** but does *not* alter the **set** unless the user has no current selection (in which case `set = Single(matched)` for ergonomics). This matches Explorer.
+Type-ahead jumps the **cursor** but does *not* alter the **set** unless the user has no current selection (in which case `set = Single(matched)` for ergonomics). This matches common file-manager behavior.
 
 Reset window: 800 ms of keyboard idle clears the type-ahead buffer.
 
@@ -72,7 +72,7 @@ Navigating to a new folder clears selection. Going *back* via history restores t
 
 ## Multi-select mode toggle
 
-Some users prefer an explicit "multi-select" toggle so they don't have to hold modifiers. We expose this as a status-bar toggle and `Ctrl+Shift+M`. When on:
+Some users prefer an explicit "multi-select" toggle so they don't have to hold modifiers. We expose this as a status-bar toggle and `Cmd+Shift+M`. When on:
 - Single click toggles instead of replaces.
 - Each row paints a Checkbox in a 24-DIP gutter prepended to the row.
 

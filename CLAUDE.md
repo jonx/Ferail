@@ -1,145 +1,114 @@
 # Claude Notes for Feraille
 
-This file is the operating manual when an LLM (Claude or otherwise) edits
-this project. The specs in `specs/` are the *what*; this file is the *how*.
+This is the operating manual for AI or human edits in this repo. Feraille is
+the macOS port and UI rewrite of `../Ferail`. The old docs are source material,
+not law. The cleaned port map is in [docs/porting/FERAIL_DOCS_MAP.md](docs/porting/FERAIL_DOCS_MAP.md).
 
-## Read these first, every session
+## Read First
 
-1. [specs/controls/00-overview.md](specs/controls/00-overview.md) — control
-   inventory and hard rules.
-2. [specs/ux/00-overview.md](specs/ux/00-overview.md) — what the app is and
-   isn't.
-3. The crate-level docstring in any file you're about to touch.
+1. [docs/UI_NONBLOCKING.md](docs/UI_NONBLOCKING.md)
+2. [docs/FEATURE_LEDGER.md](docs/FEATURE_LEDGER.md)
+3. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+4. [specs/ux/05-performance.md](specs/ux/05-performance.md)
+5. The crate-level docs and local code around the file you are touching.
 
-If a request contradicts the spec, **flag it before coding**. The right
-move is usually "edit the spec, then edit the code."
+## Prime Directive
 
-## Hard rules (carried from the spec)
+The UI must never stop.
 
-1. **No raw color literals or pixel values outside `feraille-design`.**
-   If a control needs a color it doesn't have, the *palette* is wrong.
-2. **No allocation on the hot path.** `VirtualizedList::paint` and the
-   renderer's `fill_rect` / `draw_text` must not allocate. The current
-   slice violates this in `fake_item` (returns owned strings); fixing
-   that is iteration 2's first task.
-3. **No platform code in `feraille-core`, `feraille-design`,
-   `feraille-controls`, or `feraille-render` (soft backend).** Use
-   `cfg(windows)` only inside `feraille-shell-win32` and the production
-   D2D renderer when it lands.
-4. **Layout is in DIPs; surfaces are in physical pixels.** The renderer
-   trait owns the conversion — controls never see `scale_factor`.
-5. **Paint is read-only.** No I/O, no `ensure_*` calls, no path
-   resolution during paint. Inherited from Ferail (the predecessor) and
-   non-negotiable.
+Paint, hover, hit-test, scroll, resize, keyboard input, text input, selection,
+and modal drawing are read-only and nonblocking. They must not:
 
-## Architecture invariants
+- Read files or directories.
+- Query Finder/AppKit/NSWorkspace for data.
+- Query SQLite or other persistent stores.
+- Generate previews or thumbnails.
+- Sniff magic bytes.
+- Resolve symlinks, aliases, cloud placeholders, or network locations.
+- Build context menus by touching filesystem or shell state.
+- Allocate in row-by-row hot paint paths.
 
-- **Controls speak `NodeId`, not `PathBuf`.** The mapping
-  `NodeId -> path/PIDL` lives in the FS layer.
-- **`feraille-controls` does not depend on `feraille-fs-*` or
-  `feraille-shell-*`.** Direction of dependency is one-way.
-- **Tokens are immutable for the process lifetime.** Theme switching is
-  a v2 concern; in v1 we set `Tokens::for_theme(Theme::detect())` once
-  in `App::new`.
+All expensive work is scheduled from semantic events, runs off the UI thread,
+and reports back through a small event/message boundary. If a result arrives
+after the user moved on, drop it.
 
-## Renderer abstraction
+## Current Nonblocking Lessons
 
-`Renderer` (in [crates/feraille-render/src/lib.rs](crates/feraille-render/src/lib.rs))
-is the seam between controls and graphics. Two implementations are
-planned:
+- Tree unfold froze once because navigation called synchronous magic sniffing,
+  which blocked in `read()`. Magic detection now runs on a worker and returns
+  through winit user events. Do not reintroduce synchronous I/O on navigation.
+- Icon prefetch is still synchronous in the app path. Treat it as a known risk:
+  either keep it tiny and cached or move it behind the same worker pattern.
+- The filesystem trait still returns an eager batch in places. Future work is
+  streaming enumeration with cancellation.
 
-- `SoftRenderer` (current): CPU rasterization into an `[u32]` buffer
-  presented via `softbuffer`. Cross-platform; used on macOS dev mode and
-  for unit tests.
-- `D2DRenderer` (iteration 3, Windows-only): Direct2D + DirectWrite. Same
-  trait surface; controls do not change.
+## Architecture Invariants
 
-Anti-pattern to avoid: cfg-gating control code on the rendering backend.
-If a control needs to know which backend it has, the trait is wrong.
+- `feraille-controls` knows controls, not paths.
+- `feraille-render` knows pixels, not files or platform shell APIs.
+- `feraille-design` is the only source of visual tokens.
+- `feraille-core` owns shared model types and must stay platform-neutral.
+- `feraille-fs-native` can perform filesystem work, but callers decide whether
+  that work is safe for the current thread.
+- `feraille-shell-mac` owns AppKit/Cocoa integrations.
+- Shell crates are window-aware but UI-unaware: they do not paint controls.
 
-## Coordinate convention
+## Paint Contract
 
-- All `Renderer` methods take coordinates in **DIPs**.
-- The soft renderer's internal `pixels` buffer is in physical pixels.
-- Conversion happens *inside* the renderer impl (`scale_factor`).
-- DPI scale changes route through `WindowEvent::ScaleFactorChanged` →
-  `SoftRenderer::set_scale_factor`.
+Paint may:
 
-This is a deliberate inversion of the Ferail (predecessor) pattern, where
-controls had to call `gdi::physical_to_dips`. Mistakes there caused the
-DPI bugs noted in the predecessor's `CLAUDE.md`. Don't repeat them.
+- Read already-cached strings, metrics, flags, icons, and bitmaps.
+- Draw placeholders when data is missing.
+- Clip, fill, stroke, draw text, draw bitmap.
 
-## Where to put things
+Paint may not:
 
-- New design token? `feraille-design/src/lib.rs`. Update the spec table
-  in `specs/controls/01-design-tokens.md` in the same change.
-- New primitive? `feraille-controls/src/primitives/<name>.rs`, plus a
-  spec entry in `specs/controls/02-primitives.md`.
-- New explorer-specific control? `feraille-controls/src/<name>.rs` plus
-  `specs/controls/03-explorer-controls.md`.
-- New renderer capability? Add to the `Renderer` trait *and* implement
-  in `SoftRenderer` in the same change. No optional methods.
+- Format paths or metadata in loops.
+- Call any `ensure_*`, `fetch_*`, `detect_*`, `enumerate`, `stat`, `read`,
+  `canonicalize`, `metadata`, or shell query function.
+- Spawn tasks directly.
+- Mutate app model state except renderer-internal caches that are explicitly
+  designed for paint, such as glyph caches.
 
-## Windows-specific work
+## Porting Rule From Ferail
 
-When porting shell features from the predecessor Ferail
-(`/Users/jkn/Source/Ferail/crates/ferail-win32`):
+When bringing a Ferail feature over, translate by intent:
 
-- `shell.rs`, `shell_pump.rs`, `enumerate.rs`, `wsl.rs` →
-  `feraille-shell-win32::shell` (rename to clearer module names).
-- `popup_menu.rs`, `menu_*.rs` → `feraille-shell-win32::context_menu`.
-- `drag_drop.rs` → `feraille-shell-win32::drag_drop`.
-- `d2d.rs`, `gdi.rs` → `feraille-render-d2d` (a new crate; do **not**
-  put rendering inside the shell crate).
+- Win32 `IContextMenu` becomes a macOS `NSMenu`/Finder-action boundary.
+- Win32 drag/drop COM becomes `NSPasteboard` and AppKit dragging.
+- WSL features become "not applicable to Mac v1" unless they map to remote
+  mounts, SSHFS, or network volumes.
+- Direct2D/GDI details become renderer/control guidance only.
+- SQLite metadata, Ant Trail persistence, disk usage, previews, and duplicate
+  finding remain valuable, but must use Mac-safe paths and workers.
 
-The decoupling line is: **shell crate is HWND-aware but UI-unaware**.
-It registers `IDropTarget` on an HWND owned by the app; it doesn't draw
-the drag preview (that's in `feraille-controls`).
+Never copy a Windows implementation shape just because the old doc said it.
 
-## Testing
+## Where To Document Work
 
-- State-machine tests live with the control they test (e.g.,
-  `virtualized_list::tests`). They don't render; they assert state
-  transitions on synthetic events.
-- Renderer correctness tests use a small fixed-buffer `SoftRenderer`,
-  paint a known scene, and assert pixel-exact bytes. Cheap to run.
-- Performance tests live in `crates/feraille-controls/benches/` (not yet
-  set up).
+- Product status: [docs/FEATURE_LEDGER.md](docs/FEATURE_LEDGER.md)
+- Architecture decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Hard responsiveness rules: [docs/UI_NONBLOCKING.md](docs/UI_NONBLOCKING.md)
+- Feature design notes: [docs/features](docs/features)
+- UX behavior specs: [specs/ux](specs/ux)
+- Control/render specs: [specs/controls](specs/controls)
+- Chronological shipped notes: [NOTES.md](NOTES.md)
 
-## Iteration roadmap
+## Verification
 
-| # | Adds | Removes |
-|---|---|---|
-| 1 | workspace, specs, soft renderer, virtualized list of fake rows | — |
-| 2 | Zed-aligned tokens, glyph cache, real $HOME FS, Selection, Scrollbar, Splitter, FocusRing overlay, Sidebar (transient), then BreadcrumbBar (read-only), TabStrip + per-tab state, minimal FileTree, App v2 | per-frame alloc, fake_item, Sidebar (replaced by FileTree) |
-| 2.5 | TextInput, Breadcrumb edit mode (Cmd+L) | — |
-| 2.6 | Headless screenshot CLI (`--screenshot`), scrollbar contrast fix, chevron glyph fix | — |
-| 2.7 | Standalone header removed, tree reveal-on-navigate + auto-scroll, fold/unfold redraw + perf bug fixed | redundant header strip |
-| 3 (current) | Open-file (Enter), F5 refresh, Ctrl+H / Cmd+Shift+. hidden toggle, Delete to ~/.Trash, file-type icon hue, OS window-title sync | — |
-| 3.5+ | List row hover feedback, in-memory ant trail (folder visits), F2 inline rename, Cmd+F search/filter, clipboard ops, tabs persistence | — |
-| 4 (current) | macOS shell crate: 4.1 native chrome (transparent titlebar + traffic-light inset). 4.2+: NSPasteboard drag/drop, NSMenu context menu, NSVisualEffectView vibrancy, NSWorkspace recycle | rename-to-Trash fallback (4.2+) |
-| 5 | wgpu/Vello GPU renderer; threaded + change-watching FS via FSEvents | sync FS enumeration |
-| 6 | Persisted ant trail (SQLite), magic file detection (port Ferail's type DB) | in-memory trail |
-| 7 | Disk-usage treemap (port from Ferail) | — |
-| 8 | Windows shell crate: IContextMenu, IDataObject DnD, IFileOperation | — |
+Before finishing code changes:
 
-Don't skip iterations to chase a feature. Each iteration removes one
-"slice violation" from the previous so the codebase tightens around the
-spec instead of accruing exceptions.
+- Run `cargo check`.
+- Run `cargo test` unless the change is docs-only.
+- For UI changes, render at least one screenshot with `cargo run --bin feraille -- --screenshot ...`
+  and inspect it.
+- Do not run whole-repo formatters casually; this repo may have local dirty work.
 
-## When you're stuck
+## Current Known Risks
 
-- **Compile errors involving `Renderer`?** You probably leaked a
-  platform type into the trait. The trait must be platform-agnostic.
-- **A control needs OS state (HWND, accent color)?** Pass it via the
-  `Tokens` (for design state) or via a side-channel `&dyn Host` (for
-  HWND-equivalents). Never reach back through the renderer.
-- **Spec and code disagree?** Trust the spec. Edit the code, or in rare
-  cases, edit the spec — but never silently let the code be the
-  authority.
-
-## What this file is *not*
-
-- It is not a substitute for reading the specs.
-- It is not the place to record one-off bug fixes (use git history).
-- It is not a roadmap for product decisions (use `specs/ux/`).
+- Eager filesystem enumeration still violates the final performance model for
+  very large or slow folders.
+- Icon fetching can still touch AppKit/NSWorkspace near navigation.
+- TextInput lacks full IME/composition support.
+- Preview pane is metadata-only; real previews must be async and cancellable.
+- Delete-to-Trash is still a fallback, not final `NSWorkspace` trash semantics.

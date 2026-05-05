@@ -1,59 +1,61 @@
-# Feraille UX — Overview
+# Feraille UX Overview
 
-## What this app is
+## What This App Is
 
-A desktop file explorer for Windows. The differentiator is **speed at scale**: a folder with a million files opens, scrolls, sorts, and searches without ever feeling laggy. Everything else — UI polish, shell integration, tabs — is table-stakes that has to be there but is not the *reason* to use it.
+Feraille is a native-feeling macOS file explorer with the speed ambition of the
+Windows predecessor `../Ferail`.
 
-## What it is *not*
+It should feel closer to Finder, Zed, and a power-user file pane than to a
+marketing app. Dense, direct, predictable, and fast.
 
-- A file manager with workflow automation (no batch-rename DSL, no scripting).
-- A cloud-sync client.
-- A dual-pane Norton-style commander. (Tabs, yes; orthopanes, no.)
-- A Mac/Linux app. macOS is dev-mode only; Linux is out of scope.
+## Product Promise
 
-## Mental model the user brings
+The user should be able to open a huge folder, scroll, filter, inspect, preview,
+drag, and navigate away without the UI ever feeling stuck.
 
-Users come from one of three places:
+Performance is not an implementation detail here. It is the product.
 
-1. **Windows Explorer.** Their muscle memory: F2 rename, Delete sends to Recycle, Ctrl+L for address, Alt+arrows for nav, right-click for context menu, drag to copy/move with modifier keys. **Match Explorer's keyboard map exactly** unless we have a strong reason not to. Surprise here is bad surprise.
+## Mental Model
 
-2. **VS Code / IDE file pane.** Quick switcher (Ctrl+P style fuzzy nav), keyboard-first multi-select, type-ahead. **We adopt these on top of Explorer's map**, never replacing.
+Users bring expectations from:
 
-3. **Total Commander / Directory Opus power users.** Want column control, custom sorting, multi-select that survives scrolling, drag with confidence about copy-vs-move. **We give them keyboard shortcuts and density**, not skinning.
+1. **Finder:** `Cmd+Shift+.`, `Cmd+I`, reveal, Trash, volumes, sidebar locations,
+   drag/drop, native menus.
+2. **Windows Ferail/Explorer:** speed at scale, dense list, direct keyboard
+   manipulation, context menu confidence.
+3. **Zed/IDE file panes:** fast fuzzy movement, tabs, compact chrome, keyboard
+   immediacy.
 
-If a feature pleases group 3 at the cost of confusing group 1, group 1 wins. There are vastly more of them.
+When these conflict, Feraille should prefer Mac conventions for platform
+actions and Ferail conventions for speed and density.
 
-## The five primary tasks
+## Primary Tasks
 
-Optimize for these. Everything else is secondary.
+1. Navigate to a folder.
+2. Find an item in the current folder.
+3. Inspect metadata and preview content.
+4. Manipulate files safely.
+5. Open items in other apps.
 
-1. **Navigate.** Get to a folder fast. (Tree click, breadcrumb click, Ctrl+L typed path, tabs, back/forward.)
-2. **Find.** Locate a file by name within a folder, by attribute, or by full-text. (Type-ahead, search box, filter chips.)
-3. **Inspect.** See what's there — size, modified date, type — without opening. (Columns, sort, optional preview pane.)
-4. **Manipulate.** Copy, move, rename, delete. (Drag, keyboard, context menu.)
-5. **Open.** Hand the file to another app. (Double-click, Enter, "Open with…".)
+## Non-Goals For v1
 
-## Performance is UX
+- Workflow automation or scripting.
+- Dual-pane commander mode.
+- Cloud-sync management.
+- Windows shell-extension parity inside the Mac app.
+- Anything that requires blocking UI interaction while I/O completes.
 
-The numbers in [05-performance.md](05-performance.md) are not engineering aspirations — they are user experience. A 33 ms hitch when scrolling a 100k-file folder is the difference between "fast tool" and "broken tool." Latency budgets in this spec are *part of the design*, not implementation detail.
+## Hard UX Opinion
 
-## Information density
+Every interaction has a fastest possible honest response. Use that as the
+design baseline. If an animation, modal, confirmation, metadata query, or
+visual flourish makes the median action slower, it is wrong.
 
-Default to **dense**. Row height 28 DIPs (the spec default), text size 13, no row stripes, no excessive padding. Provide a "comfortable" mode (row 32, text 14) for users who want it, but don't ship as default. Files App's default density is too generous for power users; Explorer's is right.
+## Sub-Specs
 
-## The opinion that drives every decision
-
-> Every interaction has a fastest possible reaction time. Treat that as the spec, work backwards. If a design choice — animation, modal, confirmation, "are you sure?" — makes the median path slower than the fastest possible path, it is wrong.
-
-This is the answer when a tradeoff is hard.
-
----
-
-## Sub-specs in this folder
-
-- [01-navigation.md](01-navigation.md) — moving between folders, tabs, history.
-- [02-selection.md](02-selection.md) — selection model and multi-select gestures.
-- [03-keyboard.md](03-keyboard.md) — full keyboard map.
-- [04-drag-drop.md](04-drag-drop.md) — drag-drop affordances and rules.
-- [05-performance.md](05-performance.md) — latency, frame, and memory budgets.
-- [06-error-and-empty-states.md](06-error-and-empty-states.md) — what to show when nothing is there, or it failed.
+- [01-navigation.md](01-navigation.md)
+- [02-selection.md](02-selection.md)
+- [03-keyboard.md](03-keyboard.md)
+- [04-drag-drop.md](04-drag-drop.md)
+- [05-performance.md](05-performance.md)
+- [06-error-and-empty-states.md](06-error-and-empty-states.md)
