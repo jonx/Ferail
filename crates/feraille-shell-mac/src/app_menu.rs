@@ -32,6 +32,13 @@ thread_local! {
     /// looked up from the menu-action selector below.
     static ABOUT_OPTIONS: RefCell<Option<Retained<NSDictionary<NSString, NSString>>>> =
         const { RefCell::new(None) };
+
+    /// Owned reference to the menu's action target. NSMenuItem's
+    /// `setTarget:` does **not** retain — the target is held as
+    /// `weak_unsafe`, so without this the menu items go disabled the
+    /// moment `install_app_menu` returns and our `Retained` drops.
+    static APP_MENU_TARGET: RefCell<Option<Retained<AppMenuTarget>>> =
+        const { RefCell::new(None) };
 }
 
 declare_class!(
@@ -114,6 +121,10 @@ pub fn install_app_menu(app_name: &str, tagline: &str, version: &str, copyright:
     ABOUT_OPTIONS.with(|cell| *cell.borrow_mut() = Some(about_options));
 
     let target = AppMenuTarget::new(mtm);
+    // Keep `target` alive for the program's lifetime — NSMenuItem holds
+    // its target as a weak reference, so the menu items would go
+    // disabled the moment this Retained dropped.
+    APP_MENU_TARGET.with(|cell| *cell.borrow_mut() = Some(target.clone()));
 
     let main_menu = NSMenu::new(mtm);
     main_menu.addItem(&build_app_submenu(mtm, &target, app_name));
