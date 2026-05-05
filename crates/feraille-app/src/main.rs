@@ -44,6 +44,10 @@ use winit::window::{Window, WindowId};
 
 const DRAG_THRESHOLD_DIPS: f32 = 4.0;
 const DRAG_DELAY_MS: u128 = 100;
+/// Icons fetched per `IconChunkTick`. Each call to NSWorkspace.iconForFile:
+/// is ~1ms on a warm Launch Services cache; 4 keeps a single tick under
+/// the 4ms paint frame budget from specs/ux/05-performance.md.
+const ICON_CHUNK_SIZE: usize = 4;
 
 /// Which pane currently owns keyboard focus. F6 cycles between them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -65,6 +69,12 @@ enum AppEvent {
         generation: u64,
         dir: PathBuf,
         results: Vec<MagicResult>,
+    },
+    /// Drain a chunk of `App.icon_queue` on the main thread. Posted to the
+    /// event loop so input/paint can run between chunks; NSWorkspace is
+    /// main-thread-only so we cannot offload the fetch to a worker.
+    IconChunkTick {
+        generation: u64,
     },
 }
 
@@ -198,6 +208,14 @@ pub struct App {
     pub magic_cache: HashMap<(PathBuf, i64), String>,
     event_proxy: Option<EventLoopProxy<AppEvent>>,
     magic_generation: u64,
+    /// Pending (key, representative_path) pairs for the in-flight icon
+    /// prefetch. Drained `ICON_CHUNK_SIZE` items per `IconChunkTick`.
+    icon_queue: Vec<(String, PathBuf)>,
+    icon_generation: u64,
+    icon_progress: Option<ProgressTaskId>,
+    /// Pixel size for in-flight icon fetches; captured once at prefetch
+    /// start so chunks stay consistent if the scale factor changes mid-run.
+    icon_size_px: u32,
     /// `Some` when the user has mouse-down on a list row; promotes to a
     /// system drag once `(distance > 4 DIPs && time > 100 ms)`.
     drag_watch: Option<DragWatch>,
@@ -961,6 +979,10 @@ impl App {
             magic_cache: HashMap::new(),
             event_proxy: None,
             magic_generation: 0,
+            icon_queue: Vec::new(),
+            icon_generation: 0,
+            icon_progress: None,
+            icon_size_px: 16,
             drag_watch: None,
             pointer_dips: None,
             modifiers: ModifiersState::empty(),
@@ -1282,33 +1304,60 @@ impl App {
         self.start_magic_prefetch();
     }
 
-    /// Walk the active tab's entries, fetch+cache any extensions we
-    /// haven't seen before. Synchronous on the navigate path; ~1ms per
-    /// new extension on a warm Launch Services cache. Iter-5 will move
-    /// to a worker.
+    /// Build a deduped queue of icon fetches for the active tab and post
+    /// the first `IconChunkTick` to the event loop. The handler drains
+    /// `ICON_CHUNK_SIZE` items per tick on the main thread — NSWorkspace
+    /// is main-thread-only — and re-posts until the queue is empty,
+    /// yielding to input/paint between chunks.
+    ///
+    /// Headless callers (no event proxy yet, e.g. screenshot CLI) fall
+    /// back to a synchronous drain so generated images still have icons.
     fn prefetch_icons(&mut self) {
         let icon_size_px = (16.0 * self.scale_factor).round().max(16.0) as u32;
         let cur_dir = self.tabs[self.active].current_dir.clone();
-        let to_fetch: Vec<(String, PathBuf)> = self.tabs[self.active]
-            .entries
-            .iter()
-            .filter_map(|e| {
-                let key = cache_key_for(e);
-                if self.icon_cache.contains_key(&key) {
-                    None
-                } else {
-                    Some((key, cur_dir.join(&e.name)))
-                }
-            })
-            .collect();
-        for (key, path) in to_fetch {
-            if self.icon_cache.contains_key(&key) {
+
+        // NSWorkspace returns one icon per UTI, so any file with a given
+        // extension represents the whole bucket. Dedup by cache key so we
+        // don't queue 100 `.rs` paths for the same icon.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut queue: Vec<(String, PathBuf)> = Vec::new();
+        for entry in &self.tabs[self.active].entries {
+            let key = cache_key_for(entry);
+            if self.icon_cache.contains_key(&key) || !seen.insert(key.clone()) {
                 continue;
             }
-            if let Some((rgba, w, h)) = fetch_icon_rgba(&path, icon_size_px) {
-                self.icon_cache.insert(key, Bitmap::new(w, h, rgba));
-            }
+            queue.push((key, cur_dir.join(&entry.name)));
         }
+
+        if queue.is_empty() {
+            return;
+        }
+
+        let Some(proxy) = self.event_proxy.clone() else {
+            // Headless: no event loop to schedule against. Run synchronously
+            // so screenshot output is correct.
+            for (key, path) in queue {
+                if let Some((rgba, w, h)) = fetch_icon_rgba(&path, icon_size_px) {
+                    self.icon_cache.insert(key, Bitmap::new(w, h, rgba));
+                }
+            }
+            return;
+        };
+
+        self.icon_generation = self.icon_generation.wrapping_add(1);
+        self.icon_queue = queue;
+        self.icon_size_px = icon_size_px;
+
+        // Cancel any prior prefetch's progress; pending ticks for the old
+        // generation will be dropped by the gate in the handler.
+        if let Some(prev) = self.icon_progress.take() {
+            self.progress.cancel(prev);
+        }
+        self.icon_progress = Some(self.progress.start_indeterminate());
+
+        let _ = proxy.send_event(AppEvent::IconChunkTick {
+            generation: self.icon_generation,
+        });
     }
 
     fn cursor_entry_name(&self) -> Option<String> {
@@ -1897,6 +1946,36 @@ impl ApplicationHandler<AppEvent> for App {
                     self.rebuild_visible_entries(cursor_name, true);
                     self.list.scroll_offset = scroll;
                     self.request_redraw();
+                }
+            }
+            AppEvent::IconChunkTick { generation } => {
+                if generation != self.icon_generation {
+                    return;
+                }
+                let mut redraw = false;
+                for _ in 0..ICON_CHUNK_SIZE {
+                    let Some((key, path)) = self.icon_queue.pop() else {
+                        break;
+                    };
+                    if self.icon_cache.contains_key(&key) {
+                        continue;
+                    }
+                    if let Some((rgba, w, h)) = fetch_icon_rgba(&path, self.icon_size_px) {
+                        self.icon_cache.insert(key, Bitmap::new(w, h, rgba));
+                        redraw = true;
+                    }
+                }
+                if redraw {
+                    self.request_redraw();
+                }
+                if self.icon_queue.is_empty() {
+                    if let Some(id) = self.icon_progress.take() {
+                        self.progress.complete(id);
+                    }
+                } else if let Some(proxy) = self.event_proxy.clone() {
+                    let _ = proxy.send_event(AppEvent::IconChunkTick {
+                        generation: self.icon_generation,
+                    });
                 }
             }
         }

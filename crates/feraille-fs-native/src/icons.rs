@@ -8,6 +8,14 @@
 
 use std::path::Path;
 
+/// Fetch the system icon for `path` at `size_px`, rasterized to straight
+/// (non-premultiplied) RGBA8.
+///
+/// **macOS: main-thread only.** This calls
+/// `NSWorkspace.sharedWorkspace().iconForFile:`, which is not safe to invoke
+/// from worker threads. Callers that want to keep the UI thread free should
+/// schedule the fetch via the event loop in chunks (see
+/// `App::prefetch_icons` / `IconChunkTick`), not spawn a worker.
 #[cfg(target_os = "macos")]
 pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     use objc2::msg_send;

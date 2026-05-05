@@ -53,18 +53,38 @@ Every expensive feature follows the same shape:
 5. The UI applies the result only if the token still matches current state.
 6. Paint reads the cached result on the next frame.
 
+### Variant: chunked main-thread work
+
+Some macOS APIs (notably `NSWorkspace.iconForFile:`) are main-thread only and
+will deadlock or crash if called from a worker. For these, we use the same
+event/generation/token machinery but the work itself stays on the main
+thread, drained in small chunks across multiple event-loop ticks:
+
+1. Build a deduped queue on the schedule event.
+2. Post a chunk-tick event via the event loop proxy.
+3. The handler does up to N items (small enough to fit one paint frame),
+   then either re-posts the tick or completes the progress token.
+4. A new generation invalidates older ticks the same way it invalidates
+   worker results.
+
+Chunked main-thread is a fallback, not the default. Use it only when the
+API forbids off-thread calls. Iter-5.6 icon prefetch is the reference.
+
 ## Current Examples
 
 Done:
 
 - Magic detection runs on a worker and returns through winit user events.
+- Icon prefetch is chunked on the main thread (NSWorkspace is main-thread
+  only). Generation tokens drop stale ticks on navigation; the
+  `ProgressStrip` reflects in-flight state. See `App::prefetch_icons` and
+  the `IconChunkTick` arm in `App::user_event`.
 - Search/filter uses the current in-memory listing and does not re-enumerate.
 - The preview pane reads already-enumerated metadata only.
 
 Needs work:
 
 - Directory enumeration should stream from workers with cancellation.
-- Icon fetching should move behind a worker/cache boundary.
 - Real previews must be cancellable worker jobs.
 - Context menu warming should precompute only pure app state on hover; native
   menu construction must happen asynchronously or at invocation with visible

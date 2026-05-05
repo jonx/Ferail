@@ -38,6 +38,10 @@ I/O while painting or handling immediate interaction.
 - Search/filter dialog.
 - Preview info pane.
 - Magic sniffing moved off the UI thread after a real hang report.
+- Iter-5.6: icon prefetch chunked on the main thread (NSWorkspace is
+  main-thread-only, so worker pattern doesn't apply). `IconChunkTick`
+  events drain 4 keys at a time with generation tokens; the
+  `ProgressStrip` reflects in-flight state.
 
 ## Important Bug Lesson: Magic Sniffing Hang
 
@@ -60,7 +64,9 @@ Rule reinforced: no filesystem reads on the UI hot path.
 
 - Directory enumeration is still eager in places and must become streaming and
   cancellable.
-- Icon fetching is cached but still too close to navigation.
+- Icon fetching is now chunked on the main thread (iter-5.6); it no longer
+  blocks navigation, but `NSWorkspace.iconForFile:` itself still runs on the
+  UI thread because the API is main-thread only.
 - Preview pane is metadata-only.
 - Context menu is a hardcoded slice, not final NSMenu/services behavior.
 - Trash is a fallback, not final `NSWorkspace` trash.
