@@ -199,6 +199,9 @@ pub fn install_app_menu(app_name: &str, tagline: &str, version: &str, copyright:
         main_menu.addItem(&item);
     }
     main_menu.addItem(&build_window_submenu(mtm, &target));
+    if let Some(item) = build_category_submenu(mtm, &target, Category::Help, "Help") {
+        main_menu.addItem(&item);
+    }
 
     let app = NSApplication::sharedApplication(mtm);
     app.setMainMenu(Some(&main_menu));

@@ -111,6 +111,17 @@ I/O while painting or handling immediate interaction.
   and notes that a real Settings window lands later. Native AppKit
   modal — no Feraille soft-rendered chrome. Makes Cmd+, do something
   visible without forcing a Settings UI design pass yet.
+- Iter-5.12: Help submenu. New `Category::Help` and two commands —
+  `help.github` opens the project URL via `NSWorkspace.openURL:`,
+  `help.shortcuts` (Cmd+/) pops a native modal listing every
+  catalogue command grouped by category, with the canonical
+  ⌘⌥⇧+key glyph for its `default_shortcut`. Cheat sheet is
+  auto-generated; adding a command + shortcut to
+  `feraille_core::commands` makes it appear here without touching
+  the Help code. `show_settings_placeholder` collapsed into a
+  generic `feraille_shell_mac::show_alert(title, body)` that both
+  Settings and Help share. New `feraille_shell_mac::open_url(url)`
+  helper.
 
 ## Important Bug Lesson: Magic Sniffing Hang
 

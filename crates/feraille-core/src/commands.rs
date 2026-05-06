@@ -29,6 +29,7 @@ pub enum Category {
     View,
     Go,
     Window,
+    Help,
 }
 
 /// Neutral keyboard shortcut DSL. The shell layer maps `primary` to
@@ -210,6 +211,19 @@ const CATALOGUE: &[CommandSpec] = &[
         title: "Previous Tab",
         category: Category::Window,
         default_shortcut: Some(Shortcut::primary_shift("[")),
+    },
+    // Help
+    CommandSpec {
+        id: CommandId("help.github"),
+        title: "Feraille on GitHub",
+        category: Category::Help,
+        default_shortcut: None,
+    },
+    CommandSpec {
+        id: CommandId("help.shortcuts"),
+        title: "Keyboard Shortcuts",
+        category: Category::Help,
+        default_shortcut: Some(Shortcut::primary("/")),
     },
 ];
 

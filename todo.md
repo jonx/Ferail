@@ -38,9 +38,10 @@ delete it; the commit + NOTES.md entry is the record.
   placeholder that prints current state. Replace with a proper modal
   panel (theme picker, hidden-files toggle, sidebar-width slider,
   …) backed by a config file so changes persist across runs.
-- **Help submenu.** At minimum, "Feraille on GitHub" → `open` URL.
-  Optional: keyboard-shortcuts cheat sheet generated from the
-  catalogue.
+- **Update `PROJECT_URL` once the repo is public.** iter-5.12 ships
+  Help → "Feraille on GitHub" pointing at a deliberately invalid
+  placeholder (`https://example.invalid/feraille`) — swap it out
+  when the real repo lands.
 
 ### Other gaps that matter today
 

@@ -193,6 +193,11 @@ const SIDEBAR_MAX: f32 = 480.0;
 /// `cargo run` builds (no .app bundle) get the real icon in the dock.
 const APP_ICON_PNG: &[u8] = include_bytes!("../resources/feraille.png");
 
+/// Project URL opened by the `help.github` command. Update if/when the
+/// repo moves; the placeholder below is chosen to be obviously not a
+/// real URL so it triggers a fix rather than silently shipping wrong.
+const PROJECT_URL: &str = "https://example.invalid/feraille";
+
 /// Walk the command catalogue and try to match the current keystroke
 /// against every command's `default_shortcut`. Returns the matching
 /// `CommandId` or `None`. This is the iter-5.9 unification: changing
@@ -1594,6 +1599,8 @@ impl App {
             "go.home" => self.navigate(home_dir()),
             "window.next_tab" => self.next_tab(),
             "window.prev_tab" => self.prev_tab(),
+            "help.github" => feraille_shell_mac::open_url(PROJECT_URL),
+            "help.shortcuts" => self.show_help_shortcuts(),
             other => log_warn!(59, "unknown command id: {:?}", other),
         }
         self.request_redraw();
@@ -2134,12 +2141,63 @@ impl App {
             "Theme: {theme}\n\
              Hidden files: {}\n\
              Sidebar width: {:.0} DIPs\n\
-             Tabs open: {}",
+             Tabs open: {}\n\n\
+             A proper Settings window lands in a future iter; this is \
+             a placeholder so Cmd+, isn't a no-op.",
             if self.show_hidden { "shown" } else { "hidden" },
             self.splitter_x,
             self.tabs.len(),
         );
-        feraille_shell_mac::show_settings_placeholder(&body);
+        feraille_shell_mac::show_alert("Settings", &body);
+    }
+
+    /// Pop a native modal listing every shortcut from the catalogue,
+    /// grouped by category. Auto-generated — adding a command +
+    /// shortcut to `feraille_core::commands` makes it appear here
+    /// without touching this function.
+    pub fn show_help_shortcuts(&self) {
+        use feraille_core::commands::{all_commands, Category};
+        let categories = [
+            (Category::App, "App"),
+            (Category::File, "File"),
+            (Category::Edit, "Edit"),
+            (Category::View, "View"),
+            (Category::Go, "Go"),
+            (Category::Window, "Window"),
+            (Category::Help, "Help"),
+        ];
+        let mut body = String::new();
+        for (cat, label) in categories {
+            let mut group: Vec<&feraille_core::commands::CommandSpec> = all_commands()
+                .iter()
+                .filter(|s| s.category == cat && s.default_shortcut.is_some())
+                .collect();
+            if group.is_empty() {
+                continue;
+            }
+            group.sort_by_key(|s| s.title);
+            if !body.is_empty() {
+                body.push('\n');
+            }
+            body.push_str(label);
+            body.push('\n');
+            for spec in group {
+                let sc = spec.default_shortcut.unwrap();
+                let mut keys = String::new();
+                if sc.primary {
+                    keys.push('⌘');
+                }
+                if sc.alt {
+                    keys.push('⌥');
+                }
+                if sc.shift {
+                    keys.push('⇧');
+                }
+                keys.push_str(sc.key);
+                body.push_str(&format!("  {keys:<10}  {}\n", spec.title));
+            }
+        }
+        feraille_shell_mac::show_alert("Keyboard Shortcuts", body.trim_end());
     }
 
     fn handle_tree_event(&mut self, ev: TreeEvent) {

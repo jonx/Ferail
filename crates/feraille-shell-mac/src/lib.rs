@@ -68,16 +68,12 @@ pub fn set_tab_count(n: usize) {
 #[cfg(not(target_os = "macos"))]
 pub fn set_tab_count(_n: usize) {}
 
-/// Show a placeholder Settings panel as a native NSAlert. Lets the
-/// `app.settings` command (Cmd+,) do something visible without us
-/// having to commit to a Settings UI design yet — the alert says
-/// what the current state is and that a real panel is coming.
-///
-/// `body` is the multi-line summary of current state; the host
-/// composes it (theme, hidden files, splitter, etc.) so the shell
-/// crate doesn't need to know app internals.
+/// Show a native modal NSAlert with the given title and body. Single
+/// "OK" button, informational style. Used for any "show this text
+/// in a sheet" surface the host wants — Settings placeholder, Help
+/// shortcuts cheat sheet, etc. Host composes both strings.
 #[cfg(target_os = "macos")]
-pub fn show_settings_placeholder(body: &str) {
+pub fn show_alert(title: &str, body: &str) {
     use objc2_app_kit::{NSAlert, NSAlertStyle};
     use objc2_foundation::{MainThreadMarker, NSString};
 
@@ -86,12 +82,8 @@ pub fn show_settings_placeholder(body: &str) {
     };
     unsafe {
         let alert = NSAlert::new(mtm);
-        alert.setMessageText(&NSString::from_str("Settings"));
-        let info = format!(
-            "{body}\n\nA proper Settings window lands in a future iter; \
-             this is a placeholder so Cmd+, isn't a no-op."
-        );
-        alert.setInformativeText(&NSString::from_str(&info));
+        alert.setMessageText(&NSString::from_str(title));
+        alert.setInformativeText(&NSString::from_str(body));
         alert.setAlertStyle(NSAlertStyle::Informational);
         alert.addButtonWithTitle(&NSString::from_str("OK"));
         let _ = alert.runModal();
@@ -99,7 +91,31 @@ pub fn show_settings_placeholder(body: &str) {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn show_settings_placeholder(_body: &str) {}
+pub fn show_alert(_title: &str, _body: &str) {}
+
+/// Open `url` in the user's default handler (typically the browser).
+/// Best-effort — failures are logged at the AppKit level and we don't
+/// surface them. macOS uses NSWorkspace; non-macOS falls back to the
+/// `open` / `xdg-open` shell command.
+#[cfg(target_os = "macos")]
+pub fn open_url(url: &str) {
+    use objc2_app_kit::NSWorkspace;
+    use objc2_foundation::{NSString, NSURL};
+
+    unsafe {
+        let ns_str = NSString::from_str(url);
+        let Some(ns_url) = NSURL::URLWithString(&ns_str) else {
+            return;
+        };
+        let workspace = NSWorkspace::sharedWorkspace();
+        let _ = workspace.openURL(&ns_url);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn open_url(url: &str) {
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+}
 
 /// Show a context menu at `cursor_dips` (relative to the window's content
 /// view) with the given titles. Returns the 0-based index of the selected
