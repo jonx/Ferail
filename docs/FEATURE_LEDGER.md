@@ -20,7 +20,7 @@ Status labels:
 | Breadcrumb edit mode | `todo.md` | Done | `Cmd+L` / `Ctrl+L`; completion is Todo. |
 | Keyboard navigation | `todo.md`, `SPECS.md` | Partial | Core keys exist. Full Finder-grade focus model and remapping are Todo. |
 | Search/filter | `todo.md` | Done | `Cmd+F` / `Ctrl+F` live filter over current folder by name/kind/magic. |
-| Status bar | `STATUSBARPROGRESSCONTROL.md` | Partial | Text status exists. Progress/task aggregation is Todo. |
+| Status bar | `STATUSBARPROGRESSCONTROL.md` | Partial | Text status, single shared progress strip, and a bottom-right task popover (iter-5.15) ship; per-task ETA/bytes pending future copy/move workers. |
 | Error/empty states | `SPECS.md` | Todo | Specs exist; UI states not implemented. |
 
 ## File Actions
@@ -70,5 +70,5 @@ Status labels:
 | Async enumeration | `todo.md`, `SPECS.md`, [features/STREAMING_ENUMERATION.md](features/STREAMING_ENUMERATION.md) | Spec | Spec drafted iter-5.7.4. Implementation pending. |
 | Cancellation tokens | `todo.md` | Todo | Needed for enumeration, preview, search, thumbnails, disk usage. |
 | Lazy display metadata | `LAZY_TEXT_DISPLAY.md` | Partial | Current `FileEntry` caches display strings. NodeStore-style identity is Todo. |
-| Status progress | `STATUSBARPROGRESSCONTROL.md` | Todo | Needed once long-running workers land. |
+| Status progress | `STATUSBARPROGRESSCONTROL.md` | Partial | Iter-5.15: `TaskRegistry` + popover surfaces every active task; cancellation wired for enumeration and icon prefetch. ETAs and copy/move integration are Todo. |
 | Debug overlays | `TESTING_OVERLAYS.md` | Todo | Reconstructed in [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md). |

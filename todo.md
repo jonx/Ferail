@@ -78,26 +78,50 @@ delete it; the commit + NOTES.md entry is the record.
   the FileTree's section model so each Volumes row can paint a small
   horizontal "space used" bar (and skip it for `is_local == false`).
 
-### Responsiveness polish (post iter-5.13.2)
+- **Chevron as expandability affordance.** Today every folder row in
+  Locations / Volumes paints a `▶` chevron regardless of whether the
+  folder actually has subfolders — so users discover empty folders by
+  clicking and getting nothing. Make the chevron telegraph the answer
+  before the click. Three flavors worth picking between when this
+  comes up:
+  1. **Binary** — filled `▶` if the folder has subfolders, hollow /
+     no chevron if proven leaf. Finder-style; lowest noise.
+  2. **Density** — chevron weight scales with subfolder count (1 vs 5
+     vs 50 read differently), so depth telegraphs itself.
+  3. **Heat-blended** — chevron picks up ant-trail color when the user
+     frequently expands it, surfacing "places you go" to the eye.
 
-- **Hold the previous folder visible until first batch arrives.**
-  `goto_path` on a *new* path currently clears `all_entries` and paints
-  empty for one frame before the streamed batches start arriving. For
-  fast local FS the worker beats the next paint and it's invisible; for
-  slow FS the empty state is jarring. Track a `pending_first_batch`
-  flag, defer the `all_entries.clear()` until the first
-  `EnumerationBatch` arrives (replace, not append, on first batch),
-  treat zero-batch enumerations as empty in `EnumerationDone`. Removes
-  the residual same-pane flash on legitimate navigation.
-- **Move `reveal_in_tree` ancestor enumeration off the main thread.**
-  When you navigate to a deep path the tree expands each ancestor and
-  calls `fs.enumerate(id)` synchronously per level. Cached on repeat
-  visits, but the first deep visit can stall the UI thread. Same
-  worker + token + `AppEvent` shape as the list-pane streaming
-  enumeration; per-ancestor results land via a new
-  `AppEvent::TreeChildrenLoaded { id, entries }` and the tree
-  populates incrementally. Pairs naturally with `STREAMING_ENUMERATION`
-  follow-through.
+  All three need the same infrastructure: an async "peek subfolder
+  count" that runs off-thread (CLAUDE.md prime directive — no I/O on
+  the UI thread), caches per-`NodeId`, batches like `IconChunkTick`
+  to stay under frame budget, and invalidates on rename/move/create.
+  Probably worth doing alongside or after streaming enumeration so the
+  peek can reuse the same worker plumbing.
+
+### Task manager follow-ups (post iter-5.15)
+
+- **Live GUI smoke test.** The iter-5.15 verification used the
+  `--simulate-task-panel` screenshot fixture, not a real run. Walk
+  through the golden path interactively: navigate into a slow folder,
+  click the status bar to open the popover, click `[×]` to cancel
+  enumeration / icon prefetch, hit Escape and click outside to dismiss,
+  confirm two overlapping tasks render two rows.
+- **ETAs and byte counts.** The registry stores
+  `TaskProgress::{Indeterminate, Determinate(f32)}` only — no rate, no
+  ETA, no byte totals. Add a `details: Option<String>` (or richer enum)
+  on `ActiveTask` and surface "X of Y · ETA Z" in the popover row when
+  the task can supply it. Wait until copy/move land so we have a real
+  consumer.
+- **Wire copy/move/trash/search workers into the registry.** As each of
+  those features lands, its scheduler should call `App::begin_task` /
+  `end_task` instead of (or in addition to) driving the strip
+  directly. That is the entire point of having a single registry —
+  don't let new long-running paths regress to private state fields.
+- **Determinate strip while determinate tasks are active.** Today the
+  strip stays indeterminate as long as the registry is non-empty. Once
+  copy/move ship determinate progress, switch the strip to a determinate
+  fill (averaged over determinate tasks, or the primary one) so the
+  status comet matches reality.
 
 ## Later
 
@@ -112,9 +136,11 @@ delete it; the commit + NOTES.md entry is the record.
   rename / move / mount changes — the durable substrate for ant trail,
   selection, and external watcher events. Deferred until streaming
   enumeration is in place; the two designs are coupled.
-- **Status progress / task aggregation.** A central in-flight-task
-  view (count, bytes, ETA) shared by enumeration, prefetch, copy,
-  trash, search. Today the `ProgressStrip` is single-task and per-call.
+- **Status progress / task aggregation — extend.** Iter-5.15 ships a
+  central `TaskRegistry` + bottom-right popover surfacing every active
+  task with cancellation for enumeration / icon prefetch. Still
+  pending: byte counts, ETAs, and integration with future copy / move /
+  trash / search workers as they land.
 
 ### Feature surfaces (need design before code)
 

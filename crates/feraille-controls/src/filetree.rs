@@ -69,7 +69,8 @@ impl SectionKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(dead_code)]
 pub enum SectionKind {
-    /// Top section without a visible header — recent folders.
+    /// Top section — recently/most-visited folders, sorted A→Z for
+    /// stable slot positions.
     Recents,
     /// User-pinned folders.
     Favorites,
@@ -81,8 +82,9 @@ pub enum SectionKind {
 
 #[derive(Clone, Debug)]
 pub struct Section {
-    /// Uppercase header label, or `None` for a header-less section
-    /// (the Recents section sits at the top with no label, like Finder).
+    /// Uppercase header label, or `None` for a header-less section.
+    /// Header-less sections remain supported but are no longer used by
+    /// any built-in section.
     pub header: Option<String>,
     /// Used by iter-5.2 to differentiate click behavior across sections
     /// (e.g. Pin/Unpin shows in Favorites context menus only).
@@ -301,13 +303,24 @@ impl FileTree {
         }
     }
 
-    pub fn paint(
+    /// Look up which section a node belongs to. Used by the host to
+    /// decide per-row icon lookup (e.g. real volume icons for Volumes /
+    /// Locations rows vs the shared `"DIR"` bitmap for plain folders).
+    /// O(sections × entries-per-section); fine at sub-100 rows.
+    pub fn section_kind_for(&self, id: NodeId) -> Option<SectionKind> {
+        self.sections
+            .iter()
+            .find(|s| s.entries.contains(&id))
+            .map(|s| s.kind)
+    }
+
+    pub fn paint<'a>(
         &self,
         bounds: Rect,
         tokens: &Tokens,
         painter: &mut dyn Renderer,
         heat_for: impl Fn(NodeId) -> f32,
-        dir_icon: Option<&Bitmap>,
+        icon_for: impl Fn(NodeId) -> Option<&'a Bitmap>,
     ) {
         painter.fill_rect(bounds, tokens.bg.layer2);
         if self.visible.is_empty() {
@@ -363,7 +376,8 @@ impl FileTree {
                             strip,
                         );
                     }
-                    paint_row(node, row_rect, *depth, *expandable, dir_icon, tokens, painter);
+                    let icon = icon_for(id);
+                    paint_row(node, row_rect, *depth, *expandable, icon, tokens, painter);
 
                     if self.focused && is_selected {
                         focus_paint = Some(row_rect);
@@ -774,6 +788,13 @@ impl FileTree {
 
     /// Adjust scroll so `id` is visible in `viewport_h` DIPs of viewport.
     pub fn ensure_visible(&mut self, id: NodeId, viewport_h: f32) {
+        // Skip when the viewport hasn't been sized yet (e.g. a navigate
+        // fires before the first layout pass): the scroll-down branch
+        // would otherwise treat any row as off-screen and pin
+        // scroll_offset past the first section's header.
+        if viewport_h <= 0.0 {
+            return;
+        }
         let Some(idx) = self
             .visible
             .iter()

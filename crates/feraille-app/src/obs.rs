@@ -10,6 +10,8 @@
 //! Macros `log_info!`, `log_warn!`, `log_error!` live in `main.rs` and
 //! delegate here.
 
+use std::collections::VecDeque;
+use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -25,8 +27,10 @@ use std::time::Instant;
 /// `57`). Crash-diagnostic output (startup banner, panic hook, worker
 /// panic line) does **not** flow through the macros and is always printed.
 pub const LOG_THRESHOLD: u32 = 59;
+const BREADCRUMB_CAP: usize = 64;
 
 static START: OnceLock<Instant> = OnceLock::new();
+static BREADCRUMBS: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
 
 pub fn init() {
     START.get_or_init(Instant::now);
@@ -42,15 +46,26 @@ pub fn init() {
 }
 
 pub fn elapsed_secs() -> f64 {
-    START.get().map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0)
+    START
+        .get()
+        .map(|t| t.elapsed().as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 pub fn line(level: &str, args: std::fmt::Arguments) {
     eprintln!("[+{:7.3}s][{}] {}", elapsed_secs(), level, args);
 }
 
+pub fn breadcrumb(args: std::fmt::Arguments) {
+    let entry = format!("[+{:7.3}s] {}", elapsed_secs(), args);
+    let mut guard = breadcrumbs().lock().expect("breadcrumb mutex poisoned");
+    if guard.len() == BREADCRUMB_CAP {
+        guard.pop_front();
+    }
+    guard.push_back(entry);
+}
+
 fn install_panic_hook() {
-    let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let location = info
             .location()
@@ -59,14 +74,7 @@ fn install_panic_hook() {
         let payload = panic_payload_string(info.payload());
         let thread = std::thread::current();
         let thread_name = thread.name().unwrap_or("<unnamed>");
-        eprintln!(
-            "[+{:7.3}s][PANIC] thread \"{}\" at {}: {}",
-            elapsed_secs(),
-            thread_name,
-            location,
-            payload,
-        );
-        original(info);
+        print_crash_report(thread_name, &location, &payload);
     }));
 }
 
@@ -108,6 +116,40 @@ fn print_startup_banner() {
         "info",
         format_args!("logs on stderr; backtrace via RUST_BACKTRACE (default=1)"),
     );
+}
+
+fn breadcrumbs() -> &'static Mutex<VecDeque<String>> {
+    BREADCRUMBS.get_or_init(|| Mutex::new(VecDeque::with_capacity(BREADCRUMB_CAP)))
+}
+
+fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
+    let backtrace = std::backtrace::Backtrace::force_capture();
+    eprintln!();
+    eprintln!("==================== Feraille Crash ====================");
+    eprintln!("time      : +{:.3}s", elapsed_secs());
+    eprintln!("thread    : {thread_name}");
+    eprintln!("location  : {location}");
+    eprintln!("message   : {payload}");
+    eprintln!();
+    dump_breadcrumbs_for_panic();
+    eprintln!();
+    eprintln!("backtrace :");
+    eprintln!("{backtrace}");
+    eprintln!("========================================================");
+    eprintln!();
+}
+
+fn dump_breadcrumbs_for_panic() {
+    let guard = breadcrumbs().lock().expect("breadcrumb mutex poisoned");
+    if guard.is_empty() {
+        eprintln!("breadcrumbs:");
+        eprintln!("    <none>");
+        return;
+    }
+    eprintln!("breadcrumbs:");
+    for (idx, entry) in guard.iter().enumerate() {
+        eprintln!("    {:>2}. {entry}", idx + 1);
+    }
 }
 
 /// Best-effort wall-clock UTC timestamp without pulling in chrono.

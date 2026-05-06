@@ -38,15 +38,19 @@ pub struct Args {
     pub search: bool,           // open the filter dialog
     pub preview: bool,          // show the preview pane
     pub sort: Option<(String, bool)>, // (column_name, ascending)
-    pub properties: bool,             // open Get-Info panel for the selected row
-    pub mac_chrome: bool, // simulate macOS native chrome (traffic-light inset on tabstrip)
-    pub rename: bool,     // open the rename dialog with the cursor entry
-    pub inline_rename: bool, // start in-row rename for the cursor entry
-    pub new_folder: bool, // open the new-folder dialog
+    pub properties: bool,       // open Get-Info panel for the selected row
+    pub mac_chrome: bool,       // simulate macOS native chrome (traffic-light inset on tabstrip)
+    pub rename: bool,           // open the rename dialog with the cursor entry
+    pub inline_rename: bool,    // start in-row rename for the cursor entry
+    pub new_folder: bool,       // open the new-folder dialog
     pub simulate_toast: Option<String>, // push a fake error toast
     /// Force-show the footer ProgressStrip (ignoring debounce). Used to
     /// verify the visual under deterministic conditions.
     pub simulate_progress: Option<f32>,
+    /// Open the task panel and seed it with two representative tasks so
+    /// the popover and status-bar hint can be verified without a slow
+    /// folder. v1 is a fixture for visual review.
+    pub simulate_task_panel: bool,
 }
 
 pub fn parse_args() -> Args {
@@ -99,6 +103,7 @@ pub fn parse_args() -> Args {
                         .unwrap_or(-1.0),
                 );
             }
+            "--simulate-task-panel" => args.simulate_task_panel = true,
             "--show-hidden" => args.show_hidden = true,
             "--filter" => args.filter = iter.next(),
             "--search" => args.search = true,
@@ -257,10 +262,11 @@ pub fn run(args: Args) -> Result<()> {
         app.open_new_folder();
     }
     if let Some(text) = args.simulate_toast.clone() {
-        app.toasts.push(feraille_controls::primitives::toast::Toast::new(
-            feraille_controls::primitives::toast::ToastKind::Error,
-            text,
-        ));
+        app.toasts
+            .push(feraille_controls::primitives::toast::Toast::new(
+                feraille_controls::primitives::toast::ToastKind::Error,
+                text,
+            ));
     }
     if args.search {
         app.open_search();
@@ -276,6 +282,22 @@ pub fn run(args: Args) -> Result<()> {
         }
         // Bypass the 50ms debounce so the strip shows in the screenshot.
         std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+    if args.simulate_task_panel {
+        // Two representative tasks: one cancellable enumeration with
+        // determinate progress, one non-cancellable indexing job.
+        let id = app
+            .tasks
+            .begin(crate::tasks::TaskKind::Enumeration, "Reading folder…", true);
+        app.tasks.update(id, 0.42);
+        app.tasks.begin(
+            crate::tasks::TaskKind::MagicPrefetch,
+            "Indexing files…",
+            false,
+        );
+        let _ = app.progress.start_indeterminate();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        app.task_panel_open = true;
     }
 
     let font_bytes = load_default_font().context("load default font")?;

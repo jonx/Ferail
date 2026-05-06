@@ -68,9 +68,15 @@ pub fn show_context_menu(
     titles: &[&str],
     cursor_dips: (f32, f32),
 ) -> Option<usize> {
-    let Some(mtm) = MainThreadMarker::new() else { return None };
-    let Ok(handle) = window.window_handle() else { return None };
-    let RawWindowHandle::AppKit(h) = handle.as_raw() else { return None };
+    let Some(mtm) = MainThreadMarker::new() else {
+        return None;
+    };
+    let Ok(handle) = window.window_handle() else {
+        return None;
+    };
+    let RawWindowHandle::AppKit(h) = handle.as_raw() else {
+        return None;
+    };
     let ns_view_ptr = h.ns_view.as_ptr();
     if ns_view_ptr.is_null() {
         return None;

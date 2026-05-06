@@ -122,6 +122,24 @@ I/O while painting or handling immediate interaction.
   generic `feraille_shell_mac::show_alert(title, body)` that both
   Settings and Help share. New `feraille_shell_mac::open_url(url)`
   helper.
+- Iter-5.15: tiny task manager. New `crates/feraille-app/src/tasks.rs`
+  (`TaskRegistry`, `ActiveTask`, `TaskKind`, `TaskProgress`) and
+  `task_panel.rs` (popover paint + hit-test). The three per-feature
+  `Option<ProgressTaskId>` fields collapse into per-feature
+  `Option<TaskId>` plus a single shared `task_strip_token` that lives
+  while the registry is non-empty — so two overlapping tasks no longer
+  steal the strip from each other (the prior behaviour had the visual
+  going idle once the most recent task finished, even if older ones
+  were still running). `App::begin_task` / `end_task` route through
+  the registry and the strip together; `cancel_task` knows how to halt
+  enumeration (cancel flag) and icon prefetch (bump generation, drop
+  queue). Magic prefetch stays uncancellable. `format_status` appends
+  the primary task's label when one task runs and "N tasks running"
+  when more do. Clicking the status bar while any task is active
+  toggles the popover; Escape or click-outside closes it. The popover
+  is anchored bottom-right above the status bar with inline chrome
+  matching `ModalPanel`'s look. Verified with the new
+  `--simulate-task-panel` screenshot flag.
 - Iter-5.14: real volume names + groundwork for capacity bars. New
   `feraille_fs_native::VolumeInfo { path, name, total_bytes,
   available_bytes, is_local, is_removable }` and
@@ -137,6 +155,35 @@ I/O while painting or handling immediate interaction.
   `LocalizedName` instead of the hardcoded "Macintosh HD". Boot
   firmlink (`/Volumes/<bootname>`) is filtered out by name match.
   Sets up rendering a per-row "space used" bar in a follow-up iter.
+- Iter-5.16.0: hold the previous folder visible until the first
+  enumeration batch lands. `goto_path` and `refresh_active_tab` no
+  longer clear `tab.all_entries` / `tab.entries` synchronously — the
+  swap now happens atomically inside the `EnumerationBatch` handler
+  on the first batch for a generation. New
+  `App::enumeration_pending_first_batch` is set in `start_enumeration`
+  (proxy path only) and cleared either by that first-batch swap or,
+  for empty/error finishes, by `EnumerationDone` dropping the held
+  rows and rebuilding visible. Headless `start_enumeration` still
+  overwrites synchronously so screenshot output is unchanged.
+  Removes the residual same-pane flash on slow filesystems
+  documented in c0ae03d.
+- Iter-5.16.1: tree-pane ancestor enumeration off the main thread.
+  Both `reveal_in_tree`'s ancestor walk on navigation and
+  `TreeEvent::ExpandRequested` on user click used to call
+  `fs.enumerate(id)` synchronously on the UI thread, stalling input
+  and paint on slow volumes. New `App::spawn_tree_load(id)` spawns a
+  worker via `obs::spawn_logged`; results return through
+  `AppEvent::TreeChildrenLoaded { generation, id, entries, error }`.
+  `App::tree_load_generation: u64` plus
+  `tree_pending: HashMap<NodeId, u64>` give per-id staleness gating:
+  duplicate spawns for the same id are deduped, and
+  `App::invalidate_tree(id)` (used by `refresh_active_tab`) drops the
+  pending entry so a stale result fails the gate. The handler
+  populates and re-runs `ensure_visible(selected)` so a deep reveal
+  target scrolls into view as ancestors expand around it. Headless
+  callers fall through to the synchronous path —
+  `cargo run -- --screenshot --expand <path>` keeps the same output.
+  Closes the last synchronous-tree-enum hazard noted in 449c3d6.
 
 ## Important Bug Lesson: Magic Sniffing Hang
 
@@ -163,7 +210,8 @@ Rule reinforced: no filesystem reads on the UI hot path.
 - Preview pane is metadata-only.
 - Context menu is a hardcoded slice, not final NSMenu/services behavior.
 - NodeStore identity model is not fully ported.
-- Status progress/task aggregation is not implemented.
+- Status progress/task aggregation now ships a tiny per-task popover
+  (iter-5.15). ETAs, byte counts, and copy/move integration still pending.
 - Persistent Ant Trail, metadata DB, disk usage, duplicate finder, and full
   preview providers are pending.
 

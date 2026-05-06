@@ -110,9 +110,7 @@ enum AppEvent {
     /// Drain a chunk of `App.icon_queue` on the main thread. Posted to the
     /// event loop so input/paint can run between chunks; NSWorkspace is
     /// main-thread-only so we cannot offload the fetch to a worker.
-    IconChunkTick {
-        generation: u64,
-    },
+    IconChunkTick { generation: u64 },
     /// User invoked a Feraille-owned command (menu / future command
     /// palette / future remappable shortcut). Dispatched to the
     /// matching App method by id in `user_event`.
@@ -133,6 +131,22 @@ enum AppEvent {
         generation: u64,
         dir: PathBuf,
         error: Option<EnumerationError>,
+    },
+    /// Tree-pane children for `id` arrived from a worker. Gated on
+    /// `App::tree_pending` matching `generation` so a stale result
+    /// (superseded by `invalidate_tree` or a re-spawn) is dropped.
+    TreeChildrenLoaded {
+        generation: u64,
+        id: NodeId,
+        entries: Vec<FileEntry>,
+        error: Option<EnumerationError>,
+    },
+    /// macOS Appearance flipped. `dark` is the new state. Posted by
+    /// the `feraille_shell_mac::start_system_theme_observer` callback;
+    /// the user_event arm calls `apply_theme` only when the user's
+    /// preference is `System`.
+    SystemThemeChanged {
+        dark: bool,
     },
 }
 
@@ -420,6 +434,16 @@ pub struct App {
     /// clears `all_entries` before extending so the swap is atomic.
     /// Removes the empty-frame flash on `goto_path` to a slow folder.
     enumeration_pending_first_batch: bool,
+    /// Monotonic counter for tree-pane child loads. Each `spawn_tree_load`
+    /// captures the next value; the matching `TreeChildrenLoaded` event
+    /// is dropped if `tree_pending[id]` no longer holds it (superseded
+    /// by `invalidate_tree` or a follow-up spawn).
+    tree_load_generation: u64,
+    /// `id -> generation` for tree-pane children loads currently in
+    /// flight. Insert on spawn, remove when the matching event applies
+    /// or on `invalidate_tree`. Acts as both a dedup key and a
+    /// staleness gate.
+    tree_pending: HashMap<NodeId, u64>,
     /// Pixel size for in-flight icon fetches; captured once at prefetch
     /// start so chunks stay consistent if the scale factor changes mid-run.
     icon_size_px: u32,
@@ -430,9 +454,27 @@ pub struct App {
     modifiers: ModifiersState,
 
     pub tokens: Tokens,
+    /// User-selected theme preference. `System` (default) tracks
+    /// macOS Appearance live; `Light` / `Dark` pin a fixed theme.
+    /// Persisted later (settings file); for now in-memory only.
+    pub theme_preference: ThemePreference,
+    /// Last-known macOS Appearance state. Refreshed at startup and
+    /// on every `AppEvent::SystemThemeChanged` so we can resolve the
+    /// effective theme without re-querying NSApp on every redraw.
+    pub system_is_dark: bool,
     pub width: u32,
     pub height: u32,
     pub scale_factor: f32,
+}
+
+/// User-facing theme choice. The effective rendered theme is derived
+/// from this plus the cached system Appearance state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemePreference {
+    Light,
+    Dark,
+    /// Follow macOS Appearance (live).
+    System,
 }
 
 impl App {
@@ -441,6 +483,12 @@ impl App {
     /// before calling `paint_to`.
     pub fn new_for_headless(theme: Theme) -> Self {
         let mut a = Self::new();
+        // Pin the headless theme regardless of system Appearance —
+        // screenshots want a deterministic look.
+        a.theme_preference = match theme {
+            Theme::Light => ThemePreference::Light,
+            Theme::Dark => ThemePreference::Dark,
+        };
         a.tokens = Tokens::for_theme(theme);
         a
     }
@@ -449,6 +497,53 @@ impl App {
         self.width = width.max(1);
         self.height = height.max(1);
         self.scale_factor = scale.max(0.5);
+    }
+
+    /// Resolve the user's preference + cached system Appearance into a
+    /// concrete theme. The renderer paints from this; the menu
+    /// checkmark uses the *preference* (so "Match System" stays
+    /// checked even when the resolved theme flips).
+    pub fn effective_theme(&self) -> Theme {
+        match self.theme_preference {
+            ThemePreference::Light => Theme::Light,
+            ThemePreference::Dark => Theme::Dark,
+            ThemePreference::System => {
+                if self.system_is_dark {
+                    Theme::Dark
+                } else {
+                    Theme::Light
+                }
+            }
+        }
+    }
+
+    /// Switch the user's theme preference and immediately re-resolve
+    /// the effective theme. Idempotent — same preference is a no-op.
+    pub fn set_theme_preference(&mut self, pref: ThemePreference) {
+        if self.theme_preference == pref {
+            return;
+        }
+        self.theme_preference = pref;
+        self.apply_theme();
+    }
+
+    /// Recompute tokens from the current preference + system state and
+    /// push the matching menu-item checkmarks. Call after every change
+    /// to either input (`theme_preference` or `system_is_dark`).
+    pub fn apply_theme(&mut self) {
+        self.tokens = Tokens::for_theme(self.effective_theme());
+        feraille_shell_mac::set_command_state(
+            CommandId("view.theme_light"),
+            self.theme_preference == ThemePreference::Light,
+        );
+        feraille_shell_mac::set_command_state(
+            CommandId("view.theme_dark"),
+            self.theme_preference == ThemePreference::Dark,
+        );
+        feraille_shell_mac::set_command_state(
+            CommandId("view.theme_system"),
+            self.theme_preference == ThemePreference::System,
+        );
     }
 
     pub fn new_tab_at(&mut self, path: PathBuf) {
@@ -576,7 +671,11 @@ impl App {
         if n <= 1 {
             return;
         }
-        let prev = if self.active == 0 { n - 1 } else { self.active - 1 };
+        let prev = if self.active == 0 {
+            n - 1
+        } else {
+            self.active - 1
+        };
         self.switch_tab(prev);
     }
 
@@ -722,7 +821,12 @@ impl App {
             original_name: original_name.clone(),
             input,
         });
-        log_info!(57, "inline rename: editing row {} ('{}')", idx, original_name);
+        log_info!(
+            57,
+            "inline rename: editing row {} ('{}')",
+            idx,
+            original_name
+        );
     }
 
     /// Commit the in-row rename. On filesystem error, the state is
@@ -912,7 +1016,10 @@ impl App {
         let input_rect = FRect::new(body.left(), input_y, body.size.width, 32.0);
         d.input.paint(input_rect, true, tokens, renderer);
         renderer.draw_text(
-            FPoint::new(body.left(), panel.bottom() - tokens.space.lg - tokens.text.xs),
+            FPoint::new(
+                body.left(),
+                panel.bottom() - tokens.space.lg - tokens.text.xs,
+            ),
             "Enter to confirm \u{00B7} Esc to cancel",
             TextStyle {
                 size: tokens.text.xs,
@@ -957,7 +1064,10 @@ impl App {
         );
         input.paint(input_rect, true, tokens, renderer);
         renderer.draw_text(
-            FPoint::new(body.left(), panel.bottom() - tokens.space.lg - tokens.text.xs),
+            FPoint::new(
+                body.left(),
+                panel.bottom() - tokens.space.lg - tokens.text.xs,
+            ),
             "Type to filter current folder \u{00B7} Enter to close \u{00B7} Esc to dismiss",
             TextStyle {
                 size: tokens.text.xs,
@@ -990,10 +1100,7 @@ impl App {
         let card_w = (bounds.size.width - outer * 2.0).max(0.0);
 
         let tab = &self.tabs[self.active];
-        let selected = tab
-            .selection
-            .cursor()
-            .and_then(|idx| tab.entries.get(idx));
+        let selected = tab.selection.cursor().and_then(|idx| tab.entries.get(idx));
 
         let Some(entry) = selected else {
             // Empty-state card.
@@ -1001,7 +1108,10 @@ impl App {
             let empty_card = FRect::new(card_x, bounds.top() + outer, card_w, empty_h);
             paint_card_chrome(empty_card, tokens, renderer);
             renderer.draw_text(
-                FPoint::new(empty_card.left() + card_inset, empty_card.top() + card_inset),
+                FPoint::new(
+                    empty_card.left() + card_inset,
+                    empty_card.top() + card_inset,
+                ),
                 "Preview",
                 TextStyle {
                     size: tokens.text.lg,
@@ -1082,12 +1192,7 @@ impl App {
         ];
         let row_step = tokens.text.xs + 5.0 + tokens.text.sm + tokens.space.md;
         let metadata_h = card_inset * 2.0 + (rows.len() as f32) * row_step - tokens.space.md;
-        let metadata_card = FRect::new(
-            card_x,
-            header_card.bottom() + gap,
-            card_w,
-            metadata_h,
-        );
+        let metadata_card = FRect::new(card_x, header_card.bottom() + gap, card_w, metadata_h);
         paint_card_chrome(metadata_card, tokens, renderer);
         let mut y = metadata_card.top() + card_inset;
         for (label, value) in rows {
@@ -1329,14 +1434,19 @@ impl App {
             enumeration_preserve_cursor: None,
             enumeration_preserve_scroll: 0.0,
             enumeration_pending_first_batch: false,
+            tree_load_generation: 0,
+            tree_pending: HashMap::new(),
             drag_watch: None,
             pointer_dips: None,
             modifiers: ModifiersState::empty(),
-            tokens: Tokens::for_theme(detect_theme()),
+            tokens: Tokens::light(), // overwritten below by apply_theme
+            theme_preference: initial_theme_preference(),
+            system_is_dark: feraille_shell_mac::system_is_dark(),
             width: 1,
             height: 1,
             scale_factor: 1.0,
         };
+        a.apply_theme();
         a.rebuild_tree_sections();
         a.navigate(home);
         a
@@ -1350,9 +1460,22 @@ impl App {
     fn rebuild_tree_sections(&mut self) {
         let home = home_dir();
         let mut sections: Vec<(Section, Vec<(feraille_core::NodeId, String)>)> = Vec::new();
+        // Collected here so we can attach capacity to the relevant
+        // tree nodes after `set_sections` runs (which clears prior
+        // capacity to handle remount/eject cleanly).
+        let mut capacities: Vec<(feraille_core::NodeId, feraille_controls::NodeCapacity)> =
+            Vec::new();
+        // Paths whose tree-row icons should be the real per-path Finder
+        // icon (Macintosh HD, Home, iCloud, Trash, USB / external SSD /
+        // network glyphs, custom .VolumeIcon.icns) rather than the shared
+        // generic folder bitmap. Drained at the bottom into the icon
+        // prefetcher.
+        let mut tree_icon_paths: Vec<PathBuf> = Vec::new();
 
-        // 1. Recents (no header) — top folders by ant-trail visits.
-        let mut recent_entries = Vec::new();
+        // 1. Recents — top folders by ant-trail visits, sorted A→Z for
+        //    stable slot positions. The selection is by visit count, but
+        //    the display order is alphabetical so entries don't jump
+        //    around as visit counts shift.
         let mut recent_labels = Vec::new();
         for id in self.ant_trail.most_visited(5) {
             if let Some(path) = self.fs.path_for(id) {
@@ -1367,13 +1490,14 @@ impl App {
                 if name.is_empty() {
                     continue;
                 }
-                recent_entries.push(id);
                 recent_labels.push((id, name));
             }
         }
+        recent_labels.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+        let recent_entries: Vec<NodeId> = recent_labels.iter().map(|(id, _)| *id).collect();
         if !recent_entries.is_empty() {
             sections.push((
-                Section::new(SectionKind::Recents, None, recent_entries),
+                Section::new(SectionKind::Recents, Some("RECENTS"), recent_entries),
                 recent_labels,
             ));
         }
@@ -1406,6 +1530,7 @@ impl App {
             let id = self.fs.id_for_path(&icloud);
             entries.push(id);
             labels.push((id, "iCloud Drive".to_string()));
+            tree_icon_paths.push(icloud);
         }
         let home_id = self.fs.id_for_path(&home);
         let home_label = home
@@ -1415,9 +1540,11 @@ impl App {
             .to_string();
         entries.push(home_id);
         labels.push((home_id, home_label));
+        tree_icon_paths.push(home.clone());
         let root = PathBuf::from("/");
         let root_id = self.fs.id_for_path(&root);
         entries.push(root_id);
+        tree_icon_paths.push(root.clone());
         // Real volume name from NSURL (cached, doesn't wake disks).
         // Falls back to the conventional default if the lookup fails.
         let root_info = volume_info_for_path(&root);
@@ -1426,11 +1553,22 @@ impl App {
             .map(|info| info.name.clone())
             .unwrap_or_else(|| "Macintosh HD".to_string());
         labels.push((root_id, root_label));
+        if let Some(info) = root_info.as_ref() {
+            if let (Some(total), Some(available)) = (info.total_bytes, info.available_bytes) {
+                if total > 0 {
+                    capacities.push((
+                        root_id,
+                        feraille_controls::NodeCapacity { total, available },
+                    ));
+                }
+            }
+        }
         let trash = home.join(".Trash");
         if trash.is_dir() {
             let id = self.fs.id_for_path(&trash);
             entries.push(id);
             labels.push((id, "Trash".to_string()));
+            tree_icon_paths.push(trash);
         }
         sections.push((
             Section::new(SectionKind::Locations, Some("LOCATIONS"), entries),
@@ -1455,6 +1593,12 @@ impl App {
             for info in volumes {
                 let id = self.fs.id_for_path(&info.path);
                 entries.push(id);
+                if let (Some(total), Some(available)) = (info.total_bytes, info.available_bytes) {
+                    if total > 0 {
+                        capacities.push((id, feraille_controls::NodeCapacity { total, available }));
+                    }
+                }
+                tree_icon_paths.push(info.path);
                 labels.push((id, info.name));
             }
             sections.push((
@@ -1464,6 +1608,19 @@ impl App {
         }
 
         self.tree.set_sections(sections);
+        for (id, cap) in capacities {
+            self.tree.set_node_capacity(id, Some(cap));
+        }
+
+        // Schedule per-path icon fetches for Volumes + Locations rows.
+        // The chunked main-thread prefetcher resolves these via
+        // NSWorkspace.iconForFile:; until each lands the row falls back
+        // to the cached `"DIR"` bitmap (see paint closure in `render`).
+        let icon_items: Vec<(String, PathBuf)> = tree_icon_paths
+            .into_iter()
+            .map(|p| (path_icon_key(&p), p))
+            .collect();
+        self.enqueue_icon_fetches(icon_items);
     }
 
     fn viewport_size_dips(&self) -> (f32, f32) {
@@ -1654,6 +1811,9 @@ impl App {
             "view.edit_breadcrumb" => self.open_breadcrumb_edit(),
             "view.toggle_preview" => self.toggle_preview(),
             "view.toggle_hidden" => self.toggle_hidden(),
+            "view.theme_light" => self.set_theme_preference(ThemePreference::Light),
+            "view.theme_dark" => self.set_theme_preference(ThemePreference::Dark),
+            "view.theme_system" => self.set_theme_preference(ThemePreference::System),
             "go.back" => self.navigate_back(),
             "go.forward" => self.navigate_forward(),
             "go.parent" => self.navigate_parent(),
@@ -1743,6 +1903,48 @@ impl App {
         // them here would no-op (entries are still empty).
     }
 
+    /// Enumerate children for a tree-pane node off the main thread.
+    /// Idempotent on `id`: a duplicate spawn while a prior load is
+    /// still pending is a no-op. Headless callers (no event proxy)
+    /// fall back to the synchronous path so screenshot output keeps
+    /// the expanded ancestors visible.
+    fn spawn_tree_load(&mut self, id: NodeId) {
+        if self.tree_pending.contains_key(&id) || self.tree.is_loaded(id) {
+            return;
+        }
+        let Some(proxy) = self.event_proxy.clone() else {
+            // Headless — synchronous fallback. Mirrors what the
+            // `TreeChildrenLoaded` handler does in the live path.
+            let mut handle = self.fs.enumerate(id);
+            filter_hidden(&mut handle.initial, self.show_hidden);
+            self.tree.populate_children(id, &handle.initial);
+            return;
+        };
+        self.tree_load_generation = self.tree_load_generation.wrapping_add(1);
+        let generation = self.tree_load_generation;
+        self.tree_pending.insert(id, generation);
+        let fs = self.fs.clone();
+        obs::spawn_logged("tree-load", move || {
+            let handle = fs.enumerate(id);
+            let _ = proxy.send_event(AppEvent::TreeChildrenLoaded {
+                generation,
+                id,
+                entries: handle.initial,
+                error: handle.error,
+            });
+        });
+    }
+
+    /// Drop the tree's cached children for `id` and cancel any
+    /// in-flight load (a stale `TreeChildrenLoaded` will fail the
+    /// generation gate and be dropped). Use this instead of calling
+    /// `tree.invalidate` directly so the cancellation half stays in
+    /// step.
+    fn invalidate_tree(&mut self, id: NodeId) {
+        self.tree_pending.remove(&id);
+        self.tree.invalidate(id);
+    }
+
     /// Register a new background task and ensure the status-bar strip
     /// is visible. The strip stays visible while the registry is
     /// non-empty — so two overlapping tasks share one strip rather than
@@ -1778,7 +1980,9 @@ impl App {
     /// worker's eventual completion event still arrives, but its
     /// `end_task` call is a no-op via the registry's stale-id rule.
     fn cancel_task(&mut self, id: TaskId) {
-        let Some(task) = self.tasks.find(id) else { return };
+        let Some(task) = self.tasks.find(id) else {
+            return;
+        };
         let kind = task.kind;
         match kind {
             TaskKind::Enumeration => {
@@ -1902,39 +2106,59 @@ impl App {
         });
     }
 
-    /// Build a deduped queue of icon fetches for the active tab and post
-    /// the first `IconChunkTick` to the event loop. The handler drains
-    /// `ICON_CHUNK_SIZE` items per tick on the main thread — NSWorkspace
-    /// is main-thread-only — and re-posts until the queue is empty,
-    /// yielding to input/paint between chunks.
-    ///
-    /// Headless callers (no event proxy yet, e.g. screenshot CLI) fall
-    /// back to a synchronous drain so generated images still have icons.
+    /// Build a deduped queue of icon fetches for the active tab and
+    /// dispatch via `enqueue_icon_fetches`.
     fn prefetch_icons(&mut self) {
-        let icon_size_px = (16.0 * self.scale_factor).round().max(16.0) as u32;
         let cur_dir = self.tabs[self.active].current_dir.clone();
 
         // NSWorkspace returns one icon per UTI, so any file with a given
         // extension represents the whole bucket. Dedup by cache key so we
         // don't queue 100 `.rs` paths for the same icon.
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut queue: Vec<(String, PathBuf)> = Vec::new();
+        let mut items: Vec<(String, PathBuf)> = Vec::new();
         for entry in &self.tabs[self.active].entries {
             let key = cache_key_for(entry);
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            items.push((key, cur_dir.join(&entry.name)));
+        }
+
+        self.enqueue_icon_fetches(items);
+    }
+
+    /// Append `(key, path)` icon-fetch jobs to the prefetch queue, skipping
+    /// keys already cached or already queued. Posts the first
+    /// `IconChunkTick` if the queue was idle. The handler drains
+    /// `ICON_CHUNK_SIZE` items per tick on the main thread — NSWorkspace
+    /// is main-thread-only — and re-posts until the queue is empty,
+    /// yielding to input/paint between chunks.
+    ///
+    /// Headless callers (no event proxy yet, e.g. screenshot CLI) fall
+    /// back to a synchronous drain so generated images still have icons.
+    fn enqueue_icon_fetches(&mut self, items: impl IntoIterator<Item = (String, PathBuf)>) {
+        let icon_size_px = (16.0 * self.scale_factor).round().max(16.0) as u32;
+
+        // Dedup against both the cache and any items already queued from
+        // a prior call (e.g. tree-icon enqueue followed by list prefetch).
+        let mut seen: std::collections::HashSet<String> =
+            self.icon_queue.iter().map(|(k, _)| k.clone()).collect();
+        let mut to_append: Vec<(String, PathBuf)> = Vec::new();
+        for (key, path) in items {
             if self.icon_cache.contains_key(&key) || !seen.insert(key.clone()) {
                 continue;
             }
-            queue.push((key, cur_dir.join(&entry.name)));
+            to_append.push((key, path));
         }
 
-        if queue.is_empty() {
+        if to_append.is_empty() {
             return;
         }
 
         let Some(proxy) = self.event_proxy.clone() else {
             // Headless: no event loop to schedule against. Run synchronously
             // so screenshot output is correct.
-            for (key, path) in queue {
+            for (key, path) in to_append {
                 if let Some((rgba, w, h)) = fetch_icon_rgba(&path, icon_size_px) {
                     self.icon_cache.insert(key, Bitmap::new(w, h, rgba));
                 }
@@ -1942,28 +2166,31 @@ impl App {
             return;
         };
 
+        let was_idle = self.icon_queue.is_empty();
+        let added = to_append.len();
+        self.icon_queue.extend(to_append);
+        self.icon_size_px = icon_size_px;
+
         log_info!(
             56,
-            "icon prefetch: {} keys queued (chunk={}, size={}px)",
-            queue.len(),
+            "icon prefetch: +{} keys (queue={}, chunk={}, size={}px)",
+            added,
+            self.icon_queue.len(),
             ICON_CHUNK_SIZE,
             icon_size_px
         );
-        self.icon_generation = self.icon_generation.wrapping_add(1);
-        self.icon_queue = queue;
-        self.icon_size_px = icon_size_px;
 
-        // Cancel any prior prefetch's registry entry; pending ticks for
-        // the old generation will be dropped by the gate in the handler.
-        let new_task = self.begin_task(TaskKind::IconPrefetch, "Loading icons…", true);
-        if let Some(prev) = self.icon_task.take() {
-            self.end_task(prev);
+        if was_idle {
+            self.icon_generation = self.icon_generation.wrapping_add(1);
+            let new_task = self.begin_task(TaskKind::IconPrefetch, "Loading icons…", true);
+            if let Some(prev) = self.icon_task.take() {
+                self.end_task(prev);
+            }
+            self.icon_task = Some(new_task);
+            let _ = proxy.send_event(AppEvent::IconChunkTick {
+                generation: self.icon_generation,
+            });
         }
-        self.icon_task = Some(new_task);
-
-        let _ = proxy.send_event(AppEvent::IconChunkTick {
-            generation: self.icon_generation,
-        });
     }
 
     fn cursor_entry_name(&self) -> Option<String> {
@@ -2011,7 +2238,10 @@ impl App {
             .filter(|entry| entry.display_magic.is_empty())
             .filter_map(|entry| {
                 let path = cur_dir.join(&entry.name);
-                if self.magic_cache.contains_key(&(path.clone(), entry.mtime_unix)) {
+                if self
+                    .magic_cache
+                    .contains_key(&(path.clone(), entry.mtime_unix))
+                {
                     None
                 } else {
                     Some((entry.name.clone(), entry.mtime_unix, path))
@@ -2086,8 +2316,9 @@ impl App {
         // (or zero-batch `EnumerationDone`) does the swap. Avoids the
         // empty-then-fill flash on F5 over a slow filesystem.
         // Tree might have a stale view of the current folder's contents.
-        // Mark unloaded so a future expand re-enumerates.
-        self.tree.invalidate(id);
+        // Mark unloaded so a future expand re-enumerates; cancels any
+        // in-flight tree load for this id.
+        self.invalidate_tree(id);
         self.start_enumeration(path, cursor_name, scroll);
     }
 
@@ -2157,9 +2388,13 @@ impl App {
                     // Cached — just mark expanded; don't touch the FS.
                     self.tree.ensure_expanded(id);
                 } else {
-                    let mut handle = self.fs.enumerate(id);
-                    filter_hidden(&mut handle.initial, self.show_hidden);
-                    self.tree.populate_children(id, &handle.initial);
+                    // Off-main-thread enumeration; the
+                    // `TreeChildrenLoaded` handler populates and
+                    // expands when the worker returns. The reveal
+                    // walk continues without waiting — deeper
+                    // ancestors get spawned in parallel and the user
+                    // sees the chain expand progressively.
+                    self.spawn_tree_load(id);
                 }
             }
             if current == path {
@@ -2364,9 +2599,7 @@ impl App {
                 }
             }
             TreeEvent::ExpandRequested(id) => {
-                let mut handle = self.fs.enumerate(id);
-                filter_hidden(&mut handle.initial, self.show_hidden);
-                self.tree.populate_children(id, &handle.initial);
+                self.spawn_tree_load(id);
             }
         }
     }
@@ -2410,11 +2643,29 @@ impl App {
         self.tabstrip
             .paint(tabstrip_rect, &tab_infos, active, tokens, renderer);
 
-        // Tree pane — paint with ant-trail heat overlay + cached folder icon.
+        // Tree pane — paint with ant-trail heat overlay. Volumes /
+        // Locations rows resolve to their per-path Finder icon (via
+        // `path_icon_key`); every other row uses the shared `"DIR"`
+        // bitmap. Per-path lookups fall back to `"DIR"` while the
+        // chunked prefetcher catches up, avoiding an accent-rectangle
+        // flash on first paint.
         let trail = &self.ant_trail;
-        let dir_icon = self.icon_cache.get("DIR");
-        self.tree
-            .paint(tree_rect, tokens, renderer, |id| trail.heat(id), dir_icon);
+        let icon_cache = &self.icon_cache;
+        let tree_ref = &self.tree;
+        let fs_ref = &self.fs;
+        self.tree.paint(
+            tree_rect,
+            tokens,
+            renderer,
+            |id| trail.heat(id),
+            |id| match tree_ref.section_kind_for(id) {
+                Some(SectionKind::Volumes) | Some(SectionKind::Locations) => fs_ref
+                    .path_for(id)
+                    .and_then(|p| icon_cache.get(&path_icon_key(&p)))
+                    .or_else(|| icon_cache.get("DIR")),
+                _ => icon_cache.get("DIR"),
+            },
+        );
 
         // Breadcrumb
         self.breadcrumb.paint(breadcrumb_rect, tokens, renderer);
@@ -2445,7 +2696,13 @@ impl App {
         // overlay a centered explanation panel so the user understands
         // why the list is empty.
         if let Some(err) = self.tabs[self.active].error.clone() {
-            paint_empty_state(list_inner, &err, &self.tabs[self.active].current_dir, tokens, renderer);
+            paint_empty_state(
+                list_inner,
+                &err,
+                &self.tabs[self.active].current_dir,
+                tokens,
+                renderer,
+            );
         }
 
         // Inline rename overlay — anchored to the row's name column.
@@ -2595,7 +2852,11 @@ impl App {
         // Drive progress-strip animation: if the strip is still active,
         // request another redraw so the comet keeps moving. Self-driven
         // via winit's redraw queue rather than a timer thread.
-        if self.progress.next_wakeup(std::time::Instant::now()).is_some() {
+        if self
+            .progress
+            .next_wakeup(std::time::Instant::now())
+            .is_some()
+        {
             self.request_redraw();
         }
     }
@@ -2665,6 +2926,21 @@ impl ApplicationHandler<AppEvent> for App {
         // calls update it directly.
         feraille_shell_mac::set_tab_count(self.tabs.len());
 
+        // Push the initial theme-command checkmarks now that the
+        // menu has been built. (App::new ran apply_theme before the
+        // menu existed, so the first set_command_state calls were
+        // discarded — repeat them here.)
+        self.apply_theme();
+
+        // Subscribe to live macOS Appearance changes. The callback
+        // fires on the main thread; dispatch back through the proxy
+        // so the rest of the work happens in `user_event`.
+        if let Some(proxy) = self.event_proxy.clone() {
+            feraille_shell_mac::start_system_theme_observer(Box::new(move |dark| {
+                let _ = proxy.send_event(AppEvent::SystemThemeChanged { dark });
+            }));
+        }
+
         let scale = window.scale_factor() as f32;
         let size = window.inner_size();
         self.width = size.width.max(1);
@@ -2704,8 +2980,7 @@ impl ApplicationHandler<AppEvent> for App {
                 dir,
                 results,
             } => {
-                if generation != self.magic_generation
-                    || self.tabs[self.active].current_dir != dir
+                if generation != self.magic_generation || self.tabs[self.active].current_dir != dir
                 {
                     log_info!(
                         56,
@@ -2732,13 +3007,9 @@ impl ApplicationHandler<AppEvent> for App {
                 for result in results {
                     let key = (dir.join(&result.name), result.mtime_unix);
                     self.magic_cache.insert(key, result.label.clone());
-                    if let Some(entry) = tab
-                        .all_entries
-                        .iter_mut()
-                        .find(|entry| {
-                            entry.name == result.name && entry.mtime_unix == result.mtime_unix
-                        })
-                    {
+                    if let Some(entry) = tab.all_entries.iter_mut().find(|entry| {
+                        entry.name == result.name && entry.mtime_unix == result.mtime_unix
+                    }) {
                         if entry.display_magic != result.label {
                             entry.display_magic = result.label;
                             changed = true;
@@ -2867,13 +3138,58 @@ impl ApplicationHandler<AppEvent> for App {
                         self.toast_error(format!("Listing error: {err:?}"));
                     }
                 } else {
-                    log_info!(59, "enumeration done: {} rows (gen={})", entry_count, generation);
+                    log_info!(
+                        59,
+                        "enumeration done: {} rows (gen={})",
+                        entry_count,
+                        generation
+                    );
                 }
                 // Both prefetches read the populated listing; fire now
                 // that the enumeration has settled.
                 self.prefetch_icons();
                 self.start_magic_prefetch();
                 self.request_redraw();
+            }
+            AppEvent::TreeChildrenLoaded {
+                generation,
+                id,
+                mut entries,
+                error,
+            } => {
+                if self.tree_pending.get(&id) != Some(&generation) {
+                    return;
+                }
+                self.tree_pending.remove(&id);
+                if let Some(err) = error {
+                    log_warn!(59, "tree-load error for id={:?}: {:?}", id, err);
+                    return;
+                }
+                filter_hidden(&mut entries, self.show_hidden);
+                self.tree.populate_children(id, &entries);
+                // The reveal target may have just become visible (this
+                // batch was for one of its ancestors). Cheap if it's
+                // not — `ensure_visible` no-ops when the id isn't in
+                // the visible row list.
+                if let Some(selected) = self.tree.selected {
+                    let viewport_h = self.tree_rect().size.height;
+                    self.tree.ensure_visible(selected, viewport_h);
+                }
+                self.request_redraw();
+            }
+            AppEvent::SystemThemeChanged { dark } => {
+                if self.system_is_dark == dark {
+                    return;
+                }
+                self.system_is_dark = dark;
+                // Only repaint when we're actually following the
+                // system. Pinned Light/Dark users still get the
+                // cached state updated for when they next switch
+                // back to System.
+                if self.theme_preference == ThemePreference::System {
+                    self.apply_theme();
+                    self.request_redraw();
+                }
             }
         }
     }
@@ -2922,8 +3238,27 @@ impl ApplicationHandler<AppEvent> for App {
                         if let Some(entry) = self.tabs[self.active].entries.get(watch.row).cloned()
                         {
                             let path = self.tabs[self.active].current_dir.join(&entry.name);
+                            obs::breadcrumb(format_args!(
+                                "drag promote row={} name={} path={} dist={:.1} elapsed_ms={}",
+                                watch.row,
+                                entry.name,
+                                path.display(),
+                                dist,
+                                watch.when.elapsed().as_millis(),
+                            ));
                             if let Some(window) = &self.window {
-                                let _ = feraille_shell_mac::begin_drag(window, &[path.as_path()]);
+                                let kicked =
+                                    feraille_shell_mac::begin_drag(window, &[path.as_path()]);
+                                obs::breadcrumb(format_args!(
+                                    "drag begin_drag returned kicked={} path={}",
+                                    kicked,
+                                    path.display(),
+                                ));
+                            } else {
+                                obs::breadcrumb(format_args!(
+                                    "drag promote aborted: no window for path={}",
+                                    path.display(),
+                                ));
                             }
                         }
                     }
@@ -2983,7 +3318,10 @@ impl ApplicationHandler<AppEvent> for App {
                     }
                     // Splitter hover affordance.
                     let container = self.splitter_container();
-                    if self.splitter.update_hover(self.splitter_x, container, Some(p)) {
+                    if self
+                        .splitter
+                        .update_hover(self.splitter_x, container, Some(p))
+                    {
                         redraw = true;
                     }
                     if let Some(px) = self.preview_splitter_x() {
@@ -3164,6 +3502,17 @@ impl ApplicationHandler<AppEvent> for App {
                 {
                     self.set_focused_pane(FocusedPane::List);
                     self.tabs[self.active].selection.set_cursor(idx);
+                    if let Some(entry) = self.tabs[self.active].entries.get(idx) {
+                        obs::breadcrumb(format_args!(
+                            "drag armed row={} name={} start=({:.1},{:.1})",
+                            idx, entry.name, p.x, p.y,
+                        ));
+                    } else {
+                        obs::breadcrumb(format_args!(
+                            "drag armed row={} start=({:.1},{:.1})",
+                            idx, p.x, p.y,
+                        ));
+                    }
                     // Arm drag-out: a small motion + delay after mouse-down
                     // on a row promotes to a system drag.
                     self.drag_watch = Some(DragWatch {
@@ -3202,6 +3551,9 @@ impl ApplicationHandler<AppEvent> for App {
                 if self.preview_splitter.is_dragging() {
                     self.preview_splitter.end_drag();
                     self.request_redraw();
+                }
+                if self.drag_watch.is_some() {
+                    obs::breadcrumb(format_args!("drag watch cleared on mouse release"));
                 }
                 self.drag_watch = None;
             }
@@ -3362,9 +3714,7 @@ impl ApplicationHandler<AppEvent> for App {
                 // catalogue dispatch so the user can dismiss the panel
                 // without firing any escape-bound command (none today,
                 // but defensive). Does not stop the underlying tasks.
-                if self.task_panel_open
-                    && matches!(&logical_key, Key::Named(NamedKey::Escape))
-                {
+                if self.task_panel_open && matches!(&logical_key, Key::Named(NamedKey::Escape)) {
                     self.task_panel_open = false;
                     self.request_redraw();
                     return;
@@ -3588,6 +3938,16 @@ fn cache_key_for(entry: &FileEntry) -> String {
     }
 }
 
+/// Cache key for a per-path tree-row icon (Volumes / Locations sections).
+/// macOS returns a distinct icon per mounted volume + per known special
+/// folder (Macintosh HD, Home, iCloud Drive, Trash, USB / external / DMG /
+/// network glyphs, custom .VolumeIcon.icns); namespace them under `PATH:`
+/// so they can't collide with `cache_key_for`'s `DIR` / `.ext` / `FILE` /
+/// `SYMLINK` keys.
+fn path_icon_key(path: &Path) -> String {
+    format!("PATH:{}", path.display())
+}
+
 fn filter_hidden(entries: &mut Vec<FileEntry>, show_hidden: bool) {
     if !show_hidden {
         entries.retain(|e| !e.name.starts_with('.'));
@@ -3672,11 +4032,15 @@ or run Feraille from outside a sandboxed launcher.\n\nPath: {}",
     }
 }
 
-fn detect_theme() -> Theme {
-    if std::env::var_os("FERAILLE_THEME").as_deref() == Some(std::ffi::OsStr::new("dark")) {
-        Theme::Dark
-    } else {
-        Theme::Light
+/// Initial theme preference at app startup. Pinned by `FERAILLE_THEME`
+/// when set (regression tooling, screenshots); otherwise defaults to
+/// `System`, which follows macOS Appearance live via the
+/// `SystemThemeChanged` observer.
+fn initial_theme_preference() -> ThemePreference {
+    match std::env::var("FERAILLE_THEME").ok().as_deref() {
+        Some("dark") => ThemePreference::Dark,
+        Some("light") => ThemePreference::Light,
+        _ => ThemePreference::System,
     }
 }
 
