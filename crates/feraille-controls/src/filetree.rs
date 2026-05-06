@@ -44,6 +44,17 @@ struct Node {
     /// Recorded on `populate_children` so Left-arrow can walk up the tree
     /// without an extra reverse-index. `None` for section roots.
     parent: Option<NodeId>,
+    /// Volume capacity for this node, when it represents a mounted volume
+    /// root (e.g. `/`, `/Volumes/Foo`). `None` for ordinary folders.
+    capacity: Option<NodeCapacity>,
+}
+
+/// Bytes used to paint a Finder-style capacity bar under a Volumes /
+/// Locations row. `total == 0` is treated as "no data" and skips paint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodeCapacity {
+    pub total: u64,
+    pub available: u64,
 }
 
 impl SectionKind {
@@ -161,6 +172,12 @@ impl FileTree {
         // FAVORITES and as a child of Home). We never override an
         // existing label/state — the first source wins.
         self.sections.clear();
+        // Volume capacity is metadata that can change between rebuilds
+        // (remount, eject); clear and let the host re-attach via
+        // set_node_capacity.
+        for n in self.nodes.values_mut() {
+            n.capacity = None;
+        }
         for (mut section, labels) in sections {
             for (id, label) in labels {
                 self.nodes.entry(id).or_insert_with(|| Node {
@@ -169,6 +186,7 @@ impl FileTree {
                     children_loaded: false,
                     children: Vec::new(),
                     parent: None,
+                    capacity: None,
                 });
                 if !section.entries.contains(&id) {
                     section.entries.push(id);
@@ -177,6 +195,15 @@ impl FileTree {
             self.sections.push(section);
         }
         self.recompute_visible();
+    }
+
+    /// Attach (or clear) volume capacity for a node. Painted as a thin
+    /// horizontal bar under the row in `paint_row`. No-op if the node
+    /// doesn't exist.
+    pub fn set_node_capacity(&mut self, id: NodeId, cap: Option<NodeCapacity>) {
+        if let Some(n) = self.nodes.get_mut(&id) {
+            n.capacity = cap;
+        }
     }
 
     /// Host calls this after `FsBackend::enumerate(parent)` completes.
@@ -202,6 +229,7 @@ impl FileTree {
                     children_loaded: false,
                     children: Vec::new(),
                     parent: Some(parent),
+                    capacity: None,
                 });
             child_ids.push(e.id);
         }
@@ -932,4 +960,30 @@ fn paint_row(
     let max_w = (row.right() - x - 4.0).max(0.0);
     let (text, _truncated) = truncate_to_width(&node.label, max_w, style, painter);
     painter.draw_text(Point::new(x, text_y), &text, style);
+
+    if let Some(cap) = node.capacity {
+        if cap.total > 0 {
+            // 3-DIP bar at the bottom of the row, spanning the label
+            // area. Track = subtle border color; fill = secondary fg
+            // (Finder-style neutral grey for "used").
+            let bar_h = 3.0;
+            let bar_y = row.bottom() - bar_h - 2.0;
+            let bar_left = x;
+            let bar_right = (row.right() - 8.0).max(bar_left);
+            let bar_w = bar_right - bar_left;
+            if bar_w >= 24.0 {
+                let track = Rect::new(bar_left, bar_y, bar_w, bar_h);
+                painter.fill_rect(track, tokens.border.subtle);
+                let used = cap.total.saturating_sub(cap.available);
+                let frac = (used as f64 / cap.total as f64).clamp(0.0, 1.0) as f32;
+                let fill_w = (bar_w * frac).clamp(0.0, bar_w);
+                if fill_w > 0.0 {
+                    painter.fill_rect(
+                        Rect::new(bar_left, bar_y, fill_w, bar_h),
+                        tokens.fg.secondary,
+                    );
+                }
+            }
+        }
+    }
 }
