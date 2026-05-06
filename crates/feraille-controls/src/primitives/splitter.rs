@@ -10,8 +10,22 @@
 use feraille_design::Tokens;
 use feraille_render::{Point, Rect, Renderer};
 
-const HIT_WIDTH: f32 = 6.0;
+/// Hit zone for begin-drag and hover detection. Generous enough that
+/// users don't have to aim — Finder uses ~10 DIPs.
+const HIT_WIDTH: f32 = 10.0;
+/// Visible rule width when idle.
 const RULE_WIDTH: f32 = 1.0;
+/// Visible rule width while dragging — slightly thicker so it reads as
+/// "active" without becoming visually heavy.
+const RULE_WIDTH_DRAGGING: f32 = 2.0;
+/// Diameter of each grab-handle dot. Bigger than the original 2 DIPs
+/// so the handle reads as grabbable from arm's length.
+const HANDLE_DOT: f32 = 3.0;
+/// Vertical spacing between handle dots, centre-to-centre.
+const HANDLE_DOT_GAP: f32 = 4.0;
+/// Number of grab-handle dots stacked vertically. 5 reads clearly as a
+/// drag-affordance without monopolising the visual field.
+const HANDLE_DOT_COUNT: i32 = 5;
 
 pub struct Splitter {
     /// Min position (DIPs from container left).
@@ -60,13 +74,34 @@ impl Splitter {
 
     /// Paint the rule at `position` over the full container height.
     /// Idle: 1-DIP subtle rule.
-    /// Hovered or dragging: stronger colour + a small grab-handle of
-    /// three dots in the vertical centre so the user can see where to
-    /// click. Spec §7 keeps the visible rule narrow; the dots are an
-    /// affordance hint rather than a wider rule.
+    /// Hovered: full hit-zone gets a faint fill so the grabbable area
+    /// is obvious, plus a stronger rule colour and a grab-handle dot
+    /// stack in the vertical centre.
+    /// Dragging: thicker rule + accent-coloured handle.
     pub fn paint(&self, position: f32, container: Rect, tokens: &Tokens, painter: &mut dyn Renderer) {
-        let rule_x = position - RULE_WIDTH / 2.0;
         let active = self.is_dragging() || self.hovered;
+
+        // Hover affordance: a faint fill over the full hit-zone width
+        // so the user sees the grabbable area, not just the rule.
+        if self.hovered && !self.is_dragging() {
+            let mut tint = tokens.bg.layer3;
+            tint.a = 180; // semi-translucent so it reads as overlay, not chrome
+            painter.fill_rect(
+                Rect::new(
+                    position - HIT_WIDTH / 2.0,
+                    container.top(),
+                    HIT_WIDTH,
+                    container.size.height,
+                ),
+                tint,
+            );
+        }
+
+        let rule_w = if self.is_dragging() {
+            RULE_WIDTH_DRAGGING
+        } else {
+            RULE_WIDTH
+        };
         let rule_color = if self.is_dragging() {
             tokens.border.focus
         } else if self.hovered {
@@ -75,9 +110,10 @@ impl Splitter {
             tokens.border.subtle
         };
         painter.fill_rect(
-            Rect::new(rule_x, container.top(), RULE_WIDTH, container.size.height),
+            Rect::new(position - rule_w / 2.0, container.top(), rule_w, container.size.height),
             rule_color,
         );
+
         if active {
             let handle_color = if self.is_dragging() {
                 tokens.border.focus
@@ -85,13 +121,20 @@ impl Splitter {
                 tokens.fg.secondary
             };
             let cy = container.top() + container.size.height / 2.0;
-            let dot = 2.0_f32;
-            for i in -1..=1 {
-                let dy = i as f32 * (dot + 3.0);
+            let total_h =
+                (HANDLE_DOT_COUNT - 1) as f32 * HANDLE_DOT_GAP + HANDLE_DOT;
+            let mut dy = -total_h / 2.0 + HANDLE_DOT / 2.0;
+            for _ in 0..HANDLE_DOT_COUNT {
                 painter.fill_rect(
-                    Rect::new(position - dot / 2.0, cy + dy - dot / 2.0, dot, dot),
+                    Rect::new(
+                        position - HANDLE_DOT / 2.0,
+                        cy + dy - HANDLE_DOT / 2.0,
+                        HANDLE_DOT,
+                        HANDLE_DOT,
+                    ),
                     handle_color,
                 );
+                dy += HANDLE_DOT_GAP;
             }
         }
     }
@@ -124,10 +167,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hit_rect_is_six_dips_wide() {
+    fn hit_rect_centred_on_position() {
         let r = Splitter::hit_rect(200.0, Rect::new(0.0, 0.0, 800.0, 600.0));
-        assert!((r.size.width - 6.0).abs() < 0.01);
-        assert!((r.left() - 197.0).abs() < 0.01);
+        assert!((r.size.width - HIT_WIDTH).abs() < 0.01);
+        assert!((r.left() - (200.0 - HIT_WIDTH / 2.0)).abs() < 0.01);
     }
 
     #[test]
