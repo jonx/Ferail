@@ -949,22 +949,37 @@ impl App {
         if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
             return;
         }
+        // Outer "shelf" — a slightly recessed surface that the cards sit on.
         renderer.fill_rect(bounds, tokens.bg.layer2);
+        // Vertical hairline against the file pane (the splitter rule
+        // also paints here, but only when visible — keep this so the
+        // pane reads as a separated surface even when no splitter is hovered).
         renderer.fill_rect(
             FRect::new(bounds.left(), bounds.top(), 1.0, bounds.size.height),
             tokens.border.subtle,
         );
         renderer.push_clip(bounds);
 
-        let pad = tokens.space.lg;
+        // Card layout: outer margin around the cards, gap between them.
+        let outer = tokens.space.lg;
+        let gap = tokens.space.md;
+        let card_inset = tokens.space.lg;
+        let card_x = bounds.left() + outer;
+        let card_w = (bounds.size.width - outer * 2.0).max(0.0);
+
         let tab = &self.tabs[self.active];
         let selected = tab
             .selection
             .cursor()
             .and_then(|idx| tab.entries.get(idx));
+
         let Some(entry) = selected else {
+            // Empty-state card.
+            let empty_h = 96.0;
+            let empty_card = FRect::new(card_x, bounds.top() + outer, card_w, empty_h);
+            paint_card_chrome(empty_card, tokens, renderer);
             renderer.draw_text(
-                FPoint::new(bounds.left() + pad, bounds.top() + pad),
+                FPoint::new(empty_card.left() + card_inset, empty_card.top() + card_inset),
                 "Preview",
                 TextStyle {
                     size: tokens.text.lg,
@@ -973,7 +988,10 @@ impl App {
                 },
             );
             renderer.draw_text(
-                FPoint::new(bounds.left() + pad, bounds.top() + pad + 34.0),
+                FPoint::new(
+                    empty_card.left() + card_inset,
+                    empty_card.top() + card_inset + tokens.text.lg + 6.0,
+                ),
                 "No item selected",
                 TextStyle {
                     size: tokens.text.md,
@@ -985,22 +1003,24 @@ impl App {
             return;
         };
 
-        let mut y = bounds.top() + pad;
+        // Header card: icon + name + kind.
         let icon_size = 32.0;
+        let header_h = card_inset * 2.0 + icon_size;
+        let header_card = FRect::new(card_x, bounds.top() + outer, card_w, header_h);
+        paint_card_chrome(header_card, tokens, renderer);
+        let icon_x = header_card.left() + card_inset;
+        let icon_y = header_card.top() + card_inset;
         if let Some(bitmap) = self.icon_cache.get(&cache_key_for(entry)) {
-            renderer.draw_bitmap(
-                FRect::new(bounds.left() + pad, y, icon_size, icon_size),
-                bitmap,
-            );
+            renderer.draw_bitmap(FRect::new(icon_x, icon_y, icon_size, icon_size), bitmap);
         } else {
             renderer.fill_rect(
-                FRect::new(bounds.left() + pad, y, icon_size, icon_size),
+                FRect::new(icon_x, icon_y, icon_size, icon_size),
                 tokens.accent.fill,
             );
         }
-        let title_x = bounds.left() + pad + icon_size + tokens.space.md;
+        let title_x = icon_x + icon_size + tokens.space.md;
         renderer.draw_text(
-            FPoint::new(title_x, y + 1.0),
+            FPoint::new(title_x, icon_y + 1.0),
             &entry.name,
             TextStyle {
                 size: tokens.text.lg,
@@ -1009,7 +1029,7 @@ impl App {
             },
         );
         renderer.draw_text(
-            FPoint::new(title_x, y + tokens.text.lg + 6.0),
+            FPoint::new(title_x, icon_y + tokens.text.lg + 6.0),
             &entry.display_kind,
             TextStyle {
                 size: tokens.text.sm,
@@ -1017,14 +1037,8 @@ impl App {
                 color: tokens.fg.secondary,
             },
         );
-        y += icon_size + pad;
 
-        renderer.fill_rect(
-            FRect::new(bounds.left() + pad, y, bounds.size.width - pad * 2.0, 1.0),
-            tokens.border.subtle,
-        );
-        y += pad;
-
+        // Metadata card: key/value rows.
         let path = tab.current_dir.join(&entry.name);
         let path_text = path.to_string_lossy().into_owned();
         let size_text = if matches!(entry.kind, EntryKind::Directory) {
@@ -1044,9 +1058,19 @@ impl App {
             ("Modified", entry.display_mtime.as_str()),
             ("Magic", magic_text.as_str()),
         ];
+        let row_step = tokens.text.xs + 5.0 + tokens.text.sm + tokens.space.md;
+        let metadata_h = card_inset * 2.0 + (rows.len() as f32) * row_step - tokens.space.md;
+        let metadata_card = FRect::new(
+            card_x,
+            header_card.bottom() + gap,
+            card_w,
+            metadata_h,
+        );
+        paint_card_chrome(metadata_card, tokens, renderer);
+        let mut y = metadata_card.top() + card_inset;
         for (label, value) in rows {
             renderer.draw_text(
-                FPoint::new(bounds.left() + pad, y),
+                FPoint::new(metadata_card.left() + card_inset, y),
                 label,
                 TextStyle {
                     size: tokens.text.xs,
@@ -1056,7 +1080,7 @@ impl App {
             );
             y += tokens.text.xs + 5.0;
             renderer.draw_text(
-                FPoint::new(bounds.left() + pad, y),
+                FPoint::new(metadata_card.left() + card_inset, y),
                 value,
                 TextStyle {
                     size: tokens.text.sm,
@@ -3336,6 +3360,14 @@ fn format_iso_date(unix: i64) -> String {
     let mo = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     let y = if mo <= 2 { y + 1 } else { y };
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02} UTC")
+}
+
+/// Paint card chrome — `bg.layer1` fill + 1-DIP `border.default` stroke.
+/// Used by the preview pane's section cards. Lifted to a helper so the
+/// look stays consistent and is easy to swap later.
+fn paint_card_chrome(rect: FRect, tokens: &Tokens, painter: &mut dyn Renderer) {
+    painter.fill_rect(rect, tokens.bg.layer1);
+    painter.stroke_rect(rect, 1.0, tokens.border.default);
 }
 
 fn cache_key_for(entry: &FileEntry) -> String {
