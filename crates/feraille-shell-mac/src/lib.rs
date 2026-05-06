@@ -171,7 +171,10 @@ pub fn copy_to_clipboard(_text: &str) {}
 /// Non-macOS: no-op.
 #[cfg(target_os = "macos")]
 pub fn reveal_in_finder(path: &std::path::Path) {
-    let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
+    let _ = std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn();
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -244,6 +247,41 @@ pub fn set_app_icon_from_png_bytes(_png_bytes: &[u8]) -> SetIconResult {
     SetIconResult::NotMacOs
 }
 
+/// `true` if the system is currently in Dark Mode. Reads
+/// `NSApp.effectiveAppearance.name` and compares against
+/// `NSAppearanceNameDarkAqua`, picking up both system Dark mode and
+/// any per-app appearance override higher in the responder chain.
+/// Must run on the main thread (NSApp constraint); off-thread
+/// callers get `false`.
+///
+/// Returns `false` on non-macOS or if the lookup fails for any
+/// reason — callers can layer their own override (e.g. an env var)
+/// on top.
+#[cfg(target_os = "macos")]
+pub fn system_is_dark() -> bool {
+    use objc2_app_kit::{NSAppearanceNameDarkAqua, NSApplication};
+    use objc2_foundation::MainThreadMarker;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    unsafe {
+        let app = NSApplication::sharedApplication(mtm);
+        let appearance = app.effectiveAppearance();
+        let name = appearance.name();
+        // The reported name on Sonoma+ may be `NSAppearanceNameDarkAqua`,
+        // `NSAppearanceNameAccessibilityHighContrastDarkAqua`, etc.
+        // Treat any "Dark" appearance as dark.
+        let n = name.to_string();
+        n == NSAppearanceNameDarkAqua.to_string() || n.contains("Dark")
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn system_is_dark() -> bool {
+    false
+}
+
 /// Width to reserve at the leading edge of the tabstrip so the OS
 /// traffic-light buttons (close / minimize / zoom) don't overlap our
 /// content. Standard macOS layout puts the leftmost button at ~10 DIPs
@@ -258,15 +296,21 @@ pub fn apply_native_chrome(window: &winit::window::Window) -> f32 {
     use objc2_app_kit::{NSView, NSWindowStyleMask, NSWindowTitleVisibility};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-    let Ok(handle) = window.window_handle() else { return 0.0 };
-    let RawWindowHandle::AppKit(h) = handle.as_raw() else { return 0.0 };
+    let Ok(handle) = window.window_handle() else {
+        return 0.0;
+    };
+    let RawWindowHandle::AppKit(h) = handle.as_raw() else {
+        return 0.0;
+    };
     let ns_view_ptr = h.ns_view.as_ptr();
     if ns_view_ptr.is_null() {
         return 0.0;
     }
     unsafe {
         let ns_view: &NSView = &*(ns_view_ptr as *const NSView);
-        let Some(ns_window) = ns_view.window() else { return 0.0 };
+        let Some(ns_window) = ns_view.window() else {
+            return 0.0;
+        };
         ns_window.setTitlebarAppearsTransparent(true);
         ns_window.setTitleVisibility(NSWindowTitleVisibility::NSWindowTitleHidden);
         let mask = ns_window.styleMask() | NSWindowStyleMask::FullSizeContentView;
