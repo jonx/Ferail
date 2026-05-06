@@ -466,23 +466,22 @@ fn icon_color_for_file(entry: &FileEntry, tokens: &Tokens) -> Color {
         Some(
             "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "go" | "c" | "cpp" | "cc" | "h" | "hpp"
             | "swift" | "kt" | "java" | "rb" | "php" | "lua" | "sh" | "zsh" | "bash" | "fish",
-        ) => Color::rgb(0xA0, 0x6B, 0xD9),
+        ) => tokens.magic.code,
         Some(
             "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "tiff" | "ico" | "heic",
-        ) => Color::rgb(0x4F, 0xA8, 0x6E),
-        Some("mp4" | "mov" | "mkv" | "avi" | "webm" | "m4v" | "mp3" | "wav" | "flac" | "aac" | "ogg") => {
-            Color::rgb(0xCC, 0x5B, 0x9C)
-        }
+        ) => tokens.magic.image,
+        Some(
+            "mp4" | "mov" | "mkv" | "avi" | "webm" | "m4v" | "mp3" | "wav" | "flac" | "aac"
+            | "ogg",
+        ) => tokens.magic.media,
         Some("zip" | "tar" | "gz" | "tgz" | "bz2" | "7z" | "rar" | "xz" | "zst") => {
-            Color::rgb(0xC8, 0x83, 0x44)
+            tokens.magic.archive
         }
         Some(
             "json" | "yaml" | "yml" | "toml" | "xml" | "csv" | "tsv" | "ini" | "cfg" | "conf"
             | "lock",
-        ) => Color::rgb(0x47, 0x9C, 0xB5),
-        Some("md" | "markdown" | "txt" | "pdf" | "doc" | "docx" | "rtf") => {
-            Color::rgb(0x4A, 0x80, 0xC0)
-        }
+        ) => tokens.magic.data,
+        Some("md" | "markdown" | "txt" | "pdf" | "doc" | "docx" | "rtf") => tokens.magic.doc,
         _ => tokens.fg.disabled,
     }
 }

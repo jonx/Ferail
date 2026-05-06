@@ -58,6 +58,7 @@ pub struct Tokens {
     pub radius: RadiusTokens,
     pub text: TextTokens,
     pub hit: HitTokens,
+    pub magic: MagicTokens,
 }
 
 #[derive(Clone, Debug)]
@@ -138,6 +139,25 @@ pub struct HitTokens {
     pub input: f32,
 }
 
+/// Categorical icon-tint palette for the Magic / file-type column.
+/// Saturated enough to read in both light and dark mode, so light()
+/// and dark() share the same values.
+#[derive(Clone, Copy, Debug)]
+pub struct MagicTokens {
+    /// Source code, scripts.
+    pub code: Color,
+    /// Raster + vector images.
+    pub image: Color,
+    /// Audio + video.
+    pub media: Color,
+    /// Compressed archives.
+    pub archive: Color,
+    /// Structured data / config.
+    pub data: Color,
+    /// Documents (markdown, pdf, doc, txt).
+    pub doc: Color,
+}
+
 impl Tokens {
     pub fn for_theme(theme: Theme) -> Self {
         match theme {
@@ -185,6 +205,14 @@ impl Tokens {
             radius: RadiusTokens { none: 0.0, popover: 6.0, full: 9999.0 },
             text: TextTokens { xs: 11.0, sm: 12.0, md: 13.0, lg: 15.0, xl: 18.0 },
             hit: HitTokens { min: 24.0, row: 28.0, button: 32.0, input: 32.0 },
+            magic: MagicTokens {
+                code: Color::rgb(0xA0, 0x6B, 0xD9),
+                image: Color::rgb(0x4F, 0xA8, 0x6E),
+                media: Color::rgb(0xCC, 0x5B, 0x9C),
+                archive: Color::rgb(0xC8, 0x83, 0x44),
+                data: Color::rgb(0x47, 0x9C, 0xB5),
+                doc: Color::rgb(0x4A, 0x80, 0xC0),
+            },
         }
     }
 
