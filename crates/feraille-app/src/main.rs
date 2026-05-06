@@ -38,6 +38,10 @@ use feraille_fs_native::{
 
 mod obs;
 mod screenshot;
+mod task_panel;
+mod tasks;
+
+use crate::tasks::{TaskId, TaskKind, TaskRegistry};
 
 /// Iteration-tagged logging. The first argument is an ID number; lines
 /// with `id < obs::LOG_THRESHOLD` are silently dropped. Bump `LOG_THRESHOLD`
@@ -334,12 +338,24 @@ pub struct App {
     pub tree: FileTree,
     pub focused_pane: FocusedPane,
     /// Footer progress strip — debounced; visible during long-running
-    /// background work (magic prefetch, future async enumeration).
+    /// background work (magic prefetch, icon prefetch, enumeration).
+    /// Driven by the registry through `begin_task` / `end_task`.
     pub progress: ProgressStrip,
+    /// Single live strip token, present whenever `tasks` is non-empty.
+    /// One shared strip across all concurrent tasks — the strip is a
+    /// summary indicator; details live in the task panel.
+    task_strip_token: Option<ProgressTaskId>,
+    /// Active background tasks. Mutated only on the UI thread, from
+    /// `App::begin_task` / `App::end_task`.
+    pub tasks: TaskRegistry,
+    /// Whether the task-list popover is open. Toggled by clicking the
+    /// status bar while any task is active, dismissed on Escape, click
+    /// outside, or when `tasks` becomes empty.
+    pub task_panel_open: bool,
     /// In-flight magic-prefetch task. `Some` between `start_magic_prefetch`
-    /// and the matching `MagicBatch` event. Stale tasks are completed
-    /// silently when generation rolls over.
-    magic_progress: Option<ProgressTaskId>,
+    /// and the matching `MagicBatch` event. Stale tasks are ended silently
+    /// when generation rolls over.
+    magic_task: Option<TaskId>,
     pub splitter_x: f32,
     /// Width of the preview pane in DIPs when it's visible. Persists
     /// across `preview_visible` toggles so reopening the pane restores
@@ -380,16 +396,16 @@ pub struct App {
     /// prefetch. Drained `ICON_CHUNK_SIZE` items per `IconChunkTick`.
     icon_queue: Vec<(String, PathBuf)>,
     icon_generation: u64,
-    icon_progress: Option<ProgressTaskId>,
+    icon_task: Option<TaskId>,
     /// Generation counter for in-flight directory enumerations. Bumped
     /// at every `start_enumeration`; results are gated on equality.
     enumeration_generation: u64,
     /// Cancel flag for the in-flight enumeration worker, or `None` if
     /// idle. Setting it stops the worker after its next batch.
     enumeration_cancel: Option<Arc<AtomicBool>>,
-    /// `ProgressStrip` token for the in-flight enumeration; cancelled
-    /// when superseded, completed when the final batch lands.
-    enumeration_progress: Option<ProgressTaskId>,
+    /// Registry id for the in-flight enumeration task; ended when
+    /// superseded by a fresh navigation or when the final batch lands.
+    enumeration_task: Option<TaskId>,
     /// Cursor name to preserve across in-flight batches. Set by
     /// `refresh_active_tab` so F5 keeps the cursor on the same file;
     /// `None` for plain navigation (cursor goes to row 0 of the first
@@ -1283,7 +1299,10 @@ impl App {
             tree,
             focused_pane: FocusedPane::List,
             progress: ProgressStrip::new(),
-            magic_progress: None,
+            task_strip_token: None,
+            tasks: TaskRegistry::new(),
+            task_panel_open: false,
+            magic_task: None,
             splitter_x: SIDEBAR_DEFAULT,
             preview_width: PREVIEW_W_DEFAULT,
             show_hidden: false,
@@ -1302,11 +1321,11 @@ impl App {
             magic_generation: 0,
             icon_queue: Vec::new(),
             icon_generation: 0,
-            icon_progress: None,
+            icon_task: None,
             icon_size_px: 16,
             enumeration_generation: 0,
             enumeration_cancel: None,
-            enumeration_progress: None,
+            enumeration_task: None,
             enumeration_preserve_cursor: None,
             enumeration_preserve_scroll: 0.0,
             enumeration_pending_first_batch: false,
@@ -1680,11 +1699,21 @@ impl App {
         // Same-folder no-op: clicking the current tree node, hitting
         // Enter on it, or back/forward landing on the same path used to
         // clear all_entries and re-enumerate, producing a visible
-        // empty→full flicker. Skip when we're already here and the last
-        // listing didn't error (an error state is a signal the user
-        // wants to retry; F5 explicitly refreshes regardless).
+        // empty→full flicker. Skip when we're already here AND we
+        // actually have the listing in hand.
+        //
+        // The `all_entries.is_empty()` clause matters at startup:
+        // `App::new` constructs the initial tab with `current_dir =
+        // home` *before* the first navigate, so without this guard the
+        // very first `navigate(home)` would short-circuit, leaving
+        // entries — and the icon cache that paint reads from — empty
+        // until the user moved off and back.
+        //
+        // An error state is a signal the user wants to retry; F5
+        // explicitly refreshes regardless.
         if self.tabs[self.active].current_dir == path
             && self.tabs[self.active].error.is_none()
+            && !self.tabs[self.active].all_entries.is_empty()
         {
             return;
         }
@@ -1712,6 +1741,75 @@ impl App {
         // prefetch_icons + start_magic_prefetch fire after the
         // enumeration completes, in `AppEvent::EnumerationDone`. Calling
         // them here would no-op (entries are still empty).
+    }
+
+    /// Register a new background task and ensure the status-bar strip
+    /// is visible. The strip stays visible while the registry is
+    /// non-empty — so two overlapping tasks share one strip rather than
+    /// the second one stealing the visual from the first.
+    fn begin_task(
+        &mut self,
+        kind: TaskKind,
+        label: impl Into<String>,
+        cancellable: bool,
+    ) -> TaskId {
+        let id = self.tasks.begin(kind, label, cancellable);
+        if self.task_strip_token.is_none() {
+            self.task_strip_token = Some(self.progress.start_indeterminate());
+        }
+        id
+    }
+
+    /// End a task. Stale ids are silently ignored. When the registry
+    /// empties, the shared strip is completed (with fade) and the task
+    /// panel auto-closes.
+    fn end_task(&mut self, id: TaskId) {
+        self.tasks.end(id);
+        if self.tasks.is_empty() {
+            if let Some(token) = self.task_strip_token.take() {
+                self.progress.complete(token);
+            }
+            self.task_panel_open = false;
+        }
+    }
+
+    /// User-initiated cancel from the task panel's `[×]` button. Routes
+    /// to the per-kind cancel mechanism, then ends the task. The
+    /// worker's eventual completion event still arrives, but its
+    /// `end_task` call is a no-op via the registry's stale-id rule.
+    fn cancel_task(&mut self, id: TaskId) {
+        let Some(task) = self.tasks.find(id) else { return };
+        let kind = task.kind;
+        match kind {
+            TaskKind::Enumeration => {
+                if let Some(flag) = self.enumeration_cancel.take() {
+                    flag.store(true, Ordering::Relaxed);
+                }
+                self.enumeration_task = None;
+            }
+            TaskKind::IconPrefetch => {
+                // Bump the generation to drop any in-flight chunk-tick
+                // at the gate; clear the queue so no further work is
+                // scheduled.
+                self.icon_generation = self.icon_generation.wrapping_add(1);
+                self.icon_queue.clear();
+                self.icon_task = None;
+            }
+            TaskKind::MagicPrefetch => {
+                // Not cancellable in v1; the panel hides the button for
+                // this kind, so this branch is unreachable. Defensive
+                // fallthrough drops the registry entry only.
+            }
+        }
+        self.end_task(id);
+        self.request_redraw();
+    }
+
+    /// Status-bar rect in DIPs. Used for hit-testing clicks that
+    /// toggle the task panel.
+    fn status_bar_rect(&self) -> FRect {
+        let (w, h) = self.viewport_size_dips();
+        FRect::new(0.0, h - STATUS_H, w, STATUS_H)
     }
 
     /// Spawn a worker that streams the active tab's directory listing
@@ -1750,21 +1848,25 @@ impl App {
         };
 
         // Cancel previous enumeration: flip its flag so the worker
-        // exits at the next checkpoint, drop its progress token.
+        // exits at the next checkpoint, drop its registry entry.
         if let Some(prev) = self.enumeration_cancel.take() {
             prev.store(true, Ordering::Relaxed);
         }
-        if let Some(prev_id) = self.enumeration_progress.take() {
-            self.progress.cancel(prev_id);
+        // Begin the new task before ending the old one so the strip never
+        // momentarily empties (which would trigger a fade-out flicker).
+        let new_task = self.begin_task(TaskKind::Enumeration, "Reading folder…", true);
+        if let Some(prev) = self.enumeration_task.take() {
+            self.end_task(prev);
         }
 
         self.enumeration_generation = self.enumeration_generation.wrapping_add(1);
         let generation = self.enumeration_generation;
         let cancel = Arc::new(AtomicBool::new(false));
         self.enumeration_cancel = Some(cancel.clone());
-        self.enumeration_progress = Some(self.progress.start_indeterminate());
+        self.enumeration_task = Some(new_task);
         self.enumeration_preserve_cursor = preserve_cursor;
         self.enumeration_preserve_scroll = preserve_scroll;
+        self.enumeration_pending_first_batch = true;
 
         log_info!(
             59,
@@ -1851,12 +1953,13 @@ impl App {
         self.icon_queue = queue;
         self.icon_size_px = icon_size_px;
 
-        // Cancel any prior prefetch's progress; pending ticks for the old
-        // generation will be dropped by the gate in the handler.
-        if let Some(prev) = self.icon_progress.take() {
-            self.progress.cancel(prev);
+        // Cancel any prior prefetch's registry entry; pending ticks for
+        // the old generation will be dropped by the gate in the handler.
+        let new_task = self.begin_task(TaskKind::IconPrefetch, "Loading icons…", true);
+        if let Some(prev) = self.icon_task.take() {
+            self.end_task(prev);
         }
-        self.icon_progress = Some(self.progress.start_indeterminate());
+        self.icon_task = Some(new_task);
 
         let _ = proxy.send_event(AppEvent::IconChunkTick {
             generation: self.icon_generation,
@@ -1921,13 +2024,14 @@ impl App {
             return;
         }
 
-        // If a previous prefetch is still in flight, cancel its progress
-        // (its `MagicBatch` may still arrive but the generation gate
-        // will drop it).
-        if let Some(prev) = self.magic_progress.take() {
-            self.progress.cancel(prev);
+        // If a previous prefetch is still in flight, end its registry
+        // entry (its `MagicBatch` may still arrive but the generation
+        // gate will drop it).
+        let new_task = self.begin_task(TaskKind::MagicPrefetch, "Indexing files…", false);
+        if let Some(prev) = self.magic_task.take() {
+            self.end_task(prev);
         }
-        self.magic_progress = Some(self.progress.start_indeterminate());
+        self.magic_task = Some(new_task);
 
         log_info!(
             56,
@@ -2285,7 +2389,7 @@ impl App {
         let preview_rect = self.preview_rect();
         let splitter_container = self.splitter_container();
         let content_h = self.list_content_height();
-        let status_text = format_status(&self.tabs[self.active]);
+        let status_text = format_status(&self.tabs[self.active], &self.tasks);
         let tab_infos: Vec<TabInfo> = self
             .tabs
             .iter()
@@ -2443,6 +2547,14 @@ impl App {
                 color: tokens.fg.secondary,
             },
         );
+
+        // Task popover — paints last so it sits above everything else.
+        // Only visible when the user has clicked the status bar; auto-
+        // hides when the registry empties (handled in `end_task`).
+        if self.task_panel_open && !self.tasks.is_empty() {
+            let vp = FRect::new(0.0, 0.0, viewport.width, viewport.height);
+            task_panel::paint(vp, &self.tasks, tokens, renderer);
+        }
     }
 
     fn render(&mut self) {
@@ -2609,8 +2721,8 @@ impl ApplicationHandler<AppEvent> for App {
                     results.len(),
                     generation
                 );
-                if let Some(id) = self.magic_progress.take() {
-                    self.progress.complete(id);
+                if let Some(id) = self.magic_task.take() {
+                    self.end_task(id);
                 }
 
                 let cursor_name = self.cursor_entry_name();
@@ -2661,8 +2773,8 @@ impl ApplicationHandler<AppEvent> for App {
                     self.request_redraw();
                 }
                 if self.icon_queue.is_empty() {
-                    if let Some(id) = self.icon_progress.take() {
-                        self.progress.complete(id);
+                    if let Some(id) = self.icon_task.take() {
+                        self.end_task(id);
                         log_info!(56, "icon prefetch: complete (gen={})", self.icon_generation);
                     }
                 } else if let Some(proxy) = self.event_proxy.clone() {
@@ -2683,6 +2795,15 @@ impl ApplicationHandler<AppEvent> for App {
                     return;
                 }
                 filter_hidden(&mut entries, self.show_hidden);
+                if self.enumeration_pending_first_batch {
+                    // First batch for this generation — swap out the
+                    // held previous-folder rows. Single-shot so later
+                    // batches in the same enumeration just append.
+                    let tab = &mut self.tabs[self.active];
+                    tab.all_entries.clear();
+                    tab.error = None;
+                    self.enumeration_pending_first_batch = false;
+                }
                 let tab = &mut self.tabs[self.active];
                 tab.all_entries.extend(entries);
                 let cursor_name = self
@@ -2714,12 +2835,22 @@ impl ApplicationHandler<AppEvent> for App {
                 if self.tabs[self.active].current_dir != dir {
                     return;
                 }
-                if let Some(id) = self.enumeration_progress.take() {
-                    self.progress.complete(id);
+                if let Some(id) = self.enumeration_task.take() {
+                    self.end_task(id);
                 }
                 self.enumeration_cancel = None;
                 self.enumeration_preserve_cursor = None;
                 self.enumeration_preserve_scroll = 0.0;
+                if self.enumeration_pending_first_batch {
+                    // Zero batches arrived — empty folder or an error
+                    // before any rows. Drop the held previous-folder
+                    // rows now so paint reflects the new (empty) state.
+                    let tab = &mut self.tabs[self.active];
+                    tab.all_entries.clear();
+                    tab.error = None;
+                    self.enumeration_pending_first_batch = false;
+                    self.rebuild_visible_entries(None, false);
+                }
                 let entry_count = self.tabs[self.active].all_entries.len();
                 if let Some(err) = error {
                     log_warn!(
@@ -2885,6 +3016,42 @@ impl ApplicationHandler<AppEvent> for App {
                 ..
             } => {
                 let Some(p) = self.pointer_dips else { return };
+
+                // Task panel — when open, it's the topmost popover.
+                // Hits inside route to cancel or are swallowed; hits
+                // outside close the panel without bleeding through to
+                // whatever was underneath.
+                if self.task_panel_open {
+                    let (vp_w, vp_h) = self.viewport_size_dips();
+                    let vp_rect = FRect::new(0.0, 0.0, vp_w, vp_h);
+                    match task_panel::hit_test(vp_rect, &self.tasks, p) {
+                        task_panel::HitTest::Cancel(id) => {
+                            self.cancel_task(id);
+                            return;
+                        }
+                        task_panel::HitTest::Background => {
+                            self.request_redraw();
+                            return;
+                        }
+                        task_panel::HitTest::Outside => {
+                            self.task_panel_open = false;
+                            self.request_redraw();
+                            // Fall through so the click can land on
+                            // whatever it was actually targeting (e.g.
+                            // a folder row).
+                        }
+                    }
+                }
+
+                // Status bar — clicking anywhere on the row toggles the
+                // task panel, but only when at least one task is in
+                // flight. Otherwise the click falls through (today,
+                // status is just informational).
+                if !self.tasks.is_empty() && self.status_bar_rect().contains(p) {
+                    self.task_panel_open = !self.task_panel_open;
+                    self.request_redraw();
+                    return;
+                }
 
                 // Inline rename — click inside the editor: stay editing
                 // (consume so the click doesn't fall through to selection).
@@ -3188,6 +3355,18 @@ impl ApplicationHandler<AppEvent> for App {
                         self.breadcrumb.handle_text(t);
                         self.request_redraw();
                     }
+                    return;
+                }
+
+                // Task panel — Escape closes it. Sits above the
+                // catalogue dispatch so the user can dismiss the panel
+                // without firing any escape-bound command (none today,
+                // but defensive). Does not stop the underlying tasks.
+                if self.task_panel_open
+                    && matches!(&logical_key, Key::Named(NamedKey::Escape))
+                {
+                    self.task_panel_open = false;
+                    self.request_redraw();
                     return;
                 }
 
@@ -3501,24 +3680,33 @@ fn detect_theme() -> Theme {
     }
 }
 
-fn format_status(tab: &Tab) -> String {
+fn format_status(tab: &Tab, tasks: &TaskRegistry) -> String {
     let count = tab.entries.len();
     let filter_suffix = if tab.filter_text.trim().is_empty() {
         String::new()
     } else {
         format!("    filter: {}", tab.filter_text.trim())
     };
+    let task_suffix = match tasks.len() {
+        0 => String::new(),
+        1 => match tasks.primary() {
+            Some(t) => format!("    \u{00B7} {}", t.label),
+            None => String::new(),
+        },
+        n => format!("    \u{00B7} {} tasks running", n),
+    };
     match tab.selection.cursor() {
         Some(i) if i < count => format!(
-            "{}    {} of {}{}    \u{2191}/\u{2193} navigate · Enter open · Backspace up · Esc quit",
+            "{}    {} of {}{}{}    \u{2191}/\u{2193} navigate · Enter open · Backspace up · Esc quit",
             tab.entries[i].name,
             i + 1,
             count,
-            filter_suffix
+            filter_suffix,
+            task_suffix
         ),
         _ => format!(
-            "{} items{}    \u{2191}/\u{2193} navigate · Enter open · Backspace up · Esc quit",
-            count, filter_suffix
+            "{} items{}{}    \u{2191}/\u{2193} navigate · Enter open · Backspace up · Esc quit",
+            count, filter_suffix, task_suffix
         ),
     }
 }
