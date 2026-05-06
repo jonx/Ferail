@@ -97,7 +97,7 @@ impl TabStrip {
         painter.draw_text(
             Point::new(
                 new_rect.left() + (NEW_BUTTON_W - tokens.text.lg) / 2.0 + 1.0,
-                new_rect.top() + (new_rect.size.height - tokens.text.lg) / 2.0 - 2.0,
+                new_rect.top() + (new_rect.size.height - tokens.text.lg) / 2.0,
             ),
             "+",
             TextStyle {
@@ -123,8 +123,12 @@ impl TabStrip {
             painter.fill_rect(rect, tokens.bg.layer3);
         }
         let text_y = rect.top() + (rect.size.height - tokens.text.md) / 2.0 - 1.0;
+        // Label starts past the (always-reserved) close-button area on
+        // the left, so showing/hiding the X doesn't shift the text.
+        // 8 pad + close + 4 gap.
+        let label_left = rect.left() + 8.0 + CLOSE_SIZE + 4.0;
         painter.draw_text(
-            Point::new(rect.left() + 12.0, text_y),
+            Point::new(label_left, text_y),
             label,
             TextStyle {
                 size: tokens.text.md,
@@ -228,7 +232,7 @@ fn compute_tab_width(strip_width: f32, n: usize) -> f32 {
 
 fn close_rect_of(tab_rect: Rect) -> Rect {
     Rect::new(
-        tab_rect.right() - CLOSE_SIZE - 8.0,
+        tab_rect.left() + 8.0,
         tab_rect.top() + (tab_rect.size.height - CLOSE_SIZE) / 2.0,
         CLOSE_SIZE,
         CLOSE_SIZE,
