@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use feraille_core::{EntryKind, FileEntry, NodeId};
-use feraille_design::{FontWeight, Tokens};
+use feraille_design::{FontWeight, LayoutTokens, Tokens};
 use feraille_render::{Bitmap, Point, Rect, Renderer, TextStyle};
 
 use crate::primitives::focus_ring;
@@ -26,14 +26,15 @@ const TYPE_AHEAD_RESET: Duration = Duration::from_millis(800);
 /// Hover dwell before a tooltip appears for a truncated label.
 const TOOLTIP_DELAY: Duration = Duration::from_millis(600);
 
-const ROW_HEIGHT: f32 = 24.0;
-const HEADER_HEIGHT: f32 = 26.0;
-const INDENT_PER_LEVEL: f32 = 16.0;
-const CHEVRON_W: f32 = 14.0;
-const ICON_SIZE: f32 = 14.0;
 const ELLIPSIS: &str = "\u{2026}";
-const TOOLTIP_PAD_X: f32 = 8.0;
-const TOOLTIP_PAD_Y: f32 = 4.0;
+
+/// Snapshot used for layout / hit-testing when paint isn't running.
+/// Matches `LayoutTokens` defaults built by `Tokens::light()` so a
+/// fresh `FileTree::new()` lays out correctly even if no theme has
+/// been pushed yet.
+fn default_layout_snapshot() -> LayoutTokens {
+    feraille_design::Tokens::light().layout
+}
 
 #[derive(Clone, Debug)]
 struct Node {
@@ -141,6 +142,12 @@ pub struct FileTree {
     /// When the cursor first entered `hover_index`. Used to delay
     /// tooltip appearance.
     hover_since: Option<Instant>,
+    /// Snapshot of the host's `LayoutTokens`, used by row-height /
+    /// hit-test math that runs between paints (keyboard nav, scroll,
+    /// click). The host pushes a fresh snapshot via `set_layout`
+    /// whenever tokens change (theme switch, UI scale change). paint
+    /// also refreshes it so the first frame is always current.
+    layout: LayoutTokens,
 }
 
 impl Default for FileTree {
@@ -162,6 +169,21 @@ impl FileTree {
             type_ahead: String::new(),
             type_ahead_last: None,
             hover_since: None,
+            layout: default_layout_snapshot(),
+        }
+    }
+
+    /// Push the latest `LayoutTokens` so row-height / hit-test math
+    /// stays in sync with the live tokens. Called by the host on theme
+    /// or UI-scale change. paint also refreshes this on every frame.
+    pub fn set_layout(&mut self, layout: LayoutTokens) {
+        self.layout = layout;
+    }
+
+    fn row_height(&self, row: &TreeRow) -> f32 {
+        match row {
+            TreeRow::Header { .. } => self.layout.tree_section_header,
+            TreeRow::Node { .. } => self.layout.tree_row,
         }
     }
 
@@ -333,7 +355,7 @@ impl FileTree {
         let mut y = bounds.top() - self.scroll_offset;
         let mut focus_paint: Option<Rect> = None;
         for (i, row) in self.visible.iter().enumerate() {
-            let h = row_height(row);
+            let h = self.row_height(row);
             let row_top = y;
             y += h;
             let row_rect = Rect::new(bounds.left(), row_top, bounds.size.width, h);
@@ -430,8 +452,8 @@ impl FileTree {
         // Cap right edge at the pane boundary; if it would overflow,
         // fall back to anchoring at the pane's right edge minus the
         // tooltip width so the user still sees the full name.
-        let tip_w = full_w + TOOLTIP_PAD_X * 2.0;
-        let tip_h = tokens.text.md + TOOLTIP_PAD_Y * 2.0 + 2.0;
+        let tip_w = full_w + tokens.space.sm * 2.0;
+        let tip_h = tokens.text.md + tokens.space.xs * 2.0 + 2.0;
         let preferred_x = row_rect.left() + 8.0;
         let mut tip_x = preferred_x;
         if tip_x + tip_w > bounds.right() {
@@ -443,7 +465,7 @@ impl FileTree {
         painter.stroke_rect(tip_rect, 1.0, tokens.border.default);
         let text_y = tip_y + (tip_h - tokens.text.md) / 2.0 - 1.0;
         painter.draw_text(
-            Point::new(tip_x + TOOLTIP_PAD_X, text_y),
+            Point::new(tip_x + tokens.space.sm, text_y),
             &node.label,
             style,
         );
@@ -471,8 +493,13 @@ impl FileTree {
             return Some(vec![TreeEvent::Activate(id)]);
         }
 
-        let chevron_x = row_rect.left() + 8.0 + depth as f32 * INDENT_PER_LEVEL;
-        let chevron_rect = Rect::new(chevron_x, row_rect.top(), CHEVRON_W, row_rect.size.height);
+        let chevron_x = row_rect.left() + 8.0 + depth as f32 * self.layout.tree_indent;
+        let chevron_rect = Rect::new(
+            chevron_x,
+            row_rect.top(),
+            self.layout.tree_chevron_w,
+            row_rect.size.height,
+        );
         if chevron_rect.contains(point) {
             return Some(self.toggle_expand(id).into_iter().collect());
         }
@@ -804,9 +831,9 @@ impl FileTree {
         };
         let mut y = 0.0_f32;
         for row in &self.visible[..idx] {
-            y += row_height(row);
+            y += self.row_height(row);
         }
-        let row_h = ROW_HEIGHT;
+        let row_h = self.layout.tree_row;
         if y < self.scroll_offset {
             self.scroll_offset = y;
         } else if y + row_h > self.scroll_offset + viewport_h {
@@ -815,13 +842,13 @@ impl FileTree {
     }
 
     pub fn content_height(&self) -> f32 {
-        self.visible.iter().map(row_height).sum()
+        self.visible.iter().map(|r| self.row_height(r)).sum()
     }
 
     fn row_rect(&self, bounds: Rect, idx: usize) -> Option<Rect> {
         let mut y = bounds.top() - self.scroll_offset;
         for (i, row) in self.visible.iter().enumerate() {
-            let h = row_height(row);
+            let h = self.row_height(row);
             if i == idx {
                 return Some(Rect::new(bounds.left(), y, bounds.size.width, h));
             }
@@ -836,20 +863,13 @@ impl FileTree {
         }
         let mut y = bounds.top() - self.scroll_offset;
         for (i, row) in self.visible.iter().enumerate() {
-            let h = row_height(row);
+            let h = self.row_height(row);
             if point.y >= y && point.y < y + h {
                 return Some(i);
             }
             y += h;
         }
         None
-    }
-}
-
-fn row_height(row: &TreeRow) -> f32 {
-    match row {
-        TreeRow::Header { .. } => HEADER_HEIGHT,
-        TreeRow::Node { .. } => ROW_HEIGHT,
     }
 }
 
@@ -871,14 +891,14 @@ fn paint_header(label: &str, row: Rect, tokens: &Tokens, painter: &mut dyn Rende
 
 /// X coordinate where the label text starts for a row at `depth`.
 /// Mirrors the layout in `paint_row` (kept in sync by both reading the
-/// same constants).
+/// same `LayoutTokens` / `IconTokens` fields).
 fn label_left(row: Rect, depth: u8, expandable: bool, tokens: &Tokens) -> f32 {
-    let indent = depth as f32 * INDENT_PER_LEVEL;
+    let indent = depth as f32 * tokens.layout.tree_indent;
     let mut x = row.left() + 8.0 + indent;
     if expandable {
-        x += CHEVRON_W;
+        x += tokens.layout.tree_chevron_w;
     }
-    x += ICON_SIZE + tokens.space.xs;
+    x += tokens.icon.sm + tokens.space.xs;
     x
 }
 
@@ -892,8 +912,9 @@ fn paint_indent_guides(row: Rect, depth: u8, tokens: &Tokens, painter: &mut dyn 
     // Each guide sits at the left edge of *its* indent column. So
     // depth=1's guide is at column 0's right edge, etc. We draw one
     // guide per ancestor (i.e. for depth=N, draw N guides).
+    let indent = tokens.layout.tree_indent;
     for d in 0..depth {
-        let x = row.left() + 8.0 + d as f32 * INDENT_PER_LEVEL + INDENT_PER_LEVEL / 2.0;
+        let x = row.left() + 8.0 + d as f32 * indent + indent / 2.0;
         painter.fill_rect(
             Rect::new(x, row.top(), 1.0, row.size.height),
             tokens.border.default,
@@ -945,9 +966,12 @@ fn paint_row(
     tokens: &Tokens,
     painter: &mut dyn Renderer,
 ) {
-    let indent = depth as f32 * INDENT_PER_LEVEL;
+    let icon_size = tokens.icon.sm;
+    let chevron_w = tokens.layout.tree_chevron_w;
+    let row_h = tokens.layout.tree_row;
+    let indent = depth as f32 * tokens.layout.tree_indent;
     let mut x = row.left() + 8.0 + indent;
-    let text_y = row.top() + (ROW_HEIGHT - tokens.text.md) / 2.0 - 1.0;
+    let text_y = row.top() + (row_h - tokens.text.md) / 2.0 - 1.0;
 
     if expandable {
         let chevron_x = x;
@@ -961,17 +985,17 @@ fn paint_row(
                 color: tokens.fg.secondary,
             },
         );
-        x += CHEVRON_W;
+        x += chevron_w;
     }
 
-    let icon_y = row.top() + (ROW_HEIGHT - ICON_SIZE) / 2.0;
-    let icon_rect = Rect::new(x, icon_y, ICON_SIZE, ICON_SIZE);
+    let icon_y = row.top() + (row_h - icon_size) / 2.0;
+    let icon_rect = Rect::new(x, icon_y, icon_size, icon_size);
     if let Some(bitmap) = dir_icon {
         painter.draw_bitmap(icon_rect, bitmap);
     } else {
         painter.fill_rect(icon_rect, tokens.accent.fill);
     }
-    x += ICON_SIZE + tokens.space.xs;
+    x += icon_size + tokens.space.xs;
 
     let style = TextStyle {
         size: tokens.text.md,

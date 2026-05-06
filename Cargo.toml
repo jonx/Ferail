@@ -5,6 +5,7 @@ members = [
     "crates/feraille-design",
     "crates/feraille-render",
     "crates/feraille-controls",
+    "crates/feraille-disk-usage",
     "crates/feraille-fs-native",
     "crates/feraille-shell-mac",
     "crates/feraille-shell-win32",
@@ -22,6 +23,7 @@ feraille-core         = { path = "crates/feraille-core" }
 feraille-design       = { path = "crates/feraille-design" }
 feraille-render       = { path = "crates/feraille-render" }
 feraille-controls     = { path = "crates/feraille-controls" }
+feraille-disk-usage   = { path = "crates/feraille-disk-usage" }
 feraille-fs-native    = { path = "crates/feraille-fs-native" }
 feraille-shell-mac    = { path = "crates/feraille-shell-mac" }
 feraille-shell-win32  = { path = "crates/feraille-shell-win32" }

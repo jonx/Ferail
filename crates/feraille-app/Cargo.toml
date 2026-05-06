@@ -17,6 +17,7 @@ feraille-core.workspace = true
 feraille-design.workspace = true
 feraille-render.workspace = true
 feraille-controls.workspace = true
+feraille-disk-usage.workspace = true
 feraille-fs-native.workspace = true
 feraille-shell-mac.workspace = true
 feraille-shell-win32.workspace = true

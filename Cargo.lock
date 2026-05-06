@@ -406,6 +406,7 @@ dependencies = [
  "feraille-controls",
  "feraille-core",
  "feraille-design",
+ "feraille-disk-usage",
  "feraille-fs-native",
  "feraille-render",
  "feraille-shell-mac",
@@ -433,10 +434,18 @@ name = "feraille-design"
 version = "0.0.1"
 
 [[package]]
+name = "feraille-disk-usage"
+version = "0.0.1"
+dependencies = [
+ "feraille-core",
+]
+
+[[package]]
 name = "feraille-fs-native"
 version = "0.0.1"
 dependencies = [
  "feraille-core",
+ "feraille-disk-usage",
  "objc2 0.5.2",
  "objc2-app-kit",
  "objc2-foundation 0.2.2",

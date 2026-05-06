@@ -58,7 +58,14 @@ pub struct Tokens {
     pub radius: RadiusTokens,
     pub text: TextTokens,
     pub hit: HitTokens,
+    pub icon: IconTokens,
+    pub layout: LayoutTokens,
     pub magic: MagicTokens,
+    /// User UI scale applied to all numeric dimensions on construction
+    /// (text, space, hit, icon, layout). Borders and radii are not
+    /// scaled — they are tied to pixel-level crispness.
+    /// 1.0 = baseline; clamp to [0.6, 2.5] when setting.
+    pub ui_scale: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -139,6 +146,49 @@ pub struct HitTokens {
     pub input: f32,
 }
 
+/// Icon dimensions for paint-time sizing. NSWorkspace returns icons at
+/// the physical pixel resolution requested; controls pick a logical
+/// size from this struct for hit-rect / cell layout.
+#[derive(Clone, Copy, Debug)]
+pub struct IconTokens {
+    /// Tree rows, sidebar rows, chevron-area glyphs.
+    pub sm: f32,
+    /// List rows, tab close button, status icons.
+    pub md: f32,
+    /// Toolbar buttons, larger affordances.
+    pub lg: f32,
+    /// Preview pane / properties pane hero icon.
+    pub xl: f32,
+}
+
+/// Layout dimensions used by the App-level frame and individual
+/// controls. Heights are row-major; widths are pane defaults / clamps.
+#[derive(Clone, Copy, Debug)]
+pub struct LayoutTokens {
+    /// FileTree row height (denser than `hit.row`).
+    pub tree_row: f32,
+    /// FileTree section-header row height.
+    pub tree_section_header: f32,
+    /// FileTree per-depth indent, applied left of the chevron.
+    pub tree_indent: f32,
+    /// FileTree chevron-column width.
+    pub tree_chevron_w: f32,
+    /// Tabstrip total height.
+    pub tabstrip: f32,
+    /// Breadcrumb total height.
+    pub breadcrumb: f32,
+    /// Status-bar total height.
+    pub status_bar: f32,
+    /// Sidebar default / min / max widths (splitter clamps).
+    pub sidebar_default: f32,
+    pub sidebar_min: f32,
+    pub sidebar_max: f32,
+    /// Preview pane default / min / max widths.
+    pub preview_default: f32,
+    pub preview_min: f32,
+    pub preview_max: f32,
+}
+
 /// Categorical icon-tint palette for the Magic / file-type column.
 /// Saturated enough to read in both light and dark mode, so light()
 /// and dark() share the same values.
@@ -158,12 +208,74 @@ pub struct MagicTokens {
     pub doc: Color,
 }
 
+/// Clamp range for `Tokens::scaled`. Values below 0.6 produce
+/// unreadable text; above 2.5 the layout overflows reasonable
+/// windows.
+pub const UI_SCALE_MIN: f32 = 0.6;
+pub const UI_SCALE_MAX: f32 = 2.5;
+
 impl Tokens {
     pub fn for_theme(theme: Theme) -> Self {
         match theme {
             Theme::Light => Self::light(),
             Theme::Dark => Self::dark(),
         }
+    }
+
+    /// Build a scaled copy of this token set. Multiplies every numeric
+    /// dimension that contributes to UI density (text, spacing, hit
+    /// rects, icons, layout heights / widths) by `scale`. Borders and
+    /// radii are not scaled — they're tied to crisp pixel rendering.
+    /// `scale` is clamped to `[UI_SCALE_MIN, UI_SCALE_MAX]` so a stray
+    /// keystroke can't break the layout.
+    ///
+    /// Idempotent in the sense that calling `scaled(1.0)` is a no-op.
+    /// Re-scaling an already-scaled `Tokens` compounds — callers should
+    /// always start from a freshly-built `for_theme(...)`.
+    pub fn scaled(mut self, scale: f32) -> Self {
+        let s = scale.clamp(UI_SCALE_MIN, UI_SCALE_MAX);
+        self.ui_scale = s;
+        if (s - 1.0).abs() < f32::EPSILON {
+            return self;
+        }
+
+        self.space.xxs *= s;
+        self.space.xs *= s;
+        self.space.sm *= s;
+        self.space.md *= s;
+        self.space.lg *= s;
+        self.space.xl *= s;
+        self.space.xxl *= s;
+
+        self.text.xs *= s;
+        self.text.sm *= s;
+        self.text.md *= s;
+        self.text.lg *= s;
+        self.text.xl *= s;
+
+        self.hit.min *= s;
+        self.hit.row *= s;
+        self.hit.button *= s;
+        self.hit.input *= s;
+
+        self.icon.sm *= s;
+        self.icon.md *= s;
+        self.icon.lg *= s;
+        self.icon.xl *= s;
+
+        self.layout.tree_row *= s;
+        self.layout.tree_section_header *= s;
+        self.layout.tabstrip *= s;
+        self.layout.breadcrumb *= s;
+        self.layout.status_bar *= s;
+        self.layout.sidebar_default *= s;
+        self.layout.sidebar_min *= s;
+        self.layout.sidebar_max *= s;
+        self.layout.preview_default *= s;
+        self.layout.preview_min *= s;
+        self.layout.preview_max *= s;
+
+        self
     }
 
     pub fn light() -> Self {
@@ -205,6 +317,23 @@ impl Tokens {
             radius: RadiusTokens { none: 0.0, popover: 6.0, full: 9999.0 },
             text: TextTokens { xs: 11.0, sm: 12.0, md: 13.0, lg: 15.0, xl: 18.0 },
             hit: HitTokens { min: 24.0, row: 28.0, button: 32.0, input: 32.0 },
+            icon: IconTokens { sm: 14.0, md: 16.0, lg: 20.0, xl: 32.0 },
+            layout: LayoutTokens {
+                tree_row: 24.0,
+                tree_section_header: 26.0,
+                tree_indent: 16.0,
+                tree_chevron_w: 14.0,
+                tabstrip: 32.0,
+                breadcrumb: 32.0,
+                status_bar: 24.0,
+                sidebar_default: 220.0,
+                sidebar_min: 160.0,
+                sidebar_max: 480.0,
+                preview_default: 320.0,
+                preview_min: 220.0,
+                preview_max: 600.0,
+            },
+            ui_scale: 1.0,
             magic: MagicTokens {
                 code: Color::rgb(0xA0, 0x6B, 0xD9),
                 image: Color::rgb(0x4F, 0xA8, 0x6E),

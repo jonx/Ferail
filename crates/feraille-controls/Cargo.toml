@@ -8,6 +8,7 @@ description = "Atomic + explorer-specific controls implementing the spec"
 [dependencies]
 feraille-core.workspace = true
 feraille-design.workspace = true
+feraille-disk-usage.workspace = true
 feraille-render.workspace = true
 
 [dev-dependencies]

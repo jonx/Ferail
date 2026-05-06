@@ -51,6 +51,12 @@ pub struct Args {
     /// the popover and status-bar hint can be verified without a slow
     /// folder. v1 is a fixture for visual review.
     pub simulate_task_panel: bool,
+    /// User-facing UI scale (text, spacing, hit, icon, layout
+    /// dimensions are multiplied by this in `Tokens::scaled`). Used to
+    /// render screenshot fixtures at non-default scales without
+    /// launching the GUI. None falls through to `FERAILLE_UI_SCALE` or
+    /// 1.0 via `initial_ui_scale`.
+    pub ui_scale: Option<f32>,
 }
 
 pub fn parse_args() -> Args {
@@ -104,6 +110,7 @@ pub fn parse_args() -> Args {
                 );
             }
             "--simulate-task-panel" => args.simulate_task_panel = true,
+            "--ui-scale" => args.ui_scale = iter.next().and_then(|s| s.parse().ok()),
             "--show-hidden" => args.show_hidden = true,
             "--filter" => args.filter = iter.next(),
             "--search" => args.search = true,
@@ -191,6 +198,13 @@ pub fn run(args: Args) -> Result<()> {
     // Build app + drive state.
     let mut app = App::new_for_headless(args.theme.unwrap_or(Theme::Light));
     app.set_dimensions(width_px, height_px, scale);
+    if let Some(s) = args.ui_scale {
+        app.ui_scale = s.clamp(
+            feraille_design::UI_SCALE_MIN,
+            feraille_design::UI_SCALE_MAX,
+        );
+        app.apply_theme();
+    }
     app.show_hidden = args.show_hidden;
 
     // Each --navigate is applied in order, so repeating one (or chaining

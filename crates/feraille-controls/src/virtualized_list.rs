@@ -17,7 +17,6 @@ use feraille_render::{Bitmap, Point, Rect, Renderer, TextStyle};
 use crate::primitives::focus_ring;
 use crate::selection::Selection;
 
-const HEADER_H: f32 = 28.0;
 const COLUMN_PAD: f32 = 12.0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -124,6 +123,9 @@ pub struct ListItem {
 
 pub struct VirtualizedList {
     pub row_height: f32,
+    /// Column-header row height. Host sets this from `tokens.hit.row`
+    /// (or scaled equivalent) so it tracks UI scale.
+    pub header_h: f32,
     /// Top of viewport, in DIPs from item 0.
     pub scroll_offset: f32,
     /// Whether this list owns keyboard focus (changes selection-fill color).
@@ -146,6 +148,7 @@ impl VirtualizedList {
     pub fn new() -> Self {
         Self {
             row_height: 28.0,
+            header_h: 28.0,
             scroll_offset: 0.0,
             focused: true,
             hover: None,
@@ -156,7 +159,7 @@ impl VirtualizedList {
     }
 
     pub fn header_height(&self) -> f32 {
-        HEADER_H
+        self.header_h
     }
 
     /// Update hover row from a pointer position. Returns whether hover changed.
@@ -399,7 +402,7 @@ fn paint_row(
     tokens: &Tokens,
     painter: &mut dyn Renderer,
 ) {
-    let icon_size = 16.0;
+    let icon_size = tokens.icon.md;
     let icon_x = row_rect.left() + tokens.space.md;
     let icon_y = row_rect.top() + (row_rect.size.height - icon_size) / 2.0;
     let icon_rect = Rect::new(icon_x, icon_y, icon_size, icon_size);

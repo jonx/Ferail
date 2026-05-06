@@ -17,8 +17,10 @@ use feraille_core::{
     EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId,
 };
 
+mod disk_usage_scanner;
 mod icons;
 mod magic;
+pub use disk_usage_scanner::DEFAULT_DU_BATCH;
 pub use icons::fetch_icon_rgba;
 pub use magic::detect_magic;
 
@@ -176,7 +178,7 @@ impl NativeFs {
     }
 }
 
-fn map_io_error(e: &std::io::Error) -> EnumerationError {
+pub(crate) fn map_io_error(e: &std::io::Error) -> EnumerationError {
     match e.kind() {
         std::io::ErrorKind::PermissionDenied => EnumerationError::PermissionDenied,
         std::io::ErrorKind::NotFound => EnumerationError::NotFound,

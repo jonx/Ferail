@@ -189,9 +189,6 @@ impl DialogMode {
     }
 }
 
-const TABSTRIP_H: f32 = 32.0;
-const BREADCRUMB_H: f32 = 32.0;
-const STATUS_H: f32 = 24.0;
 const SCROLLBAR_W: f32 = 10.0;
 /// Default preview-pane width when first shown.
 const PREVIEW_W_DEFAULT: f32 = 320.0;
@@ -458,6 +455,13 @@ pub struct App {
     /// macOS Appearance live; `Light` / `Dark` pin a fixed theme.
     /// Persisted later (settings file); for now in-memory only.
     pub theme_preference: ThemePreference,
+    /// User-facing UI scale multiplier, applied to every numeric
+    /// dimension token (text, space, hit, icon, layout) when
+    /// `apply_theme` builds `self.tokens`. 1.0 = baseline. Cmd+= /
+    /// Cmd+- bump in 10% steps; Cmd+0 resets. Session-only for now;
+    /// the same field will deserialize from a config file when
+    /// settings persistence lands (iter-5.11+).
+    pub ui_scale: f32,
     /// Last-known macOS Appearance state. Refreshed at startup and
     /// on every `AppEvent::SystemThemeChanged` so we can resolve the
     /// effective theme without re-querying NSApp on every redraw.
@@ -527,11 +531,18 @@ impl App {
         self.apply_theme();
     }
 
-    /// Recompute tokens from the current preference + system state and
-    /// push the matching menu-item checkmarks. Call after every change
-    /// to either input (`theme_preference` or `system_is_dark`).
+    /// Recompute tokens from the current preference + system state +
+    /// `ui_scale`, push the matching menu-item checkmarks, and forward
+    /// fresh layout/row dimensions to controls that cache them.
+    /// Call after every change to inputs (`theme_preference`,
+    /// `system_is_dark`, `ui_scale`).
     pub fn apply_theme(&mut self) {
-        self.tokens = Tokens::for_theme(self.effective_theme());
+        self.tokens = Tokens::for_theme(self.effective_theme()).scaled(self.ui_scale);
+        // Push dimensions to controls that cache layout for hit-test /
+        // scroll math between paints.
+        self.tree.set_layout(self.tokens.layout);
+        self.list.row_height = self.tokens.hit.row;
+        self.list.header_h = self.tokens.hit.row;
         feraille_shell_mac::set_command_state(
             CommandId("view.theme_light"),
             self.theme_preference == ThemePreference::Light,
@@ -544,6 +555,34 @@ impl App {
             CommandId("view.theme_system"),
             self.theme_preference == ThemePreference::System,
         );
+    }
+
+    /// UI-scale step. Cmd+= and Cmd+- move by this much; Cmd+0 resets
+    /// to 1.0. Chosen so two presses give a clearly different look
+    /// without needing fine-grained percentage control.
+    pub const UI_SCALE_STEP: f32 = 0.1;
+
+    /// Bump the UI scale by `delta` and re-apply tokens. Clamped by
+    /// `feraille_design::UI_SCALE_{MIN,MAX}` inside `Tokens::scaled`.
+    pub fn nudge_ui_scale(&mut self, delta: f32) {
+        let next = (self.ui_scale + delta)
+            .clamp(feraille_design::UI_SCALE_MIN, feraille_design::UI_SCALE_MAX);
+        if (next - self.ui_scale).abs() < f32::EPSILON {
+            return;
+        }
+        self.ui_scale = next;
+        self.apply_theme();
+        log_info!(59, "ui_scale -> {:.2}", self.ui_scale);
+    }
+
+    /// Reset UI scale to 1.0.
+    pub fn reset_ui_scale(&mut self) {
+        if (self.ui_scale - 1.0).abs() < f32::EPSILON {
+            return;
+        }
+        self.ui_scale = 1.0;
+        self.apply_theme();
+        log_info!(59, "ui_scale -> 1.00 (reset)");
     }
 
     pub fn new_tab_at(&mut self, path: PathBuf) {
@@ -1441,6 +1480,7 @@ impl App {
             modifiers: ModifiersState::empty(),
             tokens: Tokens::light(), // overwritten below by apply_theme
             theme_preference: initial_theme_preference(),
+            ui_scale: initial_ui_scale(),
             system_is_dark: feraille_shell_mac::system_is_dark(),
             width: 1,
             height: 1,
@@ -1631,12 +1671,12 @@ impl App {
     }
 
     fn body_top(&self) -> f32 {
-        TABSTRIP_H
+        self.tokens.layout.tabstrip
     }
 
     fn tabstrip_rect(&self) -> FRect {
         let (w, _) = self.viewport_size_dips();
-        FRect::new(0.0, 0.0, w, TABSTRIP_H)
+        FRect::new(0.0, 0.0, w, self.tokens.layout.tabstrip)
     }
 
     fn tree_rect(&self) -> FRect {
@@ -1645,7 +1685,7 @@ impl App {
             0.0,
             self.body_top(),
             self.splitter_x,
-            (h - self.body_top() - STATUS_H).max(0.0),
+            (h - self.body_top() - self.tokens.layout.status_bar).max(0.0),
         )
     }
 
@@ -1655,7 +1695,7 @@ impl App {
             self.splitter_x,
             self.body_top(),
             (w - self.splitter_x).max(0.0),
-            BREADCRUMB_H,
+            self.tokens.layout.breadcrumb,
         )
     }
 
@@ -1678,9 +1718,9 @@ impl App {
         let preview_w = self.effective_preview_width();
         FRect::new(
             self.splitter_x,
-            self.body_top() + BREADCRUMB_H,
+            self.body_top() + self.tokens.layout.breadcrumb,
             (w - self.splitter_x - preview_w).max(0.0),
-            (h - self.body_top() - BREADCRUMB_H - STATUS_H).max(0.0),
+            (h - self.body_top() - self.tokens.layout.breadcrumb - self.tokens.layout.status_bar).max(0.0),
         )
     }
 
@@ -1692,9 +1732,9 @@ impl App {
         let preview_w = self.effective_preview_width();
         FRect::new(
             w - preview_w,
-            self.body_top() + BREADCRUMB_H,
+            self.body_top() + self.tokens.layout.breadcrumb,
             preview_w,
-            (h - self.body_top() - BREADCRUMB_H - STATUS_H).max(0.0),
+            (h - self.body_top() - self.tokens.layout.breadcrumb - self.tokens.layout.status_bar).max(0.0),
         )
     }
 
@@ -1747,7 +1787,7 @@ impl App {
             0.0,
             self.body_top(),
             self.viewport_size_dips().0,
-            (h - self.body_top() - STATUS_H).max(0.0),
+            (h - self.body_top() - self.tokens.layout.status_bar).max(0.0),
         )
     }
 
@@ -2013,7 +2053,12 @@ impl App {
     /// toggle the task panel.
     fn status_bar_rect(&self) -> FRect {
         let (w, h) = self.viewport_size_dips();
-        FRect::new(0.0, h - STATUS_H, w, STATUS_H)
+        FRect::new(
+            0.0,
+            h - self.tokens.layout.status_bar,
+            w,
+            self.tokens.layout.status_bar,
+        )
     }
 
     /// Spawn a worker that streams the active tab's directory listing
@@ -2772,22 +2817,22 @@ impl App {
                 splitter_x,
                 breadcrumb_rect.bottom(),
                 viewport.width - splitter_x,
-                viewport.height - breadcrumb_rect.bottom() - STATUS_H,
+                viewport.height - breadcrumb_rect.bottom() - tokens.layout.status_bar,
             );
             self.toasts.paint(toast_area, tokens, renderer);
         }
 
         // Status
-        let status = FRect::new(0.0, viewport.height - STATUS_H, viewport.width, STATUS_H);
+        let status = FRect::new(0.0, viewport.height - tokens.layout.status_bar, viewport.width, tokens.layout.status_bar);
         renderer.fill_rect(status, tokens.bg.layer2);
         renderer.fill_rect(
-            FRect::new(0.0, viewport.height - STATUS_H, viewport.width, 1.0),
+            FRect::new(0.0, viewport.height - tokens.layout.status_bar, viewport.width, 1.0),
             tokens.border.subtle,
         );
         // Progress strip overlays the top edge of the status bar.
         let now = std::time::Instant::now();
         self.progress.paint(
-            FRect::new(0.0, viewport.height - STATUS_H, viewport.width, 2.0),
+            FRect::new(0.0, viewport.height - tokens.layout.status_bar, viewport.width, 2.0),
             now,
             tokens,
             renderer,
@@ -2795,7 +2840,7 @@ impl App {
         renderer.draw_text(
             FPoint::new(
                 tokens.space.md,
-                viewport.height - STATUS_H + (STATUS_H - tokens.text.xs) / 2.0 - 1.0,
+                viewport.height - tokens.layout.status_bar + (tokens.layout.status_bar - tokens.text.xs) / 2.0 - 1.0,
             ),
             &status_text,
             TextStyle {
@@ -3725,6 +3770,37 @@ impl ApplicationHandler<AppEvent> for App {
                 // returns the first command whose `default_shortcut`
                 // matches; rebinding a key lives in the catalogue, not
                 // in this handler. See `keystroke_to_command` above.
+                // UI scale: Cmd+= / Cmd+- nudge in 10% steps, Cmd+0
+                // resets to 1.0. Stays out of the command catalogue
+                // because the keystrokes alias common browser/editor
+                // bindings users will expect to "just work" — making
+                // them remappable can come with the real settings UI.
+                // `=` and `+` both map to Cmd+= (with/without shift);
+                // `-` to Cmd+-.
+                let primary_mod = self.modifiers.super_key() || self.modifiers.control_key();
+                if primary_mod {
+                    if let Some(t) = text.as_deref() {
+                        match t {
+                            "=" | "+" => {
+                                self.nudge_ui_scale(Self::UI_SCALE_STEP);
+                                self.request_redraw();
+                                return;
+                            }
+                            "-" | "_" => {
+                                self.nudge_ui_scale(-Self::UI_SCALE_STEP);
+                                self.request_redraw();
+                                return;
+                            }
+                            "0" => {
+                                self.reset_ui_scale();
+                                self.request_redraw();
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
                 if let Some(id) = keystroke_to_command(&logical_key, self.modifiers) {
                     self.dispatch_command(id);
                     return;
@@ -4042,6 +4118,20 @@ fn initial_theme_preference() -> ThemePreference {
         Some("light") => ThemePreference::Light,
         _ => ThemePreference::System,
     }
+}
+
+/// Initial `ui_scale`. `FERAILLE_UI_SCALE` env var lets screenshot
+/// fixtures and CI render at non-default scales without launching the
+/// GUI. Session-only today; when settings persistence ships this is the
+/// hook for loading the saved value before falling through to the env
+/// var, then to 1.0.
+fn initial_ui_scale() -> f32 {
+    if let Ok(s) = std::env::var("FERAILLE_UI_SCALE") {
+        if let Ok(v) = s.trim().parse::<f32>() {
+            return v.clamp(feraille_design::UI_SCALE_MIN, feraille_design::UI_SCALE_MAX);
+        }
+    }
+    1.0
 }
 
 fn format_status(tab: &Tab, tasks: &TaskRegistry) -> String {
