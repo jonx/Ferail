@@ -174,6 +174,24 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::View,
         default_shortcut: Some(Shortcut::primary_shift(".")),
     },
+    CommandSpec {
+        id: CommandId("view.theme_light"),
+        title: "Theme: Light",
+        category: Category::View,
+        default_shortcut: None,
+    },
+    CommandSpec {
+        id: CommandId("view.theme_dark"),
+        title: "Theme: Dark",
+        category: Category::View,
+        default_shortcut: None,
+    },
+    CommandSpec {
+        id: CommandId("view.theme_system"),
+        title: "Theme: Match System",
+        category: Category::View,
+        default_shortcut: None,
+    },
     // Go
     CommandSpec {
         id: CommandId("go.back"),

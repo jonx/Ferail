@@ -13,10 +13,9 @@
 //! AppKit selectors hard-coded.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 
-use feraille_core::commands::{
-    all_commands, Category, CommandId, CommandSpec, Shortcut,
-};
+use feraille_core::commands::{all_commands, Category, CommandId, CommandSpec, Shortcut};
 use objc2::declare_class;
 use objc2::msg_send;
 use objc2::msg_send_id;
@@ -24,7 +23,10 @@ use objc2::mutability;
 use objc2::rc::Retained;
 use objc2::sel;
 use objc2::{ClassType, DeclaredClass};
-use objc2_app_kit::{NSApplication, NSEventModifierFlags, NSMenu, NSMenuItem};
+use objc2_app_kit::{
+    NSApplication, NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSMenu,
+    NSMenuItem,
+};
 use objc2_foundation::{MainThreadMarker, NSDictionary, NSObject, NSObjectProtocol, NSString};
 
 thread_local! {
@@ -59,6 +61,14 @@ thread_local! {
     /// built-in `performClose:`). The host calls `set_tab_count()` on
     /// every tab open / close.
     static TAB_COUNT: Cell<usize> = const { Cell::new(1) };
+
+    /// Per-command on/off state used to render menu checkmarks (radio
+    /// or check). The host writes here via [`set_command_state`]
+    /// whenever an exclusive group's selection changes (today: theme
+    /// preference); `validateMenuItem:` reads it on every menu open
+    /// to keep the visual state in sync.
+    static COMMAND_STATES: RefCell<HashMap<CommandId, bool>> =
+        RefCell::new(HashMap::new());
 }
 
 declare_class!(
@@ -111,6 +121,15 @@ declare_class!(
                 Some("file.close_tab") => TAB_COUNT.with(|c| c.get()) > 1,
                 _ => true,
             };
+            // Mirror the per-command on/off state into the item's
+            // checkmark. Items not registered in COMMAND_STATES default
+            // to "off" — i.e. no checkmark — which is the right
+            // behaviour for non-toggle commands.
+            if let Some(id) = id {
+                let on = COMMAND_STATES.with(|s| s.borrow().get(&id).copied().unwrap_or(false));
+                let state = if on { NSControlStateValueOn } else { NSControlStateValueOff };
+                unsafe { item.setState(state) };
+            }
             objc2::runtime::Bool::new(enabled)
         }
     }
@@ -139,6 +158,17 @@ pub fn register_command_callback(cb: Option<Box<dyn Fn(CommandId) + 'static>>) {
 /// hasn't run yet.
 pub fn set_tab_count(n: usize) {
     TAB_COUNT.with(|c| c.set(n));
+}
+
+/// Set whether a command's menu item should render a checkmark.
+/// `validateMenuItem:` reads this on every menu open, so the change
+/// is picked up the next time the user opens the menu — no need to
+/// rebuild. Use for radio-button-style exclusive groups (the host
+/// flips one to `true` and the rest to `false`).
+pub fn set_command_state(id: CommandId, on: bool) {
+    COMMAND_STATES.with(|s| {
+        s.borrow_mut().insert(id, on);
+    });
 }
 
 /// Show the standard About panel using the dictionary configured by
@@ -241,7 +271,10 @@ fn build_app_submenu(
         submenu.setTitle(&NSString::from_str(app_name));
 
         // Catalogue-driven entries (About, Settings).
-        for spec in all_commands().iter().filter(|s| s.category == Category::App) {
+        for spec in all_commands()
+            .iter()
+            .filter(|s| s.category == Category::App)
+        {
             submenu.addItem(&build_command_item(mtm, target, spec));
         }
 
@@ -250,15 +283,23 @@ fn build_app_submenu(
         // Built-in AppKit items below: hide/show/quit ride the
         // responder chain via NSApplication's selectors.
         let hide_title = format!("Hide {app_name}");
-        submenu.addItem(&make_responder_item(mtm, &hide_title, sel!(hide:), "h", None));
+        submenu.addItem(&make_responder_item(
+            mtm,
+            &hide_title,
+            sel!(hide:),
+            "h",
+            None,
+        ));
 
         let hide_others = make_responder_item(
             mtm,
             "Hide Others",
             sel!(hideOtherApplications:),
             "h",
-            Some(NSEventModifierFlags::NSEventModifierFlagCommand
-                | NSEventModifierFlags::NSEventModifierFlagOption),
+            Some(
+                NSEventModifierFlags::NSEventModifierFlagCommand
+                    | NSEventModifierFlags::NSEventModifierFlagOption,
+            ),
         );
         submenu.addItem(&hide_others);
 
