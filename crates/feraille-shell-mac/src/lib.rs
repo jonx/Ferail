@@ -18,6 +18,9 @@ mod drag;
 #[cfg(target_os = "macos")]
 mod menu;
 
+#[cfg(target_os = "macos")]
+mod theme_observer;
+
 /// Install the application menu bar (`NSApp.mainMenu`) and configure the
 /// standard About panel content. Call once at startup, on the main thread,
 /// after [`set_app_icon_from_png_bytes`]. No-op on non-macOS.
@@ -67,6 +70,18 @@ pub fn set_tab_count(n: usize) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn set_tab_count(_n: usize) {}
+
+/// Set whether a command's menu item should render a checkmark.
+/// Used for radio-button-style exclusive groups: the host flips one
+/// item to `true` and the rest to `false`. Picked up on the next
+/// menu open. No-op on non-macOS or before [`install_app_menu`].
+#[cfg(target_os = "macos")]
+pub fn set_command_state(id: feraille_core::commands::CommandId, on: bool) {
+    app_menu::set_command_state(id, on);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_command_state(_id: feraille_core::commands::CommandId, _on: bool) {}
 
 /// Show a native modal NSAlert with the given title and body. Single
 /// "OK" button, informational style. Used for any "show this text
@@ -281,6 +296,23 @@ pub fn system_is_dark() -> bool {
 pub fn system_is_dark() -> bool {
     false
 }
+
+/// Subscribe to macOS Appearance change notifications. The callback
+/// fires on the main thread with the new dark-mode state every time
+/// the user toggles System Settings → Appearance, or "Auto" mode
+/// crosses the day/night boundary.
+///
+/// Idempotent: re-registering replaces the callback without stacking
+/// duplicate observers. Must be called on the main thread (after
+/// winit has built its event loop / NSApp); off-thread or non-macOS
+/// calls are a no-op.
+#[cfg(target_os = "macos")]
+pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static>) {
+    theme_observer::start(callback);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static>) {}
 
 /// Width to reserve at the leading edge of the tabstrip so the OS
 /// traffic-light buttons (close / minimize / zoom) don't overlap our

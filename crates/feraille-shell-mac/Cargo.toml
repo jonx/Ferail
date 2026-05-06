@@ -18,6 +18,8 @@ objc2-foundation = { version = "0.2", features = [
     "NSString",
     "NSData",
     "NSDictionary",
+    "NSNotification",
+    "NSDistributedNotificationCenter",
 ] }
 objc2-app-kit = { version = "0.2", features = [
     "NSWindow",
@@ -31,6 +33,7 @@ objc2-app-kit = { version = "0.2", features = [
     "NSEvent",
     "NSApplication",
     "NSAppearance",
+    "NSCell",
     "NSImage",
     "NSWorkspace",
     "NSMenu",
