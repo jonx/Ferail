@@ -333,11 +333,14 @@ fn build_category_submenu(
     category: Category,
     title: &str,
 ) -> Option<Retained<NSMenuItem>> {
-    let cmds: Vec<&CommandSpec> = all_commands()
+    // Extract the theme cluster (View-only) into its own sub-submenu so
+    // the View menu doesn't grow a flat run of "Light / Dark / Match
+    // System" rows. Other categories keep the simple flat layout.
+    let (cmds, theme_cmds): (Vec<&CommandSpec>, Vec<&CommandSpec>) = all_commands()
         .iter()
         .filter(|s| s.category == category)
-        .collect();
-    if cmds.is_empty() {
+        .partition(|s| !s.id.0.starts_with("view.theme_"));
+    if cmds.is_empty() && theme_cmds.is_empty() {
         return None;
     }
 
@@ -348,8 +351,34 @@ fn build_category_submenu(
         for spec in cmds {
             submenu.addItem(&build_command_item(mtm, target, spec));
         }
+        if !theme_cmds.is_empty() {
+            submenu.addItem(&NSMenuItem::separatorItem(mtm));
+            submenu.addItem(&build_subgroup_submenu(mtm, target, "Theme", &theme_cmds));
+        }
         item.setSubmenu(Some(&submenu));
         Some(item)
+    }
+}
+
+/// Build a nested submenu item titled `title` containing one row per
+/// command in `cmds`. Used to cluster mutually-exclusive picks (the
+/// theme group) inside a category submenu.
+fn build_subgroup_submenu(
+    mtm: MainThreadMarker,
+    target: &AppMenuTarget,
+    title: &str,
+    cmds: &[&CommandSpec],
+) -> Retained<NSMenuItem> {
+    unsafe {
+        let item = NSMenuItem::new(mtm);
+        item.setTitle(&NSString::from_str(title));
+        let submenu = NSMenu::new(mtm);
+        submenu.setTitle(&NSString::from_str(title));
+        for spec in cmds {
+            submenu.addItem(&build_command_item(mtm, target, spec));
+        }
+        item.setSubmenu(Some(&submenu));
+        item
     }
 }
 

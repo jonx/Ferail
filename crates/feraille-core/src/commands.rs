@@ -174,21 +174,24 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::View,
         default_shortcut: Some(Shortcut::primary_shift(".")),
     },
+    // The three theme commands are grouped under a "Theme" sub-submenu
+    // by `app_menu::build_category_submenu` — title is the submenu's
+    // own label, so individual items just say "Light" / "Dark" / etc.
     CommandSpec {
         id: CommandId("view.theme_light"),
-        title: "Theme: Light",
+        title: "Light",
         category: Category::View,
         default_shortcut: None,
     },
     CommandSpec {
         id: CommandId("view.theme_dark"),
-        title: "Theme: Dark",
+        title: "Dark",
         category: Category::View,
         default_shortcut: None,
     },
     CommandSpec {
         id: CommandId("view.theme_system"),
-        title: "Theme: Match System",
+        title: "Match System",
         category: Category::View,
         default_shortcut: None,
     },
