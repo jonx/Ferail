@@ -964,8 +964,9 @@ fn paint_row(
     if let Some(cap) = node.capacity {
         if cap.total > 0 {
             // 3-DIP bar at the bottom of the row, spanning the label
-            // area. Track = subtle border color; fill = secondary fg
-            // (Finder-style neutral grey for "used").
+            // area. Track uses `border.default` rather than `subtle` so
+            // it stays visible against `bg.layer2` in dark mode. Fill
+            // is neutral grey by default and escalates on heavy use.
             let bar_h = 3.0;
             let bar_y = row.bottom() - bar_h - 2.0;
             let bar_left = x;
@@ -973,15 +974,19 @@ fn paint_row(
             let bar_w = bar_right - bar_left;
             if bar_w >= 24.0 {
                 let track = Rect::new(bar_left, bar_y, bar_w, bar_h);
-                painter.fill_rect(track, tokens.border.subtle);
+                painter.fill_rect(track, tokens.border.default);
                 let used = cap.total.saturating_sub(cap.available);
                 let frac = (used as f64 / cap.total as f64).clamp(0.0, 1.0) as f32;
                 let fill_w = (bar_w * frac).clamp(0.0, bar_w);
                 if fill_w > 0.0 {
-                    painter.fill_rect(
-                        Rect::new(bar_left, bar_y, fill_w, bar_h),
-                        tokens.fg.secondary,
-                    );
+                    let fill_color = if frac >= 0.97 {
+                        tokens.status.danger
+                    } else if frac >= 0.90 {
+                        tokens.status.warning
+                    } else {
+                        tokens.fg.secondary
+                    };
+                    painter.fill_rect(Rect::new(bar_left, bar_y, fill_w, bar_h), fill_color);
                 }
             }
         }
