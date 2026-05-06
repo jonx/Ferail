@@ -1659,6 +1659,17 @@ impl App {
     /// Internal: re-enumerate `path` and update view state. Does NOT
     /// touch the history vector; callers manage that.
     fn goto_path(&mut self, path: PathBuf) {
+        // Same-folder no-op: clicking the current tree node, hitting
+        // Enter on it, or back/forward landing on the same path used to
+        // clear all_entries and re-enumerate, producing a visible
+        // empty→full flicker. Skip when we're already here and the last
+        // listing didn't error (an error state is a signal the user
+        // wants to retry; F5 explicitly refreshes regardless).
+        if self.tabs[self.active].current_dir == path
+            && self.tabs[self.active].error.is_none()
+        {
+            return;
+        }
         let id = self.fs.id_for_path(&path);
         self.ant_trail.record(id);
         // Rebuild sections so Recents reflects the latest visit.
