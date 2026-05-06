@@ -33,7 +33,7 @@ use feraille_core::{AntTrail, EntryKind, EnumerationError, FileEntry, FsBackend,
 use feraille_design::{FontWeight, Theme, Tokens};
 use feraille_fs_native::{
     detect_magic, fetch_icon_rgba, home_dir, list_volumes, move_to_trash, open_with_default,
-    NativeFs, DEFAULT_ENUMERATION_BATCH,
+    volume_info_for_path, NativeFs, DEFAULT_ENUMERATION_BATCH,
 };
 
 mod obs;
@@ -398,6 +398,12 @@ pub struct App {
     /// Scroll offset to restore on each batch. Non-zero only via the
     /// refresh path; navigate resets to 0.
     enumeration_preserve_scroll: f32,
+    /// `true` between `start_enumeration` and the first `EnumerationBatch`
+    /// (or `EnumerationDone` if zero batches arrive). While set, the
+    /// previous folder's listing is still painted; the first batch
+    /// clears `all_entries` before extending so the swap is atomic.
+    /// Removes the empty-frame flash on `goto_path` to a slow folder.
+    enumeration_pending_first_batch: bool,
     /// Pixel size for in-flight icon fetches; captured once at prefetch
     /// start so chunks stay consistent if the scale factor changes mid-run.
     icon_size_px: u32,
@@ -1303,6 +1309,7 @@ impl App {
             enumeration_progress: None,
             enumeration_preserve_cursor: None,
             enumeration_preserve_scroll: 0.0,
+            enumeration_pending_first_batch: false,
             drag_watch: None,
             pointer_dips: None,
             modifiers: ModifiersState::empty(),
@@ -1392,10 +1399,14 @@ impl App {
         let root = PathBuf::from("/");
         let root_id = self.fs.id_for_path(&root);
         entries.push(root_id);
-        // TODO iter-5.x: fetch real volume name via
-        // NSURL.resourceValuesForKeys:[NSURLVolumeNameKey]. For now,
-        // assume the conventional macOS boot volume label.
-        labels.push((root_id, "Macintosh HD".to_string()));
+        // Real volume name from NSURL (cached, doesn't wake disks).
+        // Falls back to the conventional default if the lookup fails.
+        let root_info = volume_info_for_path(&root);
+        let root_label = root_info
+            .as_ref()
+            .map(|info| info.name.clone())
+            .unwrap_or_else(|| "Macintosh HD".to_string());
+        labels.push((root_id, root_label));
         let trash = home.join(".Trash");
         if trash.is_dir() {
             let id = self.fs.id_for_path(&trash);
@@ -1407,18 +1418,25 @@ impl App {
             labels,
         ));
 
-        // 4. Volumes — non-boot mounts under /Volumes.
-        let volumes: Vec<(String, PathBuf)> = list_volumes()
+        // 4. Volumes — non-boot mounts under /Volumes. /Volumes also
+        //    contains a firmlink for the boot volume (`/Volumes/<boot>`)
+        //    that NSURL resolves to the same VolumeInfo as `/`; filter
+        //    it by matching the boot volume's name.
+        let boot_name = root_info.as_ref().map(|info| info.name.clone());
+        let volumes: Vec<feraille_fs_native::VolumeInfo> = list_volumes()
             .into_iter()
-            .filter(|(label, _)| label != "Macintosh HD")
+            .filter(|info| match &boot_name {
+                Some(b) => &info.name != b,
+                None => info.name != "Macintosh HD",
+            })
             .collect();
         if !volumes.is_empty() {
             let mut entries = Vec::new();
             let mut labels = Vec::new();
-            for (label, path) in volumes {
-                let id = self.fs.id_for_path(&path);
+            for info in volumes {
+                let id = self.fs.id_for_path(&info.path);
                 entries.push(id);
-                labels.push((id, label));
+                labels.push((id, info.name));
             }
             sections.push((
                 Section::new(SectionKind::Volumes, Some("VOLUMES"), entries),
@@ -1674,13 +1692,14 @@ impl App {
         self.ant_trail.record(id);
         // Rebuild sections so Recents reflects the latest visit.
         self.rebuild_tree_sections();
-        // Reset list state synchronously so paint sees a coherent
-        // "navigating" view; entries arrive over time via
-        // EnumerationBatch events.
+        // Hold the previous folder's `all_entries` visible until the
+        // first `EnumerationBatch` arrives (or `EnumerationDone` if the
+        // listing is empty/errors). Clearing here would paint an empty
+        // pane for one frame on slow filesystems; the first-batch swap
+        // is atomic. Filter, scroll, and current_dir reset immediately:
+        // breadcrumb shows the destination, the held rows just stand in
+        // for content for the brief interval before they're replaced.
         let tab = &mut self.tabs[self.active];
-        tab.all_entries.clear();
-        tab.entries.clear();
-        tab.error = None;
         tab.filter_text.clear();
         tab.current_dir = path.clone();
         tab.list_scroll = 0.0;
@@ -1959,11 +1978,9 @@ impl App {
         let scroll = self.list.scroll_offset;
         let path = self.tabs[self.active].current_dir.clone();
         let id = self.fs.id_for_path(&path);
-        // Wipe in place; new entries will arrive via EnumerationBatch.
-        let tab = &mut self.tabs[self.active];
-        tab.all_entries.clear();
-        tab.entries.clear();
-        tab.error = None;
+        // Hold the existing rows visible; the first arriving batch
+        // (or zero-batch `EnumerationDone`) does the swap. Avoids the
+        // empty-then-fill flash on F5 over a slow filesystem.
         // Tree might have a stale view of the current folder's contents.
         // Mark unloaded so a future expand re-enumerates.
         self.tree.invalidate(id);

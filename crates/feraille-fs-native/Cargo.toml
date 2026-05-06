@@ -17,6 +17,8 @@ objc2-foundation = { version = "0.2", features = [
     "NSURL",
     "NSError",
     "NSFileManager",
+    "NSArray",
+    "NSDictionary",
 ] }
 objc2-app-kit = { version = "0.2", features = [
     "NSWorkspace",

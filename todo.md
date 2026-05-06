@@ -72,8 +72,11 @@ delete it; the commit + NOTES.md entry is the record.
   half of file-manager drag-drop.
 - **TextInput IME / composition.** No full input-method-editor support
   yet. Will matter for non-Latin keyboards and Asian-language naming.
-- **Volume display name.** [crates/feraille-app/src/main.rs:1053](crates/feraille-app/src/main.rs#L1053)
-  still parses the path; fetch the real macOS volume label.
+- **Render the volume capacity bar.** Iter-5.14 plumbs `VolumeInfo`
+  with `total_bytes` / `available_bytes` / `is_local` / `is_removable`
+  through `list_volumes()`. Next step: thread those values through
+  the FileTree's section model so each Volumes row can paint a small
+  horizontal "space used" bar (and skip it for `is_local == false`).
 
 ### Responsiveness polish (post iter-5.13.2)
 

@@ -122,6 +122,21 @@ I/O while painting or handling immediate interaction.
   generic `feraille_shell_mac::show_alert(title, body)` that both
   Settings and Help share. New `feraille_shell_mac::open_url(url)`
   helper.
+- Iter-5.14: real volume names + groundwork for capacity bars. New
+  `feraille_fs_native::VolumeInfo { path, name, total_bytes,
+  available_bytes, is_local, is_removable }` and
+  `volume_info_for_path(path)` query a single batched
+  `NSURL.resourceValuesForKeys:` call with the cached, mount-stamped
+  keys (`LocalizedName`, `TotalCapacity`, `AvailableCapacity`,
+  `IsLocal`, `IsRemovable`). Capacity is gated on `is_local` so we
+  don't issue SMB/NFS round-trips for network shares; the chosen
+  capacity key is the cheap cached one (not the
+  `ForImportantUsageKey` variant which scans purgeable content), so
+  no spin-ups for sleeping disks. `list_volumes()` now returns
+  `Vec<VolumeInfo>`; the boot row in Locations uses the real
+  `LocalizedName` instead of the hardcoded "Macintosh HD". Boot
+  firmlink (`/Volumes/<bootname>`) is filtered out by name match.
+  Sets up rendering a per-row "space used" bar in a follow-up iter.
 
 ## Important Bug Lesson: Magic Sniffing Hang
 

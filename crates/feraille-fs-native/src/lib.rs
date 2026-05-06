@@ -337,20 +337,153 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<()> {
     ))
 }
 
-/// Returns `(display_name, path)` pairs for every directory under `/Volumes`
-/// (macOS). Empty on Linux/Windows for now.
-pub fn list_volumes() -> Vec<(String, PathBuf)> {
-    let mut out: Vec<(String, PathBuf)> = Vec::new();
+/// Volume metadata fetched in one batched NSURL `resourceValuesForKeys`
+/// call. Capacity fields are `None` for non-local (network) volumes —
+/// querying SMB / NFS for capacity can do a remote round-trip and we
+/// don't want that on the section-rebuild path. They're also `None`
+/// when the platform is non-macOS or the lookup itself failed.
+#[derive(Clone, Debug)]
+pub struct VolumeInfo {
+    pub path: PathBuf,
+    pub name: String,
+    pub total_bytes: Option<u64>,
+    pub available_bytes: Option<u64>,
+    pub is_local: bool,
+    pub is_removable: bool,
+}
+
+/// Look up a volume's metadata for the volume root at `path` (e.g.
+/// `/`, `/Volumes/External`). Returns `None` on non-macOS, on lookup
+/// failure, or when `path` isn't a volume root.
+///
+/// Reads the cached, mount-stamped NSURL keys only — does NOT trigger
+/// purgeable-content scans (`AvailableCapacityForImportantUsageKey`)
+/// and does NOT spin up sleeping disks. For non-local volumes we
+/// return name + flags but null out the capacity fields, since some
+/// network filesystems will issue a remote round-trip even for the
+/// "cheap" capacity keys.
+#[cfg(target_os = "macos")]
+pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
+    use objc2::msg_send;
+    use objc2::msg_send_id;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2::ClassType;
+    use objc2_foundation::{
+        NSArray, NSString, NSURLResourceKey, NSURLVolumeAvailableCapacityKey,
+        NSURLVolumeIsLocalKey, NSURLVolumeIsRemovableKey, NSURLVolumeLocalizedNameKey,
+        NSURLVolumeTotalCapacityKey, NSURL,
+    };
+
+    let path_str = path.to_str()?;
+    unsafe {
+        let ns_path = NSString::from_str(path_str);
+        let url: Retained<NSURL> = NSURL::fileURLWithPath(&ns_path);
+
+        // Build an `NSArray<NSURLResourceKey>` via the class method
+        // `arrayWithObjects:count:`. The typed `from_slice` constructor
+        // wants `IsRetainable`, which NSString doesn't satisfy because
+        // it has a mutable subclass — but at runtime AppKit just wants
+        // a count + a pointer to a contiguous block of `id`. Apple's
+        // constants are immortal `&'static NSString` so the lifetime
+        // is fine.
+        let key_ptrs: [*const NSURLResourceKey; 5] = [
+            NSURLVolumeLocalizedNameKey,
+            NSURLVolumeTotalCapacityKey,
+            NSURLVolumeAvailableCapacityKey,
+            NSURLVolumeIsLocalKey,
+            NSURLVolumeIsRemovableKey,
+        ];
+        let keys: Retained<NSArray<NSURLResourceKey>> = msg_send_id![
+            NSArray::<NSURLResourceKey>::class(),
+            arrayWithObjects: key_ptrs.as_ptr(),
+            count: key_ptrs.len(),
+        ];
+        let dict = url.resourceValuesForKeys_error(&keys).ok()?;
+
+        // The dictionary returns `AnyObject` values; per Apple's
+        // contract each key maps to a known concrete type (NSString
+        // for names, NSNumber for capacities and booleans). We send
+        // the appropriate selector directly rather than downcasting,
+        // which keeps the code working across objc2 versions that
+        // change the downcast API.
+        let lookup_string = |key: &NSURLResourceKey| -> Option<String> {
+            let obj: &AnyObject = dict.get(key)?;
+            let ns: &NSString = &*(obj as *const AnyObject as *const NSString);
+            Some(ns.to_string())
+        };
+        let lookup_u64 = |key: &NSURLResourceKey| -> Option<u64> {
+            let obj: &AnyObject = dict.get(key)?;
+            let v: std::os::raw::c_longlong = msg_send![obj, longLongValue];
+            if v < 0 { None } else { Some(v as u64) }
+        };
+        let lookup_bool = |key: &NSURLResourceKey| -> Option<bool> {
+            let obj: &AnyObject = dict.get(key)?;
+            let b: bool = msg_send![obj, boolValue];
+            Some(b)
+        };
+
+        let name = lookup_string(NSURLVolumeLocalizedNameKey)
+            .or_else(|| {
+                path.file_name()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| path_str.to_string());
+        let is_local = lookup_bool(NSURLVolumeIsLocalKey).unwrap_or(true);
+        let is_removable = lookup_bool(NSURLVolumeIsRemovableKey).unwrap_or(false);
+        // Skip capacity for non-local volumes — see fn doc.
+        let (total_bytes, available_bytes) = if is_local {
+            (
+                lookup_u64(NSURLVolumeTotalCapacityKey),
+                lookup_u64(NSURLVolumeAvailableCapacityKey),
+            )
+        } else {
+            (None, None)
+        };
+
+        Some(VolumeInfo {
+            path: path.to_path_buf(),
+            name,
+            total_bytes,
+            available_bytes,
+            is_local,
+            is_removable,
+        })
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn volume_info_for_path(_path: &Path) -> Option<VolumeInfo> {
+    None
+}
+
+/// Volume metadata for every directory under `/Volumes` (macOS),
+/// resolved through [`volume_info_for_path`]. Falls back to a
+/// path-derived `VolumeInfo` when the NSURL lookup fails. Empty on
+/// Linux/Windows for now.
+pub fn list_volumes() -> Vec<VolumeInfo> {
+    let mut out: Vec<VolumeInfo> = Vec::new();
     let Ok(read_dir) = std::fs::read_dir("/Volumes") else {
         return out;
     };
     for entry in read_dir.flatten() {
         let path = entry.path();
-        if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-            out.push((name.to_string(), path));
-        }
+        let info = volume_info_for_path(&path).unwrap_or_else(|| VolumeInfo {
+            name: path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| path.display().to_string()),
+            path: path.clone(),
+            total_bytes: None,
+            available_bytes: None,
+            is_local: true,
+            is_removable: false,
+        });
+        out.push(info);
     }
-    out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     out
 }
 
@@ -473,5 +606,23 @@ mod tests {
             assert!(!e.name.contains('/'));
             assert!(!e.display_mtime.is_empty());
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn volume_info_for_root_is_local_with_capacity() {
+        // The boot volume is always mounted on a macOS test runner.
+        // Don't assert the name string (users can rename the volume in
+        // Disk Utility) — just shape: local, removable=false, both
+        // capacity numbers populated and total >= available.
+        let info = volume_info_for_path(Path::new("/"))
+            .expect("boot volume info available on macOS");
+        assert!(info.is_local, "/ should be local");
+        assert!(!info.is_removable, "/ should not be removable");
+        assert!(!info.name.is_empty(), "boot volume has a name");
+        let total = info.total_bytes.expect("total capacity for /");
+        let avail = info.available_bytes.expect("available capacity for /");
+        assert!(total > 0);
+        assert!(avail <= total);
     }
 }
