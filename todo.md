@@ -75,6 +75,27 @@ delete it; the commit + NOTES.md entry is the record.
 - **Volume display name.** [crates/feraille-app/src/main.rs:1053](crates/feraille-app/src/main.rs#L1053)
   still parses the path; fetch the real macOS volume label.
 
+### Responsiveness polish (post iter-5.13.2)
+
+- **Hold the previous folder visible until first batch arrives.**
+  `goto_path` on a *new* path currently clears `all_entries` and paints
+  empty for one frame before the streamed batches start arriving. For
+  fast local FS the worker beats the next paint and it's invisible; for
+  slow FS the empty state is jarring. Track a `pending_first_batch`
+  flag, defer the `all_entries.clear()` until the first
+  `EnumerationBatch` arrives (replace, not append, on first batch),
+  treat zero-batch enumerations as empty in `EnumerationDone`. Removes
+  the residual same-pane flash on legitimate navigation.
+- **Move `reveal_in_tree` ancestor enumeration off the main thread.**
+  When you navigate to a deep path the tree expands each ancestor and
+  calls `fs.enumerate(id)` synchronously per level. Cached on repeat
+  visits, but the first deep visit can stall the UI thread. Same
+  worker + token + `AppEvent` shape as the list-pane streaming
+  enumeration; per-ancestor results land via a new
+  `AppEvent::TreeChildrenLoaded { id, entries }` and the tree
+  populates incrementally. Pairs naturally with `STREAMING_ENUMERATION`
+  follow-through.
+
 ## Later
 
 ### Architectural
