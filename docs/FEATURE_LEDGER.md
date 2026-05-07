@@ -58,7 +58,7 @@ Status labels:
 | Preview pane | `todo.md`, `MAGIC_SNIFFING.md` | Partial | Metadata/info pane exists. Text/image/PDF/Quick Look previews Todo. |
 | Ant Trail heat | `ANT_TRAIL.md` | Partial | In-memory heat stripe exists. Persistence/prediction/prewarming Todo. |
 | Metadata database | `todo.md`, `MAGIC_SNIFFING.md` | Todo | SQLite for ant trail, magic, recent folders, thumbnails. |
-| Disk usage / treemap | `DISK_USAGE.md`, [features/DISK_USAGE.md](features/DISK_USAGE.md) | Done | iter-6: dedicated `Cmd+Shift+D` window; async cancellable scanner; squarified treemap; volume header; Top-N largest files; right-click Reveal/Trash/Open/Copy Path/Zoom. APFS-clone-aware sizing deferred. |
+| Disk usage / treemap | `DISK_USAGE.md`, [features/DISK_USAGE.md](features/DISK_USAGE.md) | Done | iter-6: dedicated `Cmd+Shift+D` window, async cancellable scanner, squarified treemap, volume header, Top-N, right-click Reveal/Trash/Open/Copy Path/Zoom. iter-7 polish: bundle rolled-up size, allocated/apparent toggle, age-heatmap coloring, category-filter legend chips, Top-N scroll/sort/parent subtitle, iCloud cloud-glyph overlay, multi-selection right-click, auto-rescan on navigation, geometry persistence, refresh button hover/press, in-window toast surface, menu checkmarks, Cmd+R refresh. APFS-clone-aware sizing still deferred (sketch in feature doc). |
 | Duplicate finder | `SPECS.md`, `todo.md` | Todo | Size/partial/full hash pipeline, all off-thread. |
 | Mouse prediction | `MOUSE_PREDICTOR.md` | Todo | Future prewarm scheduler; must be pure in pointer path. |
 

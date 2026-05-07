@@ -353,6 +353,7 @@ fn render_png(
         None,
         &selected,
         du_coloring,
+        None,
         &tokens,
         &mut renderer,
         |id| display_name(tree, id),

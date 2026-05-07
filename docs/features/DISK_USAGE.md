@@ -134,21 +134,70 @@ Tests: `cargo test -p feraille-disk-usage` (model, aggregate, layout,
 hit-test) and `cargo test -p feraille-fs-native` (scanner integration
 against a temp-dir fixture, with permission and cancellation cases).
 
-## Open items
+## Iter-7 polish (shipped)
 
-- **APFS clones**: apparent size double-counts blocks shared by
-  cloned files. Block-aware sizing needs `fcntl(F_LOG2PHYS_EXT)` per
-  extent — too expensive for the v1 walker.
-- **iCloud / dataless files**: counted at their dataless size, which
-  matches Finder. A future iter could surface cloud-status in
-  tooltips via `NSURL`'s `ubiquitousItemDownloadingStatusKey`.
-- **Bundle rolled-up size**: when `descend_packages` is off, packages
-  currently report only their leaf-of-stat size. A child-only sum
-  would give Finder-style "1.2 GB for `Xcode.app`" totals.
-- **Allocated vs apparent toggle**: surface `metadata.blocks() * 512`
-  as an alternate size mode to make on-disk fragmentation visible.
-- **Age heatmap coloring**: the data model already carries `mtime`;
-  the menu just doesn't expose the alternate color mode yet.
-- **DU window toast surface**: errors from Move-to-Trash log to
-  stderr today. A small toast pane in the DU header chrome would
-  surface them inline.
+- **Bundle rolled-up size** — when `descend_packages=false` the
+  scanner walks inside `.app`/`.framework`/etc. to compute a
+  Finder-style total instead of reporting the inode-stat size.
+- **Allocated vs apparent size** (`SizeMode::{Apparent, Allocated}`)
+  — `MetadataExt::blocks() * 512` is read at scan time and stored on
+  every `DiskUsageNode`. Toggle via View → Size: Apparent / Allocated;
+  re-aggregation is cheap.
+- **Age-heatmap coloring** (`TreemapColoring::AgeHeat`) — leaves are
+  tinted on a cool→warm gradient by `mtime`. Two-year-old files land
+  deep in the warm zone.
+- **Category legend chips** — click "Image"/"Video"/etc. above the
+  treemap to dim everything else. Click again or "All" to clear.
+- **Top-N panel polish** — scrollable, click-to-sort by Size / Name /
+  Age, with the parent folder as a subtitle row.
+- **iCloud cloud glyph** — files under
+  `~/Library/Mobile Documents/` get a ☁ overlay in the top-right of
+  their cells. Coarse path-prefix detection; doesn't yet
+  distinguish downloaded vs placeholder.
+- **Right-click on multi-selection** — when the click target is part
+  of the existing selection, the menu acts on the whole set
+  ("Move 3 Items to Trash", "Reveal 3 in Finder", "Copy 3 Paths").
+- **Auto-rescan on navigation** — opt-in via View → Follow Tab
+  Navigation; default on. When the main window's active tab
+  navigates while DU is open, the scan re-roots automatically.
+- **Geometry persistence** — DU window width/height and Top-N panel
+  width are saved to
+  `~/Library/Application Support/Feraille/du_window.txt` on close
+  and restored on next open.
+- **Cmd+R refresh** — bound globally; no-op when DU window is
+  closed, so safe in either window.
+- **Menu checkmarks** — toggle states for Top-N / packages /
+  follow-navigation / coloring / size-mode reflect live values.
+- **Refresh button** has hover + pressed visual states matching the
+  main window's button styling.
+- **DU toast surface** — Move-to-Trash failures show up as a
+  bottom-right toast in the DU window instead of only stderr.
+
+## Still open
+
+- **APFS clone-aware sizing**: apparent and allocated sizes both
+  double-count blocks shared by clones. Genuine deduped on-disk
+  total needs `fcntl(F_LOG2PHYS_EXT)` per extent, plus a global
+  set of `(device, physical_block, length)` tuples to find
+  overlaps. Cost: ~one syscall per file plus a substantial heap.
+  Sketch:
+
+  ```rust
+  // Per file, on macOS:
+  // 1. open(path) read-only
+  // 2. fcntl(fd, F_LOG2PHYS_EXT, &log2phys) in a loop incrementing
+  //    log2phys.l2p_devoffset until it returns -1 / no more extents
+  // 3. for each extent: insert (st_dev, l2p_devoffset, length) into
+  //    a per-volume IntervalSet; union overlaps
+  // 4. on scan completion: per volume, sum the union's unique bytes
+  ```
+
+  Until this lands, the **Allocated** size mode is the closest
+  available proxy — it doesn't dedupe but does reflect real block
+  occupancy.
+
+- **iCloud download status**: the cloud glyph is currently
+  path-prefix only. A future iter can read NSURL's
+  `ubiquitousItemDownloadingStatusKey` per file to distinguish
+  `Downloaded` / `NotDownloaded` / `Current` and use a different
+  glyph or color tint.

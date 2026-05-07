@@ -17,6 +17,7 @@ pub enum DiskUsageFact {
         file_category: FileCategory,
         mtime: Option<SystemTime>,
         name: String,
+        is_cloud: bool,
     },
     NodeLinked {
         container: NodeId,
@@ -25,6 +26,13 @@ pub enum DiskUsageFact {
     NodeSizeAdded {
         node: NodeId,
         size_bytes: u64,
+    },
+    /// Allocated (on-disk, block-aligned) bytes for a node — emitted
+    /// by the macOS scanner alongside `NodeSizeAdded`. Optional: not
+    /// every platform supports it cheaply.
+    NodeAllocatedAdded {
+        node: NodeId,
+        bytes: u64,
     },
     ContainerScanStarted {
         container: NodeId,
@@ -43,8 +51,11 @@ impl DiskUsageTree {
                 file_category,
                 mtime,
                 name,
+                is_cloud,
             } => {
-                self.ensure_node_with_meta(*node, *kind, *file_category, *mtime, name);
+                self.ensure_node_with_meta(
+                    *node, *kind, *file_category, *mtime, name, *is_cloud,
+                );
             }
             DiskUsageFact::NodeLinked { container, node } => {
                 // Containers are always Container-kind even before they're
@@ -54,6 +65,9 @@ impl DiskUsageTree {
             }
             DiskUsageFact::NodeSizeAdded { node, size_bytes } => {
                 self.add_size(*node, *size_bytes);
+            }
+            DiskUsageFact::NodeAllocatedAdded { node, bytes } => {
+                self.add_allocated(*node, *bytes);
             }
             DiskUsageFact::ContainerScanStarted { container } => {
                 self.set_scan_state(*container, ScanState::Scanning);
@@ -92,6 +106,7 @@ mod tests {
                 file_category: FileCategory::Image,
                 mtime: None,
                 name: "p.png".to_string(),
+                is_cloud: false,
             },
             DiskUsageFact::NodeLinked {
                 container: nid(1),

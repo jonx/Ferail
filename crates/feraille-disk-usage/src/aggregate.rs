@@ -8,17 +8,28 @@ use std::collections::HashSet;
 
 use feraille_core::NodeId;
 
-use crate::model::{DiskUsageLayoutNode, DiskUsageTree, NodeKind};
+use crate::model::{DiskUsageLayoutNode, DiskUsageTree, NodeKind, SizeMode};
 
 /// Build the layout subtree rooted at `root`. `max_depth` limits
 /// recursion; depth-0 returns just the root with no children.
+/// Defaults to apparent size — for the allocated mode use
+/// [`build_layout_node_with_mode`].
 pub fn build_layout_node(
     tree: &DiskUsageTree,
     root: NodeId,
     max_depth: u32,
 ) -> DiskUsageLayoutNode {
+    build_layout_node_with_mode(tree, root, max_depth, SizeMode::Apparent)
+}
+
+pub fn build_layout_node_with_mode(
+    tree: &DiskUsageTree,
+    root: NodeId,
+    max_depth: u32,
+    mode: SizeMode,
+) -> DiskUsageLayoutNode {
     let mut visited = HashSet::new();
-    let mut node = build_inner(tree, root, max_depth, &mut visited);
+    let mut node = build_inner(tree, root, max_depth, mode, &mut visited);
     node.sort_children_by_size();
     node
 }
@@ -27,22 +38,40 @@ fn build_inner(
     tree: &DiskUsageTree,
     id: NodeId,
     remaining_depth: u32,
+    mode: SizeMode,
     visited: &mut HashSet<NodeId>,
 ) -> DiskUsageLayoutNode {
-    let (intrinsic, scan_state, kind, file_category) = match tree.nodes.get(&id) {
-        Some(n) => (n.size_bytes, n.scan_state, n.kind, n.file_category),
+    let (intrinsic, scan_state, kind, file_category, mtime) = match tree.nodes.get(&id) {
+        Some(n) => {
+            let size = match mode {
+                SizeMode::Apparent => n.size_bytes,
+                // Fall back to apparent when allocated wasn't reported
+                // (non-macOS or pre-iter-7 fact streams).
+                SizeMode::Allocated => {
+                    if n.allocated_bytes > 0 {
+                        n.allocated_bytes
+                    } else {
+                        n.size_bytes
+                    }
+                }
+            };
+            (size, n.scan_state, n.kind, n.file_category, n.mtime)
+        }
         None => (
             0,
             crate::model::ScanState::Unknown,
             NodeKind::Container,
             crate::file_category::FileCategory::Other,
+            None,
         ),
     };
 
     if !visited.insert(id) {
         // Already visited via another container — record as a leaf so the
         // user sees it but don't recurse again.
-        return DiskUsageLayoutNode::new(id, intrinsic, scan_state, kind, file_category, vec![]);
+        return DiskUsageLayoutNode::with_mtime(
+            id, intrinsic, scan_state, kind, file_category, mtime, vec![],
+        );
     }
 
     let mut children = Vec::new();
@@ -51,7 +80,7 @@ fn build_inner(
         if let Some(member_ids) = tree.containers.get(&id) {
             children.reserve(member_ids.len());
             for &child_id in member_ids {
-                let child = build_inner(tree, child_id, remaining_depth - 1, visited);
+                let child = build_inner(tree, child_id, remaining_depth - 1, mode, visited);
                 children_sum = children_sum.saturating_add(child.size_bytes);
                 children.push(child);
             }
@@ -60,13 +89,13 @@ fn build_inner(
         // We're at the depth limit but still need an honest aggregate —
         // descend with depth=0 just to gather sums (no rects).
         for &child_id in member_ids {
-            let child = build_inner(tree, child_id, 0, visited);
+            let child = build_inner(tree, child_id, 0, mode, visited);
             children_sum = children_sum.saturating_add(child.size_bytes);
         }
     }
 
     let total = intrinsic.saturating_add(children_sum);
-    DiskUsageLayoutNode::new(id, total, scan_state, kind, file_category, children)
+    DiskUsageLayoutNode::with_mtime(id, total, scan_state, kind, file_category, mtime, children)
 }
 
 #[cfg(test)]
@@ -86,6 +115,7 @@ mod tests {
             file_category: FileCategory::Other,
             mtime: None,
             name: format!("n{}", id.as_raw()),
+            is_cloud: false,
         });
         if size > 0 {
             tree.apply_fact(&DiskUsageFact::NodeSizeAdded {

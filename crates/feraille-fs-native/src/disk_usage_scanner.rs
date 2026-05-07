@@ -78,12 +78,14 @@ impl NativeFs {
         let root_mtime = fs::symlink_metadata(&canonical_root)
             .ok()
             .and_then(|m| m.modified().ok());
+        let root_is_cloud = is_icloud_path(&canonical_root);
         buffer.push(DiskUsageFact::NodeDiscovered {
             node: root_id,
             kind: NodeKind::Container,
             file_category: FileCategory::Other,
             mtime: root_mtime,
             name: root_name,
+            is_cloud: root_is_cloud,
         });
 
         // DFS stack of (container path, container node id).
@@ -150,18 +152,30 @@ impl NativeFs {
                     } else {
                         classify_path(&child_path)
                     };
-                    let size = if ft.is_symlink() { 0 } else { metadata.len() };
+                    let size = if ft.is_symlink() {
+                        0
+                    } else if mac_pkg && !descend_packages {
+                        // Bundle as opaque leaf — but we still want a
+                        // Finder-style rolled-up total, not the
+                        // useless inode-stat size. Walk the package
+                        // contents and sum them.
+                        bundle_rolled_up_size(&child_path, cancel)
+                    } else {
+                        metadata.len()
+                    };
                     (NodeKind::File, fc, size)
                 } else {
                     (NodeKind::Container, FileCategory::Other, 0u64)
                 };
 
+                let child_is_cloud = root_is_cloud || is_icloud_path(&child_path);
                 buffer.push(DiskUsageFact::NodeDiscovered {
                     node: child_id,
                     kind,
                     file_category,
                     mtime,
                     name,
+                    is_cloud: child_is_cloud,
                 });
                 buffer.push(DiskUsageFact::NodeLinked {
                     container: dir_id,
@@ -171,6 +185,18 @@ impl NativeFs {
                     buffer.push(DiskUsageFact::NodeSizeAdded {
                         node: child_id,
                         size_bytes: size,
+                    });
+                }
+                // Allocated size on macOS comes from the block count.
+                // A symlink reports 0; a tiny file reports the 4 KB
+                // block tax; a sparse file reports much less than its
+                // apparent size. Falls back to apparent on platforms
+                // that don't expose block counts.
+                let allocated = allocated_size(&metadata);
+                if allocated > 0 {
+                    buffer.push(DiskUsageFact::NodeAllocatedAdded {
+                        node: child_id,
+                        bytes: allocated,
                     });
                 }
 
@@ -205,6 +231,88 @@ impl NativeFs {
         }
         on_progress(stats);
         None
+    }
+}
+
+/// Sum every regular file under `bundle` to give a Finder-style
+/// rolled-up bundle size. Used when a macOS package (`.app`,
+/// `.framework`, …) is treated as an opaque leaf — without this the
+/// bundle would report only the inode-stat of the directory (~96 B).
+///
+/// Iterative DFS, `symlink_metadata` only (no follow), absorbs
+/// per-subdir read failures (returns whatever was summed before the
+/// failure). Honors the same cancel flag the outer scanner uses; on
+/// cancel returns `0` and lets the caller move on.
+fn bundle_rolled_up_size(bundle: &Path, cancel: &AtomicBool) -> u64 {
+    let mut total: u64 = 0;
+    let mut stack: Vec<PathBuf> = vec![bundle.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if cancel.load(Ordering::Relaxed) {
+            return total;
+        }
+        let read_dir = match fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        for dirent in read_dir.flatten() {
+            if cancel.load(Ordering::Relaxed) {
+                return total;
+            }
+            let p = dirent.path();
+            let meta = match fs::symlink_metadata(&p) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let ft = meta.file_type();
+            if ft.is_symlink() {
+                continue;
+            }
+            if ft.is_dir() {
+                stack.push(p);
+            } else {
+                total = total.saturating_add(meta.len());
+            }
+        }
+    }
+    total
+}
+
+/// On-disk allocated size for a regular file. macOS / Unix exposes
+/// this via `MetadataExt::blocks() * 512` (block size is fixed at
+/// 512 in the stat man page regardless of the underlying FS block
+/// size). Returns 0 on platforms that don't surface block counts.
+#[cfg(unix)]
+fn allocated_size(meta: &fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    if meta.file_type().is_symlink() {
+        return 0;
+    }
+    meta.blocks().saturating_mul(512)
+}
+#[cfg(not(unix))]
+fn allocated_size(meta: &fs::Metadata) -> u64 {
+    let _ = meta;
+    0
+}
+
+/// Coarse iCloud-detection by path prefix — macOS stores all
+/// ubiquity-managed files under `~/Library/Mobile Documents/`. Cheap
+/// (a string starts_with), no NSURL call per file. Doesn't tell us
+/// whether a given file is a downloaded copy vs a placeholder; the
+/// renderer just paints a cloud glyph either way.
+fn is_icloud_path(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            let home = std::path::PathBuf::from(home);
+            return path.starts_with(home.join("Library/Mobile Documents"));
+        }
+        false
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        false
     }
 }
 

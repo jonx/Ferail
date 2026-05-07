@@ -27,15 +27,27 @@ pub enum ScanState {
 
 /// A node in the graph. Carries intrinsic size only — the layout
 /// step aggregates container totals separately.
+///
+/// `size_bytes` is the **apparent** size (what `ls -l` shows).
+/// `allocated_bytes` is the on-disk block-aligned size, populated
+/// only by the macOS scanner via `MetadataExt::blocks() * 512`. Use
+/// [`SizeMode`] when aggregating to pick which one to roll up.
 #[derive(Debug, Clone)]
 pub struct DiskUsageNode {
     pub id: NodeId,
     pub size_bytes: u64,
+    pub allocated_bytes: u64,
     pub scan_state: ScanState,
     pub kind: NodeKind,
     pub file_category: FileCategory,
     pub mtime: Option<SystemTime>,
     pub display_name: String,
+    /// True when the path resolves under a known cloud-storage root
+    /// (`~/Library/Mobile Documents/` on macOS). Coarse path-prefix
+    /// detection — doesn't tell you whether a given file is
+    /// downloaded vs a placeholder. Surfaced as a cloud-glyph overlay
+    /// in the DU window.
+    pub is_cloud: bool,
 }
 
 impl DiskUsageNode {
@@ -43,13 +55,26 @@ impl DiskUsageNode {
         Self {
             id,
             size_bytes: 0,
+            allocated_bytes: 0,
             scan_state: ScanState::Unknown,
             kind: NodeKind::Container,
             file_category: FileCategory::Other,
             mtime: None,
             display_name: String::new(),
+            is_cloud: false,
         }
     }
+}
+
+/// Which size to aggregate: apparent (file logical bytes) or
+/// allocated (block-aligned on-disk bytes). Apparent matches Finder's
+/// "Size" column; allocated reveals fragmentation and 4 KB block tax
+/// on tiny files.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum SizeMode {
+    #[default]
+    Apparent,
+    Allocated,
 }
 
 #[derive(Debug, Clone)]
@@ -83,8 +108,12 @@ impl DiskUsageTree {
         file_category: FileCategory,
         mtime: Option<SystemTime>,
         name: &str,
+        is_cloud: bool,
     ) {
         let entry = self.nodes.entry(id).or_insert_with(|| DiskUsageNode::new(id));
+        if is_cloud {
+            entry.is_cloud = true;
+        }
         entry.kind = kind;
         entry.file_category = if kind == NodeKind::File {
             file_category
@@ -109,6 +138,11 @@ impl DiskUsageTree {
     pub fn add_size(&mut self, id: NodeId, size_bytes: u64) {
         let entry = self.nodes.entry(id).or_insert_with(|| DiskUsageNode::new(id));
         entry.size_bytes = entry.size_bytes.saturating_add(size_bytes);
+    }
+
+    pub fn add_allocated(&mut self, id: NodeId, bytes: u64) {
+        let entry = self.nodes.entry(id).or_insert_with(|| DiskUsageNode::new(id));
+        entry.allocated_bytes = entry.allocated_bytes.saturating_add(bytes);
     }
 
     pub fn set_scan_state(&mut self, id: NodeId, state: ScanState) {
@@ -141,6 +175,7 @@ pub struct DiskUsageLayoutNode {
     pub scan_state: ScanState,
     pub kind: NodeKind,
     pub file_category: FileCategory,
+    pub mtime: Option<SystemTime>,
     pub children: Vec<DiskUsageLayoutNode>,
 }
 
@@ -153,16 +188,31 @@ impl DiskUsageLayoutNode {
         file_category: FileCategory,
         children: Vec<DiskUsageLayoutNode>,
     ) -> Self {
+        Self::with_mtime(node_id, size_bytes, scan_state, kind, file_category, None, children)
+    }
+
+    pub fn with_mtime(
+        node_id: NodeId,
+        size_bytes: u64,
+        scan_state: ScanState,
+        kind: NodeKind,
+        file_category: FileCategory,
+        mtime: Option<SystemTime>,
+        children: Vec<DiskUsageLayoutNode>,
+    ) -> Self {
         Self {
             node_id,
             size_bytes,
             scan_state,
             kind,
             file_category,
+            mtime,
             children,
         }
     }
+}
 
+impl DiskUsageLayoutNode {
     pub fn sort_children_by_size(&mut self) {
         self.children
             .sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
@@ -232,9 +282,23 @@ mod tests {
     fn ensure_node_with_meta_preserves_first_name_and_mtime() {
         let mut t = DiskUsageTree::new(nid(1));
         let when = SystemTime::UNIX_EPOCH;
-        t.ensure_node_with_meta(nid(2), NodeKind::File, FileCategory::Image, Some(when), "a.png");
+        t.ensure_node_with_meta(
+            nid(2),
+            NodeKind::File,
+            FileCategory::Image,
+            Some(when),
+            "a.png",
+            false,
+        );
         // Second call should not overwrite the cached display name.
-        t.ensure_node_with_meta(nid(2), NodeKind::File, FileCategory::Image, None, "");
+        t.ensure_node_with_meta(
+            nid(2),
+            NodeKind::File,
+            FileCategory::Image,
+            None,
+            "",
+            false,
+        );
         let n = t.nodes.get(&nid(2)).unwrap();
         assert_eq!(n.display_name, "a.png");
         assert_eq!(n.mtime, Some(when));

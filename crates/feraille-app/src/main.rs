@@ -39,6 +39,7 @@ use feraille_fs_native::{
     DEFAULT_ENUMERATION_BATCH,
 };
 
+mod disk_usage_prefs;
 mod disk_usage_state;
 mod disk_usage_window;
 mod obs;
@@ -2130,7 +2131,10 @@ impl App {
                 tab.history_index = tab.history.len().saturating_sub(1);
             }
         }
-        self.goto_path(path);
+        self.goto_path(path.clone());
+        // If the DU window is open and following navigation, re-root
+        // its scan to the new path.
+        self.maybe_follow_disk_usage_navigation(&path);
     }
 
     /// Single dispatcher for every Feraille-owned command. Both the
@@ -2167,6 +2171,22 @@ impl App {
             "disk_usage.zoom_out" => self.disk_usage_zoom_out(),
             "disk_usage.toggle_topn" => self.disk_usage_toggle_topn(),
             "disk_usage.toggle_packages" => self.disk_usage_toggle_packages(),
+            "disk_usage.toggle_follow_navigation" => self.disk_usage_toggle_follow_navigation(),
+            "disk_usage.coloring_category" => {
+                self.disk_usage_set_coloring(feraille_controls::TreemapColoring::Category)
+            }
+            "disk_usage.coloring_age" => {
+                self.disk_usage_set_coloring(feraille_controls::TreemapColoring::AgeHeat)
+            }
+            "disk_usage.coloring_depth" => {
+                self.disk_usage_set_coloring(feraille_controls::TreemapColoring::DepthOnly)
+            }
+            "disk_usage.size_apparent" => {
+                self.disk_usage_set_size_mode(feraille_disk_usage::SizeMode::Apparent)
+            }
+            "disk_usage.size_allocated" => {
+                self.disk_usage_set_size_mode(feraille_disk_usage::SizeMode::Allocated)
+            }
             "go.back" => self.navigate_back(),
             "go.forward" => self.navigate_forward(),
             "go.parent" => self.navigate_parent(),
@@ -3498,8 +3518,112 @@ impl App {
         if let Some(du) = self.disk_usage_window.as_mut() {
             du.state.topn_visible = !du.state.topn_visible;
             du.state.invalidate_layout();
+            let on = du.state.topn_visible;
+            du.window.request_redraw();
+            feraille_shell_mac::set_command_state(
+                CommandId("disk_usage.toggle_topn"),
+                on,
+            );
+        }
+    }
+
+    /// Push the live DU window settings into the menu's checkmark
+    /// columns. Called on window open and whenever a setting flips
+    /// from elsewhere (e.g. close-and-restart for refresh / toggle
+    /// packages).
+    fn sync_disk_usage_menu_state(&self) {
+        let (topn, packages, follow) = match self.disk_usage_window.as_ref() {
+            Some(du) => (
+                du.state.topn_visible,
+                du.state.descend_packages,
+                du.state.follow_navigation,
+            ),
+            None => (false, false, false),
+        };
+        feraille_shell_mac::set_command_state(CommandId("disk_usage.toggle_topn"), topn);
+        feraille_shell_mac::set_command_state(CommandId("disk_usage.toggle_packages"), packages);
+        feraille_shell_mac::set_command_state(
+            CommandId("disk_usage.toggle_follow_navigation"),
+            follow,
+        );
+    }
+
+    fn disk_usage_set_size_mode(&mut self, mode: feraille_disk_usage::SizeMode) {
+        if let Some(du) = self.disk_usage_window.as_mut() {
+            if du.state.size_mode != mode {
+                du.state.size_mode = mode;
+                du.state.invalidate_layout();
+                du.state.rebuild_topn();
+                du.window.request_redraw();
+            }
+        }
+        feraille_shell_mac::set_command_state(
+            CommandId("disk_usage.size_apparent"),
+            mode == feraille_disk_usage::SizeMode::Apparent,
+        );
+        feraille_shell_mac::set_command_state(
+            CommandId("disk_usage.size_allocated"),
+            mode == feraille_disk_usage::SizeMode::Allocated,
+        );
+    }
+
+    fn disk_usage_set_coloring(&mut self, coloring: feraille_controls::TreemapColoring) {
+        if let Some(du) = self.disk_usage_window.as_mut() {
+            du.state.coloring = coloring;
             du.window.request_redraw();
         }
+        // Update the menu radios.
+        let map = [
+            (
+                "disk_usage.coloring_category",
+                feraille_controls::TreemapColoring::Category,
+            ),
+            (
+                "disk_usage.coloring_age",
+                feraille_controls::TreemapColoring::AgeHeat,
+            ),
+            (
+                "disk_usage.coloring_depth",
+                feraille_controls::TreemapColoring::DepthOnly,
+            ),
+        ];
+        for (id, mode) in map {
+            feraille_shell_mac::set_command_state(CommandId(id), mode == coloring);
+        }
+    }
+
+    fn disk_usage_toggle_follow_navigation(&mut self) {
+        let Some(du) = self.disk_usage_window.as_mut() else {
+            return;
+        };
+        du.state.follow_navigation = !du.state.follow_navigation;
+        let on = du.state.follow_navigation;
+        feraille_shell_mac::set_command_state(
+            CommandId("disk_usage.toggle_follow_navigation"),
+            on,
+        );
+    }
+
+    /// Called from `navigate` after the active tab's `current_dir`
+    /// settles. If the DU window is open, the user opted into
+    /// `follow_navigation`, and the new path differs from the DU
+    /// window's current root, kick a fresh scan rooted at the new
+    /// path. Preserves the descend-packages and follow-navigation
+    /// settings.
+    fn maybe_follow_disk_usage_navigation(&mut self, new_root: &Path) {
+        let Some(du) = self.disk_usage_window.as_ref() else {
+            return;
+        };
+        if !du.state.follow_navigation {
+            return;
+        }
+        let canonical_new = std::fs::canonicalize(new_root).unwrap_or_else(|_| new_root.to_path_buf());
+        if du.state.root_path == canonical_new {
+            return;
+        }
+        let descend = du.state.descend_packages;
+        self.close_disk_usage_window();
+        self.spawn_disk_usage_window(canonical_new, descend);
     }
 
     /// Toggle whether macOS packages (`.app`, `.bundle`, …) are
@@ -3514,6 +3638,10 @@ impl App {
         let new_descend = !du.state.descend_packages;
         self.close_disk_usage_window();
         self.spawn_disk_usage_window(root, new_descend);
+        feraille_shell_mac::set_command_state(
+            CommandId("disk_usage.toggle_packages"),
+            new_descend,
+        );
     }
 
     /// Right-click in the DU window. Builds an NSMenu rooted at the
@@ -3534,77 +3662,143 @@ impl App {
         };
         let Some(target_id) = target_id else { return };
 
-        // Resolve path + kind + container-flag for menu gating.
-        let path = match self.fs.path_for(target_id) {
-            Some(p) => p,
-            None => return,
+        // If the right-clicked node is already part of a multi-
+        // selection, the menu acts on the whole set. Otherwise the
+        // selection collapses to just the clicked node (matches
+        // Finder's behaviour).
+        let already_selected = du.state.selection.contains(&target_id);
+        let mut targets: Vec<NodeId> = if already_selected && du.state.selection.len() > 1 {
+            du.state.selection.iter().copied().collect()
+        } else {
+            vec![target_id]
         };
-        let node = du.state.tree.nodes.get(&target_id).cloned();
-        let is_container = matches!(
-            node.as_ref().map(|n| n.kind),
-            Some(feraille_disk_usage::NodeKind::Container)
-        ) && du
-            .state
-            .tree
-            .containers
-            .get(&target_id)
-            .map(|m| !m.is_empty())
-            .unwrap_or(false);
+        // Stable order: target_id first, then the rest by NodeId.
+        targets.sort_by(|a, b| {
+            if *a == target_id {
+                std::cmp::Ordering::Less
+            } else if *b == target_id {
+                std::cmp::Ordering::Greater
+            } else {
+                a.cmp(b)
+            }
+        });
 
-        // Stash the cursor and cloned window handle for the menu call,
-        // then drop the borrow.
+        // Resolve paths + kinds. Drop nodes whose path the FS can't
+        // resolve (shouldn't happen for live trees but guards
+        // against stale state).
+        let resolved: Vec<(NodeId, PathBuf, bool)> = targets
+            .iter()
+            .filter_map(|id| {
+                let path = self.fs.path_for(*id)?;
+                let is_container = matches!(
+                    du.state.tree.nodes.get(id).map(|n| n.kind),
+                    Some(feraille_disk_usage::NodeKind::Container)
+                ) && du
+                    .state
+                    .tree
+                    .containers
+                    .get(id)
+                    .map(|m| !m.is_empty())
+                    .unwrap_or(false);
+                Some((*id, path, is_container))
+            })
+            .collect();
+        if resolved.is_empty() {
+            return;
+        }
+        let primary_path = resolved[0].1.clone();
+        let primary_is_container = resolved[0].2;
+        let many = resolved.len() > 1;
+
         let cursor_pair = (cursor.x, cursor.y);
         let window_handle = du.window.clone();
 
-        // Build the title list. Empty string = separator.
+        // Build the title list. Single-target shows verbs as-is;
+        // multi-target swaps to "Reveal All / Move N Items to Trash".
         // Index → action: keep this in sync with the match below.
-        let mut titles: Vec<&'static str> = Vec::new();
+        let mut titles: Vec<String> = Vec::new();
         // 0
-        titles.push("Open");
-        // 1
-        titles.push("Reveal in Finder");
-        // 2
-        titles.push("Copy Path");
-        // 3 (separator)
-        titles.push("");
-        // 4 — only when target is a non-empty container
-        if is_container {
-            titles.push("Zoom into");
+        titles.push(if many {
+            "Open First".to_string()
         } else {
-            titles.push("");
+            "Open".to_string()
+        });
+        // 1
+        titles.push(if many {
+            format!("Reveal {} in Finder", resolved.len())
+        } else {
+            "Reveal in Finder".to_string()
+        });
+        // 2
+        titles.push(if many {
+            format!("Copy {} Paths", resolved.len())
+        } else {
+            "Copy Path".to_string()
+        });
+        // 3 (separator)
+        titles.push(String::new());
+        // 4 — Zoom into single non-empty container only
+        if !many && primary_is_container {
+            titles.push("Zoom into".to_string());
+        } else {
+            titles.push(String::new());
         }
         // 5 (separator)
-        titles.push("");
+        titles.push(String::new());
         // 6
-        titles.push("Move to Trash");
+        titles.push(if many {
+            format!("Move {} Items to Trash", resolved.len())
+        } else {
+            "Move to Trash".to_string()
+        });
 
-        // Make sure the clicked node is selected before acting.
+        // Promote the right-click target to selection (or grow the
+        // existing selection to include it) before we show the menu,
+        // so the highlight stays visible while the menu is up.
         if let Some(du) = self.disk_usage_window.as_mut() {
-            du.state.selection.clear();
-            du.state.selection.insert(target_id);
+            if !already_selected {
+                du.state.selection.clear();
+                du.state.selection.insert(target_id);
+            }
             du.window.request_redraw();
         }
 
+        // NSMenu titles are &str; build a Vec<&str> view of `titles`.
+        let title_refs: Vec<&str> = titles.iter().map(String::as_str).collect();
         let choice =
-            feraille_shell_mac::show_context_menu(&window_handle, &titles, cursor_pair);
+            feraille_shell_mac::show_context_menu(&window_handle, &title_refs, cursor_pair);
 
         let Some(idx) = choice else {
             return;
         };
         match idx {
             0 => {
-                if let Err(e) = feraille_fs_native::open_with_default(&path) {
-                    log_warn!(60, "disk usage: open failed for {}: {e}", path.display());
+                // "Open First" / "Open" — single primary path.
+                if let Err(e) = feraille_fs_native::open_with_default(&primary_path) {
+                    log_warn!(
+                        60,
+                        "disk usage: open failed for {}: {e}",
+                        primary_path.display()
+                    );
                 }
             }
             1 => {
-                feraille_shell_mac::reveal_in_finder(&path);
+                for (_, path, _) in &resolved {
+                    feraille_shell_mac::reveal_in_finder(path);
+                }
             }
             2 => {
-                feraille_shell_mac::copy_to_clipboard(&path.display().to_string());
+                let joined = resolved
+                    .iter()
+                    .map(|(_, p, _)| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                feraille_shell_mac::copy_to_clipboard(&joined);
             }
             4 => {
-                if is_container {
+                // Zoom into — single-target only; menu gating already
+                // ensured we got here only with one container.
+                if !many && primary_is_container {
                     if let Some(du) = self.disk_usage_window.as_mut() {
                         du.drilldown(target_id);
                         du.window.request_redraw();
@@ -3612,7 +3806,9 @@ impl App {
                 }
             }
             6 => {
-                self.disk_usage_trash_node(target_id, &path);
+                for (id, path, _) in &resolved {
+                    self.disk_usage_trash_node(*id, path);
+                }
             }
             _ => {}
         }
@@ -3645,6 +3841,18 @@ impl App {
                     "disk usage: move_to_trash failed for {}: {e}",
                     path.display()
                 );
+                if let Some(du) = self.disk_usage_window.as_mut() {
+                    use feraille_controls::primitives::toast::{Toast, ToastKind};
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or_else(|| path.to_str().unwrap_or("<path>"));
+                    du.state.toasts.push(Toast::new(
+                        ToastKind::Error,
+                        format!("Couldn't move {name} to Trash: {e}"),
+                    ));
+                    du.window.request_redraw();
+                }
             }
         }
     }
@@ -3653,6 +3861,17 @@ impl App {
     /// task entry, drop the window. Idempotent.
     fn close_disk_usage_window(&mut self) {
         if let Some(mut du) = self.disk_usage_window.take() {
+            // Persist geometry before tearing down.
+            let inner = du.window.inner_size();
+            let scale = du.scale_factor.max(0.01);
+            let width_dips = (inner.width as f32 / scale) as u32;
+            let height_dips = (inner.height as f32 / scale) as u32;
+            disk_usage_prefs::save(disk_usage_prefs::DuWindowGeometry {
+                width: Some(width_dips.max(320)),
+                height: Some(height_dips.max(240)),
+                topn_width: Some(du.state.topn_width_dips),
+            });
+
             du.state.cancel.store(true, Ordering::Relaxed);
             if let Some(id) = du.state.task_id.take() {
                 self.tasks.end(id);
@@ -3664,6 +3883,7 @@ impl App {
             p.cancel.store(true, Ordering::Relaxed);
             self.tasks.end(p.task_id);
         }
+        self.sync_disk_usage_menu_state();
     }
 
     /// Allocate the DU window + spawn the worker. Stores the window
@@ -3779,9 +3999,12 @@ impl App {
         }
 
         let title = format!("Disk Usage — {}", pending.root_path.display());
+        let saved = disk_usage_prefs::load();
+        let initial_w = saved.width.unwrap_or(1100) as f64;
+        let initial_h = saved.height.unwrap_or(720) as f64;
         let attrs = Window::default_attributes()
             .with_title(title)
-            .with_inner_size(LogicalSize::new(1100.0, 720.0));
+            .with_inner_size(LogicalSize::new(initial_w, initial_h));
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Rc::new(w),
             Err(e) => {
@@ -3829,6 +4052,10 @@ impl App {
         // Adopt the same task_id we already registered so the panel's
         // cancel button continues to work after realization.
         state.task_id = Some(pending.task_id);
+        // Restore the previously-saved Top-N panel width if any.
+        if let Some(tw) = saved.topn_width {
+            state.topn_width_dips = tw;
+        }
 
         // Volume capacity snapshot for the header strip — best effort.
         // For folders that aren't volume roots, NSURL still resolves
@@ -3852,6 +4079,7 @@ impl App {
             scale,
             state,
         ));
+        self.sync_disk_usage_menu_state();
     }
 
     /// Paint the DU window if it exists and present the buffer.
@@ -3920,6 +4148,26 @@ impl App {
                     redraw = true;
                 }
 
+                // Refresh-button visual state.
+                let over_btn = matches!(
+                    du.hit_at(p),
+                    crate::disk_usage_window::DuHit::RefreshButton
+                );
+                let new_btn = match (du.refresh_button, over_btn) {
+                    (crate::disk_usage_window::ButtonState::Pressed, true) => {
+                        crate::disk_usage_window::ButtonState::Pressed
+                    }
+                    (crate::disk_usage_window::ButtonState::Pressed, false) => {
+                        crate::disk_usage_window::ButtonState::Idle
+                    }
+                    (_, true) => crate::disk_usage_window::ButtonState::Hover,
+                    (_, false) => crate::disk_usage_window::ButtonState::Idle,
+                };
+                if du.refresh_button != new_btn {
+                    du.refresh_button = new_btn;
+                    redraw = true;
+                }
+
                 let new_hover = du.hover_node();
                 if du.state.hovered != new_hover {
                     du.state.hovered = new_hover;
@@ -3937,6 +4185,10 @@ impl App {
                         redraw = true;
                     }
                     if du.state.hovered.take().is_some() {
+                        redraw = true;
+                    }
+                    if du.refresh_button != crate::disk_usage_window::ButtonState::Idle {
+                        du.refresh_button = crate::disk_usage_window::ButtonState::Idle;
                         redraw = true;
                     }
                     if redraw {
@@ -3963,11 +4215,38 @@ impl App {
                 match hit.0 {
                     crate::disk_usage_window::DuHit::None => {}
                     crate::disk_usage_window::DuHit::RefreshButton => {
-                        self.refresh_disk_usage();
+                        // Press marks Pressed; the action fires on
+                        // release inside the button rect (canonical
+                        // macOS button behaviour, lets the user drag
+                        // off to cancel).
+                        if let Some(du) = self.disk_usage_window.as_mut() {
+                            du.refresh_button = crate::disk_usage_window::ButtonState::Pressed;
+                            du.window.request_redraw();
+                        }
                     }
                     crate::disk_usage_window::DuHit::Splitter => {
                         if let Some(du) = self.disk_usage_window.as_mut() {
                             du.begin_splitter_drag(hit.1);
+                        }
+                    }
+                    crate::disk_usage_window::DuHit::LegendChip(filter) => {
+                        if let Some(du) = self.disk_usage_window.as_mut() {
+                            // Clicking the active chip clears the
+                            // filter; clicking another sets it.
+                            du.state.category_filter = if du.state.category_filter == filter {
+                                None
+                            } else {
+                                filter
+                            };
+                            du.window.request_redraw();
+                        }
+                    }
+                    crate::disk_usage_window::DuHit::TopNSortHeader(key) => {
+                        if let Some(du) = self.disk_usage_window.as_mut() {
+                            du.state.topn_sort = key;
+                            du.state.rebuild_topn();
+                            du.state.topn_scroll_offset = 0.0;
+                            du.window.request_redraw();
                         }
                     }
                     crate::disk_usage_window::DuHit::TreemapNode(node_id)
@@ -3991,11 +4270,36 @@ impl App {
                 button: MouseButton::Left,
                 ..
             } => {
+                let mut fire_refresh = false;
                 if let Some(du) = self.disk_usage_window.as_mut() {
                     if du.splitter_dragging() {
                         du.end_splitter_drag();
                         du.window.request_redraw();
                     }
+                    // Refresh-button release: fire only if the press
+                    // started here AND the cursor is still over the
+                    // button; otherwise just reset the visual state.
+                    if du.refresh_button == crate::disk_usage_window::ButtonState::Pressed {
+                        let still_over = du
+                            .pointer_dips
+                            .map(|p| {
+                                matches!(
+                                    du.hit_at(p),
+                                    crate::disk_usage_window::DuHit::RefreshButton
+                                )
+                            })
+                            .unwrap_or(false);
+                        du.refresh_button = if still_over {
+                            crate::disk_usage_window::ButtonState::Hover
+                        } else {
+                            crate::disk_usage_window::ButtonState::Idle
+                        };
+                        du.window.request_redraw();
+                        fire_refresh = still_over;
+                    }
+                }
+                if fire_refresh {
+                    self.refresh_disk_usage();
                 }
             }
             WindowEvent::MouseInput {
@@ -4004,6 +4308,30 @@ impl App {
                 ..
             } => {
                 self.show_disk_usage_context_menu();
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                // Scroll the Top-N panel when the cursor's over it.
+                let Some(du) = self.disk_usage_window.as_mut() else {
+                    return;
+                };
+                let Some(p) = du.pointer_dips else { return };
+                let Some(topn) = du.topn_pane() else { return };
+                if !topn.contains(p) || p.y < topn.top() + crate::disk_usage_window::TOPN_HEADER_H {
+                    return;
+                }
+                let dy = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => -y * crate::disk_usage_window::TOPN_ROW_H,
+                    MouseScrollDelta::PixelDelta(pos) => -(pos.y as f32),
+                };
+                let rows_h = (topn.size.height - crate::disk_usage_window::TOPN_HEADER_H).max(0.0);
+                let content_h =
+                    du.state.topn_files.len() as f32 * crate::disk_usage_window::TOPN_ROW_H;
+                let max_offset = (content_h - rows_h).max(0.0);
+                let new = (du.state.topn_scroll_offset + dy).clamp(0.0, max_offset);
+                if (new - du.state.topn_scroll_offset).abs() > 0.5 {
+                    du.state.topn_scroll_offset = new;
+                    du.window.request_redraw();
+                }
             }
             WindowEvent::KeyboardInput {
                 event: KeyEvent {

@@ -18,6 +18,8 @@ pub use aggregate::build_layout_node;
 pub use facts::DiskUsageFact;
 pub use file_category::{classify_extension, classify_path, FileCategory};
 pub use layout::{compute_treemap, hit_test, TreemapRect};
+pub use aggregate::build_layout_node_with_mode;
 pub use model::{
     DiskUsageLayoutNode, DiskUsageNode, DiskUsageStats, DiskUsageTree, NodeKind, ScanState,
+    SizeMode,
 };

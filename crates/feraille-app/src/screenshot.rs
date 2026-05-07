@@ -501,7 +501,14 @@ fn run_disk_usage(
     let viewport = Rect::new(0.0, 0.0, width_dips, height_dips);
     let mut splitter = Splitter::new(0.0, 0.0);
 
-    disk_usage_window::paint_du(&mut state, viewport, &mut splitter, &mut renderer, &tokens);
+    disk_usage_window::paint_du(
+        &mut state,
+        viewport,
+        &mut splitter,
+        &mut renderer,
+        &tokens,
+        disk_usage_window::ButtonState::Idle,
+    );
 
     write_png(out_path, renderer.pixels(), width_px, height_px)?;
     eprintln!("wrote {}", out_path.display());

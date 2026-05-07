@@ -184,6 +184,28 @@ I/O while painting or handling immediate interaction.
   callers fall through to the synchronous path —
   `cargo run -- --screenshot --expand <path>` keeps the same output.
   Closes the last synchronous-tree-enum hazard noted in 449c3d6.
+- Iter-7: Disk Usage polish pass — every "open item" except APFS
+  clones. Bundle rolled-up size makes `.app`/`.framework` cells
+  show their real Finder size instead of the inode-stat (96 B).
+  `SizeMode::{Apparent, Allocated}` and a new `is_cloud` flag are
+  scanned and surfaced (cloud glyph overlay on
+  `~/Library/Mobile Documents/`). `TreemapColoring::AgeHeat` tints
+  by `mtime` (cool → warm). Category legend chips above the
+  treemap dim non-matching cells via a new
+  `treemap::paint(..., filter_category, ...)` parameter. Top-N
+  panel gained scroll, click-to-sort buttons (Size/Name/Age), and
+  a parent-folder subtitle row. Right-click on a multi-selection
+  acts on the whole set ("Move 3 Items to Trash"). Auto-rescan on
+  active-tab navigation (opt-in via View → Follow Tab Navigation,
+  on by default). DU window geometry persists to
+  `~/Library/Application Support/Feraille/du_window.txt` so
+  resizes stick across runs. Refresh button now has hover + press
+  visual states; click fires on release inside the rect (canonical
+  macOS button behaviour). New in-DU toast surface for
+  Move-to-Trash failures. Menu checkmarks reflect every toggle
+  state. Cmd+R bound globally to `disk_usage.refresh`. APFS clone
+  dedup is still deferred — concrete sketch in
+  `docs/features/DISK_USAGE.md`.
 - Iter-6.0…6.4: Disk Usage feature. New `feraille-disk-usage` crate
   holds the pure model + squarified treemap (ported from Ferail's
   `DISK_USAGE.md`). `NativeFs::scan_disk_usage` is the worker — DFS

@@ -4,6 +4,8 @@
 //! output `Vec<TreemapRect>`. Recomputed only when bounds, zoom path, or
 //! the underlying tree epoch change — never on hover or selection.
 
+use std::time::SystemTime;
+
 use feraille_core::NodeId;
 
 use crate::file_category::FileCategory;
@@ -22,6 +24,7 @@ pub struct TreemapRect {
     pub has_children: bool,
     pub kind: NodeKind,
     pub file_category: FileCategory,
+    pub mtime: Option<SystemTime>,
 }
 
 impl TreemapRect {
@@ -58,6 +61,7 @@ pub fn compute_treemap(
         has_children: !root.children.is_empty(),
         kind: root.kind,
         file_category: root.file_category,
+        mtime: root.mtime,
     });
 
     if !root.children.is_empty() && max_depth > 0 {
@@ -235,6 +239,7 @@ fn add_node_rect(
         has_children: !node.children.is_empty(),
         kind: node.kind,
         file_category: node.file_category,
+        mtime: node.mtime,
     });
     if depth < max_depth && !node.children.is_empty() {
         let pad = 1.0;
@@ -341,6 +346,7 @@ mod tests {
             has_children: true,
             kind: NodeKind::Container,
             file_category: FileCategory::Other,
+            mtime: None,
         };
         let child = TreemapRect {
             node_id: nid(2),
@@ -354,6 +360,7 @@ mod tests {
             has_children: false,
             kind: NodeKind::File,
             file_category: FileCategory::Other,
+            mtime: None,
         };
         let rects = vec![parent, child];
         let hit = hit_test(&rects, 15.0, 15.0).unwrap();
@@ -379,6 +386,7 @@ mod tests {
             has_children: false,
             kind: NodeKind::File,
             file_category: FileCategory::Other,
+            mtime: None,
         };
         assert!(r.contains(10.0, 20.0));
         assert!(r.contains(35.0, 35.0));

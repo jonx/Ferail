@@ -210,7 +210,9 @@ const CATALOGUE: &[CommandSpec] = &[
         id: CommandId("disk_usage.refresh"),
         title: "Refresh Disk Usage",
         category: Category::View,
-        shortcuts: &[],
+        // Cmd+R is a no-op when no DU window is open, so it's safe
+        // to bind globally rather than gating on focus.
+        shortcuts: &[Shortcut::primary("R")],
     },
     CommandSpec {
         id: CommandId("disk_usage.zoom_out"),
@@ -227,6 +229,42 @@ const CATALOGUE: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId("disk_usage.toggle_packages"),
         title: "Descend into Packages",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("disk_usage.toggle_follow_navigation"),
+        title: "Follow Tab Navigation",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("disk_usage.coloring_category"),
+        title: "Color by File Type",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("disk_usage.coloring_age"),
+        title: "Color by Age",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("disk_usage.coloring_depth"),
+        title: "Color by Depth Only",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("disk_usage.size_apparent"),
+        title: "Size: Apparent",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("disk_usage.size_allocated"),
+        title: "Size: Allocated (on disk)",
         category: Category::View,
         shortcuts: &[],
     },
