@@ -489,8 +489,8 @@ unsafe fn build_command_item(
     });
 
     let title = NSString::from_str(spec.title);
-    let (key, mask) = match spec.default_shortcut {
-        Some(sc) => (translate_key(sc.key), Some(translate_modifiers(&sc))),
+    let (key, mask) = match spec.primary_shortcut() {
+        Some(sc) => (translate_key(sc.key), Some(translate_modifiers(sc))),
         None => (String::new(), None),
     };
     let key_ns = NSString::from_str(&key);

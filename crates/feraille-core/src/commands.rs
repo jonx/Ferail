@@ -28,6 +28,7 @@ pub enum Category {
     Edit,
     View,
     Go,
+    Selection,
     Window,
     Help,
 }
@@ -46,36 +47,19 @@ pub struct Shortcut {
 
 impl Shortcut {
     pub const fn primary(key: &'static str) -> Self {
-        Self {
-            key,
-            primary: true,
-            shift: false,
-            alt: false,
-        }
+        Self { key, primary: true, shift: false, alt: false }
     }
     pub const fn primary_shift(key: &'static str) -> Self {
-        Self {
-            key,
-            primary: true,
-            shift: true,
-            alt: false,
-        }
+        Self { key, primary: true, shift: true, alt: false }
     }
     pub const fn primary_alt(key: &'static str) -> Self {
-        Self {
-            key,
-            primary: true,
-            shift: false,
-            alt: true,
-        }
+        Self { key, primary: true, shift: false, alt: true }
     }
     pub const fn bare(key: &'static str) -> Self {
-        Self {
-            key,
-            primary: false,
-            shift: false,
-            alt: false,
-        }
+        Self { key, primary: false, shift: false, alt: false }
+    }
+    pub const fn alt(key: &'static str) -> Self {
+        Self { key, primary: false, shift: false, alt: true }
     }
 }
 
@@ -83,7 +67,19 @@ pub struct CommandSpec {
     pub id: CommandId,
     pub title: &'static str,
     pub category: Category,
-    pub default_shortcut: Option<Shortcut>,
+    /// Zero or more shortcuts. The **first** entry is the canonical
+    /// binding shown in menus (AppKit menu items only support one key
+    /// equivalent each); every entry — primary or alternate — is
+    /// accepted by `keystroke_to_command` and listed in the
+    /// Keyboard Shortcuts dialog. Empty slice means menu/palette-only.
+    pub shortcuts: &'static [Shortcut],
+}
+
+impl CommandSpec {
+    /// First (canonical) shortcut, used by the menu builder.
+    pub fn primary_shortcut(&self) -> Option<&Shortcut> {
+        self.shortcuts.first()
+    }
 }
 
 const CATALOGUE: &[CommandSpec] = &[
@@ -92,87 +88,147 @@ const CATALOGUE: &[CommandSpec] = &[
         id: CommandId("app.about"),
         title: "About Feraille",
         category: Category::App,
-        default_shortcut: None,
+        shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("app.settings"),
         title: "Settings…",
         category: Category::App,
-        default_shortcut: Some(Shortcut::primary(",")),
+        shortcuts: &[Shortcut::primary(",")],
     },
     // File
     CommandSpec {
         id: CommandId("file.new_tab"),
         title: "New Tab",
         category: Category::File,
-        default_shortcut: Some(Shortcut::primary("T")),
+        shortcuts: &[Shortcut::primary("T")],
     },
     CommandSpec {
         id: CommandId("file.close_tab"),
         title: "Close Tab",
         category: Category::File,
-        default_shortcut: Some(Shortcut::primary("W")),
+        shortcuts: &[Shortcut::primary("W")],
     },
     CommandSpec {
         id: CommandId("file.new_folder"),
         title: "New Folder",
         category: Category::File,
-        default_shortcut: Some(Shortcut::primary_shift("N")),
+        shortcuts: &[Shortcut::primary_shift("N")],
     },
     CommandSpec {
         id: CommandId("file.get_info"),
         title: "Get Info",
         category: Category::File,
-        default_shortcut: Some(Shortcut::primary("I")),
+        shortcuts: &[Shortcut::primary("I")],
     },
     CommandSpec {
         id: CommandId("file.move_to_trash"),
         title: "Move to Trash",
         category: Category::File,
-        default_shortcut: Some(Shortcut::primary("Backspace")),
+        // Cmd+Backspace is the canonical Finder binding; bare Delete
+        // is a friendly alternate for users coming from Windows/Linux.
+        shortcuts: &[Shortcut::primary("Backspace"), Shortcut::bare("Delete")],
     },
     CommandSpec {
         id: CommandId("file.copy_path"),
         title: "Copy Path",
         category: Category::File,
-        default_shortcut: Some(Shortcut::primary_shift("C")),
+        shortcuts: &[Shortcut::primary_shift("C")],
     },
     CommandSpec {
         id: CommandId("file.reveal_in_finder"),
         title: "Reveal in Finder",
         category: Category::File,
-        default_shortcut: Some(Shortcut::primary_alt("R")),
+        shortcuts: &[Shortcut::primary_alt("R")],
     },
     CommandSpec {
         id: CommandId("file.refresh"),
         title: "Refresh",
         category: Category::File,
-        default_shortcut: Some(Shortcut::bare("F5")),
+        shortcuts: &[Shortcut::bare("F5")],
     },
     // View
     CommandSpec {
         id: CommandId("view.search"),
         title: "Find",
         category: Category::View,
-        default_shortcut: Some(Shortcut::primary("F")),
+        shortcuts: &[Shortcut::primary("F")],
     },
     CommandSpec {
         id: CommandId("view.edit_breadcrumb"),
         title: "Edit Path",
         category: Category::View,
-        default_shortcut: Some(Shortcut::primary("L")),
+        shortcuts: &[Shortcut::primary("L")],
     },
     CommandSpec {
         id: CommandId("view.toggle_preview"),
         title: "Show Preview Pane",
         category: Category::View,
-        default_shortcut: Some(Shortcut::primary("P")),
+        shortcuts: &[Shortcut::primary("P")],
     },
     CommandSpec {
         id: CommandId("view.toggle_hidden"),
         title: "Show Hidden Files",
         category: Category::View,
-        default_shortcut: Some(Shortcut::primary_shift(".")),
+        shortcuts: &[Shortcut::primary_shift(".")],
+    },
+    CommandSpec {
+        id: CommandId("view.cycle_focus"),
+        title: "Cycle Focus",
+        category: Category::View,
+        shortcuts: &[Shortcut::bare("F6")],
+    },
+    CommandSpec {
+        id: CommandId("view.zoom_in"),
+        title: "Zoom In",
+        category: Category::View,
+        shortcuts: &[Shortcut::primary("="), Shortcut::primary("+")],
+    },
+    CommandSpec {
+        id: CommandId("view.zoom_out"),
+        title: "Zoom Out",
+        category: Category::View,
+        shortcuts: &[Shortcut::primary("-")],
+    },
+    CommandSpec {
+        id: CommandId("view.zoom_reset"),
+        title: "Actual Size",
+        category: Category::View,
+        shortcuts: &[Shortcut::primary("0")],
+    },
+    // Disk usage. Cmd+Shift+D opens (or focuses) the dedicated Disk
+    // Usage window. The other two commands are scoped to that window
+    // — the dispatcher gates them on focus so they don't shadow
+    // similarly-bound actions in the main file pane.
+    CommandSpec {
+        id: CommandId("view.disk_usage"),
+        title: "Disk Usage",
+        category: Category::View,
+        shortcuts: &[Shortcut::primary_shift("D")],
+    },
+    CommandSpec {
+        id: CommandId("disk_usage.refresh"),
+        title: "Refresh Disk Usage",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("disk_usage.zoom_out"),
+        title: "Disk Usage: Zoom Out",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("disk_usage.toggle_topn"),
+        title: "Largest Files Panel",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("disk_usage.toggle_packages"),
+        title: "Descend into Packages",
+        category: Category::View,
+        shortcuts: &[],
     },
     // The three theme commands are grouped under a "Theme" sub-submenu
     // by `app_menu::build_category_submenu` — title is the submenu's
@@ -181,70 +237,143 @@ const CATALOGUE: &[CommandSpec] = &[
         id: CommandId("view.theme_light"),
         title: "Light",
         category: Category::View,
-        default_shortcut: None,
+        shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("view.theme_dark"),
         title: "Dark",
         category: Category::View,
-        default_shortcut: None,
+        shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("view.theme_system"),
         title: "Match System",
         category: Category::View,
-        default_shortcut: None,
+        shortcuts: &[],
     },
     // Go
     CommandSpec {
         id: CommandId("go.back"),
         title: "Back",
         category: Category::Go,
-        default_shortcut: Some(Shortcut::primary("[")),
+        shortcuts: &[Shortcut::primary("["), Shortcut::alt("Left")],
     },
     CommandSpec {
         id: CommandId("go.forward"),
         title: "Forward",
         category: Category::Go,
-        default_shortcut: Some(Shortcut::primary("]")),
+        shortcuts: &[Shortcut::primary("]"), Shortcut::alt("Right")],
     },
     CommandSpec {
         id: CommandId("go.parent"),
         title: "Enclosing Folder",
         category: Category::Go,
-        default_shortcut: Some(Shortcut::primary("Up")),
+        shortcuts: &[Shortcut::primary("Up"), Shortcut::bare("Backspace")],
     },
     CommandSpec {
         id: CommandId("go.home"),
         title: "Home",
         category: Category::Go,
-        default_shortcut: Some(Shortcut::primary_shift("H")),
+        shortcuts: &[Shortcut::primary_shift("H")],
+    },
+    // Selection — pane-aware. The dispatch handler routes to whichever
+    // pane currently owns focus (Tree or List). Bare arrow keys /
+    // Home / End / PageUp / PageDown / Enter / F2 / Escape only reach
+    // these handlers when no modal text input is active (rename,
+    // search, dialog, breadcrumb edit) because those intercept first.
+    CommandSpec {
+        id: CommandId("selection.cursor_up"),
+        title: "Move Cursor Up",
+        category: Category::Selection,
+        shortcuts: &[Shortcut::bare("Up")],
+    },
+    CommandSpec {
+        id: CommandId("selection.cursor_down"),
+        title: "Move Cursor Down",
+        category: Category::Selection,
+        shortcuts: &[Shortcut::bare("Down")],
+    },
+    CommandSpec {
+        id: CommandId("selection.cursor_first"),
+        title: "Move Cursor to Top",
+        category: Category::Selection,
+        shortcuts: &[Shortcut::bare("Home")],
+    },
+    CommandSpec {
+        id: CommandId("selection.cursor_last"),
+        title: "Move Cursor to Bottom",
+        category: Category::Selection,
+        shortcuts: &[Shortcut::bare("End")],
+    },
+    CommandSpec {
+        id: CommandId("selection.page_up"),
+        title: "Page Up",
+        category: Category::Selection,
+        shortcuts: &[Shortcut::bare("PageUp")],
+    },
+    CommandSpec {
+        id: CommandId("selection.page_down"),
+        title: "Page Down",
+        category: Category::Selection,
+        shortcuts: &[Shortcut::bare("PageDown")],
+    },
+    CommandSpec {
+        id: CommandId("selection.activate"),
+        title: "Open Selection",
+        category: Category::Selection,
+        shortcuts: &[Shortcut::bare("Enter")],
+    },
+    CommandSpec {
+        id: CommandId("selection.start_rename"),
+        title: "Rename Selection",
+        category: Category::Selection,
+        shortcuts: &[Shortcut::bare("F2")],
+    },
+    CommandSpec {
+        id: CommandId("selection.collapse_or_parent"),
+        title: "Collapse / Parent",
+        category: Category::Selection,
+        shortcuts: &[Shortcut::bare("Left")],
+    },
+    CommandSpec {
+        id: CommandId("selection.expand_or_first_child"),
+        title: "Expand / First Child",
+        category: Category::Selection,
+        shortcuts: &[Shortcut::bare("Right")],
+    },
+    CommandSpec {
+        id: CommandId("selection.dismiss"),
+        title: "Dismiss / Exit",
+        category: Category::Selection,
+        // Escape: closes Get Info if open, otherwise drops Tree focus,
+        // otherwise quits. Quirky semantics handled in dispatch.
+        shortcuts: &[Shortcut::bare("Escape")],
     },
     // Window
     CommandSpec {
         id: CommandId("window.next_tab"),
         title: "Next Tab",
         category: Category::Window,
-        default_shortcut: Some(Shortcut::primary_shift("]")),
+        shortcuts: &[Shortcut::primary_shift("]")],
     },
     CommandSpec {
         id: CommandId("window.prev_tab"),
         title: "Previous Tab",
         category: Category::Window,
-        default_shortcut: Some(Shortcut::primary_shift("[")),
+        shortcuts: &[Shortcut::primary_shift("[")],
     },
     // Help
     CommandSpec {
         id: CommandId("help.github"),
         title: "Feraille on GitHub",
         category: Category::Help,
-        default_shortcut: None,
+        shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("help.shortcuts"),
         title: "Keyboard Shortcuts",
         category: Category::Help,
-        default_shortcut: Some(Shortcut::primary("/")),
+        shortcuts: &[Shortcut::primary("/")],
     },
 ];
 

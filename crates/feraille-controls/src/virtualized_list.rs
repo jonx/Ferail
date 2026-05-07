@@ -417,6 +417,28 @@ fn paint_row(
         painter.fill_rect(icon_rect, icon_color);
     }
 
+    // Quarantine badge — corner dot for files carrying com.apple.quarantine.
+    // The halo is the row background color so the dot reads cleanly on top
+    // of busy NSWorkspace icons.
+    if entry.is_quarantined {
+        let dot = 5.0;
+        let pad = 1.0;
+        let halo = Rect::new(
+            icon_rect.right() - dot - pad,
+            icon_rect.bottom() - dot - pad,
+            dot + pad * 2.0,
+            dot + pad * 2.0,
+        );
+        let inner = Rect::new(
+            icon_rect.right() - dot,
+            icon_rect.bottom() - dot,
+            dot,
+            dot,
+        );
+        painter.fill_rect(halo, tokens.bg.layer1);
+        painter.fill_rect(inner, tokens.status.warning);
+    }
+
     let row_h = row_rect.size.height;
     let text_y = row_rect.top() + (row_h - tokens.text.md) / 2.0 - 1.0;
     let text_size = tokens.text.md;

@@ -15,25 +15,6 @@ delete it; the commit + NOTES.md entry is the record.
 
 ### Command system follow-throughs (iter-5.8 unlocks)
 
-- **Migrate keyboard handler to dispatch via `CommandId`.** The
-  keyboard match in [crates/feraille-app/src/main.rs](crates/feraille-app/src/main.rs)
-  still hard-codes the (key, modifier) → method calls that the menu
-  bar already routes through `feraille_core::commands`. Convert that
-  match to translate keystrokes into `CommandId`s and dispatch through
-  the same `AppEvent::Command` arm — single source of truth, sets up
-  user-remappable bindings later. Pure refactor.
-- **Extend the catalogue with existing keyboard-only commands.** All
-  these have App methods + keybindings but no menu/catalogue entry:
-  - `file.refresh` (F5)
-  - `file.new_folder` (Cmd+Shift+N)
-  - `file.copy_path` (Cmd+Shift+C)
-  - `file.reveal_in_finder` (Cmd+Opt+R)
-  - `file.move_to_trash` (Cmd+Backspace / Delete)
-  - `view.toggle_preview` (Cmd+P)
-  - `window.next_tab` / `window.prev_tab` (Cmd+}/Cmd+{)
-
-  Adding them = automatic menu items + future command-palette entries
-  + future remap, no extra wiring.
 - **Settings window — real one.** Iter-5.11 ships an NSAlert
   placeholder that prints current state. Replace with a proper modal
   panel (theme picker, hidden-files toggle, sidebar-width slider,
@@ -150,8 +131,6 @@ delete it; the commit + NOTES.md entry is the record.
 - **Persistent Ant Trail + metadata DB.** SQLite for ant-trail
   history, magic cache, recent folders, thumbnails. Per-user
   database; needs schema and migration plan.
-- **Disk usage.** Per-folder size pipeline, off-thread, cache-keyed
-  by folder identity + mtime / change token.
 - **Duplicate finder.** Size → partial-hash → full-hash funnel, all
   off-thread.
 - **Command palette UI.** Fuzzy search over `all_commands()`. Needs a
@@ -191,6 +170,26 @@ delete it; the commit + NOTES.md entry is the record.
   dev cycle becomes `cargo build && open .../Feraille.app` (or a tools/
   script); stderr disappears unless launched via `open -a` from a terminal;
   TCC grants tied to the bundle ID instead of the binary path.
+
+## macOS provenance xattrs — v2
+
+V1 surfaces `com.apple.quarantine` and `kMDItemWhereFroms` in the Get-Info
+modal plus a corner dot on the file icon. Open follow-ups:
+
+- Surface Gatekeeper assessment via SecAssessment APIs ("blocked by
+  Gatekeeper", "developer ID OK") for executables and `.app` bundles.
+- Surface code-signature identity (`SecCodeCopySigningInformation`) on
+  signed binaries — team identifier, signing authority.
+- "Clear quarantine" context-menu action (writes via `xattr -d`) — tied
+  to the future Mac context-menu surface.
+- Dedicated design token for the quarantine dot if `status.warning` ends
+  up colliding with other row-state usage.
+- Consider whether the dot belongs in the tree pane for downloaded `.app`
+  bundles surfaced in Locations.
+- The current dot uses `bg.layer1` as the halo; on selected rows the row
+  background is `accent.subtle`, so the halo can look mismatched. If it
+  becomes annoying, draw the halo in the actual row background color
+  (requires plumbing the selection state into the badge call).
 
 ## Notes from the porting effort
 

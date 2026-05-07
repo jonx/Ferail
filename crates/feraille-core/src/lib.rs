@@ -53,6 +53,28 @@ pub struct FileEntry {
     /// Empty string when not yet detected or no match. Populated lazily by
     /// the host (App) — `feraille-core` never blocks on file I/O.
     pub display_magic: String,
+    /// Hot-path flag for the icon-overlay dot. True when the file carries
+    /// `com.apple.quarantine` (macOS Mark-of-the-Web equivalent). Populated
+    /// lazily by the host alongside `quarantine`; defaults to false.
+    pub is_quarantined: bool,
+    /// Detail-panel rows for downloaded files. `None` until the prefetch
+    /// worker reports back; `Some` with empty fields means "we looked,
+    /// nothing to show beyond the flag."
+    pub quarantine: Option<QuarantineDetails>,
+}
+
+/// Display-ready provenance fields for a quarantined file. Strings are
+/// pre-formatted in the worker so paint never allocates or parses.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct QuarantineDetails {
+    /// Quarantining agent name from the `com.apple.quarantine` string —
+    /// e.g. "Safari", "com.google.Chrome". `None` when the field was empty.
+    pub agent: Option<String>,
+    /// ISO-8601 download timestamp from the quarantine record. `None` when
+    /// missing or unparseable.
+    pub downloaded_iso: Option<String>,
+    /// Source URLs from `kMDItemWhereFroms`. May be empty.
+    pub where_from: Vec<String>,
 }
 
 /// Filesystem trait — implemented by `feraille-fs-native` (cross-platform std::fs)

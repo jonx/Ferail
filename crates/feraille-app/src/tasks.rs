@@ -21,6 +21,8 @@ pub enum TaskKind {
     Enumeration,
     IconPrefetch,
     MagicPrefetch,
+    QuarantinePrefetch,
+    DiskUsage,
 }
 
 #[derive(Clone, Copy, Debug)]

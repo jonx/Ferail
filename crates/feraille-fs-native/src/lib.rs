@@ -20,9 +20,11 @@ use feraille_core::{
 mod disk_usage_scanner;
 mod icons;
 mod magic;
+pub mod xattr_info;
 pub use disk_usage_scanner::DEFAULT_DU_BATCH;
 pub use icons::fetch_icon_rgba;
 pub use magic::detect_magic;
+pub use xattr_info::{details_from as quarantine_details_from, fetch_quarantine_info, QuarantineInfo};
 
 const ROOT_NODE_RAW: u64 = 1;
 
@@ -174,6 +176,8 @@ impl NativeFs {
             display_mtime,
             display_kind,
             display_magic: String::new(),
+            is_quarantined: false,
+            quarantine: None,
         })
     }
 }
@@ -255,6 +259,8 @@ impl FsBackend for NativeFs {
                 display_mtime,
                 display_kind,
                 display_magic: String::new(),
+                is_quarantined: false,
+                quarantine: None,
             });
         }
         // Directories first, then case-insensitive name.

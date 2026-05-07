@@ -3,15 +3,19 @@
 //! UI; this shares the model and worker with the GUI's Disk Usage
 //! window so the two views stay in sync by construction.
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
+use feraille_controls::TreemapColoring;
 use feraille_core::NodeId;
+use feraille_design::{FontWeight, Theme, Tokens};
 use feraille_disk_usage::{
-    build_layout_node, DiskUsageFact, DiskUsageTree, NodeKind,
+    build_layout_node, compute_treemap, DiskUsageFact, DiskUsageTree, NodeKind,
 };
 use feraille_fs_native::{NativeFs, DEFAULT_DU_BATCH};
+use feraille_render::{Point, Rect, Renderer, SoftRenderer, TextStyle};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const BIN: &str = "disk_usage_cli";
@@ -24,17 +28,26 @@ USAGE:
     {BIN} <path> [OPTIONS]
 
 OPTIONS:
-    -n, --top <N>      Show top N entries in each section (default: 20)
-        --packages     Descend into macOS packages (.app, .bundle, .framework,
-                       .plugin, .kext, .xcodeproj). Default treats them as
-                       opaque leaves, matching Finder.
-    -h, --help         Print this message and exit
-    -V, --version      Print version and exit
+    -n, --top <N>          Show top N entries in each section (default: 20)
+        --packages         Descend into macOS packages (.app, .bundle, .framework,
+                           .plugin, .kext, .xcodeproj). Default treats them as
+                           opaque leaves, matching Finder.
+        --png <path>       Also render a treemap PNG of the scan to <path>.
+                           Useful for quick visual inspection without launching
+                           the GUI.
+        --width <DIPs>     PNG width (default 1400, ignored without --png).
+        --height <DIPs>    PNG height (default 900, ignored without --png).
+        --theme light|dark Theme for the PNG (default light).
+        --du-depth <N>     Treemap recursion depth (default 4).
+        --du-coloring <m>  'category' (default) or 'depth'.
+    -h, --help             Print this message and exit
+    -V, --version          Print version and exit
 
 EXAMPLES:
     {BIN} ~/Documents
     {BIN} / --top 30
     {BIN} ~/Library/Application\\ Support --packages
+    {BIN} ~/Source --png /tmp/source.png --width 1600 --height 1000 --theme dark
 
 NOTES:
     Symlinks are walked via lstat() and counted as 0-byte leaves to keep
@@ -61,6 +74,12 @@ fn main() {
     let mut path: Option<PathBuf> = None;
     let mut top_n: usize = 20;
     let mut descend_packages = false;
+    let mut png_path: Option<PathBuf> = None;
+    let mut png_width: u32 = 1400;
+    let mut png_height: u32 = 900;
+    let mut png_theme: Theme = Theme::Light;
+    let mut du_depth: u32 = 4;
+    let mut du_coloring: TreemapColoring = TreemapColoring::Category;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--top" | "-n" => {
@@ -73,6 +92,44 @@ fn main() {
                 };
             }
             "--packages" => descend_packages = true,
+            "--png" => {
+                let Some(p) = args.next() else {
+                    die_usage("--png requires a path");
+                };
+                png_path = Some(PathBuf::from(p));
+            }
+            "--width" => {
+                png_width = args
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_else(|| die_usage("--width requires a positive integer"));
+            }
+            "--height" => {
+                png_height = args
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_else(|| die_usage("--height requires a positive integer"));
+            }
+            "--theme" => {
+                png_theme = match args.next().as_deref() {
+                    Some("light") => Theme::Light,
+                    Some("dark") => Theme::Dark,
+                    other => die_usage(&format!("--theme: expected light|dark, got {:?}", other)),
+                };
+            }
+            "--du-depth" => {
+                du_depth = args
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_else(|| die_usage("--du-depth requires a non-negative integer"));
+            }
+            "--du-coloring" => {
+                du_coloring = match args.next().as_deref() {
+                    Some("depth") => TreemapColoring::DepthOnly,
+                    Some("category") | None => TreemapColoring::Category,
+                    Some(other) => die_usage(&format!("--du-coloring: expected category|depth, got {other}")),
+                };
+            }
             "-h" | "--help" => {
                 print_help();
                 std::process::exit(0);
@@ -184,6 +241,152 @@ fn main() {
         let name = display_name(&tree, *id);
         println!("  {:>2}. {:>10}  {}", i + 1, humanize(*size), name);
     }
+
+    if let Some(out) = png_path {
+        match render_png(
+            &tree,
+            &layout,
+            &canonical,
+            &out,
+            png_width,
+            png_height,
+            png_theme,
+            du_depth,
+            du_coloring,
+        ) {
+            Ok(()) => eprintln!("\nwrote {}", out.display()),
+            Err(e) => {
+                eprintln!("\nPNG render failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+    let _ = du_depth; // referenced via render_png; suppress unused if no --png
+    let _ = du_coloring;
+}
+
+/// Read a TTF the OS provides for free, so the bin doesn't need to
+/// ship a font asset. macOS uses Arial; on other platforms the
+/// caller must supply their own — which the CLI doesn't currently
+/// expose, but the GUI handles independently.
+#[cfg(target_os = "macos")]
+fn load_default_font() -> std::io::Result<Vec<u8>> {
+    std::fs::read("/System/Library/Fonts/Supplemental/Arial.ttf")
+}
+#[cfg(target_os = "windows")]
+fn load_default_font() -> std::io::Result<Vec<u8>> {
+    std::fs::read("C:\\Windows\\Fonts\\segoeui.ttf")
+}
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn load_default_font() -> std::io::Result<Vec<u8>> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "no default font path on this OS",
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_png(
+    tree: &DiskUsageTree,
+    layout: &feraille_disk_usage::DiskUsageLayoutNode,
+    root_path: &Path,
+    out: &Path,
+    width_dips: u32,
+    height_dips: u32,
+    theme: Theme,
+    du_depth: u32,
+    du_coloring: TreemapColoring,
+) -> Result<(), String> {
+    let scale = 2.0;
+    let width_px = (width_dips as f32 * scale).round() as u32;
+    let height_px = (height_dips as f32 * scale).round() as u32;
+    let width_dips_f = width_dips as f32;
+    let height_dips_f = height_dips as f32;
+
+    let tokens = Tokens::for_theme(theme);
+
+    let font_bytes = load_default_font().map_err(|e| format!("load font: {e}"))?;
+    let mut renderer = SoftRenderer::new(width_px, height_px, scale, font_bytes);
+
+    // Background.
+    let viewport = Rect::new(0.0, 0.0, width_dips_f, height_dips_f);
+    renderer.fill_rect(viewport, tokens.bg.base);
+
+    // Header strip with path + total.
+    let header_h = 28.0_f32;
+    renderer.fill_rect(
+        Rect::new(0.0, 0.0, width_dips_f, header_h),
+        tokens.bg.layer2,
+    );
+    renderer.stroke_rect(
+        Rect::new(0.0, header_h - 1.0, width_dips_f, 1.0),
+        1.0,
+        tokens.border.subtle,
+    );
+    let header_text = format!(
+        "Disk Usage  ·  {}  ·  {}",
+        root_path.display(),
+        humanize(layout.size_bytes)
+    );
+    let style = TextStyle {
+        size: tokens.text.sm,
+        weight: FontWeight::SemiBold,
+        color: tokens.fg.primary,
+    };
+    renderer.draw_text(
+        Point::new(tokens.space.md, (header_h - tokens.text.sm) / 2.0 - 1.0),
+        &header_text,
+        style,
+    );
+
+    // Treemap pane.
+    let pane = Rect::new(0.0, header_h, width_dips_f, height_dips_f - header_h);
+    let rects = compute_treemap(
+        layout,
+        (pane.left(), pane.top(), pane.size.width, pane.size.height),
+        du_depth,
+    );
+    let selected: HashSet<NodeId> = HashSet::new();
+    feraille_controls::treemap::paint(
+        &rects,
+        pane,
+        None,
+        &selected,
+        du_coloring,
+        &tokens,
+        &mut renderer,
+        |id| display_name(tree, id),
+    );
+
+    write_png(out, renderer.pixels(), width_px, height_px)
+}
+
+fn write_png(
+    path: &Path,
+    pixels: &[u32],
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    use std::fs::File;
+    use std::io::BufWriter;
+    let file = File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
+    let writer = BufWriter::new(file);
+    let mut encoder = png::Encoder::new(writer, width, height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|e| format!("write header: {e}"))?;
+    let mut bytes: Vec<u8> = Vec::with_capacity(pixels.len() * 3);
+    for p in pixels {
+        bytes.push(((p >> 16) & 0xFF) as u8);
+        bytes.push(((p >> 8) & 0xFF) as u8);
+        bytes.push((p & 0xFF) as u8);
+    }
+    writer
+        .write_image_data(&bytes)
+        .map_err(|e| format!("write data: {e}"))?;
+    Ok(())
 }
 
 fn display_name(tree: &DiskUsageTree, id: NodeId) -> String {

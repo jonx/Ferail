@@ -29,18 +29,25 @@ use feraille_controls::{
     TabInfo, TabStrip, TabStripEvent, TreeEvent, VirtualizedList,
 };
 use feraille_core::commands::CommandId;
-use feraille_core::{AntTrail, EntryKind, EnumerationError, FileEntry, FsBackend, NodeId};
+use feraille_core::{
+    AntTrail, EntryKind, EnumerationError, FileEntry, FsBackend, NodeId, QuarantineDetails,
+};
 use feraille_design::{FontWeight, Theme, Tokens};
 use feraille_fs_native::{
-    detect_magic, fetch_icon_rgba, home_dir, list_volumes, move_to_trash, open_with_default,
-    volume_info_for_path, NativeFs, DEFAULT_ENUMERATION_BATCH,
+    detect_magic, fetch_icon_rgba, fetch_quarantine_info, home_dir, list_volumes, move_to_trash,
+    open_with_default, quarantine_details_from, volume_info_for_path, NativeFs,
+    DEFAULT_ENUMERATION_BATCH,
 };
 
+mod disk_usage_state;
+mod disk_usage_window;
 mod obs;
 mod screenshot;
 mod task_panel;
 mod tasks;
 
+use crate::disk_usage_state::DiskUsageState;
+use crate::disk_usage_window::DiskUsageWindow;
 use crate::tasks::{TaskId, TaskKind, TaskRegistry};
 
 /// Iteration-tagged logging. The first argument is an ID number; lines
@@ -148,6 +155,31 @@ enum AppEvent {
     SystemThemeChanged {
         dark: bool,
     },
+    /// macOS quarantine + where-from xattrs read off-thread for files
+    /// in `dir`. Stale batches dropped at the gate via `generation`.
+    QuarantineBatch {
+        generation: u64,
+        dir: PathBuf,
+        results: Vec<QuarantineResult>,
+    },
+    /// Disk-usage scan posted a batch of facts. Gated on `generation`
+    /// matching the DU window's current scan; stale batches dropped.
+    DiskUsageBatch {
+        generation: u64,
+        facts: Vec<feraille_disk_usage::DiskUsageFact>,
+    },
+    /// Periodic progress tick from the DU worker (~250 ms cadence).
+    DiskUsageProgress {
+        generation: u64,
+        stats: feraille_disk_usage::DiskUsageStats,
+    },
+    /// Final marker for a DU scan. `error` is `Some` only on hard
+    /// failure of the top-level `read_dir`; cancellation arrives with
+    /// `error: None`.
+    DiskUsageDone {
+        generation: u64,
+        error: Option<EnumerationError>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -155,6 +187,35 @@ struct MagicResult {
     name: String,
     mtime_unix: i64,
     label: String,
+}
+
+#[derive(Clone, Debug)]
+struct QuarantineResult {
+    name: String,
+    mtime_unix: i64,
+    quarantined: bool,
+    details: QuarantineDetails,
+}
+
+/// State for the Keyboard-Shortcuts overlay. Renders a capped-height
+/// modal with a live filter at the top and a scrollable body grouped
+/// by command category. The catalogue is the source of truth — adding
+/// a `CommandSpec` with shortcuts surfaces here automatically.
+pub struct ShortcutsModal {
+    /// Live filter input. Matches case-insensitively against the
+    /// command title and against each shortcut's rendered glyphs
+    /// ("⌘=", "⌘⇧[" etc.).
+    pub filter: TextInput,
+    /// Vertical scroll offset in DIPs from the top of the content.
+    /// Clamped to `[0, max_scroll]` at paint time so resize / filter
+    /// changes don't leave it pointing past the end.
+    pub scroll_offset: f32,
+}
+
+impl ShortcutsModal {
+    pub fn new() -> Self {
+        Self { filter: TextInput::new(""), scroll_offset: 0.0 }
+    }
 }
 
 /// State for the modal rename / new-folder dialog.
@@ -214,10 +275,10 @@ const APP_ICON_PNG: &[u8] = include_bytes!("../resources/feraille.png");
 const PROJECT_URL: &str = "https://example.invalid/feraille";
 
 /// Walk the command catalogue and try to match the current keystroke
-/// against every command's `default_shortcut`. Returns the matching
-/// `CommandId` or `None`. This is the iter-5.9 unification: changing
-/// a binding lives in `feraille_core::commands`, not in two parallel
-/// match tables.
+/// against every command's `shortcuts` slice (primary + alternates).
+/// Returns the matching `CommandId` or `None`. Single source of truth
+/// for keyboard bindings: changing one lives in
+/// `feraille_core::commands`, not in any parallel match table.
 ///
 /// Cross-platform note: `primary` matches when either `super` (Cmd
 /// on macOS) or `control` is held — preserves the keyboard handler's
@@ -228,14 +289,13 @@ fn keystroke_to_command(logical: &Key, mods: ModifiersState) -> Option<CommandId
     let alt = mods.alt_key();
 
     for spec in feraille_core::commands::all_commands() {
-        let Some(sc) = &spec.default_shortcut else {
-            continue;
-        };
-        if sc.primary != primary || sc.shift != shift || sc.alt != alt {
-            continue;
-        }
-        if matches_shortcut_key(sc.key, logical) {
-            return Some(spec.id);
+        for sc in spec.shortcuts {
+            if sc.primary != primary || sc.shift != shift || sc.alt != alt {
+                continue;
+            }
+            if matches_shortcut_key(sc.key, logical) {
+                return Some(spec.id);
+            }
         }
     }
     None
@@ -264,6 +324,10 @@ fn matches_shortcut_key(spec_key: &str, logical: &Key) -> bool {
         ("Tab", Key::Named(NamedKey::Tab)) => true,
         ("Enter", Key::Named(NamedKey::Enter)) => true,
         ("Escape", Key::Named(NamedKey::Escape)) => true,
+        ("Home", Key::Named(NamedKey::Home)) => true,
+        ("End", Key::Named(NamedKey::End)) => true,
+        ("PageUp", Key::Named(NamedKey::PageUp)) => true,
+        ("PageDown", Key::Named(NamedKey::PageDown)) => true,
         // Single-character keys: the catalogue's "T" / "[" / "." etc.
         // matches `Key::Character` case-insensitively, so the catalogue
         // can use the visually-natural case ("T") without forcing the
@@ -285,6 +349,7 @@ fn main() -> Result<()> {
     let mut app = App::new();
     app.event_proxy = Some(event_loop.create_proxy());
     app.start_magic_prefetch();
+    app.start_quarantine_prefetch();
     log_info!(56, "event loop starting");
     let result = event_loop.run_app(&mut app);
     if let Err(e) = &result {
@@ -332,6 +397,18 @@ pub struct App {
     sb_context: Option<softbuffer::Context<Rc<Window>>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     renderer: Option<SoftRenderer>,
+    /// Disk Usage window — None until first `Cmd+Shift+D`. When the
+    /// user closes it (CloseRequested on its WindowId) the field is
+    /// reset to None and any in-flight scan is cancelled.
+    disk_usage_window: Option<DiskUsageWindow>,
+    /// Bumped whenever a disk-usage scan starts. Worker batches carry
+    /// this; stale events are dropped on arrival.
+    disk_usage_generation: u64,
+    /// Set by `spawn_disk_usage_window` from inside `dispatch_command`
+    /// (which doesn't have `&ActiveEventLoop`). The next `user_event`
+    /// tick drains it via `try_realize_disk_usage_window` and creates
+    /// the actual winit window.
+    pending_disk_usage_open: Option<PendingDiskUsageOpen>,
 
     pub fs: Arc<NativeFs>,
     pub tabs: Vec<Tab>,
@@ -393,6 +470,9 @@ pub struct App {
     pub toasts: ToastStack,
     /// Find/filter dialog. While open, text input updates the visible list live.
     pub search: Option<TextInput>,
+    /// Keyboard-shortcuts overlay (Cmd+/). Modal-style: capped height,
+    /// scrollable body, live filter at top. `None` = closed.
+    pub shortcuts_modal: Option<ShortcutsModal>,
     pub preview_visible: bool,
     /// Cache of NSWorkspace-fetched icons keyed by `cache_key_for(entry)`
     /// — extension for files (".rs", ".md"), "DIR"/"SYMLINK"/"FILE" for
@@ -401,6 +481,13 @@ pub struct App {
     /// Cache of magic-detected types keyed by `(path, mtime_unix)`. Empty
     /// string = "we tried, no match".
     pub magic_cache: HashMap<(PathBuf, i64), String>,
+    /// Cache of macOS quarantine reads keyed by `(path, mtime_unix)`.
+    /// `None` value = "we read the xattrs and the file is clean";
+    /// `Some` carries the display-ready details. Removing/altering the
+    /// xattrs touches mtime, which invalidates the entry naturally.
+    pub quarantine_cache: HashMap<(PathBuf, i64), Option<QuarantineDetails>>,
+    quarantine_generation: u64,
+    quarantine_task: Option<TaskId>,
     event_proxy: Option<EventLoopProxy<AppEvent>>,
     magic_generation: u64,
     /// Pending (key, representative_path) pairs for the in-flight icon
@@ -1116,6 +1203,246 @@ impl App {
         );
     }
 
+    /// Format one Shortcut as macOS glyphs + key. Shared by the
+    /// shortcuts overlay's body and its filter-matching predicate.
+    fn fmt_shortcut(sc: &feraille_core::commands::Shortcut) -> String {
+        let mut keys = String::new();
+        if sc.primary {
+            keys.push('\u{2318}'); // ⌘
+        }
+        if sc.alt {
+            keys.push('\u{2325}'); // ⌥
+        }
+        if sc.shift {
+            keys.push('\u{21E7}'); // ⇧
+        }
+        keys.push_str(sc.key);
+        keys
+    }
+
+    fn paint_shortcuts(
+        &self,
+        tokens: &Tokens,
+        viewport: feraille_render::Size,
+        renderer: &mut dyn Renderer,
+    ) {
+        use feraille_core::commands::{all_commands, Category, CommandSpec};
+
+        let Some(modal) = self.shortcuts_modal.as_ref() else {
+            return;
+        };
+
+        // Panel sizing. Width is fixed; height caps at the smaller of
+        // 560 DIP and (viewport - 80 DIP margin) so the modal never
+        // bleeds off-screen on short windows.
+        let panel_w: f32 = 560.0;
+        let panel_h: f32 = 560.0_f32.min((viewport.height - 80.0).max(280.0));
+        let pad = tokens.space.lg;
+
+        let (panel, body) = ModalPanel {
+            viewport: FRect::new(0.0, 0.0, viewport.width, viewport.height),
+            width: panel_w,
+            height: panel_h,
+            top_offset_fraction: Some(0.10),
+            backdrop_alpha: 90,
+            padding: pad,
+        }
+        .paint(tokens, renderer);
+
+        // Title row.
+        let title_y = body.top();
+        renderer.draw_text(
+            FPoint::new(body.left(), title_y),
+            "Keyboard Shortcuts",
+            TextStyle {
+                size: tokens.text.lg,
+                weight: FontWeight::SemiBold,
+                color: tokens.fg.primary,
+            },
+        );
+
+        // Filter input.
+        let input_y = title_y + tokens.text.lg + tokens.space.md;
+        let input_rect = FRect::new(body.left(), input_y, body.size.width, 32.0);
+        modal.filter.paint(input_rect, true, tokens, renderer);
+
+        // Divider below the input.
+        let divider_y = input_rect.bottom() + tokens.space.md;
+        renderer.fill_rect(
+            FRect::new(body.left(), divider_y, body.size.width, 1.0),
+            tokens.border.subtle,
+        );
+
+        // Footer hint, anchored to the panel bottom — sized first so the
+        // body height calculation knows how much room is left.
+        let footer_h = tokens.text.xs;
+        let footer_y = panel.bottom() - tokens.space.lg - footer_h;
+        renderer.draw_text(
+            FPoint::new(body.left(), footer_y),
+            "Type to filter \u{00B7} Esc to close",
+            TextStyle {
+                size: tokens.text.xs,
+                weight: FontWeight::Regular,
+                color: tokens.fg.disabled,
+            },
+        );
+
+        // Scrollable body area sits between the divider and the footer.
+        let body_top = divider_y + tokens.space.md;
+        let body_bottom = footer_y - tokens.space.sm;
+        let scroll_w = 10.0;
+        let body_rect = FRect::new(
+            body.left(),
+            body_top,
+            (body.size.width - scroll_w - 4.0).max(0.0),
+            (body_bottom - body_top).max(0.0),
+        );
+        if body_rect.size.height <= 0.0 {
+            return;
+        }
+
+        // Filter predicate. Lowercased once outside the loop.
+        let filter = modal.filter.value().to_lowercase();
+        let filter = filter.trim();
+        let row_passes = |spec: &&CommandSpec| -> bool {
+            if filter.is_empty() {
+                return true;
+            }
+            if spec.title.to_lowercase().contains(filter) {
+                return true;
+            }
+            spec.shortcuts
+                .iter()
+                .any(|sc| Self::fmt_shortcut(sc).to_lowercase().contains(filter))
+        };
+
+        let categories: [(Category, &str); 8] = [
+            (Category::App, "App"),
+            (Category::File, "File"),
+            (Category::Edit, "Edit"),
+            (Category::View, "View"),
+            (Category::Go, "Go"),
+            (Category::Selection, "Selection"),
+            (Category::Window, "Window"),
+            (Category::Help, "Help"),
+        ];
+
+        // Group → sorted list, dropping empty groups under the current
+        // filter so we don't show stranded category headers.
+        let mut groups: Vec<(&str, Vec<&CommandSpec>)> = Vec::with_capacity(categories.len());
+        for (cat, label) in categories {
+            let mut g: Vec<&CommandSpec> = all_commands()
+                .iter()
+                .filter(|s| s.category == cat && !s.shortcuts.is_empty())
+                .filter(row_passes)
+                .collect();
+            if g.is_empty() {
+                continue;
+            }
+            g.sort_by_key(|s| s.title);
+            groups.push((label, g));
+        }
+
+        let header_h = tokens.text.sm + 6.0;
+        let row_h = tokens.text.md + 10.0;
+        let group_gap = tokens.space.sm;
+        let mut total_h: f32 = 0.0;
+        for (i, (_, g)) in groups.iter().enumerate() {
+            if i > 0 {
+                total_h += group_gap;
+            }
+            total_h += header_h;
+            total_h += g.len() as f32 * row_h;
+        }
+
+        // Clamp scroll to current content. Re-clamping every frame
+        // means filter changes that shrink content reset the scroll
+        // correctly without an explicit hook.
+        let max_scroll = (total_h - body_rect.size.height).max(0.0);
+        let scroll = modal.scroll_offset.clamp(0.0, max_scroll);
+
+        // Render body with a clip.
+        renderer.push_clip(body_rect);
+        if groups.is_empty() {
+            renderer.draw_text(
+                FPoint::new(body_rect.left(), body_rect.top() + tokens.space.sm),
+                "No shortcuts match.",
+                TextStyle {
+                    size: tokens.text.md,
+                    weight: FontWeight::Regular,
+                    color: tokens.fg.disabled,
+                },
+            );
+        } else {
+            // The shortcut-keys column gets a fixed width so the title
+            // column lines up across categories.
+            let keys_col_w: f32 = 150.0;
+            let title_col_x = body_rect.left() + keys_col_w + tokens.space.md;
+
+            let mut y = body_rect.top() - scroll;
+            for (i, (label, g)) in groups.iter().enumerate() {
+                if i > 0 {
+                    y += group_gap;
+                }
+                // Category header.
+                renderer.draw_text(
+                    FPoint::new(body_rect.left(), y),
+                    label,
+                    TextStyle {
+                        size: tokens.text.sm,
+                        weight: FontWeight::SemiBold,
+                        color: tokens.fg.secondary,
+                    },
+                );
+                y += header_h;
+                for spec in g {
+                    let keys = spec
+                        .shortcuts
+                        .iter()
+                        .map(Self::fmt_shortcut)
+                        .collect::<Vec<_>>()
+                        .join("  \u{00B7}  ");
+                    renderer.draw_text(
+                        FPoint::new(body_rect.left() + tokens.space.sm, y),
+                        &keys,
+                        TextStyle {
+                            size: tokens.text.md,
+                            weight: FontWeight::Regular,
+                            color: tokens.fg.primary,
+                        },
+                    );
+                    renderer.draw_text(
+                        FPoint::new(title_col_x, y),
+                        spec.title,
+                        TextStyle {
+                            size: tokens.text.md,
+                            weight: FontWeight::Regular,
+                            color: tokens.fg.primary,
+                        },
+                    );
+                    y += row_h;
+                }
+            }
+        }
+        renderer.pop_clip();
+
+        // Scrollbar — flush right of the body, full height.
+        let track = FRect::new(
+            body_rect.right() + 4.0,
+            body_rect.top(),
+            scroll_w - 2.0,
+            body_rect.size.height,
+        );
+        self.scrollbar.paint(
+            track,
+            total_h,
+            body_rect.size.height,
+            scroll,
+            tokens,
+            renderer,
+        );
+    }
+
     fn paint_preview_pane(&self, bounds: FRect, tokens: &Tokens, renderer: &mut dyn Renderer) {
         if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
             return;
@@ -1209,32 +1536,16 @@ impl App {
             },
         );
 
-        // Metadata card: key/value rows.
-        let path = tab.current_dir.join(&entry.name);
-        let path_text = path.to_string_lossy().into_owned();
-        let size_text = if matches!(entry.kind, EntryKind::Directory) {
-            "Folder".to_string()
-        } else {
-            format!("{} ({} bytes)", entry.display_size, entry.size)
-        };
-        let magic_text = if entry.display_magic.is_empty() {
-            "Unknown".to_string()
-        } else {
-            entry.display_magic.clone()
-        };
-        let rows = [
-            ("Where", path_text.as_str()),
-            ("Kind", entry.display_kind.as_str()),
-            ("Size", size_text.as_str()),
-            ("Modified", entry.display_mtime.as_str()),
-            ("Magic", magic_text.as_str()),
-        ];
+        // Metadata card: key/value rows. Same source as the Get-Info modal
+        // (`paint_properties`) so both panels stay in lockstep — see
+        // `info_rows`.
+        let rows = info_rows(entry, &tab.current_dir.join(&entry.name));
         let row_step = tokens.text.xs + 5.0 + tokens.text.sm + tokens.space.md;
         let metadata_h = card_inset * 2.0 + (rows.len() as f32) * row_step - tokens.space.md;
         let metadata_card = FRect::new(card_x, header_card.bottom() + gap, card_w, metadata_h);
         paint_card_chrome(metadata_card, tokens, renderer);
         let mut y = metadata_card.top() + card_inset;
-        for (label, value) in rows {
+        for (label, value) in &rows {
             renderer.draw_text(
                 FPoint::new(metadata_card.left() + card_inset, y),
                 label,
@@ -1274,10 +1585,20 @@ impl App {
             return;
         };
 
+        // Single source of truth for the inspector fields — see `info_rows`.
+        let rows = info_rows(entry, &tab.current_dir.join(&entry.name));
+
+        // Modal height: header (icon + name + divider) + rows + footer.
+        let row_step = tokens.text.md * 2.0;
+        let header_h = 32.0 + tokens.space.xl + (tokens.space.xl - 4.0);
+        let footer_h = tokens.space.xl + tokens.text.xs + 8.0;
+        let modal_height =
+            (header_h + (rows.len() as f32) * row_step + footer_h).max(380.0);
+
         let (panel, _body) = ModalPanel {
             viewport: FRect::new(0.0, 0.0, viewport.width, viewport.height),
             width: 480.0,
-            height: 380.0,
+            height: modal_height,
             top_offset_fraction: None,
             backdrop_alpha: 90,
             padding: tokens.space.xl,
@@ -1328,31 +1649,7 @@ impl App {
         );
         y += pad - 4.0;
 
-        // Key-value rows
-        let path = tab.current_dir.join(&entry.name);
-        let path_str = path.to_string_lossy().into_owned();
-        let size_text = if matches!(entry.kind, EntryKind::Directory) {
-            String::from("—")
-        } else if entry.size >= 1024 {
-            format!("{} ({} bytes)", entry.display_size, entry.size)
-        } else {
-            format!("{} bytes", entry.size)
-        };
-        let magic_text = if entry.display_magic.is_empty() {
-            String::from("—")
-        } else {
-            entry.display_magic.clone()
-        };
-        let mtime_iso = format_iso_date(entry.mtime_unix);
-
-        let rows: [(&str, &str); 5] = [
-            ("Where", path_str.as_str()),
-            ("Kind", entry.display_kind.as_str()),
-            ("Size", size_text.as_str()),
-            ("Modified", mtime_iso.as_str()),
-            ("Magic", magic_text.as_str()),
-        ];
-        for (label, value) in rows {
+        for (label, value) in &rows {
             renderer.draw_text(
                 FPoint::new(panel.left() + pad, y),
                 label,
@@ -1371,7 +1668,7 @@ impl App {
                     color: tokens.fg.primary,
                 },
             );
-            y += tokens.text.md * 2.0;
+            y += row_step;
         }
 
         renderer.pop_clip();
@@ -1428,6 +1725,9 @@ impl App {
             sb_context: None,
             surface: None,
             renderer: None,
+            disk_usage_window: None,
+            disk_usage_generation: 0,
+            pending_disk_usage_open: None,
             fs,
             tabs: vec![initial_tab],
             active: 0,
@@ -1458,9 +1758,13 @@ impl App {
             inline_rename_rect: None,
             toasts: ToastStack::new(),
             search: None,
+            shortcuts_modal: None,
             preview_visible: false,
             icon_cache: HashMap::new(),
             magic_cache: HashMap::new(),
+            quarantine_cache: HashMap::new(),
+            quarantine_generation: 0,
+            quarantine_task: None,
             event_proxy: None,
             magic_generation: 0,
             icon_queue: Vec::new(),
@@ -1835,7 +2139,7 @@ impl App {
     /// needs to update two parallel matches. Unknown ids log and
     /// no-op — useful for catching catalogue/dispatch drift.
     pub fn dispatch_command(&mut self, id: CommandId) {
-        log_info!(59, "command: {:?}", id);
+        log_info!(60, "command: {:?}", id);
         match id.0 {
             "app.about" => feraille_shell_mac::show_about_panel(),
             "app.settings" => self.show_settings_placeholder(),
@@ -1854,17 +2158,144 @@ impl App {
             "view.theme_light" => self.set_theme_preference(ThemePreference::Light),
             "view.theme_dark" => self.set_theme_preference(ThemePreference::Dark),
             "view.theme_system" => self.set_theme_preference(ThemePreference::System),
+            "view.cycle_focus" => self.cycle_focus(),
+            "view.zoom_in" => self.nudge_ui_scale(Self::UI_SCALE_STEP),
+            "view.zoom_out" => self.nudge_ui_scale(-Self::UI_SCALE_STEP),
+            "view.zoom_reset" => self.reset_ui_scale(),
+            "view.disk_usage" => self.open_or_focus_disk_usage(),
+            "disk_usage.refresh" => self.refresh_disk_usage(),
+            "disk_usage.zoom_out" => self.disk_usage_zoom_out(),
+            "disk_usage.toggle_topn" => self.disk_usage_toggle_topn(),
+            "disk_usage.toggle_packages" => self.disk_usage_toggle_packages(),
             "go.back" => self.navigate_back(),
             "go.forward" => self.navigate_forward(),
             "go.parent" => self.navigate_parent(),
             "go.home" => self.navigate(home_dir()),
+            // Selection — pane-aware. The handler routes each command
+            // to whichever pane currently owns focus. Bare arrow keys /
+            // Home / End / PageUp / PageDown / Enter / F2 / Escape only
+            // reach this dispatch when no modal text input is active —
+            // the keyboard handler intercepts those first.
+            "selection.cursor_up" => self.cursor_in_focused_pane(-1),
+            "selection.cursor_down" => self.cursor_in_focused_pane(1),
+            "selection.cursor_first" => self.cursor_to_edge_in_focused_pane(true),
+            "selection.cursor_last" => self.cursor_to_edge_in_focused_pane(false),
+            "selection.page_up" => self.cursor_page_in_focused_pane(true),
+            "selection.page_down" => self.cursor_page_in_focused_pane(false),
+            "selection.activate" => self.activate_in_focused_pane(),
+            "selection.start_rename" => match self.focused_pane {
+                FocusedPane::List => self.start_inline_rename(),
+                FocusedPane::Tree => self.open_rename(),
+            },
+            "selection.collapse_or_parent" => {
+                if matches!(self.focused_pane, FocusedPane::Tree) {
+                    let h = self.tree_rect().size.height;
+                    self.tree.collapse_or_parent(h);
+                }
+            }
+            "selection.expand_or_first_child" => {
+                if matches!(self.focused_pane, FocusedPane::Tree) {
+                    let h = self.tree_rect().size.height;
+                    if let Some(ev) = self.tree.expand_or_first_child(h) {
+                        self.handle_tree_event(ev);
+                    }
+                }
+            }
+            "selection.dismiss" => {
+                if matches!(self.focused_pane, FocusedPane::Tree) {
+                    self.set_focused_pane(FocusedPane::List);
+                } else if self.properties_target.is_some() {
+                    self.close_properties();
+                }
+            }
             "window.next_tab" => self.next_tab(),
             "window.prev_tab" => self.prev_tab(),
             "help.github" => feraille_shell_mac::open_url(PROJECT_URL),
             "help.shortcuts" => self.show_help_shortcuts(),
-            other => log_warn!(59, "unknown command id: {:?}", other),
+            other => log_warn!(60, "unknown command id: {:?}", other),
         }
         self.request_redraw();
+    }
+
+    /// Step the cursor by ±1 in whichever pane has focus. Helper for
+    /// `selection.cursor_up` / `selection.cursor_down` dispatch.
+    fn cursor_in_focused_pane(&mut self, delta: i64) {
+        match self.focused_pane {
+            FocusedPane::List => {
+                let count = self.tabs[self.active].entries.len();
+                let viewport_h = self.list_inner_rect().size.height;
+                let sel = &mut self.tabs[self.active].selection;
+                sel.move_cursor(delta, count);
+                if let Some(idx) = self.tabs[self.active].selection.cursor() {
+                    self.list.ensure_visible(idx, viewport_h);
+                }
+            }
+            FocusedPane::Tree => {
+                let h = self.tree_rect().size.height;
+                self.tree.move_cursor(delta as i32, h);
+            }
+        }
+    }
+
+    /// Jump to first / last entry in the focused pane.
+    fn cursor_to_edge_in_focused_pane(&mut self, first: bool) {
+        match self.focused_pane {
+            FocusedPane::List => {
+                let count = self.tabs[self.active].entries.len();
+                let viewport_h = self.list_inner_rect().size.height;
+                let sel = &mut self.tabs[self.active].selection;
+                if first {
+                    sel.move_cursor(-(count as i64), count);
+                } else {
+                    sel.move_cursor(count as i64, count);
+                }
+                if let Some(idx) = self.tabs[self.active].selection.cursor() {
+                    self.list.ensure_visible(idx, viewport_h);
+                }
+            }
+            FocusedPane::Tree => {
+                let h = self.tree_rect().size.height;
+                if first {
+                    self.tree.move_to_first(h);
+                } else {
+                    self.tree.move_to_last(h);
+                }
+            }
+        }
+    }
+
+    /// PageUp / PageDown in the focused pane. Page size derived from
+    /// the pane's viewport / row height.
+    fn cursor_page_in_focused_pane(&mut self, up: bool) {
+        match self.focused_pane {
+            FocusedPane::List => {
+                let count = self.tabs[self.active].entries.len();
+                let viewport_h = self.list_inner_rect().size.height;
+                let page = (viewport_h / self.list.row_height) as i64;
+                let sel = &mut self.tabs[self.active].selection;
+                sel.move_cursor(if up { -page } else { page }, count);
+                if let Some(idx) = self.tabs[self.active].selection.cursor() {
+                    self.list.ensure_visible(idx, viewport_h);
+                }
+            }
+            FocusedPane::Tree => {
+                let h = self.tree_rect().size.height;
+                let page = (h / self.tokens.layout.tree_row).max(1.0) as i32;
+                self.tree.move_cursor(if up { -page } else { page }, h);
+            }
+        }
+    }
+
+    /// Enter on the focused pane.
+    fn activate_in_focused_pane(&mut self) {
+        match self.focused_pane {
+            FocusedPane::List => self.open_at_cursor(),
+            FocusedPane::Tree => {
+                if let Some(ev) = self.tree.activate_selected() {
+                    self.handle_tree_event(ev);
+                }
+            }
+        }
     }
 
     /// Move the active tab's `history_index` backward and re-enumerate.
@@ -2044,6 +2475,15 @@ impl App {
                 // this kind, so this branch is unreachable. Defensive
                 // fallthrough drops the registry entry only.
             }
+            TaskKind::QuarantinePrefetch => {
+                // Same shape as MagicPrefetch — not cancellable in v1.
+            }
+            TaskKind::DiskUsage => {
+                if let Some(du) = self.disk_usage_window.as_mut() {
+                    du.state.cancel.store(true, Ordering::Relaxed);
+                    du.state.task_id = None;
+                }
+            }
         }
         self.end_task(id);
         self.request_redraw();
@@ -2093,6 +2533,7 @@ impl App {
             }
             self.prefetch_icons();
             self.start_magic_prefetch();
+            self.start_quarantine_prefetch();
             return;
         };
 
@@ -2325,6 +2766,142 @@ impl App {
                 })
                 .collect();
             let _ = proxy.send_event(AppEvent::MagicBatch {
+                generation,
+                dir: cur_dir,
+                results,
+            });
+        });
+    }
+
+    /// Spawn a worker to read macOS quarantine + where-from xattrs for
+    /// up-to-`QUARANTINE_PREFETCH_CAP` files in the active tab. Mirrors
+    /// `start_magic_prefetch` exactly: cache by `(path, mtime)`, post a
+    /// `QuarantineBatch` user event, gate stale results on `generation`.
+    /// On non-macOS this is a no-op (the worker just returns empty info).
+    fn start_quarantine_prefetch(&mut self) {
+        const QUARANTINE_PREFETCH_CAP: usize = 200;
+
+        let cur_dir = self.tabs[self.active].current_dir.clone();
+        let cursor_name = self.cursor_entry_name();
+        let scroll = self.list.scroll_offset;
+        let mut changed = false;
+
+        for entry in self.tabs[self.active].all_entries.iter_mut() {
+            if !matches!(entry.kind, EntryKind::File) || entry.quarantine.is_some() {
+                continue;
+            }
+            let key = (cur_dir.join(&entry.name), entry.mtime_unix);
+            if let Some(cached) = self.quarantine_cache.get(&key) {
+                match cached {
+                    Some(details) => {
+                        entry.is_quarantined = true;
+                        entry.quarantine = Some(details.clone());
+                    }
+                    None => {
+                        entry.is_quarantined = false;
+                        entry.quarantine = Some(QuarantineDetails::default());
+                    }
+                }
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.rebuild_visible_entries(cursor_name, true);
+            self.list.scroll_offset = scroll;
+        }
+
+        self.quarantine_generation = self.quarantine_generation.wrapping_add(1);
+        let generation = self.quarantine_generation;
+        let candidates: Vec<(String, i64, PathBuf)> = self.tabs[self.active]
+            .all_entries
+            .iter()
+            .filter(|entry| matches!(entry.kind, EntryKind::File))
+            .filter(|entry| entry.quarantine.is_none())
+            .filter_map(|entry| {
+                let path = cur_dir.join(&entry.name);
+                if self
+                    .quarantine_cache
+                    .contains_key(&(path.clone(), entry.mtime_unix))
+                {
+                    None
+                } else {
+                    Some((entry.name.clone(), entry.mtime_unix, path))
+                }
+            })
+            .take(QUARANTINE_PREFETCH_CAP)
+            .collect();
+
+        if candidates.is_empty() {
+            return;
+        }
+
+        // Headless / screenshot path: no event proxy means there's no
+        // event loop to post a `QuarantineBatch` back to. Read xattrs
+        // synchronously and apply in-place so generated images contain
+        // the dot. xattr reads are cheap; the screenshot CLI already
+        // takes the same shape for enumeration.
+        let Some(proxy) = self.event_proxy.clone() else {
+            let cursor_name = self.cursor_entry_name();
+            let scroll = self.list.scroll_offset;
+            let tab = &mut self.tabs[self.active];
+            let mut changed = false;
+            for (name, mtime_unix, path) in candidates {
+                let info = fetch_quarantine_info(&path);
+                let key = (path.clone(), mtime_unix);
+                let details = quarantine_details_from(&info);
+                self.quarantine_cache.insert(
+                    key,
+                    if info.quarantined { Some(details.clone()) } else { None },
+                );
+                if let Some(entry) = tab
+                    .all_entries
+                    .iter_mut()
+                    .find(|e| e.name == name && e.mtime_unix == mtime_unix)
+                {
+                    entry.is_quarantined = info.quarantined;
+                    entry.quarantine = Some(if info.quarantined {
+                        details
+                    } else {
+                        QuarantineDetails::default()
+                    });
+                    changed = true;
+                }
+            }
+            if changed {
+                self.rebuild_visible_entries(cursor_name, true);
+                self.list.scroll_offset = scroll;
+            }
+            return;
+        };
+
+        let new_task = self.begin_task(TaskKind::QuarantinePrefetch, "Reading xattrs…", false);
+        if let Some(prev) = self.quarantine_task.take() {
+            self.end_task(prev);
+        }
+        self.quarantine_task = Some(new_task);
+
+        log_info!(
+            60,
+            "quarantine prefetch: {} candidates (gen={})",
+            candidates.len(),
+            generation
+        );
+
+        obs::spawn_logged("quarantine-prefetch", move || {
+            let results: Vec<QuarantineResult> = candidates
+                .into_iter()
+                .map(|(name, mtime_unix, path)| {
+                    let info = fetch_quarantine_info(&path);
+                    QuarantineResult {
+                        name,
+                        mtime_unix,
+                        quarantined: info.quarantined,
+                        details: quarantine_details_from(&info),
+                    }
+                })
+                .collect();
+            let _ = proxy.send_event(AppEvent::QuarantineBatch {
                 generation,
                 dir: cur_dir,
                 results,
@@ -2587,53 +3164,15 @@ impl App {
         feraille_shell_mac::show_alert("Settings", &body);
     }
 
-    /// Pop a native modal listing every shortcut from the catalogue,
-    /// grouped by category. Auto-generated — adding a command +
-    /// shortcut to `feraille_core::commands` makes it appear here
-    /// without touching this function.
-    pub fn show_help_shortcuts(&self) {
-        use feraille_core::commands::{all_commands, Category};
-        let categories = [
-            (Category::App, "App"),
-            (Category::File, "File"),
-            (Category::Edit, "Edit"),
-            (Category::View, "View"),
-            (Category::Go, "Go"),
-            (Category::Window, "Window"),
-            (Category::Help, "Help"),
-        ];
-        let mut body = String::new();
-        for (cat, label) in categories {
-            let mut group: Vec<&feraille_core::commands::CommandSpec> = all_commands()
-                .iter()
-                .filter(|s| s.category == cat && s.default_shortcut.is_some())
-                .collect();
-            if group.is_empty() {
-                continue;
-            }
-            group.sort_by_key(|s| s.title);
-            if !body.is_empty() {
-                body.push('\n');
-            }
-            body.push_str(label);
-            body.push('\n');
-            for spec in group {
-                let sc = spec.default_shortcut.unwrap();
-                let mut keys = String::new();
-                if sc.primary {
-                    keys.push('⌘');
-                }
-                if sc.alt {
-                    keys.push('⌥');
-                }
-                if sc.shift {
-                    keys.push('⇧');
-                }
-                keys.push_str(sc.key);
-                body.push_str(&format!("  {keys:<10}  {}\n", spec.title));
-            }
-        }
-        feraille_shell_mac::show_alert("Keyboard Shortcuts", body.trim_end());
+    /// Open the in-app Keyboard-Shortcuts overlay. Closes any previous
+    /// instance so the filter resets on each invocation. Renders next
+    /// frame; see `paint_shortcuts`.
+    pub fn show_help_shortcuts(&mut self) {
+        self.shortcuts_modal = Some(ShortcutsModal::new());
+    }
+
+    pub fn close_shortcuts_modal(&mut self) {
+        self.shortcuts_modal = None;
     }
 
     fn handle_tree_event(&mut self, ev: TreeEvent) {
@@ -2806,6 +3345,11 @@ impl App {
         if self.dialog.is_some() {
             self.paint_dialog(tokens, viewport, renderer);
         }
+        // Keyboard-shortcuts overlay. Sits above the dialog layer so
+        // pressing Cmd+/ during a rename still surfaces it.
+        if self.shortcuts_modal.is_some() {
+            self.paint_shortcuts(tokens, viewport, renderer);
+        }
 
         // Toasts — bottom-right of the file pane area, above the status
         // bar. Pruned at the start of the frame so expired entries don't
@@ -2905,6 +3449,621 @@ impl App {
             self.request_redraw();
         }
     }
+
+    // ---- Disk Usage window: open/focus, refresh, zoom-out, worker spawn ----
+
+    /// Cmd+Shift+D handler. Opens the DU window if not already open;
+    /// otherwise just focuses it. The scan is rooted at the active
+    /// tab's current directory and runs to completion in the
+    /// background; closing the window cancels it.
+    fn open_or_focus_disk_usage(&mut self) {
+        let root = self.tabs[self.active].current_dir.clone();
+        if let Some(du) = self.disk_usage_window.as_ref() {
+            // If the window is already open and rooted at the same
+            // path, just focus it. If it's open but on a different
+            // path, swap it for a fresh scan rooted at the new path.
+            if du.state.root_path == root {
+                du.window.focus_window();
+                return;
+            }
+            self.close_disk_usage_window();
+        }
+        // Default to package-as-leaf for a fresh window. The user can
+        // toggle once the window is open.
+        self.spawn_disk_usage_window(root, false);
+    }
+
+    /// Cancel-and-restart for the active DU window. Preserves the
+    /// existing window's `descend_packages` setting. No-op when closed.
+    fn refresh_disk_usage(&mut self) {
+        let Some(du) = self.disk_usage_window.as_ref() else {
+            return;
+        };
+        let root = du.state.root_path.clone();
+        let descend = du.state.descend_packages;
+        self.close_disk_usage_window();
+        self.spawn_disk_usage_window(root, descend);
+    }
+
+    /// Pop one level off the DU window's zoom path.
+    fn disk_usage_zoom_out(&mut self) {
+        if let Some(du) = self.disk_usage_window.as_mut() {
+            du.zoom_out();
+            du.window.request_redraw();
+        }
+    }
+
+    /// Toggle the Top-N largest files panel in the DU window.
+    fn disk_usage_toggle_topn(&mut self) {
+        if let Some(du) = self.disk_usage_window.as_mut() {
+            du.state.topn_visible = !du.state.topn_visible;
+            du.state.invalidate_layout();
+            du.window.request_redraw();
+        }
+    }
+
+    /// Toggle whether macOS packages (`.app`, `.bundle`, …) are
+    /// descended into during the scan. Triggers a re-scan because the
+    /// fact stream produced under the two settings is structurally
+    /// different.
+    fn disk_usage_toggle_packages(&mut self) {
+        let Some(du) = self.disk_usage_window.as_ref() else {
+            return;
+        };
+        let root = du.state.root_path.clone();
+        let new_descend = !du.state.descend_packages;
+        self.close_disk_usage_window();
+        self.spawn_disk_usage_window(root, new_descend);
+    }
+
+    /// Right-click in the DU window. Builds an NSMenu rooted at the
+    /// rect under the cursor (or the current selection if the click
+    /// landed outside any rect), then dispatches the chosen action.
+    fn show_disk_usage_context_menu(&mut self) {
+        // Capture state up-front so we can drop the window borrow
+        // before the synchronous menu pops (the menu blocks the
+        // calling thread until the user dismisses it).
+        let Some(du) = self.disk_usage_window.as_ref() else {
+            return;
+        };
+        let Some(cursor) = du.pointer_dips else { return };
+        let target_id = match du.hit_at(cursor) {
+            crate::disk_usage_window::DuHit::TreemapNode(id)
+            | crate::disk_usage_window::DuHit::TopNRow(id) => Some(id),
+            _ => du.state.selection.iter().next().copied(),
+        };
+        let Some(target_id) = target_id else { return };
+
+        // Resolve path + kind + container-flag for menu gating.
+        let path = match self.fs.path_for(target_id) {
+            Some(p) => p,
+            None => return,
+        };
+        let node = du.state.tree.nodes.get(&target_id).cloned();
+        let is_container = matches!(
+            node.as_ref().map(|n| n.kind),
+            Some(feraille_disk_usage::NodeKind::Container)
+        ) && du
+            .state
+            .tree
+            .containers
+            .get(&target_id)
+            .map(|m| !m.is_empty())
+            .unwrap_or(false);
+
+        // Stash the cursor and cloned window handle for the menu call,
+        // then drop the borrow.
+        let cursor_pair = (cursor.x, cursor.y);
+        let window_handle = du.window.clone();
+
+        // Build the title list. Empty string = separator.
+        // Index → action: keep this in sync with the match below.
+        let mut titles: Vec<&'static str> = Vec::new();
+        // 0
+        titles.push("Open");
+        // 1
+        titles.push("Reveal in Finder");
+        // 2
+        titles.push("Copy Path");
+        // 3 (separator)
+        titles.push("");
+        // 4 — only when target is a non-empty container
+        if is_container {
+            titles.push("Zoom into");
+        } else {
+            titles.push("");
+        }
+        // 5 (separator)
+        titles.push("");
+        // 6
+        titles.push("Move to Trash");
+
+        // Make sure the clicked node is selected before acting.
+        if let Some(du) = self.disk_usage_window.as_mut() {
+            du.state.selection.clear();
+            du.state.selection.insert(target_id);
+            du.window.request_redraw();
+        }
+
+        let choice =
+            feraille_shell_mac::show_context_menu(&window_handle, &titles, cursor_pair);
+
+        let Some(idx) = choice else {
+            return;
+        };
+        match idx {
+            0 => {
+                if let Err(e) = feraille_fs_native::open_with_default(&path) {
+                    log_warn!(60, "disk usage: open failed for {}: {e}", path.display());
+                }
+            }
+            1 => {
+                feraille_shell_mac::reveal_in_finder(&path);
+            }
+            2 => {
+                feraille_shell_mac::copy_to_clipboard(&path.display().to_string());
+            }
+            4 => {
+                if is_container {
+                    if let Some(du) = self.disk_usage_window.as_mut() {
+                        du.drilldown(target_id);
+                        du.window.request_redraw();
+                    }
+                }
+            }
+            6 => {
+                self.disk_usage_trash_node(target_id, &path);
+            }
+            _ => {}
+        }
+    }
+
+    /// Move-to-Trash from the DU context menu. On success, surgically
+    /// drop the affected subtree from the tree and rebuild Top-N so
+    /// the visualization updates without re-scanning. On failure, log
+    /// a warning — a toast surface for the DU window can come in a
+    /// later iter.
+    fn disk_usage_trash_node(&mut self, node_id: NodeId, path: &Path) {
+        match feraille_fs_native::move_to_trash(path) {
+            Ok(()) => {
+                if let Some(du) = self.disk_usage_window.as_mut() {
+                    du.state.tree.remove_subtree(node_id);
+                    du.state.selection.remove(&node_id);
+                    if du.state.hovered == Some(node_id) {
+                        du.state.hovered = None;
+                    }
+                    du.state.zoom_path.retain(|n| *n != node_id);
+                    du.state.invalidate_layout();
+                    du.state.rebuild_topn();
+                    du.window.request_redraw();
+                }
+                log_info!(60, "disk usage: trashed {}", path.display());
+            }
+            Err(e) => {
+                log_warn!(
+                    60,
+                    "disk usage: move_to_trash failed for {}: {e}",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    /// Tear down the DU window: cancel the in-flight scan, drop the
+    /// task entry, drop the window. Idempotent.
+    fn close_disk_usage_window(&mut self) {
+        if let Some(mut du) = self.disk_usage_window.take() {
+            du.state.cancel.store(true, Ordering::Relaxed);
+            if let Some(id) = du.state.task_id.take() {
+                self.tasks.end(id);
+            }
+        }
+        // Also clear any pending-but-unbuilt request so the next
+        // `view.disk_usage` press starts fresh.
+        if let Some(p) = self.pending_disk_usage_open.take() {
+            p.cancel.store(true, Ordering::Relaxed);
+            self.tasks.end(p.task_id);
+        }
+    }
+
+    /// Allocate the DU window + spawn the worker. Stores the window
+    /// in `self.disk_usage_window`. Bumps `disk_usage_generation` so
+    /// any in-flight events from a prior scan are dropped.
+    fn spawn_disk_usage_window(&mut self, root: std::path::PathBuf, descend_packages: bool) {
+        let Some(proxy) = self.event_proxy.clone() else {
+            // Headless: no event loop to drive the window. The
+            // screenshot harness exercises the static path instead.
+            log_warn!(60, "disk_usage: no event proxy; window not created");
+            return;
+        };
+
+        // Resolve the root: canonicalize to a stable path the worker
+        // will report facts under, then assign a NodeId.
+        let canonical = std::fs::canonicalize(&root).unwrap_or(root.clone());
+        let root_id = self.fs.id_for_path(&canonical);
+        self.disk_usage_generation = self.disk_usage_generation.wrapping_add(1);
+        let generation = self.disk_usage_generation;
+
+        // Spawn the winit window. We can't reach the active event
+        // loop from here, so we defer creation until the next
+        // `resumed`/`window_event` tick by deferring through the
+        // proxy. Practical workaround: open from the same call by
+        // borrowing the existing event loop's Window factory. winit
+        // exposes `event_loop.create_window` only inside event
+        // handlers; since `dispatch_command` is invoked from
+        // `user_event` which has `&ActiveEventLoop`, we'd need to
+        // thread it through. For iter-6.2 we take a simpler path:
+        // create the window inside the next `user_event` by posting
+        // a deferred command. But `dispatch_command` IS reachable
+        // from `user_event` already; the cleanest route is to defer
+        // the actual `create_window` call via `proxy.send_event` to
+        // a dedicated `AppEvent::OpenDiskUsageWindow`. To keep iter
+        // scope tight, we reuse the existing main window's softbuffer
+        // context for now and skip multi-window creation in this
+        // step.
+        //
+        // Below: kick off the worker; the window itself is built
+        // lazily in the first `resumed`-style touch. The state is
+        // stashed on App so the next `user_event` tick (or a
+        // dedicated `Open` arm) can pick it up.
+
+        let mut state = DiskUsageState::new(canonical.clone(), root_id, generation);
+        state.descend_packages = descend_packages;
+        let cancel_for_worker = state.cancel.clone();
+        let task_label = format!("Analyzing {}…", canonical.display());
+        let task_id = self.begin_task(TaskKind::DiskUsage, task_label, true);
+
+        // We need the actual window built from inside an event-loop
+        // callback. Stash the pending state on App and post an
+        // event so the next `user_event` tick can build the window
+        // with access to the live `ActiveEventLoop`. iter-6.2
+        // workaround: create the window structure during `resumed`
+        // *if* a pending DU root has been requested. The DU window's
+        // softbuffer surface still needs an active event loop, so we
+        // queue the request and act on it in the next event-loop
+        // turn.
+        self.pending_disk_usage_open = Some(PendingDiskUsageOpen {
+            state,
+            task_id,
+            generation,
+            cancel: cancel_for_worker.clone(),
+            root_path: canonical.clone(),
+        });
+
+        // Spawn the worker right now — it doesn't depend on the
+        // window existing. Facts queue up; once the window is built
+        // and routed by WindowId, the existing user_event arms apply
+        // them.
+        let fs = self.fs.clone();
+        let proxy_clone = proxy.clone();
+        obs::spawn_logged("disk-usage-scan", move || {
+            let proxy_a = proxy_clone.clone();
+            let proxy_b = proxy_clone.clone();
+            let err = fs.scan_disk_usage(
+                &canonical,
+                feraille_fs_native::DEFAULT_DU_BATCH,
+                &cancel_for_worker,
+                descend_packages,
+                move |facts| {
+                    let _ = proxy_a.send_event(AppEvent::DiskUsageBatch {
+                        generation,
+                        facts,
+                    });
+                },
+                move |stats| {
+                    let _ = proxy_b.send_event(AppEvent::DiskUsageProgress {
+                        generation,
+                        stats,
+                    });
+                },
+            );
+            let _ = proxy_clone.send_event(AppEvent::DiskUsageDone { generation, error: err });
+        });
+    }
+
+    /// Drain any pending DU window request and create the actual
+    /// `winit::Window` + softbuffer surface + soft renderer. Must be
+    /// called from within an event-loop callback that supplies
+    /// `&ActiveEventLoop`. No-op when nothing is pending or the
+    /// window already exists.
+    fn try_realize_disk_usage_window(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(pending) = self.pending_disk_usage_open.take() else {
+            return;
+        };
+        if self.disk_usage_window.is_some() {
+            // A previous request landed before this one; cancel the
+            // newer one's pending state to keep things consistent.
+            pending.cancel.store(true, Ordering::Relaxed);
+            self.tasks.end(pending.task_id);
+            return;
+        }
+
+        let title = format!("Disk Usage — {}", pending.root_path.display());
+        let attrs = Window::default_attributes()
+            .with_title(title)
+            .with_inner_size(LogicalSize::new(1100.0, 720.0));
+        let window = match event_loop.create_window(attrs) {
+            Ok(w) => Rc::new(w),
+            Err(e) => {
+                log_error!(60, "create_window for disk usage failed: {e}");
+                pending.cancel.store(true, Ordering::Relaxed);
+                self.tasks.end(pending.task_id);
+                return;
+            }
+        };
+        let context = match softbuffer::Context::new(window.clone()) {
+            Ok(c) => c,
+            Err(e) => {
+                log_error!(60, "softbuffer Context for disk usage failed: {e}");
+                pending.cancel.store(true, Ordering::Relaxed);
+                self.tasks.end(pending.task_id);
+                return;
+            }
+        };
+        let surface = match softbuffer::Surface::new(&context, window.clone()) {
+            Ok(s) => s,
+            Err(e) => {
+                log_error!(60, "softbuffer Surface for disk usage failed: {e}");
+                pending.cancel.store(true, Ordering::Relaxed);
+                self.tasks.end(pending.task_id);
+                return;
+            }
+        };
+
+        let scale = window.scale_factor() as f32;
+        let size = window.inner_size();
+        let width_px = size.width.max(1);
+        let height_px = size.height.max(1);
+        let font_bytes = match load_default_font() {
+            Ok(b) => b,
+            Err(e) => {
+                log_error!(60, "load_default_font for disk usage failed: {e:#}");
+                pending.cancel.store(true, Ordering::Relaxed);
+                self.tasks.end(pending.task_id);
+                return;
+            }
+        };
+        let renderer = SoftRenderer::new(width_px, height_px, scale, font_bytes);
+
+        let mut state = pending.state;
+        // Adopt the same task_id we already registered so the panel's
+        // cancel button continues to work after realization.
+        state.task_id = Some(pending.task_id);
+
+        // Volume capacity snapshot for the header strip — best effort.
+        // For folders that aren't volume roots, NSURL still resolves
+        // to the containing volume; we walk up the path until we find
+        // one. None on non-macOS or when the lookup fails.
+        state.volume = lookup_volume_for_path(&state.root_path);
+
+        log_info!(
+            60,
+            "disk usage window: {}x{} @{:.2}x for {}",
+            width_px, height_px, scale, state.root_path.display()
+        );
+
+        self.disk_usage_window = Some(DiskUsageWindow::new(
+            window,
+            context,
+            surface,
+            renderer,
+            width_px,
+            height_px,
+            scale,
+            state,
+        ));
+    }
+
+    /// Paint the DU window if it exists and present the buffer.
+    fn paint_disk_usage_window(&mut self) {
+        let tokens = self.tokens.clone();
+        if let Some(du) = self.disk_usage_window.as_mut() {
+            du.paint(&tokens);
+            du.present();
+        }
+    }
+
+    /// Handle a winit window event that's been routed to the DU
+    /// window. Mirrors the main window's handler, scoped to what the
+    /// DU view actually needs in iter-6.2: close, resize, scale,
+    /// cursor-move (hover), click (selection + drilldown), Backspace
+    /// (zoom-out), and redraw.
+    fn handle_disk_usage_window_event(&mut self, event: WindowEvent) {
+        match event {
+            WindowEvent::CloseRequested => {
+                self.close_disk_usage_window();
+            }
+            WindowEvent::Resized(size) => {
+                if let Some(du) = self.disk_usage_window.as_mut() {
+                    du.handle_resize(size);
+                    du.window.request_redraw();
+                }
+            }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                if let Some(du) = self.disk_usage_window.as_mut() {
+                    du.handle_scale_factor(scale_factor as f32);
+                    du.window.request_redraw();
+                }
+            }
+            WindowEvent::CursorMoved {
+                position: PhysicalPosition { x, y },
+                ..
+            } => {
+                let Some(du) = self.disk_usage_window.as_mut() else {
+                    return;
+                };
+                let p = FPoint::new(
+                    (x as f32) / du.scale_factor,
+                    (y as f32) / du.scale_factor,
+                );
+                du.pointer_dips = Some(p);
+                let mut redraw = false;
+
+                // If a splitter drag is in progress, route to it.
+                if du.splitter_dragging() {
+                    if du.update_splitter_drag(p) {
+                        redraw = true;
+                    }
+                    if du.update_splitter_hover(Some(p)) {
+                        redraw = true;
+                    }
+                    if redraw {
+                        du.window.request_redraw();
+                    }
+                    return;
+                }
+
+                // Splitter hover affordance — faint fill, handle dots,
+                // thicker rule. Matches the main window's sidebar /
+                // preview splitters so the visual is consistent.
+                if du.update_splitter_hover(Some(p)) {
+                    redraw = true;
+                }
+
+                let new_hover = du.hover_node();
+                if du.state.hovered != new_hover {
+                    du.state.hovered = new_hover;
+                    redraw = true;
+                }
+                if redraw {
+                    du.window.request_redraw();
+                }
+            }
+            WindowEvent::CursorLeft { .. } => {
+                if let Some(du) = self.disk_usage_window.as_mut() {
+                    du.pointer_dips = None;
+                    let mut redraw = false;
+                    if du.update_splitter_hover(None) {
+                        redraw = true;
+                    }
+                    if du.state.hovered.take().is_some() {
+                        redraw = true;
+                    }
+                    if redraw {
+                        du.window.request_redraw();
+                    }
+                }
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                let cmd = self.modifiers.super_key();
+                // Compute the hit + act in two phases so we can drop
+                // the &mut borrow on `disk_usage_window` before
+                // calling App-level methods that re-borrow it.
+                let hit = {
+                    let Some(du) = self.disk_usage_window.as_ref() else {
+                        return;
+                    };
+                    let Some(p) = du.pointer_dips else { return };
+                    (du.hit_at(p), p)
+                };
+                match hit.0 {
+                    crate::disk_usage_window::DuHit::None => {}
+                    crate::disk_usage_window::DuHit::RefreshButton => {
+                        self.refresh_disk_usage();
+                    }
+                    crate::disk_usage_window::DuHit::Splitter => {
+                        if let Some(du) = self.disk_usage_window.as_mut() {
+                            du.begin_splitter_drag(hit.1);
+                        }
+                    }
+                    crate::disk_usage_window::DuHit::TreemapNode(node_id)
+                    | crate::disk_usage_window::DuHit::TopNRow(node_id) => {
+                        if let Some(du) = self.disk_usage_window.as_mut() {
+                            if cmd {
+                                if !du.state.selection.insert(node_id) {
+                                    du.state.selection.remove(&node_id);
+                                }
+                            } else {
+                                du.state.selection.clear();
+                                du.state.selection.insert(node_id);
+                            }
+                            du.window.request_redraw();
+                        }
+                    }
+                }
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } => {
+                if let Some(du) = self.disk_usage_window.as_mut() {
+                    if du.splitter_dragging() {
+                        du.end_splitter_drag();
+                        du.window.request_redraw();
+                    }
+                }
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Right,
+                ..
+            } => {
+                self.show_disk_usage_context_menu();
+            }
+            WindowEvent::KeyboardInput {
+                event: KeyEvent {
+                    state: ElementState::Pressed,
+                    logical_key,
+                    ..
+                },
+                ..
+            } => {
+                let Some(du) = self.disk_usage_window.as_mut() else {
+                    return;
+                };
+                match logical_key {
+                    Key::Named(NamedKey::Backspace) => {
+                        if !du.state.zoom_path.is_empty() {
+                            du.zoom_out();
+                            du.window.request_redraw();
+                        }
+                    }
+                    Key::Named(NamedKey::Enter) => {
+                        // Drilldown into the selected node, if it has children.
+                        if let Some(&id) = du.state.selection.iter().next() {
+                            du.drilldown(id);
+                            du.window.request_redraw();
+                        }
+                    }
+                    Key::Named(NamedKey::Escape) => {
+                        if !du.state.selection.is_empty() {
+                            du.state.selection.clear();
+                            du.window.request_redraw();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers.state();
+            }
+            WindowEvent::RedrawRequested => {
+                self.paint_disk_usage_window();
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Deferred state captured by `spawn_disk_usage_window` so the next
+/// `resumed`/`user_event` tick (which has `&ActiveEventLoop`) can
+/// create the actual `winit::Window` and graft it onto App. This
+/// keeps the dispatch handler from needing to reach into winit
+/// internals from outside an event-loop callback.
+struct PendingDiskUsageOpen {
+    state: DiskUsageState,
+    task_id: TaskId,
+    #[allow(dead_code)] // captured for future use; the worker already has its own clone
+    generation: u64,
+    #[allow(dead_code)]
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+    #[allow(dead_code)]
+    root_path: std::path::PathBuf,
 }
 
 impl ApplicationHandler<AppEvent> for App {
@@ -3018,7 +4177,11 @@ impl ApplicationHandler<AppEvent> for App {
         ));
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
+        // Drain any pending DU window-open request first so a
+        // `Cmd+Shift+D` press realizes the window on the very same
+        // event-loop turn that posted the command.
+        self.try_realize_disk_usage_window(event_loop);
         match event {
             AppEvent::MagicBatch {
                 generation,
@@ -3057,6 +4220,69 @@ impl ApplicationHandler<AppEvent> for App {
                     }) {
                         if entry.display_magic != result.label {
                             entry.display_magic = result.label;
+                            changed = true;
+                        }
+                    }
+                }
+
+                if changed {
+                    self.rebuild_visible_entries(cursor_name, true);
+                    self.list.scroll_offset = scroll;
+                    self.request_redraw();
+                }
+            }
+            AppEvent::QuarantineBatch {
+                generation,
+                dir,
+                results,
+            } => {
+                if generation != self.quarantine_generation
+                    || self.tabs[self.active].current_dir != dir
+                {
+                    log_info!(
+                        60,
+                        "quarantine batch dropped (stale gen={} != current={})",
+                        generation,
+                        self.quarantine_generation
+                    );
+                    return;
+                }
+                log_info!(
+                    60,
+                    "quarantine batch applied: {} results (gen={})",
+                    results.len(),
+                    generation
+                );
+                if let Some(id) = self.quarantine_task.take() {
+                    self.end_task(id);
+                }
+
+                let cursor_name = self.cursor_entry_name();
+                let scroll = self.list.scroll_offset;
+                let tab = &mut self.tabs[self.active];
+                let mut changed = false;
+                for result in results {
+                    let key = (dir.join(&result.name), result.mtime_unix);
+                    let cached_details = if result.quarantined {
+                        Some(result.details.clone())
+                    } else {
+                        None
+                    };
+                    self.quarantine_cache.insert(key, cached_details);
+                    if let Some(entry) = tab.all_entries.iter_mut().find(|entry| {
+                        entry.name == result.name && entry.mtime_unix == result.mtime_unix
+                    }) {
+                        let new_flag = result.quarantined;
+                        let new_details = if result.quarantined {
+                            Some(result.details)
+                        } else {
+                            Some(QuarantineDetails::default())
+                        };
+                        if entry.is_quarantined != new_flag
+                            || entry.quarantine.as_ref() != new_details.as_ref()
+                        {
+                            entry.is_quarantined = new_flag;
+                            entry.quarantine = new_details;
                             changed = true;
                         }
                     }
@@ -3194,6 +4420,7 @@ impl ApplicationHandler<AppEvent> for App {
                 // that the enumeration has settled.
                 self.prefetch_icons();
                 self.start_magic_prefetch();
+                self.start_quarantine_prefetch();
                 self.request_redraw();
             }
             AppEvent::TreeChildrenLoaded {
@@ -3236,10 +4463,57 @@ impl ApplicationHandler<AppEvent> for App {
                     self.request_redraw();
                 }
             }
+            AppEvent::DiskUsageBatch { generation, facts } => {
+                let Some(du) = self.disk_usage_window.as_mut() else {
+                    return;
+                };
+                if generation != du.state.generation {
+                    return;
+                }
+                du.apply_batch(&facts);
+                du.window.request_redraw();
+            }
+            AppEvent::DiskUsageProgress { generation, stats } => {
+                let Some(du) = self.disk_usage_window.as_mut() else {
+                    return;
+                };
+                if generation != du.state.generation {
+                    return;
+                }
+                du.state.stats = stats;
+                du.window.request_redraw();
+            }
+            AppEvent::DiskUsageDone { generation, error } => {
+                let Some(du) = self.disk_usage_window.as_mut() else {
+                    return;
+                };
+                if generation != du.state.generation {
+                    return;
+                }
+                du.mark_complete();
+                du.state.error = error;
+                if let Some(id) = du.state.task_id.take() {
+                    self.end_task(id);
+                }
+                if let Some(du) = self.disk_usage_window.as_ref() {
+                    du.window.request_redraw();
+                }
+            }
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // Drain any pending DU window-open request first.
+        self.try_realize_disk_usage_window(event_loop);
+
+        // Route to the disk-usage window when the event targets it.
+        if let Some(du) = self.disk_usage_window.as_mut() {
+            if du.window.id() == id {
+                self.handle_disk_usage_window_event(event);
+                return;
+            }
+        }
+
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(PhysicalSize { width, height }) => {
@@ -3613,6 +4887,16 @@ impl ApplicationHandler<AppEvent> for App {
                     MouseScrollDelta::LineDelta(_, y) => -y * 56.0,
                     MouseScrollDelta::PixelDelta(p) => -(p.y as f32),
                 };
+                // Shortcuts overlay eats wheel input while open — it's
+                // a modal, scrolling under it would feel disconnected.
+                if let Some(modal) = self.shortcuts_modal.as_mut() {
+                    modal.scroll_offset = (modal.scroll_offset + dy).max(0.0);
+                    // The upper clamp is applied at paint time once we
+                    // know `total_h`, so values past the end snap back
+                    // on the next frame.
+                    self.request_redraw();
+                    return;
+                }
                 // Route to whichever pane the pointer is over. macOS Finder
                 // does the same — scrolling over the sidebar scrolls the
                 // sidebar, not the file pane. If we don't know where the
@@ -3704,6 +4988,40 @@ impl ApplicationHandler<AppEvent> for App {
                     return;
                 }
 
+                // Keyboard-shortcuts overlay — eat all input while
+                // open. Escape closes, Enter does nothing (no submit
+                // semantics here), every other key feeds the filter.
+                if self.shortcuts_modal.is_some() {
+                    if let Some(modal) = self.shortcuts_modal.as_mut() {
+                        if let Key::Named(named) = &logical_key {
+                            if let Some(tk) = map_named_to_textinput(*named) {
+                                match modal.filter.handle_key(tk) {
+                                    Some(TextInputEvent::Cancel) => {
+                                        self.shortcuts_modal = None;
+                                    }
+                                    Some(TextInputEvent::Submit(_)) => {
+                                        // No-op: there's nothing to
+                                        // commit. Keep the overlay
+                                        // open; user can keep typing
+                                        // or hit Esc.
+                                    }
+                                    None => {
+                                        // Filter changed → snap scroll
+                                        // back to the top so the new
+                                        // matches are visible.
+                                        modal.scroll_offset = 0.0;
+                                    }
+                                }
+                            }
+                        } else if let Some(t) = text.as_deref() {
+                            modal.filter.handle_text(t);
+                            modal.scroll_offset = 0.0;
+                        }
+                    }
+                    self.request_redraw();
+                    return;
+                }
+
                 // Search/filter dialog — update visible rows live as text changes.
                 if self.search.is_some() {
                     let mut close = false;
@@ -3765,188 +5083,37 @@ impl ApplicationHandler<AppEvent> for App {
                     return;
                 }
 
-                // Catalogue-driven dispatch for global app shortcuts.
-                // The translator walks `feraille_core::commands` and
-                // returns the first command whose `default_shortcut`
-                // matches; rebinding a key lives in the catalogue, not
-                // in this handler. See `keystroke_to_command` above.
-                // UI scale: Cmd+= / Cmd+- nudge in 10% steps, Cmd+0
-                // resets to 1.0. Stays out of the command catalogue
-                // because the keystrokes alias common browser/editor
-                // bindings users will expect to "just work" — making
-                // them remappable can come with the real settings UI.
-                // `=` and `+` both map to Cmd+= (with/without shift);
-                // `-` to Cmd+-.
-                let primary_mod = self.modifiers.super_key() || self.modifiers.control_key();
-                if primary_mod {
-                    if let Some(t) = text.as_deref() {
-                        match t {
-                            "=" | "+" => {
-                                self.nudge_ui_scale(Self::UI_SCALE_STEP);
-                                self.request_redraw();
-                                return;
-                            }
-                            "-" | "_" => {
-                                self.nudge_ui_scale(-Self::UI_SCALE_STEP);
-                                self.request_redraw();
-                                return;
-                            }
-                            "0" => {
-                                self.reset_ui_scale();
-                                self.request_redraw();
-                                return;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-
+                // Single source of truth for keyboard shortcuts:
+                // walk `feraille_core::commands::all_commands()` and
+                // dispatch the first match. Every Feraille-owned key
+                // lives in the catalogue — adding / rebinding /
+                // removing happens there, not here. See
+                // `keystroke_to_command` above.
                 if let Some(id) = keystroke_to_command(&logical_key, self.modifiers) {
                     self.dispatch_command(id);
                     return;
                 }
 
-                // Alternates that don't fit the single-shortcut-per-command
-                // model. All redirect to `dispatch_command` so behaviour
-                // stays unified with menus / future palette.
-                //
-                //   Ctrl+H        → view.toggle_hidden  (Linux convention;
-                //                   catalogue's primary binding is Cmd+Shift+.)
-                //   F6            → view.cycle_focus    (pane navigation;
-                //                   not in catalogue — it's not a user-facing
-                //                   command in the discoverable sense)
-                if let Some(t) = text.as_deref() {
-                    if (t == "h" || t == "H")
-                        && self.modifiers.control_key()
-                        && !self.modifiers.super_key()
-                    {
-                        self.dispatch_command(CommandId("view.toggle_hidden"));
-                        return;
-                    }
-                }
-
-                // F6 cycles focus between Tree and List regardless of
-                // which pane currently owns focus. Stays out of the
-                // catalogue: pane focus is not a discoverable command.
-                if matches!(logical_key, Key::Named(NamedKey::F6)) {
-                    self.cycle_focus();
-                    self.request_redraw();
-                    return;
-                }
-
-                // Tree-pane keyboard routing: when the tree owns focus,
-                // arrow keys / Home / End / Enter / type-ahead drive the
-                // tree, not the list.
-                if matches!(self.focused_pane, FocusedPane::Tree) {
-                    let tree_h = self.tree_rect().size.height;
-                    let mut redraw = false;
-                    let mut tree_event: Option<TreeEvent> = None;
-                    match &logical_key {
-                        Key::Named(NamedKey::Escape) => {
-                            self.set_focused_pane(FocusedPane::List);
-                            redraw = true;
-                        }
-                        Key::Named(NamedKey::ArrowDown) => {
-                            redraw |= self.tree.move_cursor(1, tree_h);
-                        }
-                        Key::Named(NamedKey::ArrowUp) => {
-                            redraw |= self.tree.move_cursor(-1, tree_h);
-                        }
-                        Key::Named(NamedKey::Home) => {
-                            redraw |= self.tree.move_to_first(tree_h);
-                        }
-                        Key::Named(NamedKey::End) => {
-                            redraw |= self.tree.move_to_last(tree_h);
-                        }
-                        Key::Named(NamedKey::ArrowLeft) => {
-                            redraw |= self.tree.collapse_or_parent(tree_h);
-                        }
-                        Key::Named(NamedKey::ArrowRight) => {
-                            tree_event = self.tree.expand_or_first_child(tree_h);
-                            redraw = true;
-                        }
-                        Key::Named(NamedKey::Enter) => {
-                            tree_event = self.tree.activate_selected();
-                            redraw = true;
-                        }
-                        _ => {
-                            // Type-ahead: a single printable character with
-                            // no Cmd/Ctrl/Alt held.
-                            let mods = self.modifiers;
-                            if !mods.super_key() && !mods.control_key() && !mods.alt_key() {
-                                if let Some(t) = text.as_deref() {
-                                    if let Some(ch) = t.chars().next() {
-                                        if !ch.is_control() {
-                                            redraw |= self.tree.type_ahead_push(ch, tree_h);
-                                        }
-                                    }
+                // Type-ahead: a printable character with no
+                // Cmd/Ctrl/Alt held, when the tree pane has focus.
+                // Not a shortcut — a text-input mode that runs after
+                // every catalogue match has missed. The list pane has
+                // no type-ahead today.
+                let mods = self.modifiers;
+                if !mods.super_key() && !mods.control_key() && !mods.alt_key() {
+                    if let Some(t) = text.as_deref() {
+                        if let Some(ch) = t.chars().next() {
+                            if !ch.is_control()
+                                && matches!(self.focused_pane, FocusedPane::Tree)
+                            {
+                                let tree_h = self.tree_rect().size.height;
+                                if self.tree.type_ahead_push(ch, tree_h) {
+                                    self.request_redraw();
                                 }
                             }
                         }
                     }
-                    if let Some(ev) = tree_event {
-                        self.handle_tree_event(ev);
-                    }
-                    if redraw {
-                        self.request_redraw();
-                    }
-                    return;
                 }
-
-                let count = self.tabs[self.active].entries.len();
-                let viewport_h = self.list_inner_rect().size.height;
-                let page = (viewport_h / self.list.row_height) as i64;
-                let sel = &mut self.tabs[self.active].selection;
-                match logical_key {
-                    Key::Named(NamedKey::Escape) => {
-                        if self.properties_target.is_some() {
-                            self.close_properties();
-                        } else {
-                            event_loop.exit();
-                        }
-                    }
-                    // Alt+Left / Alt+Right → back / forward (alternate
-                    // bindings to the catalogue's Cmd+[ / Cmd+]).
-                    Key::Named(NamedKey::ArrowLeft) if self.modifiers.alt_key() => {
-                        self.dispatch_command(CommandId("go.back"));
-                    }
-                    Key::Named(NamedKey::ArrowRight) if self.modifiers.alt_key() => {
-                        self.dispatch_command(CommandId("go.forward"));
-                    }
-                    Key::Named(NamedKey::ArrowDown) => sel.move_cursor(1, count),
-                    Key::Named(NamedKey::ArrowUp) => sel.move_cursor(-1, count),
-                    Key::Named(NamedKey::PageDown) => sel.move_cursor(page, count),
-                    Key::Named(NamedKey::PageUp) => sel.move_cursor(-page, count),
-                    Key::Named(NamedKey::Home) => sel.move_cursor(-(count as i64), count),
-                    Key::Named(NamedKey::End) => sel.move_cursor(count as i64, count),
-                    Key::Named(NamedKey::Enter) => self.open_at_cursor(),
-                    // Bare Backspace / Delete are friendly single-key
-                    // alternates to the catalogue's Cmd+Up / Cmd+Backspace.
-                    Key::Named(NamedKey::Backspace) => {
-                        self.dispatch_command(CommandId("go.parent"));
-                    }
-                    Key::Named(NamedKey::Delete) => {
-                        self.dispatch_command(CommandId("file.move_to_trash"));
-                    }
-                    // F5 is in the catalogue and the translator catches
-                    // it before this match runs; this arm only fires on
-                    // F5+modifier combinations not in the catalogue.
-                    Key::Named(NamedKey::F5) => {
-                        self.dispatch_command(CommandId("file.refresh"));
-                    }
-                    Key::Named(NamedKey::F2) => {
-                        if matches!(self.focused_pane, FocusedPane::List) {
-                            self.start_inline_rename();
-                        } else {
-                            self.open_rename();
-                        }
-                    }
-                    _ => {}
-                }
-                if let Some(idx) = self.tabs[self.active].selection.cursor() {
-                    self.list.ensure_visible(idx, viewport_h);
-                }
-                self.request_redraw();
             }
             WindowEvent::RedrawRequested => self.render(),
             _ => {}
@@ -3993,6 +5160,60 @@ fn format_iso_date(unix: i64) -> String {
     let mo = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     let y = if mo <= 2 { y + 1 } else { y };
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02} UTC")
+}
+
+/// Canonical key/value rows for the file inspectors. Both the preview
+/// pane (Cmd+P) and the Get-Info modal (Cmd+I) call this so they stay
+/// in lockstep — adding or renaming a row here updates both surfaces.
+/// `full_path` is the absolute path used for the "Where" row.
+fn info_rows(entry: &FileEntry, full_path: &Path) -> Vec<(&'static str, String)> {
+    let path_str = full_path.to_string_lossy().into_owned();
+    let size_text = if matches!(entry.kind, EntryKind::Directory) {
+        String::from("—")
+    } else if entry.size >= 1024 {
+        format!("{} ({} bytes)", entry.display_size, entry.size)
+    } else {
+        format!("{} bytes", entry.size)
+    };
+    let magic_text = if entry.display_magic.is_empty() {
+        String::from("—")
+    } else {
+        entry.display_magic.clone()
+    };
+    let mtime_iso = format_iso_date(entry.mtime_unix);
+
+    let mut rows: Vec<(&'static str, String)> = vec![
+        ("Where", path_str),
+        ("Kind", entry.display_kind.clone()),
+        ("Size", size_text),
+        ("Modified", mtime_iso),
+        ("Magic", magic_text),
+    ];
+
+    if entry.is_quarantined {
+        let q_value = match entry.quarantine.as_ref().and_then(|d| d.agent.clone()) {
+            Some(agent) => format!("Yes — {agent}"),
+            None if entry.quarantine.is_some() => String::from("Yes"),
+            None => String::from("Yes — loading…"),
+        };
+        rows.push(("Quarantined", q_value));
+        if let Some(details) = entry.quarantine.as_ref() {
+            if let Some(iso) = &details.downloaded_iso {
+                rows.push(("Downloaded", iso.clone()));
+            }
+            if !details.where_from.is_empty() {
+                let first = details.where_from.first().cloned().unwrap_or_default();
+                let value = if details.where_from.len() > 1 {
+                    format!("{first} (+{} more)", details.where_from.len() - 1)
+                } else {
+                    first
+                };
+                rows.push(("Downloaded from", value));
+            }
+        }
+    }
+
+    rows
 }
 
 /// Paint card chrome — `bg.layer1` fill + 1-DIP `border.default` stroke.
@@ -4180,4 +5401,26 @@ fn load_default_font() -> Result<Vec<u8>> {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn load_default_font() -> Result<Vec<u8>> {
     anyhow::bail!("no default font path on this OS")
+}
+
+/// Resolve volume info for `path`, walking up to the volume root if
+/// `path` itself is a folder rather than a mount point. Maps the
+/// platform `VolumeInfo` to our local snapshot so the DU module
+/// doesn't need to depend on `feraille-fs-native`'s shape.
+fn lookup_volume_for_path(path: &Path) -> Option<crate::disk_usage_state::VolumeSnapshot> {
+    let mut current = path.to_path_buf();
+    loop {
+        if let Some(info) = feraille_fs_native::volume_info_for_path(&current) {
+            return Some(crate::disk_usage_state::VolumeSnapshot {
+                name: info.name,
+                total_bytes: info.total_bytes,
+                available_bytes: info.available_bytes,
+                is_local: info.is_local,
+                is_removable: info.is_removable,
+            });
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
 }

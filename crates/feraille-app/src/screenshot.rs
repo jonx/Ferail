@@ -17,7 +17,7 @@ use feraille_render::SoftRenderer;
 
 use crate::{load_default_font, App};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Args {
     pub screenshot: Option<PathBuf>,
     pub width: Option<u32>,
@@ -51,12 +51,66 @@ pub struct Args {
     /// the popover and status-bar hint can be verified without a slow
     /// folder. v1 is a fixture for visual review.
     pub simulate_task_panel: bool,
+    /// Open the keyboard-shortcuts overlay with the given filter
+    /// pre-populated (`Some(String::new())` = open with empty filter,
+    /// `Some("zoom")` = open with that text already in the filter).
+    /// `None` = don't open.
+    pub shortcuts_help: Option<String>,
     /// User-facing UI scale (text, spacing, hit, icon, layout
     /// dimensions are multiplied by this in `Tokens::scaled`). Used to
     /// render screenshot fixtures at non-default scales without
     /// launching the GUI. None falls through to `FERAILLE_UI_SCALE` or
     /// 1.0 via `initial_ui_scale`.
     pub ui_scale: Option<f32>,
+    /// When `Some`, run the headless disk-usage path: walk the path
+    /// synchronously, build the treemap, paint a single frame with a
+    /// thin volume header on top. Bypasses the App entirely — iter-6.1
+    /// proves the visual control without the multi-window plumbing
+    /// that lands in iter-6.2.
+    pub disk_usage: Option<PathBuf>,
+    /// Treemap recursion depth for `--disk-usage`. Default 4.
+    pub disk_usage_depth: u32,
+    /// Coloring mode for `--disk-usage`. `category` (default) or `depth`.
+    pub disk_usage_coloring: feraille_controls::TreemapColoring,
+}
+
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            screenshot: None,
+            width: None,
+            height: None,
+            scale: None,
+            theme: None,
+            navigate: Vec::new(),
+            new_tabs: Vec::new(),
+            expand: Vec::new(),
+            select_row: None,
+            select_name: None,
+            splitter: None,
+            scroll: None,
+            tab: None,
+            edit_mode: false,
+            show_hidden: false,
+            filter: None,
+            search: false,
+            preview: false,
+            sort: None,
+            properties: false,
+            mac_chrome: false,
+            rename: false,
+            inline_rename: false,
+            new_folder: false,
+            simulate_toast: None,
+            simulate_progress: None,
+            simulate_task_panel: false,
+            shortcuts_help: None,
+            ui_scale: None,
+            disk_usage: None,
+            disk_usage_depth: 4,
+            disk_usage_coloring: feraille_controls::TreemapColoring::Category,
+        }
+    }
 }
 
 pub fn parse_args() -> Args {
@@ -110,7 +164,21 @@ pub fn parse_args() -> Args {
                 );
             }
             "--simulate-task-panel" => args.simulate_task_panel = true,
+            "--shortcuts-help" => args.shortcuts_help = Some(String::new()),
+            "--shortcuts-help-filter" => args.shortcuts_help = iter.next(),
             "--ui-scale" => args.ui_scale = iter.next().and_then(|s| s.parse().ok()),
+            "--disk-usage" => args.disk_usage = iter.next().map(PathBuf::from),
+            "--du-depth" => {
+                if let Some(n) = iter.next().and_then(|s| s.parse().ok()) {
+                    args.disk_usage_depth = n;
+                }
+            }
+            "--du-coloring" => {
+                args.disk_usage_coloring = match iter.next().as_deref() {
+                    Some("depth") => feraille_controls::TreemapColoring::DepthOnly,
+                    _ => feraille_controls::TreemapColoring::Category,
+                };
+            }
             "--show-hidden" => args.show_hidden = true,
             "--filter" => args.filter = iter.next(),
             "--search" => args.search = true,
@@ -169,6 +237,11 @@ OPTIONS
   --simulate-toast <text>  Push an error toast with the given message.
   --new-folder             Open the new-folder dialog.
   --mac-chrome             Simulate macOS traffic-light inset in the tabstrip.
+  --disk-usage <path>      Render the disk-usage treemap of <path> instead of
+                           the file list. Bypasses the full App; useful for
+                           regression-testing the treemap visual in isolation.
+  --du-depth <N>           Treemap recursion depth (default 4).
+  --du-coloring <mode>     'category' (default) or 'depth'.
   -h, --help               Print this help.
 
 EXAMPLES
@@ -179,6 +252,7 @@ EXAMPLES
   feraille --screenshot rename.png --navigate ~/Source/Feraille --select-name README.md --rename
   feraille --screenshot search.png --navigate ~/Source/Feraille --filter toml --search
   feraille --screenshot preview.png --navigate ~/Source/Feraille --select-name Cargo.toml --preview
+  feraille --screenshot du.png --disk-usage ~/Source/Feraille --width 1400 --height 900
 "
     );
 }
@@ -194,6 +268,24 @@ pub fn run(args: Args) -> Result<()> {
     let scale = args.scale.unwrap_or(2.0);
     let width_px = (width_dips * scale).round() as u32;
     let height_px = (height_dips * scale).round() as u32;
+
+    // Iter-6.1: dedicated disk-usage rendering path that walks the
+    // tree synchronously and paints the treemap without touching App.
+    // Iter-6.2 will replace this with the proper DU window + live
+    // worker, but keeping a no-App path here means the visual control
+    // stays regression-testable on its own.
+    if let Some(du_root) = args.disk_usage.clone() {
+        return run_disk_usage(
+            args,
+            &path,
+            width_dips,
+            height_dips,
+            width_px,
+            height_px,
+            scale,
+            &du_root,
+        );
+    }
 
     // Build app + drive state.
     let mut app = App::new_for_headless(args.theme.unwrap_or(Theme::Light));
@@ -313,6 +405,14 @@ pub fn run(args: Args) -> Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(60));
         app.task_panel_open = true;
     }
+    if let Some(filter) = args.shortcuts_help.clone() {
+        app.show_help_shortcuts();
+        if !filter.is_empty() {
+            if let Some(modal) = app.shortcuts_modal.as_mut() {
+                modal.filter.set_value(&filter);
+            }
+        }
+    }
 
     let font_bytes = load_default_font().context("load default font")?;
     let mut renderer = SoftRenderer::new(width_px, height_px, scale, font_bytes);
@@ -340,6 +440,72 @@ fn canonicalize_or_passthrough(p: &Path) -> PathBuf {
         p.to_path_buf()
     };
     std::fs::canonicalize(&expanded).unwrap_or(expanded)
+}
+
+/// Headless disk-usage path: synchronous scan, build tree + layout,
+/// paint the full DU window chrome (volume header + treemap + Top-N
+/// + splitter rule), write PNG. Uses the same `paint_du` function the
+/// live window does so the headless image matches the GUI by
+/// construction.
+#[allow(clippy::too_many_arguments)]
+fn run_disk_usage(
+    args: Args,
+    out_path: &Path,
+    width_dips: f32,
+    height_dips: f32,
+    width_px: u32,
+    height_px: u32,
+    scale: f32,
+    du_root: &Path,
+) -> Result<()> {
+    use std::sync::atomic::AtomicBool;
+
+    use feraille_controls::primitives::splitter::Splitter;
+    use feraille_design::{Theme, Tokens};
+    use feraille_fs_native::{NativeFs, DEFAULT_DU_BATCH};
+    use feraille_render::Rect;
+
+    use crate::disk_usage_state::DiskUsageState;
+    use crate::disk_usage_window;
+
+    let canonical = canonicalize_or_passthrough(du_root);
+    let theme = args.theme.unwrap_or(Theme::Light);
+    let tokens = Tokens::for_theme(theme).scaled(args.ui_scale.unwrap_or(1.0));
+
+    let fs_native = NativeFs::new();
+    let root_id = fs_native.id_for_path(&canonical);
+    let cancel = AtomicBool::new(false);
+
+    // Build a synthetic state, walk to completion, populate volume +
+    // top-N. This mirrors what the live window does after a scan.
+    let mut state = DiskUsageState::new(canonical.clone(), root_id, 1);
+    let err = fs_native.scan_disk_usage(
+        &canonical,
+        DEFAULT_DU_BATCH,
+        &cancel,
+        false,
+        |batch| state.tree.apply_facts(&batch),
+        |_| {},
+    );
+    if let Some(e) = err {
+        anyhow::bail!("disk-usage scan failed for {}: {e:?}", canonical.display());
+    }
+    state.tree.complete = true;
+    state.scan_complete = true;
+    state.coloring = args.disk_usage_coloring;
+    state.volume = crate::lookup_volume_for_path(&canonical);
+    state.rebuild_topn();
+
+    let font_bytes = load_default_font().context("load default font")?;
+    let mut renderer = feraille_render::SoftRenderer::new(width_px, height_px, scale, font_bytes);
+    let viewport = Rect::new(0.0, 0.0, width_dips, height_dips);
+    let mut splitter = Splitter::new(0.0, 0.0);
+
+    disk_usage_window::paint_du(&mut state, viewport, &mut splitter, &mut renderer, &tokens);
+
+    write_png(out_path, renderer.pixels(), width_px, height_px)?;
+    eprintln!("wrote {}", out_path.display());
+    Ok(())
 }
 
 fn write_png(path: &Path, pixels: &[u32], width: u32, height: u32) -> Result<()> {

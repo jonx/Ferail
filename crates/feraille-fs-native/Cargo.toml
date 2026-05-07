@@ -10,6 +10,8 @@ feraille-core.workspace = true
 feraille-disk-usage.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+xattr = "1"
+plist = "1"
 objc2 = "0.5"
 objc2-foundation = { version = "0.2", features = [
     "NSString",

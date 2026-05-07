@@ -184,6 +184,25 @@ I/O while painting or handling immediate interaction.
   callers fall through to the synchronous path —
   `cargo run -- --screenshot --expand <path>` keeps the same output.
   Closes the last synchronous-tree-enum hazard noted in 449c3d6.
+- Iter-6.0…6.4: Disk Usage feature. New `feraille-disk-usage` crate
+  holds the pure model + squarified treemap (ported from Ferail's
+  `DISK_USAGE.md`). `NativeFs::scan_disk_usage` is the worker — DFS
+  via `read_dir`, `symlink_metadata`, batched fact callback,
+  cancel-flag, throttled progress. `feraille-controls::treemap`
+  paints a `Vec<TreemapRect>` with depth-blue + category-tint fills,
+  hover/select borders, and rect-size-gated labels. The DU window is
+  a dedicated second `winit` Window opened on `Cmd+Shift+D`,
+  realized lazily via `try_realize_disk_usage_window` so the
+  command dispatcher doesn't need `&ActiveEventLoop`. Layout is two
+  rows of header (path + Refresh; volume name + free/used + capacity
+  bar), treemap pane on the left, draggable splitter, Top-N largest
+  files panel on the right. Right-click yields Reveal/Open/Copy
+  Path/Move-to-Trash/Zoom into; trashing surgically removes the
+  subtree and rebuilds Top-N without re-scanning. Same `paint_du`
+  function backs both the live window and the headless
+  `--screenshot --disk-usage` path so visuals stay in lockstep. A
+  standalone `disk_usage_cli` bin shares the same scan/aggregate
+  pipeline for terminal use.
 
 ## Important Bug Lesson: Magic Sniffing Hang
 
