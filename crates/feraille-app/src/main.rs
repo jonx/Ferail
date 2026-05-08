@@ -26,7 +26,7 @@ use feraille_controls::primitives::{
 };
 use feraille_controls::{
     sort_entries, BreadcrumbBar, BreadcrumbEvent, FileTree, Section, SectionKind, Selection,
-    TabInfo, TabStrip, TabStripEvent, TreeEvent, VirtualizedList,
+    SelectionSet, TabInfo, TabStrip, TabStripEvent, TreeEvent, VirtualizedList,
 };
 use feraille_core::commands::CommandId;
 use feraille_core::{
@@ -163,6 +163,27 @@ enum AppEvent {
         dir: PathBuf,
         results: Vec<QuarantineResult>,
     },
+    /// Inline preview thumbnail finished decoding. Stale ones (e.g.
+    /// the user moved the cursor before qlmanage returned) are
+    /// dropped at the gate via `generation`.
+    PreviewThumbReady {
+        generation: u64,
+        path: PathBuf,
+        mtime_unix: i64,
+        rgba: Vec<u8>,
+        width: u32,
+        height: u32,
+    },
+    /// `qlmanage -t` failed (non-zero exit, no PNG written, decode
+    /// error, …). Recorded in `preview_failed` so we don't retry on
+    /// every paint, and so the placeholder text flips from
+    /// "Generating preview…" to "No preview" once we know.
+    PreviewThumbFailed {
+        generation: u64,
+        path: PathBuf,
+        mtime_unix: i64,
+        size_px: u32,
+    },
     /// Disk-usage scan posted a batch of facts. Gated on `generation`
     /// matching the DU window's current scan; stale batches dropped.
     DiskUsageBatch {
@@ -181,6 +202,24 @@ enum AppEvent {
         generation: u64,
         error: Option<EnumerationError>,
     },
+    /// Worker-side file operation (Duplicate, Compress) finished.
+    /// Posted from the worker; the UI ends the task, refreshes the
+    /// active tab when `dest_dir` matches it, and toasts on failure.
+    FileOpComplete {
+        op: FileOpKind,
+        task_id: TaskId,
+        dest_dir: PathBuf,
+        result: Result<PathBuf, String>,
+    },
+}
+
+/// Kind of background file operation we report back via
+/// [`AppEvent::FileOpComplete`]. Drives the user-facing toast
+/// wording and nothing else.
+#[derive(Clone, Copy, Debug)]
+enum FileOpKind {
+    Duplicate,
+    Compress,
 }
 
 #[derive(Clone, Debug)]
@@ -279,6 +318,24 @@ const PROJECT_URL: &str = "https://example.invalid/feraille";
 /// against every command's `shortcuts` slice (primary + alternates).
 /// Returns the matching `CommandId` or `None`. Single source of truth
 /// for keyboard bindings: changing one lives in
+/// Coloured-circle glyph for each Finder tag. Used as a leading
+/// emoji in the right-click tag rows so the user can scan the
+/// colour without us painting a real swatch. AppKit picks up the
+/// emoji's native colour rendering — no attributed-string plumbing
+/// needed.
+fn tag_color_glyph(color: feraille_core::commands::TagColor) -> &'static str {
+    use feraille_core::commands::TagColor;
+    match color {
+        TagColor::Red => "🔴",
+        TagColor::Orange => "🟠",
+        TagColor::Yellow => "🟡",
+        TagColor::Green => "🟢",
+        TagColor::Blue => "🔵",
+        TagColor::Purple => "🟣",
+        TagColor::Gray => "⚪",
+    }
+}
+
 /// `feraille_core::commands`, not in any parallel match table.
 ///
 /// Cross-platform note: `primary` matches when either `super` (Cmd
@@ -489,6 +546,28 @@ pub struct App {
     pub quarantine_cache: HashMap<(PathBuf, i64), Option<QuarantineDetails>>,
     quarantine_generation: u64,
     quarantine_task: Option<TaskId>,
+    /// Cache of Quick Look preview bitmaps keyed by `(path, mtime, size_px)`.
+    /// `mtime` is the file's last-modified Unix seconds — bumping it
+    /// invalidates the entry naturally on file edits. `size_px` is
+    /// the longest-edge target we asked qlmanage for.
+    pub preview_cache: HashMap<(PathBuf, i64, u32), Bitmap>,
+    /// Inline-text preview cache for files whose extension marks
+    /// them textual. Faster and far prettier than qlmanage's
+    /// icon-sized text thumbnail. Keyed without a size since we read
+    /// up to a fixed byte budget.
+    pub preview_text_cache: HashMap<(PathBuf, i64), String>,
+    /// Bumped on every selection change. Worker results are dropped
+    /// at the gate when stale.
+    preview_generation: u64,
+    /// Set of `(path, mtime, size_px)` tuples currently being fetched
+    /// — guards against duplicate spawns when paint runs while a
+    /// fetch is already in flight.
+    preview_pending: std::collections::HashSet<(PathBuf, i64, u32)>,
+    /// Sentinel set: `qlmanage` already failed for these tuples.
+    /// Stops the paint loop from re-spawning the same doomed worker
+    /// every frame and lets the placeholder switch from "Generating"
+    /// to "No preview".
+    preview_failed: std::collections::HashSet<(PathBuf, i64, u32)>,
     event_proxy: Option<EventLoopProxy<AppEvent>>,
     magic_generation: u64,
     /// Pending (key, representative_path) pairs for the in-flight icon
@@ -748,6 +827,53 @@ impl App {
         }
     }
 
+    /// Multi-selection-aware copy. Single target degrades to the
+    /// cursor entry; multi-target joins paths with `\n` so a paste
+    /// into a text field gets one path per line.
+    pub fn copy_selection_paths(&self) {
+        let paths = self.resolve_selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let joined = paths
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        feraille_shell_mac::copy_to_clipboard(&joined);
+    }
+
+    /// Multi-selection-aware reveal. Each selected path opens in
+    /// Finder via `open -R`. macOS coalesces multiple `open -R` to
+    /// the same Finder window.
+    pub fn reveal_selection_in_finder(&self) {
+        let paths = self.resolve_selected_paths();
+        for p in &paths {
+            feraille_shell_mac::reveal_in_finder(p);
+        }
+    }
+
+    /// Multi-selection-aware Trash. Synchronous (Cocoa
+    /// `NSWorkspace.recycleURLs:` is fast). Refreshes the listing
+    /// once at the end so multi-trash doesn't flicker.
+    pub fn trash_selection(&mut self) {
+        let paths = self.resolve_selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let mut any_failed = false;
+        for p in &paths {
+            if let Err(e) = move_to_trash(p) {
+                log_error!(60, "move_to_trash({}) failed: {e}", p.display());
+                any_failed = true;
+            }
+        }
+        if any_failed {
+            self.toast_error("Couldn't move some items to Trash");
+        }
+        self.refresh_active_tab();
+    }
+
     /// Set the focused pane and propagate to the controls' visual state.
     pub fn set_focused_pane(&mut self, pane: FocusedPane) {
         if self.focused_pane == pane {
@@ -840,62 +966,342 @@ impl App {
             None => return,
         };
         let in_favorites = matches!(target.kind, SectionKind::Favorites);
-        let pin_label = if in_favorites {
-            "Remove from Favorites"
+        let mut plan = feraille_shell_mac::MenuPlan::new();
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.open"),
+            "Open",
+        ));
+        // The tree pane only shows folders, so always offer Open
+        // in New Tab as the second action.
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.open_in_new_tab"),
+            "Open in New Tab",
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.reveal_in_finder"),
+            "Reveal in Finder",
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.quick_look"),
+            "Quick Look",
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.copy_path"),
+            "Copy Path",
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::separator());
+        if in_favorites {
+            plan.push(feraille_shell_mac::MenuPlanItem::action(
+                CommandId("file.remove_from_favorites"),
+                "Remove from Favorites",
+            ));
         } else {
-            "Pin to Favorites"
-        };
-        let titles = ["Open", "Reveal in Finder", "Copy Path", "", pin_label];
-        let choice = feraille_shell_mac::show_context_menu(&window, &titles, (p.x, p.y));
-        match choice {
-            Some(0) => self.navigate(path.clone()),
-            Some(1) => feraille_shell_mac::reveal_in_finder(&path),
-            Some(2) => {
+            plan.push(feraille_shell_mac::MenuPlanItem::action(
+                CommandId("file.pin_to_favorites"),
+                "Pin to Favorites",
+            ));
+        }
+        let pick = feraille_shell_mac::show_context_menu(&window, plan, (p.x, p.y));
+        match pick.as_ref().map(|p| p.command.0) {
+            Some("file.open") => self.navigate(path.clone()),
+            Some("file.open_in_new_tab") => self.new_tab_at(path.clone()),
+            Some("file.reveal_in_finder") => feraille_shell_mac::reveal_in_finder(&path),
+            Some("file.quick_look") => {
+                if let Err(e) = feraille_shell_mac::show_quick_look(&[path.as_path()]) {
+                    log_warn!(60, "quick_look failed: {e}");
+                }
+            }
+            Some("file.copy_path") => {
                 if let Some(s) = path.to_str() {
                     feraille_shell_mac::copy_to_clipboard(s);
                 }
             }
-            Some(4) => {
-                if in_favorites {
-                    self.unpin_path(&path);
-                } else {
-                    self.pin_path(path);
-                }
-            }
+            Some("file.pin_to_favorites") => self.pin_path(path),
+            Some("file.remove_from_favorites") => self.unpin_path(&path),
             _ => {}
         }
         self.request_redraw();
     }
 
-    /// Right-click handler: select the row and show a context menu at
-    /// the click location. Synchronous — blocks the event loop while
-    /// the menu is open.
+    /// Right-click handler: select the row (or expand the click into
+    /// the existing multi-selection if the row is already part of
+    /// it), then show a context menu at the click location.
+    /// Synchronous — blocks the event loop while the menu is open.
     fn show_context_menu_at(&mut self, p: FPoint) {
         let inner = self.list_inner_rect();
         let count = self.tabs[self.active].entries.len();
         let Some(idx) = self.list.index_at(inner, p, count) else {
+            // Right-click missed every row → background menu (acts
+            // on the *folder*, not on a particular entry).
+            self.show_background_context_menu_at(p);
             return;
         };
-        self.tabs[self.active].selection.set_cursor(idx);
+        // If the right-clicked row is already part of a multi-row
+        // selection, leave the selection alone and act on the whole
+        // set. Otherwise collapse to just that row. Mirrors Finder.
+        let already_selected = matches!(
+            &self.tabs[self.active].selection.set,
+            SelectionSet::Range { .. } | SelectionSet::Discrete(_)
+        ) && self.tabs[self.active].selection.set.contains(idx);
+        if !already_selected {
+            self.tabs[self.active].selection.set_cursor(idx);
+        }
+        let n = self.resolve_selected_paths().len().max(1);
+        let many = n > 1;
+
+        // Inspect the cursor entry: folders get an "Open in New
+        // Tab" row and skip the Open With submenu (Launch Services
+        // would just return Finder).
+        let cursor_entry: Option<(EntryKind, String)> = self
+            .tabs[self.active]
+            .selection
+            .cursor()
+            .and_then(|i| self.tabs[self.active].entries.get(i))
+            .map(|e| (e.kind, e.name.clone()));
+        let is_folder = matches!(
+            cursor_entry.as_ref().map(|(k, _)| *k),
+            Some(EntryKind::Directory)
+        );
+
         let Some(window) = self.window.as_ref().cloned() else {
             return;
         };
-        // Item 4 is the empty separator string.
-        let titles = [
-            "Open",
-            "Reveal in Finder",
+        let mut plan = feraille_shell_mac::MenuPlan::new();
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.open"),
+            if many { "Open First" } else { "Open" },
+        ));
+        // Folder-only: "Open in New Tab" right after Open, mirroring
+        // Finder's primary-action position. Single-target only.
+        if is_folder && !many {
+            plan.push(feraille_shell_mac::MenuPlanItem::action(
+                CommandId("file.open_in_new_tab"),
+                "Open in New Tab",
+            ));
+        }
+        // Open With submenu: files only, single-target. Folders
+        // always open in Finder so Launch Services has nothing to
+        // offer (and Finder hides Open With on folders too).
+        if !many && !is_folder {
+            if let Some(primary) = self
+                .tabs[self.active]
+                .selection
+                .cursor()
+                .and_then(|i| self.tabs[self.active].entries.get(i))
+                .map(|e| self.tabs[self.active].current_dir.join(&e.name))
+            {
+                let candidates = feraille_shell_mac::open_with_candidates(&primary);
+                if !candidates.is_empty() {
+                    let mut sub: Vec<feraille_shell_mac::MenuPlanItem> = Vec::new();
+                    for c in &candidates {
+                        let label = if c.is_default {
+                            format!("{} (default)", c.name)
+                        } else {
+                            c.name.clone()
+                        };
+                        sub.push(
+                            feraille_shell_mac::MenuPlanItem::action_with_payload(
+                                CommandId("file.open_with_app"),
+                                label,
+                                feraille_core::commands::CommandPayload::OpenWithApp {
+                                    app_path: c.path.to_string_lossy().into_owned(),
+                                },
+                            ),
+                        );
+                    }
+                    plan.push(feraille_shell_mac::MenuPlanItem::submenu(
+                        "Open With", sub,
+                    ));
+                }
+            }
+        }
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.reveal_in_finder"),
+            if many {
+                format!("Reveal {n} in Finder")
+            } else {
+                "Reveal in Finder".to_string()
+            },
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.get_info"),
             "Get Info",
-            "Copy Path",
-            "",
-            "Move to Trash",
-        ];
-        let choice = feraille_shell_mac::show_context_menu(&window, &titles, (p.x, p.y));
-        match choice {
-            Some(0) => self.open_at_cursor(),
-            Some(1) => self.reveal_cursor_in_finder(),
-            Some(2) => self.toggle_properties(),
-            Some(3) => self.copy_cursor_path(),
-            Some(5) => self.delete_at_cursor_to_trash(),
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.quick_look"),
+            if many {
+                format!("Quick Look {n} Items")
+            } else {
+                "Quick Look".to_string()
+            },
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::separator());
+        // Rename is single-target only — Finder hides it on multi-
+        // select rather than rename-N-at-once.
+        if !many {
+            plan.push(feraille_shell_mac::MenuPlanItem::action(
+                CommandId("file.rename"),
+                "Rename",
+            ));
+        }
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.duplicate"),
+            "Duplicate",
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.make_alias"),
+            "Make Alias",
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.compress"),
+            if many {
+                format!("Compress {n} Items")
+            } else {
+                // Finder shows the entry name in curly quotes when
+                // single-target. Fall back to bare "Compress" if
+                // we somehow lost the cursor entry between hit-test
+                // and now.
+                cursor_entry
+                    .as_ref()
+                    .map(|(_, name)| format!("Compress \u{201C}{name}\u{201D}"))
+                    .unwrap_or_else(|| "Compress".to_string())
+            },
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::separator());
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.copy_path"),
+            if many {
+                format!("Copy {n} Paths")
+            } else {
+                "Copy Path".to_string()
+            },
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.share"),
+            "Share…",
+        ));
+        // Tags row: read from the cursor entry (primary target),
+        // toggle applies to the whole selection. Reading is a
+        // single Cocoa hop per path — fast enough on the UI thread.
+        plan.push(feraille_shell_mac::MenuPlanItem::separator());
+        let cursor_path = self
+            .tabs[self.active]
+            .selection
+            .cursor()
+            .and_then(|i| self.tabs[self.active].entries.get(i))
+            .map(|e| self.tabs[self.active].current_dir.join(&e.name));
+        let active_colors: Vec<feraille_core::commands::TagColor> =
+            cursor_path
+                .as_deref()
+                .map(feraille_shell_mac::read_canonical_tags)
+                .unwrap_or_default();
+        for color in feraille_core::commands::TagColor::ALL {
+            let is_set = active_colors.contains(&color);
+            plan.push(
+                feraille_shell_mac::MenuPlanItem::action_with_payload(
+                    CommandId("file.set_tag"),
+                    format!("{} {}", tag_color_glyph(color), color.name()),
+                    feraille_core::commands::CommandPayload::Tag(Some(color)),
+                )
+                .checked(is_set),
+            );
+        }
+        if !active_colors.is_empty() {
+            plan.push(feraille_shell_mac::MenuPlanItem::action(
+                CommandId("file.clear_tags"),
+                "Clear Tags",
+            ));
+        }
+        plan.push(feraille_shell_mac::MenuPlanItem::separator());
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.move_to_trash"),
+            if many {
+                format!("Move {n} Items to Trash")
+            } else {
+                "Move to Trash".to_string()
+            },
+        ));
+        // System Services / Quick Actions. AppKit auto-populates
+        // this submenu by walking the responder chain to find the
+        // anchor installed at startup. We push the resolved
+        // selection so the anchor has paths to vend.
+        plan.push(feraille_shell_mac::MenuPlanItem::separator());
+        plan.push(feraille_shell_mac::MenuPlanItem::services_submenu(
+            "Services",
+        ));
+        feraille_shell_mac::set_services_selection(self.resolve_selected_paths());
+        let pick = feraille_shell_mac::show_context_menu(&window, plan, (p.x, p.y));
+        match pick.as_ref().map(|p| p.command.0) {
+            Some("file.open") => self.open_at_cursor(),
+            Some("file.open_in_new_tab") => self.open_cursor_in_new_tab(),
+            Some("file.reveal_in_finder") => self.reveal_selection_in_finder(),
+            Some("file.get_info") => self.toggle_properties(),
+            Some("file.quick_look") => self.quick_look_selection(),
+            Some("file.rename") => self.start_inline_rename(),
+            Some("file.duplicate") => self.duplicate_selection(),
+            Some("file.make_alias") => self.make_alias_for_selection(),
+            Some("file.compress") => self.compress_selection(),
+            Some("file.copy_path") => self.copy_selection_paths(),
+            Some("file.share") => self.share_selection(),
+            Some("file.open_with_app") => {
+                if let Some(feraille_core::commands::CommandPayload::OpenWithApp {
+                    app_path,
+                }) = pick.as_ref().and_then(|p| p.payload.as_ref())
+                {
+                    self.open_selection_with(Path::new(app_path));
+                }
+            }
+            Some("file.set_tag") => {
+                if let Some(feraille_core::commands::CommandPayload::Tag(Some(color))) =
+                    pick.as_ref().and_then(|p| p.payload.as_ref())
+                {
+                    self.toggle_tag_on_selection(*color);
+                }
+            }
+            Some("file.clear_tags") => self.clear_tags_on_selection(),
+            Some("file.move_to_trash") => self.trash_selection(),
+            _ => {}
+        }
+        self.request_redraw();
+    }
+
+    /// Right-click on the empty space below the last row in the
+    /// list pane — acts on the *current folder* rather than a
+    /// particular entry. Mirrors what Finder shows when you right-
+    /// click in an empty area of a window.
+    fn show_background_context_menu_at(&mut self, p: FPoint) {
+        let Some(window) = self.window.as_ref().cloned() else {
+            return;
+        };
+        let cur_dir = self.tabs[self.active].current_dir.clone();
+        let mut plan = feraille_shell_mac::MenuPlan::new();
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.new_folder"),
+            "New Folder",
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::separator());
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.reveal_in_finder"),
+            "Reveal in Finder",
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.refresh"),
+            "Refresh",
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::separator());
+        plan.push(
+            feraille_shell_mac::MenuPlanItem::action(
+                CommandId("view.toggle_hidden"),
+                "Show Hidden Files",
+            )
+            .checked(self.show_hidden),
+        );
+        let pick = feraille_shell_mac::show_context_menu(&window, plan, (p.x, p.y));
+        match pick.as_ref().map(|p| p.command.0) {
+            Some("file.new_folder") => self.open_new_folder(),
+            Some("file.reveal_in_finder") => feraille_shell_mac::reveal_in_finder(&cur_dir),
+            Some("file.refresh") => self.refresh_active_tab(),
+            Some("view.toggle_hidden") => self.toggle_hidden(),
             _ => {}
         }
         self.request_redraw();
@@ -1206,19 +1612,57 @@ impl App {
 
     /// Format one Shortcut as macOS glyphs + key. Shared by the
     /// shortcuts overlay's body and its filter-matching predicate.
+    /// Layout of the shortcuts modal — single source for paint and
+    /// hit-test. Mirrors the ModalPanel sizing in `paint_shortcuts`.
+    fn shortcuts_panel_layout(
+        &self,
+        tokens: &Tokens,
+        viewport: feraille_render::Size,
+    ) -> (FRect, FRect) {
+        let panel_w: f32 = 560.0;
+        let panel_h: f32 = 560.0_f32.min((viewport.height - 80.0).max(280.0));
+        let pad = tokens.space.lg;
+        feraille_controls::primitives::panel::ModalPanel {
+            viewport: FRect::new(0.0, 0.0, viewport.width, viewport.height),
+            width: panel_w,
+            height: panel_h,
+            top_offset_fraction: Some(0.10),
+            backdrop_alpha: 90,
+            padding: pad,
+        }
+        .compute()
+    }
+
+    /// Close-button rect for the shortcuts modal — 24×24 in the
+    /// panel's top-right corner with a small inset.
+    fn shortcuts_close_rect_from_panel(panel: FRect) -> FRect {
+        const SIZE: f32 = 24.0;
+        const INSET: f32 = 12.0;
+        FRect::new(
+            panel.right() - INSET - SIZE,
+            panel.top() + INSET,
+            SIZE,
+            SIZE,
+        )
+    }
+
     fn fmt_shortcut(sc: &feraille_core::commands::Shortcut) -> String {
-        let mut keys = String::new();
+        // Arial doesn't carry the canonical Mac modifier glyphs (⌘ ⌥ ⇧)
+        // so they render as missing-glyph boxes. Use word labels —
+        // matches the App menu's plain-text style and reads cleanly
+        // even for users who don't know the symbols.
+        let mut parts: Vec<String> = Vec::new();
         if sc.primary {
-            keys.push('\u{2318}'); // ⌘
+            parts.push("Cmd".to_string());
         }
         if sc.alt {
-            keys.push('\u{2325}'); // ⌥
+            parts.push("Opt".to_string());
         }
         if sc.shift {
-            keys.push('\u{21E7}'); // ⇧
+            parts.push("Shift".to_string());
         }
-        keys.push_str(sc.key);
-        keys
+        parts.push(sc.key.to_string());
+        parts.join("+")
     }
 
     fn paint_shortcuts(
@@ -1260,6 +1704,29 @@ impl App {
                 weight: FontWeight::SemiBold,
                 color: tokens.fg.primary,
             },
+        );
+
+        // Close button — top-right of the panel chrome. Rendered as
+        // an "x" glyph (Arial doesn't carry × cleanly at small sizes)
+        // in a 24×24 hit zone. Mouse handler routes a click here to
+        // `close_shortcuts_modal`.
+        let close_rect = Self::shortcuts_close_rect_from_panel(panel);
+        renderer.fill_rect(close_rect, tokens.bg.layer2);
+        renderer.stroke_rect(close_rect, 1.0, tokens.border.subtle);
+        let close_glyph = "x";
+        let close_style = TextStyle {
+            size: tokens.text.md,
+            weight: FontWeight::SemiBold,
+            color: tokens.fg.secondary,
+        };
+        let metrics = renderer.measure_text(close_glyph, close_style);
+        renderer.draw_text(
+            FPoint::new(
+                close_rect.left() + (close_rect.size.width - metrics.width) / 2.0,
+                close_rect.top() + (close_rect.size.height - tokens.text.md) / 2.0 - 1.0,
+            ),
+            close_glyph,
+            close_style,
         );
 
         // Filter input.
@@ -1537,13 +2004,106 @@ impl App {
             },
         );
 
+        // Preview thumbnail card — Quick Look render of the selected
+        // file. Sized to a 4:3 aspect ratio so portraits and landscape
+        // images both look reasonable; the bitmap inside is drawn
+        // letterboxed to preserve its real aspect.
+        let thumb_card_h = (card_w * 0.72).clamp(160.0, 320.0);
+        let thumb_card =
+            FRect::new(card_x, header_card.bottom() + gap, card_w, thumb_card_h);
+        paint_card_chrome(thumb_card, tokens, renderer);
+        let inner = FRect::new(
+            thumb_card.left() + card_inset,
+            thumb_card.top() + card_inset,
+            (thumb_card.size.width - card_inset * 2.0).max(0.0),
+            (thumb_card.size.height - card_inset * 2.0).max(0.0),
+        );
+        let path_for_key = tab.current_dir.join(&entry.name);
+        let key = (path_for_key.clone(), entry.mtime_unix, Self::PREVIEW_THUMB_PX);
+        let text_key = (path_for_key.clone(), entry.mtime_unix);
+        let is_dir = matches!(entry.kind, feraille_core::EntryKind::Directory);
+        let text_snippet = if is_dir {
+            None
+        } else {
+            self.preview_text_cache.get(&text_key)
+        };
+
+        if let Some(snippet) = text_snippet {
+            // Inline text rendering: monospace-feel via fixed line
+            // step, clipped to the inner rect. No syntax highlighting
+            // in v1 — that's a downstream feature.
+            renderer.push_clip(inner);
+            let style = TextStyle {
+                size: tokens.text.sm,
+                weight: FontWeight::Regular,
+                color: tokens.fg.primary,
+            };
+            let line_h = tokens.text.sm + 4.0;
+            let mut y = inner.top();
+            for raw_line in snippet.lines() {
+                if y + line_h > inner.bottom() {
+                    break;
+                }
+                // Truncate per-line at the right edge so wide lines
+                // don't paint past the clip into next neighbours.
+                let line = if raw_line.len() > 4096 {
+                    &raw_line[..4096]
+                } else {
+                    raw_line
+                };
+                renderer.draw_text(FPoint::new(inner.left(), y), line, style);
+                y += line_h;
+            }
+            renderer.pop_clip();
+        } else if let (false, Some(bm)) = (is_dir, self.preview_cache.get(&key)) {
+            // Letterbox: scale-to-fit while preserving aspect.
+            let bw = bm.width as f32;
+            let bh = bm.height as f32;
+            if bw > 0.0 && bh > 0.0 && inner.size.width > 0.0 && inner.size.height > 0.0 {
+                let scale = (inner.size.width / bw).min(inner.size.height / bh);
+                let draw_w = bw * scale;
+                let draw_h = bh * scale;
+                let dx = inner.left() + (inner.size.width - draw_w) / 2.0;
+                let dy = inner.top() + (inner.size.height - draw_h) / 2.0;
+                renderer.draw_bitmap(FRect::new(dx, dy, draw_w, draw_h), bm);
+            }
+        } else {
+            // Placeholder copy: "Generating preview…" while the
+            // worker is in flight, "No preview available" for dirs
+            // (we don't fetch thumbnails for them) or after a failed
+            // qlmanage run that left no entry in the cache.
+            let style = TextStyle {
+                size: tokens.text.sm,
+                weight: FontWeight::Regular,
+                color: tokens.fg.secondary,
+            };
+            let msg = if is_dir {
+                "No preview available"
+            } else if self.preview_failed.contains(&key) {
+                "No preview available"
+            } else if self.preview_pending.contains(&key) {
+                "Generating preview…"
+            } else {
+                "Generating preview…"
+            };
+            let m = renderer.measure_text(msg, style);
+            renderer.draw_text(
+                FPoint::new(
+                    inner.left() + (inner.size.width - m.width) / 2.0,
+                    inner.top() + (inner.size.height - tokens.text.sm) / 2.0,
+                ),
+                msg,
+                style,
+            );
+        }
+
         // Metadata card: key/value rows. Same source as the Get-Info modal
         // (`paint_properties`) so both panels stay in lockstep — see
         // `info_rows`.
         let rows = info_rows(entry, &tab.current_dir.join(&entry.name));
         let row_step = tokens.text.xs + 5.0 + tokens.text.sm + tokens.space.md;
         let metadata_h = card_inset * 2.0 + (rows.len() as f32) * row_step - tokens.space.md;
-        let metadata_card = FRect::new(card_x, header_card.bottom() + gap, card_w, metadata_h);
+        let metadata_card = FRect::new(card_x, thumb_card.bottom() + gap, card_w, metadata_h);
         paint_card_chrome(metadata_card, tokens, renderer);
         let mut y = metadata_card.top() + card_inset;
         for (label, value) in &rows {
@@ -1766,6 +2326,11 @@ impl App {
             quarantine_cache: HashMap::new(),
             quarantine_generation: 0,
             quarantine_task: None,
+            preview_cache: HashMap::new(),
+            preview_text_cache: HashMap::new(),
+            preview_generation: 0,
+            preview_pending: std::collections::HashSet::new(),
+            preview_failed: std::collections::HashSet::new(),
             event_proxy: None,
             magic_generation: 0,
             icon_queue: Vec::new(),
@@ -2504,6 +3069,13 @@ impl App {
                     du.state.task_id = None;
                 }
             }
+            TaskKind::FileOp => {
+                // Not cancellable in v1: by the time the user clicks
+                // cancel, the underlying syscall (`std::fs::copy`,
+                // `ditto` subprocess) is mid-flight without a stable
+                // interruption point. The task panel hides the
+                // button for this kind, so this branch is defensive.
+            }
         }
         self.end_task(id);
         self.request_redraw();
@@ -2614,6 +3186,103 @@ impl App {
 
     /// Build a deduped queue of icon fetches for the active tab and
     /// dispatch via `enqueue_icon_fetches`.
+    /// Long edge of the inline preview thumbnail in physical pixels.
+    /// Bigger = sharper at the cost of slower fetch. Tuned to match
+    /// roughly what fits in the preview pane at 2x without scaling
+    /// artifacts when the user resizes.
+    const PREVIEW_THUMB_PX: u32 = 512;
+
+    /// Ensure a Quick Look thumbnail is being (or has been) fetched
+    /// for `path`/`mtime_unix`. No-op if cached or already in flight.
+    /// Spawned off the UI thread; result returns through
+    /// `AppEvent::PreviewThumbReady`.
+    fn ensure_preview_thumb(&mut self, path: PathBuf, mtime_unix: i64) {
+        let size = Self::PREVIEW_THUMB_PX;
+        let key = (path.clone(), mtime_unix, size);
+        if self.preview_cache.contains_key(&key)
+            || self.preview_pending.contains(&key)
+            || self.preview_failed.contains(&key)
+        {
+            return;
+        }
+        let Some(proxy) = self.event_proxy.clone() else {
+            // Headless — no event loop to drive a worker thread.
+            // Run synchronously so the screenshot harness still
+            // shows the real preview. Same pattern as the
+            // streaming-enumeration headless fallback.
+            match feraille_shell_mac::fetch_quick_look_thumbnail(&path, size) {
+                Some((rgba, w, h)) => {
+                    self.preview_cache.insert(key, Bitmap::new(w, h, rgba));
+                }
+                None => {
+                    self.preview_failed.insert(key);
+                }
+            }
+            return;
+        };
+        self.preview_pending.insert(key.clone());
+        let generation = self.preview_generation;
+        let size_px = size;
+        obs::spawn_logged("preview-thumb", move || {
+            match feraille_shell_mac::fetch_quick_look_thumbnail(&path, size_px) {
+                Some((rgba, w, h)) => {
+                    let _ = proxy.send_event(AppEvent::PreviewThumbReady {
+                        generation,
+                        path,
+                        mtime_unix,
+                        rgba,
+                        width: w,
+                        height: h,
+                    });
+                }
+                None => {
+                    let _ = proxy.send_event(AppEvent::PreviewThumbFailed {
+                        generation,
+                        path,
+                        mtime_unix,
+                        size_px,
+                    });
+                }
+            }
+        });
+    }
+
+    /// Resolve the current selection to a path + mtime and ensure a
+    /// preview fetch is running for it. Driven from `paint_to` so we
+    /// don't have to hook every selection-change site individually.
+    fn maybe_kick_preview_thumb(&mut self) {
+        let tab = &self.tabs[self.active];
+        let Some(idx) = tab.selection.cursor() else {
+            return;
+        };
+        let Some(entry) = tab.entries.get(idx) else {
+            return;
+        };
+        // Skip directories — qlmanage produces a generic folder
+        // thumbnail, which the existing icon already shows.
+        if matches!(entry.kind, feraille_core::EntryKind::Directory) {
+            return;
+        }
+        let path = tab.current_dir.join(&entry.name);
+        let mtime = entry.mtime_unix;
+
+        // Text files: read the head inline. Quick Look would render
+        // the contents anyway, and `qlmanage -t` only emits an
+        // icon-sized text thumbnail; reading the bytes ourselves
+        // produces a real, readable preview.
+        if is_text_extension(&path) {
+            let key = (path.clone(), mtime);
+            if !self.preview_text_cache.contains_key(&key) {
+                if let Some(snippet) = read_text_preview(&path) {
+                    self.preview_text_cache.insert(key, snippet);
+                }
+            }
+            return;
+        }
+
+        self.ensure_preview_thumb(path, mtime);
+    }
+
     fn prefetch_icons(&mut self) {
         let cur_dir = self.tabs[self.active].current_dir.clone();
 
@@ -2969,6 +3638,271 @@ impl App {
         self.refresh_active_tab();
     }
 
+    /// Open the cursor entry (a folder, in practice — the menu
+    /// item only shows on directories) in a new tab in the same
+    /// window. No-op if the cursor entry isn't a folder we can
+    /// resolve.
+    pub fn open_cursor_in_new_tab(&mut self) {
+        let tab = &self.tabs[self.active];
+        let Some(idx) = tab.selection.cursor() else {
+            return;
+        };
+        let Some(entry) = tab.entries.get(idx) else {
+            return;
+        };
+        if !matches!(entry.kind, EntryKind::Directory) {
+            return;
+        }
+        let path = tab.current_dir.join(&entry.name);
+        self.new_tab_at(path);
+    }
+
+    /// Open every entry in the resolved selection with the app at
+    /// `app_path`. Best-effort: failures log + toast but don't
+    /// abort the rest of the batch.
+    pub fn open_selection_with(&mut self, app_path: &Path) {
+        let paths = self.resolve_selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let mut any_failed = false;
+        for p in &paths {
+            if let Err(e) = feraille_shell_mac::open_with_app(p, app_path) {
+                log_warn!(
+                    60,
+                    "open_with_app({}, {}) failed: {e}",
+                    p.display(),
+                    app_path.display()
+                );
+                any_failed = true;
+            }
+        }
+        if any_failed {
+            self.toast_error("Couldn't open with that app");
+        }
+    }
+
+    /// Pop the system Share picker (`NSSharingServicePicker`)
+    /// anchored to the main window. The picker handles the rest —
+    /// Mail, Messages, AirDrop, etc.
+    pub fn share_selection(&mut self) {
+        let paths = self.resolve_selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let Some(window) = self.window.as_ref().cloned() else {
+            return;
+        };
+        let refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+        if let Err(e) = feraille_shell_mac::show_share_picker(&window, &refs) {
+            log_warn!(60, "share picker failed: {e}");
+            self.toast_error(format!("Couldn't show Share picker: {e}"));
+        }
+    }
+
+    /// Toggle a Finder colour tag on every entry in the resolved
+    /// selection. Synchronous — each tag is one Cocoa hop, fast
+    /// enough on the UI thread for typical selection sizes.
+    pub fn toggle_tag_on_selection(&mut self, color: feraille_core::commands::TagColor) {
+        let paths = self.resolve_selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let mut any_failed = false;
+        for p in &paths {
+            if let Err(e) = feraille_shell_mac::toggle_tag(p, color) {
+                log_warn!(60, "toggle_tag({}, {:?}) failed: {e}", p.display(), color);
+                any_failed = true;
+            }
+        }
+        if any_failed {
+            self.toast_error("Couldn't set tag on some items");
+        }
+    }
+
+    /// Strip every tag from every entry in the resolved selection.
+    pub fn clear_tags_on_selection(&mut self) {
+        let paths = self.resolve_selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let mut any_failed = false;
+        for p in &paths {
+            if let Err(e) = feraille_shell_mac::clear_tags(p) {
+                log_warn!(60, "clear_tags({}) failed: {e}", p.display());
+                any_failed = true;
+            }
+        }
+        if any_failed {
+            self.toast_error("Couldn't clear tags on some items");
+        }
+    }
+
+    /// Show Quick Look on the resolved selection. Falls back to the
+    /// cursor entry if nothing else is selected. No-op on empty
+    /// selection. Quick Look is `qlmanage -p`: spawns and detaches.
+    pub fn quick_look_selection(&mut self) {
+        let paths = self.resolve_selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+        if let Err(e) = feraille_shell_mac::show_quick_look(&refs) {
+            log_warn!(60, "quick_look failed: {e}");
+            self.toast_error(format!("Quick Look failed: {e}"));
+        }
+    }
+
+    /// Make a Finder alias for each selected entry. Synchronous on
+    /// the calling thread — bookmark-data creation is a single Cocoa
+    /// call per path, fast enough not to need a worker. Refreshes
+    /// the tab on success so the new alias file appears.
+    pub fn make_alias_for_selection(&mut self) {
+        let paths = self.resolve_selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let mut any_ok = false;
+        for p in &paths {
+            match feraille_shell_mac::make_alias(p) {
+                Ok(_) => any_ok = true,
+                Err(e) => {
+                    log_warn!(60, "make_alias({}) failed: {e}", p.display());
+                    self.toast_error(format!("Couldn't make alias: {e}"));
+                }
+            }
+        }
+        if any_ok {
+            self.refresh_active_tab();
+        }
+    }
+
+    /// Duplicate each selected entry on a worker. Refreshes the
+    /// active tab on completion via [`AppEvent::FileOpComplete`].
+    /// Opens an entry in the Tasks panel so the user can see
+    /// progress for slow folder copies.
+    pub fn duplicate_selection(&mut self) {
+        let paths = self.resolve_selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let dest_dir = self.tabs[self.active].current_dir.clone();
+        let Some(proxy) = self.event_proxy.clone() else {
+            // Headless fallback: synchronous so screenshot tests
+            // see the new file.
+            for p in &paths {
+                let _ = feraille_shell_mac::duplicate_path(p);
+            }
+            self.refresh_active_tab();
+            return;
+        };
+        let label = if paths.len() == 1 {
+            format!(
+                "Duplicating {}",
+                paths[0]
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("file")
+            )
+        } else {
+            format!("Duplicating {} items", paths.len())
+        };
+        let task_id = self.begin_task(TaskKind::FileOp, label, false);
+        let paths_for_worker = paths.clone();
+        let dest_dir_for_worker = dest_dir.clone();
+        obs::spawn_logged("file-op-duplicate", move || {
+            let mut last: Result<PathBuf, String> = Err("no files".into());
+            for src in &paths_for_worker {
+                last = feraille_shell_mac::duplicate_path(src);
+                if let Err(ref e) = last {
+                    let _ = proxy.send_event(AppEvent::FileOpComplete {
+                        op: FileOpKind::Duplicate,
+                        task_id,
+                        dest_dir: dest_dir_for_worker.clone(),
+                        result: Err(e.clone()),
+                    });
+                    return;
+                }
+            }
+            let _ = proxy.send_event(AppEvent::FileOpComplete {
+                op: FileOpKind::Duplicate,
+                task_id,
+                dest_dir: dest_dir_for_worker,
+                result: last,
+            });
+        });
+    }
+
+    /// Compress the resolved selection into a single .zip via
+    /// `/usr/bin/ditto` on a worker. Refreshes the active tab on
+    /// completion. Single source → `Foo.zip`; multiple sources →
+    /// `Archive.zip`. Matches Finder.
+    pub fn compress_selection(&mut self) {
+        let paths = self.resolve_selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let dest_dir = self.tabs[self.active].current_dir.clone();
+        let Some(proxy) = self.event_proxy.clone() else {
+            let refs: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+            let _ = feraille_shell_mac::compress_paths(&refs);
+            self.refresh_active_tab();
+            return;
+        };
+        let label = if paths.len() == 1 {
+            format!(
+                "Compressing {}",
+                paths[0]
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("file")
+            )
+        } else {
+            format!("Compressing {} items", paths.len())
+        };
+        let task_id = self.begin_task(TaskKind::FileOp, label, false);
+        let paths_for_worker = paths.clone();
+        let dest_dir_for_worker = dest_dir.clone();
+        obs::spawn_logged("file-op-compress", move || {
+            let refs: Vec<&Path> = paths_for_worker.iter().map(PathBuf::as_path).collect();
+            let result = feraille_shell_mac::compress_paths(&refs);
+            let _ = proxy.send_event(AppEvent::FileOpComplete {
+                op: FileOpKind::Compress,
+                task_id,
+                dest_dir: dest_dir_for_worker,
+                result,
+            });
+        });
+    }
+
+    /// Resolve the *active* paths the right-click context menu
+    /// should act on. Honours the SelectionSet — a multi-row
+    /// selection acts on every selected row; otherwise falls back
+    /// to the cursor entry. Empty when no row is focused.
+    fn resolve_selected_paths(&self) -> Vec<PathBuf> {
+        let tab = &self.tabs[self.active];
+        let cur = &tab.current_dir;
+        let mut indices: Vec<usize> = Vec::new();
+        match &tab.selection.set {
+            SelectionSet::None => {
+                if let Some(c) = tab.selection.cursor() {
+                    indices.push(c);
+                }
+            }
+            SelectionSet::Single(i) => indices.push(*i),
+            SelectionSet::Range { from, to } => {
+                indices.extend(*from..=*to);
+            }
+            SelectionSet::Discrete(set) => {
+                indices.extend(set.iter().copied());
+            }
+        }
+        indices
+            .into_iter()
+            .filter_map(|i| tab.entries.get(i).map(|e| cur.join(&e.name)))
+            .collect()
+    }
+
     pub fn cycle_sort(&mut self, column: feraille_controls::ColumnId) {
         self.list.toggle_sort(column);
         self.rebuild_visible_entries(None, false);
@@ -3217,6 +4151,13 @@ impl App {
     /// Pure paint into a renderer. No window/surface dependency. Used by
     /// both the GUI present path and the headless screenshot path.
     pub fn paint_to(&mut self, renderer: &mut dyn Renderer) {
+        // Kick the preview-thumbnail worker for the current selection
+        // before paint runs (paint itself is read-only). Cheap when
+        // cached or already in flight.
+        if self.preview_visible {
+            self.maybe_kick_preview_thumb();
+        }
+
         let tabstrip_rect = self.tabstrip_rect();
         let tree_rect = self.tree_rect();
         let breadcrumb_rect = self.breadcrumb_rect();
@@ -3713,44 +4654,62 @@ impl App {
         let cursor_pair = (cursor.x, cursor.y);
         let window_handle = du.window.clone();
 
-        // Build the title list. Single-target shows verbs as-is;
-        // multi-target swaps to "Reveal All / Move N Items to Trash".
-        // Index → action: keep this in sync with the match below.
-        let mut titles: Vec<String> = Vec::new();
-        // 0
-        titles.push(if many {
-            "Open First".to_string()
-        } else {
-            "Open".to_string()
-        });
-        // 1
-        titles.push(if many {
-            format!("Reveal {} in Finder", resolved.len())
-        } else {
-            "Reveal in Finder".to_string()
-        });
-        // 2
-        titles.push(if many {
-            format!("Copy {} Paths", resolved.len())
-        } else {
-            "Copy Path".to_string()
-        });
-        // 3 (separator)
-        titles.push(String::new());
-        // 4 — Zoom into single non-empty container only
+        // Build the menu plan. Single-target shows verbs as-is;
+        // multi-target swaps to "Reveal N in Finder / Move N Items
+        // to Trash". Zoom-into is only offered for a single non-
+        // empty container.
+        let mut plan = feraille_shell_mac::MenuPlan::new();
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.open"),
+            if many { "Open First" } else { "Open" },
+        ));
+        // Treemap containers are always folders. Single-target
+        // gets "Open in New Tab" in the same primary-action slot
+        // Finder uses for folder menus.
         if !many && primary_is_container {
-            titles.push("Zoom into".to_string());
-        } else {
-            titles.push(String::new());
+            plan.push(feraille_shell_mac::MenuPlanItem::action(
+                CommandId("file.open_in_new_tab"),
+                "Open in New Tab",
+            ));
         }
-        // 5 (separator)
-        titles.push(String::new());
-        // 6
-        titles.push(if many {
-            format!("Move {} Items to Trash", resolved.len())
-        } else {
-            "Move to Trash".to_string()
-        });
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.reveal_in_finder"),
+            if many {
+                format!("Reveal {} in Finder", resolved.len())
+            } else {
+                "Reveal in Finder".to_string()
+            },
+        ));
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.copy_path"),
+            if many {
+                format!("Copy {} Paths", resolved.len())
+            } else {
+                "Copy Path".to_string()
+            },
+        ));
+        if !many {
+            plan.push(feraille_shell_mac::MenuPlanItem::action(
+                CommandId("file.quick_look"),
+                "Quick Look",
+            ));
+        }
+        if !many && primary_is_container {
+            plan.push(feraille_shell_mac::MenuPlanItem::separator());
+            plan.push(feraille_shell_mac::MenuPlanItem::action(
+                CommandId("disk_usage.zoom_into"),
+                "Zoom into",
+            ));
+        }
+        plan.push(feraille_shell_mac::MenuPlanItem::separator());
+        plan.push(feraille_shell_mac::MenuPlanItem::action(
+            CommandId("file.move_to_trash"),
+            if many {
+                format!("Move {} Items to Trash", resolved.len())
+            } else {
+                "Move to Trash".to_string()
+            },
+        ));
 
         // Promote the right-click target to selection (or grow the
         // existing selection to include it) before we show the menu,
@@ -3763,17 +4722,10 @@ impl App {
             du.window.request_redraw();
         }
 
-        // NSMenu titles are &str; build a Vec<&str> view of `titles`.
-        let title_refs: Vec<&str> = titles.iter().map(String::as_str).collect();
-        let choice =
-            feraille_shell_mac::show_context_menu(&window_handle, &title_refs, cursor_pair);
-
-        let Some(idx) = choice else {
-            return;
-        };
-        match idx {
-            0 => {
-                // "Open First" / "Open" — single primary path.
+        let pick = feraille_shell_mac::show_context_menu(&window_handle, plan, cursor_pair);
+        match pick.as_ref().map(|p| p.command.0) {
+            Some("file.open") => {
+                // Single primary path on multi-select too: "Open First".
                 if let Err(e) = feraille_fs_native::open_with_default(&primary_path) {
                     log_warn!(
                         60,
@@ -3782,12 +4734,15 @@ impl App {
                     );
                 }
             }
-            1 => {
+            Some("file.open_in_new_tab") => {
+                self.new_tab_at(primary_path.clone());
+            }
+            Some("file.reveal_in_finder") => {
                 for (_, path, _) in &resolved {
                     feraille_shell_mac::reveal_in_finder(path);
                 }
             }
-            2 => {
+            Some("file.copy_path") => {
                 let joined = resolved
                     .iter()
                     .map(|(_, p, _)| p.display().to_string())
@@ -3795,9 +4750,12 @@ impl App {
                     .join("\n");
                 feraille_shell_mac::copy_to_clipboard(&joined);
             }
-            4 => {
-                // Zoom into — single-target only; menu gating already
-                // ensured we got here only with one container.
+            Some("file.quick_look") => {
+                if let Err(e) = feraille_shell_mac::show_quick_look(&[primary_path.as_path()]) {
+                    log_warn!(60, "quick_look failed: {e}");
+                }
+            }
+            Some("disk_usage.zoom_into") => {
                 if !many && primary_is_container {
                     if let Some(du) = self.disk_usage_window.as_mut() {
                         du.drilldown(target_id);
@@ -3805,7 +4763,7 @@ impl App {
                     }
                 }
             }
-            6 => {
+            Some("file.move_to_trash") => {
                 for (id, path, _) in &resolved {
                     self.disk_usage_trash_node(*id, path);
                 }
@@ -4428,6 +5386,11 @@ impl ApplicationHandler<AppEvent> for App {
         // inset to reserve in the tabstrip.
         self.tabstrip.inset_left = feraille_shell_mac::apply_native_chrome(&window);
 
+        // Splice the Services-vending responder into the window's
+        // chain so the right-click "Services" submenu can auto-
+        // populate (Quick Actions ride this same path on macOS).
+        feraille_shell_mac::install_services_anchor(&window);
+
         // Replace the dock/About icon. Must run after winit has built
         // NSApplication (i.e. not from main()), hence here in resumed().
         let icon_result = feraille_shell_mac::set_app_icon_from_png_bytes(APP_ICON_PNG);
@@ -4791,6 +5754,41 @@ impl ApplicationHandler<AppEvent> for App {
                     self.request_redraw();
                 }
             }
+            AppEvent::PreviewThumbReady {
+                generation,
+                path,
+                mtime_unix,
+                rgba,
+                width,
+                height,
+            } => {
+                if generation != self.preview_generation {
+                    return;
+                }
+                // The cache key uses the requested size (longest edge
+                // we asked qlmanage for), not the actual delivered
+                // dimensions — they don't always match because
+                // qlmanage scales to fit the type's native ratio.
+                let key = (path.clone(), mtime_unix, Self::PREVIEW_THUMB_PX);
+                self.preview_pending.remove(&key);
+                self.preview_failed.remove(&key);
+                self.preview_cache.insert(key, Bitmap::new(width, height, rgba));
+                self.request_redraw();
+            }
+            AppEvent::PreviewThumbFailed {
+                generation,
+                path,
+                mtime_unix,
+                size_px,
+            } => {
+                if generation != self.preview_generation {
+                    return;
+                }
+                let key = (path, mtime_unix, size_px);
+                self.preview_pending.remove(&key);
+                self.preview_failed.insert(key);
+                self.request_redraw();
+            }
             AppEvent::DiskUsageBatch { generation, facts } => {
                 let Some(du) = self.disk_usage_window.as_mut() else {
                     return;
@@ -4826,6 +5824,34 @@ impl ApplicationHandler<AppEvent> for App {
                 if let Some(du) = self.disk_usage_window.as_ref() {
                     du.window.request_redraw();
                 }
+            }
+            AppEvent::FileOpComplete {
+                op,
+                task_id,
+                dest_dir,
+                result,
+            } => {
+                self.end_task(task_id);
+                match result {
+                    Ok(_) => {
+                        // Only refresh if the op landed in the
+                        // currently-shown directory; otherwise the
+                        // user has navigated and a refresh would
+                        // surprise them.
+                        if self.tabs[self.active].current_dir == dest_dir {
+                            self.refresh_active_tab();
+                        }
+                    }
+                    Err(e) => {
+                        let verb = match op {
+                            FileOpKind::Duplicate => "duplicate",
+                            FileOpKind::Compress => "compress",
+                        };
+                        log_warn!(60, "file op {verb} failed: {e}");
+                        self.toast_error(format!("Couldn't {verb}: {e}"));
+                    }
+                }
+                self.request_redraw();
             }
         }
     }
@@ -5001,6 +6027,24 @@ impl ApplicationHandler<AppEvent> for App {
                 ..
             } => {
                 let Some(p) = self.pointer_dips else { return };
+
+                // Keyboard-shortcuts modal — topmost when open. Click
+                // on the close button dismisses; click anywhere else
+                // (including outside the panel) is swallowed so the
+                // overlay behaves as a true modal.
+                if self.shortcuts_modal.is_some() {
+                    let (vp_w, vp_h) = self.viewport_size_dips();
+                    let (panel, _body) = self.shortcuts_panel_layout(
+                        &self.tokens,
+                        feraille_render::Size::new(vp_w, vp_h),
+                    );
+                    let close_rect = Self::shortcuts_close_rect_from_panel(panel);
+                    if close_rect.contains(p) {
+                        self.close_shortcuts_modal();
+                        self.request_redraw();
+                    }
+                    return;
+                }
 
                 // Task panel — when open, it's the topmost popover.
                 // Hits inside route to cancel or are swallowed; hits
@@ -5729,6 +6773,75 @@ fn load_default_font() -> Result<Vec<u8>> {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn load_default_font() -> Result<Vec<u8>> {
     anyhow::bail!("no default font path on this OS")
+}
+
+/// Recognized text-file extensions for the inline-source preview
+/// path. Limited to **unstyled source / log / config** — formats
+/// where seeing raw bytes is the right answer. Markdown / HTML /
+/// rich text fall through to qlmanage so the user gets the rendered
+/// Quick Look preview Finder shows for those types.
+fn is_text_extension(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "txt"
+            | "rs"
+            | "py"
+            | "js"
+            | "ts"
+            | "tsx"
+            | "jsx"
+            | "json"
+            | "yaml"
+            | "yml"
+            | "toml"
+            | "css"
+            | "log"
+            | "sh"
+            | "zsh"
+            | "bash"
+            | "c"
+            | "cpp"
+            | "h"
+            | "hpp"
+            | "go"
+            | "rb"
+            | "swift"
+            | "java"
+            | "kt"
+            | "ini"
+            | "conf"
+            | "cfg"
+            | "csv"
+            | "tsv"
+            | "sql"
+            | "xml"
+    )
+}
+
+/// Read up to ~32 KB of `path` as UTF-8 (lossy on errors). Returns
+/// `None` only if the open fails. Truncated to a fixed byte budget
+/// so a 5 GB log file doesn't OOM the cache.
+fn read_text_preview(path: &Path) -> Option<String> {
+    use std::io::Read;
+    const MAX_BYTES: usize = 32 * 1024;
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut buf = Vec::with_capacity(4096);
+    let mut chunk = [0u8; 4096];
+    loop {
+        let n = f.read(&mut chunk).ok()?;
+        if n == 0 {
+            break;
+        }
+        let take = n.min(MAX_BYTES.saturating_sub(buf.len()));
+        buf.extend_from_slice(&chunk[..take]);
+        if buf.len() >= MAX_BYTES {
+            break;
+        }
+    }
+    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 /// Resolve volume info for `path`, walking up to the volume root if

@@ -23,6 +23,8 @@ pub enum TaskKind {
     MagicPrefetch,
     QuarantinePrefetch,
     DiskUsage,
+    /// Right-click file operations: Duplicate, Compress.
+    FileOp,
 }
 
 #[derive(Clone, Copy, Debug)]

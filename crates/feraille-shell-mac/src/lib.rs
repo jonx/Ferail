@@ -13,10 +13,31 @@
 mod app_menu;
 
 #[cfg(target_os = "macos")]
+mod archive;
+
+#[cfg(target_os = "macos")]
 mod drag;
 
 #[cfg(target_os = "macos")]
+mod file_ops;
+
+#[cfg(target_os = "macos")]
 mod menu;
+
+#[cfg(target_os = "macos")]
+mod open_with;
+
+#[cfg(target_os = "macos")]
+mod quick_look;
+
+#[cfg(target_os = "macos")]
+pub(crate) mod services;
+
+#[cfg(target_os = "macos")]
+mod share;
+
+#[cfg(target_os = "macos")]
+mod tags;
 
 #[cfg(target_os = "macos")]
 mod theme_observer;
@@ -132,24 +153,129 @@ pub fn open_url(url: &str) {
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }
 
-/// Show a context menu at `cursor_dips` (relative to the window's content
-/// view) with the given titles. Returns the 0-based index of the selected
-/// item, or `None` on dismiss. Empty title strings render as separators.
+/// Plan-driven context menu types. Build a [`MenuPlan`] at the
+/// right-click site, hand it to [`show_context_menu`], and dispatch
+/// the returned [`MenuPick`].
+#[cfg(target_os = "macos")]
+pub use menu::{MenuPick, MenuPlan, MenuPlanItem};
+
+/// Non-macOS shadow of [`MenuPlan`]. Same shape so call-sites
+/// compile uniformly; [`show_context_menu`] is a no-op.
+#[cfg(not(target_os = "macos"))]
+#[derive(Clone, Debug, Default)]
+pub struct MenuPlan {
+    pub items: Vec<MenuPlanItem>,
+}
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Clone, Debug)]
+pub enum MenuPlanItem {
+    Action {
+        command: feraille_core::commands::CommandId,
+        title: String,
+        enabled: bool,
+        checked: bool,
+        payload: Option<feraille_core::commands::CommandPayload>,
+    },
+    Separator,
+    Submenu {
+        title: String,
+        items: Vec<MenuPlanItem>,
+    },
+    ServicesSubmenu {
+        title: String,
+    },
+}
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Clone, Debug)]
+pub struct MenuPick {
+    pub command: feraille_core::commands::CommandId,
+    pub payload: Option<feraille_core::commands::CommandPayload>,
+}
+
+#[cfg(not(target_os = "macos"))]
+impl MenuPlan {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn push(&mut self, item: MenuPlanItem) -> &mut Self {
+        self.items.push(item);
+        self
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+impl MenuPlanItem {
+    pub fn action(
+        command: feraille_core::commands::CommandId,
+        title: impl Into<String>,
+    ) -> Self {
+        MenuPlanItem::Action {
+            command,
+            title: title.into(),
+            enabled: true,
+            checked: false,
+            payload: None,
+        }
+    }
+    pub fn action_with_payload(
+        command: feraille_core::commands::CommandId,
+        title: impl Into<String>,
+        payload: feraille_core::commands::CommandPayload,
+    ) -> Self {
+        MenuPlanItem::Action {
+            command,
+            title: title.into(),
+            enabled: true,
+            checked: false,
+            payload: Some(payload),
+        }
+    }
+    pub fn checked(mut self, on: bool) -> Self {
+        if let MenuPlanItem::Action {
+            ref mut checked, ..
+        } = self
+        {
+            *checked = on;
+        }
+        self
+    }
+    pub fn separator() -> Self {
+        MenuPlanItem::Separator
+    }
+    pub fn submenu(title: impl Into<String>, items: Vec<MenuPlanItem>) -> Self {
+        MenuPlanItem::Submenu {
+            title: title.into(),
+            items,
+        }
+    }
+    pub fn services_submenu(title: impl Into<String>) -> Self {
+        MenuPlanItem::ServicesSubmenu {
+            title: title.into(),
+        }
+    }
+}
+
+/// Show a context menu at `cursor_dips` (relative to the window's
+/// content view) with the items in `plan`. Returns the picked
+/// item, or `None` on dismiss. Synchronous — blocks the calling
+/// thread while the menu is open.
 #[cfg(target_os = "macos")]
 pub fn show_context_menu(
     window: &winit::window::Window,
-    titles: &[&str],
+    plan: MenuPlan,
     cursor_dips: (f32, f32),
-) -> Option<usize> {
-    menu::show_context_menu(window, titles, cursor_dips)
+) -> Option<MenuPick> {
+    menu::show_context_menu(window, plan, cursor_dips)
 }
 
 #[cfg(not(target_os = "macos"))]
 pub fn show_context_menu(
     _window: &winit::window::Window,
-    _titles: &[&str],
+    _plan: MenuPlan,
     _cursor_dips: (f32, f32),
-) -> Option<usize> {
+) -> Option<MenuPick> {
     None
 }
 
@@ -194,6 +320,224 @@ pub fn reveal_in_finder(path: &std::path::Path) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn reveal_in_finder(_path: &std::path::Path) {}
+
+/// Duplicate `src` next to itself with Finder's " copy" / " copy 2"
+/// naming. Returns the destination path on success, or an error
+/// string on failure (collision exhausted, IO error). Synchronous —
+/// callers run this on a worker.
+#[cfg(target_os = "macos")]
+pub fn duplicate_path(src: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    file_ops::duplicate(src)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn duplicate_path(_src: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    Err("duplicate is macOS-only in this build".into())
+}
+
+/// Make a Finder-resolvable alias file pointing at `target`.
+/// Synchronous — callers run this on a worker.
+#[cfg(target_os = "macos")]
+pub fn make_alias(target: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    file_ops::make_alias(target)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn make_alias(_target: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    Err("make_alias is macOS-only".into())
+}
+
+/// Compress `targets` into a `.zip` next to the first target's
+/// parent (Finder behaviour: `Foo.zip` for one source, `Archive.zip`
+/// for several). Synchronous — callers run this on a worker.
+#[cfg(target_os = "macos")]
+pub fn compress_paths(
+    targets: &[&std::path::Path],
+) -> Result<std::path::PathBuf, String> {
+    archive::compress(targets)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn compress_paths(
+    _targets: &[&std::path::Path],
+) -> Result<std::path::PathBuf, String> {
+    Err("compress is macOS-only in this build".into())
+}
+
+/// Open Quick Look on `paths`. Stage B uses the standalone
+/// `qlmanage -p` window so we don't need responder-chain plumbing
+/// for `QLPreviewPanel`. Non-blocking: spawns and detaches.
+#[cfg(target_os = "macos")]
+pub fn show_quick_look(paths: &[&std::path::Path]) -> Result<(), String> {
+    quick_look::show(paths)
+}
+
+/// Generate a Quick Look thumbnail for `path` at `size_px` (longest
+/// edge). Returns RGBA8888 bytes plus the actual image dimensions.
+/// Synchronous — call from a worker thread. macOS-only; non-macOS
+/// returns `None`.
+#[cfg(target_os = "macos")]
+pub fn fetch_quick_look_thumbnail(
+    path: &std::path::Path,
+    size_px: u32,
+) -> Option<(Vec<u8>, u32, u32)> {
+    quick_look::fetch_thumbnail(path, size_px)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn fetch_quick_look_thumbnail(
+    _path: &std::path::Path,
+    _size_px: u32,
+) -> Option<(Vec<u8>, u32, u32)> {
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_quick_look(_paths: &[&std::path::Path]) -> Result<(), String> {
+    Err("quick_look is macOS-only".into())
+}
+
+/// Read the canonical Finder-colour tags currently set on `path`.
+/// User-defined tag names are dropped on the floor here; callers
+/// that need the raw strings should use `read_tag_names` instead.
+#[cfg(target_os = "macos")]
+pub fn read_canonical_tags(
+    path: &std::path::Path,
+) -> Vec<feraille_core::commands::TagColor> {
+    tags::read_canonical_tags(path)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn read_canonical_tags(
+    _path: &std::path::Path,
+) -> Vec<feraille_core::commands::TagColor> {
+    Vec::new()
+}
+
+/// Toggle a single Finder colour tag on `path`. Other tags
+/// (including user-defined ones) are preserved. Synchronous —
+/// callers run this on a worker if the selection is large.
+#[cfg(target_os = "macos")]
+pub fn toggle_tag(
+    path: &std::path::Path,
+    color: feraille_core::commands::TagColor,
+) -> Result<(), String> {
+    tags::toggle_tag(path, color)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn toggle_tag(
+    _path: &std::path::Path,
+    _color: feraille_core::commands::TagColor,
+) -> Result<(), String> {
+    Err("toggle_tag is macOS-only".into())
+}
+
+/// Strip every tag (including user-defined ones) from `path`.
+#[cfg(target_os = "macos")]
+pub fn clear_tags(path: &std::path::Path) -> Result<(), String> {
+    tags::write_tags(path, &[])
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn clear_tags(_path: &std::path::Path) -> Result<(), String> {
+    Err("clear_tags is macOS-only".into())
+}
+
+/// One app the system would offer in the Open With submenu for a
+/// given file. `is_default` flags the system's preferred handler;
+/// the right-click builder pins it to the top.
+#[derive(Clone, Debug)]
+pub struct OpenWithCandidate {
+    pub name: String,
+    pub path: std::path::PathBuf,
+    pub is_default: bool,
+}
+
+#[cfg(target_os = "macos")]
+impl From<open_with::OpenWithCandidate> for OpenWithCandidate {
+    fn from(c: open_with::OpenWithCandidate) -> Self {
+        OpenWithCandidate {
+            name: c.name,
+            path: c.path,
+            is_default: c.is_default,
+        }
+    }
+}
+
+/// Enumerate the apps Launch Services would offer to open `path`.
+/// Synchronous (~10–50 ms typical). Empty on failure.
+#[cfg(target_os = "macos")]
+pub fn open_with_candidates(path: &std::path::Path) -> Vec<OpenWithCandidate> {
+    open_with::candidates_for(path)
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn open_with_candidates(_path: &std::path::Path) -> Vec<OpenWithCandidate> {
+    Vec::new()
+}
+
+/// Open `target` with the app at `app_path`. Shells out to
+/// `/usr/bin/open -a` so we don't have to wire up the
+/// `NSWorkspace.openURLs:` completion-handler contract.
+pub fn open_with_app(
+    target: &std::path::Path,
+    app_path: &std::path::Path,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        open_with::open_with(target, app_path)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (target, app_path);
+        Err("open_with_app is macOS-only".into())
+    }
+}
+
+/// Splice a Services-vending responder into the window's chain
+/// and publish the empty `NSApp.servicesMenu` AppKit will populate
+/// on demand. Idempotent. Call once after the main window exists,
+/// on the main thread. No-op on non-macOS.
+#[cfg(target_os = "macos")]
+pub fn install_services_anchor(window: &winit::window::Window) {
+    services::install(window);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn install_services_anchor(_window: &winit::window::Window) {}
+
+/// Push the right-clicked selection so the Services anchor has
+/// something to vend when AppKit asks. Call from the right-click
+/// handler just before [`show_context_menu`]. No-op on non-macOS.
+#[cfg(target_os = "macos")]
+pub fn set_services_selection(paths: Vec<std::path::PathBuf>) {
+    services::set_current_selection(paths);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_services_selection(_paths: Vec<std::path::PathBuf>) {}
+
+/// Show the system Share picker (`NSSharingServicePicker`) for
+/// `paths`, anchored to the given window's content view.
+#[cfg(target_os = "macos")]
+pub fn show_share_picker(
+    window: &winit::window::Window,
+    paths: &[&std::path::Path],
+) -> Result<(), String> {
+    share::show_picker(window, paths)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_share_picker(
+    _window: &winit::window::Window,
+    _paths: &[&std::path::Path],
+) -> Result<(), String> {
+    Err("share is macOS-only".into())
+}
 
 /// Replace the running process's dock/app icon with the image decoded
 /// from `png_bytes`. Useful when the binary is launched outside an .app

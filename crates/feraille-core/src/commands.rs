@@ -21,6 +21,82 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CommandId(pub &'static str);
 
+/// Optional payload attached to a command when it fires from a
+/// menu item that needs to disambiguate (e.g. which tag colour
+/// the user picked). Plain `CommandId` actions ride with `None`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommandPayload {
+    /// `file.set_tag`: which Finder tag the user picked. The
+    /// strings are the canonical Finder tag names — macOS resolves
+    /// them via Launch Services so the colour swatch shown in
+    /// Finder is the system's, not ours. `None` means "clear all".
+    Tag(Option<TagColor>),
+    /// `file.open_with_app`: filesystem path to the `.app` bundle
+    /// the user picked from the Open With submenu. Stored as a
+    /// string to keep this enum platform-neutral; the macOS
+    /// dispatcher feeds it back into `NSWorkspace.open(at:with:)`.
+    OpenWithApp { app_path: String },
+}
+
+/// The seven Finder colour tags. Display order matches Finder's
+/// own row (red → orange → yellow → green → blue → purple → grey).
+/// Names are the system-recognised English tag names; macOS maps
+/// them to localised display strings + colour swatches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TagColor {
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Blue,
+    Purple,
+    Gray,
+}
+
+impl TagColor {
+    /// All seven, in Finder's display order.
+    pub const ALL: [TagColor; 7] = [
+        TagColor::Red,
+        TagColor::Orange,
+        TagColor::Yellow,
+        TagColor::Green,
+        TagColor::Blue,
+        TagColor::Purple,
+        TagColor::Gray,
+    ];
+
+    /// English tag name as `URLTagNamesKey` understands it. Pass
+    /// directly to / from `NSURL.setResourceValue:forKey:`.
+    pub fn name(self) -> &'static str {
+        match self {
+            TagColor::Red => "Red",
+            TagColor::Orange => "Orange",
+            TagColor::Yellow => "Yellow",
+            TagColor::Green => "Green",
+            TagColor::Blue => "Blue",
+            TagColor::Purple => "Purple",
+            TagColor::Gray => "Gray",
+        }
+    }
+
+    /// `Some(_)` only for the seven canonical names; user-defined
+    /// tags collapse to `None` (the menu still shows them as
+    /// "set" via the checkmark on the matching colour, though only
+    /// when the name happens to match).
+    pub fn from_name(s: &str) -> Option<TagColor> {
+        match s {
+            "Red" => Some(TagColor::Red),
+            "Orange" => Some(TagColor::Orange),
+            "Yellow" => Some(TagColor::Yellow),
+            "Green" => Some(TagColor::Green),
+            "Blue" => Some(TagColor::Blue),
+            "Purple" => Some(TagColor::Purple),
+            "Gray" | "Grey" => Some(TagColor::Gray),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Category {
     App,
@@ -31,6 +107,10 @@ pub enum Category {
     Selection,
     Window,
     Help,
+    /// Context-menu-only actions (right-click on a node, background of a
+    /// pane, or treemap rect). Not surfaced in the menu bar — the bar
+    /// builder filters by category and never asks for this one.
+    Context,
 }
 
 /// Neutral keyboard shortcut DSL. The shell layer maps `primary` to
@@ -412,6 +492,108 @@ const CATALOGUE: &[CommandSpec] = &[
         title: "Keyboard Shortcuts",
         category: Category::Help,
         shortcuts: &[Shortcut::primary("/")],
+    },
+    // Context-menu-only. Not in the menu bar; reachable via right-click
+    // dispatch. `selection.activate` is the keyboard equivalent of
+    // `file.open` — the two stay separate because the right-click and
+    // keyboard paths capture target differently.
+    CommandSpec {
+        id: CommandId("file.open"),
+        title: "Open",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("file.pin_to_favorites"),
+        title: "Pin to Favorites",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("file.remove_from_favorites"),
+        title: "Remove from Favorites",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("disk_usage.zoom_into"),
+        title: "Zoom into",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    // Stage B — easy actions reachable from the right-click menu.
+    // No keyboard shortcuts yet: Finder's bindings (Space, Cmd+D,
+    // Cmd+L) collide with existing Feraille bindings or with text-
+    // input contexts. A focus-aware dispatcher can layer them on
+    // later without changing the menu surface.
+    CommandSpec {
+        id: CommandId("file.quick_look"),
+        title: "Quick Look",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("file.rename"),
+        title: "Rename",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("file.duplicate"),
+        title: "Duplicate",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("file.make_alias"),
+        title: "Make Alias",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("file.compress"),
+        title: "Compress",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    // Stage C — Finder colour tags. `file.set_tag` fires with a
+    // [`CommandPayload::Tag(Some(color))`] for the seven canonical
+    // colours; `file.clear_tags` strips every tag in one shot.
+    CommandSpec {
+        id: CommandId("file.set_tag"),
+        title: "Set Tag",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("file.clear_tags"),
+        title: "Clear Tags",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    // Stage D — Open With submenu. Each pick fires `file.open_with_app`
+    // with a [`CommandPayload::OpenWithApp`] carrying the chosen
+    // app's bundle path.
+    CommandSpec {
+        id: CommandId("file.open_with_app"),
+        title: "Open With",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("file.share"),
+        title: "Share",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    // Folder-only context action: open the right-clicked directory
+    // in a new tab in the same window. Mirrors Finder's primary
+    // folder-menu action.
+    CommandSpec {
+        id: CommandId("file.open_in_new_tab"),
+        title: "Open in New Tab",
+        category: Category::Context,
+        shortcuts: &[],
     },
 ];
 

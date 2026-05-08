@@ -36,7 +36,7 @@ Status labels:
 | Copy path | `todo.md` | Done | Uses macOS clipboard helper. |
 | Reveal in file manager | `WARMUP_RIGHT_CLICK.md` | Done | Reveal in Finder exists. |
 | Copy/cut/paste files | `todo.md` | Todo | Needs NSPasteboard and file-operation worker. |
-| Context menu | `WARMUP_RIGHT_CLICK.md` | Partial | Hardcoded Mac menu slice. Native NSMenu/services parity is Todo. |
+| Context menu | `WARMUP_RIGHT_CLICK.md` | Done | Plan-driven NSMenu with full Finder-equivalent action set across list / tree / treemap / background; multi-selection aware; Open With via Launch Services; Tags via URLTagNamesKey; Share via NSSharingServicePicker. Quick Actions / Services submenus deferred (need responder-chain wiring). |
 
 ## Shell And Platform Integration
 

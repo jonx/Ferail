@@ -249,7 +249,11 @@ Rule reinforced: no filesystem reads on the UI hot path.
   blocks navigation, but `NSWorkspace.iconForFile:` itself still runs on the
   UI thread because the API is main-thread only.
 - Preview pane is metadata-only.
-- Context menu is a hardcoded slice, not final NSMenu/services behavior.
+- Context menu now plan-driven NSMenu with full Finder-equivalent action set
+  across list / tree / treemap / background (iter-7+). Open With via Launch
+  Services, Tags via `URLTagNamesKey`, Share via `NSSharingServicePicker`,
+  multi-selection aware. Quick Actions / Services submenus still need
+  responder-chain wiring; tracked in [docs/features/CONTEXT_MENU.md](docs/features/CONTEXT_MENU.md).
 - NodeStore identity model is not fully ported.
 - Status progress/task aggregation now ships a tiny per-task popover
   (iter-5.15). ETAs, byte counts, and copy/move integration still pending.
