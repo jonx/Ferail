@@ -191,36 +191,66 @@ is_quarantined}`; rendering them lands in Stage 6.
 ## Tasks + status bar + toasts (Stage 5)
 
 ### TaskRegistry
-Status: Not started
-Old location: `crates/feraille-app/src/tasks.rs` (~200 lines)
-New location: `crates/feraille-gpui/src/tasks.rs` (Stage 5)
-Notes: Pure logic, verbatim port. Same Kind enum (Enumeration,
-IconPrefetch, MagicPrefetch, QuarantinePrefetch, DiskUsage, FileOp).
+Status: Ported ✅ (Harvest Stage 5.a — verbatim from old app)
+Old location: `crates/feraille-app/src/tasks.rs`
+New location: `crates/feraille-gpui/src/tasks.rs`
+Notes: Pure logic, lifted as-is with 8 tests carried over (all
+pass). Same Kind enum (Enumeration, IconPrefetch, MagicPrefetch,
+QuarantinePrefetch, DiskUsage, FileOp). `Shell` owns the registry
+as `Rc<RefCell<TaskRegistry>>` so the prefetch worker can register
+/ retire its job from the foreground executor without taking a
+mutable Shell borrow.
+Wiring landed: `prefetch::start` calls `begin` on launch + `end`
+when the worker's batch is applied (Stage 5.a). Future call sites
+(Disk Usage scan, file-op copy/move) follow the same pattern.
 
 ### Status bar
-Status: Not started
+Status: Ported ✅ (Harvest Stage 5.b)
 Old location: `feraille-app/src/main.rs` status-bar paint arm.
-New location: `crates/feraille-gpui/src/status_bar.rs` (Stage 5)
-Notes: New gpui-component build. Shows active task count + shared
-progress strip. Hover popover ties into the task panel.
+New location: `crates/feraille-gpui/src/status_bar.rs::render`
+called from `Shell::render`'s right-column footer slot.
+Notes:
+- Left: "<N> item(s)" entry count for the active tab.
+- Middle: task label — `task.label` when exactly one is in flight,
+  "N tasks running" when more, hidden otherwise.
+- Right: a 120-DIP thin progress strip. Indeterminate mode shows
+  a 30%-width stripe (animation deferred); determinate mode shows
+  the primary task's fraction.
+- `--simulate-progress <p>` CLI flag (negative = indeterminate)
+  forces the strip visible for screenshots without spinning up
+  real work; landed alongside.
 
 ### Task panel (popover)
-Status: Not started
-Old location: `crates/feraille-app/src/task_panel.rs` (~100 lines,
-soft-renderer coupled).
-New location: `crates/feraille-gpui/src/task_panel.rs` (Stage 5,
-rewrite from scratch using gpui-component Popover).
+Status: Not started (Stage 5 follow-on)
+Old location: `crates/feraille-app/src/task_panel.rs` (soft-renderer
+coupled).
+New location: `crates/feraille-gpui/src/task_panel.rs` — rewrite
+using gpui-component Popover. Trigger from a click on the status
+bar's task-label region.
 Notes: Old impl too tied to the soft renderer to copy. List of
-active tasks with cancel buttons.
+active tasks with cancel buttons. `--simulate-task-panel` is
+already implemented as "inject 2 fake tasks into the registry";
+the popover surface itself is what's pending.
 
 ### Toast notifications
-Status: Not started
+Status: Ported ✅ (Harvest Stage 5.c — uses gpui-component's
+Notification primitive)
 Old location: `feraille-controls::ToastStack` + drive points in
 `feraille-app/src/main.rs`.
-New location: gpui-component primitive (probably Notification) +
-shell-side trigger points (Stage 5).
-Notes: Time-based dismiss. `--simulate-toast <text>` CLI flag for
-visual verification.
+New location: `Window::push_notification` (via
+`gpui_component::WindowExt`) called from the shell-side trigger
+points + the screenshot CLI flag.
+Notes:
+- `--simulate-toast <text>` pushes an error-styled notification
+  with `autohide(false)` for predictable capture.
+- `Root::render_notification_layer` is added to the Shell's render
+  alongside `render_dialog_layer` so the notification list overlay
+  draws on top of the shell content.
+- Headless capture caveat: gpui's `render_to_image` doesn't fully
+  composite absolute-positioned overlays (dialogs have the same
+  partial-render issue). The toast surfaces correctly in the live
+  window — the screenshot path is "best effort" for overlay
+  layers and shouldn't gate the stage.
 
 ---
 

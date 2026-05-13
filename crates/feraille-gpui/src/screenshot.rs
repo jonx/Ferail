@@ -22,7 +22,9 @@ use std::path::PathBuf;
 use anyhow::{Context as _, Result};
 use feraille_fs_native::home_dir;
 use gpui::*;
-use gpui_component::{Theme, ThemeMode};
+use gpui_component::{
+    notification::Notification, Theme, ThemeMode, WindowExt as _,
+};
 use gpui_component_assets::Assets;
 
 use crate::settings::{category_from_arg, SettingsView};
@@ -522,6 +524,31 @@ impl ShellArgs {
             });
         }
 
+        // Stage 5.b: status-bar progress / task panel simulation.
+        if let Some(p) = self.simulate_progress {
+            let _ = shell.update(cx, |s, cx| {
+                s.simulated_progress = Some(p);
+                cx.notify();
+            });
+        }
+        if self.simulate_task_panel {
+            let _ = shell.update(cx, |s, cx| {
+                let mut reg = s.tasks.borrow_mut();
+                let _ = reg.begin(
+                    crate::tasks::TaskKind::Enumeration,
+                    "Indexing 12,318 entries\u{2026}",
+                    true,
+                );
+                let _ = reg.begin(
+                    crate::tasks::TaskKind::DiskUsage,
+                    "Computing disk usage for ~/Source\u{2026}",
+                    true,
+                );
+                drop(reg);
+                cx.notify();
+            });
+        }
+
         // ---- Stage-deferred flags. Log + skip. -------------------
         if self.properties {
             crate::log_warn!(90, "--properties flag: Get Info pane lands in Stage 8");
@@ -532,14 +559,25 @@ impl ShellArgs {
         if self.ui_scale.is_some() {
             crate::log_warn!(90, "--ui-scale flag: UI zoom lands in Stage 9");
         }
-        if self.simulate_toast.is_some() {
-            crate::log_warn!(90, "--simulate-toast flag: toasts land in Stage 5");
-        }
-        if self.simulate_progress.is_some() {
-            crate::log_warn!(90, "--simulate-progress flag: progress strip lands in Stage 5");
-        }
-        if self.simulate_task_panel {
-            crate::log_warn!(90, "--simulate-task-panel flag: task panel lands in Stage 5");
+        // Stage 5.c: push a toast notification via gpui-component's
+        // built-in Notification primitive. The Root view renders the
+        // notification list overlay automatically.
+        // `autohide(false)` because the screenshot harness waits up
+        // to ~1.2 s for prefetch to settle; the default 5 s autohide
+        // is fine for interactive use but the test path wants the
+        // toast pinned visible while we capture.
+        //
+        // Caveat: gpui's `render_to_image` doesn't fully composite
+        // absolute-positioned overlay layers (dialogs + notification
+        // list both bleed through partial state in headless capture).
+        // The toast still surfaces correctly in the live window.
+        if let Some(text) = self.simulate_toast.clone() {
+            let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
+                window.push_notification(
+                    Notification::error(text).autohide(false),
+                    cx,
+                );
+            });
         }
         if self.shortcuts_help.is_some() {
             crate::log_warn!(90, "--shortcuts-help flag: help overlay lands in Stage 9");

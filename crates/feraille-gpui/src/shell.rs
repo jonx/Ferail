@@ -27,6 +27,7 @@ use crate::app_state::{self, AppState};
 use crate::file_list::FileListDelegate;
 use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
 use crate::icons::IconCache;
+use crate::tasks::TaskRegistry;
 use crate::tree::{TreeChild, TreeRowSpec, TreeSection};
 
 actions!(
@@ -154,6 +155,16 @@ pub struct Shell {
     /// tree (Stage 9.c) share the same fetched bytes — one fetch
     /// per kind / path across the whole UI.
     pub icons: Rc<RefCell<IconCache>>,
+    /// Active background tasks (Stage 5.a). Shared via
+    /// `Rc<RefCell<_>>` so the prefetch worker can register +
+    /// retire its job from the foreground executor without taking
+    /// a mutable Shell borrow.
+    pub tasks: Rc<RefCell<TaskRegistry>>,
+    /// CLI-injected status-bar progress override
+    /// (`--simulate-progress`). `Some(_)` keeps the strip visible
+    /// at that fraction (negative = indeterminate) regardless of
+    /// `tasks` state — useful for screenshots.
+    pub simulated_progress: Option<f32>,
     /// Live filter text. Shared across tabs.
     pub filter_text: String,
     /// `gpui-component` Input state for the filter field in the
@@ -369,6 +380,8 @@ impl Shell {
             context_row: None,
             metadata_db,
             icons,
+            tasks: Rc::new(RefCell::new(TaskRegistry::new())),
+            simulated_progress: None,
             filter_text: String::new(),
             filter_input,
             expanded: HashSet::new(),
@@ -709,12 +722,15 @@ impl Shell {
         // newly-loaded entries. Cheap (snapshot is collected
         // synchronously; the actual I/O runs on the background
         // executor); per-row mutations land on the foreground
-        // executor when the worker completes.
+        // executor when the worker completes. Stage 5.a: the worker
+        // also registers / ends a Task in `tasks` so the status bar
+        // surfaces the work.
         let table = self.table.clone();
         let fs = self.fs.clone();
         let db = self.metadata_db.clone();
+        let tasks = self.tasks.clone();
         let weak = cx.weak_entity();
-        crate::prefetch::start(table, fs, db, weak, cx);
+        crate::prefetch::start(table, fs, db, tasks, weak, cx);
         cx.notify();
     }
 
@@ -1392,8 +1408,15 @@ impl Render for Shell {
 
         let tabstrip = self.tabstrip(cx);
         let toolbar = self.toolbar(cx);
+        let entry_count = self.table.read(cx).delegate().entries.len();
+        let status_bar = crate::status_bar::render(
+            entry_count,
+            &self.tasks,
+            self.simulated_progress,
+            cx,
+        );
 
-        h_flex()
+        div()
             .key_context(SHELL_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_navigate_parent))
@@ -1416,34 +1439,46 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_prev_tab))
             .on_action(cx.listener(Self::on_quick_look))
             .on_action(cx.listener(Self::on_go_home))
+            .relative()
             .size_full()
             .bg(cx.theme().background)
-            .child(sidebar)
             .child(
-                v_flex()
-                    .h_full()
-                    .flex_1()
-                    .min_w_0()
-                    .child(tabstrip)
-                    .child(toolbar)
-                    .child(breadcrumb)
+                h_flex()
+                    .size_full()
+                    .child(sidebar)
                     .child(
-                        h_flex()
+                        v_flex()
+                            .h_full()
                             .flex_1()
-                            .min_h_0()
-                            .items_stretch()
+                            .min_w_0()
+                            .child(tabstrip)
+                            .child(toolbar)
+                            .child(breadcrumb)
                             .child(
-                                div().flex_1().min_w_0().h_full().child(
-                                    self.file_pane_body(cx),
-                                ),
+                                h_flex()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .items_stretch()
+                                    .child(
+                                        div().flex_1().min_w_0().h_full().child(
+                                            self.file_pane_body(cx),
+                                        ),
+                                    )
+                                    .child(self.preview(cx)),
                             )
-                            .child(self.preview(cx)),
+                            .child(status_bar),
                     ),
             )
             // Dialog overlay layer — rendered last so dialogs draw
             // above the shell content. Needed for the New Folder /
             // Rename modals (5.5.c).
             .children(Root::render_dialog_layer(window, cx))
+            // Notification overlay (Stage 5.c) — toasts pushed via
+            // `Window::push_notification` show up in the corner the
+            // active theme specifies. The outer `div().relative()`
+            // gives the absolute-positioned notification list a
+            // positioned ancestor to anchor against.
+            .children(Root::render_notification_layer(window, cx))
     }
 }
 

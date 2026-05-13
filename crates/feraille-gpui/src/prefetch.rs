@@ -15,7 +15,9 @@
 //! The Shell entity's weak handle is passed in so a closed window
 //! causes the update call to fail gracefully — no leak, no crash.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use feraille_core::FileEntry;
@@ -26,6 +28,7 @@ use gpui_component::table::TableState;
 
 use crate::file_list::FileListDelegate;
 use crate::shell::Shell;
+use crate::tasks::{TaskKind, TaskRegistry};
 
 /// One row's worth of prefetched data, returned by the worker.
 /// The index points into the snapshot the worker started with;
@@ -65,6 +68,7 @@ pub fn start(
     table: Entity<TableState<FileListDelegate>>,
     fs: Arc<NativeFs>,
     db: Option<Arc<Mutex<MetadataDb>>>,
+    tasks: Rc<RefCell<TaskRegistry>>,
     shell_weak: gpui::WeakEntity<Shell>,
     cx: &mut gpui::Context<Shell>,
 ) {
@@ -95,7 +99,19 @@ pub fn start(
     let seed_count = seeds.len();
     crate::log_info!(90, "prefetch: starting for {seed_count} rows");
 
+    // Stage 5.a: register a Task in the shared registry so the
+    // status bar reflects the in-flight work. We fuse magic +
+    // quarantine into one MagicPrefetch entry (the old app
+    // registered two — separate workers); the label still mentions
+    // both so the panel is honest about what's happening.
+    let task_id = tasks.borrow_mut().begin(
+        TaskKind::MagicPrefetch,
+        format!("Indexing {seed_count} entries\u{2026}"),
+        false,
+    );
+
     let table_for_apply = table.clone();
+    let tasks_for_end = tasks.clone();
     cx.spawn(async move |_this, cx| {
         let batch: Vec<PrefetchRow> = cx
             .background_executor()
@@ -103,15 +119,15 @@ pub fn start(
             .await;
         let n = batch.len();
         crate::log_info!(90, "prefetch: worker returned {n} rows");
-        if batch.is_empty() {
-            return;
-        }
         if let Some(shell) = shell_weak.upgrade() {
             shell.update(cx, |_, cx| {
-                table_for_apply.update(cx, |state, cx| {
-                    apply_batch(state.delegate_mut(), batch);
-                    state.refresh(cx);
-                });
+                if !batch.is_empty() {
+                    table_for_apply.update(cx, |state, cx| {
+                        apply_batch(state.delegate_mut(), batch);
+                        state.refresh(cx);
+                    });
+                }
+                tasks_for_end.borrow_mut().end(task_id);
                 // Force the Shell to re-render. `state.refresh` on
                 // the inner TableState alone doesn't propagate up
                 // to the outer view tree in all cases.
@@ -119,6 +135,10 @@ pub fn start(
             });
             crate::log_info!(90, "prefetch: apply ran");
         } else {
+            // Shell already gone: still drop the task so its row
+            // doesn't leak in the registry singleton (though in
+            // practice the whole Shell is going away).
+            tasks_for_end.borrow_mut().end(task_id);
             crate::log_warn!(90, "prefetch: shell entity gone before apply");
         }
     })

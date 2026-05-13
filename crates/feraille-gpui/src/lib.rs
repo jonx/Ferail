@@ -20,4 +20,6 @@ pub mod prefetch;
 pub mod screenshot;
 pub mod settings;
 pub mod shell;
+pub mod status_bar;
+pub mod tasks;
 pub mod tree;
