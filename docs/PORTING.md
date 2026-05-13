@@ -150,24 +150,28 @@ Notes:
 
 ## Background prefetch (Stage 4)
 
-### Magic byte sniffing prefetch
-Status: Not started
-Old location: `feraille-app/src/main.rs::start_magic_prefetch` (~line 595)
-+ DB write-through via `feraille-meta::MagicBatch`.
-New location: `crates/feraille-gpui/src/shell.rs` (Stage 4)
-Notes: `feraille_fs_native::detect_magic` is the sync function;
-wrap in `cx.spawn` per the file_watcher pattern in 5.b. Hydrate
-on navigate via `feraille_meta`. Adds `display_magic` column to
-the file Table.
-
-### Quarantine prefetch + display
-Status: Not started
-Old location: `feraille-app/src/main.rs::start_quarantine_prefetch`
-+ `feraille_fs_native::fetch_quarantine_info` + DB row write.
-New location: `crates/feraille-gpui/src/shell.rs` (Stage 4)
-Notes: Sets `entry.is_quarantined` + populates `QuarantineDetails`.
-Surface as a badge dot in the icon column (Stage 6) + in the Get
-Info pane (Stage 8).
+### Magic byte sniffing + quarantine prefetch (data pipeline)
+Status: Ported ✅ (Harvest Stage 4 — data pipeline only; UI
+surfacing follows in Stage 6.)
+Old location: `feraille-app/src/main.rs::start_magic_prefetch` +
+`start_quarantine_prefetch` (separate workers in the old app).
+New location: `crates/feraille-gpui/src/prefetch.rs::start`.
+Notes: Old app had two parallel pipelines (magic, quarantine); the
+new app fuses them into one cx.spawn pass per `load_path` —
+single iteration, single DB lock acquisition per row, single
+batch back to the foreground executor. Pattern:
+  1. Snapshot rows on the foreground executor into `Vec<PrefetchSeed>`
+     (path + mtime + size + already-cached flags).
+  2. `cx.background_executor().spawn` runs the I/O off the main
+     thread: cache lookup via `feraille_meta::MetadataDb::get_file`,
+     fall back to `feraille_fs_native::detect_magic` +
+     `feraille_fs_native::fetch_quarantine_info` on miss, write-
+     through to DB via `upsert_file`.
+  3. `shell_weak.upgrade().update(cx, …)` applies the batch on
+     the foreground executor. Bounds-checked: a re-enumerate before
+     the batch arrives just drops the stale indices.
+The fields are now populated in `FileEntry::{display_magic,
+is_quarantined}`; rendering them lands in Stage 6.
 
 ---
 

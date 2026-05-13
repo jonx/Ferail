@@ -660,6 +660,13 @@ impl Shell {
             let _ = w.watch(&path);
         }
         self.save_state();
+        // Stage 4: kick off magic + quarantine prefetch for the
+        // newly-loaded entries. Cheap (snapshot is collected
+        // synchronously; the actual I/O runs on the background
+        // executor); per-row mutations land on the foreground
+        // executor when the worker completes.
+        let shell_entity = cx.entity();
+        crate::prefetch::start(shell_entity, cx);
         cx.notify();
     }
 

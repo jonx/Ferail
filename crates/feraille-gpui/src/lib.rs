@@ -16,6 +16,7 @@ pub mod fs_watcher;
 pub mod icons;
 pub mod keymap;
 pub mod obs;
+pub mod prefetch;
 pub mod screenshot;
 pub mod settings;
 pub mod shell;
