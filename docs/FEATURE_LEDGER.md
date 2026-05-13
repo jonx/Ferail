@@ -54,10 +54,10 @@ Status labels:
 
 | Feature | Ferail source | Feraille status | Notes |
 |---|---|---:|---|
-| Magic sniffing | `MAGIC_SNIFFING.md` | Partial | Small table ported; async worker now in app. Full DB and persistent cache Todo. |
+| Magic sniffing | `MAGIC_SNIFFING.md` | Partial | Small table ported; async worker in app; iter-8.2 persists results via `feraille-meta` (write-through on `MagicBatch`, hydrate during `start_magic_prefetch`). iter-8.3 also persists the macOS `com.apple.quarantine` flag + agent + ISO + where-from URLs in the same `files` row. Full content-sniffed magic database still Todo. |
 | Preview pane | `todo.md`, `MAGIC_SNIFFING.md` | Partial | Metadata/info pane exists. Text/image/PDF/Quick Look previews Todo. |
-| Ant Trail heat | `ANT_TRAIL.md` | Partial | In-memory heat stripe exists. Persistence/prediction/prewarming Todo. |
-| Metadata database | `todo.md`, `MAGIC_SNIFFING.md` | Todo | SQLite for ant trail, magic, recent folders, thumbnails. |
+| Ant Trail heat | `ANT_TRAIL.md` | Partial | In-memory heat stripe; iter-8.1 added persistence via `feraille-meta` (write-through on navigate, hydrate on open). Heat survives restarts. Prediction/prewarming and decay still Todo. |
+| Metadata database | `todo.md`, `MAGIC_SNIFFING.md`, [features/METADATA_DB.md](features/METADATA_DB.md) | Done | iter-8: `feraille-meta` crate (rusqlite + bundled SQLite). Hydrate-on-open + write-through for Ant Trail (8.1), magic cache (8.2), quarantine cache (8.3); window inner-size + sidebar/preview splitters + tab list persist on close (8.4); DU window geometry migrated from `du_window.txt` into `layout_state.du_*` (8.5). Schema is move-keyed by absolute path — `(dev, ino)` migration deferred to NodeStore work. |
 | Disk usage / treemap | `DISK_USAGE.md`, [features/DISK_USAGE.md](features/DISK_USAGE.md) | Done | iter-6: dedicated `Cmd+Shift+D` window, async cancellable scanner, squarified treemap, volume header, Top-N, right-click Reveal/Trash/Open/Copy Path/Zoom. iter-7 polish: bundle rolled-up size, allocated/apparent toggle, age-heatmap coloring, category-filter legend chips, Top-N scroll/sort/parent subtitle, iCloud cloud-glyph overlay, multi-selection right-click, auto-rescan on navigation, geometry persistence, refresh button hover/press, in-window toast surface, menu checkmarks, Cmd+R refresh. APFS-clone-aware sizing still deferred (sketch in feature doc). |
 | Duplicate finder | `SPECS.md`, `todo.md` | Todo | Size/partial/full hash pipeline, all off-thread. |
 | Mouse prediction | `MOUSE_PREDICTOR.md` | Todo | Future prewarm scheduler; must be pure in pointer path. |

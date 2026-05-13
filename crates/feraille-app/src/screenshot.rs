@@ -72,6 +72,10 @@ pub struct Args {
     pub disk_usage_depth: u32,
     /// Coloring mode for `--disk-usage`. `category` (default) or `depth`.
     pub disk_usage_coloring: feraille_controls::TreemapColoring,
+    /// Open the in-app Settings modal and screenshot it. The optional
+    /// String selects which page is active — accepts `appearance` /
+    /// `files` / `layout` / `about` (default `appearance`).
+    pub settings: Option<String>,
 }
 
 impl Default for Args {
@@ -109,6 +113,7 @@ impl Default for Args {
             disk_usage: None,
             disk_usage_depth: 4,
             disk_usage_coloring: feraille_controls::TreemapColoring::Category,
+            settings: None,
         }
     }
 }
@@ -178,6 +183,9 @@ pub fn parse_args() -> Args {
                     Some("depth") => feraille_controls::TreemapColoring::DepthOnly,
                     _ => feraille_controls::TreemapColoring::Category,
                 };
+            }
+            "--settings" => {
+                args.settings = Some(iter.next().unwrap_or_else(|| "appearance".to_string()));
             }
             "--show-hidden" => args.show_hidden = true,
             "--filter" => args.filter = iter.next(),
@@ -411,6 +419,18 @@ pub fn run(args: Args) -> Result<()> {
             if let Some(modal) = app.shortcuts_modal.as_mut() {
                 modal.filter.set_value(&filter);
             }
+        }
+    }
+    if let Some(page) = args.settings.clone() {
+        app.show_settings();
+        let category = match page.as_str() {
+            "files" => crate::SettingsCategory::Files,
+            "layout" => crate::SettingsCategory::Layout,
+            "about" => crate::SettingsCategory::About,
+            _ => crate::SettingsCategory::Appearance,
+        };
+        if let Some(m) = app.settings_modal.as_mut() {
+            m.category = category;
         }
     }
 

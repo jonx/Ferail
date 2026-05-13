@@ -120,11 +120,18 @@ pub struct SpacingTokens {
     pub xxl: f32,
 }
 
-/// Sharp by default. `popover` exists for a future rounded surface
-/// (context menu / tooltip); currently unused.
+/// Sharp by default for explorer chrome. The `sm/md/lg` triplet
+/// is the semantic three-step from the design brief — `sm` for
+/// controls (inputs, segments, toggles), `md` for cards / groups,
+/// `lg` for modal windows and large surfaces. `popover` is kept
+/// for context menus and tooltips where Apple's convention is a
+/// slightly different curve.
 #[derive(Clone, Copy, Debug)]
 pub struct RadiusTokens {
     pub none: f32,
+    pub sm: f32,
+    pub md: f32,
+    pub lg: f32,
     pub popover: f32,
     pub full: f32,
 }
@@ -314,7 +321,14 @@ impl Tokens {
                 xxs: 2.0, xs: 4.0, sm: 8.0, md: 12.0,
                 lg: 16.0, xl: 24.0, xxl: 32.0,
             },
-            radius: RadiusTokens { none: 0.0, popover: 6.0, full: 9999.0 },
+            radius: RadiusTokens {
+                none: 0.0,
+                sm: 4.0,
+                md: 8.0,
+                lg: 12.0,
+                popover: 6.0,
+                full: 9999.0,
+            },
             text: TextTokens { xs: 11.0, sm: 12.0, md: 13.0, lg: 15.0, xl: 18.0 },
             hit: HitTokens { min: 24.0, row: 28.0, button: 32.0, input: 32.0 },
             icon: IconTokens { sm: 14.0, md: 16.0, lg: 20.0, xl: 32.0 },

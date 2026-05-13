@@ -17,9 +17,15 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use feraille_controls::primitives::{
+    draw::{fill_rounded_rect, paint_card, stroke_rounded_rect, text_y_center},
     panel::ModalPanel,
     progress_strip::{ProgressStrip, ProgressTaskId},
     scrollbar::Scrollbar,
+    settings_widgets::{
+        compute_settings_row, paint_preview_tile, paint_segmented, paint_settings_row_text,
+        paint_sidebar_nav_item, paint_toggle, segmented_hit, toggle_hit, PreviewKind, RowLayout,
+        ROW_H_DESCRIBED,
+    },
     splitter::Splitter,
     text_input::{TextInput, TextInputEvent, TextInputKey},
     toast::{Toast, ToastKind, ToastStack},
@@ -39,6 +45,7 @@ use feraille_fs_native::{
     DEFAULT_ENUMERATION_BATCH,
 };
 
+mod app_prefs;
 mod disk_usage_prefs;
 mod disk_usage_state;
 mod disk_usage_window;
@@ -258,6 +265,173 @@ impl ShortcutsModal {
     }
 }
 
+/// Top-level pages in the Settings panel. Each page is its own
+/// content layout; the sidebar nav switches between them. Adding a
+/// page is: add a variant, give it an entry in
+/// `SettingsCategory::ALL`, and add the page layout + paint arm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsCategory {
+    Appearance,
+    Files,
+    Layout,
+    About,
+}
+
+impl SettingsCategory {
+    pub const ALL: &'static [SettingsCategory] = &[
+        SettingsCategory::Appearance,
+        SettingsCategory::Files,
+        SettingsCategory::Layout,
+        SettingsCategory::About,
+    ];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            SettingsCategory::Appearance => "Appearance",
+            SettingsCategory::Files => "Files",
+            SettingsCategory::Layout => "Layout",
+            SettingsCategory::About => "About",
+        }
+    }
+
+    /// Sidebar nav glyph. Empty for now — the bundled font has no
+    /// SF Symbols coverage and the partial coverage we tried was
+    /// inconsistent (some rendered, some didn't). When the AppKit
+    /// SF Symbols renderer lands, paint real icons here.
+    pub fn glyph(self) -> &'static str {
+        ""
+    }
+}
+
+/// Snap stops for sidebar width on the Layout page. Aligns with macOS
+/// convention of presenting size choices as Narrow/Medium/Wide
+/// rather than exposing raw pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SidebarWidthSnap {
+    Narrow,
+    Medium,
+    Wide,
+}
+
+impl SidebarWidthSnap {
+    pub const ALL: &'static [SidebarWidthSnap] = &[
+        SidebarWidthSnap::Narrow,
+        SidebarWidthSnap::Medium,
+        SidebarWidthSnap::Wide,
+    ];
+
+    pub fn px(self) -> f32 {
+        match self {
+            SidebarWidthSnap::Narrow => 180.0,
+            SidebarWidthSnap::Medium => 240.0,
+            SidebarWidthSnap::Wide => 360.0,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SidebarWidthSnap::Narrow => "Narrow",
+            SidebarWidthSnap::Medium => "Medium",
+            SidebarWidthSnap::Wide => "Wide",
+        }
+    }
+
+    /// The snap stop closest to `current_px`. None of the rounding
+    /// produces a "Custom" state; even if the user dragged the
+    /// splitter to an arbitrary value we surface the closest snap
+    /// for visual selection. The caller decides whether to show a
+    /// "currently N px" subscript when the match isn't exact.
+    pub fn nearest(current_px: f32) -> Self {
+        let mut best = SidebarWidthSnap::Medium;
+        let mut best_d = f32::INFINITY;
+        for s in Self::ALL {
+            let d = (s.px() - current_px).abs();
+            if d < best_d {
+                best_d = d;
+                best = *s;
+            }
+        }
+        best
+    }
+}
+
+/// In-app Settings panel — the live UI for the values persisted in
+/// [`app_prefs`]. Every change writes through immediately via
+/// `App::save_app_prefs`, so closing the modal isn't a "commit"
+/// step (matches macOS System Settings convention).
+pub struct SettingsModal {
+    /// Which page is currently displayed.
+    pub category: SettingsCategory,
+}
+
+impl SettingsModal {
+    pub fn new() -> Self {
+        Self {
+            category: SettingsCategory::Appearance,
+        }
+    }
+}
+
+/// Computed geometry for the Settings modal. Page-agnostic top-level
+/// frame (panel / sidebar / content) plus a page-specific layout
+/// enum carrying control rects.
+struct SettingsLayout {
+    panel: FRect,
+    /// Title bar inside the panel that hosts "Settings" + close button.
+    titlebar: FRect,
+    close_rect: FRect,
+    /// Left sidebar rect — fixed width, full content height.
+    sidebar_rect: FRect,
+    /// Each sidebar nav row, in `SettingsCategory::ALL` order.
+    nav_items: Vec<(SettingsCategory, FRect)>,
+    /// Right-hand content area (already inset by the content padding).
+    content_rect: FRect,
+    /// Page-specific control rects.
+    page: PageLayout,
+}
+
+enum PageLayout {
+    Appearance {
+        page_title_y: f32,
+        card: FRect,
+        row: RowLayout,
+        /// Three theme preview tiles, left-to-right.
+        tiles: [(ThemePreference, FRect); 3],
+    },
+    Files {
+        page_title_y: f32,
+        card: FRect,
+        row: RowLayout,
+        /// Toggle hit zone. The whole row is also clickable.
+        toggle: FRect,
+    },
+    Layout {
+        page_title_y: f32,
+        card: FRect,
+        row: RowLayout,
+        /// Strip rect for the Narrow/Medium/Wide segmented control.
+        strip: FRect,
+        /// Optional subscript "Currently 221 px" position when the
+        /// splitter doesn't match any snap exactly.
+        subscript_pos: Option<FPoint>,
+    },
+    About {
+        page_title_y: f32,
+        card: FRect,
+    },
+}
+
+/// Hit-test result for the Settings modal.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SettingsHit {
+    Inside,
+    Close,
+    Category(SettingsCategory),
+    ThemeTile(ThemePreference),
+    ToggleHidden,
+    SidebarWidthSnap(SidebarWidthSnap),
+}
+
 /// State for the modal rename / new-folder dialog.
 pub struct TextDialog {
     pub mode: DialogMode,
@@ -397,6 +571,14 @@ fn matches_shortcut_key(spec_key: &str, logical: &Key) -> bool {
 
 fn main() -> Result<()> {
     obs::init();
+    // `--reset-db <scope>` runs before any GUI work: opens the DB,
+    // wipes the requested scope, prints a one-line confirmation,
+    // and exits. Designed for support / dev iteration ("my window
+    // restored at a weird size, clear UI prefs") without making the
+    // user delete the whole file.
+    if let Some(code) = handle_reset_db_cli() {
+        std::process::exit(code);
+    }
     let args = screenshot::parse_args();
     if args.screenshot.is_some() {
         log_info!(56, "headless screenshot path");
@@ -406,6 +588,10 @@ fn main() -> Result<()> {
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = App::new();
     app.event_proxy = Some(event_loop.create_proxy());
+    // Open the persistent metadata DB before the first navigation
+    // commit. Hydrates the Ant Trail from `folder_usage` so heat
+    // survives restarts.
+    app.open_metadata_db();
     app.start_magic_prefetch();
     app.start_quarantine_prefetch();
     log_info!(56, "event loop starting");
@@ -531,6 +717,7 @@ pub struct App {
     /// Keyboard-shortcuts overlay (Cmd+/). Modal-style: capped height,
     /// scrollable body, live filter at top. `None` = closed.
     pub shortcuts_modal: Option<ShortcutsModal>,
+    pub settings_modal: Option<SettingsModal>,
     pub preview_visible: bool,
     /// Cache of NSWorkspace-fetched icons keyed by `cache_key_for(entry)`
     /// — extension for files (".rs", ".md"), "DIR"/"SYMLINK"/"FILE" for
@@ -550,6 +737,10 @@ pub struct App {
     /// `mtime` is the file's last-modified Unix seconds — bumping it
     /// invalidates the entry naturally on file edits. `size_px` is
     /// the longest-edge target we asked qlmanage for.
+    /// Persistent metadata store. `None` in headless mode and when
+    /// `$HOME` is unset; the rest of the app degrades gracefully
+    /// (in-memory caches still work, just don't survive restart).
+    pub metadata_db: Option<feraille_meta::MetadataDb>,
     pub preview_cache: HashMap<(PathBuf, i64, u32), Bitmap>,
     /// Inline-text preview cache for files whose extension marks
     /// them textual. Faster and far prettier than qlmanage's
@@ -688,6 +879,24 @@ impl App {
         }
     }
 
+    /// Snapshot the persisted-pref-relevant fields and write them to
+    /// disk. Cheap (small `key=value` text file in the user's app
+    /// support dir); call freely from mutator paths. Failures are
+    /// swallowed by `app_prefs::save` so a read-only home directory
+    /// doesn't break the running session.
+    pub fn save_app_prefs(&self) {
+        let theme = match self.theme_preference {
+            ThemePreference::Light => app_prefs::ThemePref::Light,
+            ThemePreference::Dark => app_prefs::ThemePref::Dark,
+            ThemePreference::System => app_prefs::ThemePref::System,
+        };
+        app_prefs::save(app_prefs::AppPrefs {
+            theme_preference: Some(theme),
+            show_hidden: Some(self.show_hidden),
+            sidebar_width: Some(self.splitter_x),
+        });
+    }
+
     /// Switch the user's theme preference and immediately re-resolve
     /// the effective theme. Idempotent — same preference is a no-op.
     pub fn set_theme_preference(&mut self, pref: ThemePreference) {
@@ -696,6 +905,7 @@ impl App {
         }
         self.theme_preference = pref;
         self.apply_theme();
+        self.save_app_prefs();
     }
 
     /// Recompute tokens from the current preference + system state +
@@ -1518,6 +1728,658 @@ impl App {
         self.properties_target = None;
     }
 
+    /// Layout rects for the Settings modal. Two-column layout: a
+    /// fixed-width sidebar of category nav rows on the left, and a
+    /// page-specific content area on the right. The page layout
+    /// branches on `SettingsCategory`; all dimensions come from
+    /// `tokens` so theme / ui-scale changes flow through automatically.
+    fn settings_layout(
+        &self,
+        viewport: feraille_render::Size,
+        tokens: &Tokens,
+    ) -> SettingsLayout {
+        let panel_w: f32 = 760.0;
+        let panel_h: f32 = 520.0_f32.min((viewport.height - 80.0).max(360.0));
+        // Padding=0 so we can paint the sidebar and content with
+        // distinct background fills; content padding is applied
+        // inside the content area.
+        let (panel, _) = ModalPanel {
+            viewport: FRect::new(0.0, 0.0, viewport.width, viewport.height),
+            width: panel_w,
+            height: panel_h,
+            top_offset_fraction: Some(0.10),
+            backdrop_alpha: 120,
+            padding: 0.0,
+        }
+        .compute();
+
+        // Titlebar: 44 DIPs tall, full panel width. Hosts the
+        // "Settings" label on the left and the close pill on the right.
+        let titlebar_h: f32 = 44.0;
+        let titlebar = FRect::new(panel.left(), panel.top(), panel.size.width, titlebar_h);
+        let close_size: f32 = 22.0;
+        let close_rect = FRect::new(
+            panel.right() - 14.0 - close_size,
+            panel.top() + (titlebar_h - close_size) / 2.0,
+            close_size,
+            close_size,
+        );
+
+        // Below the titlebar: 200 DIP sidebar nav, then content area.
+        let nav_w: f32 = 200.0;
+        let sidebar_rect = FRect::new(
+            panel.left(),
+            panel.top() + titlebar_h,
+            nav_w,
+            panel.size.height - titlebar_h,
+        );
+
+        // Sidebar nav rows: top-padded, 36 DIP each, 8 DIP horizontal
+        // inset. The first row gets a tiny extra gap above so it
+        // doesn't kiss the titlebar.
+        let nav_row_h: f32 = 36.0;
+        let nav_inset_x: f32 = 8.0;
+        let mut ny = sidebar_rect.top() + tokens.space.sm;
+        let mut nav_items: Vec<(SettingsCategory, FRect)> = Vec::new();
+        for cat in SettingsCategory::ALL {
+            nav_items.push((
+                *cat,
+                FRect::new(
+                    sidebar_rect.left() + nav_inset_x,
+                    ny,
+                    sidebar_rect.size.width - 2.0 * nav_inset_x,
+                    nav_row_h,
+                ),
+            ));
+            ny += nav_row_h + 2.0;
+        }
+
+        // Content area: everything to the right of the sidebar,
+        // inset by `space.xl` on all sides so the card has room to
+        // breathe (Ventura uses generous content padding here).
+        let content_inset = tokens.space.xl;
+        let content_rect = FRect::new(
+            sidebar_rect.right() + content_inset,
+            sidebar_rect.top() + content_inset,
+            panel.right() - sidebar_rect.right() - 2.0 * content_inset,
+            sidebar_rect.size.height - 2.0 * content_inset,
+        );
+
+        let category = self
+            .settings_modal
+            .as_ref()
+            .map(|m| m.category)
+            .unwrap_or(SettingsCategory::Appearance);
+
+        // Page title sits at the top of the content area in text.lg.
+        let page_title_y = content_rect.top();
+        let card_top = content_rect.top() + tokens.text.lg + tokens.space.lg;
+
+        let page = match category {
+            SettingsCategory::Appearance => {
+                // Single card containing the theme row. Description
+                // is below the title; control slot below the
+                // description, full-width, painted as 3 preview tiles.
+                let card_h: f32 = 220.0;
+                let card = FRect::new(
+                    content_rect.left(),
+                    card_top,
+                    content_rect.size.width,
+                    card_h,
+                );
+                let row = compute_settings_row(
+                    FRect::new(
+                        card.left(),
+                        card.top() + tokens.space.md,
+                        card.size.width,
+                        ROW_H_DESCRIBED,
+                    ),
+                    tokens,
+                    true,
+                    0.0,
+                    tokens.space.lg,
+                );
+                // Tiles area below the row: full card width minus
+                // inset, height filling the rest of the card.
+                let tiles_top = row.row.bottom() + tokens.space.sm;
+                let tiles_area = FRect::new(
+                    card.left() + tokens.space.lg,
+                    tiles_top,
+                    card.size.width - 2.0 * tokens.space.lg,
+                    card.bottom() - tokens.space.md - tiles_top,
+                );
+                let tile_gap = tokens.space.md;
+                let tile_w = (tiles_area.size.width - 2.0 * tile_gap) / 3.0;
+                let tile_h = tiles_area.size.height;
+                let mk_tile = |i: usize, pref: ThemePreference| -> (ThemePreference, FRect) {
+                    (
+                        pref,
+                        FRect::new(
+                            tiles_area.left() + (tile_w + tile_gap) * i as f32,
+                            tiles_area.top(),
+                            tile_w,
+                            tile_h,
+                        ),
+                    )
+                };
+                let tiles = [
+                    mk_tile(0, ThemePreference::Light),
+                    mk_tile(1, ThemePreference::Dark),
+                    mk_tile(2, ThemePreference::System),
+                ];
+                PageLayout::Appearance {
+                    page_title_y,
+                    card,
+                    row,
+                    tiles,
+                }
+            }
+            SettingsCategory::Files => {
+                let card_h: f32 = ROW_H_DESCRIBED + 2.0 * tokens.space.sm;
+                let card = FRect::new(
+                    content_rect.left(),
+                    card_top,
+                    content_rect.size.width,
+                    card_h,
+                );
+                let toggle_w =
+                    feraille_controls::primitives::settings_widgets::TOGGLE_W;
+                let row = compute_settings_row(
+                    FRect::new(
+                        card.left(),
+                        card.top() + tokens.space.sm,
+                        card.size.width,
+                        ROW_H_DESCRIBED,
+                    ),
+                    tokens,
+                    true,
+                    toggle_w,
+                    tokens.space.lg,
+                );
+                let toggle = FRect::new(
+                    row.control_slot.left(),
+                    row.control_slot.top()
+                        + (row.control_slot.size.height
+                            - feraille_controls::primitives::settings_widgets::TOGGLE_H)
+                            / 2.0,
+                    toggle_w,
+                    feraille_controls::primitives::settings_widgets::TOGGLE_H,
+                );
+                PageLayout::Files {
+                    page_title_y,
+                    card,
+                    row,
+                    toggle,
+                }
+            }
+            SettingsCategory::Layout => {
+                // Card hosts a row with description + a strip below.
+                let strip_h: f32 = 30.0;
+                let row_h = ROW_H_DESCRIBED;
+                let card_h: f32 = row_h
+                    + strip_h
+                    + tokens.space.md
+                    + 2.0 * tokens.space.sm
+                    + tokens.text.sm
+                    + 6.0;
+                let card = FRect::new(
+                    content_rect.left(),
+                    card_top,
+                    content_rect.size.width,
+                    card_h,
+                );
+                let row = compute_settings_row(
+                    FRect::new(
+                        card.left(),
+                        card.top() + tokens.space.sm,
+                        card.size.width,
+                        row_h,
+                    ),
+                    tokens,
+                    true,
+                    0.0,
+                    tokens.space.lg,
+                );
+                let strip_w: f32 = 320.0;
+                let strip = FRect::new(
+                    card.left() + tokens.space.lg,
+                    row.row.bottom() + tokens.space.xs,
+                    strip_w.min(card.size.width - 2.0 * tokens.space.lg),
+                    strip_h,
+                );
+                // Subscript only if the current splitter value
+                // doesn't match a snap to within 1 px.
+                let nearest = SidebarWidthSnap::nearest(self.splitter_x);
+                let exact = (self.splitter_x - nearest.px()).abs() <= 1.0;
+                let subscript_pos = if exact {
+                    None
+                } else {
+                    Some(FPoint::new(
+                        strip.left(),
+                        strip.bottom() + tokens.space.xs,
+                    ))
+                };
+                PageLayout::Layout {
+                    page_title_y,
+                    card,
+                    row,
+                    strip,
+                    subscript_pos,
+                }
+            }
+            SettingsCategory::About => {
+                let card_h: f32 = 180.0;
+                let card = FRect::new(
+                    content_rect.left(),
+                    card_top,
+                    content_rect.size.width,
+                    card_h,
+                );
+                PageLayout::About {
+                    page_title_y,
+                    card,
+                }
+            }
+        };
+
+        SettingsLayout {
+            panel,
+            titlebar,
+            close_rect,
+            sidebar_rect,
+            nav_items,
+            content_rect,
+            page,
+        }
+    }
+
+    fn paint_settings(
+        &self,
+        tokens: &Tokens,
+        viewport: feraille_render::Size,
+        renderer: &mut dyn Renderer,
+    ) {
+        if self.settings_modal.is_none() {
+            return;
+        }
+        let layout = self.settings_layout(viewport, tokens);
+
+        // Backdrop dim — paint manually since we asked ModalPanel
+        // for zero padding (it would have drawn the panel fill).
+        renderer.fill_rect(
+            FRect::new(0.0, 0.0, viewport.width, viewport.height),
+            feraille_design::Color::rgba(0, 0, 0, 120),
+        );
+
+        // Panel surface: rounded `radius.lg` window-style chrome.
+        // Drop-shadow approximation: 1-DIP-offset translucent black
+        // beneath the panel.
+        fill_rounded_rect(
+            renderer,
+            FRect::new(
+                layout.panel.left(),
+                layout.panel.top() + 2.0,
+                layout.panel.size.width,
+                layout.panel.size.height,
+            ),
+            tokens.radius.lg,
+            feraille_design::Color::rgba(0, 0, 0, 50),
+        );
+        stroke_rounded_rect(
+            renderer,
+            layout.panel,
+            tokens.radius.lg,
+            1.0,
+            tokens.border.default,
+            tokens.bg.layer1,
+        );
+
+        // Sidebar surface (subtly inset background).
+        fill_rounded_rect(
+            renderer,
+            layout.sidebar_rect,
+            tokens.radius.lg,
+            tokens.bg.base,
+        );
+        // Square off the inner edges so the rounded corners only
+        // appear on the panel's outer corners.
+        renderer.fill_rect(
+            FRect::new(
+                layout.sidebar_rect.right() - tokens.radius.lg,
+                layout.sidebar_rect.top(),
+                tokens.radius.lg,
+                layout.sidebar_rect.size.height,
+            ),
+            tokens.bg.base,
+        );
+
+        // Hairline between sidebar and content.
+        renderer.fill_rect(
+            FRect::new(
+                layout.sidebar_rect.right(),
+                layout.sidebar_rect.top(),
+                1.0,
+                layout.sidebar_rect.size.height,
+            ),
+            tokens.border.subtle,
+        );
+
+        // Titlebar text — "Settings" left-aligned, hairline below.
+        renderer.draw_text(
+            FPoint::new(
+                layout.panel.left() + tokens.space.lg,
+                text_y_center(layout.titlebar, tokens.text.md),
+            ),
+            "Settings",
+            TextStyle {
+                size: tokens.text.md,
+                weight: FontWeight::SemiBold,
+                color: tokens.fg.primary,
+            },
+        );
+        renderer.fill_rect(
+            FRect::new(
+                layout.titlebar.left(),
+                layout.titlebar.bottom(),
+                layout.titlebar.size.width,
+                1.0,
+            ),
+            tokens.border.subtle,
+        );
+
+        // Close pill — circle of bg.layer3 with a centered "x".
+        // Plain ASCII because the font's coverage of multiplication-
+        // sign / heavy-cross glyphs is inconsistent.
+        let radius = layout.close_rect.size.width / 2.0;
+        fill_rounded_rect(
+            renderer,
+            layout.close_rect,
+            radius,
+            tokens.bg.layer3,
+        );
+        let close_style = TextStyle {
+            size: tokens.text.md,
+            weight: FontWeight::SemiBold,
+            color: tokens.fg.primary,
+        };
+        let m = renderer.measure_text("x", close_style);
+        renderer.draw_text(
+            FPoint::new(
+                layout.close_rect.left() + (layout.close_rect.size.width - m.width) / 2.0,
+                text_y_center(layout.close_rect, tokens.text.md),
+            ),
+            "x",
+            close_style,
+        );
+
+        // Sidebar nav items.
+        let current = self
+            .settings_modal
+            .as_ref()
+            .map(|m| m.category)
+            .unwrap_or(SettingsCategory::Appearance);
+        for (cat, rect) in &layout.nav_items {
+            paint_sidebar_nav_item(
+                renderer,
+                tokens,
+                *rect,
+                cat.glyph(),
+                cat.title(),
+                *cat == current,
+                false,
+            );
+        }
+
+        // Page content.
+        self.paint_settings_page(tokens, renderer, &layout);
+    }
+
+    /// Paint the per-category content. Called from `paint_settings`
+    /// after the chrome (titlebar, sidebar, close) is laid down.
+    fn paint_settings_page(
+        &self,
+        tokens: &Tokens,
+        renderer: &mut dyn Renderer,
+        layout: &SettingsLayout,
+    ) {
+        let title_style = TextStyle {
+            size: tokens.text.lg,
+            weight: FontWeight::SemiBold,
+            color: tokens.fg.primary,
+        };
+        match &layout.page {
+            PageLayout::Appearance {
+                page_title_y,
+                card,
+                row,
+                tiles,
+            } => {
+                renderer.draw_text(
+                    FPoint::new(layout.content_rect.left(), *page_title_y),
+                    "Appearance",
+                    title_style,
+                );
+                paint_card(renderer, tokens, *card);
+                paint_settings_row_text(
+                    renderer,
+                    tokens,
+                    row,
+                    "Theme",
+                    Some("Match the system, or pick a side."),
+                );
+                for (pref, tile_rect) in tiles {
+                    let selected = self.theme_preference == *pref;
+                    let (kind, label) = match pref {
+                        ThemePreference::Light => (PreviewKind::Light, "Light"),
+                        ThemePreference::Dark => (PreviewKind::Dark, "Dark"),
+                        ThemePreference::System => (PreviewKind::Auto, "Auto"),
+                    };
+                    paint_preview_tile(
+                        renderer,
+                        tokens,
+                        *tile_rect,
+                        kind,
+                        selected,
+                        label,
+                    );
+                }
+            }
+            PageLayout::Files {
+                page_title_y,
+                card,
+                row,
+                toggle,
+            } => {
+                renderer.draw_text(
+                    FPoint::new(layout.content_rect.left(), *page_title_y),
+                    "Files",
+                    title_style,
+                );
+                paint_card(renderer, tokens, *card);
+                paint_settings_row_text(
+                    renderer,
+                    tokens,
+                    row,
+                    "Show hidden files and folders",
+                    Some("Display items that start with a dot, like .config and .ssh."),
+                );
+                paint_toggle(renderer, tokens, *toggle, self.show_hidden);
+            }
+            PageLayout::Layout {
+                page_title_y,
+                card,
+                row,
+                strip,
+                subscript_pos,
+            } => {
+                renderer.draw_text(
+                    FPoint::new(layout.content_rect.left(), *page_title_y),
+                    "Layout",
+                    title_style,
+                );
+                paint_card(renderer, tokens, *card);
+                paint_settings_row_text(
+                    renderer,
+                    tokens,
+                    row,
+                    "Sidebar width",
+                    Some("How wide the navigation panel appears."),
+                );
+                let nearest = SidebarWidthSnap::nearest(self.splitter_x);
+                let selected_idx = SidebarWidthSnap::ALL
+                    .iter()
+                    .position(|s| *s == nearest)
+                    .unwrap_or(1);
+                let labels: Vec<&str> = SidebarWidthSnap::ALL
+                    .iter()
+                    .map(|s| s.label())
+                    .collect();
+                paint_segmented(renderer, tokens, *strip, &labels, selected_idx);
+                if let Some(pos) = subscript_pos {
+                    let txt = format!("Currently {:.0} px", self.splitter_x);
+                    renderer.draw_text(
+                        *pos,
+                        &txt,
+                        TextStyle {
+                            size: tokens.text.sm,
+                            weight: FontWeight::Regular,
+                            color: tokens.fg.secondary,
+                        },
+                    );
+                }
+            }
+            PageLayout::About {
+                page_title_y,
+                card,
+            } => {
+                renderer.draw_text(
+                    FPoint::new(layout.content_rect.left(), *page_title_y),
+                    "About",
+                    title_style,
+                );
+                paint_card(renderer, tokens, *card);
+                let inner_x = card.left() + tokens.space.lg;
+                let mut y = card.top() + tokens.space.lg;
+                renderer.draw_text(
+                    FPoint::new(inner_x, y),
+                    "Feraille",
+                    TextStyle {
+                        size: tokens.text.lg,
+                        weight: FontWeight::SemiBold,
+                        color: tokens.fg.primary,
+                    },
+                );
+                y += tokens.text.lg + tokens.space.xs;
+                renderer.draw_text(
+                    FPoint::new(inner_x, y),
+                    concat!("Version ", env!("CARGO_PKG_VERSION")),
+                    TextStyle {
+                        size: tokens.text.sm,
+                        weight: FontWeight::Regular,
+                        color: tokens.fg.secondary,
+                    },
+                );
+                y += tokens.text.sm + tokens.space.md;
+                renderer.draw_text(
+                    FPoint::new(inner_x, y),
+                    "The macOS port of Ferail — a Finder-class file explorer.",
+                    TextStyle {
+                        size: tokens.text.md,
+                        weight: FontWeight::Regular,
+                        color: tokens.fg.primary,
+                    },
+                );
+                y += tokens.text.md + tokens.space.md;
+                renderer.draw_text(
+                    FPoint::new(inner_x, y),
+                    "Built for speed, predictability, and a calm UI.",
+                    TextStyle {
+                        size: tokens.text.sm,
+                        weight: FontWeight::Regular,
+                        color: tokens.fg.secondary,
+                    },
+                );
+            }
+        }
+
+        // Footer band along the bottom of the panel — separator +
+        // single line of muted helper text. Lives at the panel level
+        // (spans both columns) like the macOS System Settings footer.
+        let footer_h = tokens.text.sm + 2.0 * tokens.space.sm;
+        let footer_y = layout.panel.bottom() - footer_h;
+        renderer.fill_rect(
+            FRect::new(
+                layout.panel.left(),
+                footer_y - 1.0,
+                layout.panel.size.width,
+                1.0,
+            ),
+            tokens.border.subtle,
+        );
+        let footer_style = TextStyle {
+            size: tokens.text.xs,
+            weight: FontWeight::Regular,
+            color: tokens.fg.secondary,
+        };
+        renderer.draw_text(
+            FPoint::new(
+                layout.panel.left() + tokens.space.lg,
+                footer_y + (footer_h - tokens.text.xs) / 2.0 - 1.0,
+            ),
+            "Changes save instantly \u{00B7} Press Esc to close",
+            footer_style,
+        );
+    }
+
+    /// Hit-test the Settings modal at point `p`. Returns `None`
+    /// when the click is outside the panel (caller dismisses), or
+    /// a `SettingsHit` when it's inside.
+    fn settings_hit(
+        &self,
+        p: FPoint,
+        viewport: feraille_render::Size,
+        tokens: &Tokens,
+    ) -> Option<SettingsHit> {
+        let layout = self.settings_layout(viewport, tokens);
+        if !layout.panel.contains(p) {
+            return None;
+        }
+        if layout.close_rect.contains(p) {
+            return Some(SettingsHit::Close);
+        }
+        for (cat, rect) in &layout.nav_items {
+            if rect.contains(p) {
+                return Some(SettingsHit::Category(*cat));
+            }
+        }
+        // Page-specific hits.
+        match &layout.page {
+            PageLayout::Appearance { tiles, .. } => {
+                for (pref, tile) in tiles {
+                    if tile.contains(p) {
+                        return Some(SettingsHit::ThemeTile(*pref));
+                    }
+                }
+            }
+            PageLayout::Files { row, toggle, .. } => {
+                if toggle_hit(*toggle, p) || row.row.contains(p) {
+                    return Some(SettingsHit::ToggleHidden);
+                }
+            }
+            PageLayout::Layout { strip, .. } => {
+                if let Some(idx) =
+                    segmented_hit(*strip, SidebarWidthSnap::ALL.len(), p)
+                {
+                    if let Some(snap) = SidebarWidthSnap::ALL.get(idx).copied() {
+                        return Some(SettingsHit::SidebarWidthSnap(snap));
+                    }
+                }
+            }
+            PageLayout::About { .. } => {}
+        }
+        Some(SettingsHit::Inside)
+    }
+
     fn paint_dialog(
         &self,
         tokens: &Tokens,
@@ -2255,6 +3117,10 @@ impl App {
         let fs = Arc::new(NativeFs::new());
         let home = home_dir();
 
+        // Pull persisted user preferences once at startup. Missing
+        // file or unparseable lines fall through to defaults.
+        let prefs = app_prefs::load();
+
         // Seed the tree with Finder-style sections: Recents (top of ant
         // trail) / Favorites (pinned) / Locations (iCloud, Home, root,
         // Trash) / Volumes (other /Volumes mounts).
@@ -2308,9 +3174,12 @@ impl App {
             tasks: TaskRegistry::new(),
             task_panel_open: false,
             magic_task: None,
-            splitter_x: SIDEBAR_DEFAULT,
+            splitter_x: prefs
+                .sidebar_width
+                .map(|w| w.clamp(SIDEBAR_MIN, SIDEBAR_MAX))
+                .unwrap_or(SIDEBAR_DEFAULT),
             preview_width: PREVIEW_W_DEFAULT,
-            show_hidden: false,
+            show_hidden: prefs.show_hidden.unwrap_or(false),
             ant_trail: AntTrail::new(),
             pinned_paths,
             properties_target: None,
@@ -2320,12 +3189,14 @@ impl App {
             toasts: ToastStack::new(),
             search: None,
             shortcuts_modal: None,
+            settings_modal: None,
             preview_visible: false,
             icon_cache: HashMap::new(),
             magic_cache: HashMap::new(),
             quarantine_cache: HashMap::new(),
             quarantine_generation: 0,
             quarantine_task: None,
+            metadata_db: None,
             preview_cache: HashMap::new(),
             preview_text_cache: HashMap::new(),
             preview_generation: 0,
@@ -2349,7 +3220,7 @@ impl App {
             pointer_dips: None,
             modifiers: ModifiersState::empty(),
             tokens: Tokens::light(), // overwritten below by apply_theme
-            theme_preference: initial_theme_preference(),
+            theme_preference: initial_theme_preference(&prefs),
             ui_scale: initial_ui_scale(),
             system_is_dark: feraille_shell_mac::system_is_dark(),
             width: 1,
@@ -2711,7 +3582,7 @@ impl App {
         log_info!(60, "command: {:?}", id);
         match id.0 {
             "app.about" => feraille_shell_mac::show_about_panel(),
-            "app.settings" => self.show_settings_placeholder(),
+            "app.settings" => self.show_settings(),
             "file.new_tab" => self.new_tab_at(home_dir()),
             "file.close_tab" => self.close_active_tab(),
             "file.new_folder" => self.open_new_folder(),
@@ -2935,6 +3806,19 @@ impl App {
         }
         let id = self.fs.id_for_path(&path);
         self.ant_trail.record(id);
+        // Persist the visit. Best-effort — a write failure is logged
+        // and dropped; the in-memory trail is still correct.
+        if let Some(db) = self.metadata_db.as_ref() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            if let Some(p) = path.to_str() {
+                if let Err(e) = db.record_folder_visit(p, now) {
+                    log_warn!(60, "metadata: record_folder_visit({p}) failed: {e}");
+                }
+            }
+        }
         // Rebuild sections so Recents reflects the latest visit.
         self.rebuild_tree_sections();
         // Hold the previous folder's `all_entries` visible until the
@@ -3186,6 +4070,227 @@ impl App {
 
     /// Build a deduped queue of icon fetches for the active tab and
     /// dispatch via `enqueue_icon_fetches`.
+    /// Open the persistent metadata DB at the default macOS path
+    /// (`~/Library/Application Support/Feraille/metadata.db`),
+    /// creating the parent directory if needed. Stashes it on the
+    /// App and hydrates the in-memory Ant Trail from
+    /// `folder_usage`. Best-effort: a DB-open failure logs and
+    /// leaves `metadata_db = None`, in which case persistence is
+    /// silently disabled (caches still work in-memory).
+    fn open_metadata_db(&mut self) {
+        let Some(path) = feraille_meta::default_db_path() else {
+            log_warn!(60, "metadata: $HOME unset; persistence disabled");
+            return;
+        };
+        if let Err(e) = feraille_meta::ensure_parent_dir(&path) {
+            log_warn!(60, "metadata: mkdir failed for {}: {e}", path.display());
+            return;
+        }
+        match feraille_meta::MetadataDb::open(&path) {
+            Ok(db) => {
+                log_info!(60, "metadata: opened {}", path.display());
+                self.metadata_db = Some(db);
+                self.hydrate_ant_trail_from_db();
+                self.hydrate_layout_from_db();
+                self.hydrate_tabs_from_db();
+            }
+            Err(e) => {
+                log_warn!(60, "metadata: open failed for {}: {e}", path.display());
+            }
+        }
+    }
+
+    /// Restore sidebar / preview splitter widths + DU geometry from
+    /// the DB. Window size restoration happens later (the winit
+    /// window doesn't exist yet at App::new time); see
+    /// `apply_persisted_window_size` called from `resumed`.
+    fn hydrate_layout_from_db(&mut self) {
+        let Some(db) = self.metadata_db.as_ref() else {
+            return;
+        };
+        let layout = match db.load_layout_state() {
+            Ok(Some(l)) => l,
+            Ok(None) => return,
+            Err(e) => {
+                log_warn!(60, "metadata: load_layout_state failed: {e}");
+                return;
+            }
+        };
+        if layout.sidebar_width > 0 {
+            self.splitter_x = (layout.sidebar_width as f32)
+                .clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+        }
+        if layout.preview_width > 0 {
+            self.preview_width = layout.preview_width as f32;
+        }
+        self.preview_visible = layout.preview_visible;
+        log_info!(
+            60,
+            "metadata: restored layout (sidebar={}, preview={}, preview_visible={})",
+            self.splitter_x,
+            self.preview_width,
+            self.preview_visible,
+        );
+    }
+
+    /// Restore the persisted tab list. Each row's path is mapped to
+    /// a `Tab` and the active row's index becomes `self.active`. If
+    /// no rows persisted, we keep the home-folder default tab the
+    /// constructor created.
+    fn hydrate_tabs_from_db(&mut self) {
+        let Some(db) = self.metadata_db.as_ref() else {
+            return;
+        };
+        let rows = match db.load_tabs() {
+            Ok(r) => r,
+            Err(e) => {
+                log_warn!(60, "metadata: load_tabs failed: {e}");
+                return;
+            }
+        };
+        if rows.is_empty() {
+            return;
+        }
+        let mut new_tabs: Vec<Tab> = Vec::with_capacity(rows.len());
+        let mut active_index: usize = 0;
+        for (i, row) in rows.iter().enumerate() {
+            let path = std::path::PathBuf::from(&row.path);
+            new_tabs.push(Tab {
+                current_dir: path.clone(),
+                all_entries: Vec::new(),
+                entries: Vec::new(),
+                filter_text: String::new(),
+                selection: feraille_controls::Selection::new(),
+                list_scroll: row.scroll_offset.max(0.0),
+                error: None,
+                history: vec![path],
+                history_index: 0,
+            });
+            if row.is_active {
+                active_index = i;
+            }
+        }
+        self.tabs = new_tabs;
+        self.active = active_index.min(self.tabs.len().saturating_sub(1));
+        log_info!(
+            60,
+            "metadata: restored {} tabs (active = {})",
+            self.tabs.len(),
+            self.active
+        );
+    }
+
+    /// Window size live-tracking happens via `WindowEvent::Resized`;
+    /// at startup we want to *apply* the saved size to the freshly
+    /// created window. Called from `resumed` before the first paint.
+    fn apply_persisted_window_size(&mut self) {
+        let Some(db) = self.metadata_db.as_ref() else {
+            return;
+        };
+        let Some(state) = db.load_window_state().ok().flatten() else {
+            return;
+        };
+        if state.width <= 0 || state.height <= 0 {
+            return;
+        }
+        if let Some(window) = self.window.as_ref() {
+            let logical = winit::dpi::LogicalSize::new(
+                state.width as f64,
+                state.height as f64,
+            );
+            let _ = window.request_inner_size(logical);
+        }
+    }
+
+    /// Snapshot window + layout + tab state to the DB. Called on
+    /// `CloseRequested` so the next launch restores. Best-effort:
+    /// any sub-call's failure is logged and dropped — the user's
+    /// quit shouldn't block on a write error.
+    fn save_persistent_state(&self) {
+        let Some(db) = self.metadata_db.as_ref() else {
+            return;
+        };
+        // Window: convert physical pixels → logical points. macOS
+        // restores by logical size, so persist that shape.
+        let logical_w = (self.width as f32 / self.scale_factor).round() as i32;
+        let logical_h = (self.height as f32 / self.scale_factor).round() as i32;
+        let win = feraille_meta::WindowState {
+            width: logical_w.max(1),
+            height: logical_h.max(1),
+            maximized: false,
+        };
+        if let Err(e) = db.save_window_state(&win) {
+            log_warn!(60, "metadata: save_window_state failed: {e}");
+        }
+
+        // Layout: sidebar + preview splitter widths and visibility.
+        let layout = feraille_meta::LayoutState {
+            sidebar_width: self.splitter_x.round() as i32,
+            preview_width: self.preview_width.round() as i32,
+            preview_visible: self.preview_visible,
+            // DU geometry is iter-8.5 territory; leave at zero so
+            // the existing du_window.txt path stays authoritative
+            // until the migration commits.
+            du_width: 0,
+            du_height: 0,
+            du_topn_width: 0,
+        };
+        if let Err(e) = db.save_layout_state(&layout) {
+            log_warn!(60, "metadata: save_layout_state failed: {e}");
+        }
+
+        // Tabs.
+        let tabs: Vec<feraille_meta::TabState> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(i, t)| feraille_meta::TabState {
+                path: t.current_dir.to_string_lossy().into_owned(),
+                is_active: i == self.active,
+                scroll_offset: t.list_scroll,
+                selected_index: t.selection.cursor().map(|i| i as i32).unwrap_or(-1),
+                sort_column: 0,
+                sort_ascending: true,
+            })
+            .collect();
+        if let Err(e) = db.save_tabs(&tabs) {
+            log_warn!(60, "metadata: save_tabs failed: {e}");
+        }
+    }
+
+    /// Read folder_usage rows out of the DB and rebuild the in-memory
+    /// `AntTrail` by mapping each persisted path to a fresh NodeId
+    /// via `self.fs.id_for_path`. Idempotent — calling it twice with
+    /// no intervening writes produces the same in-memory state.
+    fn hydrate_ant_trail_from_db(&mut self) {
+        let Some(db) = self.metadata_db.as_ref() else {
+            return;
+        };
+        let entries = match db.load_ant_trail() {
+            Ok(e) => e,
+            Err(e) => {
+                log_warn!(60, "metadata: load_ant_trail failed: {e}");
+                return;
+            }
+        };
+        let mut max_hits: u32 = 0;
+        for e in &entries {
+            let id = self.fs.id_for_path(std::path::Path::new(&e.folder_path));
+            for _ in 0..e.hits {
+                self.ant_trail.record(id);
+            }
+            if e.hits > max_hits {
+                max_hits = e.hits;
+            }
+        }
+        log_info!(
+            60,
+            "metadata: hydrated ant_trail: {} folders, max hits = {}",
+            entries.len(),
+            max_hits
+        );
+    }
+
     /// Long edge of the inline preview thumbnail in physical pixels.
     /// Bigger = sharper at the cost of slower fetch. Tuned to match
     /// roughly what fits in the preview pane at 2x without scaling
@@ -3384,6 +4489,30 @@ impl App {
         let scroll = self.list.scroll_offset;
         let mut changed = false;
 
+        // Hydrate the in-memory magic_cache from the DB for any
+        // entries we don't already have. Cheap: per-row lookup keyed
+        // by the unique path index, ~10 µs each for cache hits.
+        if let Some(db) = self.metadata_db.as_ref() {
+            for entry in self.tabs[self.active].all_entries.iter() {
+                if !matches!(entry.kind, EntryKind::File) {
+                    continue;
+                }
+                let path = cur_dir.join(&entry.name);
+                let key = (path.clone(), entry.mtime_unix);
+                if self.magic_cache.contains_key(&key) {
+                    continue;
+                }
+                let Some(p) = path.to_str() else { continue };
+                if let Ok(Some(rec)) = db.get_file(p) {
+                    if rec.mtime_unix == entry.mtime_unix {
+                        if let Some(label) = rec.magic_label {
+                            self.magic_cache.insert(key, label);
+                        }
+                    }
+                }
+            }
+        }
+
         for entry in self.tabs[self.active].all_entries.iter_mut() {
             if !matches!(entry.kind, EntryKind::File) || !entry.display_magic.is_empty() {
                 continue;
@@ -3474,6 +4603,48 @@ impl App {
         let cursor_name = self.cursor_entry_name();
         let scroll = self.list.scroll_offset;
         let mut changed = false;
+
+        // Hydrate the in-memory quarantine_cache from the DB for any
+        // entries we don't already have. Mirrors start_magic_prefetch.
+        if let Some(db) = self.metadata_db.as_ref() {
+            for entry in self.tabs[self.active].all_entries.iter() {
+                if !matches!(entry.kind, EntryKind::File) {
+                    continue;
+                }
+                let path = cur_dir.join(&entry.name);
+                let key = (path.clone(), entry.mtime_unix);
+                if self.quarantine_cache.contains_key(&key) {
+                    continue;
+                }
+                let Some(p) = path.to_str() else { continue };
+                if let Ok(Some(rec)) = db.get_file(p) {
+                    if rec.mtime_unix != entry.mtime_unix {
+                        continue;
+                    }
+                    let Some(quarantined) = rec.quarantined else {
+                        continue;
+                    };
+                    let cached = if quarantined {
+                        Some(QuarantineDetails {
+                            agent: rec.quarantine_agent,
+                            downloaded_iso: rec.quarantine_iso,
+                            where_from: rec
+                                .quarantine_where_from
+                                .map(|s| {
+                                    s.split('\n')
+                                        .filter(|x| !x.is_empty())
+                                        .map(|x| x.to_string())
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                        })
+                    } else {
+                        None
+                    };
+                    self.quarantine_cache.insert(key, cached);
+                }
+            }
+        }
 
         for entry in self.tabs[self.active].all_entries.iter_mut() {
             if !matches!(entry.kind, EntryKind::File) || entry.quarantine.is_some() {
@@ -3636,6 +4807,7 @@ impl App {
     pub fn toggle_hidden(&mut self) {
         self.show_hidden = !self.show_hidden;
         self.refresh_active_tab();
+        self.save_app_prefs();
     }
 
     /// Open the cursor entry (a folder, in practice — the menu
@@ -4095,27 +5267,15 @@ impl App {
         self.close_tab(self.active);
     }
 
-    /// Compose the current-state summary and pop the Settings
-    /// placeholder NSAlert. iter-5.11 stub for `app.settings` (Cmd+,)
-    /// — gives the user something visible without committing to a
-    /// real Settings UI yet.
-    pub fn show_settings_placeholder(&self) {
-        let theme = match self.tokens.theme {
-            feraille_design::Theme::Light => "Light",
-            feraille_design::Theme::Dark => "Dark",
-        };
-        let body = format!(
-            "Theme: {theme}\n\
-             Hidden files: {}\n\
-             Sidebar width: {:.0} DIPs\n\
-             Tabs open: {}\n\n\
-             A proper Settings window lands in a future iter; this is \
-             a placeholder so Cmd+, isn't a no-op.",
-            if self.show_hidden { "shown" } else { "hidden" },
-            self.splitter_x,
-            self.tabs.len(),
-        );
-        feraille_shell_mac::show_alert("Settings", &body);
+    /// Open the in-app Settings modal. Idempotent: re-opening
+    /// closes the existing instance first so any in-flight slider
+    /// drag is reset.
+    pub fn show_settings(&mut self) {
+        self.settings_modal = Some(SettingsModal::new());
+    }
+
+    pub fn close_settings(&mut self) {
+        self.settings_modal = None;
     }
 
     /// Open the in-app Keyboard-Shortcuts overlay. Closes any previous
@@ -4310,6 +5470,9 @@ impl App {
         // pressing Cmd+/ during a rename still surfaces it.
         if self.shortcuts_modal.is_some() {
             self.paint_shortcuts(tokens, viewport, renderer);
+        }
+        if self.settings_modal.is_some() {
+            self.paint_settings(tokens, viewport, renderer);
         }
 
         // Toasts — bottom-right of the file pane area, above the status
@@ -4819,7 +5982,11 @@ impl App {
     /// task entry, drop the window. Idempotent.
     fn close_disk_usage_window(&mut self) {
         if let Some(mut du) = self.disk_usage_window.take() {
-            // Persist geometry before tearing down.
+            // Persist geometry before tearing down. Writes go to
+            // BOTH the legacy `du_window.txt` (so older builds keep
+            // working) and the new metadata DB's `layout_state.du_*`
+            // columns. Reads prefer the DB; the txt file is a
+            // fallback during the migration window.
             let inner = du.window.inner_size();
             let scale = du.scale_factor.max(0.01);
             let width_dips = (inner.width as f32 / scale) as u32;
@@ -4829,6 +5996,17 @@ impl App {
                 height: Some(height_dips.max(240)),
                 topn_width: Some(du.state.topn_width_dips),
             });
+            if let Some(db) = self.metadata_db.as_ref() {
+                // Read the current layout row, mutate just the du_*
+                // fields, and write back. Avoids stomping the
+                // sidebar / preview widths the main-window quit
+                // path also writes.
+                let mut layout = db.load_layout_state().ok().flatten().unwrap_or_default();
+                layout.du_width = width_dips.max(320) as i32;
+                layout.du_height = height_dips.max(240) as i32;
+                layout.du_topn_width = du.state.topn_width_dips.round() as i32;
+                let _ = db.save_layout_state(&layout);
+            }
 
             du.state.cancel.store(true, Ordering::Relaxed);
             if let Some(id) = du.state.task_id.take() {
@@ -4957,9 +6135,33 @@ impl App {
         }
 
         let title = format!("Disk Usage — {}", pending.root_path.display());
-        let saved = disk_usage_prefs::load();
-        let initial_w = saved.width.unwrap_or(1100) as f64;
-        let initial_h = saved.height.unwrap_or(720) as f64;
+        // Prefer the metadata DB's layout_state.du_*; fall back to
+        // the legacy `du_window.txt` for users on the migration
+        // boundary; finally fall back to compile-time defaults.
+        let saved_txt = disk_usage_prefs::load();
+        let saved_db = self
+            .metadata_db
+            .as_ref()
+            .and_then(|db| db.load_layout_state().ok().flatten());
+        let initial_w = saved_db
+            .as_ref()
+            .filter(|l| l.du_width > 0)
+            .map(|l| l.du_width as f64)
+            .or_else(|| saved_txt.width.map(|w| w as f64))
+            .unwrap_or(1100.0);
+        let initial_h = saved_db
+            .as_ref()
+            .filter(|l| l.du_height > 0)
+            .map(|l| l.du_height as f64)
+            .or_else(|| saved_txt.height.map(|h| h as f64))
+            .unwrap_or(720.0);
+        let initial_topn_width: f32 = saved_db
+            .as_ref()
+            .filter(|l| l.du_topn_width > 0)
+            .map(|l| l.du_topn_width as f32)
+            .or(saved_txt.topn_width)
+            .unwrap_or(280.0);
+        let _ = initial_topn_width; // wired into state below if non-zero
         let attrs = Window::default_attributes()
             .with_title(title)
             .with_inner_size(LogicalSize::new(initial_w, initial_h));
@@ -5010,8 +6212,11 @@ impl App {
         // Adopt the same task_id we already registered so the panel's
         // cancel button continues to work after realization.
         state.task_id = Some(pending.task_id);
-        // Restore the previously-saved Top-N panel width if any.
-        if let Some(tw) = saved.topn_width {
+        // Restore the previously-saved Top-N panel width — DB wins
+        // over the legacy txt file via `initial_topn_width` above.
+        if initial_topn_width > 0.0 {
+            state.topn_width_dips = initial_topn_width;
+        } else if let Some(tw) = saved_txt.topn_width {
             state.topn_width_dips = tw;
         }
 
@@ -5466,6 +6671,11 @@ impl ApplicationHandler<AppEvent> for App {
             scale,
             font_bytes,
         ));
+        // Apply previously-saved window size now that the winit
+        // window exists. The actual resize fires asynchronously and
+        // arrives as a `WindowEvent::Resized` which updates
+        // `self.width/height` + the renderer.
+        self.apply_persisted_window_size();
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
@@ -5501,11 +6711,33 @@ impl ApplicationHandler<AppEvent> for App {
 
                 let cursor_name = self.cursor_entry_name();
                 let scroll = self.list.scroll_offset;
+                let now_unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                // Snapshot the size before mutably borrowing the tab,
+                // since the DB write needs path/size/mtime.
+                let mut writes: Vec<(String, i64, u64, String)> = Vec::new();
                 let tab = &mut self.tabs[self.active];
                 let mut changed = false;
                 for result in results {
-                    let key = (dir.join(&result.name), result.mtime_unix);
+                    let path = dir.join(&result.name);
+                    let key = (path.clone(), result.mtime_unix);
                     self.magic_cache.insert(key, result.label.clone());
+                    let size = tab
+                        .all_entries
+                        .iter()
+                        .find(|e| e.name == result.name && e.mtime_unix == result.mtime_unix)
+                        .map(|e| e.size)
+                        .unwrap_or(0);
+                    if let Some(p) = path.to_str() {
+                        writes.push((
+                            p.to_string(),
+                            result.mtime_unix,
+                            size,
+                            result.label.clone(),
+                        ));
+                    }
                     if let Some(entry) = tab.all_entries.iter_mut().find(|entry| {
                         entry.name == result.name && entry.mtime_unix == result.mtime_unix
                     }) {
@@ -5513,6 +6745,25 @@ impl ApplicationHandler<AppEvent> for App {
                             entry.display_magic = result.label;
                             changed = true;
                         }
+                    }
+                }
+                // Persist after the tab borrow is released.
+                if let Some(db) = self.metadata_db.as_ref() {
+                    for (path, mtime, size, label) in writes {
+                        let _ = db.upsert_file(&feraille_meta::FileMetaRecord {
+                            path,
+                            mtime_unix: mtime,
+                            size,
+                            magic_label: Some(label),
+                            partial_hash: None,
+                            full_hash: None,
+                            mime: None,
+                            quarantined: None,
+            quarantine_agent: None,
+            quarantine_iso: None,
+            quarantine_where_from: None,
+                            indexed_at_unix: now_unix,
+                        });
                     }
                 }
 
@@ -5550,16 +6801,41 @@ impl ApplicationHandler<AppEvent> for App {
 
                 let cursor_name = self.cursor_entry_name();
                 let scroll = self.list.scroll_offset;
+                let now_unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                // Snapshot DB writes before borrowing the tab mutably
+                // so the persistence pass doesn't fight borrow rules.
+                let mut writes: Vec<(String, i64, u64, bool, Option<QuarantineDetails>)> =
+                    Vec::new();
                 let tab = &mut self.tabs[self.active];
                 let mut changed = false;
                 for result in results {
-                    let key = (dir.join(&result.name), result.mtime_unix);
+                    let path = dir.join(&result.name);
+                    let key = (path.clone(), result.mtime_unix);
                     let cached_details = if result.quarantined {
                         Some(result.details.clone())
                     } else {
                         None
                     };
-                    self.quarantine_cache.insert(key, cached_details);
+                    self.quarantine_cache
+                        .insert(key, cached_details.clone());
+                    let size = tab
+                        .all_entries
+                        .iter()
+                        .find(|e| e.name == result.name && e.mtime_unix == result.mtime_unix)
+                        .map(|e| e.size)
+                        .unwrap_or(0);
+                    if let Some(p) = path.to_str() {
+                        writes.push((
+                            p.to_string(),
+                            result.mtime_unix,
+                            size,
+                            result.quarantined,
+                            cached_details,
+                        ));
+                    }
                     if let Some(entry) = tab.all_entries.iter_mut().find(|entry| {
                         entry.name == result.name && entry.mtime_unix == result.mtime_unix
                     }) {
@@ -5576,6 +6852,27 @@ impl ApplicationHandler<AppEvent> for App {
                             entry.quarantine = new_details;
                             changed = true;
                         }
+                    }
+                }
+                if let Some(db) = self.metadata_db.as_ref() {
+                    for (path, mtime, size, quarantined, details) in writes {
+                        let where_from = details.as_ref().map(|d| d.where_from.join("\n"));
+                        let agent = details.as_ref().and_then(|d| d.agent.clone());
+                        let iso = details.as_ref().and_then(|d| d.downloaded_iso.clone());
+                        let _ = db.upsert_file(&feraille_meta::FileMetaRecord {
+                            path,
+                            mtime_unix: mtime,
+                            size,
+                            magic_label: None,
+                            partial_hash: None,
+                            full_hash: None,
+                            mime: None,
+                            quarantined: Some(quarantined),
+                            quarantine_agent: agent,
+                            quarantine_iso: iso,
+                            quarantine_where_from: where_from,
+                            indexed_at_unix: now_unix,
+                        });
                     }
                 }
 
@@ -5869,7 +7166,12 @@ impl ApplicationHandler<AppEvent> for App {
         }
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                // Snapshot state to the metadata DB before tearing
+                // down so the next launch can restore. Best-effort.
+                self.save_persistent_state();
+                event_loop.exit();
+            }
             WindowEvent::Resized(PhysicalSize { width, height }) => {
                 self.width = width.max(1);
                 self.height = height.max(1);
@@ -6043,6 +7345,40 @@ impl ApplicationHandler<AppEvent> for App {
                         self.close_shortcuts_modal();
                         self.request_redraw();
                     }
+                    return;
+                }
+
+                // Settings modal — same topmost behaviour. Hits route
+                // to the matching control; outside-panel clicks dismiss.
+                if self.settings_modal.is_some() {
+                    let (vp_w, vp_h) = self.viewport_size_dips();
+                    let viewport = feraille_render::Size::new(vp_w, vp_h);
+                    let tokens = self.tokens.clone();
+                    match self.settings_hit(p, viewport, &tokens) {
+                        None => {
+                            self.close_settings();
+                        }
+                        Some(SettingsHit::Close) => {
+                            self.close_settings();
+                        }
+                        Some(SettingsHit::Category(cat)) => {
+                            if let Some(m) = self.settings_modal.as_mut() {
+                                m.category = cat;
+                            }
+                        }
+                        Some(SettingsHit::ThemeTile(pref)) => {
+                            self.set_theme_preference(pref);
+                        }
+                        Some(SettingsHit::ToggleHidden) => {
+                            self.toggle_hidden();
+                        }
+                        Some(SettingsHit::SidebarWidthSnap(snap)) => {
+                            self.splitter_x = snap.px();
+                            self.save_app_prefs();
+                        }
+                        Some(SettingsHit::Inside) => {}
+                    }
+                    self.request_redraw();
                     return;
                 }
 
@@ -6237,6 +7573,10 @@ impl ApplicationHandler<AppEvent> for App {
                 }
                 if self.splitter.is_dragging() {
                     self.splitter.end_drag();
+                    // Persist the new sidebar width once the drag
+                    // settles; intermediate frames don't churn the
+                    // prefs file.
+                    self.save_app_prefs();
                     self.request_redraw();
                 }
                 if self.preview_splitter.is_dragging() {
@@ -6361,6 +7701,17 @@ impl ApplicationHandler<AppEvent> for App {
                 }
 
                 // Keyboard-shortcuts overlay — eat all input while
+                // Settings modal — Escape closes; everything else
+                // is swallowed so a stray keystroke can't flow into
+                // the underlying file pane.
+                if self.settings_modal.is_some() {
+                    if let Key::Named(winit::keyboard::NamedKey::Escape) = &logical_key {
+                        self.close_settings();
+                        self.request_redraw();
+                    }
+                    return;
+                }
+
                 // open. Escape closes, Enter does nothing (no submit
                 // semantics here), every other key feeds the filter.
                 if self.shortcuts_modal.is_some() {
@@ -6701,15 +8052,21 @@ or run Feraille from outside a sandboxed launcher.\n\nPath: {}",
     }
 }
 
-/// Initial theme preference at app startup. Pinned by `FERAILLE_THEME`
-/// when set (regression tooling, screenshots); otherwise defaults to
-/// `System`, which follows macOS Appearance live via the
-/// `SystemThemeChanged` observer.
-fn initial_theme_preference() -> ThemePreference {
-    match std::env::var("FERAILLE_THEME").ok().as_deref() {
-        Some("dark") => ThemePreference::Dark,
-        Some("light") => ThemePreference::Light,
-        _ => ThemePreference::System,
+/// Initial theme preference at app startup. Resolution order:
+/// `FERAILLE_THEME` env var (regression tooling, screenshots) →
+/// persisted `app_prefs::AppPrefs.theme_preference` → `System`.
+fn initial_theme_preference(prefs: &app_prefs::AppPrefs) -> ThemePreference {
+    if let Some(env) = std::env::var("FERAILLE_THEME").ok() {
+        match env.as_str() {
+            "dark" => return ThemePreference::Dark,
+            "light" => return ThemePreference::Light,
+            _ => {}
+        }
+    }
+    match prefs.theme_preference {
+        Some(app_prefs::ThemePref::Light) => ThemePreference::Light,
+        Some(app_prefs::ThemePref::Dark) => ThemePreference::Dark,
+        Some(app_prefs::ThemePref::System) | None => ThemePreference::System,
     }
 }
 
@@ -6842,6 +8199,124 @@ fn read_text_preview(path: &Path) -> Option<String> {
         }
     }
     Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// If the command line contains `--reset-db <scope>` (or just
+/// `--reset-db` with no value — which we treat as a usage error),
+/// open the metadata DB, wipe the requested scope, and return
+/// `Some(exit_code)`. Returns `None` when the flag isn't present
+/// so `main()` falls through to its normal startup path.
+fn handle_reset_db_cli() -> Option<i32> {
+    let mut iter = std::env::args().skip(1);
+    while let Some(arg) = iter.next() {
+        if arg != "--reset-db" {
+            continue;
+        }
+        let Some(raw) = iter.next() else {
+            // Bare `--reset-db` is the "what can I reset?" query —
+            // not an error. Print the scopes and exit 0 so users
+            // (and `--help`-style discovery) get a clean listing.
+            print_reset_db_usage();
+            return Some(0);
+        };
+        // `--reset-db help` / `list` / `-h` also list scopes.
+        if matches!(raw.as_str(), "help" | "--help" | "-h" | "list") {
+            print_reset_db_usage();
+            return Some(0);
+        }
+        let Some(scope) = feraille_meta::ResetScope::from_cli(&raw) else {
+            eprintln!("--reset-db: unknown scope `{raw}`");
+            eprintln!();
+            print_reset_db_usage();
+            return Some(2);
+        };
+        // Locate + open the DB. Mirrors `App::open_metadata_db` but
+        // pre-event-loop so we don't spin up a window.
+        let Some(path) = feraille_meta::default_db_path() else {
+            eprintln!("--reset-db: $HOME unset; nothing to reset");
+            return Some(1);
+        };
+        if !path.exists() {
+            eprintln!("--reset-db: no DB at {} (nothing to do)", path.display());
+            return Some(0);
+        }
+        if let Err(e) = feraille_meta::ensure_parent_dir(&path) {
+            eprintln!("--reset-db: mkdir failed for {}: {e}", path.display());
+            return Some(1);
+        }
+        // For `all` it's both faster and cleaner to delete the file
+        // outright than to DELETE every table — saves a vacuum step
+        // and dodges any stale FK / index state. Other scopes go
+        // through the `reset()` API which keeps `db_version` intact.
+        if matches!(scope, feraille_meta::ResetScope::All) {
+            if let Err(e) = std::fs::remove_file(&path) {
+                eprintln!("--reset-db: rm {}: {e}", path.display());
+                return Some(1);
+            }
+            eprintln!("--reset-db: deleted {}", path.display());
+            return Some(0);
+        }
+        let db = match feraille_meta::MetadataDb::open(&path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("--reset-db: open {}: {e}", path.display());
+                return Some(1);
+            }
+        };
+        match db.reset(scope) {
+            Ok(()) => {
+                eprintln!(
+                    "--reset-db {:?}: cleared {} at {}",
+                    scope,
+                    scope.help_label(),
+                    path.display()
+                );
+                return Some(0);
+            }
+            Err(e) => {
+                eprintln!("--reset-db {:?} failed: {e}", scope);
+                return Some(1);
+            }
+        }
+    }
+    None
+}
+
+fn print_reset_db_usage() {
+    use feraille_meta::ResetScope;
+    eprintln!("Reset parts of the metadata DB at:");
+    if let Some(p) = feraille_meta::default_db_path() {
+        eprintln!("  {}", p.display());
+    } else {
+        eprintln!("  (no DB — $HOME unset)");
+    }
+    eprintln!();
+    eprintln!("Usage:  Feraille --reset-db <scope>");
+    eprintln!();
+    eprintln!("Available scopes:");
+    for scope in [
+        ResetScope::All,
+        ResetScope::Ui,
+        ResetScope::Caches,
+        ResetScope::AntTrail,
+        ResetScope::Magic,
+        ResetScope::Quarantine,
+    ] {
+        let name = match scope {
+            ResetScope::All => "all",
+            ResetScope::Ui => "ui",
+            ResetScope::Caches => "caches",
+            ResetScope::AntTrail => "ant-trail",
+            ResetScope::Magic => "magic",
+            ResetScope::Quarantine => "quarantine",
+        };
+        eprintln!("  {:<12} {}", name, scope.help_label());
+    }
+    eprintln!();
+    eprintln!("Examples:");
+    eprintln!("  Feraille --reset-db ui          # forget window size + open tabs");
+    eprintln!("  Feraille --reset-db caches      # re-sniff magic + re-walk Ant Trail");
+    eprintln!("  Feraille --reset-db all         # nuke the DB file outright");
 }
 
 /// Resolve volume info for `path`, walking up to the volume root if
