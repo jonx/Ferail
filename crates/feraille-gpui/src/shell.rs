@@ -216,6 +216,10 @@ pub struct Shell {
     /// Per-path Quick Look thumbnail cache. Populated lazily by
     /// `preview::request` on selection change.
     pub preview_cache: crate::preview::PreviewCache,
+    /// Resizable-splitter state for the sidebar / center / preview
+    /// columns. Persists across renders so the drag handles work as
+    /// expected; sizes survive theme changes etc.
+    pub splitter_state: Entity<gpui_component::resizable::ResizableState>,
     /// Sidebar tree state (Stage 9.c): which directories are
     /// currently expanded. Updated on caret-click and by the
     /// `--expand <path>` CLI flag (which walks the path's ancestors).
@@ -556,6 +560,9 @@ impl Shell {
             preview_visible: true,
             ui_scale: 1.0,
             preview_cache: crate::preview::PreviewCache::new(),
+            splitter_state: cx.new(|_| {
+                gpui_component::resizable::ResizableState::default()
+            }),
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
             ant_visits,
@@ -1525,7 +1532,7 @@ impl Shell {
     /// Either the file Table, or an inline error/empty state when
     /// the directory couldn't be listed (typically macOS TCC denial
     /// on ~/Documents, ~/Desktop, ~/Downloads in a sandboxed runner).
-    fn file_pane_body(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn file_pane_body(&self, cx: &mut Context<Self>) -> AnyElement {
         if let Some(err) = self.last_error.clone() {
             let (title, body) = error_copy(&err);
             return v_flex()
@@ -1838,8 +1845,7 @@ impl Shell {
         };
 
         v_flex()
-            .w(px(280.0))
-            .h_full()
+            .size_full()
             .min_h_0()
             .border_l_1()
             .border_color(cx.theme().border)
@@ -1938,7 +1944,6 @@ impl Render for Shell {
             .into_owned();
 
         let mut sidebar = Sidebar::new("shell-sidebar")
-            .w(px(220.0))
             .header(
                 SidebarHeader::new().child(
                     div()
@@ -2018,36 +2023,58 @@ impl Render for Shell {
             .relative()
             .size_full()
             .bg(cx.theme().background)
-            .child(
-                h_flex()
-                    .size_full()
-                    .child(sidebar)
+            .child({
+                // Three-column resizable layout: sidebar | center | preview.
+                // The status bar runs full-width across the bottom so its
+                // task summary + progress strip is always visible.
+                use gpui_component::resizable::{
+                    h_resizable, resizable_panel,
+                };
+                let file_body = self.file_pane_body(cx);
+                let preview_pane = if self.preview_visible {
+                    Some(self.preview(cx))
+                } else {
+                    None
+                };
+                let splitter = h_resizable("shell-splitter")
+                    .with_state(&self.splitter_state)
                     .child(
-                        v_flex()
-                            .h_full()
-                            .flex_1()
-                            .min_w_0()
-                            .child(tabstrip)
-                            .child(toolbar)
-                            .child(breadcrumb)
-                            .child({
-                                let mut row = h_flex()
-                                    .flex_1()
-                                    .min_h_0()
-                                    .items_stretch()
-                                    .child(
-                                        div().flex_1().min_w_0().h_full().child(
-                                            self.file_pane_body(cx),
-                                        ),
-                                    );
-                                if self.preview_visible {
-                                    row = row.child(self.preview(cx));
-                                }
-                                row
-                            })
-                            .child(status_bar),
-                    ),
-            )
+                        resizable_panel()
+                            .size(px(220.0))
+                            .size_range(px(160.0)..px(400.0))
+                            .child(sidebar),
+                    )
+                    .child(
+                        resizable_panel().child(
+                            v_flex()
+                                .size_full()
+                                .child(tabstrip)
+                                .child(toolbar)
+                                .child(breadcrumb)
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_h_0()
+                                        .min_w_0()
+                                        .child(file_body),
+                                ),
+                        ),
+                    );
+                let splitter = if let Some(pane) = preview_pane {
+                    splitter.child(
+                        resizable_panel()
+                            .size(px(280.0))
+                            .size_range(px(220.0)..px(520.0))
+                            .child(pane),
+                    )
+                } else {
+                    splitter
+                };
+                v_flex()
+                    .size_full()
+                    .child(div().flex_1().min_h_0().child(splitter))
+                    .child(status_bar)
+            })
             // Dialog overlay layer — rendered last so dialogs draw
             // above the shell content. Needed for the New Folder /
             // Rename modals (5.5.c).
