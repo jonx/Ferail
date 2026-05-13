@@ -129,6 +129,12 @@ fn breadcrumbs() -> &'static Mutex<VecDeque<String>> {
 
 fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
     let backtrace = std::backtrace::Backtrace::force_capture();
+    let backtrace_text = format!("{backtrace}");
+    let full = std::env::var_os("FERAILLE_FULL_BACKTRACE").is_some()
+        || std::env::var_os("RUST_BACKTRACE")
+            .and_then(|v| v.into_string().ok())
+            .map(|v| v == "full")
+            .unwrap_or(false);
     eprintln!();
     eprintln!("==================== Feraille (gpui) Crash ====================");
     eprintln!("time      : +{:.3}s", elapsed_secs());
@@ -138,10 +144,54 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
     eprintln!();
     dump_breadcrumbs_for_panic();
     eprintln!();
-    eprintln!("backtrace :");
-    eprintln!("{backtrace}");
+    if full {
+        eprintln!("backtrace :");
+        eprintln!("{backtrace_text}");
+    } else {
+        eprintln!("relevant frames:");
+        print_compact_backtrace(&backtrace_text);
+        eprintln!("hint      : set FERAILLE_FULL_BACKTRACE=1 for the full raw backtrace");
+    }
     eprintln!("===============================================================");
     eprintln!();
+}
+
+fn print_compact_backtrace(backtrace: &str) {
+    let mut printed = 0usize;
+    let mut pending_frame: Option<&str> = None;
+    for line in backtrace.lines() {
+        let trimmed = line.trim_start();
+        let is_frame = trimmed
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+            && trimmed.contains(':');
+        if is_frame {
+            pending_frame = Some(line);
+            continue;
+        }
+        let relevant = line.contains("feraille_")
+            || line.contains("crates/feraille-")
+            || line.contains("gpui::app::entity_map")
+            || line.contains("gpui/src/app.rs")
+            || line.contains("gpui/src/app/context.rs");
+        if relevant {
+            if let Some(frame) = pending_frame.take() {
+                eprintln!("    {frame}");
+                printed += 1;
+            }
+            eprintln!("    {line}");
+            printed += 1;
+        }
+        if printed >= 28 {
+            eprintln!("    ... compacted ...");
+            return;
+        }
+    }
+    if printed == 0 {
+        eprintln!("    <no Feraille/GPUI frames found>");
+    }
 }
 
 fn dump_breadcrumbs_for_panic() {

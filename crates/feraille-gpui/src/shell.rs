@@ -10,17 +10,23 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use feraille_core::{EntryKind, EnumerationError};
-use feraille_fs_native::{home_dir, list_volumes, open_with_default, NativeFs, VolumeInfo};
+use feraille_core::{
+    EntryKind, EnumerationError, FileEntry, FsBackend, NodeId, navigation::NavigationState,
+    node_store::NodeStore,
+};
+use feraille_fs_native::{NativeFs, VolumeInfo, home_dir, list_volumes, open_with_default};
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Disableable, Sizable, button::Button, h_flex,
+    ActiveTheme, Disableable, Root, Sizable, WindowExt,
+    button::Button,
+    h_flex,
     input::{Input, InputEvent, InputState},
     sidebar::{Sidebar, SidebarHeader},
     switch::Switch,
     table::{DataTable, TableEvent, TableState},
-    v_flex, Root, WindowExt,
+    v_flex,
 };
 
 use crate::app_state::{self, AppState};
@@ -81,6 +87,10 @@ actions!(
 /// the rest of the chrome reflects."
 #[derive(Clone)]
 pub struct Tab {
+    /// Authoritative location identity. `current_dir` remains as a
+    /// display/job snapshot during the migration, but navigation logic
+    /// moves through this NodeId state first.
+    pub nav: NavigationState,
     pub current_dir: PathBuf,
     pub history: Vec<PathBuf>,
     pub history_index: usize,
@@ -88,8 +98,9 @@ pub struct Tab {
 }
 
 impl Tab {
-    pub fn new(at: PathBuf) -> Self {
+    pub fn new(at: PathBuf, node_id: NodeId) -> Self {
         Self {
+            nav: NavigationState::new(node_id),
             current_dir: at.clone(),
             history: vec![at],
             history_index: 0,
@@ -133,6 +144,10 @@ pub struct Shell {
     /// Shared FS backend. `Arc` because the file-list delegate also
     /// holds a reference (for path lookups during navigation).
     pub fs: Arc<NativeFs>,
+    /// Shared node identity store. This is the GPUI bridge toward the
+    /// Windows architecture: views carry NodeId, paths are resolved only
+    /// for jobs/actions.
+    pub node_store: NodeStore,
     /// gpui-component's virtualized Table state, parameterised by
     /// our file-list delegate. Shared across tabs — switching tabs
     /// reloads it with the new tab's current_dir + the (shared)
@@ -149,6 +164,9 @@ pub struct Shell {
     /// (most commonly macOS TCC denial on ~/Documents etc.). Drives
     /// an in-pane empty-state instead of a silent blank list.
     pub last_error: Option<EnumerationError>,
+    /// Monotonic generation for directory loads. Background enumeration
+    /// results apply only if their generation still matches.
+    pub load_generation: u64,
     /// Background file-system watcher. `Rc<RefCell<>>` so the
     /// foreground-executor polling task can read it without taking
     /// a mutable borrow of the whole Shell. None if the platform
@@ -178,6 +196,9 @@ pub struct Shell {
     /// retire its job from the foreground executor without taking
     /// a mutable Shell borrow.
     pub tasks: Rc<RefCell<TaskRegistry>>,
+    /// Whether the background-task panel popover is open. Toggled by
+    /// clicking the task region in the status bar.
+    pub task_panel_open: bool,
     /// CLI-injected status-bar progress override
     /// (`--simulate-progress`). `Some(_)` keeps the strip visible
     /// at that fraction (negative = indeterminate) regardless of
@@ -257,6 +278,11 @@ impl Shell {
     pub fn active_tab_mut(&mut self) -> &mut Tab {
         &mut self.tabs[self.active]
     }
+
+    #[inline]
+    pub fn current_node(&self) -> NodeId {
+        self.active_tab().nav.current()
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -267,6 +293,12 @@ enum SelectionDelta {
     PageDown,
     First,
     Last,
+}
+
+struct LoadResult {
+    entries: Vec<FileEntry>,
+    paths: HashMap<NodeId, PathBuf>,
+    error: Option<EnumerationError>,
 }
 
 fn now_unix_secs() -> i64 {
@@ -316,11 +348,7 @@ fn open_metadata_db() -> Option<Arc<Mutex<feraille_meta::MetadataDb>>> {
         return None;
     };
     if let Err(e) = feraille_meta::ensure_parent_dir(&path) {
-        crate::log_warn!(
-            90,
-            "metadata: mkdir failed for {}: {e}",
-            path.display()
-        );
+        crate::log_warn!(90, "metadata: mkdir failed for {}: {e}", path.display());
         return None;
     }
     match feraille_meta::MetadataDb::open(&path) {
@@ -329,11 +357,7 @@ fn open_metadata_db() -> Option<Arc<Mutex<feraille_meta::MetadataDb>>> {
             Some(Arc::new(Mutex::new(db)))
         }
         Err(e) => {
-            crate::log_warn!(
-                90,
-                "metadata: open failed for {}: {e}",
-                path.display()
-            );
+            crate::log_warn!(90, "metadata: open failed for {}: {e}", path.display());
             None
         }
     }
@@ -348,15 +372,42 @@ struct Location {
 }
 
 const LOCATIONS: &[Location] = &[
-    Location { label: "Home", sub: None },
-    Location { label: "Applications", sub: Some("Applications") },
-    Location { label: "Desktop", sub: Some("Desktop") },
-    Location { label: "Documents", sub: Some("Documents") },
-    Location { label: "Downloads", sub: Some("Downloads") },
-    Location { label: "Movies", sub: Some("Movies") },
-    Location { label: "Music", sub: Some("Music") },
-    Location { label: "Pictures", sub: Some("Pictures") },
+    Location {
+        label: "Home",
+        sub: None,
+    },
+    Location {
+        label: "Applications",
+        sub: Some("Applications"),
+    },
+    Location {
+        label: "Desktop",
+        sub: Some("Desktop"),
+    },
+    Location {
+        label: "Documents",
+        sub: Some("Documents"),
+    },
+    Location {
+        label: "Downloads",
+        sub: Some("Downloads"),
+    },
+    Location {
+        label: "Movies",
+        sub: Some("Movies"),
+    },
+    Location {
+        label: "Music",
+        sub: Some("Music"),
+    },
+    Location {
+        label: "Pictures",
+        sub: Some("Pictures"),
+    },
 ];
+
+const ICON_WARM_CHUNK: usize = 16;
+const ICON_WARM_INTERVAL: Duration = Duration::from_millis(16);
 
 impl Location {
     fn path(&self) -> PathBuf {
@@ -373,6 +424,9 @@ impl Shell {
         let fs = Arc::new(NativeFs::new());
         let persisted = app_state::load();
         let start = persisted.last_dir.clone().unwrap_or_else(home_dir);
+        let start_id = fs.id_for_path(&start);
+        let mut node_store = NodeStore::new();
+        node_store.get_or_create_path_with_id(start.clone(), start_id);
         let show_hidden = persisted.show_hidden.unwrap_or(false);
         // FERAILLE_UI_SCALE env var (regression tool / screenshots)
         // wins over the persisted value when set. Both are clamped.
@@ -383,9 +437,7 @@ impl Shell {
             .map(|n| n.clamp(0.6, 2.0))
             .unwrap_or(1.0);
         let icons = Rc::new(RefCell::new(IconCache::new()));
-        let mut delegate = FileListDelegate::new(fs.clone(), icons.clone());
-        let last_error = delegate.load(start.clone(), show_hidden, "");
-        let initial_selection = if delegate.entries.is_empty() { None } else { Some(0) };
+        let delegate = FileListDelegate::new(fs.clone(), icons.clone());
         let table = cx.new(|cx| {
             TableState::new(delegate, window, cx)
                 .col_selectable(false)
@@ -425,76 +477,58 @@ impl Shell {
         // shell.
         focus_handle.focus(window, cx);
 
-        let filter_input = cx
-            .new(|cx| InputState::new(window, cx).placeholder("Filter \u{2026}"));
-        let filter_subscription =
-            cx.subscribe_in(&filter_input, window, {
-                let filter_input = filter_input.clone();
-                move |this, _state, ev: &InputEvent, _window, cx| {
-                    if matches!(ev, InputEvent::Change) {
-                        let value = filter_input.read(cx).value().to_string();
-                        this.filter_text = value;
-                        let path = this.active_tab().current_dir.clone();
-                        this.load_path(path, cx);
-                    }
+        let filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter \u{2026}"));
+        let filter_subscription = cx.subscribe_in(&filter_input, window, {
+            let filter_input = filter_input.clone();
+            move |this, _state, ev: &InputEvent, _window, cx| {
+                if matches!(ev, InputEvent::Change) {
+                    let value = filter_input.read(cx).value().to_string();
+                    this.filter_text = value;
+                    let path = this.active_tab().current_dir.clone();
+                    this.load_path(path, cx);
                 }
-            });
+            }
+        });
 
         // Stage 9.b: shortcuts-help filter Input. Subscribed for
         // Change so typing updates `shortcuts_help_filter` live.
-        let shortcuts_help_input = cx
-            .new(|cx| InputState::new(window, cx).placeholder("Search\u{2026}"));
-        let shortcuts_help_subscription = cx.subscribe_in(
-            &shortcuts_help_input,
-            window,
-            {
-                let shortcuts_help_input = shortcuts_help_input.clone();
-                move |this, _state, ev: &InputEvent, _window, cx| {
-                    if matches!(ev, InputEvent::Change) {
-                        if this.shortcuts_help_filter.is_some() {
-                            let v = shortcuts_help_input.read(cx).value().to_string();
-                            this.shortcuts_help_filter = Some(v);
-                            cx.notify();
-                        }
+        let shortcuts_help_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search\u{2026}"));
+        let shortcuts_help_subscription = cx.subscribe_in(&shortcuts_help_input, window, {
+            let shortcuts_help_input = shortcuts_help_input.clone();
+            move |this, _state, ev: &InputEvent, _window, cx| {
+                if matches!(ev, InputEvent::Change) {
+                    if this.shortcuts_help_filter.is_some() {
+                        let v = shortcuts_help_input.read(cx).value().to_string();
+                        this.shortcuts_help_filter = Some(v);
+                        cx.notify();
                     }
                 }
-            },
-        );
+            }
+        });
 
         // Stage 9.b: breadcrumb-edit Input. Subscribed for
         // PressEnter (commit) and Blur (cancel).
-        let breadcrumb_input = cx
-            .new(|cx| InputState::new(window, cx).placeholder("/path/to/folder"));
-        let breadcrumb_subscription = cx.subscribe_in(
-            &breadcrumb_input,
-            window,
-            {
-                let breadcrumb_input = breadcrumb_input.clone();
-                move |this, _state, ev: &InputEvent, _window, cx| match ev {
-                    InputEvent::PressEnter { .. } => {
-                        let raw = breadcrumb_input
-                            .read(cx)
-                            .value()
-                            .to_string();
+        let breadcrumb_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("/path/to/folder"));
+        let breadcrumb_subscription = cx.subscribe_in(&breadcrumb_input, window, {
+            let breadcrumb_input = breadcrumb_input.clone();
+            move |this, _state, ev: &InputEvent, _window, cx| match ev {
+                InputEvent::PressEnter { .. } => {
+                    let raw = breadcrumb_input.read(cx).value().to_string();
                         let path = parse_breadcrumb_path(&raw);
                         this.breadcrumb_editing = false;
-                        if path.is_dir() {
-                            this.navigate(path, cx);
-                        } else {
-                            // Bad input — fall back to current dir.
-                            cx.notify();
-                        }
-                    }
-                    InputEvent::Blur => {
-                        if this.breadcrumb_editing {
-                            this.breadcrumb_editing = false;
-                            cx.notify();
-                        }
-                    }
-                    _ => {}
+                        this.navigate(path, cx);
                 }
-            },
-        );
+                InputEvent::Blur => {
+                    if this.breadcrumb_editing {
+                        this.breadcrumb_editing = false;
+                        cx.notify();
+                    }
+                }
+                _ => {}
+            }
+        });
 
         // Spin up the platform file-system watcher and start
         // watching the initial directory. If the watcher itself
@@ -537,27 +571,24 @@ impl Shell {
         })
         .detach();
 
-        let mut initial_tab = Tab::new(start);
-        initial_tab.selected = initial_selection;
-        let metadata_db = open_metadata_db();
-
-        // Stage 9.b: hydrate Ant Trail visit counts from the DB so
-        // the heat tint reflects historical visits across launches.
-        let (ant_visits, ant_max) = hydrate_ant_trail(metadata_db.as_ref());
-        Self {
+        let initial_tab = Tab::new(start.clone(), start_id);
+        let mut shell = Self {
             tabs: vec![initial_tab],
             active: 0,
             volumes: list_volumes(),
             fs,
+            node_store,
             table,
             focus_handle,
             show_hidden,
-            last_error,
+            last_error: None,
+            load_generation: 0,
             watcher,
             context_row: None,
-            metadata_db,
+            metadata_db: None,
             icons,
             tasks: Rc::new(RefCell::new(TaskRegistry::new())),
+            task_panel_open: false,
             simulated_progress: None,
             filter_text: String::new(),
             filter_input,
@@ -568,19 +599,20 @@ impl Shell {
             preview_visible: true,
             ui_scale,
             preview_cache: crate::preview::PreviewCache::new(),
-            splitter_state: cx.new(|_| {
-                gpui_component::resizable::ResizableState::default()
-            }),
+            splitter_state: cx.new(|_| gpui_component::resizable::ResizableState::default()),
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
-            ant_visits,
-            ant_max,
+            ant_visits: HashMap::new(),
+            ant_max: 0,
             _subscriptions: vec![
                 filter_subscription,
                 breadcrumb_subscription,
                 shortcuts_help_subscription,
             ],
-        }
+        };
+        shell.start_metadata_load(cx);
+        shell.load_path(start, cx);
+        shell
     }
 
     /// "Which row is this action targeting?" — context_row first
@@ -599,34 +631,31 @@ impl Shell {
     /// id_for_path fallback that activate_row uses.
     pub fn path_for_row(&self, row_ix: usize, cx: &App) -> Option<PathBuf> {
         let entry = self.table.read(cx).delegate().entries.get(row_ix)?.clone();
-        Some(self.fs.path_for(entry.id).unwrap_or_else(|| {
-            let mut p = self.active_tab().current_dir.clone();
-            p.push(&entry.name);
-            p
-        }))
+        self.node_store
+            .path_snapshot_for_job(entry.id, "Shell::path_for_row")
+            .or_else(|| self.table.read(cx).delegate().path_for_entry(entry.id))
+            .or_else(|| {
+                let mut p = self.active_tab().current_dir.clone();
+                p.push(&entry.name);
+                Some(p)
+            })
     }
 
-    fn on_copy_path(
-        &mut self,
-        _: &CopyPath,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.target_row() else { return };
-        let Some(path) = self.path_for_row(row, cx) else { return };
+        let Some(path) = self.path_for_row(row, cx) else {
+            return;
+        };
         cx.write_to_clipboard(ClipboardItem::new_string(
             path.to_string_lossy().into_owned(),
         ));
     }
 
-    fn on_reveal_in_finder(
-        &mut self,
-        _: &RevealInFinder,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_reveal_in_finder(&mut self, _: &RevealInFinder, _: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.target_row() else { return };
-        let Some(path) = self.path_for_row(row, cx) else { return };
+        let Some(path) = self.path_for_row(row, cx) else {
+            return;
+        };
         // `open -R <path>` is the macOS canonical "reveal in
         // Finder". On other platforms this no-ops.
         let _ = std::process::Command::new("/usr/bin/open")
@@ -635,47 +664,29 @@ impl Shell {
             .spawn();
     }
 
-    fn on_move_to_trash(
-        &mut self,
-        _: &MoveToTrash,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_move_to_trash(&mut self, _: &MoveToTrash, _: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.target_row() else { return };
-        let Some(path) = self.path_for_row(row, cx) else { return };
-        if feraille_fs_native::move_to_trash(&path).is_ok() {
-            // The fs-watcher will pick the deletion up on its next
-            // poll tick, but we also reload immediately so the row
-            // disappears without a noticeable lag.
-            let cur = self.active_tab().current_dir.clone();
-            self.load_path(cur, cx);
-        }
+        let Some(path) = self.path_for_row(row, cx) else {
+            return;
+        };
+        let cur = self.active_tab().current_dir.clone();
+        self.spawn_file_op(
+            cur,
+            move || feraille_fs_native::move_to_trash(&path).map_err(|e| e.to_string()),
+            "move-to-trash",
+            cx,
+        );
     }
 
-    fn on_navigate_back(
-        &mut self,
-        _: &NavigateBack,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_navigate_back(&mut self, _: &NavigateBack, _: &mut Window, cx: &mut Context<Self>) {
         self.navigate_back(cx);
     }
 
-    fn on_navigate_forward(
-        &mut self,
-        _: &NavigateForward,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_navigate_forward(&mut self, _: &NavigateForward, _: &mut Window, cx: &mut Context<Self>) {
         self.navigate_forward(cx);
     }
 
-    fn on_open_selected(
-        &mut self,
-        _: &OpenSelected,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_open_selected(&mut self, _: &OpenSelected, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(idx) = self.target_row() {
             self.activate_row(idx, cx);
         }
@@ -686,28 +697,21 @@ impl Shell {
         self.load_path(path, cx);
     }
 
-    fn on_toggle_hidden(
-        &mut self,
-        _: &ToggleHidden,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_toggle_hidden(&mut self, _: &ToggleHidden, _: &mut Window, cx: &mut Context<Self>) {
         self.toggle_hidden(cx);
     }
 
-    fn on_focus_filter(
-        &mut self,
-        _: &FocusFilter,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_focus_filter(&mut self, _: &FocusFilter, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_filter_input(window, cx);
     }
 
     /// Public-from-screenshot-CLI helper: focuses the filter input
     /// (same effect as Cmd+F). Stage 2's `--search` flag uses this.
     pub fn focus_filter_input(&self, window: &mut Window, cx: &mut App) {
-        self.filter_input.read(cx).focus_handle(cx).focus(window, cx);
+        self.filter_input
+            .read(cx)
+            .focus_handle(cx)
+            .focus(window, cx);
     }
 
     /// Public-from-screenshot-CLI helper: opens the rename dialog
@@ -723,12 +727,7 @@ impl Shell {
     }
 
     /// Cmd+Shift+N: open the New Folder dialog.
-    fn on_new_folder(
-        &mut self,
-        _: &NewFolder,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_new_folder(&mut self, _: &NewFolder, window: &mut Window, cx: &mut Context<Self>) {
         let parent = self.active_tab().current_dir.clone();
         let input_state = cx.new(|cx| InputState::new(window, cx).placeholder("Untitled folder"));
         let input_for_ok = input_state.clone();
@@ -748,9 +747,16 @@ impl Shell {
                     }
                     let mut path = parent.clone();
                     path.push(&name);
-                    let _ = std::fs::create_dir(&path);
                     let cur = parent.clone();
-                    shell.update(cx, move |this, cx| this.load_path(cur, cx));
+                    let op_path = path.clone();
+                    shell.update(cx, move |this, cx| {
+                        this.spawn_file_op(
+                            cur,
+                            move || std::fs::create_dir(&op_path).map_err(|e| e.to_string()),
+                            "new-folder",
+                            cx,
+                        )
+                    });
                     true
                 })
         });
@@ -767,7 +773,9 @@ impl Shell {
         let Some(entry) = self.table.read(cx).delegate().entries.get(row).cloned() else {
             return;
         };
-        let Some(old_path) = self.path_for_row(row, cx) else { return };
+        let Some(old_path) = self.path_for_row(row, cx) else {
+            return;
+        };
         let original_name = entry.name.clone();
         let input_state = cx.new(|cx| {
             let s = InputState::new(window, cx).placeholder("New name");
@@ -800,20 +808,26 @@ impl Shell {
                     }
                     let mut new_path = old_path.clone();
                     new_path.set_file_name(&new_name);
-                    let _ = std::fs::rename(&old_path, &new_path);
                     let cur = parent.clone();
-                    shell.update(cx, move |this, cx| this.load_path(cur, cx));
+                    let op_old_path = old_path.clone();
+                    let op_new_path = new_path.clone();
+                    shell.update(cx, move |this, cx| {
+                        this.spawn_file_op(
+                            cur,
+                            move || {
+                                std::fs::rename(&op_old_path, &op_new_path)
+                                    .map_err(|e| e.to_string())
+                            },
+                            "rename",
+                            cx,
+                        )
+                    });
                     true
                 })
         });
     }
 
-    fn on_clear_filter(
-        &mut self,
-        _: &ClearFilter,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_clear_filter(&mut self, _: &ClearFilter, window: &mut Window, cx: &mut Context<Self>) {
         self.filter_input.update(cx, |state, cx| {
             state.set_value("", window, cx);
         });
@@ -826,24 +840,16 @@ impl Shell {
     /// Space-bar Quick Look. Reuses the existing
     /// `feraille_shell_mac::quick_look::show` bridge — same code
     /// the old app called.
-    fn on_quick_look(
-        &mut self,
-        _: &QuickLook,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_quick_look(&mut self, _: &QuickLook, _: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.target_row() else { return };
-        let Some(path) = self.path_for_row(row, cx) else { return };
+        let Some(path) = self.path_for_row(row, cx) else {
+            return;
+        };
         let _ = feraille_shell_mac::show_quick_look(&[path.as_path()]);
     }
 
     /// Cmd+Shift+H — navigate the active tab to the home directory.
-    fn on_go_home(
-        &mut self,
-        _: &GoHome,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_go_home(&mut self, _: &GoHome, _: &mut Window, cx: &mut Context<Self>) {
         self.navigate(home_dir(), cx);
     }
 
@@ -862,7 +868,10 @@ impl Shell {
         self.breadcrumb_input.update(cx, |state, cx| {
             state.set_value(current, window, cx);
         });
-        self.breadcrumb_input.read(cx).focus_handle(cx).focus(window, cx);
+        self.breadcrumb_input
+            .read(cx)
+            .focus_handle(cx)
+            .focus(window, cx);
         cx.notify();
     }
 
@@ -918,7 +927,18 @@ impl Shell {
     ) {
         let root = self.active_tab().current_dir.clone();
         let fs = self.fs.clone();
-        if let Err(e) = crate::disk_usage::open_window(root, fs, cx) {
+        let tasks = self.tasks.clone();
+        // The DU window owns its own entity, so it can't drive our
+        // notify directly. We hand it a callback closing over a weak
+        // handle to this Shell; when the DU scan begin/ends a task, it
+        // calls back and we re-render to refresh the status bar.
+        let weak: WeakEntity<Self> = cx.weak_entity();
+        let notify_owner: Rc<dyn Fn(&mut App)> = Rc::new(move |cx| {
+            if let Some(s) = weak.upgrade() {
+                s.update(cx, |_, cx| cx.notify());
+            }
+        });
+        if let Err(e) = crate::disk_usage::open_window(root, fs, tasks, Some(notify_owner), cx) {
             crate::log_warn!(90, "disk-usage: open_window failed: {e:?}");
         }
     }
@@ -970,24 +990,14 @@ impl Shell {
     /// Cmd+P — toggle preview-pane visibility. The pane defaults to
     /// shown; toggling off gives the file list the full content
     /// width.
-    fn on_toggle_preview(
-        &mut self,
-        _: &TogglePreview,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_toggle_preview(&mut self, _: &TogglePreview, _: &mut Window, cx: &mut Context<Self>) {
         self.preview_visible = !self.preview_visible;
         cx.notify();
     }
 
     /// Cmd+I — focus the preview pane (which serves as Get Info
     /// today). If the pane is hidden, show it first.
-    fn on_get_info(
-        &mut self,
-        _: &GetInfo,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_get_info(&mut self, _: &GetInfo, _: &mut Window, cx: &mut Context<Self>) {
         if !self.preview_visible {
             self.preview_visible = true;
         }
@@ -1006,12 +1016,7 @@ impl Shell {
         self.ui_scale = (self.ui_scale - 0.1).clamp(0.6, 2.0);
         cx.notify();
     }
-    fn on_zoom_reset(
-        &mut self,
-        _: &ZoomReset,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_zoom_reset(&mut self, _: &ZoomReset, _: &mut Window, cx: &mut Context<Self>) {
         self.ui_scale = 1.0;
         cx.notify();
     }
@@ -1019,17 +1024,14 @@ impl Shell {
     /// Open the selected row's path in a new tab (context-menu
     /// command). Falls back to the active tab's current dir when
     /// nothing is selected.
-    fn on_open_in_new_tab(
-        &mut self,
-        _: &OpenInNewTab,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_open_in_new_tab(&mut self, _: &OpenInNewTab, _: &mut Window, cx: &mut Context<Self>) {
         let path = match self.target_row().and_then(|r| self.path_for_row(r, cx)) {
             Some(p) => p,
             None => self.active_tab().current_dir.clone(),
         };
-        self.tabs.push(Tab::new(path));
+        let id = self.fs.id_for_path(&path);
+        self.node_store.get_or_create_path_with_id(path.clone(), id);
+        self.tabs.push(Tab::new(path, id));
         self.active = self.tabs.len() - 1;
         let cur = self.active_tab().current_dir.clone();
         self.load_path(cur, cx);
@@ -1039,75 +1041,57 @@ impl Shell {
     /// `feraille_shell_mac::duplicate_path` (NSWorkspace duplicate on
     /// macOS, std::fs::copy fallback elsewhere). The watcher picks
     /// up the new file; we also force-reload for snappiness.
-    fn on_duplicate(
-        &mut self,
-        _: &Duplicate,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_duplicate(&mut self, _: &Duplicate, _: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.target_row() else { return };
-        let Some(path) = self.path_for_row(row, cx) else { return };
-        match feraille_shell_mac::duplicate_path(&path) {
-            Ok(_) => {
-                let cur = self.active_tab().current_dir.clone();
-                self.load_path(cur, cx);
-            }
-            Err(e) => {
-                crate::log_warn!(90, "duplicate failed for {}: {e}", path.display());
-            }
-        }
+        let Some(path) = self.path_for_row(row, cx) else {
+            return;
+        };
+        let cur = self.active_tab().current_dir.clone();
+        self.spawn_file_op(
+            cur,
+            move || feraille_shell_mac::duplicate_path(&path).map(|_| ()),
+            "duplicate",
+            cx,
+        );
     }
 
     /// Right-click → Make Alias. Creates a Finder alias next to the
     /// source.
-    fn on_make_alias(
-        &mut self,
-        _: &MakeAlias,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_make_alias(&mut self, _: &MakeAlias, _: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.target_row() else { return };
-        let Some(path) = self.path_for_row(row, cx) else { return };
-        match feraille_shell_mac::make_alias(&path) {
-            Ok(_) => {
-                let cur = self.active_tab().current_dir.clone();
-                self.load_path(cur, cx);
-            }
-            Err(e) => {
-                crate::log_warn!(90, "make_alias failed for {}: {e}", path.display());
-            }
-        }
+        let Some(path) = self.path_for_row(row, cx) else {
+            return;
+        };
+        let cur = self.active_tab().current_dir.clone();
+        self.spawn_file_op(
+            cur,
+            move || feraille_shell_mac::make_alias(&path).map(|_| ()),
+            "make-alias",
+            cx,
+        );
     }
 
     /// Right-click → Compress. Zips the selected path (or a list,
     /// when multi-select lands). The archive lands next to the
     /// source with a `.zip` suffix.
-    fn on_compress(
-        &mut self,
-        _: &Compress,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_compress(&mut self, _: &Compress, _: &mut Window, cx: &mut Context<Self>) {
         let Some(row) = self.target_row() else { return };
-        let Some(path) = self.path_for_row(row, cx) else { return };
-        let targets: Vec<&std::path::Path> = vec![path.as_path()];
-        match feraille_shell_mac::compress_paths(&targets) {
-            Ok(_) => {
-                let cur = self.active_tab().current_dir.clone();
-                self.load_path(cur, cx);
-            }
-            Err(e) => {
-                crate::log_warn!(90, "compress failed for {}: {e}", path.display());
-            }
-        }
+        let Some(path) = self.path_for_row(row, cx) else {
+            return;
+        };
+        let cur = self.active_tab().current_dir.clone();
+        self.spawn_file_op(
+            cur,
+            move || {
+                let targets: Vec<&std::path::Path> = vec![path.as_path()];
+                feraille_shell_mac::compress_paths(&targets).map(|_| ())
+            },
+            "compress",
+            cx,
+        );
     }
 
-    fn on_open_settings(
-        &mut self,
-        _: &OpenSettings,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         // Spawn a second native window hosting the SettingsView,
         // matching macOS convention where Preferences is its own
         // window not a modal sheet. Independent of the file-manager
@@ -1134,18 +1118,26 @@ impl Shell {
         }
     }
 
-    /// Persist last-dir + show-hidden + UI-scale to disk. Cheap (small
-    /// text file in the user's app support dir); call freely.
+    /// Persist last-dir + show-hidden + UI-scale to disk off the UI
+    /// thread. Even though the state file is tiny, navigation must
+    /// not wait on app-support directory creation or disk writes.
     /// `theme_pref` is owned by the Settings entity — persisted there
     /// after a tile click, not from Shell.
-    fn save_state(&self) {
-        let existing = app_state::load();
-        app_state::save(&AppState {
-            last_dir: Some(self.active_tab().current_dir.clone()),
-            show_hidden: Some(self.show_hidden),
-            theme_pref: existing.theme_pref,
-            ui_scale: Some(self.ui_scale),
-        });
+    fn save_state_async(&self, cx: &mut Context<Self>) {
+        let last_dir = self.active_tab().current_dir.clone();
+        let show_hidden = self.show_hidden;
+        let ui_scale = self.ui_scale;
+        cx.background_executor()
+            .spawn(async move {
+                let existing = app_state::load();
+                app_state::save(&AppState {
+                    last_dir: Some(last_dir),
+                    show_hidden: Some(show_hidden),
+                    theme_pref: existing.theme_pref,
+                    ui_scale: Some(ui_scale),
+                });
+            })
+            .detach();
     }
 
     /// Inner load: re-enumerate the directory + refresh the table +
@@ -1153,62 +1145,170 @@ impl Shell {
     /// is only mutated by `navigate`). Public so the screenshot
     /// CLI driver can call it directly after seeding tab state.
     pub fn load_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let node_id = self.fs.id_for_path(&path);
+        self.node_store
+            .get_or_create_path_with_id(path.clone(), node_id);
+        self.active_tab_mut().nav.replace_current(node_id);
         self.active_tab_mut().current_dir = path.clone();
+        self.active_tab_mut().selected = None;
+        self.last_error = None;
+        self.load_generation = self.load_generation.wrapping_add(1);
+        let generation = self.load_generation;
         let show_hidden = self.show_hidden;
         let filter = self.filter_text.clone();
         let table = self.table.clone();
-        let mut err: Option<EnumerationError> = None;
-        // Snapshot path → heat for the rows we're about to apply.
-        // Cheap (just a HashMap lookup per row); the table.update
-        // closure can't borrow `&self` while it borrows the table
-        // mut, so we compute heats up front.
-        let path_str = path.clone();
+
         table.update(cx, |state, cx| {
-            err = state.delegate_mut().load(path_str.clone(), show_hidden, &filter);
-            // Populate the parallel heats vec — must happen after
-            // load() resets it.
-            let delegate = state.delegate_mut();
-            let heats: Vec<f32> = delegate
-                .entries
-                .iter()
-                .map(|e| {
-                    let row_path = delegate
-                        .fs
-                        .path_for(e.id)
-                        .unwrap_or_else(|| {
-                            let mut p = path_str.clone();
-                            p.push(&e.name);
-                            p
-                        });
-                    self.ant_heat(&row_path)
-                })
-                .collect();
-            delegate.heats = heats;
+            state.delegate_mut().clear();
             state.refresh(cx);
         });
-        self.last_error = err;
-        self.active_tab_mut().selected = None;
+
         // Point the watcher at the new directory. Errors (path
         // doesn't exist, watcher saturated) are non-fatal — the
         // user still gets the listing; they just lose live updates.
         if let Some(w) = self.watcher.borrow_mut().as_mut() {
             let _ = w.watch(&path);
         }
-        self.save_state();
-        // Stage 4: kick off magic + quarantine prefetch for the
-        // newly-loaded entries. Cheap (snapshot is collected
-        // synchronously; the actual I/O runs on the background
-        // executor); per-row mutations land on the foreground
-        // executor when the worker completes. Stage 5.a: the worker
-        // also registers / ends a Task in `tasks` so the status bar
-        // surfaces the work.
+        self.save_state_async(cx);
+
+        let fs = self.fs.clone();
+        let weak = cx.weak_entity();
+        cx.spawn(async move |_this, cx| {
+            let path_for_worker = path.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { run_directory_load(fs, path_for_worker, show_hidden, filter) })
+                .await;
+            let Some(shell) = weak.upgrade() else { return };
+            let _ = shell.update(cx, |this, cx| {
+                if this.load_generation != generation {
+                    return;
+                }
+                this.apply_directory_load(result, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn apply_directory_load(&mut self, result: LoadResult, cx: &mut Context<Self>) {
+        for (id, path) in &result.paths {
+            self.node_store
+                .get_or_create_path_with_id(path.clone(), *id);
+        }
+        let icon_seeds: Vec<(FileEntry, PathBuf)> = result
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                result
+                    .paths
+                    .get(&entry.id)
+                    .cloned()
+                    .map(|path| (entry.clone(), path))
+            })
+            .collect();
+        let heats: Vec<f32> = result
+            .entries
+            .iter()
+            .map(|entry| self.ant_heat(entry.id))
+            .collect();
+        let table = self.table.clone();
+        table.update(cx, |state, cx| {
+            state
+                .delegate_mut()
+                .replace_entries(result.entries, result.paths, heats);
+            state.refresh(cx);
+        });
+        self.last_error = result.error;
+
+        // Stage 4: kick off magic + quarantine prefetch after the
+        // foreground table state has received the new snapshot.
         let table = self.table.clone();
         let fs = self.fs.clone();
         let db = self.metadata_db.clone();
         let tasks = self.tasks.clone();
         let weak = cx.weak_entity();
         crate::prefetch::start(table, fs, db, tasks, weak, cx);
+        self.start_icon_warm(icon_seeds, cx);
         cx.notify();
+    }
+
+    fn start_icon_warm(&self, seeds: Vec<(FileEntry, PathBuf)>, cx: &mut Context<Self>) {
+        if seeds.is_empty() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            for chunk in seeds.chunks(ICON_WARM_CHUNK) {
+                cx.background_executor().timer(ICON_WARM_INTERVAL).await;
+                let rows = chunk.to_vec();
+                if this
+                    .update(cx, |this, cx| {
+                        let mut icons = this.icons.borrow_mut();
+                        for (entry, path) in &rows {
+                            let _ = icons.icon_for(entry, path);
+                        }
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn start_metadata_load(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let loaded = cx
+                .background_executor()
+                .spawn(async move {
+                    let db = open_metadata_db();
+                    let (ant_visits, ant_max) = hydrate_ant_trail(db.as_ref());
+                    (db, ant_visits, ant_max)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let (db, ant_visits, ant_max) = loaded;
+                this.metadata_db = db;
+                this.ant_visits = ant_visits;
+                this.ant_max = ant_max;
+                let table = this.table.clone();
+                table.update(cx, |state, cx| {
+                    let delegate = state.delegate_mut();
+                    let heats: Vec<f32> = delegate
+                        .entries
+                        .iter()
+                        .map(|entry| this.ant_heat(entry.id))
+                        .collect();
+                    delegate.heats = heats;
+                    state.refresh(cx);
+                });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn spawn_file_op(
+        &self,
+        reload_path: PathBuf,
+        op: impl FnOnce() -> Result<(), String> + Send + 'static,
+        label: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        let weak = cx.weak_entity();
+        cx.spawn(async move |_this, cx| {
+            let result = cx.background_executor().spawn(async move { op() }).await;
+            let Some(shell) = weak.upgrade() else { return };
+            let _ = shell.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => this.load_path(reload_path, cx),
+                    Err(e) => crate::log_warn!(90, "{label} failed: {e}"),
+                }
+            });
+        })
+        .detach();
     }
 
     pub fn toggle_hidden(&mut self, cx: &mut Context<Self>) {
@@ -1221,7 +1321,10 @@ impl Shell {
 
     /// Cmd+T: open a new tab at the home directory and switch to it.
     fn on_new_tab(&mut self, _: &NewTab, _: &mut Window, cx: &mut Context<Self>) {
-        self.tabs.push(Tab::new(home_dir()));
+        let path = home_dir();
+        let id = self.fs.id_for_path(&path);
+        self.node_store.get_or_create_path_with_id(path.clone(), id);
+        self.tabs.push(Tab::new(path, id));
         self.active = self.tabs.len() - 1;
         let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
@@ -1271,12 +1374,7 @@ impl Shell {
         self.load_path(path, cx);
     }
 
-    fn on_navigate_parent(
-        &mut self,
-        _: &NavigateParent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_navigate_parent(&mut self, _: &NavigateParent, _: &mut Window, cx: &mut Context<Self>) {
         self.navigate_parent(cx);
     }
 
@@ -1285,7 +1383,7 @@ impl Shell {
     pub fn activate_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
         let path_and_kind = self.table.read(cx).delegate().entries.get(row_ix).map(|e| {
             (
-                self.fs.path_for(e.id).unwrap_or_else(|| {
+                self.path_for_row(row_ix, cx).unwrap_or_else(|| {
                     let mut p = self.active_tab().current_dir.clone();
                     p.push(&e.name);
                     p
@@ -1324,14 +1422,28 @@ impl Shell {
     /// reset selection. Also increments the Ant Trail visit count
     /// for `path` (Stage 9.b) and persists through metadata_db.
     pub fn navigate(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let node_id = self.fs.id_for_path(&path);
+        self.node_store
+            .get_or_create_path_with_id(path.clone(), node_id);
         let tab = self.active_tab_mut();
         if tab.history.get(tab.history_index) != Some(&path) {
             tab.history.truncate(tab.history_index + 1);
             tab.history.push(path.clone());
             tab.history_index = tab.history.len() - 1;
         }
-        self.record_ant_visit(&path);
+        tab.nav.navigate_to(node_id);
+        self.record_ant_visit(node_id, cx);
         self.load_path(path, cx);
+    }
+
+    pub fn navigate_node(&mut self, node_id: NodeId, cx: &mut Context<Self>) {
+        let Some(path) = self
+            .node_store
+            .path_snapshot_for_job(node_id, "Shell::navigate_node")
+        else {
+            return;
+        };
+        self.navigate(path, cx);
     }
 
     /// Bump the Ant Trail visit count for `path` in the in-memory
@@ -1339,19 +1451,29 @@ impl Shell {
     /// on the foreground executor — the DB write is a single
     /// upsert and `feraille_meta::MetadataDb` does its own
     /// connection pooling internally.
-    pub fn record_ant_visit(&mut self, path: &Path) {
-        let entry = self.ant_visits.entry(path.to_path_buf()).or_insert(0);
+    pub fn record_ant_visit(&mut self, node_id: NodeId, cx: &mut Context<Self>) {
+        let Some(path) = self
+            .node_store
+            .path_snapshot_for_job(node_id, "Shell::record_ant_visit")
+        else {
+            return;
+        };
+        let entry = self.ant_visits.entry(path.clone()).or_insert(0);
         *entry += 1;
         if *entry > self.ant_max {
             self.ant_max = *entry;
         }
-        if let Some(db) = self.metadata_db.as_ref() {
-            if let Ok(guard) = db.lock() {
-                let _ = guard.record_folder_visit(
-                    &path.to_string_lossy(),
-                    now_unix_secs(),
-                );
-            }
+        self.node_store.set_heat(node_id, self.ant_heat(node_id));
+        if let Some(db) = self.metadata_db.clone() {
+            let path_str = path.to_string_lossy().into_owned();
+            let when = now_unix_secs();
+            cx.background_executor()
+                .spawn(async move {
+                    if let Ok(guard) = db.lock() {
+                        let _ = guard.record_folder_visit(&path_str, when);
+                    }
+                })
+                .detach();
         }
     }
 
@@ -1359,7 +1481,14 @@ impl Shell {
     /// through 1.0 (most-visited folder). Log-scaled so a 10-visit
     /// folder isn't 10× brighter than a 5-visit one. Used by the
     /// file list to apply a subtle background tint per row.
-    pub fn ant_heat(&self, path: &Path) -> f32 {
+    pub fn ant_heat(&self, node_id: NodeId) -> f32 {
+        let cached = self.node_store.heat(node_id);
+        if cached > 0.0 {
+            return cached;
+        }
+        let Some(path) = self.node_store.path_for_action(node_id, "Shell::ant_heat") else {
+            return 0.0;
+        };
         let Some(&v) = self.ant_visits.get(path) else {
             return 0.0;
         };
@@ -1379,9 +1508,43 @@ impl Shell {
             self.expanded.retain(|p| !p.starts_with(&prefix));
         } else {
             self.expanded.insert(path.to_path_buf());
-            self.ensure_tree_children(path);
+            if !self.tree_children.contains_key(path) {
+                self.start_tree_children_load(path.to_path_buf(), cx);
+            }
         }
         cx.notify();
+    }
+
+    pub fn toggle_tree_expand_node(&mut self, node_id: NodeId, cx: &mut Context<Self>) {
+        let Some(path) = self
+            .node_store
+            .path_snapshot_for_job(node_id, "Shell::toggle_tree_expand_node")
+        else {
+            return;
+        };
+        self.toggle_tree_expand(&path, cx);
+    }
+
+    fn start_tree_children_load(&self, path: PathBuf, cx: &mut Context<Self>) {
+        let fs = self.fs.clone();
+        let weak = cx.weak_entity();
+        cx.spawn(async move |_this, cx| {
+            let parent = path.clone();
+            let children = cx
+                .background_executor()
+                .spawn(async move { run_tree_children_load(fs, parent.clone()) })
+                .await;
+            let Some(shell) = weak.upgrade() else { return };
+            let _ = shell.update(cx, |this, cx| {
+                for child in &children {
+                    this.node_store
+                        .get_or_create_path_with_id(child.path.clone(), child.node_id);
+                }
+                this.tree_children.insert(path, children);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Make sure `tree_children[path]` is populated. Cheap no-op if
@@ -1401,11 +1564,7 @@ impl Shell {
         if let Ok(rd) = std::fs::read_dir(path) {
             for dirent in rd.flatten() {
                 let p = dirent.path();
-                let Some(name) = p
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .map(str::to_owned)
-                else {
+                let Some(name) = p.file_name().and_then(|s| s.to_str()).map(str::to_owned) else {
                     continue;
                 };
                 // file_type() can be cheap (no extra stat on most
@@ -1414,16 +1573,21 @@ impl Shell {
                     Ok(ft) => {
                         ft.is_dir()
                             || (ft.is_symlink()
-                                && std::fs::metadata(&p)
-                                    .map(|m| m.is_dir())
-                                    .unwrap_or(false))
+                                && std::fs::metadata(&p).map(|m| m.is_dir()).unwrap_or(false))
                     }
                     Err(_) => false,
                 };
                 if !is_dir {
                     continue;
                 }
-                children.push(TreeChild { path: p, label: name });
+                let node_id = self.fs.id_for_path(&p);
+                self.node_store
+                    .get_or_create_path_with_id(p.clone(), node_id);
+                children.push(TreeChild {
+                    node_id,
+                    path: p,
+                    label: name,
+                });
             }
             children.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
         }
@@ -1454,13 +1618,17 @@ impl Shell {
 
     /// Build the Locations section as a flat row list with descendants
     /// of every expanded folder interleaved.
-    fn build_locations_rows(&self) -> Vec<TreeRowSpec> {
+    fn build_locations_rows(&mut self) -> Vec<TreeRowSpec> {
         let current = self.active_tab().current_dir.clone();
         let mut rows: Vec<TreeRowSpec> = Vec::new();
         for loc in LOCATIONS {
             let path = loc.path();
+            let node_id = self.fs.id_for_path(&path);
+            self.node_store
+                .get_or_create_path_with_id(path.clone(), node_id);
             let is_expanded = self.expanded.contains(&path);
             rows.push(TreeRowSpec {
+                node_id,
                 path: path.clone(),
                 label: SharedString::from(loc.label),
                 depth: 0,
@@ -1480,17 +1648,21 @@ impl Shell {
     /// shape as Locations, but the depth-0 volume row carries a
     /// `(total, available)` capacity so the renderer can draw a
     /// Finder-style capacity bar.
-    fn build_volumes_rows(&self) -> Vec<TreeRowSpec> {
+    fn build_volumes_rows(&mut self) -> Vec<TreeRowSpec> {
         let current = self.active_tab().current_dir.clone();
         let mut rows: Vec<TreeRowSpec> = Vec::new();
         for v in &self.volumes {
             let path = v.path.clone();
+            let node_id = self.fs.id_for_path(&path);
+            self.node_store
+                .get_or_create_path_with_id(path.clone(), node_id);
             let is_expanded = self.expanded.contains(&path);
             let capacity = match (v.total_bytes, v.available_bytes) {
                 (Some(t), Some(a)) if t > 0 => Some((t, a)),
                 _ => None,
             };
             rows.push(TreeRowSpec {
+                node_id,
                 path: path.clone(),
                 label: SharedString::from(v.name.clone()),
                 depth: 0,
@@ -1528,6 +1700,7 @@ impl Shell {
             }
             let is_expanded = self.expanded.contains(&child.path);
             rows.push(TreeRowSpec {
+                node_id: child.node_id,
                 path: child.path.clone(),
                 label: SharedString::from(child.label.clone()),
                 depth,
@@ -1662,7 +1835,10 @@ impl Shell {
                 .hover(|this| this.bg(cx.theme().accent.opacity(0.10)))
                 .child("+")
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.tabs.push(Tab::new(home_dir()));
+                    let path = home_dir();
+                    let id = this.fs.id_for_path(&path);
+                    this.node_store.get_or_create_path_with_id(path.clone(), id);
+                    this.tabs.push(Tab::new(path, id));
                     this.active = this.tabs.len() - 1;
                     let path = this.active_tab().current_dir.clone();
                     this.load_path(path, cx);
@@ -1676,8 +1852,7 @@ impl Shell {
     /// own disabled state — no manual styling.
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
         let can_back = self.active_tab().history_index > 0;
-        let can_forward =
-            self.active_tab().history_index + 1 < self.active_tab().history.len();
+        let can_forward = self.active_tab().history_index + 1 < self.active_tab().history.len();
         h_flex()
             .w_full()
             .items_center()
@@ -1786,9 +1961,7 @@ impl Shell {
                             .h(px(240.0))
                             .rounded(cx.theme().radius)
                             .bg(cx.theme().secondary.opacity(0.5))
-                            .child(
-                                gpui::img(img).max_w(px(248.0)).max_h(px(232.0)),
-                            ),
+                            .child(gpui::img(img).max_w(px(248.0)).max_h(px(232.0))),
                     );
                 } else if matches!(thumb_state, Some(crate::preview::PreviewState::Pending)) {
                     col = col.child(
@@ -1829,11 +2002,7 @@ impl Shell {
                 // asynchronously). Empty string while prefetch is
                 // still running on a fresh directory.
                 if !entry.display_magic.is_empty() {
-                    col = col.child(preview_field(
-                        "Magic",
-                        entry.display_magic.clone(),
-                        cx,
-                    ));
+                    col = col.child(preview_field("Magic", entry.display_magic.clone(), cx));
                 }
                 // Quarantine details. is_quarantined flag drives the
                 // section header even when individual fields are
@@ -1927,17 +2096,14 @@ impl Shell {
                 } else {
                     cx.theme().muted_foreground
                 })
-                .when(is_last, |this| {
-                    this.font_weight(FontWeight::SEMIBOLD)
-                })
+                .when(is_last, |this| this.font_weight(FontWeight::SEMIBOLD))
                 .cursor_pointer()
                 .hover(|this| this.bg(cx.theme().secondary))
                 .child(label)
                 .tooltip({
                     let t = SharedString::from(tooltip_path);
                     move |window, cx| {
-                        gpui_component::tooltip::Tooltip::new(t.clone())
-                            .build(window, cx)
+                        gpui_component::tooltip::Tooltip::new(t.clone()).build(window, cx)
                     }
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -1951,16 +2117,13 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _path_guard = feraille_core::path_guard::enter_render();
         let weak = cx.weak_entity();
         let locations_rows = self.build_locations_rows();
         let volumes_rows = self.build_volumes_rows();
         let has_volumes = !self.volumes.is_empty();
         let breadcrumb = self.breadcrumb(cx);
-        let path_str = self
-            .active_tab()
-            .current_dir
-            .to_string_lossy()
-            .into_owned();
+        let path_str = self.active_tab().current_dir.to_string_lossy().into_owned();
 
         // `.collapsible(false)` disables gpui-component's animatable
         // wrapper (which would otherwise force a fixed expanded
@@ -2000,12 +2163,28 @@ impl Render for Shell {
         let tabstrip = self.tabstrip(cx);
         let toolbar = self.toolbar(cx);
         let entry_count = self.table.read(cx).delegate().entries.len();
+        // Clicking the task region of the status bar toggles the
+        // background-task panel popover. The listener takes `&mut
+        // Self` directly so we don't re-enter the entity update.
+        let toggle_task_panel: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> = {
+            let weak: WeakEntity<Self> = cx.weak_entity();
+            Rc::new(move |_evt, _window, cx| {
+                if let Some(s) = weak.upgrade() {
+                    s.update(cx, |this, cx| {
+                        this.task_panel_open = !this.task_panel_open;
+                        cx.notify();
+                    });
+                }
+            })
+        };
         let status_bar = crate::status_bar::render(
             entry_count,
             &self.tasks,
             self.simulated_progress,
+            Some(toggle_task_panel),
             cx,
         );
+        let task_panel = crate::task_panel::render_if_open(self.task_panel_open, &self.tasks, cx);
 
         div()
             .key_context(SHELL_CONTEXT)
@@ -2055,9 +2234,7 @@ impl Render for Shell {
                 // Three-column resizable layout: sidebar | center | preview.
                 // The status bar runs full-width across the bottom so its
                 // task summary + progress strip is always visible.
-                use gpui_component::resizable::{
-                    h_resizable, resizable_panel,
-                };
+                use gpui_component::resizable::{h_resizable, resizable_panel};
                 let file_body = self.file_pane_body(cx);
                 let preview_pane = if self.preview_visible {
                     Some(self.preview(cx))
@@ -2079,13 +2256,7 @@ impl Render for Shell {
                                 .child(tabstrip)
                                 .child(toolbar)
                                 .child(breadcrumb)
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_h_0()
-                                        .min_w_0()
-                                        .child(file_body),
-                                ),
+                                .child(div().flex_1().min_h_0().min_w_0().child(file_body)),
                         ),
                     );
                 let splitter = if let Some(pane) = preview_pane {
@@ -2099,9 +2270,15 @@ impl Render for Shell {
                     splitter
                 };
                 v_flex()
+                    .relative()
                     .size_full()
                     .child(div().flex_1().min_h_0().child(splitter))
                     .child(status_bar)
+                    // Background-task panel popover sits absolute-
+                    // positioned over the bottom-left corner of this
+                    // column, above the status bar. Only rendered
+                    // when task_panel_open == true.
+                    .when_some(task_panel, |this, panel| this.child(panel))
             })
             // Dialog overlay layer — rendered last so dialogs draw
             // above the shell content. Needed for the New Folder /
@@ -2120,6 +2297,72 @@ impl Render for Shell {
     }
 }
 
+fn run_directory_load(
+    fs: Arc<NativeFs>,
+    path: PathBuf,
+    show_hidden: bool,
+    filter_text: String,
+) -> LoadResult {
+    let id = fs.id_for_path(&path);
+    let handle = fs.enumerate(id);
+    let needle = filter_text.trim().to_lowercase();
+    let entries: Vec<FileEntry> = handle
+        .initial
+        .into_iter()
+        .filter(|e| show_hidden || !e.name.starts_with('.'))
+        .filter(|e| {
+            if needle.is_empty() {
+                true
+            } else {
+                e.name.to_lowercase().contains(&needle)
+                    || e.display_kind.to_lowercase().contains(&needle)
+            }
+        })
+        .collect();
+    let mut paths = HashMap::with_capacity(entries.len());
+    for entry in &entries {
+        if let Some(path) = fs.path_for(entry.id) {
+            paths.insert(entry.id, path);
+        }
+    }
+    LoadResult {
+        entries,
+        paths,
+        error: handle.error,
+    }
+}
+
+fn run_tree_children_load(fs: Arc<NativeFs>, path: PathBuf) -> Vec<TreeChild> {
+    let mut children: Vec<TreeChild> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(path) {
+        for dirent in rd.flatten() {
+            let p = dirent.path();
+            let Some(name) = p.file_name().and_then(|s| s.to_str()).map(str::to_owned) else {
+                continue;
+            };
+            let is_dir = match dirent.file_type() {
+                Ok(ft) => {
+                    ft.is_dir()
+                        || (ft.is_symlink()
+                            && std::fs::metadata(&p).map(|m| m.is_dir()).unwrap_or(false))
+                }
+                Err(_) => false,
+            };
+            if !is_dir {
+                continue;
+            }
+            let node_id = fs.id_for_path(&p);
+            children.push(TreeChild {
+                node_id,
+                path: p,
+                label: name,
+            });
+        }
+        children.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    }
+    children
+}
+
 /// Map an `EnumerationError` to (title, body) copy for the in-pane
 /// error state. macOS users hitting `Documents` / `Desktop` /
 /// `Downloads` for the first time in a sandboxed launcher will see
@@ -2136,10 +2379,7 @@ fn error_copy(err: &EnumerationError) -> (&'static str, String) {
             "Folder not found",
             "This location may have been moved, renamed, or unmounted.".to_string(),
         ),
-        EnumerationError::Other(msg) => (
-            "Couldn't open this folder",
-            msg.clone(),
-        ),
+        EnumerationError::Other(msg) => ("Couldn't open this folder", msg.clone()),
     }
 }
 
@@ -2163,10 +2403,9 @@ fn preview_field(label: &'static str, value: String, cx: &Context<Shell>) -> Div
 }
 
 /// Parse a user-typed breadcrumb-input string into a real path:
-/// expands a leading `~` to `$HOME`, canonicalises, falls back to
-/// the input as-is on canonicalise failure. Mirrors the screenshot
-/// CLI's path-normalisation so paste-from-Finder ("~/Documents")
-/// behaves the same in both places.
+/// expands a leading `~` to `$HOME`. It deliberately does not
+/// canonicalise or stat the path on the UI thread; navigation's
+/// background enumeration reports errors.
 pub fn parse_breadcrumb_path(raw: &str) -> PathBuf {
     let trimmed = raw.trim();
     let expanded = if let Some(rest) = trimmed.strip_prefix('~') {
@@ -2179,7 +2418,7 @@ pub fn parse_breadcrumb_path(raw: &str) -> PathBuf {
     } else {
         PathBuf::from(trimmed)
     };
-    std::fs::canonicalize(&expanded).unwrap_or(expanded)
+    expanded
 }
 
 /// Split `path` into clickable breadcrumb segments. Each entry is

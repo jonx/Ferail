@@ -22,7 +22,7 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::{h_flex, ActiveTheme};
+use gpui_component::{ActiveTheme, h_flex};
 
 use crate::tasks::{TaskProgress, TaskRegistry};
 
@@ -30,11 +30,14 @@ use crate::tasks::{TaskProgress, TaskRegistry};
 /// count; `tasks` is the shared task registry. `simulated_progress`
 /// is `Some(_)` only when the `--simulate-progress` CLI flag is set
 /// (used to visualise the strip in screenshots without spinning up
-/// real work).
+/// real work). `on_toggle_task_panel` fires when the user clicks the
+/// task region or progress strip — `None` when the host doesn't want
+/// the panel (screenshots, etc.).
 pub fn render(
     entries: usize,
     tasks: &Rc<RefCell<TaskRegistry>>,
     simulated_progress: Option<f32>,
+    on_toggle_task_panel: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     cx: &mut App,
 ) -> Div {
     let theme = cx.theme();
@@ -53,7 +56,9 @@ pub fn render(
     } else if registry.is_empty() {
         None
     } else if registry.len() == 1 {
-        registry.primary().map(|t| SharedString::from(t.label.clone()))
+        registry
+            .primary()
+            .map(|t| SharedString::from(t.label.clone()))
     } else {
         Some(SharedString::from(format!(
             "{} tasks running",
@@ -65,6 +70,20 @@ pub fn render(
     // primary task's fraction (or the simulated value). Anything
     // indeterminate flips the strip into the indeterminate mode.
     let (visible, indeterminate, fraction) = compute_progress(&registry, simulated_progress);
+
+    let on_toggle = on_toggle_task_panel;
+    // Returns AnyElement so the two branches (id'd Stateful<Div> vs.
+    // plain Div) unify.
+    let make_clickable = |d: Div, region_id: &'static str| -> AnyElement {
+        if let Some(cb) = on_toggle.clone() {
+            d.id(region_id)
+                .cursor_pointer()
+                .on_click(move |evt, window, cx| cb(evt, window, cx))
+                .into_any_element()
+        } else {
+            d.into_any_element()
+        }
+    };
 
     let bar = h_flex()
         .w_full()
@@ -80,35 +99,29 @@ pub fn render(
         .text_color(theme.muted_foreground)
         .child(div().flex_shrink_0().child(count_label))
         .when_some(task_label, |this, label| {
-            this.child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(label),
-            )
+            this.child(make_clickable(
+                div().flex_1().min_w_0().truncate().child(label),
+                "status-bar-task-label",
+            ))
         })
         .when(task_label_none(&registry, simulated_progress), |this| {
             this.child(div().flex_1())
         })
         .when(visible, |this| {
-            this.child(progress_strip(indeterminate, fraction, cx))
+            this.child(make_clickable(
+                progress_strip(indeterminate, fraction, cx),
+                "status-bar-progress",
+            ))
         });
 
     bar
 }
 
-fn task_label_none(
-    registry: &TaskRegistry,
-    simulated_progress: Option<f32>,
-) -> bool {
+fn task_label_none(registry: &TaskRegistry, simulated_progress: Option<f32>) -> bool {
     registry.is_empty() && simulated_progress.is_none()
 }
 
-fn compute_progress(
-    registry: &TaskRegistry,
-    simulated_progress: Option<f32>,
-) -> (bool, bool, f32) {
+fn compute_progress(registry: &TaskRegistry, simulated_progress: Option<f32>) -> (bool, bool, f32) {
     if let Some(p) = simulated_progress {
         if p < 0.0 {
             return (true, true, 0.0);
@@ -151,11 +164,5 @@ fn progress_strip(indeterminate: bool, fraction: f32, cx: &mut App) -> Div {
         .h(px(3.0))
         .rounded(px(1.5))
         .bg(theme.border)
-        .child(
-            div()
-                .h_full()
-                .w(fill_w)
-                .rounded(px(1.5))
-                .bg(theme.primary),
-        )
+        .child(div().h_full().w(fill_w).rounded(px(1.5)).bg(theme.primary))
 }

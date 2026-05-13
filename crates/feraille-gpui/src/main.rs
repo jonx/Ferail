@@ -4,21 +4,21 @@
 //! capture path. All real view code lives in `crate::shell`.
 
 use anyhow::Result;
-use feraille_core::commands::{find, CommandId};
+use feraille_core::commands::{CommandId, find};
 use feraille_gpui::{
     screenshot,
-    settings::{category_from_arg, SettingsView},
+    settings::{SettingsView, category_from_arg},
     shell::{
         CloseTab, CopyPath, FocusFilter, GoHome, MoveToTrash, NavigateBack, NavigateForward,
-        NavigateParent, NewFolder, NewTab, OpenSelected, OpenSettings, Refresh,
-        RenameSelected, RevealInFinder, Shell, ToggleHidden,
+        NavigateParent, NewFolder, NewTab, OpenSelected, OpenSettings, Refresh, RenameSelected,
+        RevealInFinder, Shell, ToggleHidden,
     },
 };
 use gpui::*;
 use gpui_component::Theme;
 use gpui_component_assets::Assets;
 
-actions!(app, [Quit]);
+actions!(app, [Quit, OpenAbout]);
 
 /// macOS Dock icon — set early via `NSApplication.setApplicationIconImage:`
 /// (the same call the old app makes). Bytes embedded so the binary is
@@ -57,9 +57,18 @@ fn run_gui(args: screenshot::Args) {
         // ("Ivar platform not found on class NSApplication"). The
         // old soft-renderer app did the same thing from winit's
         // `resumed()` for the same reason.
-        let icon_result =
-            feraille_shell_mac::set_app_icon_from_png_bytes(APP_ICON_PNG);
+        let icon_result = feraille_shell_mac::set_app_icon_from_png_bytes(APP_ICON_PNG);
         feraille_gpui::log_info!(90, "set_app_icon: {:?}", icon_result);
+        // Populate the About-panel dictionary so OpenAbout brings up a
+        // dialog with our name + version instead of the AppKit bare
+        // fallback. We're not calling install_app_menu (gpui drives the
+        // menu via cx.set_menus), so this is the lightweight path.
+        feraille_shell_mac::set_about_options(
+            "Feraille",
+            "macOS file explorer",
+            env!("CARGO_PKG_VERSION"),
+            "Copyright \u{00A9} 2026 John Knipper",
+        );
         // Initial theme resolution order (highest wins):
         //   1. `--theme {light,dark}` CLI flag
         //   2. `FERAILLE_THEME` env var (light / dark / system)
@@ -107,6 +116,12 @@ fn run_gui(args: screenshot::Args) {
         cx.on_action(|_: &OpenSettings, cx| {
             feraille_gpui::settings::open_settings_window(cx);
         });
+        // OpenAbout brings up the standard macOS About panel using the
+        // dictionary populated above. Stays an App-level fallback so
+        // the menu item is always live.
+        cx.on_action(|_: &OpenAbout, _cx| {
+            feraille_shell_mac::show_about_panel();
+        });
 
         install_app_menus(cx);
 
@@ -119,11 +134,7 @@ fn run_gui(args: screenshot::Args) {
         cx.spawn(async move |cx| {
             cx.open_window(opts, |window, cx| {
                 if let Some(page) = settings_page.as_deref() {
-                    let cat = category_from_arg(if page.is_empty() {
-                        None
-                    } else {
-                        Some(page)
-                    });
+                    let cat = category_from_arg(if page.is_empty() { None } else { Some(page) });
                     let view = cx.new(|_| SettingsView::new(cat));
                     cx.new(|cx| gpui_component::Root::new(view, window, cx))
                 } else {
@@ -152,8 +163,7 @@ fn install_app_menus(cx: &mut App) {
         Menu {
             name: "Feraille".into(),
             items: vec![
-                // app.about not yet implemented — repurpose Settings.
-                MenuItem::action(title("app.about", "About Feraille"), OpenSettings),
+                MenuItem::action(title("app.about", "About Feraille"), OpenAbout),
                 MenuItem::separator(),
                 MenuItem::action(title("app.settings", "Settings\u{2026}"), OpenSettings),
                 MenuItem::separator(),
@@ -182,7 +192,10 @@ fn install_app_menus(cx: &mut App) {
         },
         Menu {
             name: "Edit".into(),
-            items: vec![MenuItem::action(title("file.copy_path", "Copy Path"), CopyPath)],
+            items: vec![MenuItem::action(
+                title("file.copy_path", "Copy Path"),
+                CopyPath,
+            )],
             disabled: false,
         },
         Menu {

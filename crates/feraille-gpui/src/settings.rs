@@ -119,7 +119,10 @@ impl SettingsView {
             show_hidden: false,
             sidebar_width: SidebarWidthSnap::Medium,
             theme_pref,
-            home_hidden_count: count_home_hidden_items(),
+            // Do not enumerate $HOME while constructing the settings
+            // window. A future async preview can fill this in after
+            // first paint.
+            home_hidden_count: None,
         }
     }
 }
@@ -133,23 +136,6 @@ fn persist_theme_pref(value: &str) {
         theme_pref: Some(value.to_string()),
         ..existing
     });
-}
-
-/// Count entries in `$HOME` whose name starts with `.`. Synchronous
-/// because it runs exactly once at view construction; future revisions
-/// will move this onto a background task with live invalidation.
-fn count_home_hidden_items() -> Option<usize> {
-    let home = std::env::var_os("HOME")?;
-    let n = std::fs::read_dir(home)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with('.')
-        })
-        .count();
-    Some(n)
 }
 
 // =============================================================================
@@ -203,12 +189,7 @@ fn settings_card(rows: Vec<Div>, cx: &mut App) -> Div {
         .bg(cx.theme().secondary);
     for (i, row) in rows.into_iter().enumerate() {
         if i > 0 {
-            card = card.child(
-                div()
-                    .h(px(1.0))
-                    .w_full()
-                    .bg(cx.theme().border),
-            );
+            card = card.child(div().h(px(1.0)).w_full().bg(cx.theme().border));
         }
         card = card.child(row);
     }
@@ -243,9 +224,6 @@ impl SettingsView {
     /// don't describe it" principle.
     fn theme_picker(&self, cx: &mut Context<Self>) -> AnyElement {
         let system_dark = feraille_shell_mac::system_is_dark();
-        let entity_light = cx.entity();
-        let entity_dark = cx.entity();
-        let entity_system = cx.entity();
         h_flex()
             .gap_3()
             .child(preview_tile(
@@ -254,13 +232,11 @@ impl SettingsView {
                 PreviewKind::Light,
                 self.theme_pref == ThemePref::Light,
                 cx,
-                move |window, cx| {
+                move |this, window, cx| {
                     Theme::change(ThemeMode::Light, Some(window), cx);
-                    entity_light.update(cx, |this, cx| {
-                        this.theme_pref = ThemePref::Light;
-                        persist_theme_pref("light");
-                        cx.notify();
-                    });
+                    this.theme_pref = ThemePref::Light;
+                    persist_theme_pref("light");
+                    cx.notify();
                 },
             ))
             .child(preview_tile(
@@ -269,13 +245,11 @@ impl SettingsView {
                 PreviewKind::Dark,
                 self.theme_pref == ThemePref::Dark,
                 cx,
-                move |window, cx| {
+                move |this, window, cx| {
                     Theme::change(ThemeMode::Dark, Some(window), cx);
-                    entity_dark.update(cx, |this, cx| {
-                        this.theme_pref = ThemePref::Dark;
-                        persist_theme_pref("dark");
-                        cx.notify();
-                    });
+                    this.theme_pref = ThemePref::Dark;
+                    persist_theme_pref("dark");
+                    cx.notify();
                 },
             ))
             .child(preview_tile(
@@ -284,18 +258,16 @@ impl SettingsView {
                 PreviewKind::System,
                 self.theme_pref == ThemePref::System,
                 cx,
-                move |window, cx| {
+                move |this, window, cx| {
                     let mode = if system_dark {
                         ThemeMode::Dark
                     } else {
                         ThemeMode::Light
                     };
                     Theme::change(mode, Some(window), cx);
-                    entity_system.update(cx, |this, cx| {
-                        this.theme_pref = ThemePref::System;
-                        persist_theme_pref("system");
-                        cx.notify();
-                    });
+                    this.theme_pref = ThemePref::System;
+                    persist_theme_pref("system");
+                    cx.notify();
                 },
             ))
             .into_any_element()
@@ -371,7 +343,10 @@ impl SettingsView {
         // user what flipping this would actually change.
         if let Some(n) = self.home_hidden_count {
             let phrase = if self.show_hidden {
-                format!("Currently revealing {} hidden items in your home folder.", n)
+                format!(
+                    "Currently revealing {} hidden items in your home folder.",
+                    n
+                )
             } else {
                 format!("Would reveal {} hidden items in your home folder.", n)
             };
@@ -405,7 +380,7 @@ impl SettingsView {
     /// modal backdrop so it sits inside the Settings layout. Rows
     /// are grouped by command Category in catalogue order.
     fn shortcuts_card(&self, cx: &mut Context<Self>) -> Div {
-        use feraille_core::commands::{all_commands, Category, CommandSpec};
+        use feraille_core::commands::{Category, CommandSpec, all_commands};
         let theme = cx.theme();
         // Group preserving first-seen category order.
         let mut groups: Vec<(Category, Vec<&CommandSpec>)> = Vec::new();
@@ -413,9 +388,7 @@ impl SettingsView {
             if spec.shortcuts.is_empty() {
                 continue;
             }
-            if let Some((_, list)) =
-                groups.iter_mut().find(|(c, _)| *c == spec.category)
-            {
+            if let Some((_, list)) = groups.iter_mut().find(|(c, _)| *c == spec.category) {
                 list.push(spec);
             } else {
                 groups.push((spec.category, vec![spec]));
@@ -589,7 +562,19 @@ impl Render for SettingsView {
                             )
                             .child(SidebarGroup::new("").child(nav)),
                     )
-                    .child(v_flex().h_full().flex_1().min_w_0().p_6().child(page)),
+                    // Right-side content scrolls when it overflows
+                    // (Keyboard Shortcuts is the tall page). flex_1 +
+                    // min_h_0 lets the inner div clip, and the inner
+                    // div carries the actual scroll behaviour.
+                    .child(
+                        div()
+                            .id("settings-page-scroll")
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .child(v_flex().w_full().p_6().child(page)),
+                    ),
             )
             .child(footer)
     }
@@ -622,25 +607,17 @@ fn preview_tile(
     kind: PreviewKind,
     selected: bool,
     cx: &mut Context<SettingsView>,
-    on_click: impl Fn(&mut Window, &mut App) + 'static,
+    on_click: impl Fn(&mut SettingsView, &mut Window, &mut Context<SettingsView>) + 'static,
 ) -> impl IntoElement {
     // Mock palette for the inner artwork — hardcoded so the tile
     // shows the OTHER theme even when the app is in the current one.
     // System uses Light for the left half + Dark for the right half
     // (set by the artwork branch below).
     let (bg, panel, accent, fg) = match kind {
-        PreviewKind::Light | PreviewKind::System => (
-            rgb(0xFAFAFA),
-            rgb(0xF0F0F0),
-            rgb(0x2A63D9),
-            rgb(0x1A1A1A),
-        ),
-        PreviewKind::Dark => (
-            rgb(0x1B1B1B),
-            rgb(0x252525),
-            rgb(0x2457CA),
-            rgb(0xF5F5F5),
-        ),
+        PreviewKind::Light | PreviewKind::System => {
+            (rgb(0xFAFAFA), rgb(0xF0F0F0), rgb(0x2A63D9), rgb(0x1A1A1A))
+        }
+        PreviewKind::Dark => (rgb(0x1B1B1B), rgb(0x252525), rgb(0x2457CA), rgb(0xF5F5F5)),
     };
 
     let border_color = if selected {
@@ -688,13 +665,7 @@ fn preview_tile(
                         .pt_2()
                         .px_2()
                         .child(div().w(px(60.0)).h(px(4.0)).rounded_full().bg(fg))
-                        .child(
-                            div()
-                                .h(px(10.0))
-                                .w_full()
-                                .rounded(px(2.0))
-                                .bg(accent),
-                        )
+                        .child(div().h(px(10.0)).w_full().rounded(px(2.0)).bg(accent))
                         .child(div().w(px(72.0)).h(px(4.0)).rounded_full().bg(fg)),
                 ),
         )
@@ -734,13 +705,7 @@ fn preview_tile(
                                     .gap_1()
                                     .pt_2()
                                     .px_2()
-                                    .child(
-                                        div()
-                                            .w(px(36.0))
-                                            .h(px(4.0))
-                                            .rounded_full()
-                                            .bg(dark_fg),
-                                    )
+                                    .child(div().w(px(36.0)).h(px(4.0)).rounded_full().bg(dark_fg))
                                     .child(
                                         div()
                                             .h(px(10.0))
@@ -748,13 +713,7 @@ fn preview_tile(
                                             .rounded(px(2.0))
                                             .bg(rgb(0x2457CA)),
                                     )
-                                    .child(
-                                        div()
-                                            .w(px(28.0))
-                                            .h(px(4.0))
-                                            .rounded_full()
-                                            .bg(dark_fg),
-                                    ),
+                                    .child(div().w(px(28.0)).h(px(4.0)).rounded_full().bg(dark_fg)),
                             ),
                     ),
             )
@@ -783,7 +742,7 @@ fn preview_tile(
                 .text_color(cx.theme().foreground)
                 .child(label),
         )
-        .on_click(cx.listener(move |_, _, window, cx| on_click(window, cx)))
+        .on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx)))
 }
 
 /// Open a second native window hosting the SettingsView. Used by

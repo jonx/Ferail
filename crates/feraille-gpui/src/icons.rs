@@ -54,6 +54,9 @@ impl IconCache {
         if let Some(arc) = self.by_kind.get(&key) {
             return arc.clone();
         }
+        if feraille_core::path_guard::is_rendering() {
+            return self.blank_icon();
+        }
         match fetch_icon_rgba(path, ICON_PX) {
             Some((rgba, w, h)) => {
                 let arc = Arc::new(build_render_image(rgba, w, h));
@@ -72,6 +75,9 @@ impl IconCache {
         let key = format!("path:{}", path.display());
         if let Some(arc) = self.by_kind.get(&key) {
             return arc.clone();
+        }
+        if feraille_core::path_guard::is_rendering() {
+            return self.blank_icon();
         }
         match fetch_icon_rgba(path, ICON_PX) {
             Some((rgba, w, h)) => {

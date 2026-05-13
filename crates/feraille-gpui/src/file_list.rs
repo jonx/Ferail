@@ -7,6 +7,7 @@
 //! side per the UI_NONBLOCKING contract carried over from the old app.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -15,9 +16,9 @@ use feraille_core::{EntryKind, FileEntry, FsBackend, NodeId};
 use feraille_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    App, AppContext as _, Context, Div, ExternalPaths, FontWeight, InteractiveElement,
-    IntoElement, ParentElement, SharedString, Stateful, StatefulInteractiveElement as _, Styled,
-    Window, div, img, px,
+    App, AppContext as _, Context, Div, ExternalPaths, FontWeight, InteractiveElement, IntoElement,
+    ParentElement, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window, div,
+    img, px,
 };
 use gpui_component::{
     ActiveTheme,
@@ -37,6 +38,10 @@ pub struct FileListDelegate {
     pub entries: Vec<FileEntry>,
     pub columns: Vec<Column>,
     pub fs: Arc<NativeFs>,
+    /// Snapshot of entry paths captured during enumeration/application.
+    /// Rendering may read this cache, but must not call back into the
+    /// filesystem resolver.
+    pub paths: HashMap<NodeId, PathBuf>,
     /// Shared icon cache. Lookup-or-fetch via NSWorkspace; subsequent
     /// renders for the same kind are a HashMap hit. Wrapped in
     /// Rc<RefCell> so render_td's `&mut self` can borrow without
@@ -61,6 +66,7 @@ impl FileListDelegate {
                 Column::new("modified", "Modified").width(160.0),
             ],
             fs,
+            paths: HashMap::new(),
             icons,
             heats: Vec::new(),
         }
@@ -92,9 +98,36 @@ impl FileListDelegate {
                 }
             })
             .collect();
+        self.paths.clear();
+        for entry in &self.entries {
+            if let Some(path) = self.fs.path_for(entry.id) {
+                self.paths.insert(entry.id, path);
+            }
+        }
         // Reset heats; Shell repopulates after load returns.
         self.heats = vec![0.0; self.entries.len()];
         handle.error
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.paths.clear();
+        self.heats.clear();
+    }
+
+    pub fn replace_entries(
+        &mut self,
+        entries: Vec<FileEntry>,
+        paths: HashMap<NodeId, PathBuf>,
+        heats: Vec<f32>,
+    ) {
+        self.entries = entries;
+        self.paths = paths;
+        self.heats = heats;
+    }
+
+    pub fn path_for_entry(&self, id: NodeId) -> Option<PathBuf> {
+        self.paths.get(&id).cloned()
     }
 }
 
@@ -117,6 +150,7 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) -> Stateful<Div> {
+        let _path_guard = feraille_core::path_guard::enter_render();
         // Ant Trail heat tint (Stage 9.b). Renders only on directory
         // rows — files aren't tracked in the trail. 0.0 → no tint;
         // up to ~0.30 warm-orange opacity at full heat. The warm
@@ -148,7 +182,7 @@ impl TableDelegate for FileListDelegate {
         // to the Finder desktop drops the actual file there. Other
         // apps (Mail, browsers) accept the same drag.
         if let Some(entry) = self.entries.get(row_ix) {
-            let path = self.fs.path_for(entry.id).unwrap_or_default();
+            let path = self.path_for_entry(entry.id).unwrap_or_default();
             if !path.as_os_str().is_empty() {
                 let paths = ExternalPaths(smallvec![path]);
                 return row.on_drag(paths, |paths, _, _, cx| cx.new(|_| paths.clone()));
@@ -164,6 +198,7 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        let _path_guard = feraille_core::path_guard::enter_render();
         let Some(entry) = self.entries.get(row_ix) else {
             return div().into_any_element();
         };
@@ -174,7 +209,7 @@ impl TableDelegate for FileListDelegate {
             // overlay + filename. Falls back to a 1×1 transparent
             // placeholder when fetch fails (e.g. outside macOS).
             0 => {
-                let path = self.fs.path_for(entry.id).unwrap_or_default();
+                let path = self.path_for_entry(entry.id).unwrap_or_default();
                 let icon = self.icons.borrow_mut().icon_for(entry, &path);
                 let quarantined = entry.is_quarantined;
                 let icon_wrapper = div()
@@ -249,8 +284,8 @@ impl TableDelegate for FileListDelegate {
         _cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
         use crate::shell::{
-            Compress, CopyPath, Duplicate, GetInfo, MakeAlias, MoveToTrash,
-            OpenInNewTab, OpenSelected, QuickLook, RenameSelected, RevealInFinder,
+            Compress, CopyPath, Duplicate, GetInfo, MakeAlias, MoveToTrash, OpenInNewTab,
+            OpenSelected, QuickLook, RenameSelected, RevealInFinder,
         };
         menu.menu("Open", Box::new(OpenSelected))
             .menu("Open in New Tab", Box::new(OpenInNewTab))

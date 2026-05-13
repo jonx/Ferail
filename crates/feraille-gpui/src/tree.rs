@@ -31,9 +31,7 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::{
-    sidebar::SidebarItem, ActiveTheme, Collapsible, h_flex, v_flex,
-};
+use gpui_component::{ActiveTheme, Collapsible, h_flex, sidebar::SidebarItem, v_flex};
 
 use crate::icons::IconCache;
 use crate::shell::Shell;
@@ -43,6 +41,7 @@ use crate::shell::Shell;
 /// the `TreeSection::render` impl.
 #[derive(Clone, Debug)]
 pub struct TreeRowSpec {
+    pub node_id: feraille_core::NodeId,
     pub path: PathBuf,
     pub label: SharedString,
     pub depth: usize,
@@ -66,6 +65,7 @@ pub struct TreeRowSpec {
 /// the main pane shows files.
 #[derive(Clone, Debug)]
 pub struct TreeChild {
+    pub node_id: feraille_core::NodeId,
     pub path: PathBuf,
     pub label: String,
 }
@@ -136,7 +136,10 @@ impl SidebarItem for TreeSection {
             .map(|spec| render_tree_row(spec, shell.clone(), icons.clone(), cx))
             .collect::<Vec<AnyElement>>();
 
-        v_flex().w_full().child(header).child(v_flex().w_full().children(rows))
+        v_flex()
+            .w_full()
+            .child(header)
+            .child(v_flex().w_full().children(rows))
     }
 }
 
@@ -152,7 +155,9 @@ fn render_tree_row(
     icons: Rc<RefCell<IconCache>>,
     cx: &mut App,
 ) -> AnyElement {
+    let _path_guard = feraille_core::path_guard::enter_render();
     let TreeRowSpec {
+        node_id,
         path,
         label,
         depth,
@@ -197,7 +202,7 @@ fn render_tree_row(
     // but the layout supports it). `▼` / `▶` render larger than the
     // small `▾`/`▸` glyphs at our font size.
     if is_expandable {
-        let caret_path = path.clone();
+        let caret_node = node_id;
         let shell_for_caret = shell.clone();
         let caret = h_flex()
             .id(ElementId::Name(caret_key))
@@ -216,9 +221,8 @@ fn render_tree_row(
                 // current directory.
                 cx.stop_propagation();
                 if let Some(shell) = shell_for_caret.upgrade() {
-                    let p = caret_path.clone();
                     shell.update(cx, |s, cx| {
-                        s.toggle_tree_expand(&p, cx);
+                        s.toggle_tree_expand_node(caret_node, cx);
                     });
                 }
             });
@@ -239,7 +243,7 @@ fn render_tree_row(
             .child(img(icon).w(px(16.0)).h(px(16.0))),
     );
 
-    let label_path = path.clone();
+    let label_node = node_id;
     let shell_for_label = shell.clone();
     row = row
         .child(
@@ -252,9 +256,8 @@ fn render_tree_row(
         )
         .on_click(move |_, _window, cx| {
             if let Some(shell) = shell_for_label.upgrade() {
-                let p = label_path.clone();
                 shell.update(cx, |s, cx| {
-                    s.navigate(p, cx);
+                    s.navigate_node(label_node, cx);
                 });
             }
         });
@@ -267,8 +270,8 @@ fn render_tree_row(
     if let Some((total, available)) = capacity {
         if total > 0 {
             let theme = cx.theme();
-            let used_fraction = ((total.saturating_sub(available)) as f32 / total as f32)
-                .clamp(0.0, 1.0);
+            let used_fraction =
+                ((total.saturating_sub(available)) as f32 / total as f32).clamp(0.0, 1.0);
             // Indent the bar so it sits under the label, skipping
             // caret + icon columns (16 + 4 + 16 + 4 = ~40 DIPs).
             let bar_indent = px(8.0 + 14.0 * depth as f32 + 40.0);
@@ -288,13 +291,7 @@ fn render_tree_row(
                         .h(px(4.0))
                         .rounded(px(2.0))
                         .bg(track_bg)
-                        .child(
-                            div()
-                                .h_full()
-                                .w(fill_w)
-                                .rounded(px(2.0))
-                                .bg(fill_bg),
-                        ),
+                        .child(div().h_full().w(fill_w).rounded(px(2.0)).bg(fill_bg)),
                 );
             return v_flex().w_full().child(row).child(bar).into_any_element();
         }

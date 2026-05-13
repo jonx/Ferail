@@ -171,9 +171,22 @@ pub fn set_command_state(id: CommandId, on: bool) {
     });
 }
 
+/// Populate the About-panel options dictionary without installing the
+/// full menu bar. Useful for hosts that build the menu through another
+/// channel (e.g. gpui's `cx.set_menus`) but still want
+/// [`show_about_panel`] to display a populated dialog. Idempotent.
+pub fn set_about_options(app_name: &str, tagline: &str, version: &str, copyright: &str) {
+    if MainThreadMarker::new().is_none() {
+        return;
+    }
+    ABOUT_OPTIONS.with(|cell| {
+        *cell.borrow_mut() = Some(build_about_options(app_name, tagline, version, copyright));
+    });
+}
+
 /// Show the standard About panel using the dictionary configured by
-/// [`install_app_menu`]. Falls back to the bare panel if
-/// `install_app_menu` hasn't run.
+/// [`install_app_menu`] or [`set_about_options`]. Falls back to the
+/// bare panel if neither has run.
 pub fn show_about_panel() {
     let Some(mtm) = MainThreadMarker::new() else {
         return;

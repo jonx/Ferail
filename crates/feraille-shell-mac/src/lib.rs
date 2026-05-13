@@ -70,8 +70,8 @@ pub fn register_command_callback(
 }
 
 /// Show the standard About panel using the dictionary configured by
-/// [`install_app_menu`]. The host app calls this in response to the
-/// `app.about` command. No-op on non-macOS.
+/// [`install_app_menu`] or [`set_about_options`]. The host app calls
+/// this in response to the `app.about` command. No-op on non-macOS.
 #[cfg(target_os = "macos")]
 pub fn show_about_panel() {
     app_menu::show_about_panel();
@@ -79,6 +79,18 @@ pub fn show_about_panel() {
 
 #[cfg(not(target_os = "macos"))]
 pub fn show_about_panel() {}
+
+/// Populate the About-panel options dictionary without installing the
+/// full menu bar. Useful when the host builds its menu through another
+/// channel (e.g. gpui's `cx.set_menus`) but still wants
+/// [`show_about_panel`] to display a populated dialog.
+#[cfg(target_os = "macos")]
+pub fn set_about_options(app_name: &str, tagline: &str, version: &str, copyright: &str) {
+    app_menu::set_about_options(app_name, tagline, version, copyright);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_about_options(_app_name: &str, _tagline: &str, _version: &str, _copyright: &str) {}
 
 /// Update the menu's snapshot of the host's tab count. Used by
 /// `validateMenuItem:` to enable / disable `file.close_tab`. Call
@@ -207,10 +219,7 @@ impl MenuPlan {
 
 #[cfg(not(target_os = "macos"))]
 impl MenuPlanItem {
-    pub fn action(
-        command: feraille_core::commands::CommandId,
-        title: impl Into<String>,
-    ) -> Self {
+    pub fn action(command: feraille_core::commands::CommandId, title: impl Into<String>) -> Self {
         MenuPlanItem::Action {
             command,
             title: title.into(),
@@ -351,16 +360,12 @@ pub fn make_alias(_target: &std::path::Path) -> Result<std::path::PathBuf, Strin
 /// parent (Finder behaviour: `Foo.zip` for one source, `Archive.zip`
 /// for several). Synchronous — callers run this on a worker.
 #[cfg(target_os = "macos")]
-pub fn compress_paths(
-    targets: &[&std::path::Path],
-) -> Result<std::path::PathBuf, String> {
+pub fn compress_paths(targets: &[&std::path::Path]) -> Result<std::path::PathBuf, String> {
     archive::compress(targets)
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn compress_paths(
-    _targets: &[&std::path::Path],
-) -> Result<std::path::PathBuf, String> {
+pub fn compress_paths(_targets: &[&std::path::Path]) -> Result<std::path::PathBuf, String> {
     Err("compress is macOS-only in this build".into())
 }
 
@@ -401,16 +406,12 @@ pub fn show_quick_look(_paths: &[&std::path::Path]) -> Result<(), String> {
 /// User-defined tag names are dropped on the floor here; callers
 /// that need the raw strings should use `read_tag_names` instead.
 #[cfg(target_os = "macos")]
-pub fn read_canonical_tags(
-    path: &std::path::Path,
-) -> Vec<feraille_core::commands::TagColor> {
+pub fn read_canonical_tags(path: &std::path::Path) -> Vec<feraille_core::commands::TagColor> {
     tags::read_canonical_tags(path)
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn read_canonical_tags(
-    _path: &std::path::Path,
-) -> Vec<feraille_core::commands::TagColor> {
+pub fn read_canonical_tags(_path: &std::path::Path) -> Vec<feraille_core::commands::TagColor> {
     Vec::new()
 }
 
@@ -483,10 +484,7 @@ pub fn open_with_candidates(_path: &std::path::Path) -> Vec<OpenWithCandidate> {
 /// Open `target` with the app at `app_path`. Shells out to
 /// `/usr/bin/open -a` so we don't have to wire up the
 /// `NSWorkspace.openURLs:` completion-handler contract.
-pub fn open_with_app(
-    target: &std::path::Path,
-    app_path: &std::path::Path,
-) -> Result<(), String> {
+pub fn open_with_app(target: &std::path::Path, app_path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         open_with::open_with(target, app_path)

@@ -56,6 +56,7 @@ impl NativeFs {
     }
 
     pub fn path_for(&self, id: NodeId) -> Option<PathBuf> {
+        feraille_core::path_guard::assert_path_resolution_allowed("NativeFs::path_for");
         self.inner.lock().ok()?.paths.get(&id).cloned()
     }
 

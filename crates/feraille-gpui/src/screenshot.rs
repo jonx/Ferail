@@ -22,12 +22,10 @@ use std::path::PathBuf;
 use anyhow::{Context as _, Result};
 use feraille_fs_native::home_dir;
 use gpui::*;
-use gpui_component::{
-    notification::Notification, Theme, ThemeMode, WindowExt as _,
-};
+use gpui_component::{Theme, ThemeMode, WindowExt as _, notification::Notification};
 use gpui_component_assets::Assets;
 
-use crate::settings::{category_from_arg, SettingsView};
+use crate::settings::{SettingsView, category_from_arg};
 use crate::shell::Shell;
 
 #[derive(Debug, Default)]
@@ -313,23 +311,20 @@ pub fn run(args: Args) -> Result<()> {
                         // Stage 7 headless DU window: skip the shell
                         // entirely, render the treemap straight into
                         // the screenshot frame.
-                        let fs = std::sync::Arc::new(
-                            feraille_fs_native::NativeFs::new(),
-                        );
-                        let canonical = std::fs::canonicalize(&du_root)
-                            .unwrap_or(du_root.clone());
+                        let fs = std::sync::Arc::new(feraille_fs_native::NativeFs::new());
+                        let canonical = std::fs::canonicalize(&du_root).unwrap_or(du_root.clone());
+                        // Screenshot path has no owning Shell, so use
+                        // a fresh standalone task registry + no notify.
+                        let tasks = std::rc::Rc::new(std::cell::RefCell::new(
+                            crate::tasks::TaskRegistry::new(),
+                        ));
                         let view = cx.new(|cx| {
-                            crate::disk_usage::DiskUsageView::new(
-                                canonical, fs, cx,
-                            )
+                            crate::disk_usage::DiskUsageView::new(canonical, fs, tasks, None, cx)
                         });
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if let Some(page) = settings_page.as_deref() {
-                        let cat = category_from_arg(if page.is_empty() {
-                            None
-                        } else {
-                            Some(page)
-                        });
+                        let cat =
+                            category_from_arg(if page.is_empty() { None } else { Some(page) });
                         let view = cx.new(|_| SettingsView::new(cat));
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else {
@@ -451,7 +446,9 @@ impl ShellArgs {
         for path in self.new_tabs.iter().cloned() {
             let p = canonicalize_or_passthrough(&path);
             let _ = shell.update(cx, |s, cx| {
-                s.tabs.push(crate::shell::Tab::new(p));
+                let id = s.fs.id_for_path(&p);
+                s.node_store.get_or_create_path_with_id(p.clone(), id);
+                s.tabs.push(crate::shell::Tab::new(p, id));
                 s.active = s.tabs.len() - 1;
                 let cur = s.active_tab().current_dir.clone();
                 s.load_path(cur, cx);
@@ -581,11 +578,7 @@ impl ShellArgs {
         if self.edit_mode {
             let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
-                    s.on_edit_breadcrumb(
-                        &crate::shell::EditBreadcrumb,
-                        window,
-                        cx,
-                    );
+                    s.on_edit_breadcrumb(&crate::shell::EditBreadcrumb, window, cx);
                 });
             });
         }
@@ -611,10 +604,7 @@ impl ShellArgs {
         // The toast still surfaces correctly in the live window.
         if let Some(text) = self.simulate_toast.clone() {
             let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
-                window.push_notification(
-                    Notification::error(text).autohide(false),
-                    cx,
-                );
+                window.push_notification(Notification::error(text).autohide(false), cx);
             });
         }
         // Stage 9.b: open keyboard-shortcuts help overlay.
@@ -626,7 +616,10 @@ impl ShellArgs {
             });
         }
         if self.splitter.is_some() {
-            crate::log_warn!(90, "--splitter flag: sidebar is fixed-width in the GPUI shell today");
+            crate::log_warn!(
+                90,
+                "--splitter flag: sidebar is fixed-width in the GPUI shell today"
+            );
         }
         if self.scroll.is_some() {
             crate::log_warn!(90, "--scroll flag: Table scroll API not yet wired");

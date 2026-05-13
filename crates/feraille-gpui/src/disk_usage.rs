@@ -12,20 +12,28 @@
 //! the same way the old `disk_usage_state` did. Cancellation is
 //! cooperative via `AtomicBool`.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use feraille_core::{EnumerationError, NodeId};
 use feraille_disk_usage::{
-    build_layout_node_with_mode, compute_treemap, DiskUsageFact, DiskUsageLayoutNode,
-    DiskUsageStats, DiskUsageTree, FileCategory, SizeMode, TreemapRect,
+    DiskUsageFact, DiskUsageLayoutNode, DiskUsageStats, DiskUsageTree, FileCategory, SizeMode,
+    TreemapRect, build_layout_node_with_mode, compute_treemap,
 };
 use feraille_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::{h_flex, v_flex, ActiveTheme, Root};
+use gpui_component::{
+    ActiveTheme, Disableable, Root, Selectable, Sizable,
+    button::{Button, ButtonGroup},
+    h_flex, v_flex,
+};
+
+use crate::tasks::{TaskId, TaskKind, TaskRegistry};
 
 /// Treemap recursion depth used by the DU window. Matches the old
 /// app's DU_LAYOUT_DEPTH.
@@ -33,10 +41,16 @@ const DU_LAYOUT_DEPTH: u32 = 4;
 /// FG drain interval — bounded so the user sees incremental progress
 /// without thrashing layout on every batch.
 const DU_DRAIN_INTERVAL: Duration = Duration::from_millis(80);
+/// Top-N rebuild is O(n) in tree size + O(n log n) for the sort. At
+/// large folders it dominates each drain tick, so we throttle it to a
+/// human-scale refresh rate. The Done message always forces a final
+/// rebuild regardless.
+const DU_TOPN_REBUILD_INTERVAL: Duration = Duration::from_millis(500);
 
 pub struct DiskUsageView {
     root_path: PathBuf,
     root_id: NodeId,
+    fs: Arc<NativeFs>,
 
     tree: DiskUsageTree,
     stats: DiskUsageStats,
@@ -53,10 +67,13 @@ pub struct DiskUsageView {
     layout_cache: Option<DiskUsageLayoutNode>,
     rects_cache: Vec<TreemapRect>,
     rects_bounds: Option<(f32, f32, f32, f32)>,
+    scan_generation: u64,
 
     /// `last() == focus` — the deepest folder the user has clicked
     /// into. Empty == root.
     zoom_path: Vec<NodeId>,
+    selected_node: Option<NodeId>,
+    category_filter: Option<FileCategory>,
 
     size_mode: SizeMode,
     descend_packages: bool,
@@ -72,12 +89,26 @@ pub struct DiskUsageView {
     /// Show the Top-N panel? Toggleable via the header chip.
     topn_visible: bool,
 
+    /// Shared task registry from the parent Shell. The DU window
+    /// `begin`s a task at scan start, optionally updates progress, and
+    /// `end`s it when the scan finishes — so the status bar's progress
+    /// strip stays live while the DU window scans.
+    tasks: Rc<RefCell<TaskRegistry>>,
+    /// Active task id while the scan is in flight. `None` after Done.
+    task_id: Option<TaskId>,
+    /// Optional callback invoked after a `tasks` mutation so the
+    /// owning Shell can `cx.notify` itself (the registry is plain
+    /// `Rc<RefCell>` so it has no built-in observers).
+    notify_owner: Option<Rc<dyn Fn(&mut App)>>,
+
     focus_handle: FocusHandle,
 }
 
 /// One entry in the Top-N largest-files panel.
 #[derive(Clone, Debug)]
 struct TopFileEntry {
+    node_id: NodeId,
+    category: FileCategory,
     name: String,
     size_bytes: u64,
 }
@@ -89,10 +120,14 @@ impl DiskUsageView {
     pub fn new(
         root_path: PathBuf,
         fs: Arc<NativeFs>,
+        tasks: Rc<RefCell<TaskRegistry>>,
+        notify_owner: Option<Rc<dyn Fn(&mut App)>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let canonical = std::fs::canonicalize(&root_path)
-            .unwrap_or_else(|_| root_path.clone());
+        // Keep construction UI-cheap. The background scanner performs
+        // canonicalisation before walking; opening the window should
+        // not wait on filesystem resolution.
+        let canonical = root_path.clone();
         let root_id = fs.id_for_path(&canonical);
         let cancel = Arc::new(AtomicBool::new(false));
         let msg_queue = Arc::new(Mutex::new(Vec::new()));
@@ -102,6 +137,7 @@ impl DiskUsageView {
         let mut view = Self {
             root_path: canonical.clone(),
             root_id,
+            fs: fs.clone(),
             tree: DiskUsageTree::new(root_id),
             stats: DiskUsageStats::default(),
             scan_complete: false,
@@ -111,16 +147,40 @@ impl DiskUsageView {
             layout_cache: None,
             rects_cache: Vec::new(),
             rects_bounds: None,
+            scan_generation: 0,
             zoom_path: Vec::new(),
+            selected_node: None,
+            category_filter: None,
             size_mode: SizeMode::Apparent,
             descend_packages: false,
             volume,
             top_files: Vec::new(),
             topn_visible: true,
+            tasks,
+            task_id: None,
+            notify_owner,
             focus_handle: cx.focus_handle(),
         };
         view.start_scan(fs, cx);
         view
+    }
+
+    /// Mutate the shared task registry and nudge the owner Shell to
+    /// repaint its status bar. Called at scan-begin and scan-end.
+    fn with_tasks<R>(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut TaskRegistry) -> R,
+    ) -> R {
+        let result = {
+            let mut reg = self.tasks.borrow_mut();
+            f(&mut reg)
+        };
+        if let Some(n) = self.notify_owner.clone() {
+            let app: &mut App = std::borrow::BorrowMut::borrow_mut(cx);
+            app.defer(move |cx| n(cx));
+        }
+        result
     }
 
     /// Recompute the Top-N largest-files list from the current tree.
@@ -130,14 +190,26 @@ impl DiskUsageView {
             .tree
             .nodes
             .iter()
-            .filter_map(|(_id, n)| match n.kind {
-                feraille_disk_usage::NodeKind::File if n.size_bytes > 0 => {
-                    Some(TopFileEntry {
-                        name: n.display_name.clone(),
-                        size_bytes: n.size_bytes,
-                    })
+            .filter_map(|(id, n)| {
+                if n.kind != feraille_disk_usage::NodeKind::File {
+                    return None;
                 }
-                _ => None,
+                if self
+                    .category_filter
+                    .is_some_and(|cat| cat != n.file_category)
+                {
+                    return None;
+                }
+                let size_bytes = size_for_mode(n.size_bytes, n.allocated_bytes, self.size_mode);
+                if size_bytes == 0 {
+                    return None;
+                }
+                Some(TopFileEntry {
+                    node_id: *id,
+                    category: n.file_category,
+                    name: n.display_name.clone(),
+                    size_bytes,
+                })
             })
             .collect();
         all.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
@@ -148,12 +220,22 @@ impl DiskUsageView {
     /// Spawn the disk-usage scan on the background executor + start
     /// the FG drain timer.
     fn start_scan(&mut self, fs: Arc<NativeFs>, cx: &mut Context<Self>) {
+        self.scan_generation = self.scan_generation.wrapping_add(1);
+        let generation = self.scan_generation;
         let root = self.root_path.clone();
         let cancel = self.cancel.clone();
         let descend = self.descend_packages;
         let queue_for_scan = self.msg_queue.clone();
         let queue_for_progress = self.msg_queue.clone();
         let queue_for_done = self.msg_queue.clone();
+
+        // Register the scan with the shared task registry so the
+        // owning Shell's status-bar progress strip shows indeterminate
+        // motion for the duration. Cancellable: the status bar / task
+        // panel will pick that up when we wire the cancel button.
+        let task_label = format!("Scanning {}", short_path(&self.root_path));
+        let task_id = self.with_tasks(cx, |reg| reg.begin(TaskKind::DiskUsage, task_label, true));
+        self.task_id = Some(task_id);
 
         // BG: run the scan. Synchronous I/O on the executor's pool.
         cx.background_executor()
@@ -181,12 +263,16 @@ impl DiskUsageView {
             .detach();
 
         // FG: drain the queue periodically + apply on the view.
+        // CRITICAL: expensive work (layout invalidation, top-N rebuild,
+        // cx.notify) runs ONCE per drain tick — not once per message —
+        // because at peak scan rate dozens of batches accumulate
+        // between drains. Doing 50× sorts of a million-node tree in a
+        // single main-thread update is what was freezing the UI.
         let queue_for_drain = self.msg_queue.clone();
         cx.spawn(async move |this, cx| {
+            let mut last_topn_rebuild = Instant::now() - DU_TOPN_REBUILD_INTERVAL;
             loop {
-                cx.background_executor()
-                    .timer(DU_DRAIN_INTERVAL)
-                    .await;
+                cx.background_executor().timer(DU_DRAIN_INTERVAL).await;
                 let msgs: Vec<ScanMsg> = match queue_for_drain.lock() {
                     Ok(mut q) => std::mem::take(&mut *q),
                     Err(_) => break,
@@ -195,20 +281,41 @@ impl DiskUsageView {
                     continue;
                 }
                 let mut done = false;
-                if this
-                    .update(cx, |v, cx| {
-                        for msg in msgs {
-                            if matches!(msg, ScanMsg::Done(_)) {
-                                done = true;
-                            }
-                            v.handle_scan_msg(msg, cx);
+                let mut had_batch = false;
+                let mut stale = false;
+                let update_result = this.update(cx, |v, cx| {
+                    if v.scan_generation != generation {
+                        stale = true;
+                        return;
+                    }
+                    for msg in msgs {
+                        match &msg {
+                            ScanMsg::Batch(_) => had_batch = true,
+                            ScanMsg::Done(_) => done = true,
+                            _ => {}
                         }
-                    })
-                    .is_err()
-                {
+                        v.apply_scan_msg(msg);
+                    }
+                    if had_batch || done {
+                        v.invalidate_layout();
+                        let rebuild_topn =
+                            done || last_topn_rebuild.elapsed() >= DU_TOPN_REBUILD_INTERVAL;
+                        if rebuild_topn {
+                            v.rebuild_top_files();
+                            last_topn_rebuild = Instant::now();
+                        }
+                        cx.notify();
+                    }
+                    if done {
+                        if let Some(id) = v.task_id.take() {
+                            v.with_tasks(cx, |reg| reg.end(id));
+                        }
+                    }
+                });
+                if update_result.is_err() {
                     break;
                 }
-                if done {
+                if stale || done {
                     break;
                 }
             }
@@ -216,24 +323,15 @@ impl DiskUsageView {
         .detach();
     }
 
-    fn handle_scan_msg(&mut self, msg: ScanMsg, cx: &mut Context<Self>) {
+    /// Pure data application — no cache invalidation, no notify. The
+    /// drain loop batches those so they happen once per tick.
+    fn apply_scan_msg(&mut self, msg: ScanMsg) {
         match msg {
-            ScanMsg::Batch(facts) => {
-                self.tree.apply_facts(&facts);
-                self.invalidate_layout();
-                self.rebuild_top_files();
-                cx.notify();
-            }
-            ScanMsg::Progress(p) => {
-                self.stats = p;
-                cx.notify();
-            }
+            ScanMsg::Batch(facts) => self.tree.apply_facts(&facts),
+            ScanMsg::Progress(p) => self.stats = p,
             ScanMsg::Done(err) => {
                 self.scan_complete = true;
                 self.error = err;
-                self.invalidate_layout();
-                self.rebuild_top_files();
-                cx.notify();
             }
         }
     }
@@ -244,8 +342,67 @@ impl DiskUsageView {
         self.rects_bounds = None;
     }
 
+    fn restart_scan(&mut self, cx: &mut Context<Self>) {
+        self.cancel.store(true, Ordering::Relaxed);
+        if let Some(id) = self.task_id.take() {
+            self.with_tasks(cx, |reg| reg.end(id));
+        }
+        self.tree = DiskUsageTree::new(self.root_id);
+        self.stats = DiskUsageStats::default();
+        self.scan_complete = false;
+        self.error = None;
+        self.cancel = Arc::new(AtomicBool::new(false));
+        self.msg_queue = Arc::new(Mutex::new(Vec::new()));
+        self.zoom_path.clear();
+        self.selected_node = None;
+        self.top_files.clear();
+        self.invalidate_layout();
+        self.start_scan(self.fs.clone(), cx);
+        cx.notify();
+    }
+
+    fn cancel_scan(&mut self, cx: &mut Context<Self>) {
+        self.cancel.store(true, Ordering::Relaxed);
+        cx.notify();
+    }
+
     fn focus_id(&self) -> NodeId {
         self.zoom_path.last().copied().unwrap_or(self.root_id)
+    }
+
+    fn select_node(&mut self, target: NodeId, cx: &mut Context<Self>) {
+        if self.selected_node != Some(target) {
+            self.selected_node = Some(target);
+        }
+        cx.notify();
+    }
+
+    fn toggle_category_filter(&mut self, category: FileCategory, cx: &mut Context<Self>) {
+        self.category_filter = if self.category_filter == Some(category) {
+            None
+        } else {
+            Some(category)
+        };
+        self.rebuild_top_files();
+        cx.notify();
+    }
+
+    fn toggle_size_mode(&mut self, mode: SizeMode, cx: &mut Context<Self>) {
+        if self.size_mode == mode {
+            return;
+        }
+        self.size_mode = mode;
+        self.invalidate_layout();
+        self.rebuild_top_files();
+        cx.notify();
+    }
+
+    fn toggle_packages(&mut self, cx: &mut Context<Self>) {
+        if !self.scan_complete {
+            return;
+        }
+        self.descend_packages = !self.descend_packages;
+        self.restart_scan(cx);
     }
 
     fn ensure_layout(&mut self, x: f32, y: f32, w: f32, h: f32) {
@@ -267,36 +424,119 @@ impl DiskUsageView {
         }
     }
 
-    fn header(&self, cx: &mut App) -> Div {
+    fn header(&self, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let title = self.root_path.to_string_lossy().into_owned();
         let scanned = humanize_bytes(self.stats.bytes_scanned);
         let files = self.stats.files_scanned;
         let folders = self.stats.dirs_scanned;
+        let scanning = !self.scan_complete;
         let summary = if self.scan_complete {
             format!("{files} files, {folders} folders, {scanned}")
         } else {
             format!("Scanning\u{2026} {files} files, {scanned}")
         };
+        let scan_button = if scanning {
+            Button::new("du-cancel")
+                .small()
+                .label("Cancel")
+                .on_click(cx.listener(|this, _, _, cx| this.cancel_scan(cx)))
+        } else {
+            Button::new("du-refresh")
+                .small()
+                .label("Refresh")
+                .on_click(cx.listener(|this, _, _, cx| this.restart_scan(cx)))
+        };
         let mut col = v_flex()
             .w_full()
-            .gap_1()
+            .gap_2()
             .px_4()
             .py_2()
             .border_b_1()
             .border_color(theme.border)
             .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.foreground)
-                    .child(SharedString::from(title)),
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.foreground)
+                            .child(SharedString::from(title)),
+                    )
+                    .child(
+                        Button::new("du-up")
+                            .small()
+                            .label("Up")
+                            .disabled(self.zoom_path.is_empty())
+                            .on_click(cx.listener(|this, _, _, cx| this.zoom_out(cx))),
+                    )
+                    .child(scan_button)
+                    .child(
+                        Button::new("du-topn")
+                            .small()
+                            .label(if self.topn_visible {
+                                "Hide List"
+                            } else {
+                                "Show List"
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.topn_visible = !this.topn_visible;
+                                cx.notify();
+                            })),
+                    ),
             )
             .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(SharedString::from(summary)),
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(summary)),
+                    )
+                    .child(
+                        ButtonGroup::new("du-size-mode")
+                            .small()
+                            .outline()
+                            .compact()
+                            .child(
+                                Button::new("du-size-apparent")
+                                    .label("Apparent")
+                                    .selected(self.size_mode == SizeMode::Apparent),
+                            )
+                            .child(
+                                Button::new("du-size-allocated")
+                                    .label("Allocated")
+                                    .selected(self.size_mode == SizeMode::Allocated),
+                            )
+                            .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
+                                match clicks.first().copied() {
+                                    Some(0) => this.toggle_size_mode(SizeMode::Apparent, cx),
+                                    Some(1) => this.toggle_size_mode(SizeMode::Allocated, cx),
+                                    _ => {}
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("du-packages")
+                            .small()
+                            .label("Packages")
+                            .selected(self.descend_packages)
+                            .disabled(scanning)
+                            .tooltip("Scan package folders as containers")
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_packages(cx))),
+                    ),
             );
         // Volume capacity bar — "X.X GB free of Y.Y GB" with the
         // used portion filled in muted_foreground.
@@ -326,13 +566,7 @@ impl DiskUsageView {
                                     .h(px(4.0))
                                     .rounded(px(2.0))
                                     .bg(track_bg)
-                                    .child(
-                                        div()
-                                            .h_full()
-                                            .w(fill_w)
-                                            .rounded(px(2.0))
-                                            .bg(fill_bg),
-                                    ),
+                                    .child(div().h_full().w(fill_w).rounded(px(2.0)).bg(fill_bg)),
                             )
                             .child(
                                 div()
@@ -349,37 +583,65 @@ impl DiskUsageView {
 
     /// Right-side Top-N panel: scrollable list of the largest files
     /// in the scanned tree. Updates live as new facts arrive.
-    fn top_panel(&self, cx: &mut App) -> Div {
+    fn top_panel(&self, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
-        let rows: Vec<Div> = self
+        let rows: Vec<AnyElement> = self
             .top_files
             .iter()
             .enumerate()
             .map(|(ix, e)| {
+                let selected = self.selected_node == Some(e.node_id);
+                let node_id = e.node_id;
                 h_flex()
+                    .id(("du-top-file", ix))
                     .w_full()
                     .gap_2()
+                    .items_center()
                     .py_1()
                     .px_2()
+                    .rounded(px(4.0))
+                    .cursor_pointer()
                     .when(ix % 2 == 0, |this| {
                         this.bg(theme.muted_foreground.opacity(0.04))
                     })
+                    .when(selected, |this| this.bg(theme.accent))
+                    .hover(|style| style.bg(theme.accent.opacity(0.65)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_node(node_id, cx);
+                    }))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .w(px(8.0))
+                            .h(px(8.0))
+                            .rounded(px(2.0))
+                            .bg(category_color(e.category)),
+                    )
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .truncate()
                             .text_xs()
-                            .text_color(theme.foreground)
+                            .text_color(if selected {
+                                theme.accent_foreground
+                            } else {
+                                theme.foreground
+                            })
                             .child(SharedString::from(e.name.clone())),
                     )
                     .child(
                         div()
                             .flex_shrink_0()
                             .text_xs()
-                            .text_color(theme.muted_foreground)
+                            .text_color(if selected {
+                                theme.accent_foreground.opacity(0.82)
+                            } else {
+                                theme.muted_foreground
+                            })
                             .child(SharedString::from(humanize_bytes(e.size_bytes))),
                     )
+                    .into_any_element()
             })
             .collect();
         v_flex()
@@ -408,14 +670,24 @@ impl DiskUsageView {
                     .overflow_y_scroll()
                     .px_1()
                     .py_1()
-                    .child(v_flex().w_full().children(rows)),
+                    .child(if rows.is_empty() {
+                        v_flex().w_full().child(
+                            div()
+                                .px_2()
+                                .py_2()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child("No matching files yet"),
+                        )
+                    } else {
+                        v_flex().w_full().children(rows)
+                    }),
             )
     }
 
-    /// Color legend at the bottom — one chip per FileCategory. Just
-    /// visual reference today; clicking to filter lands in a
-    /// follow-on.
-    fn legend(&self, cx: &mut App) -> Div {
+    /// Color legend at the bottom. Chips toggle a lightweight category
+    /// filter for the Top-N list and dim non-matching treemap tiles.
+    fn legend(&self, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let entries = [
             (FileCategory::Image, "Image"),
@@ -426,37 +698,77 @@ impl DiskUsageView {
             (FileCategory::Executable, "Executable"),
             (FileCategory::Other, "Other"),
         ];
-        let chips = entries.iter().map(|(cat, label)| {
+        let chips = entries.iter().enumerate().map(|(ix, (cat, label))| {
+            let cat = *cat;
+            let selected = self.category_filter == Some(cat);
             h_flex()
+                .id(("du-category", ix))
                 .gap_1()
                 .items_center()
+                .px_2()
+                .py_1()
+                .rounded(px(4.0))
+                .cursor_pointer()
+                .when(selected, |this| {
+                    this.bg(theme.accent).border_1().border_color(theme.border)
+                })
+                .hover(|this| this.bg(theme.accent.opacity(0.55)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.toggle_category_filter(cat, cx);
+                }))
                 .child(
                     div()
                         .w(px(10.0))
                         .h(px(10.0))
                         .rounded(px(2.0))
-                        .bg(category_color(*cat)),
+                        .bg(category_color(cat)),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(theme.muted_foreground)
+                        .text_color(if selected {
+                            theme.accent_foreground
+                        } else {
+                            theme.muted_foreground
+                        })
                         .child(SharedString::from(*label)),
                 )
         });
+        let selection = self
+            .selected_node
+            .and_then(|id| self.tree.nodes.get(&id))
+            .map(|n| {
+                let size = size_for_mode(n.size_bytes, n.allocated_bytes, self.size_mode);
+                format!("{}  {}", n.display_name, humanize_bytes(size))
+            })
+            .or_else(|| {
+                self.category_filter
+                    .map(|cat| format!("Filtering {}", category_label(cat)))
+            })
+            .unwrap_or_else(|| "All categories".to_owned());
         h_flex()
             .w_full()
             .items_center()
-            .gap_3()
+            .gap_2()
             .px_4()
-            .py_2()
+            .py_1()
+            .bg(theme.background)
             .border_t_1()
             .border_color(theme.border)
-            .children(chips)
+            .child(h_flex().items_center().gap_1().flex_wrap().children(chips))
+            .child(div().flex_1())
+            .child(
+                div()
+                    .max_w(px(360.0))
+                    .truncate()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(SharedString::from(selection)),
+            )
     }
 
-    fn treemap(&mut self, cx: &mut Context<Self>) -> Div {
-        let (w, h) = (900.0_f32, 600.0_f32);
+    fn treemap(&mut self, w: f32, h: f32, cx: &mut Context<Self>) -> Div {
+        let (w, h) = (w.max(260.0), h.max(220.0));
         self.ensure_layout(0.0, 0.0, w, h);
         let rects = self.rects_cache.clone();
         // Snapshot display name + size string per rect — drops the
@@ -473,11 +785,7 @@ impl DiskUsageView {
                 (name, humanize_bytes(r.size_bytes))
             })
             .collect();
-        let mut container = div()
-            .relative()
-            .w(px(w))
-            .h(px(h))
-            .bg(cx.theme().background);
+        let mut container = div().relative().w(px(w)).h(px(h)).bg(cx.theme().background);
         for (ix, r) in rects.iter().enumerate() {
             if r.width < 1.0 || r.height < 1.0 {
                 continue;
@@ -488,6 +796,10 @@ impl DiskUsageView {
             let (name, size) = labels[ix].clone();
             let show_label = r.width >= 60.0 && r.height >= 24.0;
             let show_size = r.width >= 80.0 && r.height >= 40.0;
+            let selected = self.selected_node == Some(node_id);
+            let dimmed = self
+                .category_filter
+                .is_some_and(|category| category != r.file_category);
             let mut rect = div()
                 .absolute()
                 .top(px(r.y))
@@ -496,9 +808,15 @@ impl DiskUsageView {
                 .h(px(r.height))
                 .bg(color)
                 .border_1()
-                .border_color(rgba(0x00000033))
+                .border_color(if selected {
+                    cx.theme().selection
+                } else {
+                    rgba(0x00000033).into()
+                })
                 .id(("du-rect", ix))
-                .cursor_pointer();
+                .cursor_pointer()
+                .when(dimmed, |this| this.opacity(0.26))
+                .hover(|this| this.border_color(cx.theme().selection));
             if show_label {
                 let inner = div()
                     .size_full()
@@ -521,13 +839,20 @@ impl DiskUsageView {
                     });
                 rect = rect.child(inner);
             }
-            // Click on a container row zooms in. Files have no
-            // children — clicking them just selects (no zoom).
-            if has_children {
-                rect = rect.on_click(cx.listener(move |this, _, _, cx| {
+            // Single click selects; double click on a container zooms
+            // in. Right click backs out one level, matching the old
+            // native view's quick navigation feel without opening a
+            // modal menu on the hot path.
+            rect = rect.on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                if event.is_right_click() {
+                    this.zoom_out(cx);
+                } else if event.click_count() >= 2 && has_children {
+                    this.selected_node = Some(node_id);
                     this.zoom_into(node_id, cx);
-                }));
-            }
+                } else {
+                    this.select_node(node_id, cx);
+                }
+            }));
             container = container.child(rect);
         }
         container
@@ -562,14 +887,16 @@ impl Focusable for DiskUsageView {
 }
 
 impl Render for DiskUsageView {
-    fn render(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let topn_visible = self.topn_visible;
+        let viewport = window.viewport_size();
+        let side_width = if topn_visible { TOPN_PANEL_WIDTH } else { 0.0 };
+        let header_height = if self.volume.is_some() { 118.0 } else { 88.0 };
+        let footer_height = 34.0;
+        let treemap_width = (viewport.width.as_f32() - side_width - 32.0).max(260.0);
+        let treemap_height = (viewport.height.as_f32() - header_height - footer_height).max(220.0);
         let header = self.header(cx);
-        let treemap = self.treemap(cx);
-        let topn_visible = self.topn_visible && !self.top_files.is_empty();
+        let treemap = self.treemap(treemap_width, treemap_height, cx);
         let topn = if topn_visible {
             Some(self.top_panel(cx))
         } else {
@@ -601,13 +928,48 @@ enum ScanMsg {
 
 fn category_color(cat: FileCategory) -> Rgba {
     match cat {
-        FileCategory::Image => Rgba { r: 0.30, g: 0.60, b: 0.95, a: 0.85 },
-        FileCategory::Video => Rgba { r: 0.85, g: 0.25, b: 0.45, a: 0.85 },
-        FileCategory::Audio => Rgba { r: 0.70, g: 0.40, b: 0.85, a: 0.85 },
-        FileCategory::Document => Rgba { r: 0.95, g: 0.75, b: 0.20, a: 0.85 },
-        FileCategory::Archive => Rgba { r: 0.60, g: 0.50, b: 0.30, a: 0.85 },
-        FileCategory::Executable => Rgba { r: 0.55, g: 0.55, b: 0.55, a: 0.85 },
-        FileCategory::Other => Rgba { r: 0.65, g: 0.65, b: 0.65, a: 0.70 },
+        FileCategory::Image => Rgba {
+            r: 0.30,
+            g: 0.60,
+            b: 0.95,
+            a: 0.85,
+        },
+        FileCategory::Video => Rgba {
+            r: 0.85,
+            g: 0.25,
+            b: 0.45,
+            a: 0.85,
+        },
+        FileCategory::Audio => Rgba {
+            r: 0.70,
+            g: 0.40,
+            b: 0.85,
+            a: 0.85,
+        },
+        FileCategory::Document => Rgba {
+            r: 0.95,
+            g: 0.75,
+            b: 0.20,
+            a: 0.85,
+        },
+        FileCategory::Archive => Rgba {
+            r: 0.60,
+            g: 0.50,
+            b: 0.30,
+            a: 0.85,
+        },
+        FileCategory::Executable => Rgba {
+            r: 0.55,
+            g: 0.55,
+            b: 0.55,
+            a: 0.85,
+        },
+        FileCategory::Other => Rgba {
+            r: 0.65,
+            g: 0.65,
+            b: 0.65,
+            a: 0.70,
+        },
     }
 }
 
@@ -626,11 +988,41 @@ fn humanize_bytes(b: u64) -> String {
     }
 }
 
+fn size_for_mode(apparent: u64, allocated: u64, mode: SizeMode) -> u64 {
+    match mode {
+        SizeMode::Apparent => apparent,
+        SizeMode::Allocated => {
+            if allocated == 0 {
+                apparent
+            } else {
+                allocated
+            }
+        }
+    }
+}
+
+fn category_label(cat: FileCategory) -> &'static str {
+    match cat {
+        FileCategory::Image => "Image",
+        FileCategory::Video => "Video",
+        FileCategory::Audio => "Audio",
+        FileCategory::Archive => "Archive",
+        FileCategory::Document => "Document",
+        FileCategory::Executable => "Executable",
+        FileCategory::Other => "Other",
+    }
+}
+
 /// Open the Disk Usage window for `root`. Independent of the main
-/// shell — closing one doesn't affect the other.
+/// shell — closing one doesn't affect the other. The shared `tasks`
+/// registry lets the DU scan register a task so the owner Shell's
+/// status bar shows progress, and `notify_owner` is invoked after each
+/// task mutation so the Shell's status bar repaints promptly.
 pub fn open_window(
     root: PathBuf,
     fs: Arc<NativeFs>,
+    tasks: Rc<RefCell<TaskRegistry>>,
+    notify_owner: Option<Rc<dyn Fn(&mut App)>>,
     cx: &mut App,
 ) -> Result<WindowHandle<Root>, anyhow::Error> {
     let opts = WindowOptions {
@@ -645,8 +1037,40 @@ pub fn open_window(
         ..Default::default()
     };
     let handle = cx.open_window(opts, |window, cx| {
-        let view = cx.new(|cx| DiskUsageView::new(root.clone(), fs.clone(), cx));
+        let view = cx.new(|cx| {
+            DiskUsageView::new(
+                root.clone(),
+                fs.clone(),
+                tasks.clone(),
+                notify_owner.clone(),
+                cx,
+            )
+        });
         cx.new(|cx| Root::new(view, window, cx))
     })?;
     Ok(handle)
+}
+
+/// Format a path for inclusion in the task label: file name plus one
+/// parent component, falling back to the full path when shorter than
+/// 40 chars. Keeps the status-bar text from being dominated by long
+/// absolute paths.
+fn short_path(p: &std::path::Path) -> String {
+    let full = p.to_string_lossy().to_string();
+    if full.len() <= 40 {
+        return full;
+    }
+    let mut comps: Vec<_> = p
+        .components()
+        .rev()
+        .take(2)
+        .filter_map(|c| c.as_os_str().to_str())
+        .collect();
+    comps.reverse();
+    let tail = comps.join("/");
+    if tail.is_empty() {
+        full
+    } else {
+        format!("\u{2026}/{}", tail)
+    }
 }
