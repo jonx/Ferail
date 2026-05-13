@@ -19,6 +19,7 @@ pub mod keyboard_help;
 pub mod keymap;
 pub mod obs;
 pub mod prefetch;
+pub mod preview;
 pub mod screenshot;
 pub mod settings;
 pub mod shell;

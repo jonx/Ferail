@@ -280,6 +280,10 @@ pub fn run(args: Args) -> Result<()> {
     app.run(move |cx| {
         gpui_component::init(cx);
         crate::shell::init(cx);
+        // Register the dock icon — see comment in main.rs::run_gui;
+        // must happen post-NSApplication-init.
+        const APP_ICON_PNG: &[u8] = include_bytes!("../resources/feraille.png");
+        let _ = feraille_shell_mac::set_app_icon_from_png_bytes(APP_ICON_PNG);
         if let Some(mode) = theme_mode {
             Theme::change(mode, None, cx);
         }
@@ -341,11 +345,12 @@ pub fn run(args: Args) -> Result<()> {
             }
 
             // Give async prefetch (magic / quarantine) time to land
-            // before render_to_image samples. 1200ms covers a few
-            // hundred entries plus a re-render after the apply
-            // batch arrives.
+            // before render_to_image samples. 2500ms covers a few
+            // hundred entries' prefetch + a qlmanage round-trip for
+            // the Quick Look thumbnail (which can take ~1s for
+            // images, longer for PDFs).
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(1200))
+                .timer(std::time::Duration::from_millis(2500))
                 .await;
 
             let img = cx
@@ -498,8 +503,11 @@ impl ShellArgs {
             });
         }
         if let Some(row) = self.select_row {
-            let _ = shell.update(cx, |s, _cx| {
+            let _ = shell.update(cx, |s, cx| {
                 s.active_tab_mut().selected = Some(row);
+                if let Some(p) = s.path_for_row(row, cx) {
+                    crate::preview::request(s, p, cx);
+                }
             });
         }
         if let Some(name) = self.select_name.clone() {
@@ -513,6 +521,9 @@ impl ShellArgs {
                     .position(|e| e.name == name);
                 if let Some(i) = idx {
                     s.active_tab_mut().selected = Some(i);
+                    if let Some(p) = s.path_for_row(i, cx) {
+                        crate::preview::request(s, p, cx);
+                    }
                 }
             });
         }

@@ -213,6 +213,9 @@ pub struct Shell {
     /// and Cmd+-. Applied to font sizes / icon sizes via Tokens-
     /// derived scaling at render time. Persisted in app_state.
     pub ui_scale: f32,
+    /// Per-path Quick Look thumbnail cache. Populated lazily by
+    /// `preview::request` on selection change.
+    pub preview_cache: crate::preview::PreviewCache,
     /// Sidebar tree state (Stage 9.c): which directories are
     /// currently expanded. Updated on caret-click and by the
     /// `--expand <path>` CLI flag (which walks the path's ancestors).
@@ -384,6 +387,14 @@ impl Shell {
             |this, _table, event: &TableEvent, _window, cx| match event {
                 TableEvent::SelectRow(row_ix) => {
                     this.active_tab_mut().selected = Some(*row_ix);
+                    // Kick off a Quick Look thumbnail fetch for the
+                    // newly-selected row. Cheap (cache hit on
+                    // re-select); cold paths run on the background
+                    // executor and the worker writes back into
+                    // `preview_cache` via cx.spawn.
+                    if let Some(p) = this.path_for_row(*row_ix, cx) {
+                        crate::preview::request(this, p, cx);
+                    }
                     cx.notify();
                 }
                 TableEvent::DoubleClickedRow(row_ix) => {
@@ -544,6 +555,7 @@ impl Shell {
             shortcuts_help_input,
             preview_visible: true,
             ui_scale: 1.0,
+            preview_cache: crate::preview::PreviewCache::new(),
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
             ant_visits,
@@ -570,7 +582,7 @@ impl Shell {
 
     /// Resolve a row to an absolute path on disk. Reuses the same
     /// id_for_path fallback that activate_row uses.
-    fn path_for_row(&self, row_ix: usize, cx: &App) -> Option<PathBuf> {
+    pub fn path_for_row(&self, row_ix: usize, cx: &App) -> Option<PathBuf> {
         let entry = self.table.read(cx).delegate().entries.get(row_ix)?.clone();
         Some(self.fs.path_for(entry.id).unwrap_or_else(|| {
             let mut p = self.active_tab().current_dir.clone();
@@ -1733,8 +1745,46 @@ impl Shell {
                 full_path.push(&entry.name);
                 let path_str = full_path.to_string_lossy().into_owned();
 
-                let mut col = v_flex()
-                    .gap_3()
+                // Quick Look thumbnail (Stage 8 native preview).
+                // `preview::request` was kicked off when the row
+                // was selected; this just reads whatever the cache
+                // has — Loaded shows the bitmap, Pending shows a
+                // muted placeholder, Failed shows nothing.
+                let thumb_state = self.preview_cache.get(&full_path);
+                let thumb_img = crate::preview::loaded_image(thumb_state.clone());
+
+                let mut col = v_flex().gap_3();
+                if let Some(img) = thumb_img {
+                    col = col.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w_full()
+                            .h(px(240.0))
+                            .rounded(cx.theme().radius)
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .child(
+                                gpui::img(img).max_w(px(248.0)).max_h(px(232.0)),
+                            ),
+                    );
+                } else if matches!(thumb_state, Some(crate::preview::PreviewState::Pending)) {
+                    col = col.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w_full()
+                            .h(px(240.0))
+                            .rounded(cx.theme().radius)
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Loading preview\u{2026}"),
+                    );
+                }
+
+                col = col
                     .child(
                         div()
                             .text_lg()
