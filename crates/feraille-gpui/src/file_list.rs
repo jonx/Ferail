@@ -6,15 +6,17 @@
 //! are Name / Size / Kind / Modified, pre-formatted on the domain
 //! side per the UI_NONBLOCKING contract carried over from the old app.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
-use feraille_core::{EntryKind, FileEntry, FsBackend, NodeId};
+use feraille_core::{FileEntry, FsBackend, NodeId};
 use feraille_fs_native::NativeFs;
 use gpui::{
     App, AppContext as _, Context, Div, ExternalPaths, FontWeight, InteractiveElement,
     IntoElement, ParentElement, SharedString, Stateful, StatefulInteractiveElement as _, Styled,
-    Window, div,
+    Window, div, img, px,
 };
 use gpui_component::{
     ActiveTheme,
@@ -22,6 +24,8 @@ use gpui_component::{
     table::{Column, TableDelegate, TableState},
 };
 use smallvec::smallvec;
+
+use crate::icons::IconCache;
 
 /// Delegate that vends the current directory's entries to the
 /// Table. Holds the live `Vec<FileEntry>`; the Shell rotates it on
@@ -32,10 +36,15 @@ pub struct FileListDelegate {
     pub entries: Vec<FileEntry>,
     pub columns: Vec<Column>,
     pub fs: Arc<NativeFs>,
+    /// Shared icon cache. Lookup-or-fetch via NSWorkspace; subsequent
+    /// renders for the same kind are a HashMap hit. Wrapped in
+    /// Rc<RefCell> so render_td's `&mut self` can borrow without
+    /// fighting the cache.
+    pub icons: Rc<RefCell<IconCache>>,
 }
 
 impl FileListDelegate {
-    pub fn new(fs: Arc<NativeFs>) -> Self {
+    pub fn new(fs: Arc<NativeFs>, icons: Rc<RefCell<IconCache>>) -> Self {
         Self {
             entries: Vec::new(),
             columns: vec![
@@ -45,6 +54,7 @@ impl FileListDelegate {
                 Column::new("modified", "Modified").width(160.0),
             ],
             fs,
+            icons,
         }
     }
 
@@ -124,15 +134,13 @@ impl TableDelegate for FileListDelegate {
         };
 
         match col_ix {
-            // Name — icon glyph (just text for now; real icons come
-            // in a future iter that re-uses feraille_shell_mac's
-            // NSWorkspace fetcher) + filename.
+            // Name — real macOS icon (via NSWorkspace, cached by
+            // file kind in self.icons) + filename. Falls back to a
+            // 1×1 transparent placeholder when fetch fails (e.g.
+            // outside macOS).
             0 => {
-                let glyph = match entry.kind {
-                    EntryKind::Directory => "\u{1F4C1}", // FILE FOLDER
-                    EntryKind::File => "\u{1F4C4}",      // PAGE FACING UP
-                    EntryKind::Symlink => "\u{2934}",    // ARROW POINTING RIGHTWARDS THEN CURVING UPWARDS
-                };
+                let path = self.fs.path_for(entry.id).unwrap_or_default();
+                let icon = self.icons.borrow_mut().icon_for(entry, &path);
                 div()
                     .flex()
                     .items_center()
@@ -140,11 +148,10 @@ impl TableDelegate for FileListDelegate {
                     .text_sm()
                     .text_color(cx.theme().foreground)
                     .child(
-                        div()
-                            .w_4()
-                            .flex_shrink_0()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(glyph),
+                        img(icon)
+                            .w(px(18.0))
+                            .h(px(18.0))
+                            .flex_shrink_0(),
                     )
                     .child(
                         div()

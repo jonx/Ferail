@@ -25,6 +25,7 @@ use gpui_component::{
 use crate::app_state::{self, AppState};
 use crate::file_list::FileListDelegate;
 use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
+use crate::icons::IconCache;
 
 actions!(
     shell,
@@ -164,7 +165,8 @@ impl Shell {
         let persisted = app_state::load();
         let start = persisted.last_dir.clone().unwrap_or_else(home_dir);
         let show_hidden = persisted.show_hidden.unwrap_or(false);
-        let mut delegate = FileListDelegate::new(fs.clone());
+        let icons = Rc::new(RefCell::new(IconCache::new()));
+        let mut delegate = FileListDelegate::new(fs.clone(), icons);
         let last_error = delegate.load(start.clone(), show_hidden, "");
         let initial_selection = if delegate.entries.is_empty() { None } else { Some(0) };
         let table = cx.new(|cx| {

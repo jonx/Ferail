@@ -29,6 +29,10 @@ gpui-component-assets.workspace = true
 notify = "7.0"
 # Used to build the smallvec ExternalPaths expects for OS drag-out.
 smallvec = "1"
+# Wraps RGBA byte buffers we pull from NSWorkspace into a Frame the
+# gpui RenderImage type accepts. gpui-component pulls the same major
+# transitively, so this stays single-copy in the graph.
+image = { version = "0.25", default-features = false }
 
 # Phase 4: domain wiring. feraille-gpui consumes the domain layer
 # the same way feraille-app did, through the same trait surface
