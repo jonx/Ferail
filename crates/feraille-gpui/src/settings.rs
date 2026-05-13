@@ -10,7 +10,7 @@
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, Theme, ThemeMode,
+    ActiveTheme, Root, Selectable, Sizable, Theme, ThemeMode,
     button::{Button, ButtonGroup},
     h_flex,
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
@@ -549,6 +549,26 @@ fn preview_tile(
                 .child(label),
         )
         .on_click(cx.listener(move |_, _, window, cx| on_click(window, cx)))
+}
+
+/// Open a second native window hosting the SettingsView. Used by
+/// the Cmd+, action and by future menu-bar entries. Idempotent in
+/// the practical sense: each call opens a new window, so spamming
+/// the shortcut just stacks them — fine for now, deduplication when
+/// the workspace-with-multiple-windows pattern lands.
+pub fn open_settings_window(cx: &mut App) {
+    let opts = WindowOptions {
+        window_bounds: Some(WindowBounds::centered(size(px(820.0), px(560.0)), cx)),
+        ..Default::default()
+    };
+    cx.spawn(async move |cx| {
+        cx.open_window(opts, |window, cx| {
+            let view = cx.new(|_| SettingsView::new(SettingsCategory::Appearance));
+            cx.new(|cx| Root::new(view, window, cx))
+        })
+        .expect("failed to open settings window");
+    })
+    .detach();
 }
 
 pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {

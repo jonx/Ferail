@@ -23,7 +23,15 @@ use crate::file_list::FileListDelegate;
 
 actions!(
     shell,
-    [NavigateParent, NavigateBack, NavigateForward]
+    [
+        NavigateParent,
+        NavigateBack,
+        NavigateForward,
+        OpenSelected,
+        Refresh,
+        ToggleHidden,
+        OpenSettings,
+    ]
 );
 
 /// Key-context name for the Shell's outer container — same convention
@@ -34,9 +42,16 @@ const SHELL_CONTEXT: &str = "Shell";
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
+        // Per-shell context: only fire when the Shell holds focus.
         KeyBinding::new("backspace", NavigateParent, Some(SHELL_CONTEXT)),
         KeyBinding::new("cmd-[", NavigateBack, Some(SHELL_CONTEXT)),
         KeyBinding::new("cmd-]", NavigateForward, Some(SHELL_CONTEXT)),
+        KeyBinding::new("enter", OpenSelected, Some(SHELL_CONTEXT)),
+        KeyBinding::new("cmd-r", Refresh, Some(SHELL_CONTEXT)),
+        KeyBinding::new("cmd-shift-.", ToggleHidden, Some(SHELL_CONTEXT)),
+        // App-wide: Cmd+, is the system convention for Preferences /
+        // Settings and should work from anywhere in the app.
+        KeyBinding::new("cmd-,", OpenSettings, None),
     ]);
 }
 
@@ -168,6 +183,45 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.navigate_forward(cx);
+    }
+
+    fn on_open_selected(
+        &mut self,
+        _: &OpenSelected,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(idx) = self.selected {
+            self.activate_row(idx, cx);
+        }
+    }
+
+    fn on_refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
+        let path = self.current_dir.clone();
+        self.load_path(path, cx);
+    }
+
+    fn on_toggle_hidden(
+        &mut self,
+        _: &ToggleHidden,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_hidden(cx);
+    }
+
+    fn on_open_settings(
+        &mut self,
+        _: &OpenSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Spawn a second native window hosting the SettingsView,
+        // matching macOS convention where Preferences is its own
+        // window not a modal sheet. Independent of the file-manager
+        // shell's lifecycle — closing one doesn't close the other.
+        let _ = window;
+        crate::settings::open_settings_window(cx);
     }
 
     pub fn navigate_back(&mut self, cx: &mut Context<Self>) {
@@ -556,6 +610,10 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_navigate_parent))
             .on_action(cx.listener(Self::on_navigate_back))
             .on_action(cx.listener(Self::on_navigate_forward))
+            .on_action(cx.listener(Self::on_open_selected))
+            .on_action(cx.listener(Self::on_refresh))
+            .on_action(cx.listener(Self::on_toggle_hidden))
+            .on_action(cx.listener(Self::on_open_settings))
             .size_full()
             .bg(cx.theme().background)
             .child(sidebar)
