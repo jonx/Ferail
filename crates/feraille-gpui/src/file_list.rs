@@ -248,11 +248,23 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
-        use crate::shell::{CopyPath, MoveToTrash, OpenSelected, RevealInFinder};
+        use crate::shell::{
+            Compress, CopyPath, Duplicate, GetInfo, MakeAlias, MoveToTrash,
+            OpenInNewTab, OpenSelected, QuickLook, RenameSelected, RevealInFinder,
+        };
         menu.menu("Open", Box::new(OpenSelected))
-            .menu("Reveal in Finder", Box::new(RevealInFinder))
+            .menu("Open in New Tab", Box::new(OpenInNewTab))
             .separator()
+            .menu("Get Info", Box::new(GetInfo))
+            .menu("Quick Look", Box::new(QuickLook))
+            .separator()
+            .menu("Reveal in Finder", Box::new(RevealInFinder))
             .menu("Copy Path", Box::new(CopyPath))
+            .separator()
+            .menu("Rename\u{2026}", Box::new(RenameSelected))
+            .menu("Duplicate", Box::new(Duplicate))
+            .menu("Make Alias", Box::new(MakeAlias))
+            .menu("Compress", Box::new(Compress))
             .separator()
             .menu("Move to Trash", Box::new(MoveToTrash))
     }

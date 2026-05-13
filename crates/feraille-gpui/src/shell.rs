@@ -68,6 +68,9 @@ actions!(
         ZoomOut,
         ZoomReset,
         OpenInNewTab,
+        Duplicate,
+        MakeAlias,
+        Compress,
     ]
 );
 
@@ -1005,6 +1008,73 @@ impl Shell {
         self.load_path(cur, cx);
     }
 
+    /// Right-click → Duplicate. Calls
+    /// `feraille_shell_mac::duplicate_path` (NSWorkspace duplicate on
+    /// macOS, std::fs::copy fallback elsewhere). The watcher picks
+    /// up the new file; we also force-reload for snappiness.
+    fn on_duplicate(
+        &mut self,
+        _: &Duplicate,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.target_row() else { return };
+        let Some(path) = self.path_for_row(row, cx) else { return };
+        match feraille_shell_mac::duplicate_path(&path) {
+            Ok(_) => {
+                let cur = self.active_tab().current_dir.clone();
+                self.load_path(cur, cx);
+            }
+            Err(e) => {
+                crate::log_warn!(90, "duplicate failed for {}: {e}", path.display());
+            }
+        }
+    }
+
+    /// Right-click → Make Alias. Creates a Finder alias next to the
+    /// source.
+    fn on_make_alias(
+        &mut self,
+        _: &MakeAlias,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.target_row() else { return };
+        let Some(path) = self.path_for_row(row, cx) else { return };
+        match feraille_shell_mac::make_alias(&path) {
+            Ok(_) => {
+                let cur = self.active_tab().current_dir.clone();
+                self.load_path(cur, cx);
+            }
+            Err(e) => {
+                crate::log_warn!(90, "make_alias failed for {}: {e}", path.display());
+            }
+        }
+    }
+
+    /// Right-click → Compress. Zips the selected path (or a list,
+    /// when multi-select lands). The archive lands next to the
+    /// source with a `.zip` suffix.
+    fn on_compress(
+        &mut self,
+        _: &Compress,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.target_row() else { return };
+        let Some(path) = self.path_for_row(row, cx) else { return };
+        let targets: Vec<&std::path::Path> = vec![path.as_path()];
+        match feraille_shell_mac::compress_paths(&targets) {
+            Ok(_) => {
+                let cur = self.active_tab().current_dir.clone();
+                self.load_path(cur, cx);
+            }
+            Err(e) => {
+                crate::log_warn!(90, "compress failed for {}: {e}", path.display());
+            }
+        }
+    }
+
     fn on_open_settings(
         &mut self,
         _: &OpenSettings,
@@ -1892,6 +1962,9 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_zoom_out))
             .on_action(cx.listener(Self::on_zoom_reset))
             .on_action(cx.listener(Self::on_open_in_new_tab))
+            .on_action(cx.listener(Self::on_duplicate))
+            .on_action(cx.listener(Self::on_make_alias))
+            .on_action(cx.listener(Self::on_compress))
             .relative()
             .size_full()
             .bg(cx.theme().background)
