@@ -34,6 +34,9 @@ actions!(
         Refresh,
         ToggleHidden,
         OpenSettings,
+        CopyPath,
+        MoveToTrash,
+        RevealInFinder,
     ]
 );
 
@@ -52,6 +55,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("enter", OpenSelected, Some(SHELL_CONTEXT)),
         KeyBinding::new("cmd-r", Refresh, Some(SHELL_CONTEXT)),
         KeyBinding::new("cmd-shift-.", ToggleHidden, Some(SHELL_CONTEXT)),
+        KeyBinding::new("cmd-backspace", MoveToTrash, Some(SHELL_CONTEXT)),
+        KeyBinding::new("cmd-shift-r", RevealInFinder, Some(SHELL_CONTEXT)),
+        KeyBinding::new("cmd-alt-c", CopyPath, Some(SHELL_CONTEXT)),
         // App-wide: Cmd+, is the system convention for Preferences /
         // Settings and should work from anywhere in the app.
         KeyBinding::new("cmd-,", OpenSettings, None),
@@ -96,6 +102,12 @@ pub struct Shell {
     /// watcher failed to start (rare — typically only in stripped
     /// CI environments without FSEvents).
     pub watcher: Rc<RefCell<Option<FsWatcher>>>,
+    /// Row index the user most recently right-clicked. Actions
+    /// dispatched from the context menu read this; keyboard actions
+    /// fall back to `self.selected`. Cleared after each
+    /// context-menu action handler runs so the next keyboard action
+    /// uses the keyboard-selected row.
+    pub context_row: Option<usize>,
 }
 
 /// A named filesystem destination shown in the sidebar's Locations
@@ -152,6 +164,9 @@ impl Shell {
                 }
                 TableEvent::DoubleClickedRow(row_ix) => {
                     this.activate_row(*row_ix, cx);
+                }
+                TableEvent::RightClickedRow(row_ix) => {
+                    this.context_row = *row_ix;
                 }
                 _ => {}
             },
@@ -216,6 +231,76 @@ impl Shell {
             history_index: 0,
             last_error,
             watcher,
+            context_row: None,
+        }
+    }
+
+    /// "Which row is this action targeting?" — context_row first
+    /// (right-click triggered), then selected (keyboard / single-
+    /// click). Consumes context_row so the next keyboard action uses
+    /// the keyboard selection.
+    fn target_row(&mut self) -> Option<usize> {
+        if let Some(r) = self.context_row.take() {
+            Some(r)
+        } else {
+            self.selected
+        }
+    }
+
+    /// Resolve a row to an absolute path on disk. Reuses the same
+    /// id_for_path fallback that activate_row uses.
+    fn path_for_row(&self, row_ix: usize, cx: &App) -> Option<PathBuf> {
+        let entry = self.table.read(cx).delegate().entries.get(row_ix)?.clone();
+        Some(self.fs.path_for(entry.id).unwrap_or_else(|| {
+            let mut p = self.current_dir.clone();
+            p.push(&entry.name);
+            p
+        }))
+    }
+
+    fn on_copy_path(
+        &mut self,
+        _: &CopyPath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.target_row() else { return };
+        let Some(path) = self.path_for_row(row, cx) else { return };
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            path.to_string_lossy().into_owned(),
+        ));
+    }
+
+    fn on_reveal_in_finder(
+        &mut self,
+        _: &RevealInFinder,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.target_row() else { return };
+        let Some(path) = self.path_for_row(row, cx) else { return };
+        // `open -R <path>` is the macOS canonical "reveal in
+        // Finder". On other platforms this no-ops.
+        let _ = std::process::Command::new("/usr/bin/open")
+            .arg("-R")
+            .arg(&path)
+            .spawn();
+    }
+
+    fn on_move_to_trash(
+        &mut self,
+        _: &MoveToTrash,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.target_row() else { return };
+        let Some(path) = self.path_for_row(row, cx) else { return };
+        if feraille_fs_native::move_to_trash(&path).is_ok() {
+            // The fs-watcher will pick the deletion up on its next
+            // poll tick, but we also reload immediately so the row
+            // disappears without a noticeable lag.
+            let cur = self.current_dir.clone();
+            self.load_path(cur, cx);
         }
     }
 
@@ -243,7 +328,7 @@ impl Shell {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(idx) = self.selected {
+        if let Some(idx) = self.target_row() {
             self.activate_row(idx, cx);
         }
     }
@@ -672,6 +757,9 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_refresh))
             .on_action(cx.listener(Self::on_toggle_hidden))
             .on_action(cx.listener(Self::on_open_settings))
+            .on_action(cx.listener(Self::on_copy_path))
+            .on_action(cx.listener(Self::on_reveal_in_finder))
+            .on_action(cx.listener(Self::on_move_to_trash))
             .size_full()
             .bg(cx.theme().background)
             .child(sidebar)

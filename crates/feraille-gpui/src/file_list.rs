@@ -17,6 +17,7 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme,
+    menu::PopupMenu,
     table::{Column, TableDelegate, TableState},
 };
 
@@ -142,6 +143,22 @@ impl TableDelegate for FileListDelegate {
                 .into_any_element(),
             _ => div().into_any_element(),
         }
+    }
+
+    fn context_menu(
+        &mut self,
+        _row_ix: usize,
+        menu: PopupMenu,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        use crate::shell::{CopyPath, MoveToTrash, OpenSelected, RevealInFinder};
+        menu.menu("Open", Box::new(OpenSelected))
+            .menu("Reveal in Finder", Box::new(RevealInFinder))
+            .separator()
+            .menu("Copy Path", Box::new(CopyPath))
+            .separator()
+            .menu("Move to Trash", Box::new(MoveToTrash))
     }
 
     fn render_empty(
