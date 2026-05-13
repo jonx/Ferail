@@ -272,6 +272,7 @@ pub fn run(args: Args) -> Result<()> {
     let height = args.height.unwrap_or(760) as f32;
     let theme_mode = args.theme;
     let settings_page = args.settings.clone();
+    let disk_usage_root = args.disk_usage.clone();
 
     let shell_args = ShellArgs::from(&args);
 
@@ -286,6 +287,7 @@ pub fn run(args: Args) -> Result<()> {
         let path = path.clone();
         let settings_page = settings_page.clone();
         let shell_args = shell_args.clone();
+        let disk_usage_root = disk_usage_root.clone();
         cx.spawn(async move |cx| {
             let opts = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -303,7 +305,22 @@ pub fn run(args: Args) -> Result<()> {
             let mut shell_entity: Option<Entity<Shell>> = None;
             let handle = cx
                 .open_window(opts, |window, cx| {
-                    if let Some(page) = settings_page.as_deref() {
+                    if let Some(du_root) = disk_usage_root.clone() {
+                        // Stage 7 headless DU window: skip the shell
+                        // entirely, render the treemap straight into
+                        // the screenshot frame.
+                        let fs = std::sync::Arc::new(
+                            feraille_fs_native::NativeFs::new(),
+                        );
+                        let canonical = std::fs::canonicalize(&du_root)
+                            .unwrap_or(du_root.clone());
+                        let view = cx.new(|cx| {
+                            crate::disk_usage::DiskUsageView::new(
+                                canonical, fs, cx,
+                            )
+                        });
+                        cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                    } else if let Some(page) = settings_page.as_deref() {
                         let cat = category_from_arg(if page.is_empty() {
                             None
                         } else {

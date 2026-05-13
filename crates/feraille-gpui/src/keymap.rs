@@ -21,8 +21,8 @@ use gpui::{App, KeyBinding};
 use crate::shell::{
     self, ClearFilter, CloseTab, CopyPath, EditBreadcrumb, FocusFilter, GoHome,
     MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
-    NextTab, OpenSelected, OpenSettings, PrevTab, QuickLook, Refresh, RenameSelected,
-    RevealInFinder, ShortcutsHelp, ToggleHidden,
+    NextTab, OpenDiskUsage, OpenSelected, OpenSettings, PrevTab, QuickLook, Refresh,
+    RenameSelected, RevealInFinder, ShortcutsHelp, ToggleHidden,
 };
 
 /// Install keybindings for every command in `feraille_core::commands`
@@ -127,6 +127,9 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         // -- Help -------------------------------------------------
         "help.shortcuts" => cx.bind_keys([KeyBinding::new(kb_str, ShortcutsHelp, ctx)]),
 
+        // -- Disk Usage -------------------------------------------
+        "view.disk_usage" => cx.bind_keys([KeyBinding::new(kb_str, OpenDiskUsage, ctx)]),
+
         // -- Go ---------------------------------------------------
         "go.back" => cx.bind_keys([KeyBinding::new(kb_str, NavigateBack, ctx)]),
         "go.forward" => cx.bind_keys([KeyBinding::new(kb_str, NavigateForward, ctx)]),
@@ -155,7 +158,6 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         | "view.zoom_in"
         | "view.zoom_out"
         | "view.zoom_reset"
-        | "view.disk_usage"
         | "view.theme_light"
         | "view.theme_dark"
         | "view.theme_system"

@@ -257,12 +257,16 @@ Notes:
 ## Disk Usage (Stage 7)
 
 ### Disk Usage scan state + cancellation + layout cache
-Status: Not started
-Old location: `crates/feraille-app/src/disk_usage_state.rs` (~150 lines, pure logic)
-New location: `crates/feraille-disk-usage` (move into the existing
-shared crate per the mix-decision; sibling module to the squarified
-treemap).
-Notes: Renderer-agnostic. Bring the file across, fix imports.
+Status: Ported ✅ (Harvest Stage 7 foundation — orchestration
+collapsed into the new `DiskUsageView` entity in
+`crates/feraille-gpui/src/disk_usage.rs`).
+Old location: `crates/feraille-app/src/disk_usage_state.rs`.
+Notes: The old 30+-field `DiskUsageState` struct collapsed into
+the GPUI view directly: `tree`, `stats`, `scan_complete`, `error`,
+`cancel`, `layout_cache`, `rects_cache`, `rects_bounds`,
+`zoom_path`, `size_mode`, `descend_packages`. Top-N panel,
+toast stack, follow-navigation, category filter are deferred to
+follow-on iters — first pass focuses on the treemap render.
 
 ### Disk Usage window prefs (persistent geometry)
 Status: Not started
@@ -270,7 +274,29 @@ Old location: `crates/feraille-app/src/disk_usage_prefs.rs` (~50 lines)
 New location: `crates/feraille-disk-usage` (same crate as the state).
 Notes: Pure stdlib text-file persistence.
 
-### Disk Usage window (UI)
+### Disk Usage window (UI) — also covered by Stage 7 foundation above
+Status: Ported ✅ (foundation — `DiskUsageView` entity opens its own
+native window via `disk_usage::open_window`).
+New location: `crates/feraille-gpui/src/disk_usage.rs`.
+Notes:
+- Bound to `view.disk_usage` (Cmd+Shift+D) via `OpenDiskUsage`
+  action; opens at the active tab's `current_dir`.
+- Streaming scan pattern: BG executor runs
+  `NativeFs::scan_disk_usage`, pushes fact batches into a shared
+  `Arc<Mutex<Vec<ScanMsg>>>`. A FG timer drains the queue every
+  80 ms and applies, then triggers `cx.notify()`.
+- Layout cached + invalidated on new facts / zoom change.
+  `compute_treemap` from feraille-disk-usage produces flat
+  `TreemapRect`s; the view renders them as absolute-positioned
+  divs with category-coloured backgrounds.
+- `--disk-usage <path>` CLI flag now opens the DU window directly
+  in headless capture (verified end-to-end with the Feraille
+  crates dir).
+- Follow-on iters: rect labels, click-to-zoom, Top-N panel,
+  capacity bar in header, legend, category filter.
+
+### Disk Usage window (UI) — legacy entry
+Status: superseded (see entry above).
 Status: Not started
 Old location: `crates/feraille-app/src/disk_usage_window.rs`
 (soft-renderer paint loop + custom event dispatch).
@@ -280,7 +306,8 @@ Notes: Second GPUI window opened by `view.disk_usage` command
 (rounded rects + text — no soft renderer). Reuses the
 context-menu pattern from the main shell.
 
-### Headless `--disk-usage` CLI path
+### Headless `--disk-usage` CLI path — covered above
+Status: Ported ✅ (Stage 7 foundation). Original entry follows.
 Status: Not started
 Old location: `feraille-app/src/screenshot.rs::run_disk_usage`
 New location: `crates/feraille-gpui/src/screenshot.rs` (Stage 7)

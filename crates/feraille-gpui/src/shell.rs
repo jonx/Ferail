@@ -55,6 +55,7 @@ actions!(
         GoHome,
         EditBreadcrumb,
         ShortcutsHelp,
+        OpenDiskUsage,
     ]
 );
 
@@ -841,6 +842,23 @@ impl Shell {
     pub fn close_shortcuts_help(&mut self, cx: &mut Context<Self>) {
         self.shortcuts_help_filter = None;
         cx.notify();
+    }
+
+    /// Cmd+Shift+D — open the Disk Usage window at the active tab's
+    /// current directory. Spawns a new native window; if opening
+    /// fails (rare — only when gpui can't allocate a window), the
+    /// failure is logged-and-ignored.
+    pub fn on_open_disk_usage(
+        &mut self,
+        _: &OpenDiskUsage,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let root = self.active_tab().current_dir.clone();
+        let fs = self.fs.clone();
+        if let Err(e) = crate::disk_usage::open_window(root, fs, cx) {
+            crate::log_warn!(90, "disk-usage: open_window failed: {e:?}");
+        }
     }
 
     fn on_open_settings(
@@ -1717,6 +1735,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_go_home))
             .on_action(cx.listener(Self::on_edit_breadcrumb))
             .on_action(cx.listener(Self::on_shortcuts_help))
+            .on_action(cx.listener(Self::on_open_disk_usage))
             .relative()
             .size_full()
             .bg(cx.theme().background)
