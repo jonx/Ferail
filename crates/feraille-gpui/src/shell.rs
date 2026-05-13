@@ -44,8 +44,46 @@ actions!(
         ClearFilter,
         NewFolder,
         RenameSelected,
+        NewTab,
+        CloseTab,
+        NextTab,
+        PrevTab,
     ]
 );
+
+/// Per-tab state. Each tab has its own current directory + nav
+/// history + cursor selection. Filter text, show-hidden, the
+/// virtualized Table entity, and the FS watcher are shared at the
+/// Shell level — Finder-style "the active tab's location is what
+/// the rest of the chrome reflects."
+#[derive(Clone)]
+pub struct Tab {
+    pub current_dir: PathBuf,
+    pub history: Vec<PathBuf>,
+    pub history_index: usize,
+    pub selected: Option<usize>,
+}
+
+impl Tab {
+    pub fn new(at: PathBuf) -> Self {
+        Self {
+            current_dir: at.clone(),
+            history: vec![at],
+            history_index: 0,
+            selected: None,
+        }
+    }
+
+    /// Short label for the tabstrip. Last path component, or "/" for
+    /// the filesystem root.
+    pub fn label(&self) -> String {
+        self.current_dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.current_dir.to_string_lossy().into_owned())
+    }
+}
 
 /// Key-context name for the Shell's outer container — same convention
 /// gpui-component uses (e.g. `Root` / `Input`). Only one context-bound
@@ -69,6 +107,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("escape", ClearFilter, Some(SHELL_CONTEXT)),
         KeyBinding::new("cmd-shift-n", NewFolder, Some(SHELL_CONTEXT)),
         KeyBinding::new("f2", RenameSelected, Some(SHELL_CONTEXT)),
+        KeyBinding::new("cmd-t", NewTab, Some(SHELL_CONTEXT)),
+        KeyBinding::new("cmd-w", CloseTab, Some(SHELL_CONTEXT)),
+        KeyBinding::new("ctrl-tab", NextTab, Some(SHELL_CONTEXT)),
+        KeyBinding::new("ctrl-shift-tab", PrevTab, Some(SHELL_CONTEXT)),
         // App-wide: Cmd+, is the system convention for Preferences /
         // Settings and should work from anywhere in the app.
         KeyBinding::new("cmd-,", OpenSettings, None),
@@ -76,8 +118,12 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct Shell {
-    /// Path the file pane is currently showing.
-    pub current_dir: PathBuf,
+    /// Open tabs in this window. Always non-empty; closing the last
+    /// tab is rejected. The active tab drives the breadcrumb,
+    /// table, preview, watcher, etc.
+    pub tabs: Vec<Tab>,
+    /// Index of the active tab in `tabs`.
+    pub active: usize,
     /// Volumes mounted at /Volumes. Refreshed lazily in 4.b; future
     /// iters will watch for changes via the macOS Disk Arbitration
     /// framework.
@@ -86,23 +132,17 @@ pub struct Shell {
     /// holds a reference (for path lookups during navigation).
     pub fs: Arc<NativeFs>,
     /// gpui-component's virtualized Table state, parameterised by
-    /// our file-list delegate. The Shell talks to the delegate
-    /// through `cx.update_entity` calls on this handle.
+    /// our file-list delegate. Shared across tabs — switching tabs
+    /// reloads it with the new tab's current_dir + the (shared)
+    /// filter/show-hidden.
     pub table: Entity<TableState<FileListDelegate>>,
     /// Focus handle for the Shell's key-context. Keybindings declared
     /// against `SHELL_CONTEXT` only fire when this handle (or one of
     /// its children) holds focus.
     pub focus_handle: FocusHandle,
-    /// Row index of the currently-selected entry (or None when the
-    /// pane is empty / nothing chosen). Drives the preview pane.
-    pub selected: Option<usize>,
-    /// When true, dotfiles are shown in the list.
+    /// When true, dotfiles are shown in the list. Shared across
+    /// tabs — toggling it reloads the active tab.
     pub show_hidden: bool,
-    /// Navigation history (back-forward stack). The current location
-    /// is always `history[history_index]`. `navigate(p)` truncates
-    /// forward, pushes `p`, and advances the index.
-    pub history: Vec<PathBuf>,
-    pub history_index: usize,
     /// `Some(err)` when the last `enumerate` returned an OS error
     /// (most commonly macOS TCC denial on ~/Documents etc.). Drives
     /// an in-pane empty-state instead of a silent blank list.
@@ -115,13 +155,10 @@ pub struct Shell {
     pub watcher: Rc<RefCell<Option<FsWatcher>>>,
     /// Row index the user most recently right-clicked. Actions
     /// dispatched from the context menu read this; keyboard actions
-    /// fall back to `self.selected`. Cleared after each
-    /// context-menu action handler runs so the next keyboard action
-    /// uses the keyboard-selected row.
+    /// fall back to the active tab's `selected`. Cleared after each
+    /// context-menu action handler runs.
     pub context_row: Option<usize>,
-    /// Live filter text. When non-empty, `load_path()` keeps only
-    /// entries whose name (case-insensitive substring) or
-    /// `display_kind` matches.
+    /// Live filter text. Shared across tabs.
     pub filter_text: String,
     /// `gpui-component` Input state for the filter field in the
     /// toolbar. Owned as an Entity so InputEvent subscriptions
@@ -132,6 +169,22 @@ pub struct Shell {
     /// Shell so they outlive any frame.
     #[allow(dead_code)]
     _subscriptions: Vec<Subscription>,
+}
+
+impl Shell {
+    /// Immutable accessor for the active tab. Panics if tabs is
+    /// empty — but the constructor + close_tab() invariant keep
+    /// that from happening.
+    #[inline]
+    pub fn active_tab(&self) -> &Tab {
+        &self.tabs[self.active]
+    }
+
+    /// Mutable accessor for the active tab.
+    #[inline]
+    pub fn active_tab_mut(&mut self) -> &mut Tab {
+        &mut self.tabs[self.active]
+    }
 }
 
 /// A named filesystem destination shown in the sidebar's Locations
@@ -185,7 +238,7 @@ impl Shell {
             window,
             |this, _table, event: &TableEvent, _window, cx| match event {
                 TableEvent::SelectRow(row_ix) => {
-                    this.selected = Some(*row_ix);
+                    this.active_tab_mut().selected = Some(*row_ix);
                     cx.notify();
                 }
                 TableEvent::DoubleClickedRow(row_ix) => {
@@ -213,7 +266,7 @@ impl Shell {
                     if matches!(ev, InputEvent::Change) {
                         let value = filter_input.read(cx).value().to_string();
                         this.filter_text = value;
-                        let path = this.current_dir.clone();
+                        let path = this.active_tab().current_dir.clone();
                         this.load_path(path, cx);
                     }
                 }
@@ -248,7 +301,7 @@ impl Shell {
                 if dirty {
                     if this
                         .update(cx, |this, cx| {
-                            let path = this.current_dir.clone();
+                            let path = this.active_tab().current_dir.clone();
                             this.load_path(path, cx);
                         })
                         .is_err()
@@ -260,16 +313,16 @@ impl Shell {
         })
         .detach();
 
+        let mut initial_tab = Tab::new(start);
+        initial_tab.selected = initial_selection;
         Self {
-            current_dir: start.clone(),
+            tabs: vec![initial_tab],
+            active: 0,
             volumes: list_volumes(),
             fs,
             table,
             focus_handle,
-            selected: initial_selection,
             show_hidden,
-            history: vec![start],
-            history_index: 0,
             last_error,
             watcher,
             context_row: None,
@@ -287,7 +340,7 @@ impl Shell {
         if let Some(r) = self.context_row.take() {
             Some(r)
         } else {
-            self.selected
+            self.active_tab().selected
         }
     }
 
@@ -296,7 +349,7 @@ impl Shell {
     fn path_for_row(&self, row_ix: usize, cx: &App) -> Option<PathBuf> {
         let entry = self.table.read(cx).delegate().entries.get(row_ix)?.clone();
         Some(self.fs.path_for(entry.id).unwrap_or_else(|| {
-            let mut p = self.current_dir.clone();
+            let mut p = self.active_tab().current_dir.clone();
             p.push(&entry.name);
             p
         }))
@@ -343,7 +396,7 @@ impl Shell {
             // The fs-watcher will pick the deletion up on its next
             // poll tick, but we also reload immediately so the row
             // disappears without a noticeable lag.
-            let cur = self.current_dir.clone();
+            let cur = self.active_tab().current_dir.clone();
             self.load_path(cur, cx);
         }
     }
@@ -378,7 +431,7 @@ impl Shell {
     }
 
     fn on_refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
-        let path = self.current_dir.clone();
+        let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
     }
 
@@ -407,7 +460,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let parent = self.current_dir.clone();
+        let parent = self.active_tab().current_dir.clone();
         let input_state = cx.new(|cx| InputState::new(window, cx).placeholder("Untitled folder"));
         let input_for_ok = input_state.clone();
         let shell = cx.entity();
@@ -460,7 +513,7 @@ impl Shell {
         });
         let input_for_ok = input_state.clone();
         let shell = cx.entity();
-        let parent = self.current_dir.clone();
+        let parent = self.active_tab().current_dir.clone();
         window.open_dialog(cx, move |dialog, _window, _cx| {
             let input = input_state.clone();
             let input_for_ok = input_for_ok.clone();
@@ -496,7 +549,7 @@ impl Shell {
             state.set_value("", window, cx);
         });
         self.filter_text.clear();
-        let path = self.current_dir.clone();
+        let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
         self.focus_handle.focus(window, cx);
     }
@@ -516,17 +569,19 @@ impl Shell {
     }
 
     pub fn navigate_back(&mut self, cx: &mut Context<Self>) {
-        if self.history_index > 0 {
-            self.history_index -= 1;
-            let path = self.history[self.history_index].clone();
+        let tab = self.active_tab_mut();
+        if tab.history_index > 0 {
+            tab.history_index -= 1;
+            let path = tab.history[tab.history_index].clone();
             self.load_path(path, cx);
         }
     }
 
     pub fn navigate_forward(&mut self, cx: &mut Context<Self>) {
-        if self.history_index + 1 < self.history.len() {
-            self.history_index += 1;
-            let path = self.history[self.history_index].clone();
+        let tab = self.active_tab_mut();
+        if tab.history_index + 1 < tab.history.len() {
+            tab.history_index += 1;
+            let path = tab.history[tab.history_index].clone();
             self.load_path(path, cx);
         }
     }
@@ -535,7 +590,7 @@ impl Shell {
     /// file in the user's app support dir); call freely.
     fn save_state(&self) {
         app_state::save(&AppState {
-            last_dir: Some(self.current_dir.clone()),
+            last_dir: Some(self.active_tab().current_dir.clone()),
             show_hidden: Some(self.show_hidden),
         });
     }
@@ -544,7 +599,7 @@ impl Shell {
     /// re-target the watcher. Does **not** touch history (history
     /// is only mutated by `navigate`).
     fn load_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.current_dir = path.clone();
+        self.active_tab_mut().current_dir = path.clone();
         let show_hidden = self.show_hidden;
         let filter = self.filter_text.clone();
         let table = self.table.clone();
@@ -554,7 +609,7 @@ impl Shell {
             state.refresh(cx);
         });
         self.last_error = err;
-        self.selected = None;
+        self.active_tab_mut().selected = None;
         // Point the watcher at the new directory. Errors (path
         // doesn't exist, watcher saturated) are non-fatal — the
         // user still gets the listing; they just lose live updates.
@@ -567,7 +622,61 @@ impl Shell {
 
     pub fn toggle_hidden(&mut self, cx: &mut Context<Self>) {
         self.show_hidden = !self.show_hidden;
-        let path = self.current_dir.clone();
+        let path = self.active_tab().current_dir.clone();
+        self.load_path(path, cx);
+    }
+
+    // ----- Tab management (5.5.d) ---------------------------------
+
+    /// Cmd+T: open a new tab at the home directory and switch to it.
+    fn on_new_tab(&mut self, _: &NewTab, _: &mut Window, cx: &mut Context<Self>) {
+        self.tabs.push(Tab::new(home_dir()));
+        self.active = self.tabs.len() - 1;
+        let path = self.active_tab().current_dir.clone();
+        self.load_path(path, cx);
+    }
+
+    /// Cmd+W: close the active tab. Refuses to close the last one;
+    /// closing a tab leaves you on the tab to its left (or 0).
+    fn on_close_tab(&mut self, _: &CloseTab, _: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.len() <= 1 {
+            return;
+        }
+        self.tabs.remove(self.active);
+        if self.active >= self.tabs.len() {
+            self.active = self.tabs.len() - 1;
+        }
+        let path = self.active_tab().current_dir.clone();
+        self.load_path(path, cx);
+    }
+
+    /// Ctrl+Tab: cycle to the next tab.
+    fn on_next_tab(&mut self, _: &NextTab, _: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.len() < 2 {
+            return;
+        }
+        self.active = (self.active + 1) % self.tabs.len();
+        let path = self.active_tab().current_dir.clone();
+        self.load_path(path, cx);
+    }
+
+    /// Ctrl+Shift+Tab: cycle to the previous tab.
+    fn on_prev_tab(&mut self, _: &PrevTab, _: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.len() < 2 {
+            return;
+        }
+        self.active = (self.active + self.tabs.len() - 1) % self.tabs.len();
+        let path = self.active_tab().current_dir.clone();
+        self.load_path(path, cx);
+    }
+
+    /// Switch to the tab at `idx`. Used by tabstrip click handlers.
+    pub fn select_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if idx >= self.tabs.len() || idx == self.active {
+            return;
+        }
+        self.active = idx;
+        let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
     }
 
@@ -586,7 +695,7 @@ impl Shell {
         let path_and_kind = self.table.read(cx).delegate().entries.get(row_ix).map(|e| {
             (
                 self.fs.path_for(e.id).unwrap_or_else(|| {
-                    let mut p = self.current_dir.clone();
+                    let mut p = self.active_tab().current_dir.clone();
                     p.push(&e.name);
                     p
                 }),
@@ -610,21 +719,24 @@ impl Shell {
     /// Navigate to the parent of the current directory (Backspace
     /// keybind in 4.c.2). No-op when already at the filesystem root.
     pub fn navigate_parent(&mut self, cx: &mut Context<Self>) {
-        if let Some(parent) = self.current_dir.parent() {
+        let cur = self.active_tab().current_dir.clone();
+        if let Some(parent) = cur.parent() {
             let parent = parent.to_path_buf();
-            if parent != self.current_dir {
+            if parent != cur {
                 self.navigate(parent, cx);
             }
         }
     }
 
     /// Navigate to `path`: re-enumerate, refresh the Table, push to
-    /// history (truncating any forward stack first), reset selection.
+    /// the active tab's history (truncating any forward stack first),
+    /// reset selection.
     pub fn navigate(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.history.get(self.history_index) != Some(&path) {
-            self.history.truncate(self.history_index + 1);
-            self.history.push(path.clone());
-            self.history_index = self.history.len() - 1;
+        let tab = self.active_tab_mut();
+        if tab.history.get(tab.history_index) != Some(&path) {
+            tab.history.truncate(tab.history_index + 1);
+            tab.history.push(path.clone());
+            tab.history_index = tab.history.len() - 1;
         }
         self.load_path(path, cx);
     }
@@ -634,7 +746,7 @@ impl Shell {
     /// on click; the entry whose `path()` matches `current_dir`
     /// gets the active state.
     fn locations_menu(&self, cx: &mut Context<Self>) -> SidebarMenu {
-        let current = self.current_dir.clone();
+        let current = self.active_tab().current_dir.clone();
         SidebarMenu::new().children(
             LOCATIONS
                 .iter()
@@ -654,7 +766,7 @@ impl Shell {
 
     /// Volumes menu: every mounted volume at /Volumes.
     fn volumes_menu(&self, cx: &mut Context<Self>) -> SidebarMenu {
-        let current = self.current_dir.clone();
+        let current = self.active_tab().current_dir.clone();
         SidebarMenu::new().children(
             self.volumes
                 .iter()
@@ -707,12 +819,107 @@ impl Shell {
             .into_any_element()
     }
 
+    /// Tabstrip above the toolbar. Each tab is a clickable pill
+    /// labelled with the directory's basename; the active tab has
+    /// a filled background. A trailing "+" opens a new tab; each
+    /// non-active tab has a small "x" hover-affordance to close.
+    fn tabstrip(&self, cx: &mut Context<Self>) -> Div {
+        let active = self.active;
+        let multi = self.tabs.len() > 1;
+        let mut row = h_flex()
+            .w_full()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().secondary);
+
+        for (idx, tab) in self.tabs.iter().enumerate() {
+            let is_active = idx == active;
+            let label = tab.label();
+            let theme = cx.theme();
+            let mut chip = h_flex()
+                .id(("tab", idx))
+                .items_center()
+                .gap_1()
+                .px_3()
+                .py_1()
+                .rounded(theme.radius)
+                .cursor_pointer()
+                .text_sm()
+                .text_color(if is_active {
+                    theme.foreground
+                } else {
+                    theme.muted_foreground
+                });
+            if is_active {
+                chip = chip.bg(theme.background);
+            } else {
+                chip = chip.hover(|this| this.bg(theme.accent.opacity(0.10)));
+            }
+            chip = chip
+                .child(div().truncate().max_w(px(160.0)).child(label))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.select_tab(idx, cx);
+                }));
+            if multi {
+                let close = div()
+                    .id(("tab-close", idx))
+                    .ml_1()
+                    .px_1()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .hover(|this| this.text_color(theme.foreground))
+                    .child("x")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        // Make sure the closed-tab index is the one we click
+                        if this.active != idx {
+                            this.active = idx;
+                        }
+                        let _ = cx; // CloseTab action would re-enter handler
+                        this.tabs.remove(idx);
+                        if this.active >= this.tabs.len() {
+                            this.active = this.tabs.len() - 1;
+                        }
+                        let path = this.active_tab().current_dir.clone();
+                        this.load_path(path, cx);
+                    }));
+                chip = chip.child(close);
+            }
+            row = row.child(chip);
+        }
+        // Trailing "+" — new tab.
+        row = row.child(
+            div()
+                .id("tab-new")
+                .ml_1()
+                .px_2()
+                .py_1()
+                .rounded(cx.theme().radius)
+                .cursor_pointer()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .hover(|this| this.bg(cx.theme().accent.opacity(0.10)))
+                .child("+")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.tabs.push(Tab::new(home_dir()));
+                    this.active = this.tabs.len() - 1;
+                    let path = this.active_tab().current_dir.clone();
+                    this.load_path(path, cx);
+                })),
+        );
+        row
+    }
+
     /// Toolbar row above the breadcrumb: Back / Forward buttons +
     /// "Show hidden" toggle. Disabled buttons grey out via Button's
     /// own disabled state — no manual styling.
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
-        let can_back = self.history_index > 0;
-        let can_forward = self.history_index + 1 < self.history.len();
+        let can_back = self.active_tab().history_index > 0;
+        let can_forward =
+            self.active_tab().history_index + 1 < self.active_tab().history.len();
         h_flex()
             .w_full()
             .items_center()
@@ -770,6 +977,7 @@ impl Shell {
     /// in a follow-up polish iter.
     fn preview(&self, cx: &mut Context<Self>) -> Div {
         let selected = self
+            .active_tab()
             .selected
             .and_then(|i| self.table.read(cx).delegate().entries.get(i).cloned());
 
@@ -795,7 +1003,7 @@ impl Shell {
                     EntryKind::File => "File",
                     EntryKind::Symlink => "Symlink",
                 };
-                let mut full_path = self.current_dir.clone();
+                let mut full_path = self.active_tab().current_dir.clone();
                 full_path.push(&entry.name);
                 let path_str = full_path.to_string_lossy().into_owned();
 
@@ -839,7 +1047,7 @@ impl Shell {
     /// clickable and navigates the pane to that level. The root `/`
     /// gets its own leading segment.
     fn breadcrumb(&self, cx: &mut Context<Self>) -> Div {
-        let segments = path_segments(&self.current_dir);
+        let segments = path_segments(&self.active_tab().current_dir);
         let mut row = h_flex()
             .w_full()
             .items_center()
@@ -898,7 +1106,11 @@ impl Render for Shell {
         let volumes = self.volumes_menu(cx);
         let has_volumes = !self.volumes.is_empty();
         let breadcrumb = self.breadcrumb(cx);
-        let path_str = self.current_dir.to_string_lossy().into_owned();
+        let path_str = self
+            .active_tab()
+            .current_dir
+            .to_string_lossy()
+            .into_owned();
 
         let mut sidebar = Sidebar::new("shell-sidebar")
             .w(px(220.0))
@@ -917,6 +1129,7 @@ impl Render for Shell {
 
         let _ = path_str; // breadcrumb already shows the path
 
+        let tabstrip = self.tabstrip(cx);
         let toolbar = self.toolbar(cx);
 
         h_flex()
@@ -936,6 +1149,10 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_clear_filter))
             .on_action(cx.listener(Self::on_new_folder))
             .on_action(cx.listener(Self::on_rename_selected))
+            .on_action(cx.listener(Self::on_new_tab))
+            .on_action(cx.listener(Self::on_close_tab))
+            .on_action(cx.listener(Self::on_next_tab))
+            .on_action(cx.listener(Self::on_prev_tab))
             .size_full()
             .bg(cx.theme().background)
             .child(sidebar)
@@ -944,6 +1161,7 @@ impl Render for Shell {
                     .h_full()
                     .flex_1()
                     .min_w_0()
+                    .child(tabstrip)
                     .child(toolbar)
                     .child(breadcrumb)
                     .child(
