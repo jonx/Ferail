@@ -495,7 +495,25 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.focus_filter_input(window, cx);
+    }
+
+    /// Public-from-screenshot-CLI helper: focuses the filter input
+    /// (same effect as Cmd+F). Stage 2's `--search` flag uses this.
+    pub fn focus_filter_input(&self, window: &mut Window, cx: &mut App) {
         self.filter_input.read(cx).focus_handle(cx).focus(window, cx);
+    }
+
+    /// Public-from-screenshot-CLI helper: opens the rename dialog
+    /// for the active selection. Same effect as F2.
+    pub fn trigger_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_rename_selected(&RenameSelected, window, cx);
+    }
+
+    /// Public-from-screenshot-CLI helper: opens the new-folder
+    /// dialog. Same effect as Cmd+Shift+N.
+    pub fn trigger_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_new_folder(&NewFolder, window, cx);
     }
 
     /// Cmd+Shift+N: open the New Folder dialog.
@@ -642,8 +660,9 @@ impl Shell {
 
     /// Inner load: re-enumerate the directory + refresh the table +
     /// re-target the watcher. Does **not** touch history (history
-    /// is only mutated by `navigate`).
-    fn load_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+    /// is only mutated by `navigate`). Public so the screenshot
+    /// CLI driver can call it directly after seeding tab state.
+    pub fn load_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.active_tab_mut().current_dir = path.clone();
         let show_hidden = self.show_hidden;
         let filter = self.filter_text.clone();

@@ -223,6 +223,89 @@ pub fn path_for(fs: &NativeFs, id: NodeId) -> Option<PathBuf> {
     fs.path_for(id)
 }
 
+/// Sort columns supported by `apply_sort`. Matches the column ids
+/// the old app used (`feraille_controls::ColumnId` in the old
+/// stack); kept in this module so feraille-gpui doesn't reach for
+/// the soft-renderer controls crate. Pure logic, easy to extend.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortColumn {
+    Name,
+    Size,
+    Kind,
+    Magic,
+    Modified,
+}
+
+impl SortColumn {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "name" => Some(Self::Name),
+            "size" => Some(Self::Size),
+            "kind" => Some(Self::Kind),
+            "magic" => Some(Self::Magic),
+            "modified" | "mtime" => Some(Self::Modified),
+            _ => None,
+        }
+    }
+}
+
+/// In-place sort with folders-first grouping (Finder convention).
+/// Pure-logic port of `feraille_controls::sort_entries` — same
+/// shape, just inlined here so we don't need to link the old UI
+/// crate. Comments carried over from the original.
+pub fn sort_in_place(entries: &mut [feraille_core::FileEntry], col: SortColumn, asc: bool) {
+    use std::cmp::Ordering;
+    entries.sort_by(|a, b| {
+        // Folders always come before non-folders, regardless of
+        // sort direction. The sort key only orders within each
+        // group.
+        let group_order = match (a.kind, b.kind) {
+            (feraille_core::EntryKind::Directory, feraille_core::EntryKind::Directory) => {
+                Ordering::Equal
+            }
+            (feraille_core::EntryKind::Directory, _) => Ordering::Less,
+            (_, feraille_core::EntryKind::Directory) => Ordering::Greater,
+            _ => Ordering::Equal,
+        };
+        if group_order != Ordering::Equal {
+            return group_order;
+        }
+        let cmp = match col {
+            SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+            SortColumn::Size => a.size.cmp(&b.size),
+            SortColumn::Kind => a
+                .display_kind
+                .to_lowercase()
+                .cmp(&b.display_kind.to_lowercase()),
+            SortColumn::Magic => a
+                .display_magic
+                .to_lowercase()
+                .cmp(&b.display_magic.to_lowercase()),
+            SortColumn::Modified => a.mtime_unix.cmp(&b.mtime_unix),
+        };
+        if asc { cmp } else { cmp.reverse() }
+    });
+}
+
+/// Apply a column sort to the live Table. Used by the
+/// `--sort <col[-desc]>` CLI flag and (eventually) by clicks on
+/// the column header row.
+pub fn apply_sort<C: gpui::AppContext>(
+    table: &gpui::Entity<TableState<FileListDelegate>>,
+    column_name: &str,
+    ascending: bool,
+    cx: &mut C,
+) {
+    let Some(col) = SortColumn::from_str(column_name) else {
+        crate::log_warn!(90, "unknown sort column: {column_name}");
+        return;
+    };
+    table.update(cx, |state, cx| {
+        sort_in_place(&mut state.delegate_mut().entries, col, ascending);
+        state.refresh(cx);
+    });
+}
+
 // Compile-time sanity check that FontWeight stays in scope — used
 // transitively by render_td when we add bold-name styling for
 // directories in a future polish pass.

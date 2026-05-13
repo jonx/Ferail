@@ -82,17 +82,29 @@ table is in place.
 ## CLI (Stage 2)
 
 ### Screenshot CLI flag parity
-Status: In progress
+Status: Ported ✅ (parse + apply, with some flags stubbed for later stages)
 Old location: `crates/feraille-app/src/screenshot.rs::parse_args` (25 flags)
-New location: `crates/feraille-gpui/src/screenshot.rs::parse_args` (5 flags)
-Notes: Flags already in new app: `--screenshot`, `--width`,
-`--height`, `--theme`, `--settings`. Stage 2 adds the remaining
-~20: --navigate, --new-tab, --tab, --expand, --select-row,
---select-name, --splitter, --scroll, --edit-mode, --show-hidden,
---filter, --search, --preview, --sort, --properties, --mac-chrome,
---rename, --inline-rename, --new-folder, --simulate-toast,
---simulate-progress, --simulate-task-panel, --shortcuts-help,
---ui-scale, --disk-usage, --du-depth, --du-coloring.
+New location: `crates/feraille-gpui/src/screenshot.rs::parse_args` (25 flags)
+Notes: All 25 old flags now parse. Functional today:
+`--screenshot`, `--width`, `--height`, `--scale`, `--theme`,
+`--navigate` (repeatable), `--new-tab` (repeatable), `--tab`,
+`--select-row`, `--select-name`, `--show-hidden`, `--filter`
+(syncs both the Input widget and the underlying filter_text),
+`--search` (focuses filter), `--preview`, `--sort col[-desc]`
+(name / size / kind / magic / mtime, folders-first), `--rename`,
+`--inline-rename` (falls back to modal rename), `--new-folder`,
+`--settings`. Stubbed (parse but emit a `log_warn` on apply,
+pending the stage that wires them up):
+`--properties` (→ Stage 8), `--edit-mode` (→ Stage 9), `--ui-scale`
+(→ Stage 9), `--simulate-toast` / `--simulate-progress` /
+`--simulate-task-panel` (→ Stage 5), `--shortcuts-help[-filter]`
+(→ Stage 9), `--disk-usage` / `--du-depth` / `--du-coloring` (→
+Stage 7), `--splitter`, `--scroll` (Table scroll API not yet
+exposed), `--mac-chrome` (N/A — GPUI has native chrome), `--expand`
+(N/A — sidebar is flat). New pure-logic port: `SortColumn` enum +
+`sort_in_place` comparator inside `crates/feraille-gpui/src/
+file_list.rs` (carries forward the folders-first behaviour from
+`feraille-controls::sort_entries`).
 
 ---
 
