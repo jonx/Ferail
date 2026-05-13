@@ -1842,7 +1842,11 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "feraille-core",
+ "feraille-design",
+ "feraille-disk-usage",
  "feraille-fs-native",
+ "feraille-meta",
+ "feraille-shell-mac",
  "gpui",
  "gpui-component",
  "gpui-component-assets",

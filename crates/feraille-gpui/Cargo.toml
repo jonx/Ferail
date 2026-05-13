@@ -34,11 +34,21 @@ smallvec = "1"
 # transitively, so this stays single-copy in the graph.
 image = { version = "0.25", default-features = false }
 
-# Phase 4: domain wiring. feraille-gpui consumes the domain layer
-# the same way feraille-app did, through the same trait surface
-# audited in Phase 2.
+# Domain wiring. feraille-gpui consumes the domain layer the same
+# way feraille-app did, through the same trait surface audited in
+# Phase 2. All seven crates are verified clean (no transitive dep
+# on feraille-render or feraille-controls); they link directly.
 feraille-core.workspace = true
 feraille-fs-native.workspace = true
+# Harvest Stage 0: link the remaining domain crates. Even when
+# their consumers haven't landed yet (e.g. feraille-meta is wired
+# in Stage 1, disk-usage in Stage 7), declaring them here means a
+# single `cargo check` from now on confirms the dep graph remains
+# clean as the harvest proceeds.
+feraille-design.workspace = true
+feraille-meta.workspace = true
+feraille-disk-usage.workspace = true
+feraille-shell-mac.workspace = true
 
 [dev-dependencies]
 # Phase 2 isolation test still lives here. It now ALSO doubles as a

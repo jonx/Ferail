@@ -19,13 +19,37 @@ GPUI also brings, for free: native window chrome, animation pipeline,
 virtualization, focus tree, action/keymap system, drag-and-drop, and a
 real text/font stack.
 
-## Strategy: parallel build
+## Strategy: parallel build, then harvest
 
 A new `crates/feraille-gpui` crate sits next to `crates/feraille-app`.
 Both binaries (`Feraille` and `feraille-gpui`) compile and run every
-day of the migration. The Phase 6 cutover deletes `feraille-app`,
+day of the migration. The cutover deletes `feraille-app`,
 `feraille-render`, and the relevant `feraille-controls` modules in a
-single PR. Resist the urge to keep "for reference" — git has it.
+single PR — but only after every feature is ported.
+
+**Direction: harvest out of the old app into the new one.** The old
+binary is the *source* we're reading from; the new binary is the
+destination. Importing new-app pieces back into the old codebase
+creates a hybrid that has to satisfy both worlds and never reaches a
+"done" state. The migration plan only works if one side actively
+shrinks. The old app is the shrinking side.
+
+Concretely, once the harvest started (Phase 5.6+):
+
+- The old `feraille-app` is **strictly frozen** — only deletions and
+  bug fixes for shipped users. Bug-fix-while-porting goes into the
+  new app with a note in [PORTING.md](PORTING.md).
+- The single source of truth for migration progress is
+  [docs/PORTING.md](PORTING.md). One section per feature, with
+  status (Not started / In progress / Ported / N/A). Updated at every
+  commit boundary; answers "what's left?" without anyone needing to
+  remember.
+- Pure-logic modules in the old app that don't depend on
+  `feraille-render` / `feraille-controls` move into `feraille-gpui` —
+  or into an already-existing shared crate when one fits (e.g.
+  `disk_usage_state.rs` → `feraille-disk-usage`). UI-coupled code is
+  rewritten using gpui-component primitives; the old code is the
+  spec, not the implementation.
 
 ## Crates
 
