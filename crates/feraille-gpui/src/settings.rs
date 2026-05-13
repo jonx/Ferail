@@ -27,6 +27,7 @@ pub enum SettingsCategory {
     Appearance,
     Files,
     Layout,
+    Shortcuts,
     About,
 }
 
@@ -35,6 +36,7 @@ impl SettingsCategory {
         SettingsCategory::Appearance,
         SettingsCategory::Files,
         SettingsCategory::Layout,
+        SettingsCategory::Shortcuts,
         SettingsCategory::About,
     ];
 
@@ -43,6 +45,7 @@ impl SettingsCategory {
             SettingsCategory::Appearance => "Appearance",
             SettingsCategory::Files => "Files",
             SettingsCategory::Layout => "Layout",
+            SettingsCategory::Shortcuts => "Keyboard Shortcuts",
             SettingsCategory::About => "About",
         }
     }
@@ -397,6 +400,95 @@ impl SettingsView {
         )
     }
 
+    /// Settings → Keyboard Shortcuts page. Reuses the same chord
+    /// formatter as the Cmd+/ overlay; just laid out without the
+    /// modal backdrop so it sits inside the Settings layout. Rows
+    /// are grouped by command Category in catalogue order.
+    fn shortcuts_card(&self, cx: &mut Context<Self>) -> Div {
+        use feraille_core::commands::{all_commands, Category, CommandSpec};
+        let theme = cx.theme();
+        // Group preserving first-seen category order.
+        let mut groups: Vec<(Category, Vec<&CommandSpec>)> = Vec::new();
+        for spec in all_commands() {
+            if spec.shortcuts.is_empty() {
+                continue;
+            }
+            if let Some((_, list)) =
+                groups.iter_mut().find(|(c, _)| *c == spec.category)
+            {
+                list.push(spec);
+            } else {
+                groups.push((spec.category, vec![spec]));
+            }
+        }
+
+        let group_to_div = |cat: Category, specs: Vec<&CommandSpec>| -> Div {
+            let title = match cat {
+                Category::App => "App",
+                Category::File => "File",
+                Category::Edit => "Edit",
+                Category::View => "View",
+                Category::Go => "Go",
+                Category::Selection => "Selection",
+                Category::Window => "Window",
+                Category::Help => "Help",
+                Category::Context => "Context",
+            };
+            let rows = specs.into_iter().map(|spec| {
+                let chord = spec
+                    .shortcuts
+                    .first()
+                    .map(crate::keyboard_help::format_shortcut)
+                    .unwrap_or_default();
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .py_1()
+                    .px_2()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_sm()
+                            .text_color(theme.foreground)
+                            .child(SharedString::from(spec.title)),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(chord)),
+                    )
+            });
+            v_flex()
+                .gap_1()
+                .pt_2()
+                .child(
+                    div()
+                        .px_2()
+                        .text_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.muted_foreground)
+                        .child(title),
+                )
+                .children(rows)
+        };
+
+        let sections = groups
+            .into_iter()
+            .map(|(cat, specs)| group_to_div(cat, specs));
+        v_flex()
+            .rounded(theme.radius)
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.secondary.opacity(0.4))
+            .px_2()
+            .py_2()
+            .gap_2()
+            .children(sections)
+    }
+
     fn about_card(&self, cx: &mut Context<Self>) -> Div {
         let inner = v_flex()
             .gap_2()
@@ -441,6 +533,7 @@ impl SettingsView {
             SettingsCategory::Appearance => self.appearance_card(cx),
             SettingsCategory::Files => self.files_card(cx),
             SettingsCategory::Layout => self.layout_card(cx),
+            SettingsCategory::Shortcuts => self.shortcuts_card(cx),
             SettingsCategory::About => self.about_card(cx),
         };
         v_flex()
@@ -717,6 +810,7 @@ pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {
     match arg.unwrap_or("appearance") {
         "files" => SettingsCategory::Files,
         "layout" => SettingsCategory::Layout,
+        "shortcuts" | "keyboard" | "keys" => SettingsCategory::Shortcuts,
         "about" => SettingsCategory::About,
         _ => SettingsCategory::Appearance,
     }
