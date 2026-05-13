@@ -5,7 +5,9 @@
 //! Phase 4.b will wire the sidebar to real Locations/Volumes. Phase
 //! 4.c brings the virtualized file list.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use feraille_core::{EntryKind, EnumerationError};
@@ -20,6 +22,7 @@ use gpui_component::{
 };
 
 use crate::file_list::FileListDelegate;
+use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
 
 actions!(
     shell,
@@ -87,6 +90,12 @@ pub struct Shell {
     /// (most commonly macOS TCC denial on ~/Documents etc.). Drives
     /// an in-pane empty-state instead of a silent blank list.
     pub last_error: Option<EnumerationError>,
+    /// Background file-system watcher. `Rc<RefCell<>>` so the
+    /// foreground-executor polling task can read it without taking
+    /// a mutable borrow of the whole Shell. None if the platform
+    /// watcher failed to start (rare — typically only in stripped
+    /// CI environments without FSEvents).
+    pub watcher: Rc<RefCell<Option<FsWatcher>>>,
 }
 
 /// A named filesystem destination shown in the sidebar's Locations
@@ -153,6 +162,48 @@ impl Shell {
         // immediately without the user having to click into the
         // shell.
         focus_handle.focus(window, cx);
+
+        // Spin up the platform file-system watcher and start
+        // watching the initial directory. If the watcher itself
+        // can't be constructed (very rare; sandbox without
+        // FSEvents), we just operate without it — manual Cmd+R
+        // still works.
+        let watcher = match FsWatcher::new() {
+            Ok(mut w) => {
+                let _ = w.watch(&start);
+                Rc::new(RefCell::new(Some(w)))
+            }
+            Err(_) => Rc::new(RefCell::new(None)),
+        };
+
+        // Foreground-executor polling task. Wakes every POLL_INTERVAL,
+        // drains the channel, asks the Shell to reload if anything
+        // changed. Stops when this.update returns Err — that means
+        // the Shell entity has been dropped.
+        let poll_watcher = watcher.clone();
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(POLL_INTERVAL).await;
+                let dirty = poll_watcher
+                    .borrow()
+                    .as_ref()
+                    .map(|w| w.drain_reload_relevant())
+                    .unwrap_or(false);
+                if dirty {
+                    if this
+                        .update(cx, |this, cx| {
+                            let path = this.current_dir.clone();
+                            this.load_path(path, cx);
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        })
+        .detach();
+
         Self {
             current_dir: start.clone(),
             volumes: list_volumes(),
@@ -164,6 +215,7 @@ impl Shell {
             history: vec![start],
             history_index: 0,
             last_error,
+            watcher,
         }
     }
 
@@ -240,20 +292,26 @@ impl Shell {
         }
     }
 
-    /// Inner load: re-enumerate the directory + refresh the table.
-    /// Does **not** touch history (history is only mutated by
-    /// `navigate`).
+    /// Inner load: re-enumerate the directory + refresh the table +
+    /// re-target the watcher. Does **not** touch history (history
+    /// is only mutated by `navigate`).
     fn load_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.current_dir = path.clone();
         let show_hidden = self.show_hidden;
         let table = self.table.clone();
         let mut err: Option<EnumerationError> = None;
         table.update(cx, |state, cx| {
-            err = state.delegate_mut().load(path, show_hidden);
+            err = state.delegate_mut().load(path.clone(), show_hidden);
             state.refresh(cx);
         });
         self.last_error = err;
         self.selected = None;
+        // Point the watcher at the new directory. Errors (path
+        // doesn't exist, watcher saturated) are non-fatal — the
+        // user still gets the listing; they just lose live updates.
+        if let Some(w) = self.watcher.borrow_mut().as_mut() {
+            let _ = w.watch(&path);
+        }
         cx.notify();
     }
 

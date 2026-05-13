@@ -11,6 +11,7 @@
 #![recursion_limit = "256"]
 
 pub mod file_list;
+pub mod fs_watcher;
 pub mod screenshot;
 pub mod settings;
 pub mod shell;

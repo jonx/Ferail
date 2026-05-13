@@ -22,6 +22,11 @@ gpui.workspace = true
 gpui_platform.workspace = true
 gpui-component.workspace = true
 gpui-component-assets.workspace = true
+# Phase 5.b: file-system change events. notify ships its own
+# platform-specific watcher (FSEvents on macOS, inotify on Linux,
+# ReadDirectoryChangesW on Windows). Pinned to the same major as
+# gpui-component's transitive use to keep one copy in the graph.
+notify = "7.0"
 
 # Phase 4: domain wiring. feraille-gpui consumes the domain layer
 # the same way feraille-app did, through the same trait surface
