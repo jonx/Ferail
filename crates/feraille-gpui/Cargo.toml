@@ -22,6 +22,10 @@ gpui.workspace = true
 gpui_platform.workspace = true
 gpui-component.workspace = true
 gpui-component-assets.workspace = true
+# Phase 1 (next-level plan): bundle our own SVG icons alongside
+# the upstream gpui-component icon pack. Same major as the upstream
+# crate uses so we stay single-copy in the graph.
+rust-embed = { version = "8.7", features = ["interpolate-folder-path", "include-exclude"] }
 # Phase 5.b: file-system change events. notify ships its own
 # platform-specific watcher (FSEvents on macOS, inotify on Linux,
 # ReadDirectoryChangesW on Windows). Pinned to the same major as

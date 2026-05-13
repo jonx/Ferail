@@ -14,9 +14,9 @@ use feraille_gpui::{
         RevealInFinder, Shell, ToggleHidden,
     },
 };
+use feraille_gpui::assets::FeraAssets;
 use gpui::*;
 use gpui_component::Theme;
-use gpui_component_assets::Assets;
 
 actions!(app, [Quit, OpenAbout]);
 
@@ -43,7 +43,10 @@ fn main() -> Result<()> {
 }
 
 fn run_gui(args: screenshot::Args) {
-    let app = gpui_platform::application().with_assets(Assets);
+    // FeraAssets stacks our local SVG bundle (file-type icons, etc.)
+    // in front of the upstream gpui-component icon pack. Both surface
+    // through one `icons/X.svg` namespace.
+    let app = gpui_platform::application().with_assets(FeraAssets);
     let width = args.width.unwrap_or(1180) as f32;
     let height = args.height.unwrap_or(760) as f32;
     let theme_mode = args.theme;

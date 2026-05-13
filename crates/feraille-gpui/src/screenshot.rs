@@ -23,7 +23,7 @@ use anyhow::{Context as _, Result};
 use feraille_fs_native::home_dir;
 use gpui::*;
 use gpui_component::{Theme, ThemeMode, WindowExt as _, notification::Notification};
-use gpui_component_assets::Assets;
+use crate::assets::FeraAssets;
 
 use crate::settings::{SettingsView, category_from_arg};
 use crate::shell::Shell;
@@ -274,7 +274,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let shell_args = ShellArgs::from(&args);
 
-    let app = gpui_platform::application().with_assets(Assets);
+    let app = gpui_platform::application().with_assets(FeraAssets);
     app.run(move |cx| {
         gpui_component::init(cx);
         crate::shell::init(cx);

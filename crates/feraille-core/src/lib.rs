@@ -66,6 +66,193 @@ pub struct FileEntry {
     pub quarantine: Option<QuarantineDetails>,
 }
 
+impl FileEntry {
+    /// Unified Format label for the file list (next-level Phase 1):
+    /// prefer the magic-detected description, fall back to the
+    /// extension-derived kind. Returns `(primary, has_mismatch)` where
+    /// `has_mismatch` is true when both fields are populated *and*
+    /// they describe genuinely different format families (a renamed
+    /// PDF claiming `.txt`, for example) — not just terminology
+    /// differences (e.g. `JSON` / `Plain text` is fine).
+    pub fn format_label(&self) -> (String, bool) {
+        let mag = self.display_magic.trim();
+        let kind = self.display_kind.trim();
+        if mag.is_empty() {
+            return (kind.to_string(), false);
+        }
+        if kind.is_empty() {
+            return (mag.to_string(), false);
+        }
+        (mag.to_string(), !formats_compatible(kind, mag))
+    }
+}
+
+/// Heuristic: do the extension-derived `kind` and the magic-detected
+/// `magic` strings describe compatible format families? Used to drive
+/// the file-list mismatch indicator without raising false alarms for
+/// the common "extension says JSON, magic says plain-text" case.
+fn formats_compatible(kind: &str, magic: &str) -> bool {
+    let k = normalize_format(kind);
+    let m = normalize_format(magic);
+    if k.is_empty() || m.is_empty() {
+        return true;
+    }
+    if k == m || m.contains(&k) || k.contains(&m) {
+        return true;
+    }
+    // Textual extensions all live happily under "plain text" / "ascii text" / "utf-8".
+    let textual = [
+        "txt", "md", "markdown", "rst", "log", "json", "yaml",
+        "toml", "ini", "csv", "tsv", "xml", "html", "css", "scss",
+        "rs", "py", "js", "ts", "go", "rb", "c", "cpp", "h", "hpp",
+        "java", "kt", "swift", "sh", "bash", "zsh", "vim", "lua",
+        "sql", "graphql", "proto", "tex", "el", "svg",
+    ];
+    if (m.contains("text") || m.contains("script") || m.contains("source"))
+        && textual.iter().any(|t| k.contains(t))
+    {
+        return true;
+    }
+    // Office / EPUB / JAR / APK formats are ZIP archives at the byte level.
+    let zip_kindly = [
+        "docx", "xlsx", "pptx", "epub", "jar", "apk", "ipa", "odt",
+        "ods", "odp", "zip", "war",
+    ];
+    if m.contains("zip") && zip_kindly.iter().any(|t| k.contains(t)) {
+        return true;
+    }
+    false
+}
+
+/// Normalize a format label for comparison. Strips common qualifier
+/// words (`image`, `archive`, `document`, `file`, `data`), then maps
+/// known aliases to a single canonical spelling so e.g. `JPG` and
+/// `JPEG image` both reduce to `jpeg`. Pure ASCII so the lowercasing
+/// is locale-independent.
+fn normalize_format(s: &str) -> String {
+    let lower = s.to_ascii_lowercase();
+    let stripped = lower
+        .replace(" image", "")
+        .replace(" archive", "")
+        .replace(" document", "")
+        .replace(" file", "")
+        .replace(" data", "")
+        .trim()
+        .to_string();
+    match stripped.as_str() {
+        "jpg" | "jpeg" => "jpeg".to_string(),
+        "tif" | "tiff" => "tiff".to_string(),
+        "htm" | "html" => "html".to_string(),
+        "mpg" | "mpeg" => "mpeg".to_string(),
+        "yml" | "yaml" => "yaml".to_string(),
+        "md" | "markdown" => "markdown".to_string(),
+        "rs" | "rust" => "rust".to_string(),
+        "py" | "python" => "python".to_string(),
+        "js" | "javascript" => "javascript".to_string(),
+        "ts" | "typescript" => "typescript".to_string(),
+        _ => stripped,
+    }
+}
+
+#[cfg(test)]
+mod format_label_tests {
+    use super::*;
+
+    fn entry(kind: &str, magic: &str) -> FileEntry {
+        FileEntry {
+            id: NodeId(std::num::NonZeroU64::new(1).unwrap()),
+            name: String::new(),
+            kind: EntryKind::File,
+            size: 0,
+            mtime_unix: 0,
+            display_size: String::new(),
+            display_mtime: String::new(),
+            display_kind: kind.into(),
+            display_magic: magic.into(),
+            is_quarantined: false,
+            quarantine: None,
+        }
+    }
+
+    #[test]
+    fn magic_is_primary() {
+        let (label, mismatch) = entry("PNG", "PNG image").format_label();
+        assert_eq!(label, "PNG image");
+        assert!(!mismatch);
+    }
+
+    #[test]
+    fn empty_magic_falls_back_to_kind() {
+        let (label, mismatch) = entry("PDF", "").format_label();
+        assert_eq!(label, "PDF");
+        assert!(!mismatch);
+    }
+
+    #[test]
+    fn json_vs_plain_text_is_compatible() {
+        let (_, mismatch) = entry("JSON", "Plain text").format_label();
+        assert!(!mismatch);
+    }
+
+    #[test]
+    fn docx_vs_zip_archive_is_compatible() {
+        let (_, mismatch) = entry("DOCX", "Zip archive").format_label();
+        assert!(!mismatch);
+    }
+
+    #[test]
+    fn png_kind_vs_plain_text_magic_is_mismatch() {
+        let (_, mismatch) = entry("PNG", "Plain text").format_label();
+        assert!(mismatch, "PNG declared but content is text → flag");
+    }
+
+    #[test]
+    fn pdf_kind_vs_zip_archive_magic_is_mismatch() {
+        let (_, mismatch) = entry("PDF", "Zip archive").format_label();
+        assert!(mismatch, "PDF declared but content is zip → flag");
+    }
+
+    // Regression: phase 1 review caught these as false positives —
+    // alias normalization in normalize_format covers them now.
+    #[test]
+    fn jpg_kind_vs_jpeg_image_magic_is_compatible() {
+        let (_, mismatch) = entry("JPG", "JPEG image").format_label();
+        assert!(!mismatch, "jpg ≡ jpeg");
+    }
+
+    #[test]
+    fn tif_kind_vs_tiff_image_magic_is_compatible() {
+        let (_, mismatch) = entry("TIF", "TIFF image").format_label();
+        assert!(!mismatch, "tif ≡ tiff");
+    }
+
+    #[test]
+    fn htm_kind_vs_html_magic_is_compatible() {
+        let (_, mismatch) = entry("HTM", "HTML document").format_label();
+        assert!(!mismatch, "htm ≡ html");
+    }
+
+    #[test]
+    fn yml_kind_vs_yaml_magic_is_compatible() {
+        let (_, mismatch) = entry("YML", "YAML data").format_label();
+        assert!(!mismatch, "yml ≡ yaml");
+    }
+
+    #[test]
+    fn pdf_kind_vs_pdf_document_magic_is_compatible() {
+        let (_, mismatch) = entry("PDF", "PDF document").format_label();
+        assert!(!mismatch, "qualifier strip — pdf == pdf document");
+    }
+
+    #[test]
+    fn png_image_kind_vs_png_image_magic_is_compatible() {
+        // Both sides arrive as the same display string; trivial equality
+        // after normalisation.
+        let (_, mismatch) = entry("PNG image", "PNG image").format_label();
+        assert!(!mismatch);
+    }
+}
+
 /// Display-ready provenance fields for a quarantined file. Strings are
 /// pre-formatted in the worker so paint never allocates or parses.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

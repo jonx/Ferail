@@ -2314,8 +2314,13 @@ fn run_directory_load(
             if needle.is_empty() {
                 true
             } else {
+                // Filter searches the visible Format value too —
+                // otherwise typing "pdf document" or "zip archive"
+                // misses rows where the magic-detected text is the
+                // only place those phrases appear.
+                let (format, _) = e.format_label();
                 e.name.to_lowercase().contains(&needle)
-                    || e.display_kind.to_lowercase().contains(&needle)
+                    || format.to_lowercase().contains(&needle)
             }
         })
         .collect();

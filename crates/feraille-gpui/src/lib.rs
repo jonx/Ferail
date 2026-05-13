@@ -11,6 +11,7 @@
 #![recursion_limit = "256"]
 
 pub mod app_state;
+pub mod assets;
 pub mod disk_usage;
 pub mod file_list;
 pub mod fs_watcher;

@@ -18,16 +18,17 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     App, AppContext as _, Context, Div, ExternalPaths, FontWeight, InteractiveElement, IntoElement,
     ParentElement, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window, div,
-    img, px,
+    img, px, svg,
 };
 use gpui_component::{
     ActiveTheme,
     menu::PopupMenu,
     table::{Column, TableDelegate, TableState},
+    tooltip::Tooltip,
 };
 use smallvec::smallvec;
 
-use crate::icons::IconCache;
+use crate::icons::{IconCache, file_type_icon, tint_color};
 
 /// Delegate that vends the current directory's entries to the
 /// Table. Holds the live `Vec<FileEntry>`; the Shell rotates it on
@@ -58,11 +59,15 @@ impl FileListDelegate {
     pub fn new(fs: Arc<NativeFs>, icons: Rc<RefCell<IconCache>>) -> Self {
         Self {
             entries: Vec::new(),
+            // Next-level Phase 1: Magic-driven `Format` column
+            // replaces the duplicate Kind + Magic columns. The Format
+            // cell prefers magic-detected text, falls back to the
+            // extension-derived kind, and renders a small mismatch
+            // indicator when the two genuinely disagree.
             columns: vec![
-                Column::new("name", "Name").width(320.0),
+                Column::new("name", "Name").width(360.0),
                 Column::new("size", "Size").width(100.0),
-                Column::new("kind", "Kind").width(120.0),
-                Column::new("magic", "Magic").width(140.0),
+                Column::new("format", "Format").width(220.0),
                 Column::new("modified", "Modified").width(160.0),
             ],
             fs,
@@ -93,8 +98,12 @@ impl FileListDelegate {
                 if needle.is_empty() {
                     true
                 } else {
+                    // Filter searches the visible Format value (the
+                    // unified Magic-or-Kind label the Format column
+                    // shows), not just the raw kind.
+                    let (format, _) = e.format_label();
                     e.name.to_lowercase().contains(&needle)
-                        || e.display_kind.to_lowercase().contains(&needle)
+                        || format.to_lowercase().contains(&needle)
                 }
             })
             .collect();
@@ -204,36 +213,51 @@ impl TableDelegate for FileListDelegate {
         };
 
         match col_ix {
-            // Name — real macOS icon (via NSWorkspace, cached by
-            // file kind in self.icons) + optional quarantine badge
-            // overlay + filename. Falls back to a 1×1 transparent
-            // placeholder when fetch fails (e.g. outside macOS).
+            // Name — Lucide line-art icon tinted by category (files +
+            // symlinks); macOS NSWorkspace bitmap for folders so
+            // user-customised folder icons and cloud-sync overlays
+            // still render. Optional quarantine badge in the top-right
+            // corner. Tooltip carries the full filename so truncation
+            // is recoverable. (Next-level Phase 1.)
             0 => {
+                use feraille_core::EntryKind;
                 let path = self.path_for_entry(entry.id).unwrap_or_default();
-                let icon = self.icons.borrow_mut().icon_for(entry, &path);
                 let quarantined = entry.is_quarantined;
-                let icon_wrapper = div()
-                    .relative()
-                    .flex_shrink_0()
-                    .w(px(18.0))
-                    .h(px(18.0))
-                    .child(img(icon).w(px(18.0)).h(px(18.0)))
-                    .when(quarantined, |this| {
-                        // Mark-of-the-Web badge: small red dot in
-                        // the icon's top-right. Same convention as
-                        // the old app's drag-out indicator.
-                        this.child(
-                            div()
-                                .absolute()
-                                .top(px(-1.0))
-                                .right(px(-1.0))
-                                .w(px(7.0))
-                                .h(px(7.0))
-                                .rounded_full()
-                                .bg(gpui::rgb(0xFF3B30)),
-                        )
-                    });
+                let icon_wrapper: gpui::AnyElement = match entry.kind {
+                    EntryKind::Directory => {
+                        let icon = self.icons.borrow_mut().icon_for(entry, &path);
+                        div()
+                            .relative()
+                            .flex_shrink_0()
+                            .w(px(18.0))
+                            .h(px(18.0))
+                            .child(img(icon).w(px(18.0)).h(px(18.0)))
+                            .when(quarantined, badge_overlay)
+                            .into_any_element()
+                    }
+                    EntryKind::File | EntryKind::Symlink => {
+                        let icon = file_type_icon(entry);
+                        let tint = tint_color(icon.tint, cx);
+                        div()
+                            .relative()
+                            .flex_shrink_0()
+                            .w(px(18.0))
+                            .h(px(18.0))
+                            .child(
+                                svg()
+                                    .path(icon.path)
+                                    .w(px(18.0))
+                                    .h(px(18.0))
+                                    .text_color(tint),
+                            )
+                            .when(quarantined, badge_overlay)
+                            .into_any_element()
+                    }
+                };
+                let full_name = entry.name.clone();
+                let tooltip_name = full_name.clone();
                 div()
+                    .id(("file-row-name", row_ix))
                     .flex()
                     .items_center()
                     .gap_2()
@@ -242,9 +266,14 @@ impl TableDelegate for FileListDelegate {
                     .child(icon_wrapper)
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
                             .truncate()
-                            .child(SharedString::from(entry.name.clone())),
+                            .child(SharedString::from(full_name)),
                     )
+                    .tooltip(move |window, cx| {
+                        Tooltip::new(tooltip_name.clone()).build(window, cx)
+                    })
                     .into_any_element()
             }
             1 => div()
@@ -252,22 +281,52 @@ impl TableDelegate for FileListDelegate {
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(entry.display_size.clone()))
                 .into_any_element(),
-            2 => div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(SharedString::from(entry.display_kind.clone()))
-                .into_any_element(),
-            3 => {
-                // Magic column. Populated by the Stage 4 prefetch
-                // pipeline; rows still being processed show empty.
-                div()
+            // Unified Format column (next-level Phase 1): replaces
+            // the old Kind + Magic duplication. Mismatch indicator
+            // surfaces when extension and magic disagree (renamed or
+            // corrupted file).
+            2 => {
+                let (label, mismatch) = entry.format_label();
+                if label.is_empty() {
+                    return div().into_any_element();
+                }
+                let tip_kind = entry.display_kind.clone();
+                let tip_magic = entry.display_magic.clone();
+                let mut row = div()
+                    .id(("file-row-format", row_ix))
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
                     .text_xs()
-                    .truncate()
                     .text_color(cx.theme().muted_foreground)
-                    .child(SharedString::from(entry.display_magic.clone()))
-                    .into_any_element()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(SharedString::from(label.clone())),
+                    );
+                if mismatch {
+                    let alert_color = cx.theme().danger;
+                    row = row
+                        .child(
+                            svg()
+                                .path("icons/triangle-alert.svg")
+                                .w(px(12.0))
+                                .h(px(12.0))
+                                .text_color(alert_color),
+                        )
+                        .tooltip(move |window, cx| {
+                            Tooltip::new(SharedString::from(format!(
+                                "Extension says \u{201C}{}\u{201D} but content looks like \u{201C}{}\u{201D}.",
+                                tip_kind, tip_magic
+                            )))
+                            .build(window, cx)
+                        });
+                }
+                row.into_any_element()
             }
-            4 => div()
+            3 => div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(entry.display_mtime.clone()))
@@ -332,6 +391,23 @@ pub fn path_for(fs: &NativeFs, id: NodeId) -> Option<PathBuf> {
     fs.path_for(id)
 }
 
+/// Mark-of-the-Web quarantine badge — small red dot in the icon's
+/// top-right corner. Same convention as the old soft-renderer app.
+/// Pulled out of `render_td` so the file-icon and folder-icon paths
+/// share one stylesheet.
+fn badge_overlay(this: Div) -> Div {
+    this.child(
+        div()
+            .absolute()
+            .top(px(-1.0))
+            .right(px(-1.0))
+            .w(px(7.0))
+            .h(px(7.0))
+            .rounded_full()
+            .bg(gpui::rgb(0xFF3B30)),
+    )
+}
+
 /// Sort columns supported by `apply_sort`. Matches the column ids
 /// the old app used (`feraille_controls::ColumnId` in the old
 /// stack); kept in this module so feraille-gpui doesn't reach for
@@ -340,8 +416,10 @@ pub fn path_for(fs: &NativeFs, id: NodeId) -> Option<PathBuf> {
 pub enum SortColumn {
     Name,
     Size,
-    Kind,
-    Magic,
+    /// Unified Format column (next-level Phase 1) — sorts by the
+    /// magic-detected description, falling back to the extension-
+    /// derived kind. Replaces the old `Kind` + `Magic` sort options.
+    Format,
     Modified,
 }
 
@@ -350,8 +428,7 @@ impl SortColumn {
         match s {
             "name" => Some(Self::Name),
             "size" => Some(Self::Size),
-            "kind" => Some(Self::Kind),
-            "magic" => Some(Self::Magic),
+            "format" | "kind" | "magic" => Some(Self::Format),
             "modified" | "mtime" => Some(Self::Modified),
             _ => None,
         }
@@ -382,14 +459,11 @@ pub fn sort_in_place(entries: &mut [feraille_core::FileEntry], col: SortColumn, 
         let cmp = match col {
             SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
             SortColumn::Size => a.size.cmp(&b.size),
-            SortColumn::Kind => a
-                .display_kind
+            SortColumn::Format => a
+                .format_label()
+                .0
                 .to_lowercase()
-                .cmp(&b.display_kind.to_lowercase()),
-            SortColumn::Magic => a
-                .display_magic
-                .to_lowercase()
-                .cmp(&b.display_magic.to_lowercase()),
+                .cmp(&b.format_label().0.to_lowercase()),
             SortColumn::Modified => a.mtime_unix.cmp(&b.mtime_unix),
         };
         if asc { cmp } else { cmp.reverse() }

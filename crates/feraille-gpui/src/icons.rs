@@ -21,7 +21,8 @@ use std::sync::Arc;
 
 use feraille_core::{EntryKind, FileEntry};
 use feraille_fs_native::fetch_icon_rgba;
-use gpui::RenderImage;
+use gpui::{App, Hsla, RenderImage};
+use gpui_component::ActiveTheme;
 use image::{Frame, RgbaImage};
 use smallvec::SmallVec;
 
@@ -111,6 +112,172 @@ fn cache_key(entry: &FileEntry, path: &Path) -> String {
             .and_then(|e| e.to_str())
             .map(|e| format!(".{}", e.to_lowercase()))
             .unwrap_or_else(|| "<noext>".into()),
+    }
+}
+
+// =============================================================================
+// Phase 1 (next-level plan): Lucide-style file-type icons.
+// =============================================================================
+//
+// Strategy: the macOS NSWorkspace path above stays the default for
+// folders + volumes (users customise folder icons, sync overlays look
+// nice). Files use the bundle-shipped Lucide SVGs below — outlined
+// glyphs that tint via theme tokens, give the file list a scannable
+// visual rhythm without relying on extension-specific raster icons.
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FileTypeTint {
+    Folder,
+    Image,
+    Video,
+    Audio,
+    Document,
+    Code,
+    Archive,
+    Disk,
+    Executable,
+    Symlink,
+    Unknown,
+}
+
+pub struct FileTypeIcon {
+    /// Asset-source path the upstream `Icon` / `svg()` resolves.
+    pub path: &'static str,
+    pub tint: FileTypeTint,
+}
+
+/// Classify a file entry into a tinted icon. Pure function over the
+/// already-stored display fields — does no I/O, no extension parsing
+/// at paint time beyond a small ASCII match on the existing name.
+pub fn file_type_icon(entry: &FileEntry) -> FileTypeIcon {
+    match entry.kind {
+        EntryKind::Directory => {
+            return FileTypeIcon { path: "icons/folder.svg", tint: FileTypeTint::Folder };
+        }
+        EntryKind::Symlink => {
+            return FileTypeIcon { path: "icons/file/symlink.svg", tint: FileTypeTint::Symlink };
+        }
+        EntryKind::File => {}
+    }
+    let ext = entry
+        .name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    let tint = classify_file(&entry.name, &entry.display_magic);
+    // Extension-specific SVG overrides — keep the category tint, swap
+    // the asset path for richer differentiation at row scale. Falls
+    // through to the tint's default icon when the extension doesn't
+    // earn a bespoke glyph.
+    let path = match ext.as_str() {
+        "pdf" => "icons/file/pdf.svg",
+        "html" | "htm" => "icons/file/html.svg",
+        "csv" | "tsv" | "xls" | "xlsx" | "ods" | "numbers" => {
+            "icons/file/spreadsheet.svg"
+        }
+        _ => match tint {
+            FileTypeTint::Image => "icons/file/image.svg",
+            FileTypeTint::Video => "icons/file/video.svg",
+            FileTypeTint::Audio => "icons/file/audio.svg",
+            FileTypeTint::Document => "icons/file/text.svg",
+            FileTypeTint::Code => "icons/file/code.svg",
+            FileTypeTint::Archive => "icons/file/archive.svg",
+            FileTypeTint::Disk => "icons/file/disk.svg",
+            FileTypeTint::Executable => "icons/file/app.svg",
+            FileTypeTint::Symlink => "icons/file/symlink.svg",
+            FileTypeTint::Folder => "icons/folder.svg",
+            FileTypeTint::Unknown => "icons/file/generic.svg",
+        },
+    };
+    FileTypeIcon { path, tint }
+}
+
+fn classify_file(name: &str, magic: &str) -> FileTypeTint {
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    // Extension is the primary signal — users renaming files
+    // deliberately get the look they expect from the name.
+    let by_ext = match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "ico" | "heic"
+        | "heif" | "svg" | "avif" | "psd" => Some(FileTypeTint::Image),
+        "mp4" | "mov" | "avi" | "mkv" | "webm" | "m4v" | "mpg" | "mpeg" | "wmv" | "flv" => {
+            Some(FileTypeTint::Video)
+        }
+        "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "opus" | "aiff" | "alac" | "wma" => {
+            Some(FileTypeTint::Audio)
+        }
+        "pdf" | "doc" | "docx" | "odt" | "rtf" | "pages" | "epub" | "txt" | "md" | "markdown"
+        | "rst" | "log" | "tex" | "csv" | "tsv" | "xls" | "xlsx" | "ods" | "numbers"
+        | "ppt" | "pptx" | "odp" | "keynote" => Some(FileTypeTint::Document),
+        "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "mjs" | "cjs" | "go" | "rb" | "c" | "cpp"
+        | "cc" | "h" | "hpp" | "java" | "kt" | "swift" | "json" | "toml" | "yaml" | "yml"
+        | "xml" | "html" | "htm" | "css" | "scss" | "sass" | "less" | "sh" | "bash" | "zsh"
+        | "fish" | "vim" | "lua" | "sql" | "graphql" | "proto" | "ml" | "hs" | "ex" | "exs"
+        | "erl" | "scala" | "clj" | "el" | "asm" | "dart" => Some(FileTypeTint::Code),
+        "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "zst" | "lz" | "lzma" => {
+            Some(FileTypeTint::Archive)
+        }
+        "dmg" | "iso" | "img" | "vmdk" | "qcow2" | "vhd" | "vdi" | "sparseimage" => {
+            Some(FileTypeTint::Disk)
+        }
+        "app" | "exe" | "dll" | "so" | "dylib" | "bin" | "appimage" | "msi" | "deb" | "rpm"
+        | "pkg" => Some(FileTypeTint::Executable),
+        _ => None,
+    };
+    if let Some(t) = by_ext {
+        return t;
+    }
+    // Fallback: magic-derived description.
+    let m = magic.to_ascii_lowercase();
+    if m.contains("image") {
+        return FileTypeTint::Image;
+    }
+    if m.contains("video") {
+        return FileTypeTint::Video;
+    }
+    if m.contains("audio") {
+        return FileTypeTint::Audio;
+    }
+    if m.contains("zip")
+        || m.contains("archive")
+        || m.contains("compressed")
+        || m.contains("gzip")
+        || m.contains("tar")
+    {
+        return FileTypeTint::Archive;
+    }
+    if m.contains("mach-o") || m.contains("elf") || m.contains("executable") {
+        return FileTypeTint::Executable;
+    }
+    if m.contains("disk image") || m.contains("iso") {
+        return FileTypeTint::Disk;
+    }
+    if m.contains("text") || m.contains("script") || m.contains("source") {
+        return FileTypeTint::Document;
+    }
+    FileTypeTint::Unknown
+}
+
+/// Resolve a tint to a concrete `Hsla` using theme tokens. Uses the
+/// theme's chart palette (5 visually distinct hues by design) plus
+/// `primary` / `danger` / `muted_foreground` for the semantic slots.
+/// No hard-coded HSLA values — every colour rides the active theme.
+pub fn tint_color(tint: FileTypeTint, cx: &App) -> Hsla {
+    let theme = cx.theme();
+    match tint {
+        FileTypeTint::Folder => theme.primary,
+        FileTypeTint::Image => theme.chart_1,
+        FileTypeTint::Video => theme.chart_2,
+        FileTypeTint::Audio => theme.chart_3,
+        FileTypeTint::Document => theme.chart_4,
+        FileTypeTint::Code => theme.chart_5,
+        FileTypeTint::Archive => theme.muted_foreground,
+        FileTypeTint::Disk => theme.info,
+        FileTypeTint::Executable => theme.danger,
+        FileTypeTint::Symlink => theme.info,
+        FileTypeTint::Unknown => theme.muted_foreground,
     }
 }
 

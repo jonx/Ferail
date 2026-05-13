@@ -67,46 +67,92 @@ too.
 
 # Phase 1 — File List Becomes Scannable
 
-**Status:** Not started
+**Status:** Done (pending user review)
 **Goal:** make the main file list feel like a commercial file manager
 — scannable by icon, no redundant columns, hover/select state visible.
 
 ### Deliverables
 
-- [ ] Build `file_type_icon(entry: &FileEntry) -> IconName` in a new
-      [crates/feraille-gpui/src/icons_lucide.rs](../crates/feraille-gpui/src/icons_lucide.rs)
-      (or extend `icons.rs`). Use gpui-component's Lucide icon set.
-      Mapping: folder, image, video, audio, PDF, document,
-      markdown/text/code, archive, disk-image, executable/app,
-      symlink, unknown.
-- [ ] Tint icons by category using theme tokens (no hard-coded
-      colours). Categories from
-      [feraille-disk-usage::FileCategory](../crates/feraille-disk-usage/src/model.rs)
-      or a fresh enum in `feraille-core` if the disk-usage one is too
-      specific.
-- [ ] Decide folder/volume icons: keep NSWorkspace (current
-      [icons.rs](../crates/feraille-gpui/src/icons.rs)) or switch to
-      Lucide for visual consistency. **Recommendation:** keep
-      NSWorkspace for folders (users recognise their custom folder
-      icons / sync-cloud overlays); Lucide for everything else.
-- [ ] Replace `Kind` + `Magic` columns in
-      [file_list.rs:64-65](../crates/feraille-gpui/src/file_list.rs#L64)
-      with one `Format` column. Source: `display_magic` when
-      non-empty, else `display_kind`. **Domain change** (additive):
-      add `FileEntry::format_label() -> (String, bool)` returning
-      `(primary, has_mismatch)` in
-      [feraille-core/src/lib.rs](../crates/feraille-core/src/lib.rs).
-- [ ] Mismatch indicator: when extension-implied kind ≠
-      magic-detected format, render a small alert dot or info icon
-      after the format text. Tooltip on hover: "Extension: .X, but
-      content looks like Y."
-- [ ] Tooltip on truncated filename column (gpui-component `Tooltip`
-      wrapping the row's name cell when text overflows).
-- [ ] Hover state per row: theme-driven row background opacity bump.
-      Audit current `render_tr` for missing hover.
-- [ ] Selected state per row: stronger than hover, accent-tinted.
-      Verify it's already loud enough vs. selected theme-tile in
-      Settings (the brief flags inconsistency between the two).
+- [x] Built `file_type_icon(entry: &FileEntry) -> FileTypeIcon` in
+      [icons.rs](../crates/feraille-gpui/src/icons.rs) returning an
+      asset-source path + `FileTypeTint` enum. Mapping covers folder,
+      image, video, audio, document/PDF/text/markdown, code,
+      archive, disk-image, executable/app, symlink, unknown.
+- [x] Tints from theme tokens only (`chart_1..chart_5`, `primary`,
+      `info`, `danger`, `muted_foreground`) — no hard-coded HSLA. See
+      `tint_color()`.
+- [x] Decision: NSWorkspace icons stay for folders (user-customised
+      folder icons + sync overlays still render). Files + symlinks
+      switch to Lucide-tinted SVGs.
+- [x] Replaced `Kind` + `Magic` columns with one `Format` column. New
+      `FileEntry::format_label() -> (String, bool)` lives in
+      [feraille-core/src/lib.rs](../crates/feraille-core/src/lib.rs)
+      (additive, no UI deps; 6 unit tests cover the heuristic).
+- [x] Mismatch indicator: red `triangle-alert` SVG next to the format
+      text when ext-implied kind ≠ magic-detected format. Tooltip
+      reads: *"Extension says X but content looks like Y."*
+- [x] Alias normalization in `formats_compatible`: `jpg ≡ jpeg`,
+      `tif ≡ tiff`, `htm ≡ html`, `mpg ≡ mpeg`, `yml ≡ yaml`,
+      `md ≡ markdown`, plus qualifier stripping so `PDF` and
+      `PDF document` compare equal. 6 extra regression tests cover
+      the cases the Phase 1 review caught.
+- [x] Tooltip on the Name cell with the full filename (Tooltip from
+      `gpui_component::tooltip`).
+- [ ] Hover + selected row states audit — left as-is for now (the
+      Table primitive already paints them via theme tokens; will
+      revisit in Phase 10 audit alongside the file-row / settings-
+      tile consistency check the brief flagged).
+- [x] New asset source [crates/feraille-gpui/src/assets.rs](../crates/feraille-gpui/src/assets.rs)
+      stacks our local SVG bundle in front of the upstream gpui-
+      component icon pack; both fit one `icons/X.svg` namespace.
+- [x] Extension-specific SVG overrides in `file_type_icon`: PDFs use
+      `icons/file/pdf.svg`, HTML uses `html.svg`,
+      CSV/TSV/XLS/XLSX/ODS/Numbers use `spreadsheet.svg`. The Document
+      tint no longer collapses every paper-shaped file to the same
+      `text.svg` glyph.
+- [x] Filter input now searches the visible Format value (the
+      unified magic-or-kind label) on top of the filename. Was
+      searching only `display_kind`; typing `pdf document` or
+      `jpeg image` would have missed every row before the fix.
+      Both filter sites updated: [file_list.rs](../crates/feraille-gpui/src/file_list.rs)
+      load + [shell.rs](../crates/feraille-gpui/src/shell.rs)
+      `run_directory_load`.
+
+### Files touched
+
+- [crates/feraille-core/src/lib.rs](../crates/feraille-core/src/lib.rs)
+  — `FileEntry::format_label()` + heuristic + 6 tests.
+- [crates/feraille-gpui/src/icons.rs](../crates/feraille-gpui/src/icons.rs)
+  — `FileTypeTint`, `file_type_icon()`, `tint_color()`.
+- [crates/feraille-gpui/src/file_list.rs](../crates/feraille-gpui/src/file_list.rs)
+  — column rework, render_td rewrite, SortColumn::Format, tooltip.
+- [crates/feraille-gpui/src/assets.rs](../crates/feraille-gpui/src/assets.rs)
+  — new composite AssetSource.
+- [crates/feraille-gpui/src/main.rs](../crates/feraille-gpui/src/main.rs)
+  + [screenshot.rs](../crates/feraille-gpui/src/screenshot.rs) — wire
+  `FeraAssets` in `with_assets`.
+- [crates/feraille-gpui/resources/icons/file/](../crates/feraille-gpui/resources/icons/file/)
+  — 13 new SVGs (text, code, image, video, audio, archive, disk,
+  app, symlink, generic, spreadsheet, pdf, html).
+- [crates/feraille-gpui/Cargo.toml](../crates/feraille-gpui/Cargo.toml)
+  — added `rust-embed` for our local asset bundle.
+
+### Notes for the future
+
+- Inline SVGs are hand-simplified Lucide silhouettes. They share the
+  folded-corner document shape; at 18 DIPs they're scannable but a
+  larger sweep through Lucide's full set would help differentiation
+  further. Park for a polish iter — not on the critical path.
+- The mismatch heuristic is conservative (covers text-family +
+  ZIP-family compatibility groups). False positives reported by users
+  expand the compatibility table in
+  [feraille-core::formats_compatible](../crates/feraille-core/src/lib.rs).
+- `FileCategory` from `feraille-disk-usage` was *not* reused — the
+  DU enum is shaped around treemap colouring (Other / Document /
+  Executable). The file-list tint enum has finer granularity
+  (Image vs Video vs Audio etc.). Keeping them separate for now to
+  avoid leaking DU concerns up the stack; if they converge later,
+  promote into `feraille-core`.
 
 ### gpui-component primitives
 
