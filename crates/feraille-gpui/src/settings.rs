@@ -59,6 +59,15 @@ pub enum SidebarWidthSnap {
     Wide,
 }
 
+/// User's theme preference. `System` follows macOS appearance at
+/// startup + (eventually) live observer updates.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ThemePref {
+    Light,
+    Dark,
+    System,
+}
+
 impl SidebarWidthSnap {
     pub const ALL: &'static [SidebarWidthSnap] = &[
         SidebarWidthSnap::Narrow,
@@ -83,6 +92,7 @@ pub struct SettingsView {
     pub category: SettingsCategory,
     pub show_hidden: bool,
     pub sidebar_width: SidebarWidthSnap,
+    pub theme_pref: ThemePref,
     /// Count of dotfiles in the user's home directory, computed once
     /// at view construction so the Files page can show a live
     /// consequence preview ("Would reveal N items …"). `None` if the
@@ -92,10 +102,16 @@ pub struct SettingsView {
 
 impl SettingsView {
     pub fn new(initial: SettingsCategory) -> Self {
+        // Infer theme preference from current Theme mode + the
+        // system's appearance. If the active mode matches the
+        // system, treat that as "System"; otherwise the user
+        // explicitly chose the other side.
+        let theme_pref = ThemePref::System;
         Self {
             category: initial,
             show_hidden: false,
             sidebar_width: SidebarWidthSnap::Medium,
+            theme_pref,
             home_hidden_count: count_home_hidden_items(),
         }
     }
@@ -208,24 +224,58 @@ impl SettingsView {
     /// before committing, per the design brief's "show consequence,
     /// don't describe it" principle.
     fn theme_picker(&self, cx: &mut Context<Self>) -> AnyElement {
-        let current = cx.theme().mode;
+        let system_dark = feraille_shell_mac::system_is_dark();
+        let entity_light = cx.entity();
+        let entity_dark = cx.entity();
+        let entity_system = cx.entity();
         h_flex()
             .gap_3()
             .child(preview_tile(
                 "tile-light",
                 "Light",
                 PreviewKind::Light,
-                current == ThemeMode::Light,
+                self.theme_pref == ThemePref::Light,
                 cx,
-                |window, cx| Theme::change(ThemeMode::Light, Some(window), cx),
+                move |window, cx| {
+                    Theme::change(ThemeMode::Light, Some(window), cx);
+                    entity_light.update(cx, |this, cx| {
+                        this.theme_pref = ThemePref::Light;
+                        cx.notify();
+                    });
+                },
             ))
             .child(preview_tile(
                 "tile-dark",
                 "Dark",
                 PreviewKind::Dark,
-                current == ThemeMode::Dark,
+                self.theme_pref == ThemePref::Dark,
                 cx,
-                |window, cx| Theme::change(ThemeMode::Dark, Some(window), cx),
+                move |window, cx| {
+                    Theme::change(ThemeMode::Dark, Some(window), cx);
+                    entity_dark.update(cx, |this, cx| {
+                        this.theme_pref = ThemePref::Dark;
+                        cx.notify();
+                    });
+                },
+            ))
+            .child(preview_tile(
+                "tile-system",
+                "System",
+                PreviewKind::System,
+                self.theme_pref == ThemePref::System,
+                cx,
+                move |window, cx| {
+                    let mode = if system_dark {
+                        ThemeMode::Dark
+                    } else {
+                        ThemeMode::Light
+                    };
+                    Theme::change(mode, Some(window), cx);
+                    entity_system.update(cx, |this, cx| {
+                        this.theme_pref = ThemePref::System;
+                        cx.notify();
+                    });
+                },
             ))
             .into_any_element()
     }
@@ -446,6 +496,10 @@ impl Render for SettingsView {
 pub enum PreviewKind {
     Light,
     Dark,
+    /// Split-tile rendering the macOS "match the system appearance"
+    /// affordance: left half is the light palette, right half is
+    /// dark. Mirrors the Finder Preferences appearance picker.
+    System,
 }
 
 /// Build a clickable preview tile: a stylized mini-window rendered in
@@ -461,8 +515,10 @@ fn preview_tile(
 ) -> impl IntoElement {
     // Mock palette for the inner artwork — hardcoded so the tile
     // shows the OTHER theme even when the app is in the current one.
+    // System uses Light for the left half + Dark for the right half
+    // (set by the artwork branch below).
     let (bg, panel, accent, fg) = match kind {
-        PreviewKind::Light => (
+        PreviewKind::Light | PreviewKind::System => (
             rgb(0xFAFAFA),
             rgb(0xF0F0F0),
             rgb(0x2A63D9),
@@ -485,6 +541,13 @@ fn preview_tile(
 
     // Inner artwork: titlebar with three traffic lights, sidebar
     // slab, three "rows" with the middle one selection-highlighted.
+    // For System mode, the tile shows a Light/Dark split — left half
+    // light, right half dark — to convey "we follow whichever the
+    // system is in."
+    let is_system = matches!(kind, PreviewKind::System);
+    let dark_bg = rgb(0x1B1B1B);
+    let dark_panel = rgb(0x252525);
+    let dark_fg = rgb(0xF5F5F5);
     let artwork = v_flex()
         .w(px(160.0))
         .h(px(96.0))
@@ -523,7 +586,68 @@ fn preview_tile(
                         )
                         .child(div().w(px(72.0)).h(px(4.0)).rounded_full().bg(fg)),
                 ),
-        );
+        )
+        .when(is_system, |this| {
+            // Overlay the right-half dark mirror. Absolute positioned
+            // so the existing light artwork remains visible on the
+            // left. Same internal structure repeated; the visual cue
+            // is the bg/panel/fg color shift across the divide.
+            this.relative().child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .w(px(80.0))
+                    .h(px(96.0))
+                    .overflow_hidden()
+                    .bg(dark_bg)
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .h(px(14.0))
+                            .px_2()
+                            .gap_1()
+                            .items_center()
+                            .bg(dark_panel)
+                            .child(div().size(px(6.0)).rounded_full().bg(rgb(0xFF6057)))
+                            .child(div().size(px(6.0)).rounded_full().bg(rgb(0xFFBD2E)))
+                            .child(div().size(px(6.0)).rounded_full().bg(rgb(0x28C940))),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .child(div().w(px(36.0)).h_full().bg(dark_panel))
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .gap_1()
+                                    .pt_2()
+                                    .px_2()
+                                    .child(
+                                        div()
+                                            .w(px(36.0))
+                                            .h(px(4.0))
+                                            .rounded_full()
+                                            .bg(dark_fg),
+                                    )
+                                    .child(
+                                        div()
+                                            .h(px(10.0))
+                                            .w_full()
+                                            .rounded(px(2.0))
+                                            .bg(rgb(0x2457CA)),
+                                    )
+                                    .child(
+                                        div()
+                                            .w(px(28.0))
+                                            .h(px(4.0))
+                                            .rounded_full()
+                                            .bg(dark_fg),
+                                    ),
+                            ),
+                    ),
+            )
+        });
 
     div()
         .id(ElementId::Name(id.into()))

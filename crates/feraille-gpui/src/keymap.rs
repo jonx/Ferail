@@ -193,6 +193,11 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         // (handled below)
 
         // -- Not yet ported. Each is wired in a later stage.  -----
+        // Known-deferred catalogue entries — handlers land in later
+        // iters. Silent to keep startup logs clean; PORTING.md
+        // tracks status authoritatively. New commands fall through
+        // to the _ arm below which DOES log so genuinely-unknown
+        // IDs still surface.
         "app.about"
         | "view.cycle_focus"
         | "view.theme_light"
@@ -208,14 +213,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         | "disk_usage.coloring_depth"
         | "disk_usage.size_apparent"
         | "disk_usage.size_allocated"
-        | "help.github" => {
-            crate::log_warn!(
-                90,
-                "keymap: command '{}' has no handler yet; binding '{}' skipped",
-                id.0,
-                kb_str
-            );
-        }
+        | "help.github" => {}
 
         _ => {
             crate::log_warn!(
