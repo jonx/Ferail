@@ -6,6 +6,7 @@
 //! 4.c brings the virtualized file list.
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -16,7 +17,7 @@ use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, button::Button, h_flex,
     input::{Input, InputEvent, InputState},
-    sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
+    sidebar::{Sidebar, SidebarHeader},
     switch::Switch,
     table::{DataTable, TableEvent, TableState},
     v_flex, Root, WindowExt,
@@ -26,6 +27,7 @@ use crate::app_state::{self, AppState};
 use crate::file_list::FileListDelegate;
 use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
 use crate::icons::IconCache;
+use crate::tree::{TreeChild, TreeRowSpec, TreeSection};
 
 actions!(
     shell,
@@ -153,6 +155,15 @@ pub struct Shell {
     /// toolbar. Owned as an Entity so InputEvent subscriptions
     /// route changes back into `filter_text`.
     pub filter_input: Entity<InputState>,
+    /// Sidebar tree state (Stage 9.c): which directories are
+    /// currently expanded. Updated on caret-click and by the
+    /// `--expand <path>` CLI flag (which walks the path's ancestors).
+    pub expanded: HashSet<PathBuf>,
+    /// Cached direct-children of any path that's ever been expanded.
+    /// Folders only (the tree shows hierarchy; files live in the
+    /// main pane). Once cached, re-expand is instant; collapsing a
+    /// folder doesn't evict its cache.
+    pub tree_children: HashMap<PathBuf, Vec<TreeChild>>,
     /// Live subscription handles (Input change, future watchers).
     /// Dropping them tears down the listeners — keep alongside the
     /// Shell so they outlive any frame.
@@ -354,6 +365,8 @@ impl Shell {
             metadata_db,
             filter_text: String::new(),
             filter_input,
+            expanded: HashSet::new(),
+            tree_children: HashMap::new(),
             _subscriptions: vec![filter_subscription],
         }
     }
@@ -820,47 +833,168 @@ impl Shell {
         self.load_path(path, cx);
     }
 
-    /// Locations menu: Home + Applications + Desktop + Documents +
-    /// Downloads + Movies + Music + Pictures. Each entry navigates
-    /// on click; the entry whose `path()` matches `current_dir`
-    /// gets the active state.
-    fn locations_menu(&self, cx: &mut Context<Self>) -> SidebarMenu {
-        let current = self.active_tab().current_dir.clone();
-        SidebarMenu::new().children(
-            LOCATIONS
-                .iter()
-                .map(|loc| {
-                    let path = loc.path();
-                    let active = path == current;
-                    let nav_path = path.clone();
-                    SidebarMenuItem::new(loc.label)
-                        .active(active)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.navigate(nav_path.clone(), cx);
-                        }))
-                })
-                .collect::<Vec<_>>(),
-        )
+    /// Toggle expansion for a directory in the sidebar tree.
+    /// Collapsing also removes every descendant from `expanded` so a
+    /// future re-open doesn't carry stale sub-expansions forward.
+    /// Cache stays — re-expand is instantaneous.
+    pub fn toggle_tree_expand(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if self.expanded.contains(path) {
+            let prefix = path.to_path_buf();
+            self.expanded.retain(|p| !p.starts_with(&prefix));
+        } else {
+            self.expanded.insert(path.to_path_buf());
+            self.ensure_tree_children(path);
+        }
+        cx.notify();
     }
 
-    /// Volumes menu: every mounted volume at /Volumes.
-    fn volumes_menu(&self, cx: &mut Context<Self>) -> SidebarMenu {
+    /// Make sure `tree_children[path]` is populated. Cheap no-op if
+    /// already cached. On first call, runs `std::fs::read_dir`
+    /// synchronously (consistent with `Shell::load_path`'s sync
+    /// enumeration; a unified async-streaming refactor lives in a
+    /// later iter). Folder-only — files don't appear in the tree.
+    ///
+    /// Hidden entries are *included* in the cache; the renderer
+    /// filters them out based on the live `show_hidden` flag so a
+    /// toggle doesn't require cache invalidation.
+    pub fn ensure_tree_children(&mut self, path: &Path) {
+        if self.tree_children.contains_key(path) {
+            return;
+        }
+        let mut children: Vec<TreeChild> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(path) {
+            for dirent in rd.flatten() {
+                let p = dirent.path();
+                let Some(name) = p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_owned)
+                else {
+                    continue;
+                };
+                // file_type() can be cheap (no extra stat on most
+                // platforms); fall back to metadata() if it errors.
+                let is_dir = match dirent.file_type() {
+                    Ok(ft) => {
+                        ft.is_dir()
+                            || (ft.is_symlink()
+                                && std::fs::metadata(&p)
+                                    .map(|m| m.is_dir())
+                                    .unwrap_or(false))
+                    }
+                    Err(_) => false,
+                };
+                if !is_dir {
+                    continue;
+                }
+                children.push(TreeChild { path: p, label: name });
+            }
+            children.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        }
+        self.tree_children.insert(path.to_path_buf(), children);
+    }
+
+    /// Expand `path` and every ancestor in the tree. Used by the
+    /// `--expand <path>` CLI flag, which mirrors the old app's
+    /// "reveal this path with the surrounding hierarchy unfurled"
+    /// shape. Each directory's children are also enumerated into
+    /// `tree_children` so the first frame already has them.
+    pub fn reveal_path_in_tree(&mut self, path: &Path) {
+        let mut chain: Vec<PathBuf> = vec![path.to_path_buf()];
+        let mut cur = path.parent().map(|p| p.to_path_buf());
+        while let Some(a) = cur {
+            chain.push(a.clone());
+            cur = a.parent().map(|p| p.to_path_buf());
+        }
+        // Walk from filesystem root toward `path` so each
+        // enumeration sees its parent already populated (no
+        // correctness impact, but symmetric with how the tree
+        // builds top-down).
+        for a in chain.into_iter().rev() {
+            self.expanded.insert(a.clone());
+            self.ensure_tree_children(&a);
+        }
+    }
+
+    /// Build the Locations section as a flat row list with descendants
+    /// of every expanded folder interleaved.
+    fn build_locations_rows(&self) -> Vec<TreeRowSpec> {
         let current = self.active_tab().current_dir.clone();
-        SidebarMenu::new().children(
-            self.volumes
-                .iter()
-                .map(|v| {
-                    let path = v.path.clone();
-                    let active = path == current;
-                    let nav_path = path.clone();
-                    SidebarMenuItem::new(SharedString::from(v.name.clone()))
-                        .active(active)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.navigate(nav_path.clone(), cx);
-                        }))
-                })
-                .collect::<Vec<_>>(),
-        )
+        let mut rows: Vec<TreeRowSpec> = Vec::new();
+        for loc in LOCATIONS {
+            let path = loc.path();
+            let is_expanded = self.expanded.contains(&path);
+            rows.push(TreeRowSpec {
+                path: path.clone(),
+                label: SharedString::from(loc.label),
+                depth: 0,
+                is_expandable: true,
+                is_expanded,
+                is_active: path == current,
+            });
+            if is_expanded {
+                self.append_tree_descendants(&mut rows, &path, 1, &current);
+            }
+        }
+        rows
+    }
+
+    /// Build the Volumes section as a flat row list. Same recursion
+    /// shape as Locations.
+    fn build_volumes_rows(&self) -> Vec<TreeRowSpec> {
+        let current = self.active_tab().current_dir.clone();
+        let mut rows: Vec<TreeRowSpec> = Vec::new();
+        for v in &self.volumes {
+            let path = v.path.clone();
+            let is_expanded = self.expanded.contains(&path);
+            rows.push(TreeRowSpec {
+                path: path.clone(),
+                label: SharedString::from(v.name.clone()),
+                depth: 0,
+                is_expandable: true,
+                is_expanded,
+                is_active: path == current,
+            });
+            if is_expanded {
+                self.append_tree_descendants(&mut rows, &path, 1, &current);
+            }
+        }
+        rows
+    }
+
+    /// Recursively append children of `parent` (and their expanded
+    /// descendants) to `rows`. Reads from `tree_children` only —
+    /// callers must have called `ensure_tree_children` first
+    /// (`toggle_tree_expand` / `reveal_path_in_tree` do). The
+    /// `show_hidden` flag is checked here, not at enumeration time,
+    /// so toggling Show Hidden doesn't require cache invalidation.
+    fn append_tree_descendants(
+        &self,
+        rows: &mut Vec<TreeRowSpec>,
+        parent: &Path,
+        depth: usize,
+        current: &Path,
+    ) {
+        let Some(children) = self.tree_children.get(parent) else {
+            return;
+        };
+        for child in children {
+            if !self.show_hidden && child.label.starts_with('.') {
+                continue;
+            }
+            let is_expanded = self.expanded.contains(&child.path);
+            rows.push(TreeRowSpec {
+                path: child.path.clone(),
+                label: SharedString::from(child.label.clone()),
+                depth,
+                is_expandable: true,
+                is_expanded,
+                is_active: &child.path == current,
+            });
+            if is_expanded {
+                self.append_tree_descendants(rows, &child.path, depth + 1, current);
+            }
+        }
     }
 
     /// Either the file Table, or an inline error/empty state when
@@ -1212,8 +1346,9 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let locations = self.locations_menu(cx);
-        let volumes = self.volumes_menu(cx);
+        let weak = cx.weak_entity();
+        let locations_rows = self.build_locations_rows();
+        let volumes_rows = self.build_volumes_rows();
         let has_volumes = !self.volumes.is_empty();
         let breadcrumb = self.breadcrumb(cx);
         let path_str = self
@@ -1232,9 +1367,9 @@ impl Render for Shell {
                         .child("Feraille"),
                 ),
             )
-            .child(SidebarGroup::new("Locations").child(locations));
+            .child(TreeSection::new("Locations", locations_rows, weak.clone()));
         if has_volumes {
-            sidebar = sidebar.child(SidebarGroup::new("Volumes").child(volumes));
+            sidebar = sidebar.child(TreeSection::new("Volumes", volumes_rows, weak.clone()));
         }
 
         let _ = path_str; // breadcrumb already shows the path

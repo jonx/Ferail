@@ -101,18 +101,18 @@ Notes: All 25 old flags now parse. Functional today:
 `--search` (focuses filter), `--preview`, `--sort col[-desc]`
 (name / size / kind / magic / mtime, folders-first), `--rename`,
 `--inline-rename` (falls back to modal rename), `--new-folder`,
-`--settings`. Stubbed (parse but emit a `log_warn` on apply,
-pending the stage that wires them up):
+`--settings`, `--expand <path>` (reveals + lazy-expands tree
+ancestors — landed in Stage 9.c). Stubbed (parse but emit a
+`log_warn` on apply, pending the stage that wires them up):
 `--properties` (→ Stage 8), `--edit-mode` (→ Stage 9), `--ui-scale`
 (→ Stage 9), `--simulate-toast` / `--simulate-progress` /
 `--simulate-task-panel` (→ Stage 5), `--shortcuts-help[-filter]`
 (→ Stage 9), `--disk-usage` / `--du-depth` / `--du-coloring` (→
 Stage 7), `--splitter`, `--scroll` (Table scroll API not yet
-exposed), `--mac-chrome` (N/A — GPUI has native chrome), `--expand`
-(N/A — sidebar is flat). New pure-logic port: `SortColumn` enum +
-`sort_in_place` comparator inside `crates/feraille-gpui/src/
-file_list.rs` (carries forward the folders-first behaviour from
-`feraille-controls::sort_entries`).
+exposed), `--mac-chrome` (N/A — GPUI has native chrome). New
+pure-logic port: `SortColumn` enum + `sort_in_place` comparator
+inside `crates/feraille-gpui/src/file_list.rs` (carries forward the
+folders-first behaviour from `feraille-controls::sort_entries`).
 
 ---
 
@@ -313,6 +313,40 @@ Old location: `feraille-app/src/main.rs` `go.home` dispatch arm.
 New location: `crates/feraille-gpui/src/shell.rs::on_go_home`.
 Notes: Trivial: `self.navigate(home_dir(), cx)`. Wired into the
 Go menu (after Enclosing Folder) and the catalogue keymap.
+
+### Hierarchical tree view in sidebar
+Status: Ported ✅ (Harvest Stage 9.c)
+Old location: `crates/feraille-controls/src/filetree.rs` (a full
+virtualized tree with sections, lazy children, type-ahead, etc.)
+driven by `feraille-app/src/main.rs::rebuild_tree_sections` +
+`spawn_tree_load`.
+New location: `crates/feraille-gpui/src/tree.rs` (new) — `TreeSection`
+SidebarItem impl + `TreeRowSpec` + `render_tree_row`. Driving state
+lives on `Shell`: `expanded: HashSet<PathBuf>` (which folders are
+currently open) + `tree_children: HashMap<PathBuf, Vec<TreeChild>>`
+(per-path child cache so we read_dir once per directory).
+Notes:
+- Click on a row's label navigates to that path. Click on the caret
+  (▸ / ▾) toggles expand-collapse via `Shell::toggle_expand`. The
+  caret's on_click calls `cx.stop_propagation()` so the row's
+  navigate handler doesn't also fire.
+- Lazy enumeration: `ensure_tree_children` reads_dir on first expand,
+  caches the result keyed by parent path. Subsequent toggles use the
+  cache. Folder-only filtering (the file pane shows files; the tree
+  shows hierarchy).
+- Collapsing a folder removes the path AND all descendants from
+  `expanded` so a re-open doesn't preserve obsolete sub-expansions.
+  Cache is kept (cheap memory, fast re-expand).
+- `--expand <path>` CLI flag: each path is canonicalised, then every
+  ancestor is added to `expanded` + ensured in the cache, so the
+  screenshot can show a fully-revealed tree branch.
+- Sidebar wrapper still gpui-component's `Sidebar`. `TreeSection`
+  impls `Collapsible + SidebarItem` so it slots in alongside future
+  non-tree sections.
+- Locations & Volumes share the same `TreeRow` rendering. Old
+  feraille-controls had 4 sections (Recents, Favorites, Locations,
+  Volumes); Recents + Favorites are deferred to a follow-on
+  (require Ant Trail persistence integration with the tree view).
 
 ### UI zoom (Cmd+= / Cmd+- / Cmd+0)
 Status: Not started

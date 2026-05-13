@@ -44,8 +44,9 @@ pub struct Args {
     pub new_tabs: Vec<PathBuf>,
     /// Tab index to make active after `--new-tab` flags apply.
     pub tab: Option<usize>,
-    /// Tree paths to reveal/expand. N/A in the new shell (sidebar
-    /// is flat in the current GPUI shell). Parsed for compatibility.
+    /// Tree paths to reveal/expand. Each path's ancestors are added
+    /// to `Shell::expanded` and pre-enumerated, so the sidebar tree
+    /// shows the path unfurled by the time the screenshot renders.
     pub expand: Vec<PathBuf>,
     /// Set cursor to this row index in the active tab's file list.
     pub select_row: Option<usize>,
@@ -221,7 +222,7 @@ OPTIONS
   --navigate <path>        Navigate the active tab to <path>. Repeatable.
   --new-tab <path>         Open an additional tab at <path>. Repeatable.
   --tab <idx>              Set active tab index after --new-tab(s) apply.
-  --expand <path>          Reveal tree path. N/A in the GPUI shell today.
+  --expand <path>          Reveal & expand <path> in the sidebar tree. Repeatable.
   --select-row <N>         Set cursor to row N in the file pane.
   --select-name <name>     Set cursor to first row whose name equals <name>.
   --splitter <x>           Sidebar splitter position. Stage-2 stub.
@@ -365,6 +366,7 @@ struct ShellArgs {
     sort: Option<(String, bool)>,
     rename: bool,
     new_folder: bool,
+    expand: Vec<PathBuf>,
     // Stage-deferred flags. Recorded so the apply step can emit a
     // single "stage X not yet wired" log warning per use, rather
     // than silently dropping the flag.
@@ -393,6 +395,7 @@ impl From<&Args> for ShellArgs {
             sort: a.sort.clone(),
             rename: a.rename || a.inline_rename,
             new_folder: a.new_folder,
+            expand: a.expand.clone(),
             properties: a.properties,
             edit_mode: a.edit_mode,
             ui_scale: a.ui_scale,
@@ -432,6 +435,13 @@ impl ShellArgs {
         }
         if let Some(idx) = self.tab {
             let _ = shell.update(cx, |s, cx| s.select_tab(idx, cx));
+        }
+        for path in self.expand.iter().cloned() {
+            let p = canonicalize_or_passthrough(&path);
+            let _ = shell.update(cx, |s, cx| {
+                s.reveal_path_in_tree(&p);
+                cx.notify();
+            });
         }
         if self.show_hidden {
             let _ = shell.update(cx, |s, cx| {
