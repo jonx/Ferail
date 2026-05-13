@@ -21,7 +21,7 @@ use gpui::{App, KeyBinding};
 use crate::shell::{
     self, ClearFilter, CloseTab, CopyPath, FocusFilter, MoveToTrash, NavigateBack,
     NavigateForward, NavigateParent, NewFolder, NewTab, NextTab, OpenSelected, OpenSettings,
-    PrevTab, Refresh, RenameSelected, RevealInFinder, ToggleHidden,
+    PrevTab, QuickLook, Refresh, RenameSelected, RevealInFinder, ToggleHidden,
 };
 
 /// Install keybindings for every command in `feraille_core::commands`
@@ -203,5 +203,10 @@ pub(crate) fn install_extras(cx: &mut App) {
             PrevTab,
             Some(shell::SHELL_CONTEXT),
         ),
+        // Stage 8: macOS Quick Look. Space-bar on the selected row
+        // pops the QL panel. Not in the catalogue because Quick
+        // Look is a macOS-specific affordance; the binding lives
+        // here alongside other shell-context extras.
+        KeyBinding::new("space", QuickLook, Some(shell::SHELL_CONTEXT)),
     ]);
 }

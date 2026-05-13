@@ -262,22 +262,36 @@ Notes: Renders one frame of the treemap into a PNG and exits.
 ## Properties / Get Info + Quick Look (Stage 8)
 
 ### Get Info / Properties pane
-Status: Not started (basic preview pane exists from Phase 4.d)
+Status: Ported ✅ (Harvest Stage 8 — pane content expanded; full
+Cmd+I toggle is Stage 9 polish.)
 Old location: `feraille-app/src/main.rs::toggle_properties` + the
 Settings-modal-dual-use detail pane.
-New location: `crates/feraille-gpui/src/properties.rs` (Stage 8).
-Notes: Expand the current preview pane into a full Get Info panel
-(magic, quarantine, full path, permissions, size on disk vs
-apparent). Cmd+I binding.
+New location: `crates/feraille-gpui/src/shell.rs::preview` —
+expanded to include Magic + Quarantined sections when the
+selected entry has them.
+Notes: Preview pane (Phase 4.d) was the foundation. Stage 8 added:
+- "Magic" row showing `entry.display_magic` (populated by the
+  Stage 4 prefetch — "PNG image" for a PNG etc.).
+- Red "Quarantined" section header + "Mark of the Web: com.apple.
+  quarantine" row when `entry.is_quarantined`. Future polish:
+  show agent / ISO date / where-from URLs once those fields ride
+  through to FileEntry (currently only in the DB).
+Cmd+I to toggle the pane is deferred to Stage 9 (the pane is
+always visible today).
 
-### Quick Look (Space-bar action + thumbnails)
-Status: Not started
-Old location: `feraille_shell_mac::quick_look::{show, fetch_thumbnail}`
-already exists and is used by old app.
-New location: `crates/feraille-gpui/src/shell.rs` action handler +
-the Get Info pane's inline thumbnail (Stage 8).
-Notes: Domain code reused as-is via the linked feraille-shell-mac
-crate. Just thread the call.
+### Quick Look (Space-bar action)
+Status: Ported ✅ (Harvest Stage 8 — show panel; thumbnail in
+preview pane deferred.)
+Old location: `feraille_shell_mac::show_quick_look(&[&Path])`
+already exists and was used by the old app.
+New location: New `QuickLook` action in
+`crates/feraille-gpui/src/shell.rs`. Space-bar on the active row
+calls `feraille_shell_mac::show_quick_look` with the selected
+path. Same code the old app used; the harvest is just the action
++ keybind glue.
+Notes: Inline thumbnail in the preview pane (via
+`fetch_quick_look_thumbnail`) is a follow-on — needs the
+worker-thread + cache by-path pattern. Out of scope for Stage 8 v1.
 
 ---
 

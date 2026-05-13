@@ -48,6 +48,7 @@ actions!(
         CloseTab,
         NextTab,
         PrevTab,
+        QuickLook,
     ]
 );
 
@@ -596,6 +597,20 @@ impl Shell {
         self.focus_handle.focus(window, cx);
     }
 
+    /// Space-bar Quick Look. Reuses the existing
+    /// `feraille_shell_mac::quick_look::show` bridge — same code
+    /// the old app called.
+    fn on_quick_look(
+        &mut self,
+        _: &QuickLook,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.target_row() else { return };
+        let Some(path) = self.path_for_row(row, cx) else { return };
+        let _ = feraille_shell_mac::show_quick_look(&[path.as_path()]);
+    }
+
     fn on_open_settings(
         &mut self,
         _: &OpenSettings,
@@ -1060,7 +1075,7 @@ impl Shell {
                 full_path.push(&entry.name);
                 let path_str = full_path.to_string_lossy().into_owned();
 
-                v_flex()
+                let mut col = v_flex()
                     .gap_3()
                     .child(
                         div()
@@ -1078,8 +1093,39 @@ impl Shell {
                     .child(preview_field("Kind", kind_label.to_string(), cx))
                     .child(preview_field("Size", entry.display_size.clone(), cx))
                     .child(preview_field("Modified", entry.display_mtime.clone(), cx))
-                    .child(preview_field("Where", path_str, cx))
-                    .into_any_element()
+                    .child(preview_field("Where", path_str, cx));
+
+                // Magic byte sniff (Stage 4 prefetch populates this
+                // asynchronously). Empty string while prefetch is
+                // still running on a fresh directory.
+                if !entry.display_magic.is_empty() {
+                    col = col.child(preview_field(
+                        "Magic",
+                        entry.display_magic.clone(),
+                        cx,
+                    ));
+                }
+                // Quarantine details. is_quarantined flag drives the
+                // section header even when individual fields are
+                // unknown; the Stage 4 prefetch + feraille-meta
+                // hydrate the rich fields lazily.
+                if entry.is_quarantined {
+                    col = col
+                        .child(
+                            div()
+                                .mt_2()
+                                .text_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(gpui::rgb(0xFF3B30))
+                                .child("Quarantined"),
+                        )
+                        .child(preview_field(
+                            "Mark of the Web",
+                            "com.apple.quarantine".to_string(),
+                            cx,
+                        ));
+                }
+                col.into_any_element()
             }
         };
 
@@ -1206,6 +1252,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_close_tab))
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_prev_tab))
+            .on_action(cx.listener(Self::on_quick_look))
             .size_full()
             .bg(cx.theme().background)
             .child(sidebar)
