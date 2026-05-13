@@ -1677,6 +1677,7 @@ impl Shell {
                 Button::new("nav-back")
                     .small()
                     .label("\u{2190}")
+                    .tooltip("Back  \u{2318}\u{5B}")
                     .disabled(!can_back)
                     .on_click(cx.listener(|this, _, _, cx| this.navigate_back(cx))),
             )
@@ -1684,6 +1685,7 @@ impl Shell {
                 Button::new("nav-forward")
                     .small()
                     .label("\u{2192}")
+                    .tooltip("Forward  \u{2318}\u{5D}")
                     .disabled(!can_forward)
                     .on_click(cx.listener(|this, _, _, cx| this.navigate_forward(cx))),
             )
@@ -1900,10 +1902,7 @@ impl Shell {
             let is_last = i + 1 == segments.len();
             let label = label.clone();
             let path = path.clone();
-            let style = TextStyle {
-                ..Default::default()
-            };
-            let _ = style; // unused-import shim if we add styled-text later
+            let tooltip_path = path.to_string_lossy().into_owned();
             let crumb = div()
                 .id(ElementId::Name(format!("crumb-{i}").into()))
                 .px_2()
@@ -1921,6 +1920,13 @@ impl Shell {
                 .cursor_pointer()
                 .hover(|this| this.bg(cx.theme().secondary))
                 .child(label)
+                .tooltip({
+                    let t = SharedString::from(tooltip_path);
+                    move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(t.clone())
+                            .build(window, cx)
+                    }
+                })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.navigate(path.clone(), cx);
                 }));

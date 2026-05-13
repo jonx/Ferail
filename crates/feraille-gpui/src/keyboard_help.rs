@@ -10,6 +10,7 @@ use gpui::*;
 use gpui_component::{
     h_flex,
     input::Input,
+    kbd::Kbd,
     v_flex, ActiveTheme, Sizable,
 };
 
@@ -143,13 +144,16 @@ fn section(
         .children(rows)
 }
 
-fn row(spec: &CommandSpec, foreground: gpui::Hsla, muted: gpui::Hsla) -> Div {
-    let shortcut = spec
-        .shortcuts
-        .first()
-        .map(format_shortcut)
-        .unwrap_or_default();
-    h_flex()
+fn row(spec: &CommandSpec, foreground: gpui::Hsla, _muted: gpui::Hsla) -> Div {
+    // Convert the catalogue's first shortcut to a gpui Keystroke via
+    // the same chord-string DSL keymap.rs uses, then hand it to
+    // gpui-component's `Kbd` for boxed-glyph styling matching
+    // Finder's menu-bar shortcuts.
+    let kbd: Option<Kbd> = spec.shortcuts.first().and_then(|s| {
+        let kb_str = keystroke_string(s)?;
+        gpui::Keystroke::parse(&kb_str).ok().map(Kbd::new)
+    });
+    let mut row = h_flex()
         .w_full()
         .items_center()
         .py_1()
@@ -160,14 +164,40 @@ fn row(spec: &CommandSpec, foreground: gpui::Hsla, muted: gpui::Hsla) -> Div {
                 .text_sm()
                 .text_color(foreground)
                 .child(SharedString::from(spec.title)),
-        )
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(muted)
-                .child(SharedString::from(shortcut)),
-        )
+        );
+    if let Some(k) = kbd {
+        row = row.child(div().flex_shrink_0().child(k));
+    }
+    row
+}
+
+/// Mirror of `keymap::translate_shortcut` — produces the same
+/// `cmd-shift-x` style chord string the keymap installer uses, so
+/// `Keystroke::parse` accepts it. Returns `None` for unsupported
+/// keys (e.g. the catalogue's `+` alternate, gpui's parser treats
+/// `-` as a separator).
+fn keystroke_string(s: &Shortcut) -> Option<String> {
+    let key = match s.key {
+        "Up" | "Down" | "Left" | "Right" | "Home" | "End" | "PageUp" | "PageDown"
+        | "Escape" | "Enter" | "Tab" | "Space" | "Backspace" | "Delete"
+        | "F1" | "F2" | "F3" | "F4" | "F5" | "F6" | "F7" | "F8" | "F9"
+        | "F10" | "F11" | "F12" => s.key.to_ascii_lowercase(),
+        "+" => return None,
+        k if k.chars().count() == 1 => k.to_ascii_lowercase(),
+        _ => return None,
+    };
+    let mut parts: Vec<&str> = Vec::with_capacity(4);
+    if s.primary {
+        parts.push("cmd");
+    }
+    if s.shift {
+        parts.push("shift");
+    }
+    if s.alt {
+        parts.push("alt");
+    }
+    parts.push(&key);
+    Some(parts.join("-"))
 }
 
 /// Render a `Shortcut` as a human-readable chord like
