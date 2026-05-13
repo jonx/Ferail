@@ -64,18 +64,26 @@ prefetch workers can share it. Hydration of ant trail / layout /
 tabs + write-through on navigate are deferred to the stages that
 consume them.
 
-### Native macOS menu bar
-Status: Not started (re-ordered after Stage 3)
+### Native macOS menu bar — titles via catalogue
+Status: Ported ✅ (Harvest Stage 3.b — gpui::Menu uses
+`feraille_core::commands` titles).
 Old location: `feraille_shell_mac::install_app_menu` driven by
 `feraille_core::commands` catalogue.
-New location: Replaces the stub `install_app_menus` in
-`crates/feraille-gpui/src/main.rs` (was Stage 1.c; now Stage 3.b).
-Notes: The new app currently builds a hand-rolled menu via
-`gpui::Menu`. Replacing it depends on the command-catalogue
-dispatcher from Stage 3 so menu items / keyboard shortcuts /
-about-panel share one source of truth. Stage 1 covers obs + DB
-foundations; the AppKit menu wiring lands once Stage 3's command
-table is in place.
+New location: `crates/feraille-gpui/src/main.rs::install_app_menus`
++ `title(id, fallback)` lookup helper.
+Notes: The new app stays on `gpui::Menu` / `cx.set_menus` (not the
+feraille-shell-mac NSMenu bridge) because gpui's Menu API directly
+takes the gpui Action type — no callback marshalling required.
+What we harvest is the *titles + structure* from the catalogue;
+each `MenuItem::action` looks up its label via `title("file.new_tab",
+"New Tab")` so a CommandSpec edit re-flows into the menu without
+touching main.rs. Item set: app menu (About / Settings / Quit),
+File (New Tab / Close Tab / New Folder / Rename / Open / Reveal in
+Finder / Move to Trash), Edit (Copy Path), Go (Back / Forward /
+Enclosing Folder), View (Find / Show Hidden Files / Refresh). The
+feraille-shell-mac variant (with About panel, theme submenu,
+checkmark-state, callback dispatch) becomes available at cutover
+or earlier if we want the About-panel polish.
 
 ---
 

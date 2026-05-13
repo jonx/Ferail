@@ -4,12 +4,14 @@
 //! capture path. All real view code lives in `crate::shell`.
 
 use anyhow::Result;
+use feraille_core::commands::{find, CommandId};
 use feraille_gpui::{
     screenshot,
     settings::{category_from_arg, SettingsView},
     shell::{
-        CopyPath, MoveToTrash, NavigateBack, NavigateForward, NavigateParent, OpenSelected,
-        OpenSettings, Refresh, RevealInFinder, Shell, ToggleHidden,
+        CloseTab, CopyPath, FocusFilter, MoveToTrash, NavigateBack, NavigateForward,
+        NavigateParent, NewFolder, NewTab, OpenSelected, OpenSettings, Refresh,
+        RenameSelected, RevealInFinder, Shell, ToggleHidden,
     },
 };
 use gpui::*;
@@ -81,24 +83,25 @@ fn run_gui(args: screenshot::Args) {
     });
 }
 
-/// Build and install the macOS application menu bar. Items are
-/// bound to the Actions defined in `shell::*` so keyboard shortcuts
-/// and menu clicks fire the same code path.
+/// Build and install the macOS application menu bar. Titles for
+/// every item are pulled from `feraille_core::commands` so the
+/// menu, the keymap (Stage 3), and the future Keyboard-Shortcuts
+/// dialog all read from the same source of truth. Items whose
+/// action handler isn't implemented yet are omitted; they show up
+/// as a startup-log warning via keymap::install instead.
 ///
-/// The bar shows the standard macOS order: app menu (with
-/// Preferences + Quit), File, Edit, View, Help. Items that operate
-/// on a selected row are unconditionally enabled in the menu —
-/// when nothing's selected they no-op silently. Per-item disable
-/// based on dynamic state arrives with the proper validation pass
-/// in a polish iter.
+/// Per-item dynamic disable (e.g. Move to Trash when nothing is
+/// selected) is deferred to a polish iter — the action handler
+/// no-ops silently in that case today.
 fn install_app_menus(cx: &mut App) {
     cx.set_menus([
         Menu {
             name: "Feraille".into(),
             items: vec![
-                MenuItem::action("About Feraille", OpenSettings), // placeholder for now
+                // app.about not yet implemented — repurpose Settings.
+                MenuItem::action(title("app.about", "About Feraille"), OpenSettings),
                 MenuItem::separator(),
-                MenuItem::action("Preferences\u{2026}", OpenSettings),
+                MenuItem::action(title("app.settings", "Settings\u{2026}"), OpenSettings),
                 MenuItem::separator(),
                 MenuItem::action("Quit Feraille", Quit),
             ],
@@ -107,35 +110,60 @@ fn install_app_menus(cx: &mut App) {
         Menu {
             name: "File".into(),
             items: vec![
-                MenuItem::action("Open", OpenSelected),
-                MenuItem::action("Reveal in Finder", RevealInFinder),
+                MenuItem::action(title("file.new_tab", "New Tab"), NewTab),
+                MenuItem::action(title("file.close_tab", "Close Tab"), CloseTab),
                 MenuItem::separator(),
-                MenuItem::action("Move to Trash", MoveToTrash),
+                MenuItem::action(title("file.new_folder", "New Folder"), NewFolder),
+                MenuItem::action(title("selection.rename", "Rename"), RenameSelected),
+                MenuItem::separator(),
+                MenuItem::action(title("selection.activate", "Open"), OpenSelected),
+                MenuItem::action(
+                    title("file.reveal_in_finder", "Reveal in Finder"),
+                    RevealInFinder,
+                ),
+                MenuItem::separator(),
+                MenuItem::action(title("file.move_to_trash", "Move to Trash"), MoveToTrash),
             ],
             disabled: false,
         },
         Menu {
             name: "Edit".into(),
-            items: vec![MenuItem::action("Copy Path", CopyPath)],
+            items: vec![MenuItem::action(title("file.copy_path", "Copy Path"), CopyPath)],
             disabled: false,
         },
         Menu {
             name: "Go".into(),
             items: vec![
-                MenuItem::action("Back", NavigateBack),
-                MenuItem::action("Forward", NavigateForward),
-                MenuItem::action("Enclosing Folder", NavigateParent),
+                MenuItem::action(title("go.back", "Back"), NavigateBack),
+                MenuItem::action(title("go.forward", "Forward"), NavigateForward),
+                MenuItem::action(title("go.parent", "Enclosing Folder"), NavigateParent),
             ],
             disabled: false,
         },
         Menu {
             name: "View".into(),
             items: vec![
-                MenuItem::action("Show Hidden Files", ToggleHidden),
+                MenuItem::action(title("view.search", "Find"), FocusFilter),
                 MenuItem::separator(),
-                MenuItem::action("Refresh", Refresh),
+                MenuItem::action(
+                    title("view.toggle_hidden", "Show Hidden Files"),
+                    ToggleHidden,
+                ),
+                MenuItem::separator(),
+                MenuItem::action(title("file.refresh", "Refresh"), Refresh),
             ],
             disabled: false,
         },
     ]);
+}
+
+/// Look up a command's title in `feraille_core::commands`, falling
+/// back to the provided default when the lookup fails. Keeping a
+/// default means a typo in the CommandId string surfaces as the
+/// wrong title rather than panicking — the catalogue still drives
+/// every wired item.
+fn title(id: &'static str, fallback: &'static str) -> SharedString {
+    find(CommandId(id))
+        .map(|spec| SharedString::from(spec.title))
+        .unwrap_or_else(|| SharedString::from(fallback))
 }
