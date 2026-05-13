@@ -665,8 +665,11 @@ impl Shell {
         // synchronously; the actual I/O runs on the background
         // executor); per-row mutations land on the foreground
         // executor when the worker completes.
-        let shell_entity = cx.entity();
-        crate::prefetch::start(shell_entity, cx);
+        let table = self.table.clone();
+        let fs = self.fs.clone();
+        let db = self.metadata_db.clone();
+        let weak = cx.weak_entity();
+        crate::prefetch::start(table, fs, db, weak, cx);
         cx.notify();
     }
 

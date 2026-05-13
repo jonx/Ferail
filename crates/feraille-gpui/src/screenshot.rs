@@ -320,8 +320,12 @@ pub fn run(args: Args) -> Result<()> {
                 shell_args.apply(&shell, &handle, cx).await;
             }
 
+            // Give async prefetch (magic / quarantine) time to land
+            // before render_to_image samples. 1200ms covers a few
+            // hundred entries plus a re-render after the apply
+            // batch arrives.
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(180))
+                .timer(std::time::Duration::from_millis(1200))
                 .await;
 
             let img = cx

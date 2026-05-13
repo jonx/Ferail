@@ -150,9 +150,22 @@ Notes:
 
 ## Background prefetch (Stage 4)
 
-### Magic byte sniffing + quarantine prefetch (data pipeline)
-Status: Ported ✅ (Harvest Stage 4 — data pipeline only; UI
-surfacing follows in Stage 6.)
+### Magic byte sniffing + quarantine prefetch (data pipeline + UI)
+Status: Ported ✅ (data pipeline in Stage 4, UI surfacing in
+Stage 6).
+UI:
+- Magic column added between Kind and Modified in `file_list.rs`,
+  reads `entry.display_magic` (truncated text style).
+- Quarantine badge: 7×7 red dot overlaid top-right of the icon
+  via a `.relative()` wrapper + `.absolute().top(-1).right(-1)`
+  positioning + `rgb(0xFF3B30)` fill. Verified on real
+  Mark-of-the-Web files (downloaded screenshots).
+- `cx.notify()` on the outer Shell after the prefetch apply was
+  needed; `TableState::refresh` alone didn't propagate the
+  delegate mutation up to the Shell view tree.
+- Diagnostic logs (`prefetch: starting for N rows`,
+  `prefetch: worker returned N rows`, `prefetch: apply ran`)
+  gated at LOG_THRESHOLD=90 stay in the source — cheap, helpful.
 Old location: `feraille-app/src/main.rs::start_magic_prefetch` +
 `start_quarantine_prefetch` (separate workers in the old app).
 New location: `crates/feraille-gpui/src/prefetch.rs::start`.

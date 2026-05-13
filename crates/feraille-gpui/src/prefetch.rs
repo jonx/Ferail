@@ -19,9 +19,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use feraille_core::FileEntry;
-use feraille_fs_native::{detect_magic, fetch_quarantine_info};
+use feraille_fs_native::{detect_magic, fetch_quarantine_info, NativeFs};
 use feraille_meta::{FileMetaRecord, MetadataDb};
 use gpui::Entity;
+use gpui_component::table::TableState;
 
 use crate::file_list::FileListDelegate;
 use crate::shell::Shell;
@@ -53,11 +54,20 @@ struct PrefetchSeed {
 /// Spawn a prefetch pass over the current entries. Called from
 /// `Shell::load_path` after the table refresh. Cheap: returns
 /// immediately; the worker runs on the background executor.
-pub fn start(shell_entity: Entity<Shell>, cx: &mut gpui::Context<Shell>) {
-    let table = shell_entity.read(cx).table.clone();
-    let fs = shell_entity.read(cx).fs.clone();
-    let db = shell_entity.read(cx).metadata_db.clone();
-
+///
+/// Field references (table, fs, db, weak handle) come in by
+/// parameter rather than being looked up via `shell.read(cx)`,
+/// because `load_path` runs inside its own `&mut self` borrow —
+/// reading the Shell entity again from the same context would
+/// trigger the gpui "cannot read while already being updated"
+/// panic.
+pub fn start(
+    table: Entity<TableState<FileListDelegate>>,
+    fs: Arc<NativeFs>,
+    db: Option<Arc<Mutex<MetadataDb>>>,
+    shell_weak: gpui::WeakEntity<Shell>,
+    cx: &mut gpui::Context<Shell>,
+) {
     // Snapshot the entries on the foreground executor. The worker
     // gets `Send` data only.
     let seeds: Vec<PrefetchSeed> = table
@@ -82,27 +92,34 @@ pub fn start(shell_entity: Entity<Shell>, cx: &mut gpui::Context<Shell>) {
     if seeds.is_empty() {
         return;
     }
+    let seed_count = seeds.len();
+    crate::log_info!(90, "prefetch: starting for {seed_count} rows");
 
     let table_for_apply = table.clone();
-    let shell_weak = shell_entity.downgrade();
     cx.spawn(async move |_this, cx| {
         let batch: Vec<PrefetchRow> = cx
             .background_executor()
             .spawn(async move { run_worker(seeds, db) })
             .await;
+        let n = batch.len();
+        crate::log_info!(90, "prefetch: worker returned {n} rows");
         if batch.is_empty() {
             return;
         }
-        // Apply on the foreground executor. If the Shell entity has
-        // been dropped (window closed), the update fails and we
-        // silently exit — no leak.
         if let Some(shell) = shell_weak.upgrade() {
-            let _ = shell.update(cx, |_, cx| {
+            shell.update(cx, |_, cx| {
                 table_for_apply.update(cx, |state, cx| {
                     apply_batch(state.delegate_mut(), batch);
                     state.refresh(cx);
                 });
+                // Force the Shell to re-render. `state.refresh` on
+                // the inner TableState alone doesn't propagate up
+                // to the outer view tree in all cases.
+                cx.notify();
             });
+            crate::log_info!(90, "prefetch: apply ran");
+        } else {
+            crate::log_warn!(90, "prefetch: shell entity gone before apply");
         }
     })
     .detach();

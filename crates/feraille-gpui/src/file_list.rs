@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use feraille_core::{FileEntry, FsBackend, NodeId};
 use feraille_fs_native::NativeFs;
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     App, AppContext as _, Context, Div, ExternalPaths, FontWeight, InteractiveElement,
     IntoElement, ParentElement, SharedString, Stateful, StatefulInteractiveElement as _, Styled,
@@ -48,9 +49,10 @@ impl FileListDelegate {
         Self {
             entries: Vec::new(),
             columns: vec![
-                Column::new("name", "Name").width(360.0),
+                Column::new("name", "Name").width(320.0),
                 Column::new("size", "Size").width(100.0),
                 Column::new("kind", "Kind").width(120.0),
+                Column::new("magic", "Magic").width(140.0),
                 Column::new("modified", "Modified").width(160.0),
             ],
             fs,
@@ -135,24 +137,41 @@ impl TableDelegate for FileListDelegate {
 
         match col_ix {
             // Name — real macOS icon (via NSWorkspace, cached by
-            // file kind in self.icons) + filename. Falls back to a
-            // 1×1 transparent placeholder when fetch fails (e.g.
-            // outside macOS).
+            // file kind in self.icons) + optional quarantine badge
+            // overlay + filename. Falls back to a 1×1 transparent
+            // placeholder when fetch fails (e.g. outside macOS).
             0 => {
                 let path = self.fs.path_for(entry.id).unwrap_or_default();
                 let icon = self.icons.borrow_mut().icon_for(entry, &path);
+                let quarantined = entry.is_quarantined;
+                let icon_wrapper = div()
+                    .relative()
+                    .flex_shrink_0()
+                    .w(px(18.0))
+                    .h(px(18.0))
+                    .child(img(icon).w(px(18.0)).h(px(18.0)))
+                    .when(quarantined, |this| {
+                        // Mark-of-the-Web badge: small red dot in
+                        // the icon's top-right. Same convention as
+                        // the old app's drag-out indicator.
+                        this.child(
+                            div()
+                                .absolute()
+                                .top(px(-1.0))
+                                .right(px(-1.0))
+                                .w(px(7.0))
+                                .h(px(7.0))
+                                .rounded_full()
+                                .bg(gpui::rgb(0xFF3B30)),
+                        )
+                    });
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
                     .text_sm()
                     .text_color(cx.theme().foreground)
-                    .child(
-                        img(icon)
-                            .w(px(18.0))
-                            .h(px(18.0))
-                            .flex_shrink_0(),
-                    )
+                    .child(icon_wrapper)
                     .child(
                         div()
                             .truncate()
@@ -170,7 +189,17 @@ impl TableDelegate for FileListDelegate {
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(entry.display_kind.clone()))
                 .into_any_element(),
-            3 => div()
+            3 => {
+                // Magic column. Populated by the Stage 4 prefetch
+                // pipeline; rows still being processed show empty.
+                div()
+                    .text_xs()
+                    .truncate()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(SharedString::from(entry.display_magic.clone()))
+                    .into_any_element()
+            }
+            4 => div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(entry.display_mtime.clone()))
