@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use feraille_fs_native::home_dir;
+use feraille_fs_native::{home_dir, list_volumes, VolumeInfo};
 use gpui::*;
 use gpui_component::{
     ActiveTheme, h_flex,
@@ -20,12 +20,46 @@ pub struct Shell {
     /// only for the breadcrumb; Phase 4.c wires it to a real
     /// `FsBackend::enumerate` call.
     pub current_dir: PathBuf,
+    /// Volumes mounted at /Volumes. Refreshed lazily in 4.b; future
+    /// iters will watch for changes via the macOS Disk Arbitration
+    /// framework.
+    pub volumes: Vec<VolumeInfo>,
+}
+
+/// A named filesystem destination shown in the sidebar's Locations
+/// section. The user's home directory, Applications, Documents, etc.
+struct Location {
+    label: &'static str,
+    /// `home`-relative subpath (None ⇒ the home directory itself).
+    sub: Option<&'static str>,
+}
+
+const LOCATIONS: &[Location] = &[
+    Location { label: "Home", sub: None },
+    Location { label: "Applications", sub: Some("Applications") },
+    Location { label: "Desktop", sub: Some("Desktop") },
+    Location { label: "Documents", sub: Some("Documents") },
+    Location { label: "Downloads", sub: Some("Downloads") },
+    Location { label: "Movies", sub: Some("Movies") },
+    Location { label: "Music", sub: Some("Music") },
+    Location { label: "Pictures", sub: Some("Pictures") },
+];
+
+impl Location {
+    fn path(&self) -> PathBuf {
+        let mut p = home_dir();
+        if let Some(sub) = self.sub {
+            p.push(sub);
+        }
+        p
+    }
 }
 
 impl Shell {
     pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         Self {
             current_dir: home_dir(),
+            volumes: list_volumes(),
         }
     }
 
@@ -35,13 +69,47 @@ impl Shell {
         cx.notify();
     }
 
-    fn nav_menu(&self) -> SidebarMenu {
-        SidebarMenu::new().children([
-            SidebarMenuItem::new("Recents").active(true),
-            SidebarMenuItem::new("Favorites"),
-            SidebarMenuItem::new("Locations"),
-            SidebarMenuItem::new("Volumes"),
-        ])
+    /// Locations menu: Home + Applications + Desktop + Documents +
+    /// Downloads + Movies + Music + Pictures. Each entry navigates
+    /// on click; the entry whose `path()` matches `current_dir`
+    /// gets the active state.
+    fn locations_menu(&self, cx: &mut Context<Self>) -> SidebarMenu {
+        let current = self.current_dir.clone();
+        SidebarMenu::new().children(
+            LOCATIONS
+                .iter()
+                .map(|loc| {
+                    let path = loc.path();
+                    let active = path == current;
+                    let nav_path = path.clone();
+                    SidebarMenuItem::new(loc.label)
+                        .active(active)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.navigate(nav_path.clone(), cx);
+                        }))
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// Volumes menu: every mounted volume at /Volumes.
+    fn volumes_menu(&self, cx: &mut Context<Self>) -> SidebarMenu {
+        let current = self.current_dir.clone();
+        SidebarMenu::new().children(
+            self.volumes
+                .iter()
+                .map(|v| {
+                    let path = v.path.clone();
+                    let active = path == current;
+                    let nav_path = path.clone();
+                    SidebarMenuItem::new(SharedString::from(v.name.clone()))
+                        .active(active)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.navigate(nav_path.clone(), cx);
+                        }))
+                })
+                .collect::<Vec<_>>(),
+        )
     }
 
     /// Build the breadcrumb row from `current_dir`. Each ancestor is
@@ -103,25 +171,31 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let menu = self.nav_menu();
+        let locations = self.locations_menu(cx);
+        let volumes = self.volumes_menu(cx);
+        let has_volumes = !self.volumes.is_empty();
         let breadcrumb = self.breadcrumb(cx);
         let path_str = self.current_dir.to_string_lossy().into_owned();
+
+        let mut sidebar = Sidebar::new("shell-sidebar")
+            .w(px(220.0))
+            .header(
+                SidebarHeader::new().child(
+                    div()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(cx.theme().foreground)
+                        .child("Feraille"),
+                ),
+            )
+            .child(SidebarGroup::new("Locations").child(locations));
+        if has_volumes {
+            sidebar = sidebar.child(SidebarGroup::new("Volumes").child(volumes));
+        }
+
         h_flex()
             .size_full()
             .bg(cx.theme().background)
-            .child(
-                Sidebar::new("shell-sidebar")
-                    .w(px(220.0))
-                    .header(
-                        SidebarHeader::new().child(
-                            div()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(cx.theme().foreground)
-                                .child("Feraille"),
-                        ),
-                    )
-                    .child(SidebarGroup::new("").child(menu)),
-            )
+            .child(sidebar)
             .child(
                 v_flex()
                     .h_full()
@@ -152,9 +226,9 @@ impl Render for Shell {
                                     .text_sm()
                                     .text_color(cx.theme().muted_foreground)
                                     .child(
-                                        "Phase 4.a: breadcrumb only. \
+                                        "Phase 4.b: sidebar wired to Locations + Volumes. \
                                         File list (virtualized Table) arrives in 4.c. \
-                                        Click any breadcrumb segment to navigate to that ancestor.",
+                                        Click any sidebar entry or breadcrumb segment to navigate.",
                                     ),
                             ),
                     ),
