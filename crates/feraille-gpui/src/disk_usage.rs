@@ -23,6 +23,7 @@ use feraille_disk_usage::{
     DiskUsageStats, DiskUsageTree, FileCategory, SizeMode, TreemapRect,
 };
 use feraille_fs_native::NativeFs;
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{h_flex, v_flex, ActiveTheme, Root};
 
@@ -248,10 +249,24 @@ impl DiskUsageView {
             )
     }
 
-    fn treemap(&mut self, cx: &mut App) -> Div {
+    fn treemap(&mut self, cx: &mut Context<Self>) -> Div {
         let (w, h) = (900.0_f32, 600.0_f32);
         self.ensure_layout(0.0, 0.0, w, h);
         let rects = self.rects_cache.clone();
+        // Snapshot display name + size string per rect — drops the
+        // tree borrow before we build click handlers below.
+        let labels: Vec<(String, String)> = rects
+            .iter()
+            .map(|r| {
+                let name = self
+                    .tree
+                    .nodes
+                    .get(&r.node_id)
+                    .map(|n| n.display_name.clone())
+                    .unwrap_or_default();
+                (name, humanize_bytes(r.size_bytes))
+            })
+            .collect();
         let mut container = div()
             .relative()
             .w(px(w))
@@ -262,7 +277,12 @@ impl DiskUsageView {
                 continue;
             }
             let color = category_color(r.file_category);
-            let rect = div()
+            let node_id = r.node_id;
+            let has_children = r.has_children;
+            let (name, size) = labels[ix].clone();
+            let show_label = r.width >= 60.0 && r.height >= 24.0;
+            let show_size = r.width >= 80.0 && r.height >= 40.0;
+            let mut rect = div()
                 .absolute()
                 .top(px(r.y))
                 .left(px(r.x))
@@ -270,11 +290,62 @@ impl DiskUsageView {
                 .h(px(r.height))
                 .bg(color)
                 .border_1()
-                .border_color(rgba(0x00000022))
-                .id(("du-rect", ix));
+                .border_color(rgba(0x00000033))
+                .id(("du-rect", ix))
+                .cursor_pointer();
+            if show_label {
+                let inner = div()
+                    .size_full()
+                    .px_1()
+                    .py_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgba(0xFFFFFFEE))
+                            .child(SharedString::from(name)),
+                    )
+                    .when(show_size, |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgba(0xFFFFFFAA))
+                                .child(SharedString::from(size)),
+                        )
+                    });
+                rect = rect.child(inner);
+            }
+            // Click on a container row zooms in. Files have no
+            // children — clicking them just selects (no zoom).
+            if has_children {
+                rect = rect.on_click(cx.listener(move |this, _, _, cx| {
+                    this.zoom_into(node_id, cx);
+                }));
+            }
             container = container.child(rect);
         }
         container
+    }
+
+    /// Zoom into `target` (clicked container rect). Pushes onto the
+    /// zoom path, drops cached layout so the next paint recomputes.
+    pub fn zoom_into(&mut self, target: NodeId, cx: &mut Context<Self>) {
+        // Ignore the root — already focused.
+        if target == self.focus_id() {
+            return;
+        }
+        self.zoom_path.push(target);
+        self.invalidate_layout();
+        cx.notify();
+    }
+
+    /// Pop one level of zoom (Cmd+Up or backspace-like). Returns to
+    /// the parent focus.
+    pub fn zoom_out(&mut self, cx: &mut Context<Self>) {
+        if self.zoom_path.pop().is_some() {
+            self.invalidate_layout();
+            cx.notify();
+        }
     }
 }
 
