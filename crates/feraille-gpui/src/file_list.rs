@@ -12,14 +12,16 @@ use std::sync::Arc;
 use feraille_core::{EntryKind, FileEntry, FsBackend, NodeId};
 use feraille_fs_native::NativeFs;
 use gpui::{
-    App, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Stateful, Styled, Window, div,
+    App, AppContext as _, Context, Div, ExternalPaths, FontWeight, InteractiveElement,
+    IntoElement, ParentElement, SharedString, Stateful, StatefulInteractiveElement as _, Styled,
+    Window, div,
 };
 use gpui_component::{
     ActiveTheme,
     menu::PopupMenu,
     table::{Column, TableDelegate, TableState},
 };
+use smallvec::smallvec;
 
 /// Delegate that vends the current directory's entries to the
 /// Table. Holds the live `Vec<FileEntry>`; the Shell rotates it on
@@ -82,7 +84,19 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) -> Stateful<Div> {
-        div().id(("file-row", row_ix))
+        let row = div().id(("file-row", row_ix));
+        // OS drag-out: GPUI's macOS backend recognises ExternalPaths
+        // and uses NSFilePromise / NSPasteboard, so dragging a row
+        // to the Finder desktop drops the actual file there. Other
+        // apps (Mail, browsers) accept the same drag.
+        if let Some(entry) = self.entries.get(row_ix) {
+            let path = self.fs.path_for(entry.id).unwrap_or_default();
+            if !path.as_os_str().is_empty() {
+                let paths = ExternalPaths(smallvec![path]);
+                return row.on_drag(paths, |paths, _, _, cx| cx.new(|_| paths.clone()));
+            }
+        }
+        row
     }
 
     fn render_td(

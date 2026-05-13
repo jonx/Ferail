@@ -27,6 +27,8 @@ gpui-component-assets.workspace = true
 # ReadDirectoryChangesW on Windows). Pinned to the same major as
 # gpui-component's transitive use to keep one copy in the graph.
 notify = "7.0"
+# Used to build the smallvec ExternalPaths expects for OS drag-out.
+smallvec = "1"
 
 # Phase 4: domain wiring. feraille-gpui consumes the domain layer
 # the same way feraille-app did, through the same trait surface
