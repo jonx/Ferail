@@ -111,18 +111,32 @@ file_list.rs` (carries forward the folders-first behaviour from
 ## Command catalogue + keymap (Stage 3)
 
 ### Command catalogue → first-class keymap
-Status: In progress
+Status: Ported ✅ (Harvest Stage 3 — catalogue drives every
+keybinding; unbound commands log a warning so the gap is visible.)
 Old location: `crates/feraille-core/src/commands.rs` (65 commands,
-already in domain layer) + `feraille-app/src/main.rs` keystroke
-dispatch.
-New location: `crates/feraille-gpui/src/shell.rs` — currently uses
-ad-hoc `actions!` for ~18 keybinds. Stage 3 rewires through the
-shared catalogue so menu / keyboard / context-menu / native menu
-bar all dispatch through one path.
-Notes: New keybinds wired so far: NavigateParent/Back/Forward,
-OpenSelected, Refresh, ToggleHidden, OpenSettings, CopyPath,
-MoveToTrash, RevealInFinder, FocusFilter, ClearFilter, NewFolder,
-RenameSelected, NewTab, CloseTab, NextTab, PrevTab.
+already in domain layer) + `crates/feraille-app/src/main.rs::
+keystroke_to_command` (bespoke matcher).
+New location: `crates/feraille-gpui/src/keymap.rs::install` walks
+`feraille_core::commands::all_commands()` once at startup;
+`crates/feraille-gpui/src/shell.rs::init` now just calls into it.
+Notes:
+- `Shortcut → gpui keybind string` translation via
+  `translate_shortcut` (cmd / shift / alt prefixes + lowercased
+  key name).
+- Each `CommandId` whose action is implemented (16 today) routes to
+  the existing gpui Action type. The remaining ~30 catalogue
+  entries (Disk Usage / cursor-nav / Get Info / zoom / breadcrumb-
+  edit / etc.) log a one-time warning at startup with the binding
+  that's currently dropped — visibility for the porter, harmless
+  to users.
+- Tab cycling (Cmd+T / Cmd+W / Ctrl+Tab / Ctrl+Shift+Tab) and the
+  ClearFilter escape aren't catalogue commands (Phase 5.5
+  invention); installed by `install_extras` alongside.
+- One behavioural change worth noting: the catalogue assigns Cmd+R
+  to `disk_usage.refresh`, not `file.refresh`. `file.refresh`
+  binds F5 only. The previous new-app Cmd+R-refreshes-file-list
+  shortcut is therefore inactive until Stage 7 wires Disk Usage.
+  Same direction as the old app — it's the catalogue's design.
 
 ---
 

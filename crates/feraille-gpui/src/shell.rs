@@ -86,35 +86,14 @@ impl Tab {
 }
 
 /// Key-context name for the Shell's outer container — same convention
-/// gpui-component uses (e.g. `Root` / `Input`). Only one context-bound
-/// keystroke today (Backspace → NavigateParent); the full keymap
-/// system arrives in Phase 5.
-const SHELL_CONTEXT: &str = "Shell";
+/// gpui-component uses (e.g. `Root` / `Input`). The keymap module
+/// drives every binding off `feraille_core::commands` as of Harvest
+/// Stage 3; SHELL_CONTEXT gates them to the file-pane focus.
+pub const SHELL_CONTEXT: &str = "Shell";
 
 pub fn init(cx: &mut App) {
-    cx.bind_keys([
-        // Per-shell context: only fire when the Shell holds focus.
-        KeyBinding::new("backspace", NavigateParent, Some(SHELL_CONTEXT)),
-        KeyBinding::new("cmd-[", NavigateBack, Some(SHELL_CONTEXT)),
-        KeyBinding::new("cmd-]", NavigateForward, Some(SHELL_CONTEXT)),
-        KeyBinding::new("enter", OpenSelected, Some(SHELL_CONTEXT)),
-        KeyBinding::new("cmd-r", Refresh, Some(SHELL_CONTEXT)),
-        KeyBinding::new("cmd-shift-.", ToggleHidden, Some(SHELL_CONTEXT)),
-        KeyBinding::new("cmd-backspace", MoveToTrash, Some(SHELL_CONTEXT)),
-        KeyBinding::new("cmd-shift-r", RevealInFinder, Some(SHELL_CONTEXT)),
-        KeyBinding::new("cmd-alt-c", CopyPath, Some(SHELL_CONTEXT)),
-        KeyBinding::new("cmd-f", FocusFilter, Some(SHELL_CONTEXT)),
-        KeyBinding::new("escape", ClearFilter, Some(SHELL_CONTEXT)),
-        KeyBinding::new("cmd-shift-n", NewFolder, Some(SHELL_CONTEXT)),
-        KeyBinding::new("f2", RenameSelected, Some(SHELL_CONTEXT)),
-        KeyBinding::new("cmd-t", NewTab, Some(SHELL_CONTEXT)),
-        KeyBinding::new("cmd-w", CloseTab, Some(SHELL_CONTEXT)),
-        KeyBinding::new("ctrl-tab", NextTab, Some(SHELL_CONTEXT)),
-        KeyBinding::new("ctrl-shift-tab", PrevTab, Some(SHELL_CONTEXT)),
-        // App-wide: Cmd+, is the system convention for Preferences /
-        // Settings and should work from anywhere in the app.
-        KeyBinding::new("cmd-,", OpenSettings, None),
-    ]);
+    crate::keymap::install(cx);
+    crate::keymap::install_extras(cx);
 }
 
 pub struct Shell {
