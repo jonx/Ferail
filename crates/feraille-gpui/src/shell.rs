@@ -21,6 +21,7 @@ use gpui_component::{
     v_flex,
 };
 
+use crate::app_state::{self, AppState};
 use crate::file_list::FileListDelegate;
 use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
 
@@ -142,8 +143,9 @@ impl Location {
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let fs = Arc::new(NativeFs::new());
-        let start = home_dir();
-        let show_hidden = false;
+        let persisted = app_state::load();
+        let start = persisted.last_dir.clone().unwrap_or_else(home_dir);
+        let show_hidden = persisted.show_hidden.unwrap_or(false);
         let mut delegate = FileListDelegate::new(fs.clone());
         let last_error = delegate.load(start.clone(), show_hidden);
         let initial_selection = if delegate.entries.is_empty() { None } else { Some(0) };
@@ -377,6 +379,15 @@ impl Shell {
         }
     }
 
+    /// Persist last-dir + show-hidden to disk. Cheap (small text
+    /// file in the user's app support dir); call freely.
+    fn save_state(&self) {
+        app_state::save(&AppState {
+            last_dir: Some(self.current_dir.clone()),
+            show_hidden: Some(self.show_hidden),
+        });
+    }
+
     /// Inner load: re-enumerate the directory + refresh the table +
     /// re-target the watcher. Does **not** touch history (history
     /// is only mutated by `navigate`).
@@ -397,6 +408,7 @@ impl Shell {
         if let Some(w) = self.watcher.borrow_mut().as_mut() {
             let _ = w.watch(&path);
         }
+        self.save_state();
         cx.notify();
     }
 
