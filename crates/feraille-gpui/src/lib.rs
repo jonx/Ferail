@@ -10,6 +10,7 @@
 // recommendation comes straight from rustc's error message.
 #![recursion_limit = "256"]
 
+pub mod file_list;
 pub mod screenshot;
 pub mod settings;
 pub mod shell;

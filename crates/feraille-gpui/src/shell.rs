@@ -6,24 +6,33 @@
 //! 4.c brings the virtualized file list.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use feraille_fs_native::{home_dir, list_volumes, VolumeInfo};
+use feraille_fs_native::{home_dir, list_volumes, NativeFs, VolumeInfo};
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, h_flex,
+    ActiveTheme, Sizable, h_flex,
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
+    table::{DataTable, TableState},
     v_flex,
 };
 
+use crate::file_list::FileListDelegate;
+
 pub struct Shell {
-    /// Path the file pane is currently showing. Phase 4.a uses this
-    /// only for the breadcrumb; Phase 4.c wires it to a real
-    /// `FsBackend::enumerate` call.
+    /// Path the file pane is currently showing.
     pub current_dir: PathBuf,
     /// Volumes mounted at /Volumes. Refreshed lazily in 4.b; future
     /// iters will watch for changes via the macOS Disk Arbitration
     /// framework.
     pub volumes: Vec<VolumeInfo>,
+    /// Shared FS backend. `Arc` because the file-list delegate also
+    /// holds a reference (for path lookups during navigation).
+    pub fs: Arc<NativeFs>,
+    /// gpui-component's virtualized Table state, parameterised by
+    /// our file-list delegate. The Shell talks to the delegate
+    /// through `cx.update_entity` calls on this handle.
+    pub table: Entity<TableState<FileListDelegate>>,
 }
 
 /// A named filesystem destination shown in the sidebar's Locations
@@ -56,16 +65,34 @@ impl Location {
 }
 
 impl Shell {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let fs = Arc::new(NativeFs::new());
+        let start = home_dir();
+        let mut delegate = FileListDelegate::new(fs.clone());
+        let _ = delegate.load(start.clone());
+        let table = cx.new(|cx| {
+            TableState::new(delegate, window, cx)
+                .col_selectable(false)
+                .col_movable(false)
+        });
         Self {
-            current_dir: home_dir(),
+            current_dir: start,
             volumes: list_volumes(),
+            fs,
+            table,
         }
     }
 
-    /// Navigate to `path` and request a re-render.
+    /// Navigate to `path`: update `current_dir`, re-enumerate the
+    /// directory via the FS backend, refresh the Table, request a
+    /// re-render.
     pub fn navigate(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.current_dir = path;
+        self.current_dir = path.clone();
+        let table = self.table.clone();
+        table.update(cx, |state, cx| {
+            state.delegate_mut().load(path);
+            state.refresh(cx);
+        });
         cx.notify();
     }
 
@@ -192,6 +219,8 @@ impl Render for Shell {
             sidebar = sidebar.child(SidebarGroup::new("Volumes").child(volumes));
         }
 
+        let _ = path_str; // breadcrumb already shows the path
+
         h_flex()
             .size_full()
             .bg(cx.theme().background)
@@ -205,31 +234,12 @@ impl Render for Shell {
                     .child(
                         v_flex()
                             .flex_1()
-                            .p_6()
-                            .gap_2()
+                            .min_h_0()
                             .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("Current directory"),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(cx.theme().foreground)
-                                    .child(path_str),
-                            )
-                            .child(
-                                div()
-                                    .mt_4()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(
-                                        "Phase 4.b: sidebar wired to Locations + Volumes. \
-                                        File list (virtualized Table) arrives in 4.c. \
-                                        Click any sidebar entry or breadcrumb segment to navigate.",
-                                    ),
+                                DataTable::new(&self.table)
+                                    .bordered(false)
+                                    .stripe(true)
+                                    .small(),
                             ),
                     ),
             )
