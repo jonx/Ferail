@@ -6,4 +6,5 @@
 //! harness can construct the same view tree as the live app.
 
 pub mod screenshot;
+pub mod settings;
 pub mod shell;

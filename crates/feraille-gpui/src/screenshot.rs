@@ -18,6 +18,7 @@ use gpui::*;
 use gpui_component::{Theme, ThemeMode};
 use gpui_component_assets::Assets;
 
+use crate::settings::{category_from_arg, SettingsView};
 use crate::shell::Shell;
 
 #[derive(Debug, Default)]
@@ -27,6 +28,10 @@ pub struct Args {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub theme: Option<ThemeMode>,
+    /// `Some("appearance" | "files" | "layout" | "about")` opens
+    /// the Settings view at that page instead of the file-manager
+    /// Shell. `Some("")` opens Settings at the default page.
+    pub settings: Option<String>,
 }
 
 pub fn parse_args() -> Args {
@@ -43,6 +48,9 @@ pub fn parse_args() -> Args {
                     "dark" => Some(ThemeMode::Dark),
                     _ => None,
                 });
+            }
+            "--settings" => {
+                args.settings = Some(iter.next().unwrap_or_default());
             }
             "--help" | "-h" => {
                 print_help();
@@ -66,6 +74,8 @@ OPTIONS
   --width <N>             Logical width in DIPs (default 1180).
   --height <N>            Logical height in DIPs (default 760).
   --theme light|dark      Theme (default: follow system appearance).
+  --settings <page>       Open the Settings view instead of the Shell.
+                          <page> is one of: appearance, files, layout, about.
   -h, --help              Print this help.
 "
     );
@@ -83,6 +93,7 @@ pub fn run(args: Args) -> Result<()> {
     let theme_mode = args.theme;
 
     let app = gpui_platform::application().with_assets(Assets);
+    let settings_page = args.settings.clone();
     app.run(move |cx| {
         gpui_component::init(cx);
         if let Some(mode) = theme_mode {
@@ -90,6 +101,7 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         let path = path.clone();
+        let settings_page = settings_page.clone();
         cx.spawn(async move |cx| {
             // Open invisibly. show=false keeps the window off-screen
             // and out of the user's face during automated capture.
@@ -104,8 +116,18 @@ pub fn run(args: Args) -> Result<()> {
             };
             let handle = cx
                 .open_window(opts, |window, cx| {
-                    let view = cx.new(|cx| Shell::new(window, cx));
-                    cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                    if let Some(page) = settings_page.as_deref() {
+                        let cat = category_from_arg(if page.is_empty() {
+                            None
+                        } else {
+                            Some(page)
+                        });
+                        let view = cx.new(|_| SettingsView::new(cat));
+                        cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                    } else {
+                        let view = cx.new(|cx| Shell::new(window, cx));
+                        cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                    }
                 })
                 .expect("failed to open window for screenshot");
 

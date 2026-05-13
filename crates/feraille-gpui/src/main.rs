@@ -4,7 +4,11 @@
 //! capture path. All real view code lives in `crate::shell`.
 
 use anyhow::Result;
-use feraille_gpui::{screenshot, shell::Shell};
+use feraille_gpui::{
+    screenshot,
+    settings::{category_from_arg, SettingsView},
+    shell::Shell,
+};
 use gpui::*;
 use gpui_component::Theme;
 use gpui_component_assets::Assets;
@@ -23,6 +27,7 @@ fn run_gui(args: screenshot::Args) {
     let width = args.width.unwrap_or(1180) as f32;
     let height = args.height.unwrap_or(760) as f32;
     let theme_mode = args.theme;
+    let settings_page = args.settings;
 
     app.run(move |cx| {
         gpui_component::init(cx);
@@ -35,10 +40,21 @@ fn run_gui(args: screenshot::Args) {
             ..Default::default()
         };
 
+        let settings_page = settings_page.clone();
         cx.spawn(async move |cx| {
             cx.open_window(opts, |window, cx| {
-                let view = cx.new(|cx| Shell::new(window, cx));
-                cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                if let Some(page) = settings_page.as_deref() {
+                    let cat = category_from_arg(if page.is_empty() {
+                        None
+                    } else {
+                        Some(page)
+                    });
+                    let view = cx.new(|_| SettingsView::new(cat));
+                    cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                } else {
+                    let view = cx.new(|cx| Shell::new(window, cx));
+                    cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                }
             })
             .expect("failed to open feraille-gpui window");
         })
