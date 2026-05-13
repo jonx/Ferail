@@ -198,6 +198,13 @@ pub struct Shell {
     /// main pane). Once cached, re-expand is instant; collapsing a
     /// folder doesn't evict its cache.
     pub tree_children: HashMap<PathBuf, Vec<TreeChild>>,
+    /// Ant Trail visit counts (Stage 9.b). Path → hits. Hydrated
+    /// from `metadata_db` on startup, incremented on every
+    /// `navigate`, persisted through `record_folder_visit`.
+    pub ant_visits: HashMap<PathBuf, u32>,
+    /// Cached max visit count for heat normalisation. Updated
+    /// whenever a row's count crosses the existing max.
+    pub ant_max: u32,
     /// Live subscription handles (Input change, future watchers).
     /// Dropping them tears down the listeners — keep alongside the
     /// Shell so they outlive any frame.
@@ -219,6 +226,41 @@ impl Shell {
     pub fn active_tab_mut(&mut self) -> &mut Tab {
         &mut self.tabs[self.active]
     }
+}
+
+fn now_unix_secs() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Pull existing Ant Trail visit counts out of the metadata DB so
+/// heat is reflected on the very first render. Returns
+/// `(empty_map, 0)` when the DB is absent or the read fails — heat
+/// tint just won't show until the user's done some navigating.
+fn hydrate_ant_trail(
+    db: Option<&Arc<Mutex<feraille_meta::MetadataDb>>>,
+) -> (HashMap<PathBuf, u32>, u32) {
+    let Some(db) = db else {
+        return (HashMap::new(), 0);
+    };
+    let Ok(guard) = db.lock() else {
+        return (HashMap::new(), 0);
+    };
+    let Ok(entries) = guard.load_ant_trail() else {
+        return (HashMap::new(), 0);
+    };
+    let mut max: u32 = 0;
+    let mut map: HashMap<PathBuf, u32> = HashMap::with_capacity(entries.len());
+    for e in entries {
+        if e.hits > max {
+            max = e.hits;
+        }
+        map.insert(PathBuf::from(e.folder_path), e.hits);
+    }
+    (map, max)
 }
 
 /// Open the persistent metadata DB at the default location
@@ -441,6 +483,10 @@ impl Shell {
         let mut initial_tab = Tab::new(start);
         initial_tab.selected = initial_selection;
         let metadata_db = open_metadata_db();
+
+        // Stage 9.b: hydrate Ant Trail visit counts from the DB so
+        // the heat tint reflects historical visits across launches.
+        let (ant_visits, ant_max) = hydrate_ant_trail(metadata_db.as_ref());
         Self {
             tabs: vec![initial_tab],
             active: 0,
@@ -464,6 +510,8 @@ impl Shell {
             shortcuts_help_input,
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
+            ant_visits,
+            ant_max,
             _subscriptions: vec![
                 filter_subscription,
                 breadcrumb_subscription,
@@ -846,8 +894,32 @@ impl Shell {
         let filter = self.filter_text.clone();
         let table = self.table.clone();
         let mut err: Option<EnumerationError> = None;
+        // Snapshot path → heat for the rows we're about to apply.
+        // Cheap (just a HashMap lookup per row); the table.update
+        // closure can't borrow `&self` while it borrows the table
+        // mut, so we compute heats up front.
+        let path_str = path.clone();
         table.update(cx, |state, cx| {
-            err = state.delegate_mut().load(path.clone(), show_hidden, &filter);
+            err = state.delegate_mut().load(path_str.clone(), show_hidden, &filter);
+            // Populate the parallel heats vec — must happen after
+            // load() resets it.
+            let delegate = state.delegate_mut();
+            let heats: Vec<f32> = delegate
+                .entries
+                .iter()
+                .map(|e| {
+                    let row_path = delegate
+                        .fs
+                        .path_for(e.id)
+                        .unwrap_or_else(|| {
+                            let mut p = path_str.clone();
+                            p.push(&e.name);
+                            p
+                        });
+                    self.ant_heat(&row_path)
+                })
+                .collect();
+            delegate.heats = heats;
             state.refresh(cx);
         });
         self.last_error = err;
@@ -985,7 +1057,8 @@ impl Shell {
 
     /// Navigate to `path`: re-enumerate, refresh the Table, push to
     /// the active tab's history (truncating any forward stack first),
-    /// reset selection.
+    /// reset selection. Also increments the Ant Trail visit count
+    /// for `path` (Stage 9.b) and persists through metadata_db.
     pub fn navigate(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let tab = self.active_tab_mut();
         if tab.history.get(tab.history_index) != Some(&path) {
@@ -993,7 +1066,43 @@ impl Shell {
             tab.history.push(path.clone());
             tab.history_index = tab.history.len() - 1;
         }
+        self.record_ant_visit(&path);
         self.load_path(path, cx);
+    }
+
+    /// Bump the Ant Trail visit count for `path` in the in-memory
+    /// map and persist asynchronously through `metadata_db`. Cheap
+    /// on the foreground executor — the DB write is a single
+    /// upsert and `feraille_meta::MetadataDb` does its own
+    /// connection pooling internally.
+    pub fn record_ant_visit(&mut self, path: &Path) {
+        let entry = self.ant_visits.entry(path.to_path_buf()).or_insert(0);
+        *entry += 1;
+        if *entry > self.ant_max {
+            self.ant_max = *entry;
+        }
+        if let Some(db) = self.metadata_db.as_ref() {
+            if let Ok(guard) = db.lock() {
+                let _ = guard.record_folder_visit(
+                    &path.to_string_lossy(),
+                    now_unix_secs(),
+                );
+            }
+        }
+    }
+
+    /// Compute the Ant Trail heat for `path` — 0.0 (never visited)
+    /// through 1.0 (most-visited folder). Log-scaled so a 10-visit
+    /// folder isn't 10× brighter than a 5-visit one. Used by the
+    /// file list to apply a subtle background tint per row.
+    pub fn ant_heat(&self, path: &Path) -> f32 {
+        let Some(&v) = self.ant_visits.get(path) else {
+            return 0.0;
+        };
+        if self.ant_max <= 1 {
+            return 1.0;
+        }
+        ((v as f32 + 1.0).log2() / (self.ant_max as f32 + 1.0).log2()).clamp(0.0, 1.0)
     }
 
     /// Toggle expansion for a directory in the sidebar tree.

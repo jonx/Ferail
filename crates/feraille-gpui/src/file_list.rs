@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use feraille_core::{FileEntry, FsBackend, NodeId};
+use feraille_core::{EntryKind, FileEntry, FsBackend, NodeId};
 use feraille_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -42,6 +42,11 @@ pub struct FileListDelegate {
     /// Rc<RefCell> so render_td's `&mut self` can borrow without
     /// fighting the cache.
     pub icons: Rc<RefCell<IconCache>>,
+    /// Ant Trail heat per row, parallel to `entries`. Populated by
+    /// `Shell::load_path` after each enumerate. 0.0 = never visited
+    /// (no tint); 1.0 = the most-visited folder. Renderer maps to
+    /// a low-opacity accent background.
+    pub heats: Vec<f32>,
 }
 
 impl FileListDelegate {
@@ -57,6 +62,7 @@ impl FileListDelegate {
             ],
             fs,
             icons,
+            heats: Vec::new(),
         }
     }
 
@@ -86,6 +92,8 @@ impl FileListDelegate {
                 }
             })
             .collect();
+        // Reset heats; Shell repopulates after load returns.
+        self.heats = vec![0.0; self.entries.len()];
         handle.error
     }
 }
@@ -109,7 +117,32 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) -> Stateful<Div> {
-        let row = div().id(("file-row", row_ix));
+        // Ant Trail heat tint (Stage 9.b). Renders only on directory
+        // rows — files aren't tracked in the trail. 0.0 → no tint;
+        // up to ~0.30 warm-orange opacity at full heat. The warm
+        // hue matches the "heat" metaphor (frequently-visited
+        // folders glow brighter); accent / primary blend too far
+        // into hover/selection territory.
+        let heat = self.heats.get(row_ix).copied().unwrap_or(0.0);
+        let kind_is_dir = self
+            .entries
+            .get(row_ix)
+            .map(|e| matches!(e.kind, EntryKind::Directory))
+            .unwrap_or(false);
+        let mut row = div().id(("file-row", row_ix));
+        if kind_is_dir && heat > 0.0 {
+            // Warm orange tint, scaled by heat. Stable hue across
+            // light/dark themes (a theme-color .opacity() would
+            // multiply the theme's existing alpha and dim out in
+            // dark mode).
+            let alpha = (heat * 0.30).clamp(0.0, 1.0);
+            row = row.bg(gpui::Rgba {
+                r: 1.0,
+                g: 0.55,
+                b: 0.26,
+                a: alpha,
+            });
+        }
         // OS drag-out: GPUI's macOS backend recognises ExternalPaths
         // and uses NSFilePromise / NSPasteboard, so dragging a row
         // to the Finder desktop drops the actual file there. Other

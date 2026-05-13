@@ -328,14 +328,22 @@ worker-thread + cache by-path pattern. Out of scope for Stage 8 v1.
 ## Polish (Stage 9)
 
 ### Ant Trail heat tint
-Status: Not started
+Status: Ported ✅ (Harvest Stage 9.b)
 Old location: `feraille-app/src/main.rs` ant-trail visit tracking
-backed by `feraille-meta`. Visible as subtle background heat tint
-on entries.
-New location: `crates/feraille-gpui/src/file_list.rs` render_tr
-hook (Stage 9).
-Notes: Domain types already in feraille-core; persistence in
-feraille-meta. Just need the visual treatment.
+backed by `feraille-meta`.
+New location:
+- Shell state: `ant_visits: HashMap<PathBuf, u32>` + `ant_max: u32`
+  hydrated from `metadata_db.load_ant_trail()` at startup;
+  `record_ant_visit` increments + persists through
+  `record_folder_visit`. Called from every `Shell::navigate`.
+- `Shell::ant_heat(path) -> f32` returns 0.0–1.0 (log-scaled —
+  10-visit folder isn't 10× brighter than 5-visit).
+- `Shell::load_path` populates `FileListDelegate::heats`, a Vec<f32>
+  parallel to entries. `render_tr` applies a warm-orange RGBA
+  (≈ #FF8C42) scaled by heat * 0.30 to directory rows only.
+Notes: The warm-orange hue is stable across light/dark themes
+(direct Rgba rather than a theme-color `.opacity()` which would
+multiply the theme's own alpha in dark mode).
 
 ### Go Home (Cmd+Shift+H)
 Status: Ported ✅ (Harvest Stage 9.a)
