@@ -31,6 +31,9 @@ gpui-component-assets.workspace = true
 feraille-core.workspace = true
 feraille-fs-native.workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "feraille-gpui"
 path = "src/main.rs"
