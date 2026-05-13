@@ -19,11 +19,15 @@ use gpui_component_assets::Assets;
 actions!(app, [Quit]);
 
 fn main() -> Result<()> {
+    feraille_gpui::obs::init();
     let args = screenshot::parse_args();
     if args.screenshot.is_some() {
+        feraille_gpui::log_info!(90, "headless screenshot path");
         return screenshot::run(args);
     }
+    feraille_gpui::log_info!(90, "event loop starting");
     run_gui(args);
+    feraille_gpui::log_info!(90, "event loop exited");
     Ok(())
 }
 

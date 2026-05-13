@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use feraille_core::{EntryKind, EnumerationError};
 use feraille_fs_native::{home_dir, list_volumes, open_with_default, NativeFs, VolumeInfo};
@@ -158,6 +158,14 @@ pub struct Shell {
     /// fall back to the active tab's `selected`. Cleared after each
     /// context-menu action handler runs.
     pub context_row: Option<usize>,
+    /// Persistent metadata database (rusqlite-backed) opened at
+    /// startup. `None` when `$HOME` is unset or the DB couldn't be
+    /// opened — in-memory state still works, just no persistence.
+    /// Stage 4+ uses this for magic / quarantine / ant-trail
+    /// caches; Stage 1.b just establishes the handle.
+    /// `Arc<Mutex<_>>` so background workers (Stage 4 prefetch) can
+    /// share it without competing borrows.
+    pub metadata_db: Option<Arc<Mutex<feraille_meta::MetadataDb>>>,
     /// Live filter text. Shared across tabs.
     pub filter_text: String,
     /// `gpui-component` Input state for the filter field in the
@@ -184,6 +192,41 @@ impl Shell {
     #[inline]
     pub fn active_tab_mut(&mut self) -> &mut Tab {
         &mut self.tabs[self.active]
+    }
+}
+
+/// Open the persistent metadata DB at the default location
+/// (`~/Library/Application Support/Feraille/metadata.db`). Returns
+/// `None` and logs a warning when `$HOME` is unset, mkdir fails, or
+/// open fails — in-memory state still works in those cases, just
+/// without persistence. Reuses the path resolution + parent-dir
+/// helpers from `feraille_meta`.
+fn open_metadata_db() -> Option<Arc<Mutex<feraille_meta::MetadataDb>>> {
+    let Some(path) = feraille_meta::default_db_path() else {
+        crate::log_warn!(90, "metadata: $HOME unset; persistence disabled");
+        return None;
+    };
+    if let Err(e) = feraille_meta::ensure_parent_dir(&path) {
+        crate::log_warn!(
+            90,
+            "metadata: mkdir failed for {}: {e}",
+            path.display()
+        );
+        return None;
+    }
+    match feraille_meta::MetadataDb::open(&path) {
+        Ok(db) => {
+            crate::log_info!(90, "metadata: opened {}", path.display());
+            Some(Arc::new(Mutex::new(db)))
+        }
+        Err(e) => {
+            crate::log_warn!(
+                90,
+                "metadata: open failed for {}: {e}",
+                path.display()
+            );
+            None
+        }
     }
 }
 
@@ -315,6 +358,7 @@ impl Shell {
 
         let mut initial_tab = Tab::new(start);
         initial_tab.selected = initial_selection;
+        let metadata_db = open_metadata_db();
         Self {
             tabs: vec![initial_tab],
             active: 0,
@@ -326,6 +370,7 @@ impl Shell {
             last_error,
             watcher,
             context_row: None,
+            metadata_db,
             filter_text: String::new(),
             filter_input,
             _subscriptions: vec![filter_subscription],

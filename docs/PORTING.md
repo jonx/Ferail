@@ -31,11 +31,16 @@ Notes: `cargo check` passes. All domain crates verified clean of
 `feraille-render` / `feraille-controls` deps in Phase 2 audit.
 
 ### Observability (obs.rs)
-Status: Not started
-Old location: `crates/feraille-app/src/obs.rs` (~80 lines)
-New location: `crates/feraille-gpui/src/obs.rs` (Stage 1)
-Notes: Pure stdlib. Verbatim port. Bump `LOG_THRESHOLD` to a new
-iter number on first land so old call-site noise stays muted.
+Status: Ported ✅ (Harvest Stage 1.a)
+Old location: `crates/feraille-app/src/obs.rs` (~190 lines)
+New location: `crates/feraille-gpui/src/obs.rs`
+Notes: Verbatim port + minor branding edits ("Feraille (gpui)" in
+banner / crash header) + bumped `LOG_THRESHOLD` from 60 → 90.
+`log_info!` / `log_warn!` / `log_error!` macros that previously
+lived at the top of `feraille-app/src/main.rs` are now
+`#[macro_export]` inside obs.rs so any feraille-gpui module reaches
+them via `crate::log_info!(id, "...")`. Verified: running
+feraille-gpui prints the same startup banner + arg log line.
 
 ### Entry point — main.rs equivalence
 Status: In progress
@@ -46,24 +51,31 @@ metadata DB open, magic prefetch, quarantine prefetch missing.
 Stage 1 fills them in.
 
 ### Persistent metadata DB (feraille-meta)
-Status: Not started
+Status: In progress (handle opened in Stage 1.b; hydration / write-
+through arrives in later stages)
 Old location: `crates/feraille-app/src/main.rs::App::open_metadata_db`
 + write-through helpers across navigate / magic / quarantine paths.
-New location: `crates/feraille-gpui/src/shell.rs` (Stage 1+)
-Notes: Crate is already clean and linked in Stage 0. Open once at
-startup, share `Arc` with Shell. Used by ant trail, magic cache,
-quarantine cache, layout state.
+New location: `crates/feraille-gpui/src/shell.rs::open_metadata_db`
++ `Shell::metadata_db: Option<Arc<Mutex<MetadataDb>>>`
+Notes: Stage 1.b opened the handle at the canonical location
+(`~/Library/Application Support/Feraille/metadata.db`) and stored
+it on Shell. Wrapped in `Arc<Mutex<_>>` so Stage 4 background
+prefetch workers can share it. Hydration of ant trail / layout /
+tabs + write-through on navigate are deferred to the stages that
+consume them.
 
 ### Native macOS menu bar
-Status: Not started
+Status: Not started (re-ordered after Stage 3)
 Old location: `feraille_shell_mac::install_app_menu` driven by
 `feraille_core::commands` catalogue.
 New location: Replaces the stub `install_app_menus` in
-`crates/feraille-gpui/src/main.rs` (Stage 1).
+`crates/feraille-gpui/src/main.rs` (was Stage 1.c; now Stage 3.b).
 Notes: The new app currently builds a hand-rolled menu via
-`gpui::Menu`. Stage 1 replaces it with the shared AppKit menu so
-menu items / keyboard shortcuts / about-panel share one source of
-truth across both apps until cutover.
+`gpui::Menu`. Replacing it depends on the command-catalogue
+dispatcher from Stage 3 so menu items / keyboard shortcuts /
+about-panel share one source of truth. Stage 1 covers obs + DB
+foundations; the AppKit menu wiring lands once Stage 3's command
+table is in place.
 
 ---
 

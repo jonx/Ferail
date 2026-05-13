@@ -14,6 +14,7 @@ pub mod app_state;
 pub mod file_list;
 pub mod fs_watcher;
 pub mod icons;
+pub mod obs;
 pub mod screenshot;
 pub mod settings;
 pub mod shell;
