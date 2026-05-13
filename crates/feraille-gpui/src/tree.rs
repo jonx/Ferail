@@ -31,7 +31,11 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::{ActiveTheme, Collapsible, h_flex, sidebar::SidebarItem, v_flex};
+use gpui_component::{
+    ActiveTheme, Collapsible, h_flex,
+    sidebar::{SidebarGroup, SidebarItem, SidebarMenu},
+    v_flex,
+};
 
 use crate::icons::IconCache;
 use crate::shell::Shell;
@@ -107,6 +111,55 @@ impl Collapsible for TreeSection {
     fn collapsed(mut self, c: bool) -> Self {
         self.collapsed = c;
         self
+    }
+}
+
+/// Unifies the two kinds of section the shell's sidebar contains
+/// (flat icon-prefixed menu groups for Favorites, custom tree
+/// sections for Browse / Volumes) into a single `SidebarItem` so
+/// `gpui_component::Sidebar<E>` can hold a mixed sequence — gpui-
+/// component otherwise pins one `E` for all of a sidebar's children.
+#[derive(Clone)]
+pub enum ShellSidebarItem {
+    Group(SidebarGroup<SidebarMenu>),
+    Tree(TreeSection),
+}
+
+impl ShellSidebarItem {
+    pub fn group(g: SidebarGroup<SidebarMenu>) -> Self {
+        ShellSidebarItem::Group(g)
+    }
+    pub fn tree(t: TreeSection) -> Self {
+        ShellSidebarItem::Tree(t)
+    }
+}
+
+impl Collapsible for ShellSidebarItem {
+    fn is_collapsed(&self) -> bool {
+        match self {
+            ShellSidebarItem::Group(g) => g.is_collapsed(),
+            ShellSidebarItem::Tree(t) => t.is_collapsed(),
+        }
+    }
+    fn collapsed(self, c: bool) -> Self {
+        match self {
+            ShellSidebarItem::Group(g) => ShellSidebarItem::Group(g.collapsed(c)),
+            ShellSidebarItem::Tree(t) => ShellSidebarItem::Tree(t.collapsed(c)),
+        }
+    }
+}
+
+impl SidebarItem for ShellSidebarItem {
+    fn render(
+        self,
+        id: impl Into<ElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        match self {
+            ShellSidebarItem::Group(g) => g.render(id, window, cx).into_any_element(),
+            ShellSidebarItem::Tree(t) => t.render(id, window, cx).into_any_element(),
+        }
     }
 }
 

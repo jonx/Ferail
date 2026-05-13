@@ -179,46 +179,82 @@ existing `Table`.
 
 # Phase 2 — Sidebar IA Cleanup
 
-**Status:** Not started
+**Status:** Done (pending user review)
 **Goal:** remove the duplicate-Downloads bug and pick a single
 sidebar IA model.
 
-### Open decision (resolve before implementation)
+**Decision (user-locked 2026-05-14):** Option **C** — flat Favorites
+above an expandable Browse tree, with mounted Volumes as a third
+tree-style section. Favorites do not expand, so the same path can no
+longer appear both as a favorite and as a tree-descendant of the
+parent home folder.
 
-- [ ] **Pick the sidebar model:**
-  - (A) **Flat Favorites only.** Drop the Home-as-tree. Sidebar is
-        just the user's pinned locations (Home, Desktop, Documents,
-        Downloads, Applications, mounted Volumes, custom favorites).
-        Filesystem browsing happens via main pane + breadcrumb.
-  - (B) **Tree only.** A single hierarchical tree rooted at `/` (or
-        Home), with mounted volumes as sibling roots. Favorites
-        become tree "pinned" markers, not separate entries.
-  - (C) **Both, deduplicated and visually distinct.** Favorites
-        section at top (flat shortcuts); Tree section below as
-        "Browse" (lazy filesystem explorer). The tree never contains
-        nodes that are also pinned to Favorites *unless* they appear
-        with a visual badge indicating "this is also a Favorite."
-- *Recommendation:* (C) with strict deduplication. Most native Finder
-  / Files apps converged on this; users want both.
+### Deliverables
 
-### Deliverables (assuming option C)
+- [x] Removed the duplicate Downloads — Favorites is now flat
+      (no caret, no expand), and **Browse filters out depth-1 Home
+      children that match a Favorite path** so Desktop / Documents /
+      Downloads / Applications / Movies / Music / Pictures no longer
+      reappear under the expanded Home tree. Browse now reads as
+      "the parts of Home that aren't already in Favorites" — Library,
+      Public, custom subfolders, etc. The filter is depth-scoped:
+      deeper descendants (`Library/Application Support`, etc.) are
+      untouched. Implemented via the new
+      `append_tree_descendants_filtered(skip_paths: Option<&HashSet>)`
+      helper.
+- [x] Adopted `gpui_component::sidebar::{Sidebar, SidebarGroup,
+      SidebarMenu, SidebarMenuItem}` for the Favorites section.
+      Each shortcut is a `SidebarMenuItem` with a Lucide-style
+      `.icon(Icon::empty().path("icons/nav/X.svg"))` prefix and an
+      `.active(...)` state that matches the current tab's path.
+- [x] Custom `TreeSection` retained for **Browse** (single Home
+      root, expandable) and **Volumes** (each volume expandable),
+      since gpui-component's `Tree` primitive doesn't yet offer the
+      same lazy-children + active-path + capacity-bar story we
+      already paint.
+- [x] New `ShellSidebarItem` enum in
+      [tree.rs](../crates/feraille-gpui/src/tree.rs) wraps
+      `SidebarGroup<SidebarMenu>` and `TreeSection` so
+      `Sidebar<ShellSidebarItem>` can hold a mixed sequence —
+      gpui-component otherwise pins one `E` for all of a sidebar's
+      children.
+- [x] Bundled 10 new Lucide-style SVGs at
+      [resources/icons/nav/](../crates/feraille-gpui/resources/icons/nav/):
+      home, apps, desktop, documents, downloads, movies, music,
+      pictures, folder, drive, chevron-right, chevron-down.
+- [x] Browse section default-collapsed; clicking the Home caret
+      lazy-enumerates and shows descendants (existing behaviour
+      preserved).
+- [ ] Hover / focus state audit on the new SidebarMenuItem rows is
+      handed off to the Phase 10 polish sweep — gpui-component
+      already paints hover via its theme tokens, but the *contrast*
+      against our active state may want tuning.
 
-- [ ] Remove the duplicate Downloads entry in the current sidebar.
-- [ ] Adopt `gpui-component::Sidebar` end-to-end. We're already using
-      it for the top-level container; ensure every group uses
-      `SidebarGroup` + `SidebarMenu` + `SidebarMenuItem` (or the
-      header API for sub-sections).
-- [ ] Move the existing tree code in
-      [tree.rs](../crates/feraille-gpui/src/tree.rs) under a
-      `SidebarGroup::new("Browse")` with collapsible header.
-- [ ] Investigate `gpui-component::Tree` (if present in the version we
-      pin). If suitable, swap our custom `TreeSection` for it; keep
-      our `TreeRowSpec` + lazy children API as the data shape.
-- [ ] Icons on every sidebar row (Phase 3 covers Settings sidebar
-      icons; this covers main sidebar).
-- [ ] Hover, active, focus, disabled states verified per row.
-- [ ] Persistent active marker matches the file-list selection
-      contrast level (paired with Phase 1's selected-row work).
+### Files touched
+
+- [shell.rs](../crates/feraille-gpui/src/shell.rs) — Favorite struct,
+  FAVORITES const, build_favorites_menu, build_browse_rows
+  (replaces build_locations_rows), render() rewiring.
+- [tree.rs](../crates/feraille-gpui/src/tree.rs) — `ShellSidebarItem`
+  enum + impls.
+- [resources/icons/nav/](../crates/feraille-gpui/resources/icons/nav/)
+  — 10 new SVGs.
+
+### Notes for the future
+
+- Custom favorites (drag-to-add, persist across sessions) is a Phase
+  6+ concern — Favorites today is a fixed list of XDG-style home
+  shortcuts. Decision: persistence key will be canonical path
+  string (resolved via `feraille-fs-native::canonicalize` at save
+  time), per the locked-decisions answer #2.
+- `gpui_component::tree::Tree` is worth a revisit when we add a
+  "Recents" section — it ships keyboard nav (arrow keys + Enter)
+  that our TreeSection doesn't yet implement.
+- The right-click "Reveal in Browse" affordance (Phase 6 plan)
+  would expand the Browse tree to the matching ancestor; existing
+  `Shell::reveal_path_in_tree` already does this for the old
+  Locations API and just needs rewiring to the new single-rooted
+  Browse model.
 
 ### gpui-component primitives
 

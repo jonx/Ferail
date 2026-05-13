@@ -23,7 +23,7 @@ use gpui_component::{
     button::Button,
     h_flex,
     input::{Input, InputEvent, InputState},
-    sidebar::{Sidebar, SidebarHeader},
+    sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
     switch::Switch,
     table::{DataTable, TableEvent, TableState},
     v_flex,
@@ -34,7 +34,7 @@ use crate::file_list::FileListDelegate;
 use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
 use crate::icons::IconCache;
 use crate::tasks::TaskRegistry;
-use crate::tree::{TreeChild, TreeRowSpec, TreeSection};
+use crate::tree::{ShellSidebarItem, TreeChild, TreeRowSpec, TreeSection};
 
 actions!(
     shell,
@@ -363,53 +363,67 @@ fn open_metadata_db() -> Option<Arc<Mutex<feraille_meta::MetadataDb>>> {
     }
 }
 
-/// A named filesystem destination shown in the sidebar's Locations
-/// section. The user's home directory, Applications, Documents, etc.
-struct Location {
+/// A user-pinned filesystem shortcut shown in the sidebar's
+/// **Favorites** section. Flat — no expand/collapse, no descendants
+/// — so a click navigates and that's it. Tree-style hierarchical
+/// browsing lives in the separate Browse section below the favorites.
+struct Favorite {
     label: &'static str,
     /// `home`-relative subpath (None ⇒ the home directory itself).
     sub: Option<&'static str>,
+    /// Asset path for the row's prefix icon. Resolved via
+    /// `FeraAssets` (Phase 1 composite source) so both our local
+    /// bundle and the upstream gpui-component pack work.
+    icon: &'static str,
 }
 
-const LOCATIONS: &[Location] = &[
-    Location {
+const FAVORITES: &[Favorite] = &[
+    Favorite {
         label: "Home",
         sub: None,
+        icon: "icons/nav/home.svg",
     },
-    Location {
+    Favorite {
         label: "Applications",
         sub: Some("Applications"),
+        icon: "icons/nav/apps.svg",
     },
-    Location {
+    Favorite {
         label: "Desktop",
         sub: Some("Desktop"),
+        icon: "icons/nav/desktop.svg",
     },
-    Location {
+    Favorite {
         label: "Documents",
         sub: Some("Documents"),
+        icon: "icons/nav/documents.svg",
     },
-    Location {
+    Favorite {
         label: "Downloads",
         sub: Some("Downloads"),
+        icon: "icons/nav/downloads.svg",
     },
-    Location {
+    Favorite {
         label: "Movies",
         sub: Some("Movies"),
+        icon: "icons/nav/movies.svg",
     },
-    Location {
+    Favorite {
         label: "Music",
         sub: Some("Music"),
+        icon: "icons/nav/music.svg",
     },
-    Location {
+    Favorite {
         label: "Pictures",
         sub: Some("Pictures"),
+        icon: "icons/nav/pictures.svg",
     },
 ];
 
 const ICON_WARM_CHUNK: usize = 16;
 const ICON_WARM_INTERVAL: Duration = Duration::from_millis(16);
 
-impl Location {
+impl Favorite {
     fn path(&self) -> PathBuf {
         let mut p = home_dir();
         if let Some(sub) = self.sub {
@@ -1616,32 +1630,80 @@ impl Shell {
         }
     }
 
-    /// Build the Locations section as a flat row list with descendants
-    /// of every expanded folder interleaved.
-    fn build_locations_rows(&mut self) -> Vec<TreeRowSpec> {
+    /// Build the **Browse** section as a single-rooted, expandable
+    /// tree starting at the home folder. (Phase 2: the flat
+    /// shortcut list moved out into the dedicated Favorites menu
+    /// above this section, which eliminates the
+    /// Downloads-appears-twice IA bug — favorites don't expand.)
+    ///
+    /// Direct children of Home that are already pinned in Favorites
+    /// are hidden from the tree so the same path can never appear
+    /// twice in the sidebar, even when Home is expanded. Browse then
+    /// reads as "the parts of Home that aren't already in Favorites"
+    /// — Library, Public, custom subfolders, etc. — plus their
+    /// hierarchy. Deeper descendants are untouched: expanding
+    /// `Library/Application Support` is fine because that's already
+    /// not pinned anywhere.
+    fn build_browse_rows(&mut self) -> Vec<TreeRowSpec> {
+        let home = home_dir();
+        let favorite_paths: HashSet<PathBuf> =
+            FAVORITES.iter().map(|f| f.path()).collect();
         let current = self.active_tab().current_dir.clone();
-        let mut rows: Vec<TreeRowSpec> = Vec::new();
-        for loc in LOCATIONS {
-            let path = loc.path();
+        let node_id = self.fs.id_for_path(&home);
+        self.node_store
+            .get_or_create_path_with_id(home.clone(), node_id);
+        let is_expanded = self.expanded.contains(&home);
+        let mut rows: Vec<TreeRowSpec> = vec![TreeRowSpec {
+            node_id,
+            path: home.clone(),
+            label: SharedString::from("Home"),
+            depth: 0,
+            is_expandable: true,
+            is_expanded,
+            is_active: home == current,
+            capacity: None,
+        }];
+        if is_expanded {
+            self.append_tree_descendants_filtered(
+                &mut rows,
+                &home,
+                1,
+                &current,
+                Some(&favorite_paths),
+            );
+        }
+        rows
+    }
+
+    /// Build the Favorites section: a flat `SidebarMenu` of icon-
+    /// prefixed shortcuts. Each item navigates straight to its
+    /// path; none expand, so the IA stays unambiguous next to the
+    /// expandable Browse tree below.
+    fn build_favorites_menu(&mut self, weak: WeakEntity<Self>) -> SidebarMenu {
+        use gpui_component::Icon;
+        let current = self.active_tab().current_dir.clone();
+        let mut menu = SidebarMenu::new();
+        for fav in FAVORITES {
+            let path = fav.path();
             let node_id = self.fs.id_for_path(&path);
             self.node_store
                 .get_or_create_path_with_id(path.clone(), node_id);
-            let is_expanded = self.expanded.contains(&path);
-            rows.push(TreeRowSpec {
-                node_id,
-                path: path.clone(),
-                label: SharedString::from(loc.label),
-                depth: 0,
-                is_expandable: true,
-                is_expanded,
-                is_active: path == current,
-                capacity: None,
-            });
-            if is_expanded {
-                self.append_tree_descendants(&mut rows, &path, 1, &current);
-            }
+            let active = path == current;
+            let weak_for_click = weak.clone();
+            menu = menu.child(
+                SidebarMenuItem::new(SharedString::from(fav.label))
+                    .icon(Icon::empty().path(fav.icon))
+                    .active(active)
+                    .on_click(move |_window, _evt, cx| {
+                        if let Some(s) = weak_for_click.upgrade() {
+                            s.update(cx, |shell, cx| {
+                                shell.navigate_node(node_id, cx);
+                            });
+                        }
+                    }),
+            );
         }
-        rows
+        menu
     }
 
     /// Build the Volumes section as a flat row list. Same recursion
@@ -1684,6 +1746,9 @@ impl Shell {
     /// (`toggle_tree_expand` / `reveal_path_in_tree` do). The
     /// `show_hidden` flag is checked here, not at enumeration time,
     /// so toggling Show Hidden doesn't require cache invalidation.
+    ///
+    /// Thin wrapper that runs without a skip filter — used by
+    /// Volumes and any deeper-than-depth-1 recursion in Browse.
     fn append_tree_descendants(
         &self,
         rows: &mut Vec<TreeRowSpec>,
@@ -1691,12 +1756,38 @@ impl Shell {
         depth: usize,
         current: &Path,
     ) {
+        self.append_tree_descendants_filtered(rows, parent, depth, current, None);
+    }
+
+    /// Same as [`append_tree_descendants`] but with an optional
+    /// `skip_paths` filter applied to direct children only. Used by
+    /// Browse to suppress depth-1 Home children that are already
+    /// pinned in Favorites. The filter is *not* propagated to deeper
+    /// levels: once we're inside `Library/`, recursion ignores it so
+    /// `Library/Application Support` still lists.
+    fn append_tree_descendants_filtered(
+        &self,
+        rows: &mut Vec<TreeRowSpec>,
+        parent: &Path,
+        depth: usize,
+        current: &Path,
+        skip_paths: Option<&HashSet<PathBuf>>,
+    ) {
         let Some(children) = self.tree_children.get(parent) else {
             return;
         };
         for child in children {
             if !self.show_hidden && child.label.starts_with('.') {
                 continue;
+            }
+            // Filter is applied at this depth only — passes `None`
+            // to the recursive call, so grandchildren are never
+            // filtered. Keeps Browse complete past the depth-1
+            // Favorites overlap.
+            if let Some(skip) = skip_paths {
+                if skip.contains(&child.path) {
+                    continue;
+                }
             }
             let is_expanded = self.expanded.contains(&child.path);
             rows.push(TreeRowSpec {
@@ -2119,7 +2210,8 @@ impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _path_guard = feraille_core::path_guard::enter_render();
         let weak = cx.weak_entity();
-        let locations_rows = self.build_locations_rows();
+        let favorites_menu = self.build_favorites_menu(weak.clone());
+        let browse_rows = self.build_browse_rows();
         let volumes_rows = self.build_volumes_rows();
         let has_volumes = !self.volumes.is_empty();
         let breadcrumb = self.breadcrumb(cx);
@@ -2132,6 +2224,14 @@ impl Render for Shell {
         // fill its panel; the tree rows already use `.w_full()` on
         // each row container, so the labels grow as the user
         // drags the splitter.
+        //
+        // Phase 2 IA: Favorites = flat icon-prefixed shortcuts
+        // (SidebarMenu primitive); Browse = single-rooted expandable
+        // tree at Home; Volumes = expandable per-volume tree. Each
+        // section is visually distinct (header style differs between
+        // SidebarGroup labels and TreeSection headers) and Downloads
+        // can no longer appear twice because Favorites items don't
+        // expand.
         let mut sidebar = Sidebar::new("shell-sidebar")
             .collapsible(false)
             .w_full()
@@ -2143,19 +2243,22 @@ impl Render for Shell {
                         .child("Feraille"),
                 ),
             )
-            .child(TreeSection::new(
-                "Locations",
-                locations_rows,
+            .child(ShellSidebarItem::group(
+                SidebarGroup::new("Favorites").child(favorites_menu),
+            ))
+            .child(ShellSidebarItem::tree(TreeSection::new(
+                "Browse",
+                browse_rows,
                 weak.clone(),
                 self.icons.clone(),
-            ));
+            )));
         if has_volumes {
-            sidebar = sidebar.child(TreeSection::new(
+            sidebar = sidebar.child(ShellSidebarItem::tree(TreeSection::new(
                 "Volumes",
                 volumes_rows,
                 weak.clone(),
                 self.icons.clone(),
-            ));
+            )));
         }
 
         let _ = path_str; // breadcrumb already shows the path
