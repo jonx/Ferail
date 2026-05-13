@@ -19,7 +19,7 @@ use gpui_component::{
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
     switch::Switch,
     table::{DataTable, TableEvent, TableState},
-    v_flex,
+    v_flex, Root, WindowExt,
 };
 
 use crate::app_state::{self, AppState};
@@ -42,6 +42,8 @@ actions!(
         RevealInFinder,
         FocusFilter,
         ClearFilter,
+        NewFolder,
+        RenameSelected,
     ]
 );
 
@@ -65,6 +67,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-alt-c", CopyPath, Some(SHELL_CONTEXT)),
         KeyBinding::new("cmd-f", FocusFilter, Some(SHELL_CONTEXT)),
         KeyBinding::new("escape", ClearFilter, Some(SHELL_CONTEXT)),
+        KeyBinding::new("cmd-shift-n", NewFolder, Some(SHELL_CONTEXT)),
+        KeyBinding::new("f2", RenameSelected, Some(SHELL_CONTEXT)),
         // App-wide: Cmd+, is the system convention for Preferences /
         // Settings and should work from anywhere in the app.
         KeyBinding::new("cmd-,", OpenSettings, None),
@@ -394,6 +398,92 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.filter_input.read(cx).focus_handle(cx).focus(window, cx);
+    }
+
+    /// Cmd+Shift+N: open the New Folder dialog.
+    fn on_new_folder(
+        &mut self,
+        _: &NewFolder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let parent = self.current_dir.clone();
+        let input_state = cx.new(|cx| InputState::new(window, cx).placeholder("Untitled folder"));
+        let input_for_ok = input_state.clone();
+        let shell = cx.entity();
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input = input_state.clone();
+            let input_for_ok = input_for_ok.clone();
+            let shell = shell.clone();
+            let parent = parent.clone();
+            dialog
+                .title("New Folder")
+                .child(Input::new(&input).small())
+                .on_ok(move |_, _window, cx: &mut App| {
+                    let name = input_for_ok.read(cx).value().trim().to_string();
+                    if name.is_empty() {
+                        return true;
+                    }
+                    let mut path = parent.clone();
+                    path.push(&name);
+                    let _ = std::fs::create_dir(&path);
+                    let cur = parent.clone();
+                    shell.update(cx, move |this, cx| this.load_path(cur, cx));
+                    true
+                })
+        });
+    }
+
+    /// F2: rename the currently-selected row.
+    fn on_rename_selected(
+        &mut self,
+        _: &RenameSelected,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.target_row() else { return };
+        let Some(entry) = self.table.read(cx).delegate().entries.get(row).cloned() else {
+            return;
+        };
+        let Some(old_path) = self.path_for_row(row, cx) else { return };
+        let original_name = entry.name.clone();
+        let input_state = cx.new(|cx| {
+            let s = InputState::new(window, cx).placeholder("New name");
+            // Pre-fill with the existing name (so the user is
+            // editing, not typing from scratch).
+            s
+        });
+        // Set the initial value AFTER creating the entity so the
+        // window+cx are properly threaded.
+        input_state.update(cx, |state, cx| {
+            state.set_value(original_name.clone(), window, cx);
+        });
+        let input_for_ok = input_state.clone();
+        let shell = cx.entity();
+        let parent = self.current_dir.clone();
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input = input_state.clone();
+            let input_for_ok = input_for_ok.clone();
+            let shell = shell.clone();
+            let old_path = old_path.clone();
+            let original_name = original_name.clone();
+            let parent = parent.clone();
+            dialog
+                .title("Rename")
+                .child(Input::new(&input).small())
+                .on_ok(move |_, _window, cx: &mut App| {
+                    let new_name = input_for_ok.read(cx).value().trim().to_string();
+                    if new_name.is_empty() || new_name == original_name {
+                        return true;
+                    }
+                    let mut new_path = old_path.clone();
+                    new_path.set_file_name(&new_name);
+                    let _ = std::fs::rename(&old_path, &new_path);
+                    let cur = parent.clone();
+                    shell.update(cx, move |this, cx| this.load_path(cur, cx));
+                    true
+                })
+        });
     }
 
     fn on_clear_filter(
@@ -803,7 +893,7 @@ impl Shell {
 }
 
 impl Render for Shell {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let locations = self.locations_menu(cx);
         let volumes = self.volumes_menu(cx);
         let has_volumes = !self.volumes.is_empty();
@@ -844,6 +934,8 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_move_to_trash))
             .on_action(cx.listener(Self::on_focus_filter))
             .on_action(cx.listener(Self::on_clear_filter))
+            .on_action(cx.listener(Self::on_new_folder))
+            .on_action(cx.listener(Self::on_rename_selected))
             .size_full()
             .bg(cx.theme().background)
             .child(sidebar)
@@ -867,6 +959,10 @@ impl Render for Shell {
                             .child(self.preview(cx)),
                     ),
             )
+            // Dialog overlay layer — rendered last so dialogs draw
+            // above the shell content. Needed for the New Folder /
+            // Rename modals (5.5.c).
+            .children(Root::render_dialog_layer(window, cx))
     }
 }
 
