@@ -25,7 +25,9 @@
 //! `Shell::load_path` is too — moving both to a background-executor
 //! pipeline is a unified follow-on (streaming enumeration).
 
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
@@ -33,6 +35,7 @@ use gpui_component::{
     sidebar::SidebarItem, ActiveTheme, Collapsible, h_flex, v_flex,
 };
 
+use crate::icons::IconCache;
 use crate::shell::Shell;
 
 /// One row to render in the tree view. Computed by `Shell` (needs
@@ -72,6 +75,7 @@ pub struct TreeSection {
     label: SharedString,
     rows: Vec<TreeRowSpec>,
     shell: WeakEntity<Shell>,
+    icons: Rc<RefCell<IconCache>>,
     collapsed: bool,
 }
 
@@ -80,11 +84,13 @@ impl TreeSection {
         label: impl Into<SharedString>,
         rows: Vec<TreeRowSpec>,
         shell: WeakEntity<Shell>,
+        icons: Rc<RefCell<IconCache>>,
     ) -> Self {
         Self {
             label: label.into(),
             rows,
             shell,
+            icons,
             collapsed: false,
         }
     }
@@ -119,10 +125,11 @@ impl SidebarItem for TreeSection {
             .child(self.label);
 
         let shell = self.shell.clone();
+        let icons = self.icons.clone();
         let rows = self
             .rows
             .into_iter()
-            .map(|spec| render_tree_row(spec, shell.clone(), cx))
+            .map(|spec| render_tree_row(spec, shell.clone(), icons.clone(), cx))
             .collect::<Vec<AnyElement>>();
 
         v_flex().w_full().child(header).child(v_flex().w_full().children(rows))
@@ -131,10 +138,14 @@ impl SidebarItem for TreeSection {
 
 /// Render one tree row. The caret + label split is deliberate so
 /// click-on-name navigates while click-on-caret only toggles
-/// expansion — matches Finder's sidebar.
+/// expansion — matches Finder's sidebar. A small NSWorkspace-fetched
+/// folder/volume icon renders between the caret and the label, with
+/// the icon cache keyed by path so /Volumes/Foo gets its custom icon
+/// rather than the generic blue-folder.
 fn render_tree_row(
     spec: TreeRowSpec,
     shell: WeakEntity<Shell>,
+    icons: Rc<RefCell<IconCache>>,
     cx: &mut App,
 ) -> AnyElement {
     let TreeRowSpec {
@@ -210,6 +221,18 @@ fn render_tree_row(
     } else {
         row = row.child(div().flex_shrink_0().w(px(16.0)));
     }
+
+    // Real folder/volume icon between the caret and the label. The
+    // first call per path costs one NSWorkspace fetch (~1ms); the
+    // shared cache means subsequent renders are a HashMap hit.
+    let icon = icons.borrow_mut().folder_icon_for(&path);
+    row = row.child(
+        div()
+            .flex_shrink_0()
+            .w(px(16.0))
+            .h(px(16.0))
+            .child(img(icon).w(px(16.0)).h(px(16.0))),
+    );
 
     let label_path = path.clone();
     let shell_for_label = shell.clone();

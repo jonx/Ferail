@@ -149,6 +149,11 @@ pub struct Shell {
     /// `Arc<Mutex<_>>` so background workers (Stage 4 prefetch) can
     /// share it without competing borrows.
     pub metadata_db: Option<Arc<Mutex<feraille_meta::MetadataDb>>>,
+    /// Shared NSWorkspace-backed icon cache. Owned at the Shell
+    /// level so the file-list delegate (Phase 4.c) and the sidebar
+    /// tree (Stage 9.c) share the same fetched bytes — one fetch
+    /// per kind / path across the whole UI.
+    pub icons: Rc<RefCell<IconCache>>,
     /// Live filter text. Shared across tabs.
     pub filter_text: String,
     /// `gpui-component` Input state for the filter field in the
@@ -258,7 +263,7 @@ impl Shell {
         let start = persisted.last_dir.clone().unwrap_or_else(home_dir);
         let show_hidden = persisted.show_hidden.unwrap_or(false);
         let icons = Rc::new(RefCell::new(IconCache::new()));
-        let mut delegate = FileListDelegate::new(fs.clone(), icons);
+        let mut delegate = FileListDelegate::new(fs.clone(), icons.clone());
         let last_error = delegate.load(start.clone(), show_hidden, "");
         let initial_selection = if delegate.entries.is_empty() { None } else { Some(0) };
         let table = cx.new(|cx| {
@@ -363,6 +368,7 @@ impl Shell {
             watcher,
             context_row: None,
             metadata_db,
+            icons,
             filter_text: String::new(),
             filter_input,
             expanded: HashSet::new(),
@@ -1367,9 +1373,19 @@ impl Render for Shell {
                         .child("Feraille"),
                 ),
             )
-            .child(TreeSection::new("Locations", locations_rows, weak.clone()));
+            .child(TreeSection::new(
+                "Locations",
+                locations_rows,
+                weak.clone(),
+                self.icons.clone(),
+            ));
         if has_volumes {
-            sidebar = sidebar.child(TreeSection::new("Volumes", volumes_rows, weak.clone()));
+            sidebar = sidebar.child(TreeSection::new(
+                "Volumes",
+                volumes_rows,
+                weak.clone(),
+                self.icons.clone(),
+            ));
         }
 
         let _ = path_str; // breadcrumb already shows the path

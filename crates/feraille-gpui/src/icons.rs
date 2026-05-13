@@ -64,6 +64,25 @@ impl IconCache {
         }
     }
 
+    /// Sidebar-tree-flavoured lookup: caches by the full path string
+    /// so special folders (Applications, Documents, /Volumes/Foo)
+    /// each keep their distinctive Finder icon. Per-row cost
+    /// amortises over the tree's bounded entry count.
+    pub fn folder_icon_for(&mut self, path: &Path) -> Arc<RenderImage> {
+        let key = format!("path:{}", path.display());
+        if let Some(arc) = self.by_kind.get(&key) {
+            return arc.clone();
+        }
+        match fetch_icon_rgba(path, ICON_PX) {
+            Some((rgba, w, h)) => {
+                let arc = Arc::new(build_render_image(rgba, w, h));
+                self.by_kind.insert(key, arc.clone());
+                arc
+            }
+            None => self.blank_icon(),
+        }
+    }
+
     fn blank_icon(&mut self) -> Arc<RenderImage> {
         if let Some(b) = &self.blank {
             return b.clone();
