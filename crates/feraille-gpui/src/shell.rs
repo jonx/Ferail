@@ -1962,7 +1962,16 @@ impl Render for Shell {
             .to_string_lossy()
             .into_owned();
 
+        // `.collapsible(false)` disables gpui-component's animatable
+        // wrapper (which would otherwise force a fixed expanded
+        // width), letting the surrounding `resizable_panel` drive
+        // the actual column width. `.w_full()` makes the Sidebar
+        // fill its panel; the tree rows already use `.w_full()` on
+        // each row container, so the labels grow as the user
+        // drags the splitter.
         let mut sidebar = Sidebar::new("shell-sidebar")
+            .collapsible(false)
+            .w_full()
             .header(
                 SidebarHeader::new().child(
                     div()

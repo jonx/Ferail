@@ -99,6 +99,14 @@ fn run_gui(args: screenshot::Args) {
         // the menu item below can advertise the shortcut hint).
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
+        // App-level OpenSettings handler so the menu-bar item is
+        // always enabled, not just when a Shell window has focus.
+        // The Shell-context listener for OpenSettings still wins
+        // when present (lower precedence first); this is the
+        // fallback that fires from the app menu / About dialog.
+        cx.on_action(|_: &OpenSettings, cx| {
+            feraille_gpui::settings::open_settings_window(cx);
+        });
 
         install_app_menus(cx);
 
