@@ -953,6 +953,7 @@ impl Shell {
                 is_expandable: true,
                 is_expanded,
                 is_active: path == current,
+                capacity: None,
             });
             if is_expanded {
                 self.append_tree_descendants(&mut rows, &path, 1, &current);
@@ -962,13 +963,19 @@ impl Shell {
     }
 
     /// Build the Volumes section as a flat row list. Same recursion
-    /// shape as Locations.
+    /// shape as Locations, but the depth-0 volume row carries a
+    /// `(total, available)` capacity so the renderer can draw a
+    /// Finder-style capacity bar.
     fn build_volumes_rows(&self) -> Vec<TreeRowSpec> {
         let current = self.active_tab().current_dir.clone();
         let mut rows: Vec<TreeRowSpec> = Vec::new();
         for v in &self.volumes {
             let path = v.path.clone();
             let is_expanded = self.expanded.contains(&path);
+            let capacity = match (v.total_bytes, v.available_bytes) {
+                (Some(t), Some(a)) if t > 0 => Some((t, a)),
+                _ => None,
+            };
             rows.push(TreeRowSpec {
                 path: path.clone(),
                 label: SharedString::from(v.name.clone()),
@@ -976,6 +983,7 @@ impl Shell {
                 is_expandable: true,
                 is_expanded,
                 is_active: path == current,
+                capacity,
             });
             if is_expanded {
                 self.append_tree_descendants(&mut rows, &path, 1, &current);
@@ -1012,6 +1020,7 @@ impl Shell {
                 is_expandable: true,
                 is_expanded,
                 is_active: &child.path == current,
+                capacity: None,
             });
             if is_expanded {
                 self.append_tree_descendants(rows, &child.path, depth + 1, current);

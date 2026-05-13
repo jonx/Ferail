@@ -55,6 +55,10 @@ pub struct TreeRowSpec {
     pub is_expanded: bool,
     /// Whether this directory equals the active tab's `current_dir`.
     pub is_active: bool,
+    /// Optional `(total_bytes, available_bytes)` capacity to render a
+    /// Finder-style capacity bar under the label. Populated for
+    /// volume rows; `None` for everything else.
+    pub capacity: Option<(u64, u64)>,
 }
 
 /// Cached representation of one direct child of an expanded folder.
@@ -155,6 +159,7 @@ fn render_tree_row(
         is_expandable,
         is_expanded,
         is_active,
+        capacity,
     } = spec;
     let theme = cx.theme();
     let row_key: SharedString = format!("tree-row-{}", path.display()).into();
@@ -253,6 +258,47 @@ fn render_tree_row(
                 });
             }
         });
+
+    // Capacity bar for volume rows. Finder draws this as a thin
+    // line under the volume name, with the used portion filled in
+    // accent and the rest in muted grey. Matches the
+    // `feraille-controls::filetree` NodeCapacity shape from the
+    // old app.
+    if let Some((total, available)) = capacity {
+        if total > 0 {
+            let theme = cx.theme();
+            let used_fraction = ((total.saturating_sub(available)) as f32 / total as f32)
+                .clamp(0.0, 1.0);
+            // Indent the bar so it sits under the label, skipping
+            // caret + icon columns (16 + 4 + 16 + 4 = ~40 DIPs).
+            let bar_indent = px(8.0 + 14.0 * depth as f32 + 40.0);
+            let bar_w = px(140.0);
+            let fill_w = bar_w * used_fraction;
+            let track_bg = theme.muted_foreground.opacity(0.25);
+            let fill_bg = theme.muted_foreground.opacity(0.85);
+            let bar = div()
+                .flex()
+                .items_center()
+                .pl(bar_indent)
+                .pr_2()
+                .pb_1()
+                .child(
+                    div()
+                        .w(bar_w)
+                        .h(px(4.0))
+                        .rounded(px(2.0))
+                        .bg(track_bg)
+                        .child(
+                            div()
+                                .h_full()
+                                .w(fill_w)
+                                .rounded(px(2.0))
+                                .bg(fill_bg),
+                        ),
+                );
+            return v_flex().w_full().child(row).child(bar).into_any_element();
+        }
+    }
 
     row.into_any_element()
 }
