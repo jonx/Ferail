@@ -49,6 +49,7 @@ actions!(
         NextTab,
         PrevTab,
         QuickLook,
+        GoHome,
     ]
 );
 
@@ -609,6 +610,16 @@ impl Shell {
         let Some(row) = self.target_row() else { return };
         let Some(path) = self.path_for_row(row, cx) else { return };
         let _ = feraille_shell_mac::show_quick_look(&[path.as_path()]);
+    }
+
+    /// Cmd+Shift+H — navigate the active tab to the home directory.
+    fn on_go_home(
+        &mut self,
+        _: &GoHome,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate(home_dir(), cx);
     }
 
     fn on_open_settings(
@@ -1253,6 +1264,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_prev_tab))
             .on_action(cx.listener(Self::on_quick_look))
+            .on_action(cx.listener(Self::on_go_home))
             .size_full()
             .bg(cx.theme().background)
             .child(sidebar)

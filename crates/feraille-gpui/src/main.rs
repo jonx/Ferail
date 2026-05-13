@@ -9,7 +9,7 @@ use feraille_gpui::{
     screenshot,
     settings::{category_from_arg, SettingsView},
     shell::{
-        CloseTab, CopyPath, FocusFilter, MoveToTrash, NavigateBack, NavigateForward,
+        CloseTab, CopyPath, FocusFilter, GoHome, MoveToTrash, NavigateBack, NavigateForward,
         NavigateParent, NewFolder, NewTab, OpenSelected, OpenSettings, Refresh,
         RenameSelected, RevealInFinder, Shell, ToggleHidden,
     },
@@ -43,9 +43,19 @@ fn run_gui(args: screenshot::Args) {
     app.run(move |cx| {
         gpui_component::init(cx);
         feraille_gpui::shell::init(cx);
-        if let Some(mode) = theme_mode {
-            Theme::change(mode, None, cx);
-        }
+        // Initial theme: explicit --theme flag wins; otherwise
+        // detect macOS Appearance via feraille_shell_mac. Live
+        // observer (responding to System Settings → Appearance
+        // changes after launch) lands with the Stage 9 "Auto"
+        // preference work; this just establishes the default.
+        let mode = theme_mode.unwrap_or_else(|| {
+            if feraille_shell_mac::system_is_dark() {
+                gpui_component::ThemeMode::Dark
+            } else {
+                gpui_component::ThemeMode::Light
+            }
+        });
+        Theme::change(mode, None, cx);
 
         // Quit action so Cmd+Q routes through gpui's normal app
         // shutdown rather than relying on the platform's default
@@ -137,6 +147,8 @@ fn install_app_menus(cx: &mut App) {
                 MenuItem::action(title("go.back", "Back"), NavigateBack),
                 MenuItem::action(title("go.forward", "Forward"), NavigateForward),
                 MenuItem::action(title("go.parent", "Enclosing Folder"), NavigateParent),
+                MenuItem::separator(),
+                MenuItem::action(title("go.home", "Home"), GoHome),
             ],
             disabled: false,
         },

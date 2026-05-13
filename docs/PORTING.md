@@ -307,6 +307,13 @@ hook (Stage 9).
 Notes: Domain types already in feraille-core; persistence in
 feraille-meta. Just need the visual treatment.
 
+### Go Home (Cmd+Shift+H)
+Status: Ported ✅ (Harvest Stage 9.a)
+Old location: `feraille-app/src/main.rs` `go.home` dispatch arm.
+New location: `crates/feraille-gpui/src/shell.rs::on_go_home`.
+Notes: Trivial: `self.navigate(home_dir(), cx)`. Wired into the
+Go menu (after Enclosing Folder) and the catalogue keymap.
+
 ### UI zoom (Cmd+= / Cmd+- / Cmd+0)
 Status: Not started
 Old location: `feraille-app/src/main.rs::nudge_ui_scale` +
@@ -323,13 +330,18 @@ New location: `crates/feraille-gpui/src/shell.rs::breadcrumb`
 Notes: Enter navigates, Escape cancels.
 
 ### System theme follow ("Auto")
-Status: Not started
+Status: Partially ported (Stage 9.a — startup detection only;
+live observer + explicit "Auto" preference deferred.)
 Old location: `feraille_shell_mac::start_system_theme_observer` +
 ThemePreference::System branch in feraille-app.
-New location: `crates/feraille-gpui/src/main.rs` startup + a new
-ThemeMode::Auto handling layer (Stage 9).
-Notes: Current new app supports Light/Dark only. Add Auto via the
-observer callback.
+New location: `crates/feraille-gpui/src/main.rs` — initial theme
+defaults to `feraille_shell_mac::system_is_dark()` when no
+`--theme` flag is set, instead of gpui-component's hard-coded
+Light default. Live observer (responding to System Settings →
+Appearance changes after launch) defers to a follow-on:
+SettingsView needs an "Auto" radio option + an
+`Arc<AtomicBool>` shared with a `start_system_theme_observer`
+callback that the foreground executor polls.
 
 ### Keyboard-shortcuts help overlay (Cmd+?)
 Status: Not started

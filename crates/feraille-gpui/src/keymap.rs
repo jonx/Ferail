@@ -19,7 +19,7 @@ use feraille_core::commands::{all_commands, CommandId, Shortcut};
 use gpui::{App, KeyBinding};
 
 use crate::shell::{
-    self, ClearFilter, CloseTab, CopyPath, FocusFilter, MoveToTrash, NavigateBack,
+    self, ClearFilter, CloseTab, CopyPath, FocusFilter, GoHome, MoveToTrash, NavigateBack,
     NavigateForward, NavigateParent, NewFolder, NewTab, NextTab, OpenSelected, OpenSettings,
     PrevTab, QuickLook, Refresh, RenameSelected, RevealInFinder, ToggleHidden,
 };
@@ -124,6 +124,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "go.back" => cx.bind_keys([KeyBinding::new(kb_str, NavigateBack, ctx)]),
         "go.forward" => cx.bind_keys([KeyBinding::new(kb_str, NavigateForward, ctx)]),
         "go.parent" => cx.bind_keys([KeyBinding::new(kb_str, NavigateParent, ctx)]),
+        "go.home" => cx.bind_keys([KeyBinding::new(kb_str, GoHome, ctx)]),
 
         // -- Selection --------------------------------------------
         "selection.activate" => {
@@ -152,7 +153,6 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         | "view.theme_light"
         | "view.theme_dark"
         | "view.theme_system"
-        | "go.home"
         | "disk_usage.refresh"
         | "disk_usage.zoom_out"
         | "disk_usage.toggle_topn"
