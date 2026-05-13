@@ -23,11 +23,16 @@ gpui_platform.workspace = true
 gpui-component.workspace = true
 gpui-component-assets.workspace = true
 
+# Phase 4: domain wiring. feraille-gpui consumes the domain layer
+# the same way feraille-app did, through the same trait surface
+# audited in Phase 2.
+feraille-core.workspace = true
+feraille-fs-native.workspace = true
+
 [dev-dependencies]
-# Phase 2 isolation test consumes the domain layer directly — proves
-# the layer works without any GPUI involvement. If a domain crate
-# ever pulls in a UI dep, this test stops compiling and Phase 2's
-# invariant is loudly violated.
+# Phase 2 isolation test still lives here. It now ALSO doubles as a
+# guarantee that the domain types stay dyn-safe — Phase 4 relies on
+# `Box<dyn FsBackend>` working.
 feraille-core.workspace = true
 feraille-fs-native.workspace = true
 

@@ -6,7 +6,7 @@
 //! behind gpui's `test-support` feature; enabled in the workspace
 //! `Cargo.toml`), writes a PNG, then quits.
 //!
-//! ```
+//! ```sh
 //! cargo run --bin feraille-gpui -- --screenshot screenshots/foo.png \
 //!     --theme dark --width 1180 --height 760
 //! ```
