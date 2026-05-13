@@ -19,10 +19,11 @@ use feraille_core::commands::{all_commands, CommandId, Shortcut};
 use gpui::{App, KeyBinding};
 
 use crate::shell::{
-    self, ClearFilter, CloseTab, CopyPath, EditBreadcrumb, FocusFilter, GoHome,
-    MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
-    NextTab, OpenDiskUsage, OpenSelected, OpenSettings, PrevTab, QuickLook, Refresh,
-    RenameSelected, RevealInFinder, ShortcutsHelp, ToggleHidden,
+    self, ClearFilter, CloseTab, CopyPath, CursorDown, CursorFirst, CursorLast, CursorUp,
+    EditBreadcrumb, FocusFilter, GetInfo, GoHome, MoveToTrash, NavigateBack, NavigateForward,
+    NavigateParent, NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected,
+    OpenSettings, PageDown, PageUp, PrevTab, QuickLook, Refresh, RenameSelected,
+    RevealInFinder, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
 };
 
 /// Install keybindings for every command in `feraille_core::commands`
@@ -123,6 +124,29 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "view.edit_breadcrumb" => {
             cx.bind_keys([KeyBinding::new(kb_str, EditBreadcrumb, ctx)])
         }
+        "view.toggle_preview" => {
+            cx.bind_keys([KeyBinding::new(kb_str, TogglePreview, ctx)])
+        }
+        "view.zoom_in" => cx.bind_keys([KeyBinding::new(kb_str, ZoomIn, ctx)]),
+        "view.zoom_out" => cx.bind_keys([KeyBinding::new(kb_str, ZoomOut, ctx)]),
+        "view.zoom_reset" => cx.bind_keys([KeyBinding::new(kb_str, ZoomReset, ctx)]),
+
+        // -- File: Get Info --------------------------------------
+        "file.get_info" => cx.bind_keys([KeyBinding::new(kb_str, GetInfo, ctx)]),
+
+        // -- Selection cursor nav --------------------------------
+        "selection.cursor_up" => cx.bind_keys([KeyBinding::new(kb_str, CursorUp, ctx)]),
+        "selection.cursor_down" => {
+            cx.bind_keys([KeyBinding::new(kb_str, CursorDown, ctx)])
+        }
+        "selection.cursor_first" => {
+            cx.bind_keys([KeyBinding::new(kb_str, CursorFirst, ctx)])
+        }
+        "selection.cursor_last" => {
+            cx.bind_keys([KeyBinding::new(kb_str, CursorLast, ctx)])
+        }
+        "selection.page_up" => cx.bind_keys([KeyBinding::new(kb_str, PageUp, ctx)]),
+        "selection.page_down" => cx.bind_keys([KeyBinding::new(kb_str, PageDown, ctx)]),
 
         // -- Help -------------------------------------------------
         "help.shortcuts" => cx.bind_keys([KeyBinding::new(kb_str, ShortcutsHelp, ctx)]),
@@ -140,8 +164,26 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "selection.activate" => {
             cx.bind_keys([KeyBinding::new(kb_str, OpenSelected, ctx)])
         }
-        "selection.rename" => {
+        "selection.rename" | "selection.start_rename" => {
             cx.bind_keys([KeyBinding::new(kb_str, RenameSelected, ctx)])
+        }
+        "selection.collapse_or_parent" => {
+            cx.bind_keys([KeyBinding::new(kb_str, NavigateParent, ctx)])
+        }
+        "selection.expand_or_first_child" => {
+            cx.bind_keys([KeyBinding::new(kb_str, OpenSelected, ctx)])
+        }
+        "selection.dismiss" => {
+            cx.bind_keys([KeyBinding::new(kb_str, ClearFilter, ctx)])
+        }
+
+        // -- Window: tab cycling ---------------------------------
+        "window.next_tab" => cx.bind_keys([KeyBinding::new(kb_str, NextTab, ctx)]),
+        "window.prev_tab" => cx.bind_keys([KeyBinding::new(kb_str, PrevTab, ctx)]),
+
+        // -- File: open in new tab -------------------------------
+        "file.open_in_new_tab" => {
+            cx.bind_keys([KeyBinding::new(kb_str, OpenInNewTab, ctx)])
         }
 
         // -- Tab cycling. These aren't in the canonical catalogue
@@ -152,12 +194,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
 
         // -- Not yet ported. Each is wired in a later stage.  -----
         "app.about"
-        | "file.get_info"
-        | "view.toggle_preview"
         | "view.cycle_focus"
-        | "view.zoom_in"
-        | "view.zoom_out"
-        | "view.zoom_reset"
         | "view.theme_light"
         | "view.theme_dark"
         | "view.theme_system"
@@ -171,12 +208,6 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         | "disk_usage.coloring_depth"
         | "disk_usage.size_apparent"
         | "disk_usage.size_allocated"
-        | "selection.cursor_up"
-        | "selection.cursor_down"
-        | "selection.cursor_first"
-        | "selection.cursor_last"
-        | "selection.page_up"
-        | "selection.page_down"
         | "help.github" => {
             crate::log_warn!(
                 90,

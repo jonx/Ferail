@@ -56,6 +56,18 @@ actions!(
         EditBreadcrumb,
         ShortcutsHelp,
         OpenDiskUsage,
+        CursorUp,
+        CursorDown,
+        CursorFirst,
+        CursorLast,
+        PageUp,
+        PageDown,
+        TogglePreview,
+        GetInfo,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset,
+        OpenInNewTab,
     ]
 );
 
@@ -190,6 +202,14 @@ pub struct Shell {
     /// Input state for the shortcuts-help filter. Always allocated;
     /// only rendered when the overlay is visible.
     pub shortcuts_help_input: Entity<InputState>,
+    /// Whether the right-side preview pane is visible. Cmd+P toggles
+    /// it; Cmd+I focuses the preview's Get Info section (today it's
+    /// the only thing in the pane).
+    pub preview_visible: bool,
+    /// UI zoom factor (Stage 9.b.5). 1.0 = default; bumped by Cmd+=
+    /// and Cmd+-. Applied to font sizes / icon sizes via Tokens-
+    /// derived scaling at render time. Persisted in app_state.
+    pub ui_scale: f32,
     /// Sidebar tree state (Stage 9.c): which directories are
     /// currently expanded. Updated on caret-click and by the
     /// `--expand <path>` CLI flag (which walks the path's ancestors).
@@ -227,6 +247,16 @@ impl Shell {
     pub fn active_tab_mut(&mut self) -> &mut Tab {
         &mut self.tabs[self.active]
     }
+}
+
+#[derive(Copy, Clone)]
+enum SelectionDelta {
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    First,
+    Last,
 }
 
 fn now_unix_secs() -> i64 {
@@ -509,6 +539,8 @@ impl Shell {
             breadcrumb_input,
             shortcuts_help_filter: None,
             shortcuts_help_input,
+            preview_visible: true,
+            ui_scale: 1.0,
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
             ant_visits,
@@ -859,6 +891,118 @@ impl Shell {
         if let Err(e) = crate::disk_usage::open_window(root, fs, cx) {
             crate::log_warn!(90, "disk-usage: open_window failed: {e:?}");
         }
+    }
+
+    /// File-list keyboard navigation — up/down/home/end/pgup/pgdn.
+    /// Bounds-clamped against `entries.len()`; no-op when the list
+    /// is empty.
+    fn move_selection(&mut self, delta: SelectionDelta, cx: &mut Context<Self>) {
+        let len = self.table.read(cx).delegate().entries.len();
+        if len == 0 {
+            self.active_tab_mut().selected = None;
+            return;
+        }
+        let page = 12usize;
+        let cur = self.active_tab().selected.unwrap_or(0) as i64;
+        let last = len as i64 - 1;
+        let next: i64 = match delta {
+            SelectionDelta::Up => cur - 1,
+            SelectionDelta::Down => cur + 1,
+            SelectionDelta::PageUp => cur - page as i64,
+            SelectionDelta::PageDown => cur + page as i64,
+            SelectionDelta::First => 0,
+            SelectionDelta::Last => last,
+        };
+        let clamped = next.clamp(0, last) as usize;
+        self.active_tab_mut().selected = Some(clamped);
+        cx.notify();
+    }
+
+    fn on_cursor_up(&mut self, _: &CursorUp, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_selection(SelectionDelta::Up, cx);
+    }
+    fn on_cursor_down(&mut self, _: &CursorDown, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_selection(SelectionDelta::Down, cx);
+    }
+    fn on_cursor_first(&mut self, _: &CursorFirst, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_selection(SelectionDelta::First, cx);
+    }
+    fn on_cursor_last(&mut self, _: &CursorLast, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_selection(SelectionDelta::Last, cx);
+    }
+    fn on_page_up(&mut self, _: &PageUp, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_selection(SelectionDelta::PageUp, cx);
+    }
+    fn on_page_down(&mut self, _: &PageDown, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_selection(SelectionDelta::PageDown, cx);
+    }
+
+    /// Cmd+P — toggle preview-pane visibility. The pane defaults to
+    /// shown; toggling off gives the file list the full content
+    /// width.
+    fn on_toggle_preview(
+        &mut self,
+        _: &TogglePreview,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.preview_visible = !self.preview_visible;
+        cx.notify();
+    }
+
+    /// Cmd+I — focus the preview pane (which serves as Get Info
+    /// today). If the pane is hidden, show it first.
+    fn on_get_info(
+        &mut self,
+        _: &GetInfo,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.preview_visible {
+            self.preview_visible = true;
+        }
+        cx.notify();
+    }
+
+    /// Cmd+= / Cmd+- / Cmd+0 — UI zoom. Bumps `ui_scale` by ±0.1
+    /// (clamped to [0.6, 2.0]). The render functions multiply
+    /// text sizes against this value; a full pass through every
+    /// `.text_*` call site lands with the per-tokens refactor.
+    fn on_zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
+        self.ui_scale = (self.ui_scale + 0.1).clamp(0.6, 2.0);
+        cx.notify();
+    }
+    fn on_zoom_out(&mut self, _: &ZoomOut, _: &mut Window, cx: &mut Context<Self>) {
+        self.ui_scale = (self.ui_scale - 0.1).clamp(0.6, 2.0);
+        cx.notify();
+    }
+    fn on_zoom_reset(
+        &mut self,
+        _: &ZoomReset,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ui_scale = 1.0;
+        cx.notify();
+    }
+
+    /// Open the selected row's path in a new tab (context-menu
+    /// command). Falls back to the active tab's current dir when
+    /// nothing is selected.
+    fn on_open_in_new_tab(
+        &mut self,
+        _: &OpenInNewTab,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let path = match self.target_row().and_then(|r| self.path_for_row(r, cx)) {
+            Some(p) => p,
+            None => self.active_tab().current_dir.clone(),
+        };
+        self.tabs.push(Tab::new(path));
+        self.active = self.tabs.len() - 1;
+        let cur = self.active_tab().current_dir.clone();
+        self.load_path(cur, cx);
     }
 
     fn on_open_settings(
@@ -1736,6 +1880,18 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_edit_breadcrumb))
             .on_action(cx.listener(Self::on_shortcuts_help))
             .on_action(cx.listener(Self::on_open_disk_usage))
+            .on_action(cx.listener(Self::on_cursor_up))
+            .on_action(cx.listener(Self::on_cursor_down))
+            .on_action(cx.listener(Self::on_cursor_first))
+            .on_action(cx.listener(Self::on_cursor_last))
+            .on_action(cx.listener(Self::on_page_up))
+            .on_action(cx.listener(Self::on_page_down))
+            .on_action(cx.listener(Self::on_toggle_preview))
+            .on_action(cx.listener(Self::on_get_info))
+            .on_action(cx.listener(Self::on_zoom_in))
+            .on_action(cx.listener(Self::on_zoom_out))
+            .on_action(cx.listener(Self::on_zoom_reset))
+            .on_action(cx.listener(Self::on_open_in_new_tab))
             .relative()
             .size_full()
             .bg(cx.theme().background)
@@ -1751,8 +1907,8 @@ impl Render for Shell {
                             .child(tabstrip)
                             .child(toolbar)
                             .child(breadcrumb)
-                            .child(
-                                h_flex()
+                            .child({
+                                let mut row = h_flex()
                                     .flex_1()
                                     .min_h_0()
                                     .items_stretch()
@@ -1760,9 +1916,12 @@ impl Render for Shell {
                                         div().flex_1().min_w_0().h_full().child(
                                             self.file_pane_body(cx),
                                         ),
-                                    )
-                                    .child(self.preview(cx)),
-                            )
+                                    );
+                                if self.preview_visible {
+                                    row = row.child(self.preview(cx));
+                                }
+                                row
+                            })
                             .child(status_bar),
                     ),
             )
