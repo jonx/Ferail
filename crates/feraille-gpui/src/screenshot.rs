@@ -589,8 +589,13 @@ impl ShellArgs {
                 );
             });
         }
-        if self.shortcuts_help.is_some() {
-            crate::log_warn!(90, "--shortcuts-help flag: help overlay lands in Stage 9");
+        // Stage 9.b: open keyboard-shortcuts help overlay.
+        if let Some(initial_filter) = self.shortcuts_help.clone() {
+            let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    s.open_shortcuts_help(initial_filter, window, cx);
+                });
+            });
         }
         if self.splitter.is_some() {
             crate::log_warn!(90, "--splitter flag: sidebar is fixed-width in the GPUI shell today");

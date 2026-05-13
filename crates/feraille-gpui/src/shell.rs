@@ -54,6 +54,7 @@ actions!(
         QuickLook,
         GoHome,
         EditBreadcrumb,
+        ShortcutsHelp,
     ]
 );
 
@@ -181,6 +182,13 @@ pub struct Shell {
     /// at Shell creation; visible only while
     /// `breadcrumb_editing == true`.
     pub breadcrumb_input: Entity<InputState>,
+    /// Stage 9.b: keyboard-shortcuts help overlay. `Some(filter)`
+    /// while visible — the string is the live filter text shown in
+    /// the modal's search input.
+    pub shortcuts_help_filter: Option<String>,
+    /// Input state for the shortcuts-help filter. Always allocated;
+    /// only rendered when the overlay is visible.
+    pub shortcuts_help_input: Entity<InputState>,
     /// Sidebar tree state (Stage 9.c): which directories are
     /// currently expanded. Updated on caret-click and by the
     /// `--expand <path>` CLI flag (which walks the path's ancestors).
@@ -333,6 +341,27 @@ impl Shell {
                 }
             });
 
+        // Stage 9.b: shortcuts-help filter Input. Subscribed for
+        // Change so typing updates `shortcuts_help_filter` live.
+        let shortcuts_help_input = cx
+            .new(|cx| InputState::new(window, cx).placeholder("Search\u{2026}"));
+        let shortcuts_help_subscription = cx.subscribe_in(
+            &shortcuts_help_input,
+            window,
+            {
+                let shortcuts_help_input = shortcuts_help_input.clone();
+                move |this, _state, ev: &InputEvent, _window, cx| {
+                    if matches!(ev, InputEvent::Change) {
+                        if this.shortcuts_help_filter.is_some() {
+                            let v = shortcuts_help_input.read(cx).value().to_string();
+                            this.shortcuts_help_filter = Some(v);
+                            cx.notify();
+                        }
+                    }
+                }
+            },
+        );
+
         // Stage 9.b: breadcrumb-edit Input. Subscribed for
         // PressEnter (commit) and Blur (cancel).
         let breadcrumb_input = cx
@@ -431,9 +460,15 @@ impl Shell {
             filter_input,
             breadcrumb_editing: false,
             breadcrumb_input,
+            shortcuts_help_filter: None,
+            shortcuts_help_input,
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
-            _subscriptions: vec![filter_subscription, breadcrumb_subscription],
+            _subscriptions: vec![
+                filter_subscription,
+                breadcrumb_subscription,
+                shortcuts_help_subscription,
+            ],
         }
     }
 
@@ -717,6 +752,46 @@ impl Shell {
             state.set_value(current, window, cx);
         });
         self.breadcrumb_input.read(cx).focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
+    /// Cmd+/ (or `--shortcuts-help[-filter]` CLI flag): open the
+    /// keyboard-shortcuts help overlay. Filter starts empty
+    /// (showing every command in the catalogue, grouped by
+    /// category); the user can type to narrow down.
+    pub fn on_shortcuts_help(
+        &mut self,
+        _: &ShortcutsHelp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_shortcuts_help(String::new(), window, cx);
+    }
+
+    /// Programmatic version of `on_shortcuts_help` — the CLI flag
+    /// can seed the filter so the screenshot captures a focused
+    /// subset of the catalogue.
+    pub fn open_shortcuts_help(
+        &mut self,
+        initial_filter: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.shortcuts_help_filter = Some(initial_filter.clone());
+        self.shortcuts_help_input.update(cx, |state, cx| {
+            state.set_value(initial_filter, window, cx);
+        });
+        self.shortcuts_help_input
+            .read(cx)
+            .focus_handle(cx)
+            .focus(window, cx);
+        cx.notify();
+    }
+
+    /// Dismiss the shortcuts-help overlay (called when the user
+    /// clicks the backdrop or presses Esc).
+    pub fn close_shortcuts_help(&mut self, cx: &mut Context<Self>) {
+        self.shortcuts_help_filter = None;
         cx.notify();
     }
 
@@ -1532,6 +1607,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_quick_look))
             .on_action(cx.listener(Self::on_go_home))
             .on_action(cx.listener(Self::on_edit_breadcrumb))
+            .on_action(cx.listener(Self::on_shortcuts_help))
             .relative()
             .size_full()
             .bg(cx.theme().background)
@@ -1572,6 +1648,10 @@ impl Render for Shell {
             // gives the absolute-positioned notification list a
             // positioned ancestor to anchor against.
             .children(Root::render_notification_layer(window, cx))
+            // Keyboard-shortcuts help overlay (Stage 9.b). Renders
+            // only when `shortcuts_help_filter` is Some(_); the
+            // module reads `self` for the filter + input state.
+            .children(crate::keyboard_help::render(self, cx))
     }
 }
 

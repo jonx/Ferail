@@ -14,6 +14,7 @@ pub mod app_state;
 pub mod file_list;
 pub mod fs_watcher;
 pub mod icons;
+pub mod keyboard_help;
 pub mod keymap;
 pub mod obs;
 pub mod prefetch;

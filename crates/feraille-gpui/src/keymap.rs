@@ -22,7 +22,7 @@ use crate::shell::{
     self, ClearFilter, CloseTab, CopyPath, EditBreadcrumb, FocusFilter, GoHome,
     MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
     NextTab, OpenSelected, OpenSettings, PrevTab, QuickLook, Refresh, RenameSelected,
-    RevealInFinder, ToggleHidden,
+    RevealInFinder, ShortcutsHelp, ToggleHidden,
 };
 
 /// Install keybindings for every command in `feraille_core::commands`
@@ -124,6 +124,9 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
             cx.bind_keys([KeyBinding::new(kb_str, EditBreadcrumb, ctx)])
         }
 
+        // -- Help -------------------------------------------------
+        "help.shortcuts" => cx.bind_keys([KeyBinding::new(kb_str, ShortcutsHelp, ctx)]),
+
         // -- Go ---------------------------------------------------
         "go.back" => cx.bind_keys([KeyBinding::new(kb_str, NavigateBack, ctx)]),
         "go.forward" => cx.bind_keys([KeyBinding::new(kb_str, NavigateForward, ctx)]),
@@ -171,7 +174,8 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         | "selection.cursor_first"
         | "selection.cursor_last"
         | "selection.page_up"
-        | "selection.page_down" => {
+        | "selection.page_down"
+        | "help.github" => {
             crate::log_warn!(
                 90,
                 "keymap: command '{}' has no handler yet; binding '{}' skipped",

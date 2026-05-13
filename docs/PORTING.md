@@ -387,11 +387,13 @@ Notes: `feraille-design` linked in Stage 0 already. Apply scale to
 tokens; persist via app_state.
 
 ### Breadcrumb edit mode (Cmd+L)
-Status: Not started
+Status: Ported ✅ (Harvest Stage 9.b)
 Old location: `feraille-app/src/main.rs::enter_breadcrumb_edit_mode`.
-New location: `crates/feraille-gpui/src/shell.rs::breadcrumb`
-(toggle TextInput in place of segments) (Stage 9).
-Notes: Enter navigates, Escape cancels.
+New location: `crates/feraille-gpui/src/shell.rs::on_edit_breadcrumb`
++ a `breadcrumb_editing` flag that flips the breadcrumb render to
+an `Input` widget. Enter parses the path (with `~` expansion) and
+navigates; Blur cancels.
+Notes: `--edit-mode` CLI flag now functional.
 
 ### System theme follow ("Auto")
 Status: Partially ported (Stage 9.a — startup detection only;
@@ -407,12 +409,25 @@ SettingsView needs an "Auto" radio option + an
 `Arc<AtomicBool>` shared with a `start_system_theme_observer`
 callback that the foreground executor polls.
 
-### Keyboard-shortcuts help overlay (Cmd+?)
-Status: Not started
+### Keyboard-shortcuts help overlay (Cmd+/)
+Status: Ported ✅ (Harvest Stage 9.b)
 Old location: `feraille-app/src/main.rs` shortcuts_modal.
-New location: `crates/feraille-gpui/src/keyboard_help.rs` (Stage 9).
-Notes: Modal listing the full command catalogue with live filter.
-The catalogue (feraille-core::commands) is the source of truth.
+New location: `crates/feraille-gpui/src/keyboard_help.rs::render`
++ Shell state (`shortcuts_help_filter: Option<String>`,
+`shortcuts_help_input: Entity<InputState>`).
+Notes:
+- Catalogue (`feraille-core::commands::all_commands`) is the
+  source of truth; `format_shortcut` renders chords as macOS
+  glyphs (⌘ ⇧ ⌥ + key).
+- Modal renders inline in `Shell::render` as the topmost overlay
+  layer (after dialog + notification layers). Backdrop dismisses
+  on outside-click; the card stops propagation so inside-clicks
+  don't dismiss.
+- Live filter: typing in the search input narrows the catalogue
+  by title or by formatted-chord substring (case-insensitive).
+- `--shortcuts-help` opens with empty filter;
+  `--shortcuts-help-filter <text>` seeds the filter — both
+  functional via the CLI now.
 
 ---
 
