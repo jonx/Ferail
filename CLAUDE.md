@@ -6,11 +6,23 @@ not law. The cleaned port map is in [docs/porting/FERAIL_DOCS_MAP.md](docs/porti
 
 ## Read First
 
-1. [docs/UI_NONBLOCKING.md](docs/UI_NONBLOCKING.md)
-2. [docs/FEATURE_LEDGER.md](docs/FEATURE_LEDGER.md)
-3. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-4. [specs/ux/05-performance.md](specs/ux/05-performance.md)
-5. The crate-level docs and local code around the file you are touching.
+1. [docs/GPUI_MIGRATION.md](docs/GPUI_MIGRATION.md) — active migration; tells you which crate to edit.
+2. [docs/UI_NONBLOCKING.md](docs/UI_NONBLOCKING.md) — still applies to `feraille-app` (frozen) but not to `feraille-gpui` (GPU pipeline is async by construction).
+3. [docs/FEATURE_LEDGER.md](docs/FEATURE_LEDGER.md)
+4. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+5. [specs/ux/05-performance.md](specs/ux/05-performance.md)
+6. The crate-level docs and local code around the file you are touching.
+
+## Two binaries during the migration
+
+- `cargo run --bin Feraille` — old soft-rendered app, **frozen**, no
+  new features. Lives in `crates/feraille-app`, uses
+  `crates/feraille-render` + `crates/feraille-controls`.
+- `cargo run --bin feraille-gpui` — new GPUI shell, **active**, where
+  all new feature work lands. Lives in `crates/feraille-gpui`.
+
+Both must compile every day. See [docs/GPUI_MIGRATION.md](docs/GPUI_MIGRATION.md)
+for which crate to touch.
 
 ## Prime Directive
 
@@ -135,6 +147,8 @@ Before finishing code changes:
 - Run `cargo test` unless the change is docs-only.
 - For UI changes, render at least one screenshot with `cargo run -- --screenshot ...`
   and inspect it. (The package has a single binary, so `--bin` is unnecessary.)
+  Write screenshots to `screenshots/<feature>.png` in the repo, **not `/tmp/`** —
+  they are durable artifacts the user reviews and compares iteration over iteration.
 - Do not run whole-repo formatters casually; this repo may have local dirty work.
 
 ## Open backlog

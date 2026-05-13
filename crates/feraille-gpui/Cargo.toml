@@ -1,0 +1,36 @@
+[package]
+name = "feraille-gpui"
+version.workspace = true
+license.workspace = true
+# GPUI requires edition 2024 (and Rust >= 1.85). The rest of the
+# workspace is on 2021 / 1.78 — we keep the new crate's edition
+# explicit so the rest of the workspace doesn't have to bump.
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+# Phase 1 of the GPUI migration. Empty shell — opens a window with
+# native chrome, sidebar + main panel scaffolding, no domain logic.
+#
+# This crate is parallel to `feraille-app`. Both compile and run
+# during the migration. The cutover commit at end of Phase 6 deletes
+# `feraille-app`, `feraille-render`, and `feraille-controls`.
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+gpui-component.workspace = true
+gpui-component-assets.workspace = true
+
+[dev-dependencies]
+# Phase 2 isolation test consumes the domain layer directly — proves
+# the layer works without any GPUI involvement. If a domain crate
+# ever pulls in a UI dep, this test stops compiling and Phase 2's
+# invariant is loudly violated.
+feraille-core.workspace = true
+feraille-fs-native.workspace = true
+
+[[bin]]
+name = "feraille-gpui"
+path = "src/main.rs"

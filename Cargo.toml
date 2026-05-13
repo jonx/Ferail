@@ -7,9 +7,13 @@ members = [
     "crates/feraille-controls",
     "crates/feraille-disk-usage",
     "crates/feraille-fs-native",
+    "crates/feraille-meta",
     "crates/feraille-shell-mac",
     "crates/feraille-shell-win32",
     "crates/feraille-app",
+    # GPUI migration target. Parallel to feraille-app; both compile
+    # and run until the Phase 6 cutover. See docs/GPUI_MIGRATION.md.
+    "crates/feraille-gpui",
 ]
 
 [workspace.package]
@@ -25,14 +29,30 @@ feraille-render       = { path = "crates/feraille-render" }
 feraille-controls     = { path = "crates/feraille-controls" }
 feraille-disk-usage   = { path = "crates/feraille-disk-usage" }
 feraille-fs-native    = { path = "crates/feraille-fs-native" }
+feraille-meta         = { path = "crates/feraille-meta" }
 feraille-shell-mac    = { path = "crates/feraille-shell-mac" }
 feraille-shell-win32  = { path = "crates/feraille-shell-win32" }
 
-# External
+# External — old stack (feraille-app)
 winit       = "0.30"
 softbuffer  = "0.4"
 ab_glyph    = "0.2"
 anyhow      = "1"
+
+# External — new stack (feraille-gpui).
+#
+# Pinning strategy: `gpui-component` is pinned to a specific rev (it
+# is our higher-level coupling and we want updates to be deliberate).
+# `gpui` itself is left *URL-identical* to how gpui-component declares
+# it (no rev) — adding `rev = "..."` makes cargo treat our pin as a
+# *different source* from gpui-component's unpinned gpui, ending up
+# with two gpuis in the graph. Reproducibility comes from committing
+# `Cargo.lock`; see CHANGELOG-DEPS.md for the locked revs at any
+# point in time.
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "ba44512e0cfe633869714054e8ea1afd133d4a28" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "ba44512e0cfe633869714054e8ea1afd133d4a28" }
 
 [profile.dev]
 # Text rasterization is sluggish at -Copt-level=0 — keep some optimization in dev.
