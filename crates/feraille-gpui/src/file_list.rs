@@ -25,7 +25,9 @@ use smallvec::smallvec;
 
 /// Delegate that vends the current directory's entries to the
 /// Table. Holds the live `Vec<FileEntry>`; the Shell rotates it on
-/// every `navigate()`.
+/// every `navigate()`. The Vec is already filtered by both
+/// `show_hidden` and `filter_text` at `load()` time — the Table
+/// always sees the user-visible subset, no per-cell skipping.
 pub struct FileListDelegate {
     pub entries: Vec<FileEntry>,
     pub columns: Vec<Column>,
@@ -46,21 +48,32 @@ impl FileListDelegate {
         }
     }
 
-    /// Enumerate `path` via the FS backend and swap the entries in.
-    /// Returns the error variant when the OS reports one (e.g. macOS
-    /// TCC denial) so the Shell can render an empty-state.
-    pub fn load(&mut self, path: PathBuf, show_hidden: bool) -> Option<feraille_core::EnumerationError> {
+    /// Enumerate `path` via the FS backend, apply the show-hidden +
+    /// filter-text filters, and swap the entries in. Returns the
+    /// error variant when the OS reports one (e.g. macOS TCC
+    /// denial) so the Shell can render an empty-state.
+    pub fn load(
+        &mut self,
+        path: PathBuf,
+        show_hidden: bool,
+        filter_text: &str,
+    ) -> Option<feraille_core::EnumerationError> {
         let id = self.fs.id_for_path(&path);
         let handle = self.fs.enumerate(id);
-        self.entries = if show_hidden {
-            handle.initial
-        } else {
-            handle
-                .initial
-                .into_iter()
-                .filter(|e| !e.name.starts_with('.'))
-                .collect()
-        };
+        let needle = filter_text.trim().to_lowercase();
+        self.entries = handle
+            .initial
+            .into_iter()
+            .filter(|e| show_hidden || !e.name.starts_with('.'))
+            .filter(|e| {
+                if needle.is_empty() {
+                    true
+                } else {
+                    e.name.to_lowercase().contains(&needle)
+                        || e.display_kind.to_lowercase().contains(&needle)
+                }
+            })
+            .collect();
         handle.error
     }
 }

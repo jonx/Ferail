@@ -15,6 +15,7 @@ use feraille_fs_native::{home_dir, list_volumes, open_with_default, NativeFs, Vo
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, Sizable, button::Button, h_flex,
+    input::{Input, InputEvent, InputState},
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
     switch::Switch,
     table::{DataTable, TableEvent, TableState},
@@ -38,6 +39,8 @@ actions!(
         CopyPath,
         MoveToTrash,
         RevealInFinder,
+        FocusFilter,
+        ClearFilter,
     ]
 );
 
@@ -59,6 +62,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-backspace", MoveToTrash, Some(SHELL_CONTEXT)),
         KeyBinding::new("cmd-shift-r", RevealInFinder, Some(SHELL_CONTEXT)),
         KeyBinding::new("cmd-alt-c", CopyPath, Some(SHELL_CONTEXT)),
+        KeyBinding::new("cmd-f", FocusFilter, Some(SHELL_CONTEXT)),
+        KeyBinding::new("escape", ClearFilter, Some(SHELL_CONTEXT)),
         // App-wide: Cmd+, is the system convention for Preferences /
         // Settings and should work from anywhere in the app.
         KeyBinding::new("cmd-,", OpenSettings, None),
@@ -109,6 +114,19 @@ pub struct Shell {
     /// context-menu action handler runs so the next keyboard action
     /// uses the keyboard-selected row.
     pub context_row: Option<usize>,
+    /// Live filter text. When non-empty, `load_path()` keeps only
+    /// entries whose name (case-insensitive substring) or
+    /// `display_kind` matches.
+    pub filter_text: String,
+    /// `gpui-component` Input state for the filter field in the
+    /// toolbar. Owned as an Entity so InputEvent subscriptions
+    /// route changes back into `filter_text`.
+    pub filter_input: Entity<InputState>,
+    /// Live subscription handles (Input change, future watchers).
+    /// Dropping them tears down the listeners — keep alongside the
+    /// Shell so they outlive any frame.
+    #[allow(dead_code)]
+    _subscriptions: Vec<Subscription>,
 }
 
 /// A named filesystem destination shown in the sidebar's Locations
@@ -147,7 +165,7 @@ impl Shell {
         let start = persisted.last_dir.clone().unwrap_or_else(home_dir);
         let show_hidden = persisted.show_hidden.unwrap_or(false);
         let mut delegate = FileListDelegate::new(fs.clone());
-        let last_error = delegate.load(start.clone(), show_hidden);
+        let last_error = delegate.load(start.clone(), show_hidden, "");
         let initial_selection = if delegate.entries.is_empty() { None } else { Some(0) };
         let table = cx.new(|cx| {
             TableState::new(delegate, window, cx)
@@ -179,6 +197,21 @@ impl Shell {
         // immediately without the user having to click into the
         // shell.
         focus_handle.focus(window, cx);
+
+        let filter_input = cx
+            .new(|cx| InputState::new(window, cx).placeholder("Filter \u{2026}"));
+        let filter_subscription =
+            cx.subscribe_in(&filter_input, window, {
+                let filter_input = filter_input.clone();
+                move |this, _state, ev: &InputEvent, _window, cx| {
+                    if matches!(ev, InputEvent::Change) {
+                        let value = filter_input.read(cx).value().to_string();
+                        this.filter_text = value;
+                        let path = this.current_dir.clone();
+                        this.load_path(path, cx);
+                    }
+                }
+            });
 
         // Spin up the platform file-system watcher and start
         // watching the initial directory. If the watcher itself
@@ -234,6 +267,9 @@ impl Shell {
             last_error,
             watcher,
             context_row: None,
+            filter_text: String::new(),
+            filter_input,
+            _subscriptions: vec![filter_subscription],
         }
     }
 
@@ -349,6 +385,30 @@ impl Shell {
         self.toggle_hidden(cx);
     }
 
+    fn on_focus_filter(
+        &mut self,
+        _: &FocusFilter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.filter_input.read(cx).focus_handle(cx).focus(window, cx);
+    }
+
+    fn on_clear_filter(
+        &mut self,
+        _: &ClearFilter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.filter_input.update(cx, |state, cx| {
+            state.set_value("", window, cx);
+        });
+        self.filter_text.clear();
+        let path = self.current_dir.clone();
+        self.load_path(path, cx);
+        self.focus_handle.focus(window, cx);
+    }
+
     fn on_open_settings(
         &mut self,
         _: &OpenSettings,
@@ -394,10 +454,11 @@ impl Shell {
     fn load_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.current_dir = path.clone();
         let show_hidden = self.show_hidden;
+        let filter = self.filter_text.clone();
         let table = self.table.clone();
         let mut err: Option<EnumerationError> = None;
         table.update(cx, |state, cx| {
-            err = state.delegate_mut().load(path.clone(), show_hidden);
+            err = state.delegate_mut().load(path.clone(), show_hidden, &filter);
             state.refresh(cx);
         });
         self.last_error = err;
@@ -581,6 +642,13 @@ impl Shell {
                     .label("\u{2192}")
                     .disabled(!can_forward)
                     .on_click(cx.listener(|this, _, _, cx| this.navigate_forward(cx))),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .max_w(px(360.0))
+                    .ml_4()
+                    .child(Input::new(&self.filter_input).small()),
             )
             .child(div().flex_1())
             .child(
@@ -772,6 +840,8 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_copy_path))
             .on_action(cx.listener(Self::on_reveal_in_finder))
             .on_action(cx.listener(Self::on_move_to_trash))
+            .on_action(cx.listener(Self::on_focus_filter))
+            .on_action(cx.listener(Self::on_clear_filter))
             .size_full()
             .bg(cx.theme().background)
             .child(sidebar)
