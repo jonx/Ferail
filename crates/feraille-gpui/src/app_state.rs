@@ -16,6 +16,12 @@ const FILENAME: &str = "gpui-state.txt";
 pub struct AppState {
     pub last_dir: Option<PathBuf>,
     pub show_hidden: Option<bool>,
+    /// "light", "dark", or "system". `None` = follow the system
+    /// detection done at startup (Stage 9.a default).
+    pub theme_pref: Option<String>,
+    /// User UI zoom factor (Cmd+= / Cmd+- / Cmd+0). Clamped at
+    /// load to the same `[0.6, 2.0]` range Shell uses.
+    pub ui_scale: Option<f32>,
 }
 
 #[cfg(target_os = "macos")]
@@ -63,6 +69,19 @@ pub fn load() -> AppState {
             "show_hidden" => {
                 out.show_hidden = parse_bool(val);
             }
+            "theme_pref" => {
+                let v = val.trim().to_lowercase();
+                if matches!(v.as_str(), "light" | "dark" | "system") {
+                    out.theme_pref = Some(v);
+                }
+            }
+            "ui_scale" => {
+                out.ui_scale = val
+                    .trim()
+                    .parse::<f32>()
+                    .ok()
+                    .map(|n| n.clamp(0.6, 2.0));
+            }
             _ => {}
         }
     }
@@ -80,6 +99,12 @@ pub fn save(state: &AppState) {
     }
     if let Some(b) = state.show_hidden {
         s.push_str(&format!("show_hidden={b}\n"));
+    }
+    if let Some(p) = &state.theme_pref {
+        s.push_str(&format!("theme_pref={p}\n"));
+    }
+    if let Some(z) = state.ui_scale {
+        s.push_str(&format!("ui_scale={z}\n"));
     }
     let _ = std::fs::write(dir.join(FILENAME), s);
 }

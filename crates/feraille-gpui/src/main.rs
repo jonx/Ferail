@@ -27,6 +27,10 @@ const APP_ICON_PNG: &[u8] = include_bytes!("../resources/feraille.png");
 
 fn main() -> Result<()> {
     feraille_gpui::obs::init();
+    // Pre-event-loop CLI handlers — run before the window opens.
+    if let Some(code) = feraille_gpui::reset_db::handle_reset_db_cli() {
+        std::process::exit(code);
+    }
     let args = screenshot::parse_args();
     if args.screenshot.is_some() {
         feraille_gpui::log_info!(90, "headless screenshot path");
@@ -56,18 +60,37 @@ fn run_gui(args: screenshot::Args) {
         let icon_result =
             feraille_shell_mac::set_app_icon_from_png_bytes(APP_ICON_PNG);
         feraille_gpui::log_info!(90, "set_app_icon: {:?}", icon_result);
-        // Initial theme: explicit --theme flag wins; otherwise
-        // detect macOS Appearance via feraille_shell_mac. Live
-        // observer (responding to System Settings → Appearance
-        // changes after launch) lands with the Stage 9 "Auto"
-        // preference work; this just establishes the default.
-        let mode = theme_mode.unwrap_or_else(|| {
-            if feraille_shell_mac::system_is_dark() {
-                gpui_component::ThemeMode::Dark
-            } else {
-                gpui_component::ThemeMode::Light
+        // Initial theme resolution order (highest wins):
+        //   1. `--theme {light,dark}` CLI flag
+        //   2. `FERAILLE_THEME` env var (light / dark / system)
+        //   3. Persisted `theme_pref` in app_state
+        //   4. macOS Appearance via `system_is_dark()`
+        let env_theme = std::env::var("FERAILLE_THEME")
+            .ok()
+            .map(|s| s.to_lowercase());
+        let persisted_theme = feraille_gpui::app_state::load().theme_pref;
+        let resolve_string = |s: &str| -> Option<gpui_component::ThemeMode> {
+            match s {
+                "light" => Some(gpui_component::ThemeMode::Light),
+                "dark" => Some(gpui_component::ThemeMode::Dark),
+                "system" | "auto" => Some(if feraille_shell_mac::system_is_dark() {
+                    gpui_component::ThemeMode::Dark
+                } else {
+                    gpui_component::ThemeMode::Light
+                }),
+                _ => None,
             }
-        });
+        };
+        let mode = theme_mode
+            .or_else(|| env_theme.as_deref().and_then(resolve_string))
+            .or_else(|| persisted_theme.as_deref().and_then(resolve_string))
+            .unwrap_or_else(|| {
+                if feraille_shell_mac::system_is_dark() {
+                    gpui_component::ThemeMode::Dark
+                } else {
+                    gpui_component::ThemeMode::Light
+                }
+            });
         Theme::change(mode, None, cx);
 
         // Quit action so Cmd+Q routes through gpui's normal app

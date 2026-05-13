@@ -374,6 +374,14 @@ impl Shell {
         let persisted = app_state::load();
         let start = persisted.last_dir.clone().unwrap_or_else(home_dir);
         let show_hidden = persisted.show_hidden.unwrap_or(false);
+        // FERAILLE_UI_SCALE env var (regression tool / screenshots)
+        // wins over the persisted value when set. Both are clamped.
+        let ui_scale = std::env::var("FERAILLE_UI_SCALE")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .or(persisted.ui_scale)
+            .map(|n| n.clamp(0.6, 2.0))
+            .unwrap_or(1.0);
         let icons = Rc::new(RefCell::new(IconCache::new()));
         let mut delegate = FileListDelegate::new(fs.clone(), icons.clone());
         let last_error = delegate.load(start.clone(), show_hidden, "");
@@ -558,7 +566,7 @@ impl Shell {
             shortcuts_help_filter: None,
             shortcuts_help_input,
             preview_visible: true,
-            ui_scale: 1.0,
+            ui_scale,
             preview_cache: crate::preview::PreviewCache::new(),
             splitter_state: cx.new(|_| {
                 gpui_component::resizable::ResizableState::default()
@@ -1126,12 +1134,17 @@ impl Shell {
         }
     }
 
-    /// Persist last-dir + show-hidden to disk. Cheap (small text
-    /// file in the user's app support dir); call freely.
+    /// Persist last-dir + show-hidden + UI-scale to disk. Cheap (small
+    /// text file in the user's app support dir); call freely.
+    /// `theme_pref` is owned by the Settings entity — persisted there
+    /// after a tile click, not from Shell.
     fn save_state(&self) {
+        let existing = app_state::load();
         app_state::save(&AppState {
             last_dir: Some(self.active_tab().current_dir.clone()),
             show_hidden: Some(self.show_hidden),
+            theme_pref: existing.theme_pref,
+            ui_scale: Some(self.ui_scale),
         });
     }
 

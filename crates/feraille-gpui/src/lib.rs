@@ -20,6 +20,7 @@ pub mod keymap;
 pub mod obs;
 pub mod prefetch;
 pub mod preview;
+pub mod reset_db;
 pub mod screenshot;
 pub mod settings;
 pub mod shell;

@@ -102,11 +102,15 @@ pub struct SettingsView {
 
 impl SettingsView {
     pub fn new(initial: SettingsCategory) -> Self {
-        // Infer theme preference from current Theme mode + the
-        // system's appearance. If the active mode matches the
-        // system, treat that as "System"; otherwise the user
-        // explicitly chose the other side.
-        let theme_pref = ThemePref::System;
+        // Theme preference reflects what's persisted in app_state
+        // (which `main::run_gui` already applied at startup). The
+        // tile selection should match the stored value, defaulting
+        // to "System" when nothing's set.
+        let theme_pref = match crate::app_state::load().theme_pref.as_deref() {
+            Some("light") => ThemePref::Light,
+            Some("dark") => ThemePref::Dark,
+            _ => ThemePref::System,
+        };
         Self {
             category: initial,
             show_hidden: false,
@@ -115,6 +119,17 @@ impl SettingsView {
             home_hidden_count: count_home_hidden_items(),
         }
     }
+}
+
+/// Persist the user's theme preference to `gpui-state.txt`. Read at
+/// startup by `main::run_gui`; the live tile click also drives the
+/// in-process theme change directly (this is just for next launch).
+fn persist_theme_pref(value: &str) {
+    let existing = crate::app_state::load();
+    crate::app_state::save(&crate::app_state::AppState {
+        theme_pref: Some(value.to_string()),
+        ..existing
+    });
 }
 
 /// Count entries in `$HOME` whose name starts with `.`. Synchronous
@@ -240,6 +255,7 @@ impl SettingsView {
                     Theme::change(ThemeMode::Light, Some(window), cx);
                     entity_light.update(cx, |this, cx| {
                         this.theme_pref = ThemePref::Light;
+                        persist_theme_pref("light");
                         cx.notify();
                     });
                 },
@@ -254,6 +270,7 @@ impl SettingsView {
                     Theme::change(ThemeMode::Dark, Some(window), cx);
                     entity_dark.update(cx, |this, cx| {
                         this.theme_pref = ThemePref::Dark;
+                        persist_theme_pref("dark");
                         cx.notify();
                     });
                 },
@@ -273,6 +290,7 @@ impl SettingsView {
                     Theme::change(mode, Some(window), cx);
                     entity_system.update(cx, |this, cx| {
                         this.theme_pref = ThemePref::System;
+                        persist_theme_pref("system");
                         cx.notify();
                     });
                 },
