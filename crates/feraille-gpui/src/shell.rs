@@ -54,6 +54,9 @@ pub struct Shell {
     /// against `SHELL_CONTEXT` only fire when this handle (or one of
     /// its children) holds focus.
     pub focus_handle: FocusHandle,
+    /// Row index of the currently-selected entry (or None when the
+    /// pane is empty / nothing chosen). Drives the preview pane.
+    pub selected: Option<usize>,
 }
 
 /// A named filesystem destination shown in the sidebar's Locations
@@ -91,21 +94,26 @@ impl Shell {
         let start = home_dir();
         let mut delegate = FileListDelegate::new(fs.clone());
         let _ = delegate.load(start.clone());
+        let initial_selection = if delegate.entries.is_empty() { None } else { Some(0) };
         let table = cx.new(|cx| {
             TableState::new(delegate, window, cx)
                 .col_selectable(false)
                 .col_movable(false)
         });
-        // Bridge double-click events into our own activate handler.
-        // `cx.subscribe_in` keeps a window reference so we can route
-        // navigate() calls back through the foreground executor.
+        // Bridge Table events (selection + double-click) to the
+        // Shell's own state so the preview pane sees the live row.
         cx.subscribe_in(
             &table,
             window,
-            |this, _table, event: &TableEvent, _window, cx| {
-                if let TableEvent::DoubleClickedRow(row_ix) = event {
+            |this, _table, event: &TableEvent, _window, cx| match event {
+                TableEvent::SelectRow(row_ix) => {
+                    this.selected = Some(*row_ix);
+                    cx.notify();
+                }
+                TableEvent::DoubleClickedRow(row_ix) => {
                     this.activate_row(*row_ix, cx);
                 }
+                _ => {}
             },
         )
         .detach();
@@ -120,6 +128,7 @@ impl Shell {
             fs,
             table,
             focus_handle,
+            selected: initial_selection,
         }
     }
 
@@ -172,7 +181,7 @@ impl Shell {
 
     /// Navigate to `path`: update `current_dir`, re-enumerate the
     /// directory via the FS backend, refresh the Table, request a
-    /// re-render.
+    /// re-render. Resets selection because the row indices change.
     pub fn navigate(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.current_dir = path.clone();
         let table = self.table.clone();
@@ -180,6 +189,7 @@ impl Shell {
             state.delegate_mut().load(path);
             state.refresh(cx);
         });
+        self.selected = None;
         cx.notify();
     }
 
@@ -224,6 +234,78 @@ impl Shell {
                 })
                 .collect::<Vec<_>>(),
         )
+    }
+
+    /// Build the preview pane on the right of the file list. Shows
+    /// title / kind / size / modified / full path of the selected
+    /// row. Falls back to a neutral empty state when nothing is
+    /// selected. Format-specific previews (image, text, PDF) arrive
+    /// in a follow-up polish iter.
+    fn preview(&self, cx: &mut Context<Self>) -> Div {
+        let selected = self
+            .selected
+            .and_then(|i| self.table.read(cx).delegate().entries.get(i).cloned());
+
+        let header = div()
+            .text_xs()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(cx.theme().muted_foreground)
+            .child("Preview");
+
+        let body: AnyElement = match selected {
+            None => div()
+                .flex()
+                .flex_1()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("No selection")
+                .into_any_element(),
+            Some(entry) => {
+                let kind_label = match entry.kind {
+                    EntryKind::Directory => "Folder",
+                    EntryKind::File => "File",
+                    EntryKind::Symlink => "Symlink",
+                };
+                let mut full_path = self.current_dir.clone();
+                full_path.push(&entry.name);
+                let path_str = full_path.to_string_lossy().into_owned();
+
+                v_flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(cx.theme().foreground)
+                            .child(SharedString::from(entry.name.clone())),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(SharedString::from(entry.display_kind.clone())),
+                    )
+                    .child(preview_field("Kind", kind_label.to_string(), cx))
+                    .child(preview_field("Size", entry.display_size.clone(), cx))
+                    .child(preview_field("Modified", entry.display_mtime.clone(), cx))
+                    .child(preview_field("Where", path_str, cx))
+                    .into_any_element()
+            }
+        };
+
+        v_flex()
+            .w(px(280.0))
+            .h_full()
+            .min_h_0()
+            .border_l_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().background)
+            .p_4()
+            .gap_3()
+            .child(header)
+            .child(body)
     }
 
     /// Build the breadcrumb row from `current_dir`. Each ancestor is
@@ -322,18 +404,46 @@ impl Render for Shell {
                     .min_w_0()
                     .child(breadcrumb)
                     .child(
-                        v_flex()
+                        h_flex()
                             .flex_1()
                             .min_h_0()
+                            .items_stretch()
                             .child(
-                                DataTable::new(&self.table)
-                                    .bordered(false)
-                                    .stripe(true)
-                                    .small(),
-                            ),
+                                // The DataTable expects to fill its
+                                // own area; wrapping in an extra
+                                // v_flex was pushing rows down.
+                                // size_full() inside a flex_1 cell
+                                // is the canonical fill pattern.
+                                div().flex_1().min_w_0().h_full().child(
+                                    DataTable::new(&self.table)
+                                        .bordered(false)
+                                        .stripe(true)
+                                        .small(),
+                                ),
+                            )
+                            .child(self.preview(cx)),
                     ),
             )
     }
+}
+
+/// Two-line field for the preview pane: muted label on top, primary
+/// value below. Used for Kind / Size / Modified / Where.
+fn preview_field(label: &'static str, value: String, cx: &Context<Shell>) -> Div {
+    v_flex()
+        .gap_1()
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(label),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(cx.theme().foreground)
+                .child(SharedString::from(value)),
+        )
 }
 
 /// Split `path` into clickable breadcrumb segments. Each entry is
