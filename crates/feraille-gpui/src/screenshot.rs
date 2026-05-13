@@ -549,12 +549,22 @@ impl ShellArgs {
             });
         }
 
+        // Stage 9.b: open breadcrumb edit mode (Cmd+L).
+        if self.edit_mode {
+            let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    s.on_edit_breadcrumb(
+                        &crate::shell::EditBreadcrumb,
+                        window,
+                        cx,
+                    );
+                });
+            });
+        }
+
         // ---- Stage-deferred flags. Log + skip. -------------------
         if self.properties {
             crate::log_warn!(90, "--properties flag: Get Info pane lands in Stage 8");
-        }
-        if self.edit_mode {
-            crate::log_warn!(90, "--edit-mode flag: breadcrumb edit lands in Stage 9");
         }
         if self.ui_scale.is_some() {
             crate::log_warn!(90, "--ui-scale flag: UI zoom lands in Stage 9");

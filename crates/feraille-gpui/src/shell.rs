@@ -53,6 +53,7 @@ actions!(
         PrevTab,
         QuickLook,
         GoHome,
+        EditBreadcrumb,
     ]
 );
 
@@ -171,6 +172,15 @@ pub struct Shell {
     /// toolbar. Owned as an Entity so InputEvent subscriptions
     /// route changes back into `filter_text`.
     pub filter_input: Entity<InputState>,
+    /// Cmd+L breadcrumb edit (Stage 9.b): when true the breadcrumb
+    /// renders an Input field pre-filled with the active tab's
+    /// current_dir instead of the clickable segments. Enter commits
+    /// (canonicalise + navigate); Blur cancels.
+    pub breadcrumb_editing: bool,
+    /// `InputState` for the breadcrumb edit field. Constructed once
+    /// at Shell creation; visible only while
+    /// `breadcrumb_editing == true`.
+    pub breadcrumb_input: Entity<InputState>,
     /// Sidebar tree state (Stage 9.c): which directories are
     /// currently expanded. Updated on caret-click and by the
     /// `--expand <path>` CLI flag (which walks the path's ancestors).
@@ -323,6 +333,41 @@ impl Shell {
                 }
             });
 
+        // Stage 9.b: breadcrumb-edit Input. Subscribed for
+        // PressEnter (commit) and Blur (cancel).
+        let breadcrumb_input = cx
+            .new(|cx| InputState::new(window, cx).placeholder("/path/to/folder"));
+        let breadcrumb_subscription = cx.subscribe_in(
+            &breadcrumb_input,
+            window,
+            {
+                let breadcrumb_input = breadcrumb_input.clone();
+                move |this, _state, ev: &InputEvent, _window, cx| match ev {
+                    InputEvent::PressEnter { .. } => {
+                        let raw = breadcrumb_input
+                            .read(cx)
+                            .value()
+                            .to_string();
+                        let path = parse_breadcrumb_path(&raw);
+                        this.breadcrumb_editing = false;
+                        if path.is_dir() {
+                            this.navigate(path, cx);
+                        } else {
+                            // Bad input — fall back to current dir.
+                            cx.notify();
+                        }
+                    }
+                    InputEvent::Blur => {
+                        if this.breadcrumb_editing {
+                            this.breadcrumb_editing = false;
+                            cx.notify();
+                        }
+                    }
+                    _ => {}
+                }
+            },
+        );
+
         // Spin up the platform file-system watcher and start
         // watching the initial directory. If the watcher itself
         // can't be constructed (very rare; sandbox without
@@ -384,9 +429,11 @@ impl Shell {
             simulated_progress: None,
             filter_text: String::new(),
             filter_input,
+            breadcrumb_editing: false,
+            breadcrumb_input,
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
-            _subscriptions: vec![filter_subscription],
+            _subscriptions: vec![filter_subscription, breadcrumb_subscription],
         }
     }
 
@@ -652,6 +699,25 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.navigate(home_dir(), cx);
+    }
+
+    /// Cmd+L: open breadcrumb edit mode. Pre-fills the input with
+    /// the active tab's current directory, focuses it, and selects
+    /// all text so the user can immediately type a replacement
+    /// path. Mirrors the old app's `enter_breadcrumb_edit_mode`.
+    pub fn on_edit_breadcrumb(
+        &mut self,
+        _: &EditBreadcrumb,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.breadcrumb_editing = true;
+        let current = self.active_tab().current_dir.to_string_lossy().into_owned();
+        self.breadcrumb_input.update(cx, |state, cx| {
+            state.set_value(current, window, cx);
+        });
+        self.breadcrumb_input.read(cx).focus_handle(cx).focus(window, cx);
+        cx.notify();
     }
 
     fn on_open_settings(
@@ -1320,8 +1386,25 @@ impl Shell {
 
     /// Build the breadcrumb row from `current_dir`. Each ancestor is
     /// clickable and navigates the pane to that level. The root `/`
-    /// gets its own leading segment.
+    /// gets its own leading segment. When `breadcrumb_editing` is
+    /// set (Cmd+L) the row swaps in an Input field instead — Enter
+    /// commits the path, Blur cancels.
     fn breadcrumb(&self, cx: &mut Context<Self>) -> Div {
+        if self.breadcrumb_editing {
+            return h_flex()
+                .w_full()
+                .items_center()
+                .gap_1()
+                .px_4()
+                .py_2()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .child(
+                    div()
+                        .flex_1()
+                        .child(Input::new(&self.breadcrumb_input).small()),
+                );
+        }
         let segments = path_segments(&self.active_tab().current_dir);
         let mut row = h_flex()
             .w_full()
@@ -1448,6 +1531,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_prev_tab))
             .on_action(cx.listener(Self::on_quick_look))
             .on_action(cx.listener(Self::on_go_home))
+            .on_action(cx.listener(Self::on_edit_breadcrumb))
             .relative()
             .size_full()
             .bg(cx.theme().background)
@@ -1531,6 +1615,26 @@ fn preview_field(label: &'static str, value: String, cx: &Context<Shell>) -> Div
                 .text_color(cx.theme().foreground)
                 .child(SharedString::from(value)),
         )
+}
+
+/// Parse a user-typed breadcrumb-input string into a real path:
+/// expands a leading `~` to `$HOME`, canonicalises, falls back to
+/// the input as-is on canonicalise failure. Mirrors the screenshot
+/// CLI's path-normalisation so paste-from-Finder ("~/Documents")
+/// behaves the same in both places.
+pub fn parse_breadcrumb_path(raw: &str) -> PathBuf {
+    let trimmed = raw.trim();
+    let expanded = if let Some(rest) = trimmed.strip_prefix('~') {
+        let mut h = home_dir();
+        let suffix = rest.trim_start_matches('/');
+        if !suffix.is_empty() {
+            h.push(suffix);
+        }
+        h
+    } else {
+        PathBuf::from(trimmed)
+    };
+    std::fs::canonicalize(&expanded).unwrap_or(expanded)
 }
 
 /// Split `path` into clickable breadcrumb segments. Each entry is

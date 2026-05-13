@@ -19,9 +19,10 @@ use feraille_core::commands::{all_commands, CommandId, Shortcut};
 use gpui::{App, KeyBinding};
 
 use crate::shell::{
-    self, ClearFilter, CloseTab, CopyPath, FocusFilter, GoHome, MoveToTrash, NavigateBack,
-    NavigateForward, NavigateParent, NewFolder, NewTab, NextTab, OpenSelected, OpenSettings,
-    PrevTab, QuickLook, Refresh, RenameSelected, RevealInFinder, ToggleHidden,
+    self, ClearFilter, CloseTab, CopyPath, EditBreadcrumb, FocusFilter, GoHome,
+    MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
+    NextTab, OpenSelected, OpenSettings, PrevTab, QuickLook, Refresh, RenameSelected,
+    RevealInFinder, ToggleHidden,
 };
 
 /// Install keybindings for every command in `feraille_core::commands`
@@ -119,6 +120,9 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         // -- View -------------------------------------------------
         "view.search" => cx.bind_keys([KeyBinding::new(kb_str, FocusFilter, ctx)]),
         "view.toggle_hidden" => cx.bind_keys([KeyBinding::new(kb_str, ToggleHidden, ctx)]),
+        "view.edit_breadcrumb" => {
+            cx.bind_keys([KeyBinding::new(kb_str, EditBreadcrumb, ctx)])
+        }
 
         // -- Go ---------------------------------------------------
         "go.back" => cx.bind_keys([KeyBinding::new(kb_str, NavigateBack, ctx)]),
@@ -143,7 +147,6 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         // -- Not yet ported. Each is wired in a later stage.  -----
         "app.about"
         | "file.get_info"
-        | "view.edit_breadcrumb"
         | "view.toggle_preview"
         | "view.cycle_focus"
         | "view.zoom_in"
