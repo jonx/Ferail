@@ -8,19 +8,23 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use feraille_core::EntryKind;
+use feraille_core::{EntryKind, EnumerationError};
 use feraille_fs_native::{home_dir, list_volumes, open_with_default, NativeFs, VolumeInfo};
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Sizable, h_flex,
+    ActiveTheme, Disableable, Sizable, button::Button, h_flex,
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
+    switch::Switch,
     table::{DataTable, TableEvent, TableState},
     v_flex,
 };
 
 use crate::file_list::FileListDelegate;
 
-actions!(shell, [NavigateParent]);
+actions!(
+    shell,
+    [NavigateParent, NavigateBack, NavigateForward]
+);
 
 /// Key-context name for the Shell's outer container — same convention
 /// gpui-component uses (e.g. `Root` / `Input`). Only one context-bound
@@ -29,11 +33,11 @@ actions!(shell, [NavigateParent]);
 const SHELL_CONTEXT: &str = "Shell";
 
 pub fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new(
-        "backspace",
-        NavigateParent,
-        Some(SHELL_CONTEXT),
-    )]);
+    cx.bind_keys([
+        KeyBinding::new("backspace", NavigateParent, Some(SHELL_CONTEXT)),
+        KeyBinding::new("cmd-[", NavigateBack, Some(SHELL_CONTEXT)),
+        KeyBinding::new("cmd-]", NavigateForward, Some(SHELL_CONTEXT)),
+    ]);
 }
 
 pub struct Shell {
@@ -57,6 +61,17 @@ pub struct Shell {
     /// Row index of the currently-selected entry (or None when the
     /// pane is empty / nothing chosen). Drives the preview pane.
     pub selected: Option<usize>,
+    /// When true, dotfiles are shown in the list.
+    pub show_hidden: bool,
+    /// Navigation history (back-forward stack). The current location
+    /// is always `history[history_index]`. `navigate(p)` truncates
+    /// forward, pushes `p`, and advances the index.
+    pub history: Vec<PathBuf>,
+    pub history_index: usize,
+    /// `Some(err)` when the last `enumerate` returned an OS error
+    /// (most commonly macOS TCC denial on ~/Documents etc.). Drives
+    /// an in-pane empty-state instead of a silent blank list.
+    pub last_error: Option<EnumerationError>,
 }
 
 /// A named filesystem destination shown in the sidebar's Locations
@@ -92,8 +107,9 @@ impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let fs = Arc::new(NativeFs::new());
         let start = home_dir();
+        let show_hidden = false;
         let mut delegate = FileListDelegate::new(fs.clone());
-        let _ = delegate.load(start.clone());
+        let last_error = delegate.load(start.clone(), show_hidden);
         let initial_selection = if delegate.entries.is_empty() { None } else { Some(0) };
         let table = cx.new(|cx| {
             TableState::new(delegate, window, cx)
@@ -123,13 +139,74 @@ impl Shell {
         // shell.
         focus_handle.focus(window, cx);
         Self {
-            current_dir: start,
+            current_dir: start.clone(),
             volumes: list_volumes(),
             fs,
             table,
             focus_handle,
             selected: initial_selection,
+            show_hidden,
+            history: vec![start],
+            history_index: 0,
+            last_error,
         }
+    }
+
+    fn on_navigate_back(
+        &mut self,
+        _: &NavigateBack,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate_back(cx);
+    }
+
+    fn on_navigate_forward(
+        &mut self,
+        _: &NavigateForward,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate_forward(cx);
+    }
+
+    pub fn navigate_back(&mut self, cx: &mut Context<Self>) {
+        if self.history_index > 0 {
+            self.history_index -= 1;
+            let path = self.history[self.history_index].clone();
+            self.load_path(path, cx);
+        }
+    }
+
+    pub fn navigate_forward(&mut self, cx: &mut Context<Self>) {
+        if self.history_index + 1 < self.history.len() {
+            self.history_index += 1;
+            let path = self.history[self.history_index].clone();
+            self.load_path(path, cx);
+        }
+    }
+
+    /// Inner load: re-enumerate the directory + refresh the table.
+    /// Does **not** touch history (history is only mutated by
+    /// `navigate`).
+    fn load_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.current_dir = path.clone();
+        let show_hidden = self.show_hidden;
+        let table = self.table.clone();
+        let mut err: Option<EnumerationError> = None;
+        table.update(cx, |state, cx| {
+            err = state.delegate_mut().load(path, show_hidden);
+            state.refresh(cx);
+        });
+        self.last_error = err;
+        self.selected = None;
+        cx.notify();
+    }
+
+    pub fn toggle_hidden(&mut self, cx: &mut Context<Self>) {
+        self.show_hidden = !self.show_hidden;
+        let path = self.current_dir.clone();
+        self.load_path(path, cx);
     }
 
     fn on_navigate_parent(
@@ -179,18 +256,15 @@ impl Shell {
         }
     }
 
-    /// Navigate to `path`: update `current_dir`, re-enumerate the
-    /// directory via the FS backend, refresh the Table, request a
-    /// re-render. Resets selection because the row indices change.
+    /// Navigate to `path`: re-enumerate, refresh the Table, push to
+    /// history (truncating any forward stack first), reset selection.
     pub fn navigate(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.current_dir = path.clone();
-        let table = self.table.clone();
-        table.update(cx, |state, cx| {
-            state.delegate_mut().load(path);
-            state.refresh(cx);
-        });
-        self.selected = None;
-        cx.notify();
+        if self.history.get(self.history_index) != Some(&path) {
+            self.history.truncate(self.history_index + 1);
+            self.history.push(path.clone());
+            self.history_index = self.history.len() - 1;
+        }
+        self.load_path(path, cx);
     }
 
     /// Locations menu: Home + Applications + Desktop + Documents +
@@ -234,6 +308,90 @@ impl Shell {
                 })
                 .collect::<Vec<_>>(),
         )
+    }
+
+    /// Either the file Table, or an inline error/empty state when
+    /// the directory couldn't be listed (typically macOS TCC denial
+    /// on ~/Documents, ~/Desktop, ~/Downloads in a sandboxed runner).
+    fn file_pane_body(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(err) = self.last_error.clone() {
+            let (title, body) = error_copy(&err);
+            return v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .p_8()
+                .child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(cx.theme().foreground)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .max_w(px(420.0))
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(body),
+                )
+                .into_any_element();
+        }
+        DataTable::new(&self.table)
+            .bordered(false)
+            .stripe(true)
+            .small()
+            .into_any_element()
+    }
+
+    /// Toolbar row above the breadcrumb: Back / Forward buttons +
+    /// "Show hidden" toggle. Disabled buttons grey out via Button's
+    /// own disabled state — no manual styling.
+    fn toolbar(&self, cx: &mut Context<Self>) -> Div {
+        let can_back = self.history_index > 0;
+        let can_forward = self.history_index + 1 < self.history.len();
+        h_flex()
+            .w_full()
+            .items_center()
+            .gap_2()
+            .px_4()
+            .py_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                Button::new("nav-back")
+                    .small()
+                    .label("\u{2190}")
+                    .disabled(!can_back)
+                    .on_click(cx.listener(|this, _, _, cx| this.navigate_back(cx))),
+            )
+            .child(
+                Button::new("nav-forward")
+                    .small()
+                    .label("\u{2192}")
+                    .disabled(!can_forward)
+                    .on_click(cx.listener(|this, _, _, cx| this.navigate_forward(cx))),
+            )
+            .child(div().flex_1())
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Show hidden"),
+                    )
+                    .child(
+                        Switch::new("hidden-toggle-toolbar")
+                            .checked(self.show_hidden)
+                            .on_click(cx.listener(|this, _checked: &bool, _, cx| {
+                                this.toggle_hidden(cx);
+                            })),
+                    ),
+            )
     }
 
     /// Build the preview pane on the right of the file list. Shows
@@ -390,10 +548,14 @@ impl Render for Shell {
 
         let _ = path_str; // breadcrumb already shows the path
 
+        let toolbar = self.toolbar(cx);
+
         h_flex()
             .key_context(SHELL_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_navigate_parent))
+            .on_action(cx.listener(Self::on_navigate_back))
+            .on_action(cx.listener(Self::on_navigate_forward))
             .size_full()
             .bg(cx.theme().background)
             .child(sidebar)
@@ -402,6 +564,7 @@ impl Render for Shell {
                     .h_full()
                     .flex_1()
                     .min_w_0()
+                    .child(toolbar)
                     .child(breadcrumb)
                     .child(
                         h_flex()
@@ -409,21 +572,36 @@ impl Render for Shell {
                             .min_h_0()
                             .items_stretch()
                             .child(
-                                // The DataTable expects to fill its
-                                // own area; wrapping in an extra
-                                // v_flex was pushing rows down.
-                                // size_full() inside a flex_1 cell
-                                // is the canonical fill pattern.
                                 div().flex_1().min_w_0().h_full().child(
-                                    DataTable::new(&self.table)
-                                        .bordered(false)
-                                        .stripe(true)
-                                        .small(),
+                                    self.file_pane_body(cx),
                                 ),
                             )
                             .child(self.preview(cx)),
                     ),
             )
+    }
+}
+
+/// Map an `EnumerationError` to (title, body) copy for the in-pane
+/// error state. macOS users hitting `Documents` / `Desktop` /
+/// `Downloads` for the first time in a sandboxed launcher will see
+/// the TCC permission case; other variants get a generic message.
+fn error_copy(err: &EnumerationError) -> (&'static str, String) {
+    match err {
+        EnumerationError::PermissionDenied => (
+            "Access required",
+            "Feraille needs permission to read this folder. Grant access in \
+             System Settings \u{2192} Privacy & Security \u{2192} Files and Folders."
+                .to_string(),
+        ),
+        EnumerationError::NotFound => (
+            "Folder not found",
+            "This location may have been moved, renamed, or unmounted.".to_string(),
+        ),
+        EnumerationError::Other(msg) => (
+            "Couldn't open this folder",
+            msg.clone(),
+        ),
     }
 }
 

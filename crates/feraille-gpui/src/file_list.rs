@@ -46,10 +46,18 @@ impl FileListDelegate {
     /// Enumerate `path` via the FS backend and swap the entries in.
     /// Returns the error variant when the OS reports one (e.g. macOS
     /// TCC denial) so the Shell can render an empty-state.
-    pub fn load(&mut self, path: PathBuf) -> Option<feraille_core::EnumerationError> {
+    pub fn load(&mut self, path: PathBuf, show_hidden: bool) -> Option<feraille_core::EnumerationError> {
         let id = self.fs.id_for_path(&path);
         let handle = self.fs.enumerate(id);
-        self.entries = handle.initial;
+        self.entries = if show_hidden {
+            handle.initial
+        } else {
+            handle
+                .initial
+                .into_iter()
+                .filter(|e| !e.name.starts_with('.'))
+                .collect()
+        };
         handle.error
     }
 }
