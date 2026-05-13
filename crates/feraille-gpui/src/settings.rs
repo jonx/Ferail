@@ -83,6 +83,11 @@ pub struct SettingsView {
     pub category: SettingsCategory,
     pub show_hidden: bool,
     pub sidebar_width: SidebarWidthSnap,
+    /// Count of dotfiles in the user's home directory, computed once
+    /// at view construction so the Files page can show a live
+    /// consequence preview ("Would reveal N items …"). `None` if the
+    /// home directory couldn't be read (sandbox, CI, etc.).
+    pub home_hidden_count: Option<usize>,
 }
 
 impl SettingsView {
@@ -91,8 +96,26 @@ impl SettingsView {
             category: initial,
             show_hidden: false,
             sidebar_width: SidebarWidthSnap::Medium,
+            home_hidden_count: count_home_hidden_items(),
         }
     }
+}
+
+/// Count entries in `$HOME` whose name starts with `.`. Synchronous
+/// because it runs exactly once at view construction; future revisions
+/// will move this onto a background task with live invalidation.
+fn count_home_hidden_items() -> Option<usize> {
+    let home = std::env::var_os("HOME")?;
+    let n = std::fs::read_dir(home)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with('.')
+        })
+        .count();
+    Some(n)
 }
 
 // =============================================================================
@@ -180,33 +203,30 @@ impl SettingsView {
         )
     }
 
-    /// Theme picker — two-button segmented control. Each click flips
-    /// the global theme via `Theme::change`, so the rest of the
-    /// window updates immediately.
+    /// Two-tile theme picker (Light, Dark). Each tile is a mini-
+    /// window mock — the user sees the consequence of the choice
+    /// before committing, per the design brief's "show consequence,
+    /// don't describe it" principle.
     fn theme_picker(&self, cx: &mut Context<Self>) -> AnyElement {
         let current = cx.theme().mode;
-        ButtonGroup::new("theme-picker")
-            .small()
-            .outline()
-            .compact()
-            .child(
-                Button::new("theme-light")
-                    .label("Light")
-                    .selected(current == ThemeMode::Light),
-            )
-            .child(
-                Button::new("theme-dark")
-                    .label("Dark")
-                    .selected(current == ThemeMode::Dark),
-            )
-            .on_click(cx.listener(|_, clicks: &Vec<usize>, window, cx| {
-                let mode = match clicks.first().copied() {
-                    Some(0) => ThemeMode::Light,
-                    Some(1) => ThemeMode::Dark,
-                    _ => return,
-                };
-                Theme::change(mode, Some(window), cx);
-            }))
+        h_flex()
+            .gap_3()
+            .child(preview_tile(
+                "tile-light",
+                "Light",
+                PreviewKind::Light,
+                current == ThemeMode::Light,
+                cx,
+                |window, cx| Theme::change(ThemeMode::Light, Some(window), cx),
+            ))
+            .child(preview_tile(
+                "tile-dark",
+                "Dark",
+                PreviewKind::Dark,
+                current == ThemeMode::Dark,
+                cx,
+                |window, cx| Theme::change(ThemeMode::Dark, Some(window), cx),
+            ))
             .into_any_element()
     }
 
@@ -270,15 +290,30 @@ impl SettingsView {
 
     fn files_card(&self, cx: &mut Context<Self>) -> Div {
         let toggle = self.hidden_toggle(cx);
-        settings_card(
-            vec![settings_row(
-                "Show hidden files and folders",
-                Some("Display items that start with a dot, like .config and .ssh."),
-                toggle,
-                cx,
-            )],
+        let mut rows = vec![settings_row(
+            "Show hidden files and folders",
+            Some("Display items that start with a dot, like .config and .ssh."),
+            toggle,
             cx,
-        )
+        )];
+        // Live consequence preview per the design brief: tell the
+        // user what flipping this would actually change.
+        if let Some(n) = self.home_hidden_count {
+            let phrase = if self.show_hidden {
+                format!("Currently revealing {} hidden items in your home folder.", n)
+            } else {
+                format!("Would reveal {} hidden items in your home folder.", n)
+            };
+            rows.push(
+                h_flex().w_full().px_4().py_2().child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(phrase),
+                ),
+            );
+        }
+        settings_card(rows, cx)
     }
 
     fn layout_card(&self, cx: &mut Context<Self>) -> Div {
@@ -402,6 +437,119 @@ impl Render for SettingsView {
 // =============================================================================
 // CLI helper
 // =============================================================================
+
+// =============================================================================
+// PreviewTile — mini-window theme swatches
+// =============================================================================
+
+#[derive(Clone, Copy)]
+pub enum PreviewKind {
+    Light,
+    Dark,
+}
+
+/// Build a clickable preview tile: a stylized mini-window rendered in
+/// the target theme's palette, with a label below. Selected tiles get
+/// an accent border ring; unselected ones get `border.subtle`.
+fn preview_tile(
+    id: &'static str,
+    label: &'static str,
+    kind: PreviewKind,
+    selected: bool,
+    cx: &mut Context<SettingsView>,
+    on_click: impl Fn(&mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    // Mock palette for the inner artwork — hardcoded so the tile
+    // shows the OTHER theme even when the app is in the current one.
+    let (bg, panel, accent, fg) = match kind {
+        PreviewKind::Light => (
+            rgb(0xFAFAFA),
+            rgb(0xF0F0F0),
+            rgb(0x2A63D9),
+            rgb(0x1A1A1A),
+        ),
+        PreviewKind::Dark => (
+            rgb(0x1B1B1B),
+            rgb(0x252525),
+            rgb(0x2457CA),
+            rgb(0xF5F5F5),
+        ),
+    };
+
+    let border_color = if selected {
+        cx.theme().primary
+    } else {
+        cx.theme().border
+    };
+    let border_w = if selected { px(2.0) } else { px(1.0) };
+
+    // Inner artwork: titlebar with three traffic lights, sidebar
+    // slab, three "rows" with the middle one selection-highlighted.
+    let artwork = v_flex()
+        .w(px(160.0))
+        .h(px(96.0))
+        .rounded(px(6.0))
+        .overflow_hidden()
+        .bg(bg)
+        .child(
+            h_flex()
+                .w_full()
+                .h(px(14.0))
+                .items_center()
+                .gap_1()
+                .px_2()
+                .bg(panel)
+                .child(div().size(px(6.0)).rounded_full().bg(rgb(0xFF6057)))
+                .child(div().size(px(6.0)).rounded_full().bg(rgb(0xFFBD2E)))
+                .child(div().size(px(6.0)).rounded_full().bg(rgb(0x28C940))),
+        )
+        .child(
+            h_flex()
+                .flex_1()
+                .child(div().w(px(46.0)).h_full().bg(panel))
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .gap_1()
+                        .pt_2()
+                        .px_2()
+                        .child(div().w(px(60.0)).h(px(4.0)).rounded_full().bg(fg))
+                        .child(
+                            div()
+                                .h(px(10.0))
+                                .w_full()
+                                .rounded(px(2.0))
+                                .bg(accent),
+                        )
+                        .child(div().w(px(72.0)).h(px(4.0)).rounded_full().bg(fg)),
+                ),
+        );
+
+    div()
+        .id(ElementId::Name(id.into()))
+        .flex()
+        .flex_col()
+        .gap_2()
+        .items_center()
+        .p_1p5()
+        .rounded(px(8.0))
+        .border(border_w)
+        .border_color(border_color)
+        .cursor_pointer()
+        .child(artwork)
+        .child(
+            div()
+                .text_xs()
+                .font_weight(if selected {
+                    FontWeight::SEMIBOLD
+                } else {
+                    FontWeight::MEDIUM
+                })
+                .text_color(cx.theme().foreground)
+                .child(label),
+        )
+        .on_click(cx.listener(move |_, _, window, cx| on_click(window, cx)))
+}
 
 pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {
     match arg.unwrap_or("appearance") {
