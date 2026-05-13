@@ -96,6 +96,7 @@ pub fn run(args: Args) -> Result<()> {
     let settings_page = args.settings.clone();
     app.run(move |cx| {
         gpui_component::init(cx);
+        crate::shell::init(cx);
         if let Some(mode) = theme_mode {
             Theme::change(mode, None, cx);
         }

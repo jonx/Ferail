@@ -8,16 +8,33 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use feraille_fs_native::{home_dir, list_volumes, NativeFs, VolumeInfo};
+use feraille_core::EntryKind;
+use feraille_fs_native::{home_dir, list_volumes, open_with_default, NativeFs, VolumeInfo};
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Sizable, h_flex,
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
-    table::{DataTable, TableState},
+    table::{DataTable, TableEvent, TableState},
     v_flex,
 };
 
 use crate::file_list::FileListDelegate;
+
+actions!(shell, [NavigateParent]);
+
+/// Key-context name for the Shell's outer container — same convention
+/// gpui-component uses (e.g. `Root` / `Input`). Only one context-bound
+/// keystroke today (Backspace → NavigateParent); the full keymap
+/// system arrives in Phase 5.
+const SHELL_CONTEXT: &str = "Shell";
+
+pub fn init(cx: &mut App) {
+    cx.bind_keys([KeyBinding::new(
+        "backspace",
+        NavigateParent,
+        Some(SHELL_CONTEXT),
+    )]);
+}
 
 pub struct Shell {
     /// Path the file pane is currently showing.
@@ -33,6 +50,10 @@ pub struct Shell {
     /// our file-list delegate. The Shell talks to the delegate
     /// through `cx.update_entity` calls on this handle.
     pub table: Entity<TableState<FileListDelegate>>,
+    /// Focus handle for the Shell's key-context. Keybindings declared
+    /// against `SHELL_CONTEXT` only fire when this handle (or one of
+    /// its children) holds focus.
+    pub focus_handle: FocusHandle,
 }
 
 /// A named filesystem destination shown in the sidebar's Locations
@@ -75,11 +96,77 @@ impl Shell {
                 .col_selectable(false)
                 .col_movable(false)
         });
+        // Bridge double-click events into our own activate handler.
+        // `cx.subscribe_in` keeps a window reference so we can route
+        // navigate() calls back through the foreground executor.
+        cx.subscribe_in(
+            &table,
+            window,
+            |this, _table, event: &TableEvent, _window, cx| {
+                if let TableEvent::DoubleClickedRow(row_ix) = event {
+                    this.activate_row(*row_ix, cx);
+                }
+            },
+        )
+        .detach();
+        let focus_handle = cx.focus_handle();
+        // Grab focus on first paint so the Backspace keybind works
+        // immediately without the user having to click into the
+        // shell.
+        focus_handle.focus(window, cx);
         Self {
             current_dir: start,
             volumes: list_volumes(),
             fs,
             table,
+            focus_handle,
+        }
+    }
+
+    fn on_navigate_parent(
+        &mut self,
+        _: &NavigateParent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate_parent(cx);
+    }
+
+    /// User activated a row (double-click or Enter). For directories
+    /// we navigate into them; for files we hand off to the OS opener.
+    pub fn activate_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        let path_and_kind = self.table.read(cx).delegate().entries.get(row_ix).map(|e| {
+            (
+                self.fs.path_for(e.id).unwrap_or_else(|| {
+                    let mut p = self.current_dir.clone();
+                    p.push(&e.name);
+                    p
+                }),
+                e.kind,
+            )
+        });
+        let Some((path, kind)) = path_and_kind else {
+            return;
+        };
+        match kind {
+            EntryKind::Directory => self.navigate(path, cx),
+            EntryKind::File | EntryKind::Symlink => {
+                // open_with_default routes through `open(1)` on macOS;
+                // failures are logged-and-ignored — the user already
+                // gets system-level feedback if the app can't open.
+                let _ = open_with_default(&path);
+            }
+        }
+    }
+
+    /// Navigate to the parent of the current directory (Backspace
+    /// keybind in 4.c.2). No-op when already at the filesystem root.
+    pub fn navigate_parent(&mut self, cx: &mut Context<Self>) {
+        if let Some(parent) = self.current_dir.parent() {
+            let parent = parent.to_path_buf();
+            if parent != self.current_dir {
+                self.navigate(parent, cx);
+            }
         }
     }
 
@@ -222,6 +309,9 @@ impl Render for Shell {
         let _ = path_str; // breadcrumb already shows the path
 
         h_flex()
+            .key_context(SHELL_CONTEXT)
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::on_navigate_parent))
             .size_full()
             .bg(cx.theme().background)
             .child(sidebar)

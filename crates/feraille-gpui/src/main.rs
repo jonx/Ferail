@@ -31,6 +31,7 @@ fn run_gui(args: screenshot::Args) {
 
     app.run(move |cx| {
         gpui_component::init(cx);
+        feraille_gpui::shell::init(cx);
         if let Some(mode) = theme_mode {
             Theme::change(mode, None, cx);
         }
