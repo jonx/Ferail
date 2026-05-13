@@ -61,8 +61,29 @@ pub struct DiskUsageView {
     size_mode: SizeMode,
     descend_packages: bool,
 
+    /// Capacity of the volume containing `root_path`, when known.
+    /// Renders as a Finder-style "X.X GB free of Y.Y GB" capacity
+    /// bar in the header.
+    volume: Option<feraille_fs_native::VolumeInfo>,
+
+    /// Top-N largest files in the scanned tree, recomputed when a
+    /// new fact batch lands. Capped at 50 entries.
+    top_files: Vec<TopFileEntry>,
+    /// Show the Top-N panel? Toggleable via the header chip.
+    topn_visible: bool,
+
     focus_handle: FocusHandle,
 }
+
+/// One entry in the Top-N largest-files panel.
+#[derive(Clone, Debug)]
+struct TopFileEntry {
+    name: String,
+    size_bytes: u64,
+}
+
+const TOPN_CAP: usize = 50;
+const TOPN_PANEL_WIDTH: f32 = 240.0;
 
 impl DiskUsageView {
     pub fn new(
@@ -75,6 +96,9 @@ impl DiskUsageView {
         let root_id = fs.id_for_path(&canonical);
         let cancel = Arc::new(AtomicBool::new(false));
         let msg_queue = Arc::new(Mutex::new(Vec::new()));
+        // Resolve volume capacity for the header capacity bar.
+        // None on non-macOS or when the volume info lookup failed.
+        let volume = feraille_fs_native::volume_info_for_path(&canonical);
         let mut view = Self {
             root_path: canonical.clone(),
             root_id,
@@ -90,10 +114,35 @@ impl DiskUsageView {
             zoom_path: Vec::new(),
             size_mode: SizeMode::Apparent,
             descend_packages: false,
+            volume,
+            top_files: Vec::new(),
+            topn_visible: true,
             focus_handle: cx.focus_handle(),
         };
         view.start_scan(fs, cx);
         view
+    }
+
+    /// Recompute the Top-N largest-files list from the current tree.
+    /// Single pass + partial sort, capped at `TOPN_CAP`.
+    fn rebuild_top_files(&mut self) {
+        let mut all: Vec<TopFileEntry> = self
+            .tree
+            .nodes
+            .iter()
+            .filter_map(|(_id, n)| match n.kind {
+                feraille_disk_usage::NodeKind::File if n.size_bytes > 0 => {
+                    Some(TopFileEntry {
+                        name: n.display_name.clone(),
+                        size_bytes: n.size_bytes,
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        all.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+        all.truncate(TOPN_CAP);
+        self.top_files = all;
     }
 
     /// Spawn the disk-usage scan on the background executor + start
@@ -172,6 +221,7 @@ impl DiskUsageView {
             ScanMsg::Batch(facts) => {
                 self.tree.apply_facts(&facts);
                 self.invalidate_layout();
+                self.rebuild_top_files();
                 cx.notify();
             }
             ScanMsg::Progress(p) => {
@@ -182,6 +232,7 @@ impl DiskUsageView {
                 self.scan_complete = true;
                 self.error = err;
                 self.invalidate_layout();
+                self.rebuild_top_files();
                 cx.notify();
             }
         }
@@ -227,7 +278,7 @@ impl DiskUsageView {
         } else {
             format!("Scanning\u{2026} {files} files, {scanned}")
         };
-        v_flex()
+        let mut col = v_flex()
             .w_full()
             .gap_1()
             .px_4()
@@ -246,7 +297,162 @@ impl DiskUsageView {
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .child(SharedString::from(summary)),
+            );
+        // Volume capacity bar — "X.X GB free of Y.Y GB" with the
+        // used portion filled in muted_foreground.
+        if let Some(v) = &self.volume {
+            if let (Some(total), Some(avail)) = (v.total_bytes, v.available_bytes) {
+                if total > 0 {
+                    let used = total.saturating_sub(avail);
+                    let frac = (used as f32 / total as f32).clamp(0.0, 1.0);
+                    let bar_w = px(280.0);
+                    let fill_w = bar_w * frac;
+                    let track_bg = theme.muted_foreground.opacity(0.25);
+                    let fill_bg = theme.muted_foreground.opacity(0.85);
+                    let label = format!(
+                        "{} free of {} on {}",
+                        humanize_bytes(avail),
+                        humanize_bytes(total),
+                        v.name
+                    );
+                    col = col.child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .pt_1()
+                            .child(
+                                div()
+                                    .w(bar_w)
+                                    .h(px(4.0))
+                                    .rounded(px(2.0))
+                                    .bg(track_bg)
+                                    .child(
+                                        div()
+                                            .h_full()
+                                            .w(fill_w)
+                                            .rounded(px(2.0))
+                                            .bg(fill_bg),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(SharedString::from(label)),
+                            ),
+                    );
+                }
+            }
+        }
+        col
+    }
+
+    /// Right-side Top-N panel: scrollable list of the largest files
+    /// in the scanned tree. Updates live as new facts arrive.
+    fn top_panel(&self, cx: &mut App) -> Div {
+        let theme = cx.theme();
+        let rows: Vec<Div> = self
+            .top_files
+            .iter()
+            .enumerate()
+            .map(|(ix, e)| {
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .py_1()
+                    .px_2()
+                    .when(ix % 2 == 0, |this| {
+                        this.bg(theme.muted_foreground.opacity(0.04))
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(theme.foreground)
+                            .child(SharedString::from(e.name.clone())),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(humanize_bytes(e.size_bytes))),
+                    )
+            })
+            .collect();
+        v_flex()
+            .w(px(TOPN_PANEL_WIDTH))
+            .h_full()
+            .flex_shrink_0()
+            .border_l_1()
+            .border_color(theme.border)
+            .bg(theme.background)
+            .child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .text_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.muted_foreground)
+                    .child("Largest files"),
             )
+            .child(
+                div()
+                    .id("du-topn-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_1()
+                    .py_1()
+                    .child(v_flex().w_full().children(rows)),
+            )
+    }
+
+    /// Color legend at the bottom — one chip per FileCategory. Just
+    /// visual reference today; clicking to filter lands in a
+    /// follow-on.
+    fn legend(&self, cx: &mut App) -> Div {
+        let theme = cx.theme();
+        let entries = [
+            (FileCategory::Image, "Image"),
+            (FileCategory::Video, "Video"),
+            (FileCategory::Audio, "Audio"),
+            (FileCategory::Document, "Document"),
+            (FileCategory::Archive, "Archive"),
+            (FileCategory::Executable, "Executable"),
+            (FileCategory::Other, "Other"),
+        ];
+        let chips = entries.iter().map(|(cat, label)| {
+            h_flex()
+                .gap_1()
+                .items_center()
+                .child(
+                    div()
+                        .w(px(10.0))
+                        .h(px(10.0))
+                        .rounded(px(2.0))
+                        .bg(category_color(*cat)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(*label)),
+                )
+        });
+        h_flex()
+            .w_full()
+            .items_center()
+            .gap_3()
+            .px_4()
+            .py_2()
+            .border_t_1()
+            .border_color(theme.border)
+            .children(chips)
     }
 
     fn treemap(&mut self, cx: &mut Context<Self>) -> Div {
@@ -363,6 +569,13 @@ impl Render for DiskUsageView {
     ) -> impl IntoElement {
         let header = self.header(cx);
         let treemap = self.treemap(cx);
+        let topn_visible = self.topn_visible && !self.top_files.is_empty();
+        let topn = if topn_visible {
+            Some(self.top_panel(cx))
+        } else {
+            None
+        };
+        let legend = self.legend(cx);
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
@@ -373,8 +586,10 @@ impl Render for DiskUsageView {
                     .flex_1()
                     .min_h_0()
                     .items_stretch()
-                    .child(div().flex_1().min_w_0().p_2().child(treemap)),
+                    .child(div().flex_1().min_w_0().p_2().child(treemap))
+                    .when_some(topn, |this, panel| this.child(panel)),
             )
+            .child(legend)
     }
 }
 
