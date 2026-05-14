@@ -26,6 +26,23 @@ use gpui_component::{ActiveTheme, Sizable as _, h_flex};
 
 use crate::tasks::{TaskProgress, TaskRegistry};
 
+/// Status-bar-local byte-size formatter. Mirrors the one in
+/// disk_usage.rs (1 KB = 1024 B; 1 decimal place above KB).
+fn humanize_bytes(b: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut s = b as f64;
+    let mut u = 0;
+    while s >= 1024.0 && u + 1 < UNITS.len() {
+        s /= 1024.0;
+        u += 1;
+    }
+    if u == 0 {
+        format!("{} {}", b, UNITS[u])
+    } else {
+        format!("{:.1} {}", s, UNITS[u])
+    }
+}
+
 /// Render the status bar row. `entries` is the active tab's entry
 /// count; `tasks` is the shared task registry. `simulated_progress`
 /// is `Some(_)` only when the `--simulate-progress` CLI flag is set
@@ -33,8 +50,21 @@ use crate::tasks::{TaskProgress, TaskRegistry};
 /// real work). `on_toggle_task_panel` fires when the user clicks the
 /// task region or progress strip — `None` when the host doesn't want
 /// the panel (screenshots, etc.).
+/// Density-of-decisions metrics surfaced by the status bar
+/// (Phase 8). Each field is precomputed by the Shell so the render
+/// path doesn't recompute on every paint.
+#[derive(Default, Clone, Copy)]
+pub struct StatusMetrics {
+    pub entries: usize,
+    pub selected_count: usize,
+    pub selected_size: u64,
+    pub total_size: u64,
+    pub free_bytes: Option<u64>,
+    pub volume_name: Option<&'static str>,
+}
+
 pub fn render(
-    entries: usize,
+    metrics: StatusMetrics,
     tasks: &Rc<RefCell<TaskRegistry>>,
     simulated_progress: Option<f32>,
     on_toggle_task_panel: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -42,14 +72,39 @@ pub fn render(
     on_toggle_hidden: Option<Rc<dyn Fn(&mut Window, &mut App) + 'static>>,
     cx: &mut App,
 ) -> Div {
-    let theme = cx.theme();
+    // Snapshot theme colours up-front — the later progress_strip
+    // call takes `&mut App`, which would otherwise conflict with the
+    // outstanding `theme` borrow inside `when_some(free_label, ...)`.
+    let theme_border = cx.theme().border;
+    let theme_secondary = cx.theme().secondary;
+    let theme_muted_fg = cx.theme().muted_foreground;
     let registry = tasks.borrow();
 
-    // Left side: entry count.
+    // Left side: item count + selected-count / -size when there is
+    // a selection. Total visible size sits after the count so a
+    // glance reveals "how heavy is this folder?" without selecting.
+    let entries = metrics.entries;
     let count_label = if entries == 1 {
-        "1 item".to_string()
+        format!("1 item \u{00B7} {}", humanize_bytes(metrics.total_size))
+    } else if entries == 0 {
+        "Empty folder".to_string()
+    } else if metrics.selected_count > 0 {
+        format!(
+            "{} of {} selected \u{00B7} {}",
+            metrics.selected_count,
+            entries,
+            humanize_bytes(metrics.selected_size),
+        )
     } else {
-        format!("{} items", entries)
+        format!("{} items \u{00B7} {}", entries, humanize_bytes(metrics.total_size))
+    };
+
+    let free_label = match (metrics.free_bytes, metrics.volume_name) {
+        (Some(b), Some(name)) => {
+            Some(format!("{} free on {}", humanize_bytes(b), name))
+        }
+        (Some(b), None) => Some(format!("{} free", humanize_bytes(b))),
+        _ => None,
     };
 
     // Middle: task summary.
@@ -95,10 +150,10 @@ pub fn render(
         .px_3()
         .py_1()
         .border_t_1()
-        .border_color(theme.border)
-        .bg(theme.secondary)
+        .border_color(theme_border)
+        .bg(theme_secondary)
         .text_xs()
-        .text_color(theme.muted_foreground)
+        .text_color(theme_muted_fg)
         .child(div().flex_shrink_0().child(count_label))
         .when_some(task_label, |this, label| {
             this.child(make_clickable(
@@ -114,6 +169,18 @@ pub fn render(
                 progress_strip(indeterminate, fraction, cx),
                 "status-bar-progress",
             ))
+        })
+        // Phase 8: free-disk-space label sits between the task
+        // summary and the Show-Hidden toggle. Only rendered when we
+        // could query the volume info — non-macOS / sandboxed
+        // builds skip it gracefully.
+        .when_some(free_label, |this, label| {
+            this.child(
+                div()
+                    .flex_shrink_0()
+                    .text_color(theme_muted_fg.opacity(0.85))
+                    .child(SharedString::from(label)),
+            )
         })
         // Phase 7 user ask: Show-Hidden moved out of the toolbar
         // and lives here next to the count + task summary. View-mode

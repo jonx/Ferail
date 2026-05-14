@@ -2741,7 +2741,43 @@ impl Render for Shell {
         let _ = path_str; // breadcrumb already shows the path
 
         let tabstrip = self.tabstrip(cx);
-        let entry_count = self.table.read(cx).delegate().entries.len();
+        // Phase 8: status-bar density. Compute selected count / size,
+        // total visible size for the active folder, and free disk on
+        // the active tab's volume. Cheap O(N) sums over the already-
+        // filtered entries Vec; called once per render.
+        let delegate = self.table.read(cx).delegate();
+        let entries = &delegate.entries;
+        let entry_count = entries.len();
+        let total_size: u64 = entries.iter().map(|e| e.size).sum();
+        let selected_count = self.active_tab().selected.map(|_| 1).unwrap_or(0);
+        let selected_size: u64 = self
+            .active_tab()
+            .selected
+            .and_then(|i| entries.get(i))
+            .map(|e| e.size)
+            .unwrap_or(0);
+        // Free-space query — sync, very cheap on macOS (statvfs).
+        // Returns None on non-macOS or for paths we can't reach.
+        let volume_info = feraille_fs_native::volume_info_for_path(
+            &self.active_tab().current_dir,
+        );
+        let (free_bytes, volume_name): (Option<u64>, Option<&'static str>) =
+            match volume_info {
+                Some(v) => {
+                    let name: Option<&'static str> = Some(Box::leak(v.name.into_boxed_str()));
+                    (v.available_bytes, name)
+                }
+                None => (None, None),
+            };
+        let metrics = crate::status_bar::StatusMetrics {
+            entries: entry_count,
+            selected_count,
+            selected_size,
+            total_size,
+            free_bytes,
+            volume_name,
+        };
+        let _ = delegate;
         // Clicking the task region of the status bar toggles the
         // background-task panel popover. The listener takes `&mut
         // Self` directly so we don't re-enter the entity update.
@@ -2768,7 +2804,7 @@ impl Render for Shell {
             })
         };
         let status_bar = crate::status_bar::render(
-            entry_count,
+            metrics,
             &self.tasks,
             self.simulated_progress,
             Some(toggle_task_panel),
