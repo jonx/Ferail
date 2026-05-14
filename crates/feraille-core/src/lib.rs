@@ -97,6 +97,16 @@ fn formats_compatible(kind: &str, magic: &str) -> bool {
     if k.is_empty() || m.is_empty() {
         return true;
     }
+    // Placeholder kinds ("File" / "Folder" / "Symlink") fire when a
+    // file has no extension or we couldn't derive one — they're
+    // *missing* information, not an assertion about format. A Mach-O
+    // binary with no extension still shows kind="File", which
+    // doesn't contradict the magic-detected type. Same for folders
+    // and symlinks (which won't reach magic detection but we belt-
+    // and-suspender it).
+    if matches!(k.as_str(), "file" | "folder" | "symlink") {
+        return true;
+    }
     if k == m || m.contains(&k) || k.contains(&m) {
         return true;
     }
@@ -249,6 +259,28 @@ mod format_label_tests {
         // Both sides arrive as the same display string; trivial equality
         // after normalisation.
         let (_, mismatch) = entry("PNG image", "PNG image").format_label();
+        assert!(!mismatch);
+    }
+
+    #[test]
+    fn placeholder_file_kind_never_mismatches_magic() {
+        // No-extension files surface as kind="File" — that's a missing-
+        // info placeholder, not an assertion about the format. It
+        // shouldn't ever flag a mismatch.
+        let (_, mismatch) = entry("File", "Mach-O 64-bit").format_label();
+        assert!(
+            !mismatch,
+            "kind=File is a placeholder, can't disagree with magic"
+        );
+        let (_, mismatch) = entry("File", "ELF executable").format_label();
+        assert!(!mismatch);
+    }
+
+    #[test]
+    fn folder_and_symlink_kinds_never_mismatch() {
+        let (_, mismatch) = entry("Folder", "directory").format_label();
+        assert!(!mismatch);
+        let (_, mismatch) = entry("Symlink", "symbolic link").format_label();
         assert!(!mismatch);
     }
 }
