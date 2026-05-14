@@ -327,6 +327,11 @@ pub struct Shell {
     /// debounce the file write to ~once per `SPLITTER_PERSIST_INTERVAL`
     /// so a drag doesn't hammer the config file.
     pub splitter_last_save: Option<std::time::Instant>,
+    /// Sidebar collapsed to icons-only when true. Toggled by the
+    /// SidebarToggleButton in the TitleBar; persisted via
+    /// `app_state::sidebar_collapsed` so the choice survives
+    /// restarts.
+    pub sidebar_collapsed: bool,
     /// Sidebar tree state (Stage 9.c): which directories are
     /// currently expanded. Updated on caret-click and by the
     /// `--expand <path>` CLI flag (which walks the path's ancestors).
@@ -553,7 +558,8 @@ impl Shell {
         let table = cx.new(|cx| {
             TableState::new(delegate, window, cx)
                 .col_selectable(false)
-                .col_movable(false)
+                .col_movable(true)
+                .col_resizable(true)
         });
         // Bridge Table events (selection + double-click) to the
         // Shell's own state so the preview pane sees the live row.
@@ -716,6 +722,7 @@ impl Shell {
             sidebar_width: persisted.sidebar_width.unwrap_or(220.0).clamp(160.0, 400.0),
             preview_width: persisted.preview_width.unwrap_or(280.0).clamp(220.0, 520.0),
             splitter_last_save: None,
+            sidebar_collapsed: persisted.sidebar_collapsed.unwrap_or(false),
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
             ant_visits: HashMap::new(),
@@ -2377,15 +2384,32 @@ impl Shell {
     /// status bar now (paired with the item count, where view-mode
     /// state belongs).
     fn title_bar(&self, cx: &mut Context<Self>) -> TitleBar {
+        use gpui_component::sidebar::SidebarToggleButton;
         let can_back = self.active_tab().history_index > 0;
         let can_forward =
             self.active_tab().history_index + 1 < self.active_tab().history.len();
+        let collapsed = self.sidebar_collapsed;
         TitleBar::new().child(
             h_flex()
                 .w_full()
                 .items_center()
                 .gap_2()
                 .pr_3()
+                // Sidebar collapse / expand toggle. The SidebarToggle-
+                // Button swaps its glyph based on the `collapsed`
+                // flag (panel-left-open vs panel-left-close) so the
+                // user can read what clicking will do.
+                .child(
+                    SidebarToggleButton::new()
+                        .collapsed(collapsed)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.sidebar_collapsed = !this.sidebar_collapsed;
+                            let mut s = app_state::load();
+                            s.sidebar_collapsed = Some(this.sidebar_collapsed);
+                            app_state::save(&s);
+                            cx.notify();
+                        })),
+                )
                 .child(
                     div()
                         .flex_shrink_0()
@@ -2796,8 +2820,11 @@ impl Render for Shell {
         // expand.
         // Sidebar no longer carries the "Feraille" header — that moved
         // into the TitleBar at the top of the window (Phase 7).
+        // Icon-mode collapse is enabled so the toggle button in the
+        // TitleBar can shrink the sidebar to a 48-DIP icon strip.
         let mut sidebar = Sidebar::new("shell-sidebar")
-            .collapsible(false)
+            .collapsible(gpui_component::sidebar::SidebarCollapsible::Icon)
+            .collapsed(self.sidebar_collapsed)
             .w_full()
             .child(ShellSidebarItem::group(
                 SidebarGroup::new("Favorites").child(favorites_menu),
@@ -2994,7 +3021,15 @@ impl Render for Shell {
                 // `.size(...)` — they survive across launches because
                 // they're written through `on_resize` to app_state
                 // (debounced via SPLITTER_PERSIST_INTERVAL below).
-                let sidebar_width_px = px(self.sidebar_width);
+                // Collapsed sidebar shrinks to the gpui-component
+                // icon strip width (~48 DIPs). Drag handle hides
+                // implicitly because we squeeze the range to a fixed
+                // size in that mode.
+                let sidebar_width_px = if self.sidebar_collapsed {
+                    px(48.0)
+                } else {
+                    px(self.sidebar_width)
+                };
                 let preview_width_px = px(self.preview_width);
                 let weak = cx.weak_entity();
                 let splitter = h_resizable("shell-splitter")
@@ -3021,7 +3056,16 @@ impl Render for Shell {
                     .child(
                         resizable_panel()
                             .size(sidebar_width_px)
-                            .size_range(px(160.0)..px(400.0))
+                            // Collapsed: pin the panel to the icon
+                            // strip width so the drag handle can't
+                            // reopen it accidentally; the TitleBar
+                            // toggle is the one way back to expanded.
+                            .when(self.sidebar_collapsed, |this| {
+                                this.size_range(px(48.0)..px(48.0))
+                            })
+                            .when(!self.sidebar_collapsed, |this| {
+                                this.size_range(px(160.0)..px(400.0))
+                            })
                             .child(sidebar),
                     )
                     .child(

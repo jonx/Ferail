@@ -64,11 +64,17 @@ impl FileListDelegate {
             // cell prefers magic-detected text, falls back to the
             // extension-derived kind, and renders a small mismatch
             // indicator when the two genuinely disagree.
+            //
+            // Each column is marked `.sortable()` so clicking the
+            // header runs `perform_sort` below. The Table primitive
+            // also handles resizing + reorder when its TableState
+            // has col_resizable / col_movable enabled (both default
+            // true in our pinned version).
             columns: vec![
-                Column::new("name", "Name").width(360.0),
-                Column::new("size", "Size").width(100.0),
-                Column::new("format", "Format").width(220.0),
-                Column::new("modified", "Modified").width(160.0),
+                Column::new("name", "Name").width(360.0).sortable(),
+                Column::new("size", "Size").width(100.0).sortable(),
+                Column::new("format", "Format").width(220.0).sortable(),
+                Column::new("modified", "Modified").width(160.0).sortable(),
             ],
             fs,
             paths: HashMap::new(),
@@ -445,6 +451,36 @@ impl TableDelegate for FileListDelegate {
         menu = menu.item(PopupMenuItem::submenu("Tags", tags_submenu));
 
         menu.separator().menu("Move to Trash", Box::new(MoveToTrash))
+    }
+
+    /// Click on a header runs this — we delegate to the existing
+    /// `sort_in_place` helper, mapping the column index back to a
+    /// `SortColumn` via the `columns` vec's index → key lookup. The
+    /// Table's column moves shift indices around, which is why we
+    /// resolve via key rather than hard-coding indices.
+    fn perform_sort(
+        &mut self,
+        col_ix: usize,
+        sort: gpui_component::table::ColumnSort,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) {
+        let Some(col) = self.columns.get(col_ix) else { return };
+        let Some(sort_col) = SortColumn::from_str(&col.key) else { return };
+        match sort {
+            gpui_component::table::ColumnSort::Default => {
+                // "Reset to natural order" — sort by name ascending
+                // (Finder convention) as a deterministic fallback,
+                // since we don't retain the load-time order.
+                sort_in_place(&mut self.entries, SortColumn::Name, true);
+            }
+            gpui_component::table::ColumnSort::Ascending => {
+                sort_in_place(&mut self.entries, sort_col, true);
+            }
+            gpui_component::table::ColumnSort::Descending => {
+                sort_in_place(&mut self.entries, sort_col, false);
+            }
+        }
     }
 
     fn render_empty(

@@ -28,6 +28,9 @@ pub struct AppState {
     pub sidebar_width: Option<f32>,
     /// Preview pane width in DIPs. Same clamp story.
     pub preview_width: Option<f32>,
+    /// Whether the sidebar is collapsed to icons-only. None == the
+    /// user has never expressed a preference (defaults to expanded).
+    pub sidebar_collapsed: Option<bool>,
 }
 
 #[cfg(target_os = "macos")]
@@ -102,6 +105,9 @@ pub fn load() -> AppState {
                     .ok()
                     .map(|n| n.clamp(220.0, 520.0));
             }
+            "sidebar_collapsed" => {
+                out.sidebar_collapsed = parse_bool(val);
+            }
             _ => {}
         }
     }
@@ -131,6 +137,9 @@ pub fn save(state: &AppState) {
     }
     if let Some(w) = state.preview_width {
         s.push_str(&format!("preview_width={w}\n"));
+    }
+    if let Some(b) = state.sidebar_collapsed {
+        s.push_str(&format!("sidebar_collapsed={b}\n"));
     }
     let _ = std::fs::write(dir.join(FILENAME), s);
 }
