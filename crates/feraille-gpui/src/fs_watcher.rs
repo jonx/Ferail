@@ -16,8 +16,9 @@
 //! the polling shape works on all GPUI versions and is easy to
 //! reason about.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -28,7 +29,7 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 pub struct FsWatcher {
     watcher: RecommendedWatcher,
     receiver: Receiver<Event>,
-    current: Option<PathBuf>,
+    watched: HashSet<PathBuf>,
 }
 
 impl FsWatcher {
@@ -45,38 +46,53 @@ impl FsWatcher {
         Ok(Self {
             watcher,
             receiver: rx,
-            current: None,
+            watched: HashSet::new(),
         })
     }
 
-    /// Re-target the watcher at `path`. Unwatches the previous path
-    /// (if any) first. Non-recursive: we only care about the directory
-    /// the user is looking at right now; future iters can opt into
-    /// `RecursiveMode::Recursive` for tree-watch features.
+    /// Add `path` to the watched directory set. Non-recursive: each
+    /// visible tab/window directory registers itself explicitly, and
+    /// reload fan-out decides which views need refreshing.
     pub fn watch(&mut self, path: &Path) -> Result<()> {
-        if let Some(prev) = self.current.take() {
-            let _ = self.watcher.unwatch(&prev);
+        if self.watched.contains(path) {
+            return Ok(());
         }
         self.watcher.watch(path, RecursiveMode::NonRecursive)?;
-        self.current = Some(path.to_path_buf());
+        self.watched.insert(path.to_path_buf());
         Ok(())
     }
 
-    /// Drain any pending events. Returns true if at least one event
-    /// touched the watched directory in a way that should trigger a
-    /// reload. Filters out access-only events (Open / ReadAccess)
-    /// since they don't change the listing.
-    pub fn drain_reload_relevant(&self) -> bool {
-        let mut relevant = false;
+    /// Drain any pending events and return the watched directory roots
+    /// affected by relevant mutations. Filters out access-only events
+    /// (Open / ReadAccess) since they don't change the listing.
+    pub fn drain_reload_relevant_paths(&self) -> Vec<PathBuf> {
+        let mut relevant = HashSet::new();
         while let Ok(ev) = self.receiver.try_recv() {
-            if matches!(
+            let should_reload = matches!(
                 ev.kind,
-                EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) | EventKind::Other
-            ) {
-                relevant = true;
+                EventKind::Create(_)
+                    | EventKind::Modify(_)
+                    | EventKind::Remove(_)
+                    | EventKind::Other
+            );
+            if !should_reload {
+                continue;
+            }
+
+            if ev.paths.is_empty() {
+                relevant.extend(self.watched.iter().cloned());
+                continue;
+            }
+
+            for changed in &ev.paths {
+                for root in &self.watched {
+                    if changed == root || changed.parent() == Some(root.as_path()) {
+                        relevant.insert(root.clone());
+                    }
+                }
             }
         }
-        relevant
+        relevant.into_iter().collect()
     }
 }
 

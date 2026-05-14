@@ -6,7 +6,7 @@
 //! 4.c brings the virtualized file list.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{
@@ -15,13 +15,8 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use feraille_core::{
-    EntryKind, EnumerationError, FileEntry, NodeId, navigation::NavigationState,
-    node_store::NodeStore,
-};
-use feraille_fs_native::{
-    DEFAULT_ENUMERATION_BATCH, NativeFs, VolumeInfo, home_dir, list_volumes, open_with_default,
-};
+use feraille_core::{EntryKind, EnumerationError, FileEntry, NodeId};
+use feraille_fs_native::{NativeFs, home_dir, open_with_default};
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, Root, Sizable, TitleBar, WindowExt,
@@ -35,171 +30,26 @@ use gpui_component::{
 use crate::app_state;
 use crate::file_list::FileListDelegate;
 use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
-use crate::icons::IconCache;
 use crate::multi_table::{DataTable, TableEvent, TableState};
-use crate::tasks::{TaskId, TaskKind, TaskRegistry};
+use crate::tasks::TaskKind;
 use crate::tree::{ShellSidebarItem, TreeChild, TreeRowIcon, TreeRowSpec, TreeSection};
+use gpui::prelude::FluentBuilder as _;
 
-actions!(
-    shell,
-    [
-        NavigateParent,
-        NavigateBack,
-        NavigateForward,
-        OpenSelected,
-        Refresh,
-        ToggleHidden,
-        OpenSettings,
-        CopyPath,
-        MoveToTrash,
-        RevealInFinder,
-        FocusFilter,
-        ClearFilter,
-        NewFolder,
-        RenameSelected,
-        NewTab,
-        CloseTab,
-        NextTab,
-        PrevTab,
-        QuickLook,
-        GoHome,
-        EditBreadcrumb,
-        ShortcutsHelp,
-        OpenDiskUsage,
-        CursorUp,
-        CursorDown,
-        CursorFirst,
-        CursorLast,
-        PageUp,
-        PageDown,
-        // Spec §2.5 — Shift-extend variants. The plain `Cursor*` /
-        // `Page*` set above move the lead and collapse the selection
-        // to just that row; the extend variants move the lead and
-        // make the selection the inclusive span from anchor to lead.
-        CursorUpExtend,
-        CursorDownExtend,
-        CursorFirstExtend,
-        CursorLastExtend,
-        PageUpExtend,
-        PageDownExtend,
-        /// Cmd+A — selection becomes every row currently in the
-        /// (filtered) model. anchor = first visible row, lead = last
-        /// visible row. Spec §2.5.
-        SelectAll,
-        /// Esc on a non-empty selection — clear the selection set,
-        /// anchor and lead. Higher-precedence Esc behaviors
-        /// (close-shortcuts-overlay, ClearFilter) are still bound
-        /// against the filter input's own focus context; this fires
-        /// only when the shell pane itself owns focus.
-        ClearSelection,
-        TogglePreview,
-        GetInfo,
-        ZoomIn,
-        ZoomOut,
-        ZoomReset,
-        OpenInNewTab,
-        Duplicate,
-        MakeAlias,
-        Compress,
-        // Phase 6 (next-level): right-click context menus on the
-        // sidebar / breadcrumb / file-pane background. These four
-        // actions all operate on `Shell::context_target` instead
-        // of the file-list selection. The right-click event hands
-        // the closure in `context_menu(...)` a PathBuf; the
-        // closure stashes it on Shell, then dispatches one of the
-        // actions below. Handlers `take()` the target so the next
-        // keyboard-driven action falls back to the regular row
-        // selection.
-        RevealContextPath,
-        CopyContextPath,
-        OpenContextInNewTab,
-        NewFolderHere,
-        // Phase 6 follow-on: Tags + Open-With submenus. Seven tag
-        // colours match Finder's canonical Red/Orange/Yellow/Green/
-        // Blue/Purple/Gray set; toggle behaviour mirrors
-        // `feraille_shell_mac::toggle_tag`.
-        ToggleTagRed,
-        ToggleTagOrange,
-        ToggleTagYellow,
-        ToggleTagGreen,
-        ToggleTagBlue,
-        ToggleTagPurple,
-        ToggleTagGray,
-        // Twelve indexed slots for the Open-With submenu. The menu
-        // builder lays out at most this many candidate apps; each
-        // handler re-resolves the candidates for the target row at
-        // dispatch time and opens slot N. Twelve covers every file
-        // kind we've seen in practice (~5 is typical).
-        OpenWithSlot0,
-        OpenWithSlot1,
-        OpenWithSlot2,
-        OpenWithSlot3,
-        OpenWithSlot4,
-        OpenWithSlot5,
-        OpenWithSlot6,
-        OpenWithSlot7,
-        OpenWithSlot8,
-        OpenWithSlot9,
-        OpenWithSlot10,
-        OpenWithSlot11,
-        /// Cmd+Z — pop the most recent reversible action off
-        /// Shell::undo_stack and replay its inverse. Currently handles
-        /// Rename (rename back) and NewFolder (delete the created
-        /// folder); Move-to-Trash undo is documented in the deferred
-        /// list (needs NSFileManager.trashItemAt to return the trash
-        /// URL so we can move the file back).
-        UndoLastAction,
-        // Favorites (docs/features/FAVORITES.md). The toggle action
-        // is the unified Cmd+D / menu-bar / row-context-menu entry
-        // point: it adds the target if absent, removes it if present,
-        // pulses the row on a dedup attempt (which can't happen via
-        // toggle, but matches the spec's verb shape). The target is
-        // either:
-        //   - `Shell::favorites_context_path` (right-clicked source row,
-        //     or right-clicked favorite row), if set
-        //   - the file list selection (a folder), or
-        //   - the active tab's current_dir as a last fallback.
-        ToggleFavoriteForTarget,
-        /// Append the active tab's current directory to Favorites.
-        /// Backs the section-header `+` button and the menu bar item.
-        AddCurrentFolderToFavorites,
-        /// Section header click handler — also reachable via menu bar
-        /// "Window → Toggle Favorites Section".
-        ToggleFavoritesSection,
-        // One-shot sorts (§4.5). Each rewrites every `sort_index` in
-        // place; subsequent drags continue to work — the order isn't
-        // "locked", it's just set.
-        SortFavoritesByName,
-        SortFavoritesByDateAddedNewest,
-        SortFavoritesByDateAddedOldest,
-        SortFavoritesByKind,
-        /// Cmd+Option+Up — shift the most-recently-focused favorite
-        /// up one slot in the section list (§4.4).
-        MoveFavoriteUp,
-        /// Cmd+Option+Down — shift down one slot.
-        MoveFavoriteDown,
-        /// Rename the favorite under `favorites_context_path` via a
-        /// native NSAlert prompt (§6).
-        RenameFavorite,
-        /// Clear the favorite's custom display_name so it tracks the
-        /// folder's on-disk basename again (§6 "Reset to Original Name").
-        ResetFavoriteName,
-        /// Strip a custom icon, falling back to kind+target default (§7).
-        ResetFavoriteIcon,
-        // Curated icon picks (§7 "Change Icon" submenu). Each sets
-        // `custom_icon = Some(Lucide(subpath))` on the contextual
-        // favorite, where the subpath references an asset under
-        // `crates/feraille-gpui/resources/icons/` (e.g. "nav/star",
-        // "file/code"). Six pre-curated picks; a full picker UI is a
-        // future polish piece.
-        SetFavoriteIconStar,
-        SetFavoriteIconFolder,
-        SetFavoriteIconCode,
-        SetFavoriteIconImage,
-        SetFavoriteIconMusic,
-        SetFavoriteIconArchive,
-    ]
-);
+mod actions;
+mod file_ops;
+mod loading;
+mod path;
+mod render;
+mod selection;
+mod tab;
+
+pub use actions::*;
+use loading::{
+    LoadBatch, LoadMsg, error_copy, middle_truncate_path, run_directory_load_streaming,
+    run_tree_children_load,
+};
+pub use path::{parse_breadcrumb_path, path_segments};
+pub use tab::{HistoryEntry, Tab, TabId};
 
 /// Classification produced by `Shell::resolve_favorite_target` so
 /// the toggle handler can show the appropriate toast for files.
@@ -237,9 +87,7 @@ impl UndoOp {
             UndoOp::Rename { current, original } => {
                 std::fs::rename(current, original).map_err(|e| e.to_string())
             }
-            UndoOp::DeleteFolder(p) => {
-                std::fs::remove_dir(p).map_err(|e| e.to_string())
-            }
+            UndoOp::DeleteFolder(p) => std::fs::remove_dir(p).map_err(|e| e.to_string()),
             UndoOp::AddFavorite(_) | UndoOp::RemoveFavorite(_) => {
                 Err("favorite undo handled by Shell".into())
             }
@@ -258,108 +106,6 @@ impl UndoOp {
 
 const UNDO_STACK_CAP: usize = 20;
 
-/// Per-tab state. Each tab has its own current directory + nav
-/// history + cursor selection. Filter text, show-hidden, the
-/// virtualized Table entity, and the FS watcher are shared at the
-/// Shell level — Finder-style "the active tab's location is what
-/// the rest of the chrome reflects."
-/// One entry in a tab's back/forward history. Spec §2.6 history
-/// exception: a back-navigation should restore the selection state
-/// that tab had for the destination directory, reconciled against
-/// the freshly streamed model on `Done`. Each push records the
-/// selection that was live at the moment of leaving.
-#[derive(Clone)]
-pub struct HistoryEntry {
-    pub path: PathBuf,
-    pub selection: HashSet<NodeId>,
-    pub anchor: Option<NodeId>,
-    pub lead: Option<NodeId>,
-}
-
-impl HistoryEntry {
-    pub fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            selection: HashSet::new(),
-            anchor: None,
-            lead: None,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct Tab {
-    /// Authoritative location identity. `current_dir` remains as a
-    /// display/job snapshot during the migration, but navigation logic
-    /// moves through this NodeId state first.
-    pub nav: NavigationState,
-    pub current_dir: PathBuf,
-    pub history: Vec<HistoryEntry>,
-    pub history_index: usize,
-    /// Multi-selection set keyed by `NodeId`. Per spec §2.2 this is
-    /// in-memory interaction state, not persisted truth; reconciled
-    /// against the model on streaming `Done` and on every model
-    /// change. Empty is a valid common state.
-    pub selection: HashSet<NodeId>,
-    /// Anchor — fixed end of a Shift-range; set on plain click or
-    /// the first Cmd-click into an empty selection. (Spec §2.3.)
-    pub anchor: Option<NodeId>,
-    /// Lead / cursor — moving end of a range, target of keyboard
-    /// navigation, focus-ring row. Mirrored to the underlying
-    /// `TableState::selected_row` so the primitive's native focus
-    /// overlay marks it.
-    pub lead: Option<NodeId>,
-    /// Spec §2.6 filter holding set: NodeIds that were in
-    /// `selection` but got filtered out of the visible model. When
-    /// the filter loosens or clears, members whose rows reappear
-    /// move back to `selection`. Dropped entirely on navigation.
-    pub filtered_out: HashSet<NodeId>,
-    /// Spec §2.6 live Shift-range marker: when true the current
-    /// selection is the anchor→lead inclusive span and should be
-    /// recomputed against the model on every batch arrival, so
-    /// rows streaming in between the endpoints join the selection
-    /// automatically. Set by Shift-click / Cmd+Shift-click / any
-    /// Shift-extend keyboard nav; cleared on any non-range gesture
-    /// (plain click, Cmd-click, plain kbd nav, Cmd+A, Esc, sort).
-    pub range_live: bool,
-}
-
-impl Tab {
-    pub fn new(at: PathBuf, node_id: NodeId) -> Self {
-        Self {
-            nav: NavigationState::new(node_id),
-            current_dir: at.clone(),
-            history: vec![HistoryEntry::new(at)],
-            history_index: 0,
-            selection: HashSet::new(),
-            anchor: None,
-            lead: None,
-            filtered_out: HashSet::new(),
-            range_live: false,
-        }
-    }
-
-    /// Row index of the lead within `entries`, or `None` if no lead
-    /// is set or the lead is not currently in the view's model.
-    /// Used by every site that previously read `Tab::selected` as a
-    /// row index — preview pane, status bar, screenshot driver,
-    /// activate_row's keyboard fallback.
-    pub fn lead_row(&self, entries: &[FileEntry]) -> Option<usize> {
-        let lead = self.lead?;
-        entries.iter().position(|e| e.id == lead)
-    }
-
-    /// Short label for the tabstrip. Last path component, or "/" for
-    /// the filesystem root.
-    pub fn label(&self) -> String {
-        self.current_dir
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(str::to_owned)
-            .unwrap_or_else(|| self.current_dir.to_string_lossy().into_owned())
-    }
-}
-
 /// Key-context name for the Shell's outer container — same convention
 /// gpui-component uses (e.g. `Root` / `Input`). The keymap module
 /// drives every binding off `feraille_core::commands` as of Harvest
@@ -372,8 +118,7 @@ pub const SHELL_CONTEXT: &str = "Shell";
 /// Instead it pushes the latest dark-mode bool here; Shell::render
 /// consumes the pending value (if any) and calls `Theme::change`
 /// before painting. Single-digit-millisecond lag at worst.
-static SYSTEM_THEME_PENDING: std::sync::atomic::AtomicI8 =
-    std::sync::atomic::AtomicI8::new(-1);
+static SYSTEM_THEME_PENDING: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(-1);
 
 pub fn set_system_theme_pending(is_dark: bool) {
     SYSTEM_THEME_PENDING.store(
@@ -398,57 +143,26 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct Shell {
+    /// Process-scoped state shared with every other window of this
+    /// process (today there is only one window, but the singleton
+    /// is what the rest of the windows-instances-tabs spec is built
+    /// on; see `crates/feraille-gpui/src/process_state.rs`).
+    pub process: Rc<crate::process_state::ProcessState>,
     /// Open tabs in this window. Always non-empty; closing the last
-    /// tab is rejected. The active tab drives the breadcrumb,
-    /// table, preview, watcher, etc.
+    /// tab is rejected. Each tab owns its own `Entity<TableState>`,
+    /// its own enumeration generation/cancel/task, and its own
+    /// last-error / pending-select state — so tab-switching is
+    /// instant and an inactive tab's enumeration keeps streaming.
     pub tabs: Vec<Tab>,
     /// Index of the active tab in `tabs`.
     pub active: usize,
-    /// Volumes mounted at /Volumes. Refreshed lazily in 4.b; future
-    /// iters will watch for changes via the macOS Disk Arbitration
-    /// framework.
-    pub volumes: Vec<VolumeInfo>,
-    /// Shared FS backend. `Arc` because the file-list delegate also
-    /// holds a reference (for path lookups during navigation).
-    pub fs: Arc<NativeFs>,
-    /// Shared node identity store. This is the GPUI bridge toward the
-    /// Windows architecture: views carry NodeId, paths are resolved only
-    /// for jobs/actions.
-    pub node_store: NodeStore,
-    /// gpui-component's virtualized Table state, parameterised by
-    /// our file-list delegate. Shared across tabs — switching tabs
-    /// reloads it with the new tab's current_dir + the (shared)
-    /// filter/show-hidden.
-    pub table: Entity<TableState<FileListDelegate>>,
     /// Focus handle for the Shell's key-context. Keybindings declared
     /// against `SHELL_CONTEXT` only fire when this handle (or one of
     /// its children) holds focus.
     pub focus_handle: FocusHandle,
-    /// When true, dotfiles are shown in the list. Shared across
-    /// tabs — toggling it reloads the active tab.
+    /// When true, dotfiles are shown in the list. Per-window today —
+    /// future preference may make it per-tab.
     pub show_hidden: bool,
-    /// `Some(err)` when the last `enumerate` returned an OS error
-    /// (most commonly macOS TCC denial on ~/Documents etc.). Drives
-    /// an in-pane empty-state instead of a silent blank list.
-    pub last_error: Option<EnumerationError>,
-    /// Monotonic generation for directory loads. Background enumeration
-    /// results apply only if their generation still matches.
-    pub load_generation: u64,
-    /// Cooperative cancel flag for the active directory enumeration.
-    /// Replaced on every navigation/filter/show-hidden reload.
-    pub load_cancel: Option<Arc<AtomicBool>>,
-    /// Task-registry row for the active directory enumeration.
-    pub load_task: Option<TaskId>,
-    /// True after navigation starts and before the first batch lands.
-    /// While true, the old folder rows remain visible instead of
-    /// flashing an empty table.
-    pub load_pending_first_batch: bool,
-    /// Background file-system watcher. `Rc<RefCell<>>` so the
-    /// foreground-executor polling task can read it without taking
-    /// a mutable borrow of the whole Shell. None if the platform
-    /// watcher failed to start (rare — typically only in stripped
-    /// CI environments without FSEvents).
-    pub watcher: Rc<RefCell<Option<FsWatcher>>>,
     /// Row index the user most recently right-clicked. Actions
     /// dispatched from the context menu read this; keyboard actions
     /// fall back to the active tab's `selected`. Cleared after each
@@ -462,13 +176,6 @@ pub struct Shell {
     /// file-list rows by index), this carries the full path because
     /// sidebar items aren't part of the file list.
     pub context_target: Option<PathBuf>,
-    /// Screenshot-driver row index queued for selection once a
-    /// streaming batch lands. Cleared when applied or when the
-    /// active tab navigates elsewhere. Internal/CLI use only.
-    pub pending_select_row: Option<usize>,
-    /// Same as `pending_select_row` but for the multi-row
-    /// screenshot seed (`--select-rows`).
-    pub pending_select_rows: Vec<usize>,
     /// Path target for Favorites mutations
     /// (docs/features/FAVORITES.md). Set by every "Add to Favorites" /
     /// "Remove from Favorites" context-menu closure and by row-row drag
@@ -476,24 +183,6 @@ pub struct Shell {
     /// `on_toggle_favorite_for_target`. Fallback chain when unset:
     /// file-list selection → active tab `current_dir`.
     pub favorites_context_path: Option<PathBuf>,
-    /// Persistent metadata database (rusqlite-backed) opened at
-    /// startup. `None` when `$HOME` is unset or the DB couldn't be
-    /// opened — in-memory state still works, just no persistence.
-    /// Stage 4+ uses this for magic / quarantine / ant-trail
-    /// caches; Stage 1.b just establishes the handle.
-    /// `Arc<Mutex<_>>` so background workers (Stage 4 prefetch) can
-    /// share it without competing borrows.
-    pub metadata_db: Option<Arc<Mutex<feraille_meta::MetadataDb>>>,
-    /// Shared NSWorkspace-backed icon cache. Owned at the Shell
-    /// level so the file-list delegate (Phase 4.c) and the sidebar
-    /// tree (Stage 9.c) share the same fetched bytes — one fetch
-    /// per kind / path across the whole UI.
-    pub icons: Rc<RefCell<IconCache>>,
-    /// Active background tasks (Stage 5.a). Shared via
-    /// `Rc<RefCell<_>>` so the prefetch worker can register +
-    /// retire its job from the foreground executor without taking
-    /// a mutable Shell borrow.
-    pub tasks: Rc<RefCell<TaskRegistry>>,
     /// Whether the background-task panel popover is open. Toggled by
     /// clicking the task region in the status bar.
     pub task_panel_open: bool,
@@ -502,12 +191,6 @@ pub struct Shell {
     /// at that fraction (negative = indeterminate) regardless of
     /// `tasks` state — useful for screenshots.
     pub simulated_progress: Option<f32>,
-    /// Live filter text. Shared across tabs.
-    pub filter_text: String,
-    /// `gpui-component` Input state for the filter field in the
-    /// toolbar. Owned as an Entity so InputEvent subscriptions
-    /// route changes back into `filter_text`.
-    pub filter_input: Entity<InputState>,
     /// Cmd+L breadcrumb edit (Stage 9.b): when true the breadcrumb
     /// renders an Input field pre-filled with the active tab's
     /// current_dir instead of the clickable segments. Enter commits
@@ -532,9 +215,6 @@ pub struct Shell {
     /// and Cmd+-. Applied to font sizes / icon sizes via Tokens-
     /// derived scaling at render time. Persisted in app_state.
     pub ui_scale: f32,
-    /// Per-path Quick Look thumbnail cache. Populated lazily by
-    /// `preview::request` on selection change.
-    pub preview_cache: crate::preview::PreviewCache,
     /// Resizable-splitter state for the sidebar / center / preview
     /// columns. Persists across renders so the drag handles work as
     /// expected; sizes survive theme changes etc.
@@ -567,16 +247,6 @@ pub struct Shell {
     /// `Cmd+Option+Up/Down` operates on the row the user just selected.
     /// `None` when no favorite has been clicked this session.
     pub focused_favorite: Option<feraille_core::favorites::FavoriteId>,
-    /// User-curated favorites entity. Source of truth for the sidebar
-    /// Favorites section, the §5 favorited-indicator badge across the
-    /// file list / tree / breadcrumb, and all add/remove/reorder
-    /// mutations. Persistence is delegated to `metadata_db`; this
-    /// entity owns the in-memory list and the path → id lookup index.
-    pub favorites: Entity<crate::favorites::Favorites>,
-    /// Reversible-action history. Newest at the back. Capped at
-    /// UNDO_STACK_CAP so the stack doesn't grow unbounded across a
-    /// long session; older ops drop off the front silently.
-    pub undo_stack: VecDeque<UndoOp>,
     /// Sidebar tree state (Stage 9.c): which directories are
     /// currently expanded. Updated on caret-click and by the
     /// `--expand <path>` CLI flag (which walks the path's ancestors).
@@ -586,13 +256,6 @@ pub struct Shell {
     /// main pane). Once cached, re-expand is instant; collapsing a
     /// folder doesn't evict its cache.
     pub tree_children: HashMap<PathBuf, Vec<TreeChild>>,
-    /// Ant Trail visit counts (Stage 9.b). Path → hits. Hydrated
-    /// from `metadata_db` on startup, incremented on every
-    /// `navigate`, persisted through `record_folder_visit`.
-    pub ant_visits: HashMap<PathBuf, u32>,
-    /// Cached max visit count for heat normalisation. Updated
-    /// whenever a row's count crosses the existing max.
-    pub ant_max: u32,
     /// Live subscription handles (Input change, future watchers).
     /// Dropping them tears down the listeners — keep alongside the
     /// Shell so they outlive any frame.
@@ -629,16 +292,6 @@ enum SelectionDelta {
     PageDown,
     First,
     Last,
-}
-
-struct LoadBatch {
-    entries: Vec<FileEntry>,
-    paths: HashMap<NodeId, PathBuf>,
-}
-
-enum LoadMsg {
-    Batch(LoadBatch),
-    Done(Option<EnumerationError>),
 }
 
 fn now_unix_secs() -> i64 {
@@ -793,13 +446,46 @@ impl Location {
 }
 
 impl Shell {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// Construct the singleton `ProcessState` for this process.
+    /// Called exactly once from `main.rs` (or the screenshot harness)
+    /// before any window opens; the resulting `Rc` is stashed as a
+    /// GPUI `Global` and read back by every `Shell::new`.
+    pub fn build_process_state(cx: &mut App) -> Rc<crate::process_state::ProcessState> {
         let fs = Arc::new(NativeFs::new());
+        // Spin up the platform file-system watcher. Errors
+        // (sandboxed CI without FSEvents) are non-fatal — the app
+        // still runs, just without live external updates.
+        let watcher_rc: Rc<RefCell<Option<FsWatcher>>> = match FsWatcher::new() {
+            Ok(w) => Rc::new(RefCell::new(Some(w))),
+            Err(_) => Rc::new(RefCell::new(None)),
+        };
+        // Favorites is process-scoped: one Entity shared across every
+        // window. DB handle attached later by `start_metadata_load`.
+        let favorites = cx.new(|_| crate::favorites::Favorites::new(None));
+        crate::process_state::ProcessState::new(fs, watcher_rc, favorites)
+    }
+
+    pub fn new(
+        process: Rc<crate::process_state::ProcessState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let persisted = app_state::load();
         let start = persisted.last_dir.clone().unwrap_or_else(home_dir);
-        let start_id = fs.id_for_path(&start);
-        let mut node_store = NodeStore::new();
-        node_store.get_or_create_path_with_id(start.clone(), start_id);
+        let start_id = process.fs.id_for_path(&start);
+        // Seed the NodeStore with the start path so the very first
+        // navigate doesn't re-mint a different NodeId. Idempotent —
+        // the second window seeing the same path is a no-op.
+        process
+            .node_store
+            .borrow_mut()
+            .get_or_create_path_with_id(start.clone(), start_id);
+        // Add this window's start path to the shared watcher set.
+        // Each visible tab registers its directory; watcher events are
+        // fanned out to every matching tab in every live window.
+        if let Some(w) = process.watcher.borrow_mut().as_mut() {
+            let _ = w.watch(&start);
+        }
         let show_hidden = persisted.show_hidden.unwrap_or(false);
         // FERAILLE_UI_SCALE env var (regression tool / screenshots)
         // wins over the persisted value when set. Both are clamped.
@@ -809,77 +495,11 @@ impl Shell {
             .or(persisted.ui_scale)
             .map(|n| n.clamp(0.6, 2.0))
             .unwrap_or(1.0);
-        let icons = Rc::new(RefCell::new(IconCache::new()));
-        let delegate = FileListDelegate::new(fs.clone(), icons.clone());
-        let table = cx.new(|cx| {
-            TableState::new(delegate, window, cx)
-                .col_selectable(false)
-                .col_movable(true)
-                .col_resizable(true)
-        });
-        // Bridge table events to the Shell's own selection state.
-        // The local GPUI table carries the original click modifiers
-        // through RowClicked, unlike upstream gpui-component's
-        // single-select SelectRow event.
-        // RightClickedRow obeys spec §2.4's "preserve selection if
-        // row already in set; otherwise replace to just this row"
-        // rule before the menu's target reads `context_row`.
-        cx.subscribe_in(
-            &table,
-            window,
-            |this, _table, event: &TableEvent, _window, cx| match event {
-                TableEvent::RowClicked {
-                    row_ix,
-                    modifiers,
-                    ..
-                } => {
-                    this.apply_row_click_gesture(*row_ix, *modifiers, cx);
-                }
-                TableEvent::LeadMoved { row_ix, modifiers } => {
-                    this.apply_row_keyboard_gesture(*row_ix, *modifiers, cx);
-                }
-                TableEvent::DoubleClickedRow(row_ix) => {
-                    this.activate_row(*row_ix, cx);
-                }
-                TableEvent::RightClickedRow(row_ix) => {
-                    if let Some(r) = *row_ix {
-                        let row_was_selected = this
-                            .node_id_at_row(r, cx)
-                            .map(|id| this.active_tab().selection.contains(&id))
-                            .unwrap_or(false);
-                        this.apply_row_right_click(r, cx);
-                        // Spec §2.4: if the user right-clicks inside
-                        // the current selection, the context menu
-                        // targets the whole selection. Only stash a
-                        // row-specific context target when the click
-                        // replaced selection to that unselected row.
-                        this.context_row = if row_was_selected { None } else { Some(r) };
-                    } else {
-                        this.context_row = None;
-                    }
-                }
-                _ => {}
-            },
-        )
-        .detach();
         let focus_handle = cx.focus_handle();
         // Grab focus on first paint so the Backspace keybind works
         // immediately without the user having to click into the
         // shell.
         focus_handle.focus(window, cx);
-
-        let filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter \u{2026}"));
-        let filter_subscription = cx.subscribe_in(&filter_input, window, {
-            let filter_input = filter_input.clone();
-            move |this, _state, ev: &InputEvent, _window, cx| {
-                if matches!(ev, InputEvent::Change) {
-                    let value = filter_input.read(cx).value().to_string();
-                    this.filter_text = value;
-                    let path = this.active_tab().current_dir.clone();
-                    this.load_path(path, cx);
-                }
-            }
-        });
 
         // Stage 9.b: shortcuts-help filter Input. Subscribed for
         // Change so typing updates `shortcuts_help_filter` live.
@@ -907,9 +527,9 @@ impl Shell {
             move |this, _state, ev: &InputEvent, _window, cx| match ev {
                 InputEvent::PressEnter { .. } => {
                     let raw = breadcrumb_input.read(cx).value().to_string();
-                        let path = parse_breadcrumb_path(&raw);
-                        this.breadcrumb_editing = false;
-                        this.navigate(path, cx);
+                    let path = parse_breadcrumb_path(&raw);
+                    this.breadcrumb_editing = false;
+                    this.navigate(path, cx);
                 }
                 InputEvent::Blur => {
                     if this.breadcrumb_editing {
@@ -921,101 +541,60 @@ impl Shell {
             }
         });
 
-        // Spin up the platform file-system watcher and start
-        // watching the initial directory. If the watcher itself
-        // can't be constructed (very rare; sandbox without
-        // FSEvents), we just operate without it — manual Cmd+R
-        // still works.
-        let watcher = match FsWatcher::new() {
-            Ok(mut w) => {
-                let _ = w.watch(&start);
-                Rc::new(RefCell::new(Some(w)))
-            }
-            Err(_) => Rc::new(RefCell::new(None)),
-        };
-
         // Foreground-executor polling task. Wakes every POLL_INTERVAL,
         // drains the channel, asks the Shell to reload if anything
         // changed. Stops when this.update returns Err — that means
         // the Shell entity has been dropped.
-        let poll_watcher = watcher.clone();
+        let poll_watcher = process.watcher.clone();
+        let poll_process = process.clone();
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(POLL_INTERVAL).await;
-                let dirty = poll_watcher
+                let dirty_paths = poll_watcher
                     .borrow()
                     .as_ref()
-                    .map(|w| w.drain_reload_relevant())
-                    .unwrap_or(false);
-                if dirty {
-                    if this
-                        .update(cx, |this, cx| {
-                            let path = this.active_tab().current_dir.clone();
-                            this.load_path(path, cx);
-                        })
-                        .is_err()
-                    {
+                    .map(|w| w.drain_reload_relevant_paths())
+                    .unwrap_or_default();
+                if !dirty_paths.is_empty() {
+                    if this.update(cx, |_, _| {}).is_err() {
                         break;
                     }
+                    Shell::broadcast_reload_for_process(&poll_process, dirty_paths, cx);
                 }
             }
         })
         .detach();
 
-        let initial_tab = Tab::new(start.clone(), start_id);
+        let initial_tab = Shell::build_tab(process.clone(), start.clone(), start_id, window, cx);
         let mut shell = Self {
+            process: process.clone(),
             tabs: vec![initial_tab],
             active: 0,
-            volumes: list_volumes(),
-            fs,
-            node_store,
-            table,
             focus_handle,
             show_hidden,
-            last_error: None,
-            load_generation: 0,
-            load_cancel: None,
-            load_task: None,
-            load_pending_first_batch: false,
-            watcher,
             context_row: None,
             context_target: None,
-            pending_select_row: None,
-            pending_select_rows: Vec::new(),
             favorites_context_path: None,
-            metadata_db: None,
-            icons,
-            tasks: Rc::new(RefCell::new(TaskRegistry::new())),
             task_panel_open: false,
             simulated_progress: None,
-            filter_text: String::new(),
-            filter_input,
             breadcrumb_editing: false,
             breadcrumb_input,
             shortcuts_help_filter: None,
             shortcuts_help_input,
             preview_visible: true,
             ui_scale,
-            preview_cache: crate::preview::PreviewCache::new(),
             splitter_state: cx.new(|_| gpui_component::resizable::ResizableState::default()),
             sidebar_width: persisted.sidebar_width.unwrap_or(220.0).clamp(160.0, 400.0),
             preview_width: persisted.preview_width.unwrap_or(280.0).clamp(220.0, 520.0),
             splitter_last_save: None,
             sidebar_collapsed: persisted.sidebar_collapsed.unwrap_or(false),
             favorites_section_collapsed: false,
-            favorites: cx.new(|_| crate::favorites::Favorites::new(None)),
             focused_favorite: None,
-            undo_stack: VecDeque::new(),
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
-            ant_visits: HashMap::new(),
-            ant_max: 0,
-            _subscriptions: vec![
-                filter_subscription,
-                breadcrumb_subscription,
-                shortcuts_help_subscription,
-            ],
+            _subscriptions: vec![breadcrumb_subscription, shortcuts_help_subscription],
         };
+        shell.process.register_shell(cx.weak_entity());
         // §5.3 live-sync: every folder-rendering view observes the
         // Favorites entity through Shell, so a single `cx.notify()`
         // here re-renders the sidebar (FavoritesSection), the
@@ -1024,7 +603,7 @@ impl Shell {
         // parallel vec, which `load_path` recomputes from the same
         // entity, so it picks up the change on the next load — for
         // truly synchronous list updates we also push a refresh here.
-        let fav_subscription = cx.observe(&shell.favorites, |this, _favs, cx| {
+        let fav_subscription = cx.observe(&shell.process.favorites, |this, _favs, cx| {
             this.refresh_file_list_favorited(cx);
             cx.notify();
         });
@@ -1033,6 +612,114 @@ impl Shell {
         shell.start_metadata_load(cx);
         shell.load_path(start, cx);
         shell
+    }
+
+    /// Build a fresh `Tab` with its own `TableState` entity + table-
+    /// event subscription. The subscription captures the new tab's
+    /// `TabId` so events from inactive tabs (which shouldn't fire,
+    /// since only the active tab is rendered, but defence in depth)
+    /// are routed only when the tab is currently active.
+    ///
+    /// Takes `process` by value so it can be called from `Shell::new`
+    /// before the `Shell` struct exists. Other callers can wrap with
+    /// `self.make_tab(...)` which forwards `self.process.clone()`.
+    pub fn build_tab(
+        process: Rc<crate::process_state::ProcessState>,
+        at: PathBuf,
+        node_id: NodeId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Tab {
+        let tab_id = process.mint_tab_id();
+        let delegate = FileListDelegate::new(process.fs.clone(), process.icons.clone());
+        let table = cx.new(|cx| {
+            TableState::new(delegate, window, cx)
+                .col_selectable(false)
+                .col_movable(true)
+                .col_resizable(true)
+        });
+        // Bridge table events on this tab to the Shell's selection
+        // state. The closure captures `tab_id` so events from a
+        // background tab (rare; only the active tab is hit-tested)
+        // never apply gestures meant for the active tab.
+        let subscription = cx.subscribe_in(
+            &table,
+            window,
+            move |this, _table, event: &TableEvent, _window, cx| {
+                if this.active_tab().id != tab_id {
+                    return;
+                }
+                match event {
+                    TableEvent::RowClicked {
+                        row_ix, modifiers, ..
+                    } => {
+                        this.apply_row_click_gesture(*row_ix, *modifiers, cx);
+                    }
+                    TableEvent::LeadMoved { row_ix, modifiers } => {
+                        this.apply_row_keyboard_gesture(*row_ix, *modifiers, cx);
+                    }
+                    TableEvent::DoubleClickedRow(row_ix) => {
+                        this.activate_row(*row_ix, cx);
+                    }
+                    TableEvent::RightClickedRow(row_ix) => {
+                        if let Some(r) = *row_ix {
+                            let row_was_selected = this
+                                .node_id_at_row(r, cx)
+                                .map(|id| this.active_tab().selection.contains(&id))
+                                .unwrap_or(false);
+                            this.apply_row_right_click(r, cx);
+                            // Spec §2.4: if the user right-clicks
+                            // inside the current selection, the
+                            // menu targets the whole set. Only
+                            // stash a row-specific context target
+                            // when the click replaced selection
+                            // to that unselected row.
+                            this.context_row = if row_was_selected { None } else { Some(r) };
+                        } else {
+                            this.context_row = None;
+                        }
+                    }
+                    _ => {}
+                }
+            },
+        );
+        // Filter input — per-tab so cursor / focus / value persist
+        // when the user switches tabs. The closure captures `tab_id`
+        // so only this tab's enumeration is re-triggered.
+        let filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter \u{2026}"));
+        let filter_subscription = cx.subscribe_in(&filter_input, window, {
+            let filter_input = filter_input.clone();
+            move |this, _state, ev: &InputEvent, _window, cx| {
+                if matches!(ev, InputEvent::Change) {
+                    let value = filter_input.read(cx).value().to_string();
+                    if let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) {
+                        this.tabs[idx].filter_text = value;
+                        let path = this.tabs[idx].current_dir.clone();
+                        this.load_path_for_tab(tab_id, path, cx);
+                    }
+                }
+            }
+        });
+        Tab::new_internal(
+            tab_id,
+            at,
+            node_id,
+            table,
+            subscription,
+            filter_input,
+            filter_subscription,
+        )
+    }
+
+    /// `build_tab` wrapper for callers that already have `&mut self`.
+    pub fn make_tab(
+        &mut self,
+        at: PathBuf,
+        node_id: NodeId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Tab {
+        Self::build_tab(self.process.clone(), at, node_id, window, cx)
     }
 
     /// "Which row is this action targeting?" — context_row first
@@ -1051,17 +738,32 @@ impl Shell {
             Some(r)
         } else {
             self.active_tab()
-                .lead_row(&self.table.read(cx).delegate().entries)
+                .lead_row(&self.active_tab().table.read(cx).delegate().entries)
         }
     }
 
     /// Resolve a row to an absolute path on disk. Reuses the same
     /// id_for_path fallback that activate_row uses.
     pub fn path_for_row(&self, row_ix: usize, cx: &App) -> Option<PathBuf> {
-        let entry = self.table.read(cx).delegate().entries.get(row_ix)?.clone();
-        self.node_store
+        let entry = self
+            .active_tab()
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .get(row_ix)?
+            .clone();
+        self.process
+            .node_store
+            .borrow_mut()
             .path_snapshot_for_job(entry.id, "Shell::path_for_row")
-            .or_else(|| self.table.read(cx).delegate().path_for_entry(entry.id))
+            .or_else(|| {
+                self.active_tab()
+                    .table
+                    .read(cx)
+                    .delegate()
+                    .path_for_entry(entry.id)
+            })
             .or_else(|| {
                 let mut p = self.active_tab().current_dir.clone();
                 p.push(&entry.name);
@@ -1069,12 +771,15 @@ impl Shell {
             })
     }
 
-    fn entry_path_for_row(
-        &self,
-        row_ix: usize,
-        cx: &App,
-    ) -> Option<(usize, FileEntry, PathBuf)> {
-        let entry = self.table.read(cx).delegate().entries.get(row_ix)?.clone();
+    fn entry_path_for_row(&self, row_ix: usize, cx: &App) -> Option<(usize, FileEntry, PathBuf)> {
+        let entry = self
+            .active_tab()
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .get(row_ix)?
+            .clone();
         let path = self.path_for_row(row_ix, cx)?;
         Some((row_ix, entry, path))
     }
@@ -1088,7 +793,8 @@ impl Shell {
         if selection.is_empty() {
             return Vec::new();
         }
-        self.table
+        self.active_tab()
+            .table
             .read(cx)
             .delegate()
             .entries
@@ -1118,352 +824,10 @@ impl Shell {
             return selected;
         }
         self.active_tab()
-            .lead_row(&self.table.read(cx).delegate().entries)
+            .lead_row(&self.active_tab().table.read(cx).delegate().entries)
             .and_then(|row| self.entry_path_for_row(row, cx))
             .into_iter()
             .collect()
-    }
-
-    fn on_copy_path(&mut self, _: &CopyPath, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
-        let paths: Vec<PathBuf> = self
-            .action_entries_visible_order(cx)
-            .into_iter()
-            .map(|(_, _, path)| path)
-            .collect();
-        if paths.is_empty() {
-            return;
-        }
-        cx.write_to_clipboard(ClipboardItem::new_string(
-            paths
-                .iter()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        ));
-        // Phase 9: quiet success toast so the user sees the
-        // clipboard action acknowledged. Notification::success
-        // autohides after a few seconds.
-        let msg = if paths.len() == 1 {
-            "Path copied to clipboard".to_string()
-        } else {
-            format!("{} paths copied to clipboard", paths.len())
-        };
-        window.push_notification(Notification::success(msg), cx);
-    }
-
-    fn on_reveal_in_finder(
-        &mut self,
-        _: &RevealInFinder,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        use gpui_component::notification::Notification;
-        let paths: Vec<PathBuf> = self
-            .action_entries_visible_order(cx)
-            .into_iter()
-            .map(|(_, _, path)| path)
-            .collect();
-        if paths.is_empty() {
-            return;
-        }
-        // `open -R <path>` is the macOS canonical "reveal in
-        // Finder". On other platforms this no-ops.
-        let mut cmd = std::process::Command::new("/usr/bin/open");
-        cmd.arg("-R").args(&paths);
-        let _ = cmd.spawn();
-        let msg = if paths.len() == 1 {
-            let name = paths[0]
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("item")
-                .to_string();
-            format!("Showing \u{201C}{}\u{201D} in Finder", name)
-        } else {
-            format!("Showing {} items in Finder", paths.len())
-        };
-        window.push_notification(Notification::info(msg), cx);
-    }
-
-    // -- Phase 6 (next-level) ----------------------------------------
-    // Path-aware context-menu handlers. Each consumes
-    // `context_target` (set by the right-click closure) so the next
-    // keyboard action falls back to the file-row selection.
-
-    fn on_reveal_context_path(
-        &mut self,
-        _: &RevealContextPath,
-        _: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-        let Some(path) = self.context_target.take() else { return };
-        let _ = std::process::Command::new("/usr/bin/open")
-            .arg("-R")
-            .arg(&path)
-            .spawn();
-    }
-
-    fn on_copy_context_path(
-        &mut self,
-        _: &CopyContextPath,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(path) = self.context_target.take() else { return };
-        cx.write_to_clipboard(ClipboardItem::new_string(
-            path.to_string_lossy().into_owned(),
-        ));
-    }
-
-    fn on_open_context_in_new_tab(
-        &mut self,
-        _: &OpenContextInNewTab,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(path) = self.context_target.take() else { return };
-        let id = self.fs.id_for_path(&path);
-        self.node_store
-            .get_or_create_path_with_id(path.clone(), id);
-        let tab = Tab::new(path, id);
-        self.tabs.push(tab);
-        self.active = self.tabs.len() - 1;
-        let active_id = self.fs.id_for_path(&self.active_tab().current_dir);
-        self.navigate_node(active_id, cx);
-    }
-
-    fn on_new_folder_here(
-        &mut self,
-        _: &NewFolderHere,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // Mirrors the existing NewFolder action but pins the parent
-        // to `context_target` rather than the current tab's dir.
-        // When no target is set (e.g. dispatched via menu without
-        // right-click priming), fall through to the regular handler.
-        if let Some(target) = self.context_target.take() {
-            let saved = self.active_tab().current_dir.clone();
-            self.active_tab_mut().current_dir = target;
-            self.on_new_folder(&NewFolder, window, cx);
-            self.active_tab_mut().current_dir = saved;
-        } else {
-            self.on_new_folder(&NewFolder, window, cx);
-        }
-    }
-
-    // -- Phase 6 follow-on: Tags submenu --------------------------
-
-    fn toggle_tag_on_target(
-        &mut self,
-        color: feraille_core::commands::TagColor,
-        cx: &mut Context<Self>,
-    ) {
-        for (_, _, path) in self.action_entries_visible_order(cx) {
-            let _ = feraille_shell_mac::toggle_tag(&path, color);
-        }
-    }
-
-    fn on_toggle_tag_red(&mut self, _: &ToggleTagRed, _: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Red, cx);
-    }
-    fn on_toggle_tag_orange(
-        &mut self,
-        _: &ToggleTagOrange,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Orange, cx);
-    }
-    fn on_toggle_tag_yellow(
-        &mut self,
-        _: &ToggleTagYellow,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Yellow, cx);
-    }
-    fn on_toggle_tag_green(
-        &mut self,
-        _: &ToggleTagGreen,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Green, cx);
-    }
-    fn on_toggle_tag_blue(&mut self, _: &ToggleTagBlue, _: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Blue, cx);
-    }
-    fn on_toggle_tag_purple(
-        &mut self,
-        _: &ToggleTagPurple,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Purple, cx);
-    }
-    fn on_toggle_tag_gray(&mut self, _: &ToggleTagGray, _: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Gray, cx);
-    }
-
-    // -- Phase 6 follow-on: Open With submenu ---------------------
-
-    fn open_with_slot(&mut self, slot: usize, cx: &mut Context<Self>) {
-        let paths: Vec<PathBuf> = self
-            .action_entries_visible_order(cx)
-            .into_iter()
-            .map(|(_, _, path)| path)
-            .collect();
-        let Some(first) = paths.first() else { return };
-        let candidates = feraille_shell_mac::open_with_candidates(first);
-        if let Some(c) = candidates.get(slot) {
-            for path in paths {
-                let _ = feraille_shell_mac::open_with_app(&path, &c.path);
-            }
-        }
-    }
-
-    fn on_open_with_slot_0(
-        &mut self,
-        _: &OpenWithSlot0,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_with_slot(0, cx);
-    }
-    fn on_open_with_slot_1(
-        &mut self,
-        _: &OpenWithSlot1,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_with_slot(1, cx);
-    }
-    fn on_open_with_slot_2(
-        &mut self,
-        _: &OpenWithSlot2,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_with_slot(2, cx);
-    }
-    fn on_open_with_slot_3(
-        &mut self,
-        _: &OpenWithSlot3,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_with_slot(3, cx);
-    }
-    fn on_open_with_slot_4(
-        &mut self,
-        _: &OpenWithSlot4,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_with_slot(4, cx);
-    }
-    fn on_open_with_slot_5(
-        &mut self,
-        _: &OpenWithSlot5,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_with_slot(5, cx);
-    }
-    fn on_open_with_slot_6(
-        &mut self,
-        _: &OpenWithSlot6,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_with_slot(6, cx);
-    }
-    fn on_open_with_slot_7(
-        &mut self,
-        _: &OpenWithSlot7,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_with_slot(7, cx);
-    }
-    fn on_open_with_slot_8(
-        &mut self,
-        _: &OpenWithSlot8,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_with_slot(8, cx);
-    }
-    fn on_open_with_slot_9(
-        &mut self,
-        _: &OpenWithSlot9,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_with_slot(9, cx);
-    }
-    fn on_open_with_slot_10(
-        &mut self,
-        _: &OpenWithSlot10,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_with_slot(10, cx);
-    }
-    fn on_open_with_slot_11(
-        &mut self,
-        _: &OpenWithSlot11,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_with_slot(11, cx);
-    }
-
-    fn on_move_to_trash(
-        &mut self,
-        _: &MoveToTrash,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        use gpui_component::notification::Notification;
-        let paths: Vec<PathBuf> = self
-            .action_entries_visible_order(cx)
-            .into_iter()
-            .map(|(_, _, path)| path)
-            .collect();
-        if paths.is_empty() {
-            return;
-        }
-        let count = paths.len();
-        let name = if count == 1 {
-            paths[0]
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("item")
-                .to_string()
-        } else {
-            format!("{count} items")
-        };
-        let cur = self.active_tab().current_dir.clone();
-        self.spawn_file_op(
-            cur,
-            move || {
-                for path in paths {
-                    feraille_fs_native::move_to_trash(&path).map_err(|e| e.to_string())?;
-                }
-                Ok(())
-            },
-            "move-to-trash",
-            cx,
-        );
-        // Quiet "in flight" toast — the trash op is near-instant
-        // on macOS, so by the time the user reads this the file
-        // list has already refreshed.
-        window.push_notification(
-            Notification::info(format!("Moved \u{201C}{}\u{201D} to Trash", name)),
-            cx,
-        );
     }
 
     fn on_navigate_back(&mut self, _: &NavigateBack, _: &mut Window, cx: &mut Context<Self>) {
@@ -1496,7 +860,7 @@ impl Shell {
         }
         for (_, entry, path) in entries {
             if matches!(entry.kind, EntryKind::Directory) {
-                self.open_path_in_new_tab(path, cx);
+                self.open_path_in_new_tab(path, window, cx);
             } else {
                 let _ = open_with_default(&path);
             }
@@ -1519,134 +883,11 @@ impl Shell {
     /// Public-from-screenshot-CLI helper: focuses the filter input
     /// (same effect as Cmd+F). Stage 2's `--search` flag uses this.
     pub fn focus_filter_input(&self, window: &mut Window, cx: &mut App) {
-        self.filter_input
+        self.active_tab()
+            .filter_input
             .read(cx)
             .focus_handle(cx)
             .focus(window, cx);
-    }
-
-    /// Public-from-screenshot-CLI helper: opens the rename dialog
-    /// for the active selection. Same effect as F2.
-    pub fn trigger_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.on_rename_selected(&RenameSelected, window, cx);
-    }
-
-    /// Public-from-screenshot-CLI helper: opens the new-folder
-    /// dialog. Same effect as Cmd+Shift+N.
-    pub fn trigger_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.on_new_folder(&NewFolder, window, cx);
-    }
-
-    /// Cmd+Shift+N: open the New Folder dialog.
-    fn on_new_folder(&mut self, _: &NewFolder, window: &mut Window, cx: &mut Context<Self>) {
-        let parent = self.active_tab().current_dir.clone();
-        let input_state = cx.new(|cx| InputState::new(window, cx).placeholder("Untitled folder"));
-        let input_for_ok = input_state.clone();
-        let shell = cx.entity();
-        window.open_dialog(cx, move |dialog, _window, _cx| {
-            let input = input_state.clone();
-            let input_for_ok = input_for_ok.clone();
-            let shell = shell.clone();
-            let parent = parent.clone();
-            dialog
-                .title("New Folder")
-                .child(Input::new(&input).small())
-                .on_ok(move |_, _window, cx: &mut App| {
-                    let name = input_for_ok.read(cx).value().trim().to_string();
-                    if name.is_empty() {
-                        return true;
-                    }
-                    let mut path = parent.clone();
-                    path.push(&name);
-                    let cur = parent.clone();
-                    let op_path = path.clone();
-                    let undo_path = path.clone();
-                    shell.update(cx, move |this, cx| {
-                        this.spawn_file_op(
-                            cur,
-                            move || std::fs::create_dir(&op_path).map_err(|e| e.to_string()),
-                            "new-folder",
-                            cx,
-                        );
-                        // Push the undo op optimistically — the file
-                        // op runs async; if it fails the undo would
-                        // be a no-op (the path doesn't exist).
-                        this.push_undo(UndoOp::DeleteFolder(undo_path));
-                    });
-                    true
-                })
-        });
-    }
-
-    /// F2: rename the currently-selected row.
-    fn on_rename_selected(
-        &mut self,
-        _: &RenameSelected,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(row) = self.target_row(cx) else { return };
-        let Some(entry) = self.table.read(cx).delegate().entries.get(row).cloned() else {
-            return;
-        };
-        let Some(old_path) = self.path_for_row(row, cx) else {
-            return;
-        };
-        let original_name = entry.name.clone();
-        let input_state = cx.new(|cx| {
-            let s = InputState::new(window, cx).placeholder("New name");
-            // Pre-fill with the existing name (so the user is
-            // editing, not typing from scratch).
-            s
-        });
-        // Set the initial value AFTER creating the entity so the
-        // window+cx are properly threaded.
-        input_state.update(cx, |state, cx| {
-            state.set_value(original_name.clone(), window, cx);
-        });
-        let input_for_ok = input_state.clone();
-        let shell = cx.entity();
-        let parent = self.active_tab().current_dir.clone();
-        window.open_dialog(cx, move |dialog, _window, _cx| {
-            let input = input_state.clone();
-            let input_for_ok = input_for_ok.clone();
-            let shell = shell.clone();
-            let old_path = old_path.clone();
-            let original_name = original_name.clone();
-            let parent = parent.clone();
-            dialog
-                .title("Rename")
-                .child(Input::new(&input).small())
-                .on_ok(move |_, _window, cx: &mut App| {
-                    let new_name = input_for_ok.read(cx).value().trim().to_string();
-                    if new_name.is_empty() || new_name == original_name {
-                        return true;
-                    }
-                    let mut new_path = old_path.clone();
-                    new_path.set_file_name(&new_name);
-                    let cur = parent.clone();
-                    let op_old_path = old_path.clone();
-                    let op_new_path = new_path.clone();
-                    let undo_current = new_path.clone();
-                    let undo_original = old_path.clone();
-                    shell.update(cx, move |this, cx| {
-                        this.spawn_file_op(
-                            cur,
-                            move || {
-                                std::fs::rename(&op_old_path, &op_new_path)
-                                    .map_err(|e| e.to_string())
-                            },
-                            "rename",
-                            cx,
-                        );
-                        this.push_undo(UndoOp::Rename {
-                            current: undo_current,
-                            original: undo_original,
-                        });
-                    });
-                    true
-                })
-        });
     }
 
     fn on_clear_filter(&mut self, _: &ClearFilter, window: &mut Window, cx: &mut Context<Self>) {
@@ -1660,29 +901,14 @@ impl Shell {
             self.focus_handle.focus(window, cx);
             return;
         }
-        self.filter_input.update(cx, |state, cx| {
+        let filter_input = self.active_tab().filter_input.clone();
+        filter_input.update(cx, |state, cx| {
             state.set_value("", window, cx);
         });
-        self.filter_text.clear();
+        self.active_tab_mut().filter_text.clear();
         let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
         self.focus_handle.focus(window, cx);
-    }
-
-    /// Space-bar Quick Look. Reuses the existing
-    /// `feraille_shell_mac::quick_look::show` bridge — same code
-    /// the old app called.
-    fn on_quick_look(&mut self, _: &QuickLook, _: &mut Window, cx: &mut Context<Self>) {
-        let paths: Vec<PathBuf> = self
-            .action_entries_visible_order(cx)
-            .into_iter()
-            .map(|(_, _, path)| path)
-            .collect();
-        if paths.is_empty() {
-            return;
-        }
-        let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
-        let _ = feraille_shell_mac::show_quick_look(&refs);
     }
 
     /// Cmd+Shift+H — navigate the active tab to the home directory.
@@ -1787,8 +1013,8 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let root = self.active_tab().current_dir.clone();
-        let fs = self.fs.clone();
-        let tasks = self.tasks.clone();
+        let fs = self.process.fs.clone();
+        let tasks = self.process.tasks.clone();
         // The DU window owns its own entity, so it can't drive our
         // notify directly. We hand it a callback closing over a weak
         // handle to this Shell; when the DU scan begin/ends a task, it
@@ -1804,618 +1030,8 @@ impl Shell {
         }
     }
 
-    // -- Selection model (spec §2) ---------------------------------
-    //
-    // Selection state lives on `Tab` as a HashSet<NodeId> + anchor +
-    // lead. Every selection mutation routes through one of the
-    // helpers in this block so the parallel render vecs in the
-    // delegate (`selected_in_set`, `is_lead`) and the underlying
-    // `TableState::selected_row` stay in lockstep. Read paths
-    // (`target_row`, status bar, preview, screenshot driver) derive
-    // a row index from the lead via `Tab::lead_row`.
-
-    /// Apply a mouse-click gesture on a row, dispatching by
-    /// modifiers per spec §2.4. The Table primitive has already
-    /// stamped its own `selected_row = row_ix` before this fires
-    /// (via `on_row_left_click → set_selected_row`); in every
-    /// branch below the lead also lands on `row_ix`, so the
-    /// primitive's focus overlay tracks the lead without our help.
-    pub(crate) fn apply_row_click_gesture(
-        &mut self,
-        row_ix: usize,
-        modifiers: gpui::Modifiers,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(id) = self.node_id_at_row(row_ix, cx) else {
-            return;
-        };
-        let cmd = modifiers.secondary();
-        let shift = modifiers.shift;
-        if shift && cmd {
-            // Cmd+Shift+Click: additive range — union anchor→row
-            // into the existing set, lead = row, anchor unchanged.
-            self.range_select(id, /* additive */ true, cx);
-        } else if shift {
-            // Shift+Click: replacement range from anchor to row,
-            // lead = row. If no anchor, treat as plain click.
-            self.range_select(id, /* additive */ false, cx);
-        } else if cmd {
-            // Cmd+Click: toggle membership; lead = row; anchor =
-            // row when set non-empty, cleared when it just emptied.
-            self.toggle_select(id, cx);
-        } else {
-            // Plain click: replace selection to just this row.
-            self.replace_select_one(id, cx);
-        }
-        // Preview always follows the lead — keeps the right pane
-        // and the table in lockstep regardless of which gesture
-        // ran. Same cost as the old single-click behavior.
-        if let Some(p) = self.path_for_row(row_ix, cx) {
-            crate::preview::request(self, p, cx);
-        }
-        cx.notify();
-    }
-
-    fn apply_row_keyboard_gesture(
-        &mut self,
-        row_ix: usize,
-        modifiers: gpui::Modifiers,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(id) = self.node_id_at_row(row_ix, cx) else {
-            return;
-        };
-        if modifiers.shift {
-            self.range_select(id, /* additive */ false, cx);
-        } else {
-            self.replace_select_one(id, cx);
-        }
-        if let Some(p) = self.path_for_row(row_ix, cx) {
-            crate::preview::request(self, p, cx);
-        }
-        cx.notify();
-    }
-
-    /// Spec §2.4: right-click on a selected row leaves the
-    /// selection alone (so "operate on all 12 selected" works);
-    /// right-click on an unselected row replaces selection to
-    /// that single row before the menu opens. The menu's target
-    /// reads `context_row` which is set by the caller before this
-    /// runs.
-    fn apply_row_right_click(&mut self, row_ix: usize, cx: &mut Context<Self>) {
-        let Some(id) = self.node_id_at_row(row_ix, cx) else {
-            return;
-        };
-        if !self.active_tab().selection.contains(&id) {
-            self.replace_select_one(id, cx);
-            cx.notify();
-        }
-    }
-
-    /// Programmatic single-row select by row index. Used by the
-    /// screenshot driver (`--select-row N`, `--select-name foo`)
-    /// to seed a deterministic selection state without simulating
-    /// a click. Equivalent to a plain click on the row.
-    ///
-    /// The screenshot harness runs this BEFORE the streaming load
-    /// delivers any batches, so when `entries` is empty we stash
-    /// the row index in `pending_select_row` and consume it on the
-    /// next batch arrival. This preserves the old row-index-only
-    /// semantics the harness depends on while keeping the runtime
-    /// selection model NodeId-based.
-    pub fn select_row_index(&mut self, row_ix: usize, cx: &mut Context<Self>) {
-        if let Some(id) = self.node_id_at_row(row_ix, cx) {
-            self.replace_select_one(id, cx);
-            cx.notify();
-        } else {
-            self.pending_select_row = Some(row_ix);
-        }
-    }
-
-    /// Apply a deferred `select_row_index` once entries are
-    /// available. Called from `apply_directory_batch` after the
-    /// delegate has the new rows. Also drains any
-    /// `pending_select_rows` (multi-row screenshot seed).
-    fn apply_pending_select_row(&mut self, cx: &mut Context<Self>) {
-        if let Some(row_ix) = self.pending_select_row {
-            if let Some(id) = self.node_id_at_row(row_ix, cx) {
-                self.pending_select_row = None;
-                self.replace_select_one(id, cx);
-                cx.notify();
-            }
-        }
-        if !self.pending_select_rows.is_empty() {
-            let rows = std::mem::take(&mut self.pending_select_rows);
-            self.select_row_indices(&rows, cx);
-        }
-    }
-
-    /// Programmatic multi-row select used by the screenshot
-    /// harness (`--select-rows`). First index becomes the anchor,
-    /// last becomes the lead. If any index is out of range we
-    /// stash the whole list for retry on the next batch arrival.
-    pub fn select_row_indices(&mut self, rows: &[usize], cx: &mut Context<Self>) {
-        let ids: Option<Vec<NodeId>> = rows.iter().map(|r| self.node_id_at_row(*r, cx)).collect();
-        let Some(ids) = ids else {
-            self.pending_select_rows = rows.to_vec();
-            return;
-        };
-        if ids.is_empty() {
-            return;
-        }
-        let anchor = ids.first().copied();
-        let lead = ids.last().copied();
-        let tab = self.active_tab_mut();
-        tab.selection = ids.into_iter().collect();
-        tab.anchor = anchor;
-        tab.lead = lead;
-        self.refresh_file_list_selection(cx);
-        cx.notify();
-    }
-
-    /// Plain-click semantics: selection = {id}, anchor = lead = id.
-    /// Non-range gesture → clears `range_live`.
-    fn replace_select_one(&mut self, id: NodeId, cx: &mut Context<Self>) {
-        let tab = self.active_tab_mut();
-        tab.selection.clear();
-        tab.selection.insert(id);
-        tab.anchor = Some(id);
-        tab.lead = Some(id);
-        tab.range_live = false;
-        self.refresh_file_list_selection(cx);
-    }
-
-    /// Cmd+Click semantics: toggle `id` in the set. lead = id.
-    /// Empty after toggle → anchor cleared; otherwise anchor = id.
-    /// Non-range gesture → clears `range_live`.
-    fn toggle_select(&mut self, id: NodeId, cx: &mut Context<Self>) {
-        let tab = self.active_tab_mut();
-        if !tab.selection.remove(&id) {
-            tab.selection.insert(id);
-        }
-        tab.lead = Some(id);
-        tab.anchor = if tab.selection.is_empty() {
-            None
-        } else {
-            Some(id)
-        };
-        tab.range_live = false;
-        self.refresh_file_list_selection(cx);
-    }
-
-    /// Shift+Click and Cmd+Shift+Click: compute the inclusive
-    /// span from anchor to `id` in visible (delegate) order; if
-    /// `additive` (Cmd+Shift), union it into the existing set,
-    /// otherwise replace. lead = id; anchor unchanged (or seeded
-    /// to id when there was none, matching spec's "treat as plain
-    /// click").
-    fn range_select(&mut self, id: NodeId, additive: bool, cx: &mut Context<Self>) {
-        let entries: Vec<NodeId> = self
-            .table
-            .read(cx)
-            .delegate()
-            .entries
-            .iter()
-            .map(|e| e.id)
-            .collect();
-        let Some(target_idx) = entries.iter().position(|x| *x == id) else {
-            return;
-        };
-        let anchor_id = self.active_tab().anchor;
-        let anchor_idx = anchor_id.and_then(|a| entries.iter().position(|x| *x == a));
-        match anchor_idx {
-            None => {
-                // No anchor → treat as plain click (spec §2.4).
-                self.replace_select_one(id, cx);
-            }
-            Some(a_idx) => {
-                let (lo, hi) = if a_idx <= target_idx {
-                    (a_idx, target_idx)
-                } else {
-                    (target_idx, a_idx)
-                };
-                let span: HashSet<NodeId> = entries[lo..=hi].iter().copied().collect();
-                let tab = self.active_tab_mut();
-                if additive {
-                    tab.selection.extend(span);
-                } else {
-                    tab.selection = span;
-                }
-                tab.lead = Some(id);
-                // Range gesture → mark live so the span keeps
-                // recomputing as rows stream in (spec §2.6).
-                tab.range_live = true;
-                // Anchor unchanged.
-                self.refresh_file_list_selection(cx);
-            }
-        }
-    }
-
-    /// Spec §2.5: Cmd+A — select every row currently in the
-    /// (filtered) model. anchor = first visible, lead = last.
-    /// Non-range gesture → clears `range_live`.
-    fn select_all_visible(&mut self, cx: &mut Context<Self>) {
-        let (all, first, last): (HashSet<NodeId>, Option<NodeId>, Option<NodeId>) = {
-            let delegate = self.table.read(cx).delegate();
-            let ids: Vec<NodeId> = delegate.entries.iter().map(|e| e.id).collect();
-            let first = ids.first().copied();
-            let last = ids.last().copied();
-            (ids.into_iter().collect(), first, last)
-        };
-        let tab = self.active_tab_mut();
-        tab.selection = all;
-        tab.anchor = first;
-        tab.lead = last;
-        tab.range_live = false;
-        self.refresh_file_list_selection(cx);
-        cx.notify();
-    }
-
-    /// Spec §2.5 Esc: clear selection, anchor, lead. Also drains
-    /// the filter holding set so a subsequent filter-loosen
-    /// doesn't restore ghosts.
-    pub fn clear_active_selection(&mut self, cx: &mut Context<Self>) {
-        let tab = self.active_tab_mut();
-        tab.selection.clear();
-        tab.anchor = None;
-        tab.lead = None;
-        tab.filtered_out.clear();
-        tab.range_live = false;
-        self.refresh_file_list_selection(cx);
-        cx.notify();
-    }
-
-    /// Rebuild the delegate's per-row `selected_in_set` + `is_lead`
-    /// parallel vecs from the active tab's selection state, and
-    /// mirror the lead's row index into the underlying
-    /// `TableState::selected_row` so the primitive's focus overlay
-    /// matches the keyboard cursor. Called after every selection
-    /// mutation, after every streaming batch, and on `Done`.
-    ///
-    /// We only call `set_selected_row` when the row index actually
-    /// differs to avoid redundant redraw/scroll work. Semantic
-    /// selection comes from `RowClicked` / `LeadMoved`; `SelectRow`
-    /// is now just the table's internal lead mirror.
-    pub fn refresh_file_list_selection(&mut self, cx: &mut Context<Self>) {
-        // Snapshot the active tab's selection state so the
-        // table.update closure doesn't need to borrow Shell again.
-        let selection = self.active_tab().selection.clone();
-        let lead = self.active_tab().lead;
-        let table = self.table.clone();
-        let lead_row = table.update(cx, |state, cx| {
-            let delegate = state.delegate_mut();
-            delegate.selected_set = selection;
-            delegate.lead = lead;
-            let lead_row = lead
-                .and_then(|id| delegate.entries.iter().position(|e| e.id == id));
-            state.refresh(cx);
-            lead_row
-        });
-        if let Some(row) = lead_row {
-            let needs_set = table.read(cx).selected_row() != Some(row);
-            if needs_set {
-                table.update(cx, |state, cx| {
-                    state.set_selected_row(row, cx);
-                });
-            }
-        }
-    }
-
-    /// Resolve the NodeId at a given row index by reading the
-    /// delegate's `entries`. Cheap (one indexed access). Returns
-    /// `None` if the row index is out of bounds — possible if the
-    /// model changed between an event being queued and dispatched.
-    fn node_id_at_row(&self, row_ix: usize, cx: &App) -> Option<NodeId> {
-        self.table
-            .read(cx)
-            .delegate()
-            .entries
-            .get(row_ix)
-            .map(|e| e.id)
-    }
-
-    /// Spec §2.6 streaming arrival. For each NodeId currently in
-    /// the tab's `filtered_out` holding set whose row has now
-    /// arrived in the model, move it back into `selection`. Runs
-    /// after every batch and at `Done`. Doesn't drop anything —
-    /// dropping is `reconcile_done`'s job.
-    fn restore_filtered_out_against_model(&mut self, cx: &mut Context<Self>) {
-        let visible: HashSet<NodeId> = self
-            .table
-            .read(cx)
-            .delegate()
-            .entries
-            .iter()
-            .map(|e| e.id)
-            .collect();
-        let tab = self.active_tab_mut();
-        if tab.filtered_out.is_empty() {
-            return;
-        }
-        let mut restored = false;
-        tab.filtered_out.retain(|id| {
-            if visible.contains(id) {
-                tab.selection.insert(*id);
-                restored = true;
-                false
-            } else {
-                true
-            }
-        });
-        if restored {
-            self.refresh_file_list_selection(cx);
-        }
-    }
-
-    /// Spec §2.6 live Shift-range recompute. When the tab's
-    /// `range_live` flag is set, the selection is logically the
-    /// anchor→lead inclusive span. As rows stream in, the visible
-    /// position of the endpoints may change and rows between them
-    /// may newly appear. Recompute the span on every batch + at
-    /// `Done`. No-op if either endpoint isn't visible yet — we
-    /// wait for the row that defines them to land before binding.
-    fn recompute_live_range(&mut self, cx: &mut Context<Self>) {
-        if !self.active_tab().range_live {
-            return;
-        }
-        let (anchor_id, lead_id) =
-            match (self.active_tab().anchor, self.active_tab().lead) {
-                (Some(a), Some(l)) => (a, l),
-                _ => return,
-            };
-        let entries: Vec<NodeId> = self
-            .table
-            .read(cx)
-            .delegate()
-            .entries
-            .iter()
-            .map(|e| e.id)
-            .collect();
-        let anchor_idx = entries.iter().position(|x| *x == anchor_id);
-        let lead_idx = entries.iter().position(|x| *x == lead_id);
-        let (Some(a), Some(l)) = (anchor_idx, lead_idx) else {
-            return;
-        };
-        let (lo, hi) = if a <= l { (a, l) } else { (l, a) };
-        let span: HashSet<NodeId> = entries[lo..=hi].iter().copied().collect();
-        self.active_tab_mut().selection = span;
-        self.refresh_file_list_selection(cx);
-    }
-
-    /// Spec §2.6 `LoadMsg::Done` reconciliation. Drops NodeIds no
-    /// longer present in the final model from `selection` (or
-    /// holds them in `filtered_out` when a filter is active), and
-    /// re-seats `anchor` / `lead` if they vanished. Also runs the
-    /// other reconcile passes one last time so a range that just
-    /// became valid is bound by the time the load is "done."
-    fn reconcile_done(&mut self, cx: &mut Context<Self>) {
-        let visible: HashSet<NodeId> = self
-            .table
-            .read(cx)
-            .delegate()
-            .entries
-            .iter()
-            .map(|e| e.id)
-            .collect();
-        let filter_active = !self.filter_text.trim().is_empty();
-        let tab = self.active_tab_mut();
-        let mut moved = false;
-        if filter_active {
-            // Move members not in the visible set into the filter
-            // holding set, preserving them across a future filter
-            // loosening (spec §2.6 filter rule).
-            tab.selection.retain(|id| {
-                if visible.contains(id) {
-                    true
-                } else {
-                    tab.filtered_out.insert(*id);
-                    moved = true;
-                    false
-                }
-            });
-        } else {
-            // Filter is empty → ghost ids are genuinely gone.
-            // Drop both selection and filter-holding entries that
-            // aren't in the model.
-            let before = tab.selection.len();
-            tab.selection.retain(|id| visible.contains(id));
-            let after = tab.selection.len();
-            moved = moved || (before != after);
-            let fo_before = tab.filtered_out.len();
-            tab.filtered_out.retain(|id| visible.contains(id));
-            moved = moved || (fo_before != tab.filtered_out.len());
-        }
-        // Re-seat anchor / lead if they're gone.
-        if let Some(a) = tab.anchor {
-            if !visible.contains(&a) {
-                tab.anchor = None;
-                moved = true;
-            }
-        }
-        if let Some(l) = tab.lead {
-            if !visible.contains(&l) {
-                tab.lead = None;
-                moved = true;
-            }
-        }
-        // If neither endpoint is in the model anymore, the live
-        // range can't reconcile — let it freeze.
-        if tab.range_live && (tab.anchor.is_none() || tab.lead.is_none()) {
-            tab.range_live = false;
-            moved = true;
-        }
-        if moved {
-            self.refresh_file_list_selection(cx);
-        }
-        // Final pass: restore any filtered_out members that did
-        // make it in and recompute a still-live range.
-        self.restore_filtered_out_against_model(cx);
-        self.recompute_live_range(cx);
-    }
-
-    /// Keyboard navigation: move the lead by `delta` and, when
-    /// `extend` is true (Shift-extend variants), make the
-    /// selection the inclusive span from anchor to the new lead.
-    /// Plain moves replace the selection with just the new lead
-    /// (spec §2.5).
-    fn move_selection(
-        &mut self,
-        delta: SelectionDelta,
-        extend: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let entries: Vec<NodeId> = self
-            .table
-            .read(cx)
-            .delegate()
-            .entries
-            .iter()
-            .map(|e| e.id)
-            .collect();
-        let len = entries.len();
-        if len == 0 {
-            self.clear_active_selection(cx);
-            return;
-        }
-        let page = 12i64;
-        let last = len as i64 - 1;
-        let cur_idx: i64 = self
-            .active_tab()
-            .lead
-            .and_then(|id| entries.iter().position(|x| *x == id))
-            .map(|i| i as i64)
-            .unwrap_or(0);
-        let next: i64 = match delta {
-            SelectionDelta::Up => cur_idx - 1,
-            SelectionDelta::Down => cur_idx + 1,
-            SelectionDelta::PageUp => cur_idx - page,
-            SelectionDelta::PageDown => cur_idx + page,
-            SelectionDelta::First => 0,
-            SelectionDelta::Last => last,
-        };
-        let clamped = next.clamp(0, last) as usize;
-        let new_lead = entries[clamped];
-        if extend {
-            // Range-extend keeps anchor fixed; if there was no
-            // anchor, seed it at the previous lead (or the new
-            // one, which collapses to plain navigation).
-            let tab = self.active_tab_mut();
-            if tab.anchor.is_none() {
-                tab.anchor = tab.lead.or(Some(new_lead));
-            }
-            let anchor_id = tab.anchor.unwrap_or(new_lead);
-            let anchor_idx = entries
-                .iter()
-                .position(|x| *x == anchor_id)
-                .unwrap_or(clamped);
-            let (lo, hi) = if anchor_idx <= clamped {
-                (anchor_idx, clamped)
-            } else {
-                (clamped, anchor_idx)
-            };
-            tab.selection = entries[lo..=hi].iter().copied().collect();
-            tab.lead = Some(new_lead);
-            // Spec §2.6: a Shift-extend keyboard nav keeps the
-            // range live so subsequent batches recompute the span.
-            tab.range_live = true;
-        } else {
-            // Plain navigation collapses selection — replace_select_one
-            // clears range_live.
-            self.replace_select_one(new_lead, cx);
-            return;
-        }
-        self.refresh_file_list_selection(cx);
-        // Preview pane follows the lead.
-        if let Some(p) = self.path_for_row(clamped, cx) {
-            crate::preview::request(self, p, cx);
-        }
-        cx.notify();
-    }
-
-    fn on_cursor_up(&mut self, _: &CursorUp, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_selection(SelectionDelta::Up, false, cx);
-    }
-    fn on_cursor_down(&mut self, _: &CursorDown, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_selection(SelectionDelta::Down, false, cx);
-    }
-    fn on_cursor_first(&mut self, _: &CursorFirst, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_selection(SelectionDelta::First, false, cx);
-    }
-    fn on_cursor_last(&mut self, _: &CursorLast, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_selection(SelectionDelta::Last, false, cx);
-    }
-    fn on_page_up(&mut self, _: &PageUp, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_selection(SelectionDelta::PageUp, false, cx);
-    }
-    fn on_page_down(&mut self, _: &PageDown, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_selection(SelectionDelta::PageDown, false, cx);
-    }
-
-    fn on_cursor_up_extend(
-        &mut self,
-        _: &CursorUpExtend,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.move_selection(SelectionDelta::Up, true, cx);
-    }
-    fn on_cursor_down_extend(
-        &mut self,
-        _: &CursorDownExtend,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.move_selection(SelectionDelta::Down, true, cx);
-    }
-    fn on_cursor_first_extend(
-        &mut self,
-        _: &CursorFirstExtend,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.move_selection(SelectionDelta::First, true, cx);
-    }
-    fn on_cursor_last_extend(
-        &mut self,
-        _: &CursorLastExtend,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.move_selection(SelectionDelta::Last, true, cx);
-    }
-    fn on_page_up_extend(
-        &mut self,
-        _: &PageUpExtend,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.move_selection(SelectionDelta::PageUp, true, cx);
-    }
-    fn on_page_down_extend(
-        &mut self,
-        _: &PageDownExtend,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.move_selection(SelectionDelta::PageDown, true, cx);
-    }
-
-    fn on_select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
-        self.select_all_visible(cx);
-    }
-
-    fn on_clear_selection(
-        &mut self,
-        _: &ClearSelection,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.clear_active_selection(cx);
-    }
-
     /// Cmd+P — toggle preview-pane visibility. The pane defaults to
-    /// shown; toggling off gives the file list the full content
-    /// width.
+    /// shown; toggling off gives the file list the full content width.
     fn on_toggle_preview(&mut self, _: &TogglePreview, _: &mut Window, cx: &mut Context<Self>) {
         self.preview_visible = !self.preview_visible;
         cx.notify();
@@ -2450,101 +1066,40 @@ impl Shell {
     /// Open the selected row's path in a new tab (context-menu
     /// command). Falls back to the active tab's current dir when
     /// nothing is selected.
-    fn on_open_in_new_tab(&mut self, _: &OpenInNewTab, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_open_in_new_tab(
+        &mut self,
+        _: &OpenInNewTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let path = match self.target_row(cx).and_then(|r| self.path_for_row(r, cx)) {
             Some(p) => p,
             None => self.active_tab().current_dir.clone(),
         };
-        self.open_path_in_new_tab(path, cx);
+        self.open_path_in_new_tab(path, window, cx);
     }
 
     /// Push a new tab at `path` and switch to it. Shared entry point
     /// for modifier-click in the file list / sidebar / Favorites
     /// section so each surface doesn't reimplement the tab push.
-    pub fn open_path_in_new_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let id = self.fs.id_for_path(&path);
-        self.node_store.get_or_create_path_with_id(path.clone(), id);
-        self.tabs.push(Tab::new(path, id));
-        self.active = self.tabs.len() - 1;
+    /// Inserts beside the active tab per spec §3.3.
+    pub fn open_path_in_new_tab(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = self.process.fs.id_for_path(&path);
+        self.process
+            .node_store
+            .borrow_mut()
+            .get_or_create_path_with_id(path.clone(), id);
+        let tab = self.make_tab(path, id, window, cx);
+        let insert_at = self.active + 1;
+        self.tabs.insert(insert_at, tab);
+        self.active = insert_at;
         let cur = self.active_tab().current_dir.clone();
         self.load_path(cur, cx);
-    }
-
-    /// Right-click → Duplicate. Calls
-    /// `feraille_shell_mac::duplicate_path` (NSWorkspace duplicate on
-    /// macOS, std::fs::copy fallback elsewhere). The watcher picks
-    /// up the new file; we also force-reload for snappiness.
-    fn on_duplicate(&mut self, _: &Duplicate, _: &mut Window, cx: &mut Context<Self>) {
-        let paths: Vec<PathBuf> = self
-            .action_entries_visible_order(cx)
-            .into_iter()
-            .map(|(_, _, path)| path)
-            .collect();
-        if paths.is_empty() {
-            return;
-        }
-        let cur = self.active_tab().current_dir.clone();
-        self.spawn_file_op(
-            cur,
-            move || {
-                for path in paths {
-                    feraille_shell_mac::duplicate_path(&path).map(|_| ())?;
-                }
-                Ok(())
-            },
-            "duplicate",
-            cx,
-        );
-    }
-
-    /// Right-click → Make Alias. Creates a Finder alias next to the
-    /// source.
-    fn on_make_alias(&mut self, _: &MakeAlias, _: &mut Window, cx: &mut Context<Self>) {
-        let paths: Vec<PathBuf> = self
-            .action_entries_visible_order(cx)
-            .into_iter()
-            .map(|(_, _, path)| path)
-            .collect();
-        if paths.is_empty() {
-            return;
-        }
-        let cur = self.active_tab().current_dir.clone();
-        self.spawn_file_op(
-            cur,
-            move || {
-                for path in paths {
-                    feraille_shell_mac::make_alias(&path).map(|_| ())?;
-                }
-                Ok(())
-            },
-            "make-alias",
-            cx,
-        );
-    }
-
-    /// Right-click → Compress. Zips the selected visible rows into
-    /// one archive, matching Finder's multi-item "Archive.zip"
-    /// behavior through `feraille_shell_mac::compress_paths`.
-    fn on_compress(&mut self, _: &Compress, _: &mut Window, cx: &mut Context<Self>) {
-        let paths: Vec<PathBuf> = self
-            .action_entries_visible_order(cx)
-            .into_iter()
-            .map(|(_, _, path)| path)
-            .collect();
-        if paths.is_empty() {
-            return;
-        }
-        let cur = self.active_tab().current_dir.clone();
-        self.spawn_file_op(
-            cur,
-            move || {
-                let targets: Vec<&std::path::Path> =
-                    paths.iter().map(|path| path.as_path()).collect();
-                feraille_shell_mac::compress_paths(&targets).map(|_| ())
-            },
-            "compress",
-            cx,
-        );
     }
 
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
@@ -2614,9 +1169,9 @@ impl Shell {
             tab.filtered_out.clear();
             tab.range_live = false;
         }
-        self.pending_select_row = None;
-        self.pending_select_rows.clear();
-        let node_id = self.fs.id_for_path(&path);
+        self.active_tab_mut().pending_select_row = None;
+        self.active_tab_mut().pending_select_rows.clear();
+        let node_id = self.process.fs.id_for_path(&path);
         self.active_tab_mut().nav.navigate_to(node_id);
         self.record_ant_visit(node_id, cx);
         self.load_path(path, cx);
@@ -2644,51 +1199,68 @@ impl Shell {
 
     /// Inner load: re-enumerate the directory + refresh the table +
     /// re-target the watcher. Does **not** touch history (history
-    /// is only mutated by `navigate`). Public so the screenshot
-    /// CLI driver can call it directly after seeding tab state.
+    /// is only mutated by `navigate`). Loads into the currently
+    /// active tab. Public so the screenshot CLI driver can call it
+    /// directly after seeding tab state.
     pub fn load_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let node_id = self.fs.id_for_path(&path);
-        self.node_store
+        let tab_id = self.active_tab().id;
+        self.load_path_for_tab(tab_id, path, cx);
+    }
+
+    /// Schedule a directory load against a specific tab. Used by
+    /// `load_path` (active tab) and, in Phase A+B + beyond, any
+    /// background path that wants to retarget an inactive tab —
+    /// e.g. the cross-window reload fan-out in Phase E.
+    pub fn load_path_for_tab(&mut self, tab_id: TabId, path: PathBuf, cx: &mut Context<Self>) {
+        let Some(tab_index) = self.tabs.iter().position(|t| t.id == tab_id) else {
+            return;
+        };
+        let node_id = self.process.fs.id_for_path(&path);
+        self.process
+            .node_store
+            .borrow_mut()
             .get_or_create_path_with_id(path.clone(), node_id);
-        self.active_tab_mut().nav.replace_current(node_id);
-        self.active_tab_mut().current_dir = path.clone();
+        let tab = &mut self.tabs[tab_index];
+        tab.nav.replace_current(node_id);
+        tab.current_dir = path.clone();
         // Selection is preserved across `load_path` calls so
         // filter/refresh/show-hidden/watcher reloads can reconcile
         // against the new model (spec §2.6). `navigate`, which
         // commits a new path, clears selection itself BEFORE
-        // delegating here. The screenshot harness still owns the
-        // `pending_select_row(s)` lifecycle and clears those on its
-        // own at navigate time.
-        self.last_error = None;
-        self.load_generation = self.load_generation.wrapping_add(1);
-        let generation = self.load_generation;
+        // delegating here.
+        tab.last_error = None;
+        tab.load_generation = tab.load_generation.wrapping_add(1);
+        let generation = tab.load_generation;
+        let filter = tab.filter_text.clone();
         let show_hidden = self.show_hidden;
-        let filter = self.filter_text.clone();
 
-        if let Some(cancel) = self.load_cancel.take() {
+        if let Some(cancel) = self.tabs[tab_index].load_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
-        let task = self.tasks.borrow_mut().begin(
+        let task = self.process.tasks.borrow_mut().begin(
             TaskKind::Enumeration,
-            format!("Reading {}", middle_truncate_path(&path.to_string_lossy(), 40)),
+            format!(
+                "Reading {}",
+                middle_truncate_path(&path.to_string_lossy(), 40)
+            ),
             true,
         );
-        if let Some(previous) = self.load_task.replace(task) {
-            self.tasks.borrow_mut().end(previous);
+        if let Some(previous) = self.tabs[tab_index].load_task.replace(task) {
+            self.process.tasks.borrow_mut().end(previous);
         }
-        self.load_pending_first_batch = true;
+        self.tabs[tab_index].load_pending_first_batch = true;
 
         // Point the watcher at the new directory. Errors (path
         // doesn't exist, watcher saturated) are non-fatal — the
         // user still gets the listing; they just lose live updates.
-        if let Some(w) = self.watcher.borrow_mut().as_mut() {
+        if let Some(w) = self.process.watcher.borrow_mut().as_mut() {
             let _ = w.watch(&path);
         }
         self.save_state_async(cx);
 
-        let fs = self.fs.clone();
+        let fs = self.process.fs.clone();
         let cancel = Arc::new(AtomicBool::new(false));
-        self.load_cancel = Some(cancel.clone());
+        self.tabs[tab_index].load_cancel = Some(cancel.clone());
         let (tx, rx) = async_channel::unbounded();
         let worker_path = path.clone();
         cx.background_executor()
@@ -2702,12 +1274,26 @@ impl Shell {
                 let done = matches!(msg, LoadMsg::Done(_));
                 let stale = this
                     .update(cx, |this, cx| {
-                        if this.load_generation != generation
-                            || this.active_tab().current_dir != path
+                        // Find the loading tab by id — its index may
+                        // have shifted under reorder, and it may have
+                        // closed entirely.
+                        let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) else {
+                            return true;
+                        };
+                        if this.tabs[idx].load_generation != generation
+                            || this.tabs[idx].current_dir != path
                         {
                             return true;
                         }
+                        // Helpers below operate on `self.active_tab()`.
+                        // Temporarily swap `active` to the loading tab
+                        // so the helpers update its state; restore on
+                        // the way out. Safe because helpers don't paint
+                        // synchronously — `cx.notify()` only schedules.
+                        let prev_active = this.active;
+                        this.active = idx;
                         this.apply_directory_load_msg(msg, cx);
+                        this.active = prev_active;
                         false
                     })
                     .unwrap_or(true);
@@ -2729,7 +1315,9 @@ impl Shell {
 
     fn apply_directory_batch(&mut self, batch: LoadBatch, cx: &mut Context<Self>) {
         for (id, path) in &batch.paths {
-            self.node_store
+            self.process
+                .node_store
+                .borrow_mut()
                 .get_or_create_path_with_id(path.clone(), *id);
         }
         let heats: Vec<f32> = batch
@@ -2737,9 +1325,9 @@ impl Shell {
             .iter()
             .map(|entry| self.ant_heat(entry.id))
             .collect();
-        let first_batch = self.load_pending_first_batch;
-        self.load_pending_first_batch = false;
-        let table = self.table.clone();
+        let first_batch = self.active_tab_mut().load_pending_first_batch;
+        self.active_tab_mut().load_pending_first_batch = false;
+        let table = self.active_tab().table.clone();
         table.update(cx, |state, cx| {
             if first_batch {
                 state.delegate_mut().clear();
@@ -2773,12 +1361,12 @@ impl Shell {
     /// Recompute the file list's per-row `is_favorited` parallel vec
     /// from the current Favorites entity index. Called from:
     /// - `apply_directory_batch` (after rows arrive)
-    /// - The `cx.observe(&self.favorites, …)` subscription registered
+    /// - The `cx.observe(&self.process.favorites, …)` subscription registered
     ///   in `Shell::new` (so add / remove / repoint repaints star
     ///   badges in the same frame, §5.3).
     pub fn refresh_file_list_favorited(&mut self, cx: &mut Context<Self>) {
-        let favs = self.favorites.clone();
-        let table = self.table.clone();
+        let favs = self.process.favorites.clone();
+        let table = self.active_tab().table.clone();
         let favs_ref = favs.read(cx);
         // Pre-collect each row's path so the table-update closure
         // doesn't need to borrow Shell again.
@@ -2811,31 +1399,27 @@ impl Shell {
         });
     }
 
-    fn finish_directory_load(
-        &mut self,
-        error: Option<EnumerationError>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(id) = self.load_task.take() {
-            self.tasks.borrow_mut().end(id);
+    fn finish_directory_load(&mut self, error: Option<EnumerationError>, cx: &mut Context<Self>) {
+        if let Some(id) = self.active_tab_mut().load_task.take() {
+            self.process.tasks.borrow_mut().end(id);
         }
-        self.load_cancel = None;
-        if self.load_pending_first_batch {
-            self.load_pending_first_batch = false;
-            let table = self.table.clone();
+        self.active_tab_mut().load_cancel = None;
+        if self.active_tab_mut().load_pending_first_batch {
+            self.active_tab_mut().load_pending_first_batch = false;
+            let table = self.active_tab().table.clone();
             table.update(cx, |state, cx| {
                 state.delegate_mut().clear();
                 state.refresh(cx);
             });
         }
-        let row_count = self.table.read(cx).delegate().entries.len();
+        let row_count = self.active_tab().table.read(cx).delegate().entries.len();
         if row_count == 0 {
-            self.last_error = error;
+            self.active_tab_mut().last_error = error;
         } else {
             if let Some(err) = error {
                 crate::log_warn!(90, "directory load ended with partial rows: {err:?}");
             }
-            self.last_error = None;
+            self.active_tab_mut().last_error = None;
         }
 
         // Spec §2.6 `Done`: drop NodeIds no longer in the final
@@ -2848,10 +1432,10 @@ impl Shell {
 
         // Stage 4: kick off magic + quarantine prefetch after the
         // foreground table state has received the final snapshot.
-        let table = self.table.clone();
-        let fs = self.fs.clone();
-        let db = self.metadata_db.clone();
-        let tasks = self.tasks.clone();
+        let table = self.active_tab().table.clone();
+        let fs = self.process.fs.clone();
+        let db = self.process.db_snapshot();
+        let tasks = self.process.tasks.clone();
         let weak = cx.weak_entity();
         crate::prefetch::start(table, fs, db, tasks, weak, cx);
         let icon_seeds = self.icon_seeds_from_table(cx);
@@ -2860,7 +1444,7 @@ impl Shell {
     }
 
     fn icon_seeds_from_table(&self, cx: &App) -> Vec<(FileEntry, PathBuf)> {
-        let table = self.table.read(cx);
+        let table = self.active_tab().table.read(cx);
         let delegate = table.delegate();
         delegate
             .entries
@@ -2883,7 +1467,7 @@ impl Shell {
                 let rows = chunk.to_vec();
                 if this
                     .update(cx, |this, cx| {
-                        let mut icons = this.icons.borrow_mut();
+                        let mut icons = this.process.icons.borrow_mut();
                         for (entry, path) in &rows {
                             let _ = icons.icon_for(entry, path);
                         }
@@ -2898,7 +1482,26 @@ impl Shell {
         .detach();
     }
 
-    fn start_metadata_load(&self, cx: &mut Context<Self>) {
+    fn refresh_active_tab_heats(&mut self, cx: &mut Context<Self>) {
+        let table = self.active_tab().table.clone();
+        table.update(cx, |state, cx| {
+            let delegate = state.delegate_mut();
+            let heats: Vec<f32> = delegate
+                .entries
+                .iter()
+                .map(|entry| self.ant_heat(entry.id))
+                .collect();
+            delegate.heats = heats;
+            state.refresh(cx);
+        });
+    }
+
+    fn start_metadata_load(&mut self, cx: &mut Context<Self>) {
+        if self.process.metadata_loaded.replace(true) {
+            self.favorites_section_collapsed = self.process.favorites_section_collapsed.get();
+            self.refresh_active_tab_heats(cx);
+            return;
+        }
         cx.spawn(async move |this, cx| {
             let loaded = cx
                 .background_executor()
@@ -2918,15 +1521,16 @@ impl Shell {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 let (db, ant_visits, ant_max, favs_collapsed, favorites) = loaded;
-                this.metadata_db = db.clone();
-                this.ant_visits = ant_visits;
-                this.ant_max = ant_max;
+                *this.process.metadata_db.borrow_mut() = db.clone();
+                *this.process.ant_visits.borrow_mut() = ant_visits;
+                this.process.ant_max.set(ant_max);
+                this.process.favorites_section_collapsed.set(favs_collapsed);
                 this.favorites_section_collapsed = favs_collapsed;
                 // Attach the writable DB to the favorites entity and
                 // hydrate. The dev seed runs only when the entry list
                 // is empty AND `FERAILLE_DEV_SEED_FAVORITES=1` — see
                 // `crate::favorites::maybe_seed_dev_favorites`.
-                let fav_entity = this.favorites.clone();
+                let fav_entity = this.process.favorites.clone();
                 fav_entity.update(cx, |f, cx| {
                     if let Some(d) = db.clone() {
                         f.attach_db(d);
@@ -2934,21 +1538,41 @@ impl Shell {
                     f.hydrate(favorites, cx);
                     crate::favorites::maybe_seed_dev_favorites(f, cx);
                 });
-                let table = this.table.clone();
-                table.update(cx, |state, cx| {
-                    let delegate = state.delegate_mut();
-                    let heats: Vec<f32> = delegate
-                        .entries
-                        .iter()
-                        .map(|entry| this.ant_heat(entry.id))
-                        .collect();
-                    delegate.heats = heats;
-                    state.refresh(cx);
-                });
+                this.refresh_active_tab_heats(cx);
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    fn reload_tabs_matching_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        let targets: Vec<(TabId, PathBuf)> = self
+            .tabs
+            .iter()
+            .filter(|tab| paths.iter().any(|path| path == &tab.current_dir))
+            .map(|tab| (tab.id, tab.current_dir.clone()))
+            .collect();
+        for (tab_id, path) in targets {
+            self.load_path_for_tab(tab_id, path, cx);
+        }
+    }
+
+    fn broadcast_reload_for_process(
+        process: &Rc<crate::process_state::ProcessState>,
+        paths: Vec<PathBuf>,
+        cx: &mut AsyncApp,
+    ) {
+        if paths.is_empty() {
+            return;
+        }
+        for weak in process.live_shells() {
+            if let Some(shell) = weak.upgrade() {
+                let paths = paths.clone();
+                let _ = shell.update(cx, |this, cx| {
+                    this.reload_tabs_matching_paths(&paths, cx);
+                });
+            }
+        }
     }
 
     fn spawn_file_op(
@@ -2958,16 +1582,13 @@ impl Shell {
         label: &'static str,
         cx: &mut Context<Self>,
     ) {
-        let weak = cx.weak_entity();
+        let process = self.process.clone();
         cx.spawn(async move |_this, cx| {
             let result = cx.background_executor().spawn(async move { op() }).await;
-            let Some(shell) = weak.upgrade() else { return };
-            let _ = shell.update(cx, |this, cx| {
-                match result {
-                    Ok(()) => this.load_path(reload_path, cx),
-                    Err(e) => crate::log_warn!(90, "{label} failed: {e}"),
-                }
-            });
+            match result {
+                Ok(()) => Shell::broadcast_reload_for_process(&process, vec![reload_path], cx),
+                Err(e) => crate::log_warn!(90, "{label} failed: {e}"),
+            }
         })
         .detach();
     }
@@ -2975,10 +1596,7 @@ impl Shell {
     /// Append a reversible op to the undo stack, evicting the oldest
     /// entry when capacity is exceeded.
     fn push_undo(&mut self, op: UndoOp) {
-        if self.undo_stack.len() >= UNDO_STACK_CAP {
-            self.undo_stack.pop_front();
-        }
-        self.undo_stack.push_back(op);
+        self.process.push_undo(op, UNDO_STACK_CAP);
     }
 
     pub fn on_undo_last_action(
@@ -2988,20 +1606,20 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
-        let Some(op) = self.undo_stack.pop_back() else {
+        let Some(op) = self.process.undo_stack.borrow_mut().pop_back() else {
             window.push_notification(Notification::info("Nothing to undo"), cx);
             return;
         };
         let label = op.label();
         match op {
             UndoOp::AddFavorite(id) => {
-                self.favorites.update(cx, |f, cx| {
+                self.process.favorites.update(cx, |f, cx| {
                     f.remove(id, cx);
                 });
                 window.push_notification(Notification::success(label.to_string()), cx);
             }
             UndoOp::RemoveFavorite(fav) => {
-                self.favorites.update(cx, |f, cx| {
+                self.process.favorites.update(cx, |f, cx| {
                     f.restore(fav, cx);
                 });
                 window.push_notification(Notification::success(label.to_string()), cx);
@@ -3013,10 +1631,7 @@ impl Shell {
                     self.load_path(path, cx);
                 }
                 Err(e) => {
-                    window.push_notification(
-                        Notification::error(format!("Undo failed: {e}")),
-                        cx,
-                    );
+                    window.push_notification(Notification::error(format!("Undo failed: {e}")), cx);
                 }
             },
         }
@@ -3053,15 +1668,17 @@ impl Shell {
         match kind {
             FavoriteResolved::Folder => {
                 let canonical = std::fs::canonicalize(&path).unwrap_or(path.clone());
-                let already = self.favorites.read(cx).contains_path(&canonical);
-                let favs = self.favorites.clone();
+                let already = self.process.favorites.read(cx).contains_path(&canonical);
+                let favs = self.process.favorites.clone();
                 if already {
                     let id = self
+                        .process
                         .favorites
                         .read(cx)
                         .id_for_path(&canonical)
                         .expect("contains_path returned true");
                     let label = self
+                        .process
                         .favorites
                         .read(cx)
                         .entry_by_id(id)
@@ -3069,11 +1686,7 @@ impl Shell {
                         .unwrap_or_else(|| "favorite".to_string());
                     // Capture the full entry before removal so the undo
                     // restores name + icon + sort_index + date_added.
-                    let removed_for_undo = self
-                        .favorites
-                        .read(cx)
-                        .entry_by_id(id)
-                        .cloned();
+                    let removed_for_undo = self.process.favorites.read(cx).entry_by_id(id).cloned();
                     favs.update(cx, |f, cx| {
                         f.remove(id, cx);
                     });
@@ -3106,7 +1719,9 @@ impl Shell {
                         self.push_undo(UndoOp::AddFavorite(id));
                     }
                     window.push_notification(
-                        Notification::success(format!("Added \u{201C}{label}\u{201D} to Favorites")),
+                        Notification::success(format!(
+                            "Added \u{201C}{label}\u{201D} to Favorites"
+                        )),
                         cx,
                     );
                 }
@@ -3151,7 +1766,7 @@ impl Shell {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.favorites.update(cx, |f, cx| {
+        self.process.favorites.update(cx, |f, cx| {
             f.one_shot_sort(feraille_core::favorites::FavoriteSort::NameAsc, cx);
         });
     }
@@ -3162,11 +1777,8 @@ impl Shell {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.favorites.update(cx, |f, cx| {
-            f.one_shot_sort(
-                feraille_core::favorites::FavoriteSort::DateAddedNewest,
-                cx,
-            );
+        self.process.favorites.update(cx, |f, cx| {
+            f.one_shot_sort(feraille_core::favorites::FavoriteSort::DateAddedNewest, cx);
         });
     }
 
@@ -3176,11 +1788,8 @@ impl Shell {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.favorites.update(cx, |f, cx| {
-            f.one_shot_sort(
-                feraille_core::favorites::FavoriteSort::DateAddedOldest,
-                cx,
-            );
+        self.process.favorites.update(cx, |f, cx| {
+            f.one_shot_sort(feraille_core::favorites::FavoriteSort::DateAddedOldest, cx);
         });
     }
 
@@ -3190,7 +1799,7 @@ impl Shell {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.favorites.update(cx, |f, cx| {
+        self.process.favorites.update(cx, |f, cx| {
             f.one_shot_sort(feraille_core::favorites::FavoriteSort::Kind, cx);
         });
     }
@@ -3204,7 +1813,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         if let Some(id) = self.focused_favorite {
-            self.favorites.update(cx, |f, cx| f.shift(id, -1, cx));
+            self.process
+                .favorites
+                .update(cx, |f, cx| f.shift(id, -1, cx));
         }
     }
 
@@ -3215,7 +1826,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         if let Some(id) = self.focused_favorite {
-            self.favorites.update(cx, |f, cx| f.shift(id, 1, cx));
+            self.process
+                .favorites
+                .update(cx, |f, cx| f.shift(id, 1, cx));
         }
     }
 
@@ -3230,7 +1843,7 @@ impl Shell {
     ) -> Option<feraille_core::favorites::FavoriteId> {
         let path = self.favorites_context_path.take()?;
         let canonical = std::fs::canonicalize(&path).unwrap_or(path);
-        self.favorites.read(cx).id_for_path(&canonical)
+        self.process.favorites.read(cx).id_for_path(&canonical)
     }
 
     pub fn on_rename_favorite(
@@ -3244,6 +1857,7 @@ impl Shell {
             return;
         };
         let current = self
+            .process
             .favorites
             .read(cx)
             .entry_by_id(id)
@@ -3262,7 +1876,8 @@ impl Shell {
             window.push_notification(Notification::info("Name can\u{2019}t be empty."), cx);
             return;
         }
-        self.favorites
+        self.process
+            .favorites
             .update(cx, |f, cx| f.rename(id, Some(trimmed), cx));
     }
 
@@ -3275,7 +1890,9 @@ impl Shell {
         let Some(id) = self.pop_favorite_id_for_action(cx) else {
             return;
         };
-        self.favorites.update(cx, |f, cx| f.rename(id, None, cx));
+        self.process
+            .favorites
+            .update(cx, |f, cx| f.rename(id, None, cx));
     }
 
     pub fn on_reset_favorite_icon(
@@ -3287,7 +1904,9 @@ impl Shell {
         let Some(id) = self.pop_favorite_id_for_action(cx) else {
             return;
         };
-        self.favorites.update(cx, |f, cx| f.set_icon(id, None, cx));
+        self.process
+            .favorites
+            .update(cx, |f, cx| f.set_icon(id, None, cx));
     }
 
     fn set_favorite_lucide(&mut self, name: &'static str, cx: &mut Context<Self>) {
@@ -3295,7 +1914,8 @@ impl Shell {
             return;
         };
         let icon = feraille_core::favorites::FavoriteIcon::Lucide(name.into());
-        self.favorites
+        self.process
+            .favorites
             .update(cx, |f, cx| f.set_icon(id, Some(icon), cx));
     }
 
@@ -3366,7 +1986,7 @@ impl Shell {
         // Favorites" on a broken row routes to the NotAFolder rejection
         // toast and the user can never remove the stale shortcut.
         let already_favorite =
-            |path: &Path, this: &Self| this.favorites.read(cx).contains_path(path);
+            |path: &Path, this: &Self| this.process.favorites.read(cx).contains_path(path);
         if let Some(p) = self.favorites_context_path.take() {
             let kind = if already_favorite(&p, self) || p.is_dir() {
                 FavoriteResolved::Folder
@@ -3391,29 +2011,47 @@ impl Shell {
 
     // ----- Tab management (5.5.d) ---------------------------------
 
-    /// Cmd+T: open a new tab at the home directory and switch to it.
-    fn on_new_tab(&mut self, _: &NewTab, _: &mut Window, cx: &mut Context<Self>) {
-        let path = home_dir();
-        let id = self.fs.id_for_path(&path);
-        self.node_store.get_or_create_path_with_id(path.clone(), id);
-        self.tabs.push(Tab::new(path, id));
-        self.active = self.tabs.len() - 1;
+    /// Cmd+T: open a new tab beside the active one, at the active
+    /// tab's current directory. Spec §4.3: "new tab default — same
+    /// directory as the currently active tab (so Cmd+T is 'another
+    /// view of where I am'), inserted after the active tab."
+    fn on_new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
         let path = self.active_tab().current_dir.clone();
+        let id = self.process.fs.id_for_path(&path);
+        self.process
+            .node_store
+            .borrow_mut()
+            .get_or_create_path_with_id(path.clone(), id);
+        let tab = self.make_tab(path.clone(), id, window, cx);
+        let insert_at = self.active + 1;
+        self.tabs.insert(insert_at, tab);
+        self.active = insert_at;
         self.load_path(path, cx);
     }
 
-    /// Cmd+W: close the active tab. Refuses to close the last one;
-    /// closing a tab leaves you on the tab to its left (or 0).
-    fn on_close_tab(&mut self, _: &CloseTab, _: &mut Window, cx: &mut Context<Self>) {
+    /// Cmd+W: close the active tab. Per spec §3.4: if it's the last
+    /// tab, close the whole window. With multi-window (Phase C) the
+    /// process stays resident at zero windows, so this is non-fatal.
+    fn on_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
         if self.tabs.len() <= 1 {
+            window.remove_window();
             return;
         }
         self.tabs.remove(self.active);
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len() - 1;
         }
-        let path = self.active_tab().current_dir.clone();
-        self.load_path(path, cx);
+        // No re-load — the now-active tab already has its own
+        // TableState populated from its earlier load (Phase A+B).
+        cx.notify();
+    }
+
+    /// Cmd+Shift+W: close the entire window regardless of how many
+    /// tabs it has. Per spec §3.4 the "I mean the window" verb. The
+    /// process stays resident at zero windows; the user can reopen
+    /// with Cmd+N.
+    fn on_close_window(&mut self, _: &CloseWindow, window: &mut Window, _cx: &mut Context<Self>) {
+        window.remove_window();
     }
 
     /// Ctrl+Tab: cycle to the next tab.
@@ -3422,8 +2060,7 @@ impl Shell {
             return;
         }
         self.active = (self.active + 1) % self.tabs.len();
-        let path = self.active_tab().current_dir.clone();
-        self.load_path(path, cx);
+        cx.notify();
     }
 
     /// Ctrl+Shift+Tab: cycle to the previous tab.
@@ -3432,18 +2069,18 @@ impl Shell {
             return;
         }
         self.active = (self.active + self.tabs.len() - 1) % self.tabs.len();
-        let path = self.active_tab().current_dir.clone();
-        self.load_path(path, cx);
+        cx.notify();
     }
 
     /// Switch to the tab at `idx`. Used by tabstrip click handlers.
+    /// No re-enumeration — the target tab already owns its own
+    /// `TableState` with whatever its last load produced.
     pub fn select_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
         if idx >= self.tabs.len() || idx == self.active {
             return;
         }
         self.active = idx;
-        let path = self.active_tab().current_dir.clone();
-        self.load_path(path, cx);
+        cx.notify();
     }
 
     fn on_navigate_parent(&mut self, _: &NavigateParent, _: &mut Window, cx: &mut Context<Self>) {
@@ -3453,16 +2090,23 @@ impl Shell {
     /// User activated a row (double-click or Enter). For directories
     /// we navigate into them; for files we hand off to the OS opener.
     pub fn activate_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
-        let path_and_kind = self.table.read(cx).delegate().entries.get(row_ix).map(|e| {
-            (
-                self.path_for_row(row_ix, cx).unwrap_or_else(|| {
-                    let mut p = self.active_tab().current_dir.clone();
-                    p.push(&e.name);
-                    p
-                }),
-                e.kind,
-            )
-        });
+        let path_and_kind = self
+            .active_tab()
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .get(row_ix)
+            .map(|e| {
+                (
+                    self.path_for_row(row_ix, cx).unwrap_or_else(|| {
+                        let mut p = self.active_tab().current_dir.clone();
+                        p.push(&e.name);
+                        p
+                    }),
+                    e.kind,
+                )
+            });
         let Some((path, kind)) = path_and_kind else {
             return;
         };
@@ -3500,8 +2144,10 @@ impl Shell {
     /// (see `navigate_back` / `navigate_forward` which seed the
     /// restored selection before calling here).
     pub fn navigate(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let node_id = self.fs.id_for_path(&path);
-        self.node_store
+        let node_id = self.process.fs.id_for_path(&path);
+        self.process
+            .node_store
+            .borrow_mut()
             .get_or_create_path_with_id(path.clone(), node_id);
         let tab = self.active_tab_mut();
         // Snapshot the selection we're leaving into the current
@@ -3532,15 +2178,17 @@ impl Shell {
         tab.nav.navigate_to(node_id);
         // Any pending screenshot select belongs to the previous
         // path; drop it so a stale row index doesn't apply.
-        self.pending_select_row = None;
-        self.pending_select_rows.clear();
+        self.active_tab_mut().pending_select_row = None;
+        self.active_tab_mut().pending_select_rows.clear();
         self.record_ant_visit(node_id, cx);
         self.load_path(path, cx);
     }
 
     pub fn navigate_node(&mut self, node_id: NodeId, cx: &mut Context<Self>) {
         let Some(path) = self
+            .process
             .node_store
+            .borrow_mut()
             .path_snapshot_for_job(node_id, "Shell::navigate_node")
         else {
             return;
@@ -3555,18 +2203,17 @@ impl Shell {
     /// connection pooling internally.
     pub fn record_ant_visit(&mut self, node_id: NodeId, cx: &mut Context<Self>) {
         let Some(path) = self
+            .process
             .node_store
+            .borrow()
             .path_snapshot_for_job(node_id, "Shell::record_ant_visit")
         else {
             return;
         };
-        let entry = self.ant_visits.entry(path.clone()).or_insert(0);
-        *entry += 1;
-        if *entry > self.ant_max {
-            self.ant_max = *entry;
-        }
-        self.node_store.set_heat(node_id, self.ant_heat(node_id));
-        if let Some(db) = self.metadata_db.clone() {
+        self.process.record_ant_visit(path.clone());
+        let heat = self.ant_heat(node_id);
+        self.process.node_store.borrow_mut().set_heat(node_id, heat);
+        if let Some(db) = self.process.db_snapshot() {
             let path_str = path.to_string_lossy().into_owned();
             let when = now_unix_secs();
             cx.background_executor()
@@ -3584,20 +2231,26 @@ impl Shell {
     /// folder isn't 10× brighter than a 5-visit one. Used by the
     /// file list to apply a subtle background tint per row.
     pub fn ant_heat(&self, node_id: NodeId) -> f32 {
-        let cached = self.node_store.heat(node_id);
+        let cached = self.process.node_store.borrow().heat(node_id);
         if cached > 0.0 {
             return cached;
         }
-        let Some(path) = self.node_store.path_for_action(node_id, "Shell::ant_heat") else {
+        let Some(path) = self
+            .process
+            .node_store
+            .borrow()
+            .path_snapshot_for_job(node_id, "Shell::ant_heat")
+        else {
             return 0.0;
         };
-        let Some(&v) = self.ant_visits.get(path) else {
+        let Some(&v) = self.process.ant_visits.borrow().get(&path) else {
             return 0.0;
         };
-        if self.ant_max <= 1 {
+        let max = self.process.ant_max.get();
+        if max <= 1 {
             return 1.0;
         }
-        ((v as f32 + 1.0).log2() / (self.ant_max as f32 + 1.0).log2()).clamp(0.0, 1.0)
+        ((v as f32 + 1.0).log2() / (max as f32 + 1.0).log2()).clamp(0.0, 1.0)
     }
 
     /// Toggle expansion for a directory in the sidebar tree.
@@ -3619,7 +2272,9 @@ impl Shell {
 
     pub fn toggle_tree_expand_node(&mut self, node_id: NodeId, cx: &mut Context<Self>) {
         let Some(path) = self
+            .process
             .node_store
+            .borrow_mut()
             .path_snapshot_for_job(node_id, "Shell::toggle_tree_expand_node")
         else {
             return;
@@ -3628,7 +2283,7 @@ impl Shell {
     }
 
     fn start_tree_children_load(&self, path: PathBuf, cx: &mut Context<Self>) {
-        let fs = self.fs.clone();
+        let fs = self.process.fs.clone();
         let weak = cx.weak_entity();
         cx.spawn(async move |_this, cx| {
             let parent = path.clone();
@@ -3639,7 +2294,9 @@ impl Shell {
             let Some(shell) = weak.upgrade() else { return };
             let _ = shell.update(cx, |this, cx| {
                 for child in &children {
-                    this.node_store
+                    this.process
+                        .node_store
+                        .borrow_mut()
                         .get_or_create_path_with_id(child.path.clone(), child.node_id);
                 }
                 this.tree_children.insert(path, children);
@@ -3682,8 +2339,10 @@ impl Shell {
                 if !is_dir {
                     continue;
                 }
-                let node_id = self.fs.id_for_path(&p);
-                self.node_store
+                let node_id = self.process.fs.id_for_path(&p);
+                self.process
+                    .node_store
+                    .borrow_mut()
                     .get_or_create_path_with_id(p.clone(), node_id);
                 children.push(TreeChild {
                     node_id,
@@ -3717,1522 +2376,4 @@ impl Shell {
             self.ensure_tree_children(&a);
         }
     }
-
-    /// Build the **Browse** section as a single-rooted, expandable
-    /// tree starting at the home folder. (Phase 2: the flat
-    /// shortcut list moved out into the dedicated Favorites menu
-    /// above this section, which eliminates the
-    /// Downloads-appears-twice IA bug — favorites don't expand.)
-    ///
-    /// Direct children of Home that are already pinned in Favorites
-    /// are hidden from the tree so the same path can never appear
-    /// twice in the sidebar, even when Home is expanded. Browse then
-    /// reads as "the parts of Home that aren't already in Favorites"
-    /// — Library, Public, custom subfolders, etc. — plus their
-    /// hierarchy. Deeper descendants are untouched: expanding
-    /// `Library/Application Support` is fine because that's already
-    /// not pinned anywhere.
-    fn build_browse_rows(&mut self, cx: &App) -> Vec<TreeRowSpec> {
-        let home = home_dir();
-        // Hide Locations from the Browse tree so the same depth-1 entry
-        // (Documents, Downloads, etc.) doesn't appear twice. User-curated
-        // Favorites are *not* hidden — those are intentional shortcuts.
-        let location_paths: HashSet<PathBuf> =
-            LOCATIONS.iter().map(|f| f.path()).collect();
-        let current = self.active_tab().current_dir.clone();
-        let node_id = self.fs.id_for_path(&home);
-        self.node_store
-            .get_or_create_path_with_id(home.clone(), node_id);
-        let is_expanded = self.expanded.contains(&home);
-        let favorited = self.favorites.read(cx).contains_path(&home);
-        {
-            let f = self.favorites.read(cx);
-            eprintln!(
-                "build_browse_rows: home={:?} entries={} favorited={}",
-                home,
-                f.entries().len(),
-                favorited
-            );
-            for e in f.entries() {
-                if let feraille_core::favorites::FavoriteTarget::Path(p) = &e.target {
-                    eprintln!("  fav target: {:?}  eq_home={}", p, p == &home);
-                }
-            }
-        }
-        let mut rows: Vec<TreeRowSpec> = vec![TreeRowSpec {
-            node_id,
-            path: home.clone(),
-            label: SharedString::from("Home"),
-            depth: 0,
-            is_expandable: true,
-            is_expanded,
-            is_active: home == current,
-            capacity: None,
-            icon: TreeRowIcon::Folder,
-            favorited,
-        }];
-        if is_expanded {
-            self.append_tree_descendants_filtered(
-                &mut rows,
-                &home,
-                1,
-                &current,
-                Some(&location_paths),
-                cx,
-            );
-        }
-        rows
-    }
-
-    /// Build the user-curated **Favorites** section (separate from the
-    /// fixed Locations menu above). Iter 2 renders an empty section
-    /// with the empty-state prompt; iter 3 wires the live entity and
-    /// the §5 favorited-indicator index. The section's collapse state
-    /// flows through `favorites_section_collapsed`, persisted in
-    /// `MetadataDb`.
-    fn build_user_favorites_section(
-        &mut self,
-        weak: WeakEntity<Self>,
-        cx: &mut Context<Self>,
-    ) -> ShellSidebarItem {
-        // Snapshot the current entry list; the entity is observed at
-        // construction time below so any mutation (add / remove /
-        // reorder / rename) drives a Shell repaint, which re-runs
-        // `build_user_favorites_section` with the fresh list.
-        let entries = self.favorites.read(cx).entries().to_vec();
-        ShellSidebarItem::favorites(crate::favorites_section::FavoritesSection::new(
-            entries,
-            self.favorites_section_collapsed,
-            weak,
-            self.icons.clone(),
-        ))
-    }
-
-    /// Flip the Favorites section's disclosure-triangle and persist
-    /// the new state. Called from the section header click handler.
-    pub fn toggle_favorites_section_collapsed(&mut self, cx: &mut Context<Self>) {
-        self.favorites_section_collapsed = !self.favorites_section_collapsed;
-        let collapsed = self.favorites_section_collapsed;
-        if let Some(db) = self.metadata_db.clone() {
-            cx.background_spawn(async move {
-                if let Ok(g) = db.lock() {
-                    let _ = g.set_favorites_section_collapsed(collapsed);
-                }
-            })
-            .detach();
-        }
-        cx.notify();
-    }
-
-    /// Build the **Locations** section: a flat `SidebarMenu` of icon-
-    /// prefixed shortcuts to the macOS-standard folders. Each item
-    /// navigates straight to its path; none expand, so the IA stays
-    /// unambiguous next to the user-curated Favorites section below
-    /// and the expandable Browse tree underneath.
-    fn build_locations_menu(&mut self, weak: WeakEntity<Self>, cx: &App) -> SidebarMenu {
-        use gpui_component::Icon;
-        let current = self.active_tab().current_dir.clone();
-        let mut menu = SidebarMenu::new();
-        let favs = self.favorites.read(cx);
-        for loc in LOCATIONS {
-            let path = loc.path();
-            let node_id = self.fs.id_for_path(&path);
-            self.node_store
-                .get_or_create_path_with_id(path.clone(), node_id);
-            let active = path == current;
-            let favorited = favs.contains_path(&path);
-            let weak_for_click = weak.clone();
-            let weak_for_menu = weak.clone();
-            let path_for_menu = path.clone();
-            let path_for_modclick = path.clone();
-            let item = SidebarMenuItem::new(SharedString::from(loc.label))
-                .icon(Icon::empty().path(loc.icon))
-                .active(active)
-                .on_click(move |event, _window, cx| {
-                    if let Some(s) = weak_for_click.upgrade() {
-                        let modifiers = event.modifiers();
-                        let path = path_for_modclick.clone();
-                        s.update(cx, |shell, cx| {
-                            if modifiers.platform {
-                                shell.open_path_in_new_tab(path, cx);
-                            } else {
-                                shell.navigate_node(node_id, cx);
-                            }
-                        });
-                    }
-                })
-                .context_menu(move |menu, _window, cx| {
-                    // Stash the right-clicked path on Shell so
-                    // the path-aware action handlers know which
-                    // path the user meant.
-                    if let Some(s) = weak_for_menu.upgrade() {
-                        s.update(cx, |shell, _| {
-                            shell.context_target = Some(path_for_menu.clone());
-                        });
-                    }
-                    menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
-                        .separator()
-                        .menu("Reveal in Finder", Box::new(RevealContextPath))
-                        .menu("Copy Path", Box::new(CopyContextPath))
-                });
-            // §5: a Locations entry that's also a user Favorite gets the
-            // same trailing star treatment as everywhere else.
-            let item = if favorited {
-                item.suffix(|_, cx| {
-                    use gpui::svg;
-                    svg()
-                        .path("icons/nav/star.svg")
-                        .w(px(11.0))
-                        .h(px(11.0))
-                        .text_color(cx.theme().primary)
-                        .flex_shrink_0()
-                        .into_any_element()
-                })
-            } else {
-                item
-            };
-            menu = menu.child(item);
-        }
-        let _ = favs;
-        menu
-    }
-
-    /// Build the Volumes section as a flat row list. Same recursion
-    /// shape as Locations, but the depth-0 volume row carries a
-    /// `(total, available)` capacity so the renderer can draw a
-    /// Finder-style capacity bar.
-    fn build_volumes_rows(&mut self, cx: &App) -> Vec<TreeRowSpec> {
-        let current = self.active_tab().current_dir.clone();
-        let mut rows: Vec<TreeRowSpec> = Vec::new();
-        // Snapshot the favorites paths once so the inner loop doesn't
-        // re-read the entity per row.
-        let favs = self.favorites.read(cx);
-        let volume_paths: Vec<(PathBuf, String, Option<(u64, u64)>)> = self
-            .volumes
-            .iter()
-            .map(|v| {
-                let cap = match (v.total_bytes, v.available_bytes) {
-                    (Some(t), Some(a)) if t > 0 => Some((t, a)),
-                    _ => None,
-                };
-                (v.path.clone(), v.name.clone(), cap)
-            })
-            .collect();
-        let mut entries: Vec<(PathBuf, String, Option<(u64, u64)>, bool)> = volume_paths
-            .into_iter()
-            .map(|(p, n, c)| {
-                let fav = favs.contains_path(&p);
-                (p, n, c, fav)
-            })
-            .collect();
-        let _ = favs;
-        for (path, name, capacity, favorited) in entries.drain(..) {
-            let node_id = self.fs.id_for_path(&path);
-            self.node_store
-                .get_or_create_path_with_id(path.clone(), node_id);
-            let is_expanded = self.expanded.contains(&path);
-            rows.push(TreeRowSpec {
-                node_id,
-                path: path.clone(),
-                label: SharedString::from(name),
-                depth: 0,
-                is_expandable: true,
-                is_expanded,
-                is_active: path == current,
-                capacity,
-                icon: TreeRowIcon::Volume,
-                favorited,
-            });
-            if is_expanded {
-                self.append_tree_descendants(&mut rows, &path, 1, &current, cx);
-            }
-        }
-        rows
-    }
-
-    /// Recursively append children of `parent` (and their expanded
-    /// descendants) to `rows`. Reads from `tree_children` only —
-    /// callers must have called `ensure_tree_children` first
-    /// (`toggle_tree_expand` / `reveal_path_in_tree` do). The
-    /// `show_hidden` flag is checked here, not at enumeration time,
-    /// so toggling Show Hidden doesn't require cache invalidation.
-    ///
-    /// Thin wrapper that runs without a skip filter — used by
-    /// Volumes and any deeper-than-depth-1 recursion in Browse.
-    fn append_tree_descendants(
-        &self,
-        rows: &mut Vec<TreeRowSpec>,
-        parent: &Path,
-        depth: usize,
-        current: &Path,
-        cx: &App,
-    ) {
-        self.append_tree_descendants_filtered(rows, parent, depth, current, None, cx);
-    }
-
-    /// Same as [`append_tree_descendants`] but with an optional
-    /// `skip_paths` filter applied to direct children only. Used by
-    /// Browse to suppress depth-1 Home children that are already
-    /// pinned in Locations. The filter is *not* propagated to deeper
-    /// levels.
-    fn append_tree_descendants_filtered(
-        &self,
-        rows: &mut Vec<TreeRowSpec>,
-        parent: &Path,
-        depth: usize,
-        current: &Path,
-        skip_paths: Option<&HashSet<PathBuf>>,
-        cx: &App,
-    ) {
-        let Some(children) = self.tree_children.get(parent) else {
-            return;
-        };
-        let favs = self.favorites.read(cx);
-        for child in children {
-            if !self.show_hidden && child.label.starts_with('.') {
-                continue;
-            }
-            if let Some(skip) = skip_paths {
-                if skip.contains(&child.path) {
-                    continue;
-                }
-            }
-            let is_expanded = self.expanded.contains(&child.path);
-            let favorited = favs.contains_path(&child.path);
-            rows.push(TreeRowSpec {
-                node_id: child.node_id,
-                path: child.path.clone(),
-                label: SharedString::from(child.label.clone()),
-                depth,
-                is_expandable: true,
-                is_expanded,
-                is_active: &child.path == current,
-                capacity: None,
-                icon: TreeRowIcon::Folder,
-                favorited,
-            });
-            if is_expanded {
-                self.append_tree_descendants(rows, &child.path, depth + 1, current, cx);
-            }
-        }
-    }
-
-    /// Either the file Table, or an inline error/empty state when
-    /// the directory couldn't be listed (typically macOS TCC denial
-    /// on ~/Documents, ~/Desktop, ~/Downloads in a sandboxed runner).
-    fn file_pane_body(&self, cx: &mut Context<Self>) -> AnyElement {
-        if let Some(err) = self.last_error.clone() {
-            let (title, body) = error_copy(&err);
-            return v_flex()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_2()
-                .p_8()
-                .child(
-                    div()
-                        .text_lg()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().foreground)
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .max_w(px(420.0))
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(body),
-                )
-                .into_any_element();
-        }
-        DataTable::new(&self.table)
-            .bordered(false)
-            .stripe(true)
-            .small()
-            .into_any_element()
-    }
-
-    /// Tabstrip above the toolbar. Each tab is a clickable pill
-    /// labelled with the directory's basename; the active tab has
-    /// a filled background. A trailing "+" opens a new tab; each
-    /// non-active tab has a small "x" hover-affordance to close.
-    fn tabstrip(&self, cx: &mut Context<Self>) -> Div {
-        let active = self.active;
-        let multi = self.tabs.len() > 1;
-        let mut row = h_flex()
-            .w_full()
-            .items_center()
-            .gap_1()
-            .px_2()
-            .py_1()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().secondary);
-
-        for (idx, tab) in self.tabs.iter().enumerate() {
-            let is_active = idx == active;
-            let label = tab.label();
-            let theme = cx.theme();
-            let mut chip = h_flex()
-                .id(("tab", idx))
-                .items_center()
-                .gap_1()
-                .px_3()
-                .py_1()
-                .rounded(theme.radius)
-                .cursor_pointer()
-                .text_sm()
-                .text_color(if is_active {
-                    theme.foreground
-                } else {
-                    theme.muted_foreground
-                });
-            if is_active {
-                chip = chip.bg(theme.background);
-            } else {
-                chip = chip.hover(|this| this.bg(theme.accent.opacity(0.10)));
-            }
-            chip = chip
-                .child(div().truncate().max_w(px(160.0)).child(label))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.select_tab(idx, cx);
-                }));
-            if multi {
-                let close = div()
-                    .id(("tab-close", idx))
-                    .ml_1()
-                    .px_1()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .hover(|this| this.text_color(theme.foreground))
-                    .child("x")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        // Make sure the closed-tab index is the one we click
-                        if this.active != idx {
-                            this.active = idx;
-                        }
-                        let _ = cx; // CloseTab action would re-enter handler
-                        this.tabs.remove(idx);
-                        if this.active >= this.tabs.len() {
-                            this.active = this.tabs.len() - 1;
-                        }
-                        let path = this.active_tab().current_dir.clone();
-                        this.load_path(path, cx);
-                    }));
-                chip = chip.child(close);
-            }
-            row = row.child(chip);
-        }
-        // Trailing "+" — new tab.
-        row = row.child(
-            div()
-                .id("tab-new")
-                .ml_1()
-                .px_2()
-                .py_1()
-                .rounded(cx.theme().radius)
-                .cursor_pointer()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .hover(|this| this.bg(cx.theme().accent.opacity(0.10)))
-                .child("+")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    let path = home_dir();
-                    let id = this.fs.id_for_path(&path);
-                    this.node_store.get_or_create_path_with_id(path.clone(), id);
-                    this.tabs.push(Tab::new(path, id));
-                    this.active = this.tabs.len() - 1;
-                    let path = this.active_tab().current_dir.clone();
-                    this.load_path(path, cx);
-                })),
-        );
-        row
-    }
-
-    /// Toolbar row above the breadcrumb: Back / Forward buttons +
-    /// "Show hidden" toggle. Disabled buttons grey out via Button's
-    /// own disabled state — no manual styling.
-    // Toolbar removed in Phase 7. Back / forward / filter went into
-    // the TitleBar; Show Hidden moved into the status bar; nothing
-    // useful was left to render between the tabstrip and the
-    // breadcrumb. Future density items (Refresh, New Folder, Sort,
-    // Group, Overflow) will reintroduce a toolbar when they land.
-
-    /// TitleBar built from elements that used to live in the sidebar
-    /// header + toolbar. Layout (left → right):
-    ///   • "Feraille" name
-    ///   • Back / forward navigation (history nav lives next to the
-    ///     brand — Finder convention)
-    ///   • flex spacer
-    ///   • Filter `Input` (~half its previous width, centred-ish via
-    ///     the trailing flex spacer)
-    ///   • trailing space so the right edge isn't crowded
-    ///
-    /// Show-Hidden moved out of here entirely and lives in the
-    /// status bar now (paired with the item count, where view-mode
-    /// state belongs).
-    fn title_bar(&self, cx: &mut Context<Self>) -> TitleBar {
-        use gpui_component::sidebar::SidebarToggleButton;
-        let can_back = self.active_tab().history_index > 0;
-        let can_forward =
-            self.active_tab().history_index + 1 < self.active_tab().history.len();
-        let collapsed = self.sidebar_collapsed;
-        TitleBar::new().child(
-            h_flex()
-                .w_full()
-                .items_center()
-                .gap_2()
-                .pr_3()
-                // Sidebar collapse / expand toggle. The SidebarToggle-
-                // Button swaps its glyph based on the `collapsed`
-                // flag (panel-left-open vs panel-left-close) so the
-                // user can read what clicking will do.
-                .child(
-                    SidebarToggleButton::new()
-                        .collapsed(collapsed)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.sidebar_collapsed = !this.sidebar_collapsed;
-                            let mut s = app_state::load();
-                            s.sidebar_collapsed = Some(this.sidebar_collapsed);
-                            app_state::save(&s);
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().foreground)
-                        .child("Feraille"),
-                )
-                .child(
-                    Button::new("nav-back")
-                        .small()
-                        .ghost()
-                        .icon(gpui_component::Icon::empty().path("icons/chevron-left.svg"))
-                        .tooltip("Back  \u{2318}\u{5B}")
-                        .disabled(!can_back)
-                        .on_click(cx.listener(|this, _, _, cx| this.navigate_back(cx))),
-                )
-                .child(
-                    Button::new("nav-forward")
-                        .small()
-                        .ghost()
-                        .icon(gpui_component::Icon::empty().path("icons/chevron-right.svg"))
-                        .tooltip("Forward  \u{2318}\u{5D}")
-                        .disabled(!can_forward)
-                        .on_click(cx.listener(|this, _, _, cx| this.navigate_forward(cx))),
-                )
-                .child(div().flex_1())
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .w(px(220.0))
-                        .child(Input::new(&self.filter_input).small()),
-                )
-                .child(div().flex_1())
-                // Phase 7 follow-on: density buttons on the right —
-                // Refresh and New Folder. Icon-only with tooltips so
-                // the bar stays narrow.
-                .child(
-                    Button::new("toolbar-new-folder")
-                        .small()
-                        .ghost()
-                        .icon(gpui_component::Icon::empty().path("icons/nav/folder.svg"))
-                        .tooltip_with_action(
-                            "New Folder",
-                            &NewFolder,
-                            Some(SHELL_CONTEXT),
-                        )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.on_new_folder(&NewFolder, window, cx);
-                        })),
-                )
-                .child(
-                    Button::new("toolbar-refresh")
-                        .small()
-                        .ghost()
-                        .icon(gpui_component::Icon::empty().path("icons/nav/refresh.svg"))
-                        .tooltip_with_action("Refresh", &Refresh, Some(SHELL_CONTEXT))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.on_refresh(&Refresh, window, cx);
-                        })),
-                ),
-        )
-    }
-
-    /// Build the preview pane on the right of the file list. Shows
-    /// title / kind / size / modified / full path of the selected
-    /// row. Falls back to a neutral empty state when nothing is
-    /// selected. Format-specific previews (image, text, PDF) arrive
-    /// in a follow-up polish iter.
-    fn preview(&self, cx: &mut Context<Self>) -> Div {
-        use gpui_component::{
-            Sizable as _,
-            button::{Button, ButtonVariants as _},
-            description_list::{DescriptionItem, DescriptionList},
-            tooltip::Tooltip,
-        };
-
-        // Preview always reflects the **lead** row, even with a
-        // multi-selection. Matches Finder's "the focused one of
-        // many" semantics.
-        let selected = {
-            let entries = &self.table.read(cx).delegate().entries;
-            self.active_tab().lead_row(entries).and_then(|i| entries.get(i).cloned())
-        };
-
-        let header = div()
-            .text_xs()
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(cx.theme().muted_foreground)
-            .child("Preview");
-
-        let body: AnyElement = match selected {
-            None => div()
-                .flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("No selection")
-                .into_any_element(),
-            Some(entry) => {
-                let mut full_path = self.active_tab().current_dir.clone();
-                full_path.push(&entry.name);
-                let path_str = full_path.to_string_lossy().into_owned();
-                let format_label_text = {
-                    let (label, _) = entry.format_label();
-                    if label.is_empty() {
-                        match entry.kind {
-                            EntryKind::Directory => "Folder".to_string(),
-                            EntryKind::File => "File".to_string(),
-                            EntryKind::Symlink => "Symlink".to_string(),
-                        }
-                    } else {
-                        label
-                    }
-                };
-                let path_display = middle_truncate_path(&path_str, 44);
-
-                // Quick Look thumbnail (Stage 8 native preview).
-                // `preview::request` was kicked off when the row
-                // was selected; this just reads whatever the cache
-                // has — Loaded shows the bitmap, Pending shows a
-                // muted placeholder, Failed shows nothing.
-                let thumb_state = self.preview_cache.get(&full_path);
-                let thumb_img = crate::preview::loaded_image(thumb_state.clone());
-
-                let mut col = v_flex().gap_3();
-                if let Some(img) = thumb_img {
-                    col = col.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w_full()
-                            .h(px(200.0))
-                            .rounded(cx.theme().radius)
-                            .bg(cx.theme().secondary.opacity(0.5))
-                            .child(gpui::img(img).max_w(px(248.0)).max_h(px(184.0))),
-                    );
-                } else if matches!(thumb_state, Some(crate::preview::PreviewState::Pending)) {
-                    col = col.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w_full()
-                            .h(px(200.0))
-                            .rounded(cx.theme().radius)
-                            .bg(cx.theme().secondary.opacity(0.5))
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Loading preview\u{2026}"),
-                    );
-                }
-
-                // Filename header — truncated, with a tooltip that
-                // carries the full name. The format label that used
-                // to sit here as a subtitle has moved into the
-                // DescriptionList below as the "Format" row, so the
-                // same string isn't shown twice.
-                let name_for_tooltip = entry.name.clone();
-                col = col.child(
-                    div()
-                        .id(("preview-name", entry.id.as_raw() as usize))
-                        .text_lg()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().foreground)
-                        .truncate()
-                        .child(SharedString::from(entry.name.clone()))
-                        .tooltip(move |window, cx| {
-                            Tooltip::new(SharedString::from(name_for_tooltip.clone()))
-                                .build(window, cx)
-                        }),
-                );
-
-                // DescriptionList: dense key/value rows. Path uses
-                // a middle-truncated value + tooltip with the full
-                // path. The library handles label-column sizing.
-                let path_for_tooltip = path_str.clone();
-                let path_value: AnyElement = div()
-                    .id(("preview-path", entry.id.as_raw() as usize))
-                    .truncate()
-                    .child(SharedString::from(path_display))
-                    .tooltip(move |window, cx| {
-                        Tooltip::new(SharedString::from(path_for_tooltip.clone()))
-                            .build(window, cx)
-                    })
-                    .into_any_element();
-
-                // `vertical()` is a constructor — label above value
-                // per row. `columns(1)` keeps it as a single column
-                // in narrow preview panes where multi-column would
-                // squeeze values to nothing.
-                let list = DescriptionList::vertical()
-                    .small()
-                    .columns(1)
-                    .child(
-                        DescriptionItem::new("Format")
-                            .value(SharedString::from(format_label_text)),
-                    )
-                    .child(
-                        DescriptionItem::new("Size")
-                            .value(SharedString::from(entry.display_size.clone())),
-                    )
-                    .child(
-                        DescriptionItem::new("Modified")
-                            .value(SharedString::from(entry.display_mtime.clone())),
-                    )
-                    .child(DescriptionItem::new("Where").value(path_value));
-                col = col.child(list);
-
-                // Quarantine surface — single signal via the red
-                // badge. (The DescriptionList "Quarantine" row that
-                // used to repeat `com.apple.quarantine` was dropped
-                // — the xattr name isn't actionable user info.) The
-                // rich originating-URL details from
-                // LSQuarantineDataURLKey still land in feraille-meta
-                // and can populate the badge tooltip in a follow-on
-                // polish iter.
-                if entry.is_quarantined {
-                    col = col.child(
-                        div()
-                            .mt_1()
-                            .text_xs()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(gpui::rgb(0xFF3B30))
-                            .child("Quarantined \u{00B7} Mark of the Web"),
-                    );
-                }
-
-                // Action row — icon-only buttons with tooltips that
-                // include the keyboard shortcut. Icon-only keeps the
-                // row dense enough that all four buttons fit even at
-                // the preview pane's narrow default width.
-                // `tooltip_with_action` pulls the chord from the
-                // keymap automatically so each hover reads "Open ⌘O".
-                let actions = h_flex()
-                    .mt_2()
-                    .gap_1()
-                    .child(
-                        Button::new("preview-open")
-                            .icon(gpui_component::Icon::empty().path("icons/external-link.svg"))
-                            .xsmall()
-                            .ghost()
-                            .tooltip_with_action("Open", &OpenSelected, Some(SHELL_CONTEXT))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.on_open_selected(&OpenSelected, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("preview-reveal")
-                            .icon(gpui_component::Icon::empty().path("icons/folder-open.svg"))
-                            .xsmall()
-                            .ghost()
-                            .tooltip_with_action(
-                                "Reveal in Finder",
-                                &RevealInFinder,
-                                Some(SHELL_CONTEXT),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.on_reveal_in_finder(&RevealInFinder, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("preview-copy-path")
-                            .icon(gpui_component::Icon::empty().path("icons/copy.svg"))
-                            .xsmall()
-                            .ghost()
-                            .tooltip_with_action("Copy Path", &CopyPath, Some(SHELL_CONTEXT))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.on_copy_path(&CopyPath, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("preview-get-info")
-                            .icon(gpui_component::Icon::empty().path("icons/info.svg"))
-                            .xsmall()
-                            .ghost()
-                            .tooltip_with_action("Get Info", &GetInfo, Some(SHELL_CONTEXT))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.on_get_info(&GetInfo, window, cx);
-                            })),
-                    );
-                col = col.child(actions);
-
-                col.into_any_element()
-            }
-        };
-
-        v_flex()
-            .size_full()
-            .min_h_0()
-            .border_l_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().background)
-            .p_4()
-            .gap_3()
-            .child(header)
-            .child(body)
-    }
-
-    /// Build the breadcrumb row from `current_dir`. Each ancestor is
-    /// clickable and navigates the pane to that level. The root `/`
-    /// gets its own leading segment. When `breadcrumb_editing` is
-    /// set (Cmd+L) the row swaps in an Input field instead — Enter
-    /// commits the path, Blur cancels.
-    fn breadcrumb(&self, cx: &mut Context<Self>) -> Div {
-        if self.breadcrumb_editing {
-            return h_flex()
-                .w_full()
-                .items_center()
-                .gap_1()
-                .px_4()
-                .py_2()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(
-                    div()
-                        .flex_1()
-                        .child(Input::new(&self.breadcrumb_input).small()),
-                );
-        }
-        let segments = path_segments(&self.active_tab().current_dir);
-        let mut row = h_flex()
-            .w_full()
-            .items_center()
-            .gap_1()
-            .px_4()
-            .py_2()
-            .border_b_1()
-            .border_color(cx.theme().border);
-
-        for (i, (label, path)) in segments.iter().enumerate() {
-            if i > 0 {
-                row = row.child(
-                    div()
-                        .px_1()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("\u{203A}"), // SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
-                );
-            }
-            let is_last = i + 1 == segments.len();
-            let label = label.clone();
-            let path = path.clone();
-            let tooltip_path = path.to_string_lossy().into_owned();
-            // Phase 6 (next-level): right-click on a breadcrumb
-            // segment offers "Open in New Tab" / "Reveal in Finder"
-            // / "Copy Path" — same right-click surface as the
-            // sidebar Favorites. context_target carries the path of
-            // *this* segment, not the active tab's current_dir.
-            use gpui_component::menu::ContextMenuExt as _;
-            let weak_for_crumb = cx.weak_entity();
-            let path_for_menu = path.clone();
-            let path_for_click = path.clone();
-            // §5 favorited indicator: trailing star on any breadcrumb
-            // segment whose path is in the Favorites index. The last
-            // segment is the current-folder header per §5.1, so the
-            // current-folder header is covered by the same render path.
-            let favorited = self.favorites.read(cx).contains_path(&path);
-            let crumb = div()
-                .id(ElementId::Name(format!("crumb-{i}").into()))
-                .px_2()
-                .py_1()
-                .rounded(cx.theme().radius)
-                .text_sm()
-                .flex()
-                .items_center()
-                .gap_1()
-                .text_color(if is_last {
-                    cx.theme().foreground
-                } else {
-                    cx.theme().muted_foreground
-                })
-                .when(is_last, |this| this.font_weight(FontWeight::SEMIBOLD))
-                .cursor_pointer()
-                .hover(|this| this.bg(cx.theme().secondary))
-                .child(label)
-                .when(favorited, |this| {
-                    this.child(
-                        svg()
-                            .path("icons/nav/star.svg")
-                            .w(px(11.0))
-                            .h(px(11.0))
-                            .text_color(cx.theme().primary)
-                            .flex_shrink_0(),
-                    )
-                })
-                .tooltip({
-                    let t = SharedString::from(tooltip_path);
-                    move |window, cx| {
-                        gpui_component::tooltip::Tooltip::new(t.clone()).build(window, cx)
-                    }
-                })
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.navigate(path_for_click.clone(), cx);
-                }))
-                .context_menu(move |menu, _window, cx| {
-                    let favorited_now = if let Some(s) = weak_for_crumb.upgrade() {
-                        let already =
-                            s.read(cx).favorites.read(cx).contains_path(&path_for_menu);
-                        s.update(cx, |shell, _| {
-                            shell.context_target = Some(path_for_menu.clone());
-                            shell.favorites_context_path = Some(path_for_menu.clone());
-                        });
-                        already
-                    } else {
-                        false
-                    };
-                    let favorite_label = if favorited_now {
-                        "Remove from Favorites"
-                    } else {
-                        "Add to Favorites"
-                    };
-                    menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
-                        .separator()
-                        .menu("Reveal in Finder", Box::new(RevealContextPath))
-                        .menu("Copy Path", Box::new(CopyContextPath))
-                        .separator()
-                        .menu(favorite_label, Box::new(ToggleFavoriteForTarget))
-                        .separator()
-                        .menu("New Folder Here", Box::new(NewFolderHere))
-                });
-            row = row.child(crumb);
-        }
-        row
-    }
 }
-
-impl Render for Shell {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let _path_guard = feraille_core::path_guard::enter_render();
-        // Phase 10: drain any pending system-appearance change the
-        // native observer pushed since the last paint, then flip the
-        // gpui Theme. The observer can only set an AtomicBool; the
-        // Theme::change call needs `&mut App + &mut Window` so it
-        // lives here.
-        if let Some(is_dark) = take_system_theme_pending() {
-            let mode = if is_dark {
-                gpui_component::ThemeMode::Dark
-            } else {
-                gpui_component::ThemeMode::Light
-            };
-            gpui_component::Theme::change(mode, Some(window), cx);
-        }
-        let weak = cx.weak_entity();
-        let locations_menu = self.build_locations_menu(weak.clone(), cx);
-        let favorites_section = self.build_user_favorites_section(weak.clone(), cx);
-        let browse_rows = self.build_browse_rows(cx);
-        let volumes_rows = self.build_volumes_rows(cx);
-        let has_volumes = !self.volumes.is_empty();
-        let breadcrumb = self.breadcrumb(cx);
-        let path_str = self.active_tab().current_dir.to_string_lossy().into_owned();
-
-        // `.collapsible(false)` disables gpui-component's animatable
-        // wrapper (which would otherwise force a fixed expanded
-        // width), letting the surrounding `resizable_panel` drive
-        // the actual column width. `.w_full()` makes the Sidebar
-        // fill its panel; the tree rows already use `.w_full()` on
-        // each row container, so the labels grow as the user
-        // drags the splitter.
-        //
-        // Sidebar IA: Locations = fixed OS-standard folders (flat
-        // SidebarMenu); Favorites = user-curated, persisted, reorderable
-        // shortcuts (docs/features/FAVORITES.md); Browse = single-rooted
-        // expandable Home tree; Volumes = expandable per-volume tree.
-        // Sidebar no longer carries the "Feraille" header — that moved
-        // into the TitleBar at the top of the window. Icon-mode collapse
-        // is enabled so the toggle button in the TitleBar can shrink the
-        // sidebar to a 48-DIP icon strip.
-        let mut sidebar = Sidebar::new("shell-sidebar")
-            .collapsible(gpui_component::sidebar::SidebarCollapsible::Icon)
-            .collapsed(self.sidebar_collapsed)
-            .w_full()
-            .child(ShellSidebarItem::group(
-                SidebarGroup::new("Locations").child(locations_menu),
-            ))
-            .child(favorites_section)
-            .child(ShellSidebarItem::tree(TreeSection::new(
-                "Browse",
-                browse_rows,
-                weak.clone(),
-                self.icons.clone(),
-            )));
-        if has_volumes {
-            sidebar = sidebar.child(ShellSidebarItem::tree(TreeSection::new(
-                "Volumes",
-                volumes_rows,
-                weak.clone(),
-                self.icons.clone(),
-            )));
-        }
-
-        let _ = path_str; // breadcrumb already shows the path
-
-        let tabstrip = self.tabstrip(cx);
-        // Phase 8: status-bar density. Compute selected count / size,
-        // total visible size for the active folder, and free disk on
-        // the active tab's volume. Cheap O(N) sums over the already-
-        // filtered entries Vec; called once per render.
-        let delegate = self.table.read(cx).delegate();
-        let entries = &delegate.entries;
-        let entry_count = entries.len();
-        let total_size: u64 = entries.iter().map(|e| e.size).sum();
-        // Multi-select stats: count the whole selection set and sum
-        // the visible entries' sizes for the rows that are members.
-        // Iterating `entries` once is O(N) and the membership check
-        // is an O(1) HashSet hit per row.
-        let selection = &self.active_tab().selection;
-        let selected_count = selection.len();
-        let selected_size: u64 = entries
-            .iter()
-            .filter(|e| selection.contains(&e.id))
-            .map(|e| e.size)
-            .sum();
-        // Free-space query — sync, very cheap on macOS (statvfs).
-        // Returns None on non-macOS or for paths we can't reach.
-        let volume_info = feraille_fs_native::volume_info_for_path(
-            &self.active_tab().current_dir,
-        );
-        let (free_bytes, volume_name): (Option<u64>, Option<&'static str>) =
-            match volume_info {
-                Some(v) => {
-                    let name: Option<&'static str> = Some(Box::leak(v.name.into_boxed_str()));
-                    (v.available_bytes, name)
-                }
-                None => (None, None),
-            };
-        let metrics = crate::status_bar::StatusMetrics {
-            entries: entry_count,
-            selected_count,
-            selected_size,
-            total_size,
-            free_bytes,
-            volume_name,
-        };
-        let _ = delegate;
-        // Clicking the task region of the status bar toggles the
-        // background-task panel popover. The listener takes `&mut
-        // Self` directly so we don't re-enter the entity update.
-        let toggle_task_panel: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> = {
-            let weak: WeakEntity<Self> = cx.weak_entity();
-            Rc::new(move |_evt, _window, cx| {
-                if let Some(s) = weak.upgrade() {
-                    s.update(cx, |this, cx| {
-                        this.task_panel_open = !this.task_panel_open;
-                        cx.notify();
-                    });
-                }
-            })
-        };
-        // Show-Hidden toggle moved into the status bar in Phase 7.
-        // The callback wraps Shell::toggle_hidden so the switch's
-        // built-in checked-state stays in sync via the next render.
-        let toggle_hidden_cb: Rc<dyn Fn(&mut Window, &mut App) + 'static> = {
-            let weak: WeakEntity<Self> = cx.weak_entity();
-            Rc::new(move |_window, cx| {
-                if let Some(s) = weak.upgrade() {
-                    s.update(cx, |this, cx| this.toggle_hidden(cx));
-                }
-            })
-        };
-        let status_bar = crate::status_bar::render(
-            metrics,
-            &self.tasks,
-            self.simulated_progress,
-            Some(toggle_task_panel),
-            self.show_hidden,
-            Some(toggle_hidden_cb),
-            cx,
-        );
-        let task_panel = crate::task_panel::render_if_open(self.task_panel_open, &self.tasks, cx);
-
-        div()
-            .key_context(SHELL_CONTEXT)
-            .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::on_navigate_parent))
-            .on_action(cx.listener(Self::on_navigate_back))
-            .on_action(cx.listener(Self::on_navigate_forward))
-            .on_action(cx.listener(Self::on_open_selected))
-            .on_action(cx.listener(Self::on_refresh))
-            .on_action(cx.listener(Self::on_toggle_hidden))
-            .on_action(cx.listener(Self::on_open_settings))
-            .on_action(cx.listener(Self::on_copy_path))
-            .on_action(cx.listener(Self::on_reveal_in_finder))
-            .on_action(cx.listener(Self::on_move_to_trash))
-            .on_action(cx.listener(Self::on_focus_filter))
-            .on_action(cx.listener(Self::on_clear_filter))
-            .on_action(cx.listener(Self::on_new_folder))
-            .on_action(cx.listener(Self::on_rename_selected))
-            .on_action(cx.listener(Self::on_new_tab))
-            .on_action(cx.listener(Self::on_close_tab))
-            .on_action(cx.listener(Self::on_next_tab))
-            .on_action(cx.listener(Self::on_prev_tab))
-            .on_action(cx.listener(Self::on_quick_look))
-            .on_action(cx.listener(Self::on_go_home))
-            .on_action(cx.listener(Self::on_edit_breadcrumb))
-            .on_action(cx.listener(Self::on_shortcuts_help))
-            .on_action(cx.listener(Self::on_open_disk_usage))
-            .on_action(cx.listener(Self::on_cursor_up))
-            .on_action(cx.listener(Self::on_cursor_down))
-            .on_action(cx.listener(Self::on_cursor_first))
-            .on_action(cx.listener(Self::on_cursor_last))
-            .on_action(cx.listener(Self::on_page_up))
-            .on_action(cx.listener(Self::on_page_down))
-            .on_action(cx.listener(Self::on_cursor_up_extend))
-            .on_action(cx.listener(Self::on_cursor_down_extend))
-            .on_action(cx.listener(Self::on_cursor_first_extend))
-            .on_action(cx.listener(Self::on_cursor_last_extend))
-            .on_action(cx.listener(Self::on_page_up_extend))
-            .on_action(cx.listener(Self::on_page_down_extend))
-            .on_action(cx.listener(Self::on_select_all))
-            .on_action(cx.listener(Self::on_clear_selection))
-            .on_action(cx.listener(Self::on_toggle_preview))
-            .on_action(cx.listener(Self::on_get_info))
-            .on_action(cx.listener(Self::on_zoom_in))
-            .on_action(cx.listener(Self::on_zoom_out))
-            .on_action(cx.listener(Self::on_zoom_reset))
-            .on_action(cx.listener(Self::on_open_in_new_tab))
-            .on_action(cx.listener(Self::on_duplicate))
-            .on_action(cx.listener(Self::on_make_alias))
-            .on_action(cx.listener(Self::on_compress))
-            .on_action(cx.listener(Self::on_reveal_context_path))
-            .on_action(cx.listener(Self::on_copy_context_path))
-            .on_action(cx.listener(Self::on_open_context_in_new_tab))
-            .on_action(cx.listener(Self::on_new_folder_here))
-            .on_action(cx.listener(Self::on_toggle_tag_red))
-            .on_action(cx.listener(Self::on_toggle_tag_orange))
-            .on_action(cx.listener(Self::on_toggle_tag_yellow))
-            .on_action(cx.listener(Self::on_toggle_tag_green))
-            .on_action(cx.listener(Self::on_toggle_tag_blue))
-            .on_action(cx.listener(Self::on_toggle_tag_purple))
-            .on_action(cx.listener(Self::on_toggle_tag_gray))
-            .on_action(cx.listener(Self::on_open_with_slot_0))
-            .on_action(cx.listener(Self::on_open_with_slot_1))
-            .on_action(cx.listener(Self::on_open_with_slot_2))
-            .on_action(cx.listener(Self::on_open_with_slot_3))
-            .on_action(cx.listener(Self::on_open_with_slot_4))
-            .on_action(cx.listener(Self::on_open_with_slot_5))
-            .on_action(cx.listener(Self::on_open_with_slot_6))
-            .on_action(cx.listener(Self::on_open_with_slot_7))
-            .on_action(cx.listener(Self::on_open_with_slot_8))
-            .on_action(cx.listener(Self::on_open_with_slot_9))
-            .on_action(cx.listener(Self::on_open_with_slot_10))
-            .on_action(cx.listener(Self::on_open_with_slot_11))
-            .on_action(cx.listener(Self::on_undo_last_action))
-            .on_action(cx.listener(Self::on_toggle_favorite_for_target))
-            .on_action(cx.listener(Self::on_add_current_folder_to_favorites))
-            .on_action(cx.listener(Self::on_toggle_favorites_section))
-            .on_action(cx.listener(Self::on_sort_favorites_by_name))
-            .on_action(cx.listener(Self::on_sort_favorites_by_date_added_newest))
-            .on_action(cx.listener(Self::on_sort_favorites_by_date_added_oldest))
-            .on_action(cx.listener(Self::on_sort_favorites_by_kind))
-            .on_action(cx.listener(Self::on_move_favorite_up))
-            .on_action(cx.listener(Self::on_move_favorite_down))
-            .on_action(cx.listener(Self::on_rename_favorite))
-            .on_action(cx.listener(Self::on_reset_favorite_name))
-            .on_action(cx.listener(Self::on_reset_favorite_icon))
-            .on_action(cx.listener(Self::on_set_favorite_icon_star))
-            .on_action(cx.listener(Self::on_set_favorite_icon_folder))
-            .on_action(cx.listener(Self::on_set_favorite_icon_code))
-            .on_action(cx.listener(Self::on_set_favorite_icon_image))
-            .on_action(cx.listener(Self::on_set_favorite_icon_music))
-            .on_action(cx.listener(Self::on_set_favorite_icon_archive))
-            // §3.1 tear-off remove. The favorites section's drop gaps
-            // already intercept FavoriteDragPayload to reorder; any
-            // drop that falls through to the shell's outer container
-            // is by definition outside the section — treat it as a
-            // remove with undo (§3.2). Same code path as the menu /
-            // keyboard remove, so Cmd+Z restores at the prior index.
-            .on_drop(cx.listener(
-                |this, payload: &crate::favorites_section::FavoriteDragPayload, window, cx| {
-                    use gpui_component::notification::Notification;
-                    let id = payload.id;
-                    let label = this
-                        .favorites
-                        .read(cx)
-                        .entry_by_id(id)
-                        .map(|f| f.effective_label())
-                        .unwrap_or_else(|| "favorite".to_string());
-                    let removed_for_undo = this.favorites.read(cx).entry_by_id(id).cloned();
-                    this.favorites.update(cx, |f, cx| {
-                        f.remove(id, cx);
-                    });
-                    if let Some(fav) = removed_for_undo {
-                        this.push_undo(UndoOp::RemoveFavorite(fav));
-                    }
-                    window.push_notification(
-                        Notification::info(format!(
-                            "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo"
-                        )),
-                        cx,
-                    );
-                },
-            ))
-            .relative()
-            .size_full()
-            .bg(cx.theme().background)
-            .child({
-                // Three-column resizable layout: sidebar | center | preview.
-                // The status bar runs full-width across the bottom so its
-                // task summary + progress strip is always visible.
-                use gpui_component::resizable::{h_resizable, resizable_panel};
-                let file_body = self.file_pane_body(cx);
-                // Phase 6 review fix: an outer .context_menu on the
-                // file body wrapper consumed the click events bound
-                // for the inner DataTable row menu, causing every
-                // file-row menu selection to dismiss without firing.
-                // The empty-space menu (New Folder / Refresh / etc.)
-                // is parked until we can split the file pane's
-                // background from the rows at the event-routing
-                // layer — the toolbar already exposes those actions
-                // so users aren't blocked.
-                let file_body_wrapped =
-                    div().flex_1().min_h_0().min_w_0().child(file_body);
-                // Auto-hide the preview when the window is too narrow
-                // to fit sidebar + file list + preview comfortably.
-                // The user's explicit `preview_visible` flag still
-                // wins when there's room — the threshold only
-                // suppresses the pane, never re-enables it.
-                let viewport_w = f32::from(window.viewport_size().width);
-                let preview_visible =
-                    self.preview_visible && viewport_w >= PREVIEW_AUTOHIDE_THRESHOLD;
-                let preview_pane = if preview_visible {
-                    Some(self.preview(cx))
-                } else {
-                    None
-                };
-                // Pull the persisted widths into the panels' initial
-                // `.size(...)` — they survive across launches because
-                // they're written through `on_resize` to app_state
-                // (debounced via SPLITTER_PERSIST_INTERVAL below).
-                // Collapsed sidebar shrinks to the gpui-component
-                // icon strip width (~48 DIPs). Drag handle hides
-                // implicitly because we squeeze the range to a fixed
-                // size in that mode.
-                let sidebar_width_px = if self.sidebar_collapsed {
-                    px(48.0)
-                } else {
-                    px(self.sidebar_width)
-                };
-                let preview_width_px = px(self.preview_width);
-                let weak = cx.weak_entity();
-                let splitter = h_resizable("shell-splitter")
-                    .with_state(&self.splitter_state)
-                    .on_resize(move |state, _window, cx| {
-                        // Callback fires per drag tick. Read sizes
-                        // out of the ResizableState, write them back
-                        // into Shell so the next render re-applies
-                        // them, and push to disk through the
-                        // throttled writer.
-                        let sizes = state.read(cx).sizes().clone();
-                        if let Some(s) = weak.upgrade() {
-                            s.update(cx, |this, _cx| {
-                                if let Some(sw) = sizes.first() {
-                                    this.sidebar_width = f32::from(*sw);
-                                }
-                                if preview_visible && sizes.len() >= 3 {
-                                    this.preview_width = f32::from(sizes[2]);
-                                }
-                                this.maybe_persist_splitter();
-                            });
-                        }
-                    })
-                    .child(
-                        resizable_panel()
-                            .size(sidebar_width_px)
-                            // Collapsed: pin the panel to the icon
-                            // strip width so the drag handle can't
-                            // reopen it accidentally; the TitleBar
-                            // toggle is the one way back to expanded.
-                            .when(self.sidebar_collapsed, |this| {
-                                this.size_range(px(48.0)..px(48.0))
-                            })
-                            .when(!self.sidebar_collapsed, |this| {
-                                this.size_range(px(160.0)..px(400.0))
-                            })
-                            .child(sidebar),
-                    )
-                    .child(
-                        resizable_panel().child(
-                            v_flex()
-                                .size_full()
-                                .child(tabstrip)
-                                .child(breadcrumb)
-                                .child(file_body_wrapped),
-                        ),
-                    );
-                let splitter = if let Some(pane) = preview_pane {
-                    splitter.child(
-                        resizable_panel()
-                            .size(preview_width_px)
-                            .size_range(px(220.0)..px(520.0))
-                            .child(pane),
-                    )
-                } else {
-                    splitter
-                };
-                let title_bar = self.title_bar(cx);
-                v_flex()
-                    .relative()
-                    .size_full()
-                    // Phase 7: TitleBar sits across the top with the
-                    // app name + filter input + back/forward
-                    // navigation. Replaces the sidebar-header brand
-                    // mark and the toolbar's nav buttons + filter
-                    // input.
-                    .child(title_bar)
-                    .child(div().flex_1().min_h_0().child(splitter))
-                    .child(status_bar)
-                    // Background-task panel popover sits absolute-
-                    // positioned over the bottom-left corner of this
-                    // column, above the status bar. Only rendered
-                    // when task_panel_open == true.
-                    .when_some(task_panel, |this, panel| this.child(panel))
-            })
-            // Dialog overlay layer — rendered last so dialogs draw
-            // above the shell content. Needed for the New Folder /
-            // Rename modals (5.5.c).
-            .children(Root::render_dialog_layer(window, cx))
-            // Notification overlay (Stage 5.c) — toasts pushed via
-            // `Window::push_notification` show up in the corner the
-            // active theme specifies. The outer `div().relative()`
-            // gives the absolute-positioned notification list a
-            // positioned ancestor to anchor against.
-            .children(Root::render_notification_layer(window, cx))
-            // Keyboard-shortcuts help overlay (Stage 9.b). Renders
-            // only when `shortcuts_help_filter` is Some(_); the
-            // module reads `self` for the filter + input state.
-            .children(crate::keyboard_help::render(self, cx))
-    }
-}
-
-fn run_directory_load_streaming(
-    fs: Arc<NativeFs>,
-    path: PathBuf,
-    show_hidden: bool,
-    filter_text: String,
-    cancel: Arc<AtomicBool>,
-    tx: async_channel::Sender<LoadMsg>,
-) {
-    let needle = filter_text.trim().to_lowercase();
-    let error = fs.enumerate_streaming(&path, DEFAULT_ENUMERATION_BATCH, &cancel, |entries| {
-        let batch = filter_directory_batch(&fs, entries, show_hidden, &needle);
-        if !batch.entries.is_empty() && tx.send_blocking(LoadMsg::Batch(batch)).is_err() {
-            cancel.store(true, Ordering::Relaxed);
-        }
-    });
-    let _ = tx.send_blocking(LoadMsg::Done(error));
-}
-
-fn filter_directory_batch(
-    fs: &NativeFs,
-    entries: Vec<FileEntry>,
-    show_hidden: bool,
-    needle: &str,
-) -> LoadBatch {
-    let entries: Vec<FileEntry> = entries
-        .into_iter()
-        .filter(|e| show_hidden || !e.name.starts_with('.'))
-        .filter(|e| {
-            if needle.is_empty() {
-                true
-            } else {
-                // Filter searches the visible Format value too —
-                // otherwise typing "pdf document" or "zip archive"
-                // misses rows where the magic-detected text is the
-                // only place those phrases appear.
-                let (format, _) = e.format_label();
-                e.name.to_lowercase().contains(needle)
-                    || format.to_lowercase().contains(needle)
-            }
-        })
-        .collect();
-    let mut paths = HashMap::with_capacity(entries.len());
-    for entry in &entries {
-        if let Some(path) = fs.path_for(entry.id) {
-            paths.insert(entry.id, path);
-        }
-    }
-    LoadBatch { entries, paths }
-}
-
-fn run_tree_children_load(fs: Arc<NativeFs>, path: PathBuf) -> Vec<TreeChild> {
-    let mut children: Vec<TreeChild> = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(path) {
-        for dirent in rd.flatten() {
-            let p = dirent.path();
-            let Some(name) = p.file_name().and_then(|s| s.to_str()).map(str::to_owned) else {
-                continue;
-            };
-            let is_dir = match dirent.file_type() {
-                Ok(ft) => {
-                    ft.is_dir()
-                        || (ft.is_symlink()
-                            && std::fs::metadata(&p).map(|m| m.is_dir()).unwrap_or(false))
-                }
-                Err(_) => false,
-            };
-            if !is_dir {
-                continue;
-            }
-            let node_id = fs.id_for_path(&p);
-            children.push(TreeChild {
-                node_id,
-                path: p,
-                label: name,
-            });
-        }
-        children.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
-    }
-    children
-}
-
-/// Map an `EnumerationError` to (title, body) copy for the in-pane
-/// error state. macOS users hitting `Documents` / `Desktop` /
-/// `Downloads` for the first time in a sandboxed launcher will see
-/// the TCC permission case; other variants get a generic message.
-fn error_copy(err: &EnumerationError) -> (&'static str, String) {
-    match err {
-        EnumerationError::PermissionDenied => (
-            "Access required",
-            "Feraille needs permission to read this folder. Grant access in \
-             System Settings \u{2192} Privacy & Security \u{2192} Files and Folders."
-                .to_string(),
-        ),
-        EnumerationError::NotFound => (
-            "Folder not found",
-            "This location may have been moved, renamed, or unmounted.".to_string(),
-        ),
-        EnumerationError::Other(msg) => ("Couldn't open this folder", msg.clone()),
-    }
-}
-
-/// Middle-truncate a path so the basename stays visible but the
-/// middle is collapsed to an ellipsis. Useful in the preview pane
-/// where the full path would otherwise blow out the column width.
-/// Falls back to a tail-truncation when the basename alone exceeds
-/// `max`. Char-based length counting (handles non-ASCII path
-/// components); byte indexing only ever lands on `/` which is ASCII.
-fn middle_truncate_path(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        return s.to_string();
-    }
-    let basename_start = s.rfind('/').map(|i| i + 1).unwrap_or(0);
-    let basename: Vec<char> = s[basename_start..].chars().collect();
-    if basename.len() + 3 >= max {
-        let take = max.saturating_sub(1);
-        let start = basename.len().saturating_sub(take);
-        let tail: String = basename[start..].iter().collect();
-        return format!("\u{2026}{}", tail);
-    }
-    let prefix_budget = max - basename.len() - 2;
-    let prefix: String = chars[..prefix_budget].iter().collect();
-    let bn: String = basename.iter().collect();
-    format!("{}\u{2026}/{}", prefix, bn)
-}
-
-#[cfg(test)]
-mod middle_truncate_tests {
-    use super::middle_truncate_path;
-
-    #[test]
-    fn short_path_unchanged() {
-        assert_eq!(middle_truncate_path("/Users/x/file.txt", 40), "/Users/x/file.txt");
-    }
-
-    #[test]
-    fn long_path_keeps_basename() {
-        let out = middle_truncate_path(
-            "/Users/jkn/Library/Application Support/Feraille/file.txt",
-            30,
-        );
-        assert!(out.ends_with("/file.txt"), "basename preserved: {out}");
-        assert!(out.contains('\u{2026}'), "ellipsis inserted: {out}");
-    }
-
-    #[test]
-    fn very_long_basename_tail_truncates() {
-        let s = "/x/this-is-an-absurdly-long-filename-that-blows-past-the-limit.txt";
-        let out = middle_truncate_path(s, 20);
-        assert!(out.starts_with('\u{2026}'), "leading ellipsis: {out}");
-        assert!(out.len() <= 25, "approx max width respected: {out}");
-    }
-}
-
-/// Parse a user-typed breadcrumb-input string into a real path:
-/// expands a leading `~` to `$HOME`. It deliberately does not
-/// canonicalise or stat the path on the UI thread; navigation's
-/// background enumeration reports errors.
-pub fn parse_breadcrumb_path(raw: &str) -> PathBuf {
-    let trimmed = raw.trim();
-    let expanded = if let Some(rest) = trimmed.strip_prefix('~') {
-        let mut h = home_dir();
-        let suffix = rest.trim_start_matches('/');
-        if !suffix.is_empty() {
-            h.push(suffix);
-        }
-        h
-    } else {
-        PathBuf::from(trimmed)
-    };
-    expanded
-}
-
-/// Split `path` into clickable breadcrumb segments. Each entry is
-/// `(visible_label, path_to_navigate_to_on_click)`. The first entry
-/// represents the filesystem root.
-///
-/// Public for the integration test in `tests/path_segments.rs` —
-/// keeping it private and using an inline `#[cfg(test)] mod tests`
-/// crashes the compiler (gpui's type graph plus the macro recursion
-/// from `#[test]` overflows syn's parser).
-pub fn path_segments(path: &Path) -> Vec<(String, PathBuf)> {
-    let mut out: Vec<(String, PathBuf)> = Vec::new();
-    let mut accum = PathBuf::from("/");
-    out.push(("/".to_string(), accum.clone()));
-    for component in path.components() {
-        use std::path::Component;
-        match component {
-            Component::RootDir => {}
-            Component::Normal(s) => {
-                accum.push(s);
-                out.push((s.to_string_lossy().into_owned(), accum.clone()));
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                accum.pop();
-            }
-            Component::Prefix(_) => {}
-        }
-    }
-    out
-}
-
-use gpui::prelude::FluentBuilder as _;

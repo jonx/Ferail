@@ -469,6 +469,18 @@ const CATALOGUE: &[CommandSpec] = &[
     },
     // Window
     CommandSpec {
+        id: CommandId("window.new_window"),
+        title: "New Window",
+        category: Category::Window,
+        shortcuts: &[Shortcut::primary("N")],
+    },
+    CommandSpec {
+        id: CommandId("window.close_window"),
+        title: "Close Window",
+        category: Category::Window,
+        shortcuts: &[Shortcut::primary_shift("W")],
+    },
+    CommandSpec {
         id: CommandId("window.next_tab"),
         title: "Next Tab",
         category: Category::Window,

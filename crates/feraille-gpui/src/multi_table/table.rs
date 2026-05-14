@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::FluentBuilder as _, px, relative, AnyElement, App, InteractiveElement as _,
-    IntoElement, ParentElement, Pixels, RenderOnce, StyleRefinement, Styled, TextAlign, Window,
+    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement, Pixels, RenderOnce,
+    StyleRefinement, Styled, TextAlign, Window, div, prelude::FluentBuilder as _, px, relative,
 };
 
 use gpui_component::{

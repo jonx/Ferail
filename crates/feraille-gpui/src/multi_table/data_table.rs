@@ -1,15 +1,15 @@
 use gpui_component::{ActiveTheme, Sizable, Size};
 
 use super::{
+    TableDelegate, TableState,
     actions::{
         Cancel, SelectDown, SelectFirst, SelectLast, SelectNextColumn, SelectPageDown,
         SelectPageUp, SelectPrevColumn, SelectUp,
     },
-    TableDelegate, TableState,
 };
 use gpui::{
-    div, prelude::FluentBuilder, App, Edges, Entity, Focusable, InteractiveElement, IntoElement,
-    KeyBinding, ParentElement, RenderOnce, Styled, Window,
+    App, Edges, Entity, Focusable, InteractiveElement, IntoElement, KeyBinding, ParentElement,
+    RenderOnce, Styled, Window, div, prelude::FluentBuilder,
 };
 
 const CONTEXT: &'static str = "FerailleDataTable";

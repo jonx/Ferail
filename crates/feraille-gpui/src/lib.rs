@@ -24,6 +24,7 @@ pub mod multi_table;
 pub mod obs;
 pub mod prefetch;
 pub mod preview;
+pub mod process_state;
 pub mod reset_db;
 pub mod screenshot;
 pub mod settings;

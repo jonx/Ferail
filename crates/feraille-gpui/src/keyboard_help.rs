@@ -5,14 +5,9 @@
 //! filterable by a top text-input. The state (visible flag + filter
 //! string) lives on `Shell`; this module is a pure render helper.
 
-use feraille_core::commands::{all_commands, Category, CommandSpec, Shortcut};
+use feraille_core::commands::{Category, CommandSpec, Shortcut, all_commands};
 use gpui::*;
-use gpui_component::{
-    h_flex,
-    input::Input,
-    kbd::Kbd,
-    v_flex, ActiveTheme, Sizable,
-};
+use gpui_component::{ActiveTheme, Sizable, h_flex, input::Input, kbd::Kbd, v_flex};
 
 use crate::shell::Shell;
 
@@ -259,10 +254,9 @@ fn row(
 /// `-` as a separator).
 fn keystroke_string(s: &Shortcut) -> Option<String> {
     let key = match s.key {
-        "Up" | "Down" | "Left" | "Right" | "Home" | "End" | "PageUp" | "PageDown"
-        | "Escape" | "Enter" | "Tab" | "Space" | "Backspace" | "Delete"
-        | "F1" | "F2" | "F3" | "F4" | "F5" | "F6" | "F7" | "F8" | "F9"
-        | "F10" | "F11" | "F12" => s.key.to_ascii_lowercase(),
+        "Up" | "Down" | "Left" | "Right" | "Home" | "End" | "PageUp" | "PageDown" | "Escape"
+        | "Enter" | "Tab" | "Space" | "Backspace" | "Delete" | "F1" | "F2" | "F3" | "F4" | "F5"
+        | "F6" | "F7" | "F8" | "F9" | "F10" | "F11" | "F12" => s.key.to_ascii_lowercase(),
         "+" => return None,
         k if k.chars().count() == 1 => k.to_ascii_lowercase(),
         _ => return None,

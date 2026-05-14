@@ -1,12 +1,12 @@
 use std::ops::Range;
 
 use gpui::{
-    div, App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    SharedString, Stateful, Styled as _, Window,
+    App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
+    SharedString, Stateful, Styled as _, Window, div,
 };
 
-use super::{loading::Loading, Column, ColumnGroup, ColumnSort, TableState};
-use gpui_component::{h_flex, menu::PopupMenu, ActiveTheme as _, Icon, IconName, Size};
+use super::{Column, ColumnGroup, ColumnSort, TableState, loading::Loading};
+use gpui_component::{ActiveTheme as _, Icon, IconName, Size, h_flex, menu::PopupMenu};
 
 /// A delegate trait for providing data and rendering for a table.
 #[allow(unused)]

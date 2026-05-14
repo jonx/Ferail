@@ -96,13 +96,15 @@ pub fn render(
             humanize_bytes(metrics.selected_size),
         )
     } else {
-        format!("{} items \u{00B7} {}", entries, humanize_bytes(metrics.total_size))
+        format!(
+            "{} items \u{00B7} {}",
+            entries,
+            humanize_bytes(metrics.total_size)
+        )
     };
 
     let free_label = match (metrics.free_bytes, metrics.volume_name) {
-        (Some(b), Some(name)) => {
-            Some(format!("{} free on {}", humanize_bytes(b), name))
-        }
+        (Some(b), Some(name)) => Some(format!("{} free on {}", humanize_bytes(b), name)),
         (Some(b), None) => Some(format!("{} free", humanize_bytes(b))),
         _ => None,
     };

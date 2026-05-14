@@ -20,9 +20,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{Axis, *};
 use gpui_component::{
     ActiveTheme, Icon, Root, Theme, ThemeMode,
-    setting::{
-        SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
-    },
+    setting::{SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
 };
 
 use feraille_core::commands::{Category, all_commands};
@@ -229,20 +227,22 @@ fn build_pages(home_hidden_count: Option<usize>) -> Vec<SettingPage> {
 fn appearance_page() -> SettingPage {
     SettingPage::new("Appearance")
         .icon(Icon::empty().path("icons/palette.svg"))
-        .group(SettingGroup::new().title("Theme").item(
-            // Vertical layout so the three fixed-width tiles drop
-            // below the title rather than competing with it for
-            // horizontal space — previous default-horizontal layout
-            // clipped the System tile on the right edge.
-            SettingItem::new(
-                "Theme",
-                SettingField::render(|_options, _window, _cx| {
-                    theme_tile_strip().into_any_element()
-                }),
-            )
-            .layout(Axis::Vertical)
-            .description("Match the system, or pick a side."),
-        ))
+        .group(
+            SettingGroup::new().title("Theme").item(
+                // Vertical layout so the three fixed-width tiles drop
+                // below the title rather than competing with it for
+                // horizontal space — previous default-horizontal layout
+                // clipped the System tile on the right edge.
+                SettingItem::new(
+                    "Theme",
+                    SettingField::render(|_options, _window, _cx| {
+                        theme_tile_strip().into_any_element()
+                    }),
+                )
+                .layout(Axis::Vertical)
+                .description("Match the system, or pick a side."),
+            ),
+        )
 }
 
 fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
@@ -261,17 +261,19 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
     };
     SettingPage::new("Files")
         .icon(Icon::empty().path("icons/folder.svg"))
-        .group(SettingGroup::new().title("Visibility").item(
-            SettingItem::new(
-                "Show hidden files",
-                SettingField::switch(
-                    |_cx: &App| app_state::load().show_hidden.unwrap_or(false),
-                    |val: bool, _cx: &mut App| persist_show_hidden(val),
+        .group(
+            SettingGroup::new().title("Visibility").item(
+                SettingItem::new(
+                    "Show hidden files",
+                    SettingField::switch(
+                        |_cx: &App| app_state::load().show_hidden.unwrap_or(false),
+                        |val: bool, _cx: &mut App| persist_show_hidden(val),
+                    )
+                    .default_value(false),
                 )
-                .default_value(false),
-            )
-            .description(description),
-        ))
+                .description(description),
+            ),
+        )
 }
 
 fn layout_page() -> SettingPage {
@@ -344,18 +346,15 @@ fn shortcuts_page() -> SettingPage {
             }),
         )
         .description(format!("{cat_name} \u{00B7} {chord}"));
-        if let Some((_, items)) = groups_by_cat
-            .iter_mut()
-            .find(|(c, _)| *c == spec.category)
-        {
+        if let Some((_, items)) = groups_by_cat.iter_mut().find(|(c, _)| *c == spec.category) {
             items.push(item);
         } else {
             groups_by_cat.push((spec.category, vec![item]));
         }
     }
 
-    let mut page = SettingPage::new("Keyboard Shortcuts")
-        .icon(Icon::empty().path("icons/keyboard.svg"));
+    let mut page =
+        SettingPage::new("Keyboard Shortcuts").icon(Icon::empty().path("icons/keyboard.svg"));
     for (cat, items) in groups_by_cat {
         let title = category_name(cat);
         let mut group = SettingGroup::new().title(title);
@@ -370,8 +369,8 @@ fn shortcuts_page() -> SettingPage {
 fn about_page() -> SettingPage {
     SettingPage::new("About")
         .icon(Icon::empty().path("icons/info.svg"))
-        .group(SettingGroup::new().item(SettingItem::render(
-            |_options, _window, cx| {
+        .group(
+            SettingGroup::new().item(SettingItem::render(|_options, _window, cx| {
                 let theme = cx.theme();
                 gpui_component::v_flex()
                     .gap_2()
@@ -384,15 +383,9 @@ fn about_page() -> SettingPage {
                             .text_color(theme.foreground)
                             .child("Feraille"),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(SharedString::from(concat!(
-                                "Version ",
-                                env!("CARGO_PKG_VERSION")
-                            ))),
-                    )
+                    .child(div().text_xs().text_color(theme.muted_foreground).child(
+                        SharedString::from(concat!("Version ", env!("CARGO_PKG_VERSION"))),
+                    ))
                     .child(
                         div()
                             .mt_2()
@@ -407,8 +400,8 @@ fn about_page() -> SettingPage {
                             .child("Built for speed, predictability, and a calm UI."),
                     )
                     .into_any_element()
-            },
-        )))
+            })),
+        )
 }
 
 fn category_name(c: Category) -> &'static str {
@@ -461,18 +454,10 @@ fn theme_tile_body(pref: ThemePref) -> impl IntoElement {
     // theme so the user sees the consequence of clicking. System
     // tile is split-rendered Light/Dark.
     let (bg, panel, accent, fg) = match pref {
-        ThemePref::Light | ThemePref::System => (
-            rgb(0xFAFAFA),
-            rgb(0xF0F0F0),
-            rgb(0x2A63D9),
-            rgb(0x1A1A1A),
-        ),
-        ThemePref::Dark => (
-            rgb(0x1B1B1B),
-            rgb(0x252525),
-            rgb(0x2457CA),
-            rgb(0xF5F5F5),
-        ),
+        ThemePref::Light | ThemePref::System => {
+            (rgb(0xFAFAFA), rgb(0xF0F0F0), rgb(0x2A63D9), rgb(0x1A1A1A))
+        }
+        ThemePref::Dark => (rgb(0x1B1B1B), rgb(0x252525), rgb(0x2457CA), rgb(0xF5F5F5)),
     };
     let is_system = matches!(pref, ThemePref::System);
     let dark_bg = rgb(0x1B1B1B);
@@ -513,13 +498,7 @@ fn theme_tile_body(pref: ThemePref) -> impl IntoElement {
                                 .pt_2()
                                 .px_2()
                                 .child(div().w(px(60.0)).h(px(4.0)).rounded_full().bg(fg))
-                                .child(
-                                    div()
-                                        .h(px(10.0))
-                                        .w_full()
-                                        .rounded(px(2.0))
-                                        .bg(accent),
-                                )
+                                .child(div().h(px(10.0)).w_full().rounded(px(2.0)).bg(accent))
                                 .child(div().w(px(72.0)).h(px(4.0)).rounded_full().bg(fg)),
                         ),
                 )
@@ -588,11 +567,7 @@ fn theme_tile_body(pref: ThemePref) -> impl IntoElement {
                 // Strengthened active state — accent ring + check
                 // badge — applied as a wrapper around the label.
                 .child(active_state_decoration(pref))
-                .child(
-                    div()
-                        .text_xs()
-                        .child(pref.label()),
-                ),
+                .child(div().text_xs().child(pref.label())),
         )
 }
 

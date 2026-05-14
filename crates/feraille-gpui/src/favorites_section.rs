@@ -10,13 +10,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use feraille_core::favorites::{Favorite, FavoriteId, FavoriteKind, FavoriteState, FavoriteTarget};
+use gpui::{AnyElement, Context, WeakEntity, div};
 use gpui::{
-    img, px, svg, App, AppContext, ElementId, ExternalPaths, FontWeight, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
+    App, AppContext, ElementId, ExternalPaths, FontWeight, InteractiveElement, IntoElement,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, img, px, svg,
 };
-use gpui::{div, AnyElement, Context, WeakEntity};
 use gpui_component::{
-    h_flex, menu::ContextMenuExt as _, sidebar::SidebarItem, v_flex, ActiveTheme, Collapsible,
+    ActiveTheme, Collapsible, h_flex, menu::ContextMenuExt as _, sidebar::SidebarItem, v_flex,
 };
 
 use crate::icons::IconCache;
@@ -125,7 +125,7 @@ impl SidebarItem for FavoritesSection {
                     shell.update(cx, |s, cx| {
                         let path = s.active_tab().current_dir.clone();
                         let canonical = std::fs::canonicalize(&path).unwrap_or(path);
-                        s.favorites.update(cx, |f, cx| {
+                        s.process.favorites.update(cx, |f, cx| {
                             f.add_path(
                                 canonical,
                                 feraille_core::favorites::FavoriteKind::Folder,
@@ -159,7 +159,11 @@ impl SidebarItem for FavoritesSection {
                     .justify_center()
                     .text_color(theme.muted_foreground)
                     .text_size(px(9.0))
-                    .child(if section_collapsed { "\u{25B6}" } else { "\u{25BC}" }),
+                    .child(if section_collapsed {
+                        "\u{25B6}"
+                    } else {
+                        "\u{25BC}"
+                    }),
             )
             .child(div().flex_1().child("Favorites"))
             .child(plus_button)
@@ -224,7 +228,7 @@ impl SidebarItem for FavoritesSection {
                 .map(|f| {
                     shell
                         .upgrade()
-                        .map(|s| s.read(cx).favorites.read(cx).state_for(f.id))
+                        .map(|s| s.read(cx).process.favorites.read(cx).state_for(f.id))
                         .unwrap_or(FavoriteState::Available)
                 })
                 .collect();
@@ -233,8 +237,7 @@ impl SidebarItem for FavoritesSection {
             // gap before the first row gets a `-INF` left bound; the
             // gap after the last row gets `+INF` right bound, both
             // routed through `Favorites::reorder_between`.
-            let mut elements: Vec<AnyElement> =
-                Vec::with_capacity(self.favorites.len() * 2 + 1);
+            let mut elements: Vec<AnyElement> = Vec::with_capacity(self.favorites.len() * 2 + 1);
             let n = self.favorites.len();
             for (i, f) in self.favorites.iter().enumerate() {
                 let before = if i == 0 {
@@ -260,11 +263,21 @@ impl SidebarItem for FavoritesSection {
             } else {
                 self.favorites[n - 1].sort_index
             };
-            elements.push(render_drop_gap(n, last_idx, f64::INFINITY, shell.clone(), cx));
+            elements.push(render_drop_gap(
+                n,
+                last_idx,
+                f64::INFINITY,
+                shell.clone(),
+                cx,
+            ));
             v_flex().w_full().children(elements).into_any_element()
         };
 
-        v_flex().w_full().child(header).child(body).into_any_element()
+        v_flex()
+            .w_full()
+            .child(header)
+            .child(body)
+            .into_any_element()
     }
 }
 
@@ -414,7 +427,7 @@ fn render_favorite_row(
     // a native alert instead. Locate dialog with NSOpenPanel is iter
     // 11 polish.
     let click_state = state;
-    row = row.on_click(move |event, _window, cx| {
+    row = row.on_click(move |event, window, cx| {
         if let Some(s) = shell_for_click.upgrade() {
             let modifiers = event.modifiers();
             let path = path_for_click.clone();
@@ -423,7 +436,7 @@ fn render_favorite_row(
                 match click_state {
                     FavoriteState::Available => {
                         if modifiers.platform {
-                            shell.open_path_in_new_tab(path, cx);
+                            shell.open_path_in_new_tab(path, window, cx);
                         } else {
                             shell.navigate(path, cx);
                         }
@@ -455,9 +468,9 @@ fn render_favorite_row(
     row.context_menu(move |menu, window, cx| {
         use crate::shell::{
             CopyContextPath, RenameFavorite, ResetFavoriteIcon, ResetFavoriteName,
-            RevealContextPath, SetFavoriteIconArchive, SetFavoriteIconCode,
-            SetFavoriteIconFolder, SetFavoriteIconImage, SetFavoriteIconMusic,
-            SetFavoriteIconStar, ToggleFavoriteForTarget,
+            RevealContextPath, SetFavoriteIconArchive, SetFavoriteIconCode, SetFavoriteIconFolder,
+            SetFavoriteIconImage, SetFavoriteIconMusic, SetFavoriteIconStar,
+            ToggleFavoriteForTarget,
         };
         use gpui_component::menu::{PopupMenu, PopupMenuItem};
         if let Some(s) = shell_for_menu.upgrade() {
@@ -472,7 +485,10 @@ fn render_favorite_row(
         let icon_submenu = PopupMenu::build(window, cx, move |m, _w, _c| {
             m.menu("\u{2605} Star", Box::new(SetFavoriteIconStar))
                 .menu("\u{1F4C1} Folder", Box::new(SetFavoriteIconFolder))
-                .menu("\u{27E8}\u{2009}/\u{2009}\u{27E9} Code", Box::new(SetFavoriteIconCode))
+                .menu(
+                    "\u{27E8}\u{2009}/\u{2009}\u{27E9} Code",
+                    Box::new(SetFavoriteIconCode),
+                )
                 .menu("\u{1F5BC} Image", Box::new(SetFavoriteIconImage))
                 .menu("\u{266B} Music", Box::new(SetFavoriteIconMusic))
                 .menu("\u{1F5C4} Archive", Box::new(SetFavoriteIconArchive))
@@ -524,7 +540,7 @@ fn render_drop_gap(
                 if let Some(s) = shell.upgrade() {
                     let id = payload.id;
                     s.update(cx, |shell, cx| {
-                        shell.favorites.update(cx, |f, cx| {
+                        shell.process.favorites.update(cx, |f, cx| {
                             f.reorder_between(id, before, after, cx);
                         });
                     });
@@ -548,9 +564,8 @@ fn render_drop_gap(
                             rejected += 1;
                             continue;
                         }
-                        let slot =
-                            feraille_core::favorites::fractional_between(cursor, upper);
-                        shell.favorites.update(cx, |f, cx| {
+                        let slot = feraille_core::favorites::fractional_between(cursor, upper);
+                        shell.process.favorites.update(cx, |f, cx| {
                             f.add_path_at(canonical.clone(), FavoriteKind::Folder, slot, cx);
                         });
                         cursor = slot;

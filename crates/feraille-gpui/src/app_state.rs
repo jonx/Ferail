@@ -85,11 +85,7 @@ pub fn load() -> AppState {
                 }
             }
             "ui_scale" => {
-                out.ui_scale = val
-                    .trim()
-                    .parse::<f32>()
-                    .ok()
-                    .map(|n| n.clamp(0.6, 2.0));
+                out.ui_scale = val.trim().parse::<f32>().ok().map(|n| n.clamp(0.6, 2.0));
             }
             "sidebar_width" => {
                 out.sidebar_width = val

@@ -157,10 +157,16 @@ pub struct FileTypeIcon {
 pub fn file_type_icon(entry: &FileEntry) -> FileTypeIcon {
     match entry.kind {
         EntryKind::Directory => {
-            return FileTypeIcon { path: "icons/folder.svg", tint: FileTypeTint::Folder };
+            return FileTypeIcon {
+                path: "icons/folder.svg",
+                tint: FileTypeTint::Folder,
+            };
         }
         EntryKind::Symlink => {
-            return FileTypeIcon { path: "icons/file/symlink.svg", tint: FileTypeTint::Symlink };
+            return FileTypeIcon {
+                path: "icons/file/symlink.svg",
+                tint: FileTypeTint::Symlink,
+            };
         }
         EntryKind::File => {}
     }
@@ -177,9 +183,7 @@ pub fn file_type_icon(entry: &FileEntry) -> FileTypeIcon {
     let path = match ext.as_str() {
         "pdf" => "icons/file/pdf.svg",
         "html" | "htm" => "icons/file/html.svg",
-        "csv" | "tsv" | "xls" | "xlsx" | "ods" | "numbers" => {
-            "icons/file/spreadsheet.svg"
-        }
+        "csv" | "tsv" | "xls" | "xlsx" | "ods" | "numbers" => "icons/file/spreadsheet.svg",
         _ => match tint {
             FileTypeTint::Image => "icons/file/image.svg",
             FileTypeTint::Video => "icons/file/video.svg",
@@ -214,8 +218,8 @@ fn classify_file(name: &str, magic: &str) -> FileTypeTint {
             Some(FileTypeTint::Audio)
         }
         "pdf" | "doc" | "docx" | "odt" | "rtf" | "pages" | "epub" | "txt" | "md" | "markdown"
-        | "rst" | "log" | "tex" | "csv" | "tsv" | "xls" | "xlsx" | "ods" | "numbers"
-        | "ppt" | "pptx" | "odp" | "keynote" => Some(FileTypeTint::Document),
+        | "rst" | "log" | "tex" | "csv" | "tsv" | "xls" | "xlsx" | "ods" | "numbers" | "ppt"
+        | "pptx" | "odp" | "keynote" => Some(FileTypeTint::Document),
         "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "mjs" | "cjs" | "go" | "rb" | "c" | "cpp"
         | "cc" | "h" | "hpp" | "java" | "kt" | "swift" | "json" | "toml" | "yaml" | "yml"
         | "xml" | "html" | "htm" | "css" | "scss" | "sass" | "less" | "sh" | "bash" | "zsh"

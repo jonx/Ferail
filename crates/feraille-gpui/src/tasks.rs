@@ -62,12 +62,7 @@ impl TaskRegistry {
         }
     }
 
-    pub fn begin(
-        &mut self,
-        kind: TaskKind,
-        label: impl Into<String>,
-        cancellable: bool,
-    ) -> TaskId {
+    pub fn begin(&mut self, kind: TaskKind, label: impl Into<String>, cancellable: bool) -> TaskId {
         let id = TaskId(self.next_id);
         self.next_id = self.next_id.wrapping_add(1).max(1);
         self.tasks.push(ActiveTask {

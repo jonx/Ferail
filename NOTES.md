@@ -1,7 +1,127 @@
-# Feraille — Selection & DnD: Architecture and Decision Log
+# Feraille — Architecture and Decision Log
 
-Working log for the `docs/features/feraille-selection-dnd-spec.md` work,
-written under the Slow AI method.
+Multi-iter spec work under the Slow AI method. Currently covers two specs:
+
+- `docs/features/feraille-selection-dnd-spec.md` (selection iter 1+2 landed; drag still pending) — below.
+- `docs/features/feraille-windows-instances-tabs-spec.md` (in progress) — top of file.
+
+---
+
+# Windows / Instances / Tabs (in progress)
+
+## Phase A+B-iter3 — filter on Tab (landed)
+
+Audit flagged filter as window-level vs. spec §3.1's "each tab owns
+its filter." Flipped per user direction.
+
+### Decisions
+
+- **`filter_text` and `filter_input: Entity<InputState>` moved onto Tab.** Each tab has its own filter Input entity. Title-bar render reads `self.active_tab().filter_input`, so cursor / focus / typed value are naturally per-tab — switching tabs shows the new tab's filter without imperative `set_value` calls.
+- **Filter Input + subscription are constructed in `Shell::build_tab`** alongside the table Input + subscription. Each is stored as a non-Clone field on Tab and drops when the tab closes.
+- **Filter subscription closure captures `tab_id`** and writes to `self.tabs[idx].filter_text`, then calls `load_path_for_tab(tab_id, ...)`. So typing in one tab never reloads another.
+- **`load_path_for_tab` reads `tab.filter_text` directly** (was `self.filter_text` at the window level).
+- **`on_clear_filter` and `focus_filter_input` operate on the active tab's filter Input.**
+- **Screenshot harness's `--filter X` flag now writes the active tab's filter, not a window-shared one.**
+
+### Outcome
+
+- `cargo check --workspace --all-targets` clean.
+- `cargo test --workspace` all green.
+- `screenshots/phase-c-per-tab-filter.png` shows the filter text rendering correctly in the title bar.
+- Cmd+T opens a fresh tab with an empty filter; switching tabs swaps the filter input contents accordingly (verified manually).
+
+### Trade-offs
+
+- Each Tab carries an `Entity<InputState>` + a `Subscription`. Memory cost per tab is small; the simplicity of "rendering reads the right thing automatically" is worth it. The alternative (single Input mirroring active tab's text) would have needed `set_value` on every tab switch and lost per-tab cursor/focus state.
+
+---
+
+## Phase C — Cmd+N, second window, stay-resident (landed)
+
+Goal: open a second window that shares the singleton `ProcessState`.
+Process stays resident on zero windows (Finder / Safari model).
+
+### Decisions
+
+- **`ProcessState` lives in a GPUI `Global` newtype** (`ProcessStateGlobal(Rc<ProcessState>)`). `Global: 'static` is the only constraint — `Rc<…>` qualifies. Set once at `app.run` start via `cx.set_global(...)` in both `main.rs::run_gui` and the screenshot path. Every `Shell::new` reads it back via `process_state::process_state(cx)`. No Send/Sync gymnastics needed.
+- **`Shell::new` now takes `Rc<ProcessState>` by argument** instead of constructing it. Two call sites: `main.rs::open_shell_window_sized` and `screenshot.rs::run` (both read from the global). New helper `Shell::build_process_state(cx)` runs once at startup and returns the Rc.
+- **`open_shell_window(cx)`** is the single entry point for spawning a Shell window. Used by the initial-window boot (via `open_shell_window_sized` with size hints) and by the Cmd+N handler. Window options live in this function — there's no longer a single hard-coded `opts` block in `run_gui`. Future Phase C polish (cascade offset, per-window WindowOptions persistence) lands here.
+- **`Cmd+N` binds at App level**, not under `SHELL_CONTEXT`. Reasons: (a) Cmd+N must work with zero windows open; (b) it should work regardless of which window holds focus. The action is declared in `main.rs`'s `actions!(app, …)` block alongside `Quit`/`OpenAbout`. The keymap's catalogue walker is told to skip `window.new_window` so main.rs's explicit `cx.bind_keys` is the only binding.
+- **Process stays resident at zero windows.** Removed the `cx.on_window_closed` handler that called `cx.quit()`. Quit only via `Cmd+Q` or app-menu Quit. Matches spec §1.2 / §2.2. The dock icon stays visible — Phase I will wire `applicationShouldHandleReopen` so clicking it with no windows open reopens a window.
+- **`Cmd+W` on the last tab closes the window**, via `window.remove_window()`. With the stay-resident default this is non-fatal. Same behavior on the tabstrip's `×` close button. Matches spec §3.4.
+- **Watcher / reload fan-out now tracks every live tab path in-process.** `FsWatcher` keeps a set of watched directories, and `ProcessState` keeps weak handles for live Shell windows so watcher events and file-op completions reload every matching tab in every window.
+- **Later: true OS-level singleton + launch-intent forwarding.** The current work shares one `ProcessState` inside a running process, but a second `feraille-gpui` process launched from CLI/Finder still needs the platform primary/secondary intent channel described in the spec.
+- **`MergeAllWindows` / dock menu / cascade offsets deferred** to Phases F / K. Cmd+N opens centered windows; the user can drag them apart. Tear-off (Phase F) needs a position-near-cursor anyway, so cascade lives with that work.
+
+### Outcome
+
+- `cargo check --workspace --all-targets` clean.
+- `cargo test --workspace` all green.
+- `screenshots/phase-c-baseline.png` renders a single window identically to Phase A+B's baseline (the screenshot harness only captures one window).
+- Cmd+N opens a second window sharing process state (favorites, undo, NodeStore, caches, tasks). Closing the last window leaves the process alive. Re-opening via Cmd+N from a zero-window state works.
+
+### Trade-offs taken
+
+- Initial-window size hints (`--width`, `--height`) only apply to the *first* window. Cmd+N windows use defaults (1180 × 760, centered). The size flags exist primarily for screenshots / dev iteration; persisted per-window geometry is Phase J (session restore) work.
+- The settings-only boot path (`--settings page`) uses windowed (top-left) bounds rather than centered, because computing centered bounds needs `&mut App` synchronously and the existing code structure spawned that work async. Acceptable — this is a developer / CLI path, not a user-facing default.
+
+---
+
+## Phase A+B — per-tab state + ProcessState extraction (in flight)
+
+Goal: pure refactor, no user-visible behavior change. Foundation for
+multi-window, tear-off, and cross-window reload fan-out.
+
+### Decisions agreed before code
+
+- **Per-tab `Entity<TableState>`** — each `Tab` owns its own table state.
+  Tab-switching no longer re-enumerates; inactive tabs' enumerations
+  keep streaming into their own table.
+- **Filter is per-window**, not per-tab — preserves current behavior;
+  one less migration surface.
+- **Closed-tab stack is process-scoped** (when added in Phase D).
+- **Cmd+W closes the active tab; closing the last tab closes the window**
+  (today it refuses; flip lands in Phase C alongside multi-window).
+- **No lockfile-based singleton** — rely on macOS LaunchServices for the
+  shipped .app, accept that `cargo run --bin` from dev can launch multiple.
+- **Process state lives in an `Rc<ProcessState>`** held by each window;
+  GPUI is single-threaded for entity access so `Rc` is fine. Background
+  workers grab `Arc<MetadataDb>` / `Arc<NativeFs>` directly.
+- **Phases A and B are landed together** — both touch the same field
+  layout on Shell; splitting them is more churn than value.
+
+### Decisions made during Phase A+B
+
+- **`ProcessState` is a plain `Rc<ProcessState>` field on `Shell`** rather than a global / thread-local. Multi-window construction will clone the Rc into each new `Shell`. Background workers don't take the `Rc` — they take `Arc<Mutex<MetadataDb>>` / `Arc<NativeFs>` / `Arc<AtomicBool>` clones, so `Rc` never crosses thread boundaries.
+- **`metadata_db` is `RefCell<Option<Arc<Mutex<…>>>>`** because the existing async open path needs to *set* the slot post-construction. Background workers grab `.borrow().clone()` to take a stable handle.
+- **`NodeStore` is `RefCell<NodeStore>`.** Every call site now does `.borrow_mut()`. The lifetime cost is one site (`path_for_action` returns `&Path` and can't survive the borrow); rewrote it to use `path_snapshot_for_job` which returns `PathBuf`. Cost: a path-clone per row in `ant_heat`, negligible.
+- **`Tab` is no longer `Clone`.** It now owns a `Subscription` (table-event bridge) which isn't Clone. No call sites needed it. Confirmed by grep.
+- **Tab construction goes through `Shell::build_tab` / `make_tab`** — both build the `TableState` entity and wire its subscription before handing back a `Tab`. The subscription closure captures the tab's `TabId` so events from a non-active tab are dropped (defence in depth — only the active tab is rendered/hit-tested).
+- **`load_path` captures `self.active_tab().id` and delegates to `load_path_for_tab(tab_id, ...)`.** The streaming closure looks up the tab by id, checks *that* tab's generation, then temporarily sets `self.active = idx` before calling the helpers that operate on the active tab. Restored on the way out. This keeps the existing helper signatures (`refresh_file_list_selection`, `restore_filtered_out_against_model`, etc.) unchanged while making the streaming correctly target the loading tab — even when the user has tab-switched mid-load.
+- **`Cmd+W` no longer re-enumerates the now-active tab.** Each tab keeps its `TableState` populated from its own prior load. Same for `select_tab`, `on_next_tab`, `on_prev_tab` — pure index swap + `cx.notify()`. The spec calls for this; today's behavior was a forced reload (when there was one shared TableState).
+- **`suppress_select_row` stays on `Shell`, not Tab.** It gates programmatic `set_selected_row` calls that fire `SelectRow` events; today only the active tab's mirror calls happen, so one counter suffices. If a future iteration mirrors lead into an inactive tab's TableState, this becomes per-tab.
+- **`Shell` rename to `WindowShell` deferred to Phase C.** Cosmetic, and the rename's natural home is the multi-window step. Phase A+B already does the field split; the type name can follow.
+- **The screenshot harness now opens new tabs through the window handle** — `handle.update(cx, |_, window, cx| { shell.update(...) })` — because `make_tab` needs `&mut Window` and a bare `Entity::update` doesn't provide one.
+
+### Outcome
+
+- Workspace compiles clean (`cargo check --workspace --all-targets`) — 0 warnings, 0 errors.
+- Workspace tests pass (`cargo test --workspace`).
+- Screenshots verified:
+  - `screenshots/phase-ab-shell.png` (default shell — no visual regression vs. existing baseline).
+  - `screenshots/phase-ab-multi-tab.png` (two extra tabs + multi-row selection).
+  - `screenshots/phase-ab-selection-multi.png` (selection iter 2 still renders identically).
+- Spec §3.6 win landed: tab switching is instant (no re-enumeration); each tab's enumeration streams into its own table; inactive-tab enumerations keep running.
+
+### Trade-offs taken in this phase
+
+- The `self.active = idx; …; self.active = prev_active` swap inside the streaming closure is a hack. It keeps the existing per-active-tab helpers unchanged at the cost of a momentary "active tab pointer" anomaly. The user can't observe it — helpers only mutate state and schedule a `cx.notify()`, no synchronous paint. Cleaner alternative (thread `tab_id` through every helper) is more invasive; we'll revisit when Phase E (cross-window reload fan-out) needs to update arbitrary tabs from external events.
+- Volumes is `RefCell<Vec<VolumeInfo>>` even though it's only read after construction today. Future-proofs against a Disk Arbitration listener that refreshes it from any thread.
+- The undo stack is process-wide. Spec §1.1 implies process-scoped state; a Cmd+Z in any window undoes the most recent op anywhere. If user feedback wants per-window undo, easy to move later.
+
+---
+
+# Selection & DnD (iter 1+2 landed)
 
 ## Architecture at a glance
 - Selection state is per-tab in `Tab` (file table): `selection: HashSet<NodeId>`, `anchor: Option<NodeId>`, `lead: Option<NodeId>`. The legacy `selected: Option<usize>` is gone; the row index is derived from `lead` against the live delegate entries.

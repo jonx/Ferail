@@ -1,17 +1,17 @@
 use std::{ops::Range, rc::Rc, time::Duration};
 
 use gpui::{
-    div, prelude::FluentBuilder, px, uniform_list, AppContext, Axis, Bounds, ClickEvent, Context,
-    Div, DragMoveEvent, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ListSizingBehavior, Modifiers, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    Render, ScrollStrategy, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Task,
-    UniformListScrollHandle, Window,
+    AppContext, Axis, Bounds, ClickEvent, Context, Div, DragMoveEvent, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, ListSizingBehavior, Modifiers, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled, Task, UniformListScrollHandle, Window, div,
+    prelude::FluentBuilder, px, uniform_list,
 };
 use gpui_component::{
-    h_flex,
+    ActiveTheme, ElementExt, Icon, IconName, StyleSized as _, StyledExt, h_flex,
     menu::{ContextMenuExt, PopupMenu},
     scroll::{ScrollableMask, Scrollbar},
-    v_flex, ActiveTheme, ElementExt, Icon, IconName, StyleSized as _, StyledExt,
+    v_flex,
 };
 
 use super::actions::{

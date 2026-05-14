@@ -419,9 +419,7 @@ impl TableDelegate for FileListDelegate {
                     )
                     .child(chips)
                     .child(star)
-                    .tooltip(move |window, cx| {
-                        Tooltip::new(tooltip_name.clone()).build(window, cx)
-                    })
+                    .tooltip(move |window, cx| Tooltip::new(tooltip_name.clone()).build(window, cx))
                     .into_any_element()
             }
             "size" => div()
@@ -613,7 +611,8 @@ impl TableDelegate for FileListDelegate {
         });
         menu = menu.item(PopupMenuItem::submenu("Tags", tags_submenu));
 
-        menu.separator().menu("Move to Trash", Box::new(MoveToTrash))
+        menu.separator()
+            .menu("Move to Trash", Box::new(MoveToTrash))
     }
 
     fn move_column(
@@ -642,8 +641,12 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) {
-        let Some(col) = self.columns.get(col_ix) else { return };
-        let Some(sort_col) = SortColumn::from_str(&col.key) else { return };
+        let Some(col) = self.columns.get(col_ix) else {
+            return;
+        };
+        let Some(sort_col) = SortColumn::from_str(&col.key) else {
+            return;
+        };
         match sort {
             ColumnSort::Default => {
                 // "Reset to natural order" — sort by name ascending
@@ -708,13 +711,48 @@ pub fn path_for(fs: &NativeFs, id: NodeId) -> Option<PathBuf> {
 fn tag_color_rgba(c: feraille_core::commands::TagColor) -> gpui::Rgba {
     use feraille_core::commands::TagColor;
     match c {
-        TagColor::Red => gpui::Rgba { r: 1.0, g: 0.23, b: 0.19, a: 1.0 },
-        TagColor::Orange => gpui::Rgba { r: 1.0, g: 0.58, b: 0.0, a: 1.0 },
-        TagColor::Yellow => gpui::Rgba { r: 1.0, g: 0.80, b: 0.0, a: 1.0 },
-        TagColor::Green => gpui::Rgba { r: 0.30, g: 0.85, b: 0.39, a: 1.0 },
-        TagColor::Blue => gpui::Rgba { r: 0.0, g: 0.48, b: 1.0, a: 1.0 },
-        TagColor::Purple => gpui::Rgba { r: 0.69, g: 0.32, b: 0.87, a: 1.0 },
-        TagColor::Gray => gpui::Rgba { r: 0.56, g: 0.56, b: 0.58, a: 1.0 },
+        TagColor::Red => gpui::Rgba {
+            r: 1.0,
+            g: 0.23,
+            b: 0.19,
+            a: 1.0,
+        },
+        TagColor::Orange => gpui::Rgba {
+            r: 1.0,
+            g: 0.58,
+            b: 0.0,
+            a: 1.0,
+        },
+        TagColor::Yellow => gpui::Rgba {
+            r: 1.0,
+            g: 0.80,
+            b: 0.0,
+            a: 1.0,
+        },
+        TagColor::Green => gpui::Rgba {
+            r: 0.30,
+            g: 0.85,
+            b: 0.39,
+            a: 1.0,
+        },
+        TagColor::Blue => gpui::Rgba {
+            r: 0.0,
+            g: 0.48,
+            b: 1.0,
+            a: 1.0,
+        },
+        TagColor::Purple => gpui::Rgba {
+            r: 0.69,
+            g: 0.32,
+            b: 0.87,
+            a: 1.0,
+        },
+        TagColor::Gray => gpui::Rgba {
+            r: 0.56,
+            g: 0.56,
+            b: 0.58,
+            a: 1.0,
+        },
     }
 }
 

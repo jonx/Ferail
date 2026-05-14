@@ -19,11 +19,11 @@
 
 use std::path::PathBuf;
 
+use crate::assets::FeraAssets;
 use anyhow::{Context as _, Result};
 use feraille_fs_native::home_dir;
 use gpui::*;
 use gpui_component::{Theme, ThemeMode, WindowExt as _, notification::Notification};
-use crate::assets::FeraAssets;
 
 use crate::settings::{SettingsView, category_from_arg};
 use crate::shell::Shell;
@@ -300,6 +300,11 @@ pub fn run(args: Args) -> Result<()> {
         if let Some(mode) = theme_mode {
             Theme::change(mode, None, cx);
         }
+        // Build the singleton ProcessState and register it as a
+        // GPUI Global so the open_window factory (and any
+        // subsequent Shell::new) can read it back.
+        let process = Shell::build_process_state(cx);
+        cx.set_global(crate::process_state::ProcessStateGlobal(process));
 
         let path = path.clone();
         let settings_page = settings_page.clone();
@@ -343,7 +348,8 @@ pub fn run(args: Args) -> Result<()> {
                         let view = cx.new(|_| SettingsView::new(cat));
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else {
-                        let view = cx.new(|cx| Shell::new(window, cx));
+                        let process = crate::process_state::process_state(cx);
+                        let view = cx.new(|cx| Shell::new(process, window, cx));
                         shell_entity = Some(view.clone());
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     }
@@ -462,13 +468,23 @@ impl ShellArgs {
         }
         for path in self.new_tabs.iter().cloned() {
             let p = canonicalize_or_passthrough(&path);
-            let _ = shell.update(cx, |s, cx| {
-                let id = s.fs.id_for_path(&p);
-                s.node_store.get_or_create_path_with_id(p.clone(), id);
-                s.tabs.push(crate::shell::Tab::new(p, id));
-                s.active = s.tabs.len() - 1;
-                let cur = s.active_tab().current_dir.clone();
-                s.load_path(cur, cx);
+            // `make_tab` needs `&mut Window` to build the TableState
+            // entity and subscribe to it, so route through the
+            // window handle rather than the shell entity directly.
+            let shell_for_tab = shell.clone();
+            let _ = handle.update(cx, move |_root, window, cx| {
+                shell_for_tab.update(cx, |s, cx| {
+                    let id = s.process.fs.id_for_path(&p);
+                    s.process
+                        .node_store
+                        .borrow_mut()
+                        .get_or_create_path_with_id(p.clone(), id);
+                    let tab = s.make_tab(p.clone(), id, window, cx);
+                    s.tabs.push(tab);
+                    s.active = s.tabs.len() - 1;
+                    let cur = s.active_tab().current_dir.clone();
+                    s.load_path(cur, cx);
+                });
             });
         }
         if let Some(idx) = self.tab {
@@ -497,10 +513,11 @@ impl ShellArgs {
             let text_for_data = text.clone();
             let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
-                    s.filter_input.update(cx, |state, cx| {
+                    let input = s.active_tab().filter_input.clone();
+                    input.update(cx, |state, cx| {
                         state.set_value(text_for_input.clone(), window, cx);
                     });
-                    s.filter_text = text_for_data.clone();
+                    s.active_tab_mut().filter_text = text_for_data.clone();
                     let path = s.active_tab().current_dir.clone();
                     s.load_path(path, cx);
                 });
@@ -533,6 +550,7 @@ impl ShellArgs {
         if let Some(name) = self.select_name.clone() {
             let _ = shell.update(cx, |s, cx| {
                 let idx = s
+                    .active_tab()
                     .table
                     .read(cx)
                     .delegate()
@@ -549,7 +567,7 @@ impl ShellArgs {
         }
         if let Some((col, asc)) = self.sort.clone() {
             let _ = shell.update(cx, |s, cx| {
-                crate::file_list::apply_sort(&s.table, &col, asc, cx);
+                crate::file_list::apply_sort(&s.active_tab().table, &col, asc, cx);
             });
         }
         if self.rename {
@@ -581,7 +599,7 @@ impl ShellArgs {
         }
         if self.simulate_task_panel {
             let _ = shell.update(cx, |s, cx| {
-                let mut reg = s.tasks.borrow_mut();
+                let mut reg = s.process.tasks.borrow_mut();
                 let _ = reg.begin(
                     crate::tasks::TaskKind::Enumeration,
                     "Indexing 12,318 entries\u{2026}",

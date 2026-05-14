@@ -31,13 +31,13 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use smallvec::smallvec;
 use gpui_component::{
     ActiveTheme, Collapsible, h_flex,
     menu::ContextMenuExt as _,
     sidebar::{SidebarGroup, SidebarItem, SidebarMenu},
     v_flex,
 };
+use smallvec::smallvec;
 
 use crate::icons::IconCache;
 use crate::shell::Shell;
@@ -362,13 +362,13 @@ fn render_tree_row(
         })
         .on_click({
             let path = path.clone();
-            move |event, _window, cx| {
+            move |event, window, cx| {
                 if let Some(shell) = shell_for_label.upgrade() {
                     let modifiers = event.modifiers();
                     let path = path.clone();
                     shell.update(cx, |s, cx| {
                         if modifiers.platform {
-                            s.open_path_in_new_tab(path, cx);
+                            s.open_path_in_new_tab(path, window, cx);
                         } else {
                             s.navigate_node(label_node, cx);
                         }

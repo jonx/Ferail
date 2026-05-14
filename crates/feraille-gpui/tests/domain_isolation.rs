@@ -17,7 +17,7 @@
 use std::path::PathBuf;
 
 use feraille_core::{EntryKind, FsBackend};
-use feraille_fs_native::{home_dir, NativeFs};
+use feraille_fs_native::{NativeFs, home_dir};
 
 #[test]
 fn enumerate_home_via_domain_layer_only() {

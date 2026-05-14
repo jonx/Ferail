@@ -15,17 +15,17 @@
 //! `keystroke_to_command` matcher in `feraille-app/src/main.rs` is
 //! replaced by this single function call.
 
-use feraille_core::commands::{all_commands, CommandId, Shortcut};
+use feraille_core::commands::{CommandId, Shortcut, all_commands};
 use gpui::{App, KeyBinding};
 
 use crate::shell::{
-    self, ClearFilter, CloseTab, CopyPath, CursorDown, CursorDownExtend, CursorFirst,
+    self, ClearFilter, CloseTab, CloseWindow, CopyPath, CursorDown, CursorDownExtend, CursorFirst,
     CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp, CursorUpExtend, EditBreadcrumb,
     FocusFilter, GetInfo, GoHome, MoveToTrash, NavigateBack, NavigateForward, NavigateParent,
-    NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings,
-    PageDown, PageDownExtend, PageUp, PageUpExtend, PrevTab, QuickLook, Refresh,
-    RenameSelected, RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview,
-    ZoomIn, ZoomOut, ZoomReset,
+    NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, PageDown,
+    PageDownExtend, PageUp, PageUpExtend, PrevTab, QuickLook, Refresh, RenameSelected,
+    RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn, ZoomOut,
+    ZoomReset,
 };
 
 /// Install keybindings for every command in `feraille_core::commands`
@@ -91,11 +91,9 @@ fn translate_key(key: &str) -> Option<String> {
     let lower = key.to_ascii_lowercase();
     match lower.as_str() {
         // Named keys gpui's keystroke parser accepts.
-        "up" | "down" | "left" | "right" | "home" | "end" | "pageup" | "pagedown"
-        | "escape" | "enter" | "tab" | "space" | "backspace" | "delete" | "f1" | "f2"
-        | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9" | "f10" | "f11" | "f12" => {
-            Some(lower)
-        }
+        "up" | "down" | "left" | "right" | "home" | "end" | "pageup" | "pagedown" | "escape"
+        | "enter" | "tab" | "space" | "backspace" | "delete" | "f1" | "f2" | "f3" | "f4" | "f5"
+        | "f6" | "f7" | "f8" | "f9" | "f10" | "f11" | "f12" => Some(lower),
         // gpui doesn't currently accept `+` directly in keybind
         // strings (it's the chord separator). The catalogue lists
         // `+` as an alternate for zoom-in alongside `=`; binding
@@ -123,20 +121,14 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "file.new_folder" => cx.bind_keys([KeyBinding::new(kb_str, NewFolder, ctx)]),
         "file.move_to_trash" => cx.bind_keys([KeyBinding::new(kb_str, MoveToTrash, ctx)]),
         "file.copy_path" => cx.bind_keys([KeyBinding::new(kb_str, CopyPath, ctx)]),
-        "file.reveal_in_finder" => {
-            cx.bind_keys([KeyBinding::new(kb_str, RevealInFinder, ctx)])
-        }
+        "file.reveal_in_finder" => cx.bind_keys([KeyBinding::new(kb_str, RevealInFinder, ctx)]),
         "file.refresh" => cx.bind_keys([KeyBinding::new(kb_str, Refresh, ctx)]),
 
         // -- View -------------------------------------------------
         "view.search" => cx.bind_keys([KeyBinding::new(kb_str, FocusFilter, ctx)]),
         "view.toggle_hidden" => cx.bind_keys([KeyBinding::new(kb_str, ToggleHidden, ctx)]),
-        "view.edit_breadcrumb" => {
-            cx.bind_keys([KeyBinding::new(kb_str, EditBreadcrumb, ctx)])
-        }
-        "view.toggle_preview" => {
-            cx.bind_keys([KeyBinding::new(kb_str, TogglePreview, ctx)])
-        }
+        "view.edit_breadcrumb" => cx.bind_keys([KeyBinding::new(kb_str, EditBreadcrumb, ctx)]),
+        "view.toggle_preview" => cx.bind_keys([KeyBinding::new(kb_str, TogglePreview, ctx)]),
         "view.zoom_in" => cx.bind_keys([KeyBinding::new(kb_str, ZoomIn, ctx)]),
         "view.zoom_out" => cx.bind_keys([KeyBinding::new(kb_str, ZoomOut, ctx)]),
         "view.zoom_reset" => cx.bind_keys([KeyBinding::new(kb_str, ZoomReset, ctx)]),
@@ -146,15 +138,9 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
 
         // -- Selection cursor nav --------------------------------
         "selection.cursor_up" => cx.bind_keys([KeyBinding::new(kb_str, CursorUp, ctx)]),
-        "selection.cursor_down" => {
-            cx.bind_keys([KeyBinding::new(kb_str, CursorDown, ctx)])
-        }
-        "selection.cursor_first" => {
-            cx.bind_keys([KeyBinding::new(kb_str, CursorFirst, ctx)])
-        }
-        "selection.cursor_last" => {
-            cx.bind_keys([KeyBinding::new(kb_str, CursorLast, ctx)])
-        }
+        "selection.cursor_down" => cx.bind_keys([KeyBinding::new(kb_str, CursorDown, ctx)]),
+        "selection.cursor_first" => cx.bind_keys([KeyBinding::new(kb_str, CursorFirst, ctx)]),
+        "selection.cursor_last" => cx.bind_keys([KeyBinding::new(kb_str, CursorLast, ctx)]),
         "selection.page_up" => cx.bind_keys([KeyBinding::new(kb_str, PageUp, ctx)]),
         "selection.page_down" => cx.bind_keys([KeyBinding::new(kb_str, PageDown, ctx)]),
 
@@ -181,9 +167,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "go.home" => cx.bind_keys([KeyBinding::new(kb_str, GoHome, ctx)]),
 
         // -- Selection --------------------------------------------
-        "selection.activate" => {
-            cx.bind_keys([KeyBinding::new(kb_str, OpenSelected, ctx)])
-        }
+        "selection.activate" => cx.bind_keys([KeyBinding::new(kb_str, OpenSelected, ctx)]),
         "selection.rename" | "selection.start_rename" => {
             cx.bind_keys([KeyBinding::new(kb_str, RenameSelected, ctx)])
         }
@@ -193,18 +177,15 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "selection.expand_or_first_child" => {
             cx.bind_keys([KeyBinding::new(kb_str, OpenSelected, ctx)])
         }
-        "selection.dismiss" => {
-            cx.bind_keys([KeyBinding::new(kb_str, ClearFilter, ctx)])
-        }
+        "selection.dismiss" => cx.bind_keys([KeyBinding::new(kb_str, ClearFilter, ctx)]),
 
         // -- Window: tab cycling ---------------------------------
         "window.next_tab" => cx.bind_keys([KeyBinding::new(kb_str, NextTab, ctx)]),
         "window.prev_tab" => cx.bind_keys([KeyBinding::new(kb_str, PrevTab, ctx)]),
+        "window.close_window" => cx.bind_keys([KeyBinding::new(kb_str, CloseWindow, ctx)]),
 
         // -- File: open in new tab -------------------------------
-        "file.open_in_new_tab" => {
-            cx.bind_keys([KeyBinding::new(kb_str, OpenInNewTab, ctx)])
-        }
+        "file.open_in_new_tab" => cx.bind_keys([KeyBinding::new(kb_str, OpenInNewTab, ctx)]),
 
         // -- Tab cycling. These aren't in the canonical catalogue
         //    yet (Stage 5.5.d added them locally); bind from the
@@ -218,7 +199,12 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         // tracks status authoritatively. New commands fall through
         // to the _ arm below which DOES log so genuinely-unknown
         // IDs still surface.
-        "app.about"
+        // `window.new_window` is bound at App level (Cmd+N opens a new
+        // shell window regardless of focus). main.rs installs the
+        // binding directly via `cx.bind_keys` — we leave it out of
+        // SHELL_CONTEXT here so a missing-focus user can still hit it.
+        "window.new_window"
+        | "app.about"
         | "view.cycle_focus"
         | "view.theme_light"
         | "view.theme_dark"
@@ -256,11 +242,7 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("cmd-t", NewTab, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("cmd-w", CloseTab, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("ctrl-tab", NextTab, Some(shell::SHELL_CONTEXT)),
-        KeyBinding::new(
-            "ctrl-shift-tab",
-            PrevTab,
-            Some(shell::SHELL_CONTEXT),
-        ),
+        KeyBinding::new("ctrl-shift-tab", PrevTab, Some(shell::SHELL_CONTEXT)),
         // Stage 8: macOS Quick Look. Space-bar on the selected row
         // pops the QL panel. Not in the catalogue because Quick
         // Look is a macOS-specific affordance; the binding lives
@@ -304,8 +286,16 @@ pub(crate) fn install_extras(cx: &mut App) {
         // and Cmd+Shift for first/last extend.
         KeyBinding::new("shift-up", CursorUpExtend, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("shift-down", CursorDownExtend, Some(shell::SHELL_CONTEXT)),
-        KeyBinding::new("cmd-shift-up", CursorFirstExtend, Some(shell::SHELL_CONTEXT)),
-        KeyBinding::new("cmd-shift-down", CursorLastExtend, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new(
+            "cmd-shift-up",
+            CursorFirstExtend,
+            Some(shell::SHELL_CONTEXT),
+        ),
+        KeyBinding::new(
+            "cmd-shift-down",
+            CursorLastExtend,
+            Some(shell::SHELL_CONTEXT),
+        ),
         KeyBinding::new("shift-home", CursorFirstExtend, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("shift-end", CursorLastExtend, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("shift-pageup", PageUpExtend, Some(shell::SHELL_CONTEXT)),

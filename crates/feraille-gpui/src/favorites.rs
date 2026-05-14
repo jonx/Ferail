@@ -26,7 +26,10 @@ use gpui::{AppContext, Context, EventEmitter};
 pub enum FavoritesEvent {
     /// A new entry was appended or inserted. `index` is its position in
     /// the sorted entry list — useful for the §2.2 fade-in animation.
-    Added { id: FavoriteId, index: usize },
+    Added {
+        id: FavoriteId,
+        index: usize,
+    },
     /// An entry was removed. The full entry payload rides along so the
     /// `UndoOp::RemoveFavorite` variant (iter 6) can capture it without
     /// a separate clone.
@@ -122,11 +125,7 @@ impl Favorites {
         let probes: Vec<(FavoriteId, PathBuf, FavoriteKind)> = self
             .entries
             .iter()
-            .filter_map(|f| {
-                f.target
-                    .as_path()
-                    .map(|p| (f.id, p.to_path_buf(), f.kind))
-            })
+            .filter_map(|f| f.target.as_path().map(|p| (f.id, p.to_path_buf(), f.kind)))
             .collect();
         if probes.is_empty() {
             return;
@@ -331,18 +330,14 @@ impl Favorites {
             return;
         }
         let (before, after) = match by.signum() {
-            -1 if target == 0 => (
-                f64::NEG_INFINITY,
-                self.entries[target].sort_index,
-            ),
+            -1 if target == 0 => (f64::NEG_INFINITY, self.entries[target].sort_index),
             -1 => (
                 self.entries[target - 1].sort_index,
                 self.entries[target].sort_index,
             ),
-            1 if target == self.entries.len() - 1 => (
-                self.entries[target].sort_index,
-                f64::INFINITY,
-            ),
+            1 if target == self.entries.len() - 1 => {
+                (self.entries[target].sort_index, f64::INFINITY)
+            }
             1 => (
                 self.entries[target].sort_index,
                 self.entries[target + 1].sort_index,
@@ -352,12 +347,7 @@ impl Favorites {
         self.reorder_between(id, before, after, cx);
     }
 
-    pub fn rename(
-        &mut self,
-        id: FavoriteId,
-        new_name: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn rename(&mut self, id: FavoriteId, new_name: Option<String>, cx: &mut Context<Self>) {
         let Some(pos) = self.entries.iter().position(|f| f.id == id) else {
             return;
         };
@@ -368,12 +358,7 @@ impl Favorites {
         cx.notify();
     }
 
-    pub fn set_icon(
-        &mut self,
-        id: FavoriteId,
-        icon: Option<FavoriteIcon>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_icon(&mut self, id: FavoriteId, icon: Option<FavoriteIcon>, cx: &mut Context<Self>) {
         let Some(pos) = self.entries.iter().position(|f| f.id == id) else {
             return;
         };
@@ -386,12 +371,7 @@ impl Favorites {
 
     /// Repoint `id` at a new target while keeping its identity. Used
     /// by the §8 Locate… flow.
-    pub fn repoint(
-        &mut self,
-        id: FavoriteId,
-        new_target: FavoriteTarget,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn repoint(&mut self, id: FavoriteId, new_target: FavoriteTarget, cx: &mut Context<Self>) {
         let Some(pos) = self.entries.iter().position(|f| f.id == id) else {
             return;
         };

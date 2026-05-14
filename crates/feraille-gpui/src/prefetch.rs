@@ -21,7 +21,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use feraille_core::FileEntry;
-use feraille_fs_native::{detect_magic, fetch_quarantine_info, NativeFs};
+use feraille_fs_native::{NativeFs, detect_magic, fetch_quarantine_info};
 use feraille_meta::{FileMetaRecord, MetadataDb};
 use gpui::Entity;
 
@@ -148,10 +148,7 @@ pub fn start(
 /// Body of the background pass. For each seed: cache lookup first
 /// (cheap, hits the SQLite WAL); on miss, sniff + xattr-read; write
 /// through to DB; produce a result row.
-fn run_worker(
-    seeds: Vec<PrefetchSeed>,
-    db: Option<Arc<Mutex<MetadataDb>>>,
-) -> Vec<PrefetchRow> {
+fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> Vec<PrefetchRow> {
     let mut out = Vec::with_capacity(seeds.len());
     for seed in seeds {
         // If FileEntry already carries the data (rare — only when
@@ -183,7 +180,9 @@ fn run_worker(
                     q,
                     cached.as_ref().and_then(|r| r.quarantine_agent.clone()),
                     cached.as_ref().and_then(|r| r.quarantine_iso.clone()),
-                    cached.as_ref().and_then(|r| r.quarantine_where_from.clone()),
+                    cached
+                        .as_ref()
+                        .and_then(|r| r.quarantine_where_from.clone()),
                 ),
                 None => {
                     let info = fetch_quarantine_info(&seed.path);

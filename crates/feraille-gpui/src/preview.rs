@@ -87,13 +87,18 @@ impl PreviewCache {
 ///
 /// Call sites already hold `&mut Shell` (we're inside a shell
 /// update closure), so the cache mutation goes straight against
-/// `shell.preview_cache` rather than re-reading the entity through
-/// `cx.entity()` — that would trigger the GPUI re-entrancy guard.
+/// `shell.process.preview_cache` rather than re-reading the entity
+/// through `cx.entity()` — that would trigger the GPUI re-entrancy
+/// guard.
 pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) {
-    if shell.preview_cache.get(&path).is_some() {
+    if shell.process.preview_cache.borrow().get(&path).is_some() {
         return;
     }
-    shell.preview_cache.insert(path.clone(), PreviewState::Pending);
+    shell
+        .process
+        .preview_cache
+        .borrow_mut()
+        .insert(path.clone(), PreviewState::Pending);
 
     let weak = cx.weak_entity();
     cx.spawn(async move |_this, cx| {
@@ -119,7 +124,7 @@ async fn apply_result(
     };
     let Some(shell) = weak.upgrade() else { return };
     let _ = shell.update(cx, |shell, cx| {
-        shell.preview_cache.insert(path, state);
+        shell.process.preview_cache.borrow_mut().insert(path, state);
         cx.notify();
     });
 }

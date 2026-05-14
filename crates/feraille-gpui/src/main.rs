@@ -15,15 +15,23 @@ use feraille_gpui::{
     screenshot,
     settings::{SettingsView, category_from_arg},
     shell::{
-        CloseTab, CopyPath, FocusFilter, GoHome, MoveToTrash, NavigateBack, NavigateForward,
-        NavigateParent, NewFolder, NewTab, OpenSelected, OpenSettings, Refresh, RenameSelected,
-        RevealInFinder, Shell, ToggleHidden,
+        CloseTab, CloseWindow, CopyPath, FocusFilter, GoHome, MoveToTrash, NavigateBack,
+        NavigateForward, NavigateParent, NewFolder, NewTab, OpenSelected, OpenSettings, Refresh,
+        RenameSelected, RevealInFinder, Shell, ToggleHidden,
     },
 };
 use gpui::*;
 use gpui_component::Theme;
 
-actions!(app, [Quit, OpenAbout]);
+// App-scoped actions. These fire regardless of whether a Shell window
+// owns focus, so they're bound via `cx.on_action` at the App level
+// rather than under the `SHELL_CONTEXT` keymap.
+//
+// - `Quit`        — Cmd+Q
+// - `OpenAbout`   — About menu item
+// - `NewWindow`   — Cmd+N. Opens a fresh window sharing the singleton
+//                   `ProcessState`. See `open_new_window`.
+actions!(app, [Quit, OpenAbout, NewWindow]);
 
 /// macOS Dock icon — set early via `NSApplication.setApplicationIconImage:`
 /// (the same call the old app makes). Bytes embedded so the binary is
@@ -312,16 +320,11 @@ fn run_gui(args: screenshot::Args) {
         // the menu item below can advertise the shortcut hint).
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
-        // GPUI keeps the app loop running after the last window
-        // closes; on macOS that leaves a zombie process with no UI.
-        // on_window_closed fires *after* removal, so an empty
-        // cx.windows() means this was the final window.
-        cx.on_window_closed(|cx, _id| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
-        })
-        .detach();
+        // Phase C: process stays resident at zero windows (Finder /
+        // Safari model). Quit only via Cmd+Q or the app menu. A future
+        // preference may toggle this back to "quit on last window."
+        // (Phase I will also wire dock-icon-with-zero-windows to
+        // reopen a window via NSApplicationDelegate.)
         // App-level OpenSettings handler so the menu-bar item is
         // always enabled, not just when a Shell window has focus.
         // The Shell-context listener for OpenSettings still wins
@@ -337,39 +340,103 @@ fn run_gui(args: screenshot::Args) {
             feraille_shell_mac::show_about_panel();
         });
 
-        install_app_menus(cx);
+        // Build the singleton ProcessState before opening any window
+        // and stash it as a GPUI Global. Every Shell::new (this window,
+        // future Cmd+N windows, screenshot path) reads the same Rc
+        // through `process_state::process_state(cx)`.
+        let process = feraille_gpui::shell::Shell::build_process_state(cx);
+        cx.set_global(feraille_gpui::process_state::ProcessStateGlobal(process));
 
-        let opts = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(width), px(height)), cx)),
-            // Phase 7: gpui-component's TitleBar replaces the macOS
-            // default title text + adopts the traffic-light area so
-            // our custom title-bar content (name + filter + nav)
-            // sits flush across the top of the window.
-            titlebar: Some(gpui_component::TitleBar::title_bar_options()),
-            ..Default::default()
-        };
+        // Cmd+N → new window. The handler runs at App level so the
+        // binding works regardless of which window holds focus, and
+        // works with zero windows (after the last window closes the
+        // process stays resident, Cmd+N reopens).
+        cx.bind_keys([KeyBinding::new("cmd-n", NewWindow, None)]);
+        cx.on_action(|_: &NewWindow, cx| {
+            open_shell_window(cx);
+        });
+
+        install_app_menus(cx);
 
         // [NSApp activateIgnoringOtherApps:YES] — without this the
         // terminal that invoked us keeps key-window status and our
         // window opens unfocused behind it.
         cx.activate(true);
 
-        let settings_page = settings_page.clone();
-        cx.spawn(async move |cx| {
-            cx.open_window(opts, |window, cx| {
-                if let Some(page) = settings_page.as_deref() {
-                    let cat = category_from_arg(if page.is_empty() { None } else { Some(page) });
+        // First window. The size hints from `--width` / `--height`
+        // apply only to this initial window; future Cmd+N windows
+        // use defaults from `open_shell_window`.
+        if let Some(page) = settings_page.clone() {
+            // Direct-into-settings boot path (CLI). Skips the shell.
+            let opts = settings_window_opts(width, height);
+            cx.spawn(async move |cx| {
+                cx.open_window(opts, |window, cx| {
+                    let cat = category_from_arg(if page.is_empty() {
+                        None
+                    } else {
+                        Some(page.as_str())
+                    });
                     let view = cx.new(|_| SettingsView::new(cat));
                     cx.new(|cx| gpui_component::Root::new(view, window, cx))
-                } else {
-                    let view = cx.new(|cx| Shell::new(window, cx));
-                    cx.new(|cx| gpui_component::Root::new(view, window, cx))
-                }
+                })
+                .expect("failed to open feraille settings window");
             })
-            .expect("failed to open feraille-gpui window");
-        })
-        .detach();
+            .detach();
+        } else {
+            let initial_size = (width, height);
+            cx.spawn(async move |cx| {
+                let _ = cx.update(|cx| {
+                    open_shell_window_sized(cx, Some(initial_size));
+                });
+            })
+            .detach();
+        }
     });
+}
+
+/// Bounds for the initial settings-only boot path. Uses windowed
+/// geometry at the requested size — `WindowBounds::centered` needs
+/// an `&mut App` (display metrics) which we don't have inside the
+/// async spawn, and the settings boot path is rare enough that
+/// top-left positioning is fine.
+fn settings_window_opts(width: f32, height: f32) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds {
+            origin: Default::default(),
+            size: size(px(width), px(height)),
+        })),
+        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
+        ..Default::default()
+    }
+}
+
+/// Spawn a new Shell window using the singleton `ProcessState`. The
+/// handler bound to `Cmd+N` (and the initial-window boot path) both
+/// route through this so there's one place that owns window options
+/// and process-state hookup.
+fn open_shell_window(cx: &mut App) {
+    open_shell_window_sized(cx, None);
+}
+
+fn open_shell_window_sized(cx: &mut App, size_hint: Option<(f32, f32)>) {
+    let (w, h) = size_hint.unwrap_or((1180.0, 760.0));
+    let opts = WindowOptions {
+        window_bounds: Some(WindowBounds::centered(size(px(w), px(h)), cx)),
+        // gpui-component's TitleBar replaces the macOS default title
+        // text + adopts the traffic-light area so our custom title-
+        // bar content (brand + filter + nav) sits flush across the top.
+        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
+        ..Default::default()
+    };
+    cx.spawn(async move |cx| {
+        cx.open_window(opts, |window, cx| {
+            let process = feraille_gpui::process_state::process_state(cx);
+            let view = cx.new(|cx| Shell::new(process, window, cx));
+            cx.new(|cx| gpui_component::Root::new(view, window, cx))
+        })
+        .expect("failed to open feraille-gpui window");
+    })
+    .detach();
 }
 
 /// Build and install the macOS application menu bar. Titles for
@@ -398,8 +465,10 @@ fn install_app_menus(cx: &mut App) {
         Menu {
             name: "File".into(),
             items: vec![
+                MenuItem::action(title("window.new_window", "New Window"), NewWindow),
                 MenuItem::action(title("file.new_tab", "New Tab"), NewTab),
                 MenuItem::action(title("file.close_tab", "Close Tab"), CloseTab),
+                MenuItem::action(title("window.close_window", "Close Window"), CloseWindow),
                 MenuItem::separator(),
                 MenuItem::action(title("file.new_folder", "New Folder"), NewFolder),
                 MenuItem::action(title("selection.rename", "Rename"), RenameSelected),
