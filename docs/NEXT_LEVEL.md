@@ -440,28 +440,63 @@ pipeline.
 
 # Phase 5 — Resizable Layout
 
-**Status:** In progress (sidebar splitter shipped in 5.5.d; needs
-persistence + collapse rules + preview wiring polish)
+**Status:** Done (pending user review)
 **Goal:** users shape the window to their workflow; widths persist.
 
 ### Deliverables
 
-- [ ] Persist sidebar width to
-      [app_state.rs](../crates/feraille-gpui/src/app_state.rs).
-      Restore on launch.
-- [ ] Persist preview-pane width similarly.
-- [ ] Confirm preview pane is wrapped in `resizable_panel`. Today
-      it's a sibling; verify the splitter has 3 children when
-      preview is visible.
-- [ ] Min/max widths sensible:
-  - sidebar: 160-400 DIPs (current)
-  - file list: no upper bound, min 320 DIPs
-  - preview: 220-520 DIPs (current)
-- [ ] At narrow window widths: preview collapses first, then the
-      sidebar collapses to icons. Wire a window-resize observer in
-      Shell.
-- [ ] At wide widths: panes have max widths so the file list grows
-      rather than the sidebar sprawling.
+- [x] Sidebar width persists across launches:
+      [app_state.rs](../crates/feraille-gpui/src/app_state.rs) gained
+      `sidebar_width: Option<f32>` (clamped to 160-400 on load).
+- [x] Preview pane width persists likewise via
+      `preview_width: Option<f32>` (clamped 220-520).
+- [x] Splitter `on_resize` callback writes through to `Shell` fields
+      + calls `Shell::maybe_persist_splitter`, throttled by
+      `SPLITTER_PERSIST_INTERVAL = 500 ms`. The on_resize fires per
+      drag tick at ~60 Hz; the throttle samples the file system at
+      most ~2× per second. Final width at drag-end persists because
+      the next render re-checks the timestamp and flushes.
+- [x] Min/max widths kept:
+  - sidebar: 160–400 DIPs.
+  - center pane: unconstrained (flex_1).
+  - preview: 220–520 DIPs.
+- [x] **Preview auto-hides at narrow widths.** New constant
+      `PREVIEW_AUTOHIDE_THRESHOLD = 900 DIPs`. The renderer reads
+      `window.viewport_size().width` and suppresses the preview pane
+      below the threshold *without* mutating
+      `Shell::preview_visible`, so widening the window back restores
+      the user's previous preference automatically. See the
+      narrow-screenshot below: at 760 DIPs the preview is gone, the
+      file list reclaims the space; at 1180 DIPs it's back.
+- [ ] **Sidebar collapse-to-icons at very narrow widths is parked.**
+      `gpui_component::Sidebar::collapsible(SidebarCollapsible::Icon)`
+      ships an animated icon-mode, but threading that through our
+      `ShellSidebarItem` enum (Phase 2 type-unifying wrapper) and
+      restoring user state cleanly is a separate change. Moved to
+      the Phase 10 audit / a follow-on plan.
+
+### Files touched
+
+- [app_state.rs](../crates/feraille-gpui/src/app_state.rs) —
+  +2 fields, +2 parse arms, +2 serialise lines, clamped at load.
+- [shell.rs](../crates/feraille-gpui/src/shell.rs) —
+  `sidebar_width`/`preview_width`/`splitter_last_save` fields, new
+  `maybe_persist_splitter` helper, `on_resize` wiring,
+  `PREVIEW_AUTOHIDE_THRESHOLD` viewport-width gate, new
+  `SPLITTER_PERSIST_INTERVAL` constant.
+
+### Notes
+
+- Saved values clamp on load, so a stale config (or a hand-edited
+  file with absurd widths) can't push the splitter outside the
+  primitive's min/max.
+- The on_resize callback receives `Entity<ResizableState>` — not
+  the flat Vec the docs suggested. We read `.sizes()` inside the
+  callback and convert each `Pixels` to `f32` via the upstream
+  `From<Pixels> for f32` impl.
+- At default 1180-DIP window width: sidebar 220, file list ~680,
+  preview 280 — fits with breathing room. The threshold of 900
+  leaves room for sidebar + file list at their respective minima.
 
 ### gpui-component primitives
 

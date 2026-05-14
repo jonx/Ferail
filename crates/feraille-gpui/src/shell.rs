@@ -29,7 +29,7 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::app_state::{self, AppState};
+use crate::app_state;
 use crate::file_list::FileListDelegate;
 use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
 use crate::icons::IconCache;
@@ -241,6 +241,19 @@ pub struct Shell {
     /// columns. Persists across renders so the drag handles work as
     /// expected; sizes survive theme changes etc.
     pub splitter_state: Entity<gpui_component::resizable::ResizableState>,
+    /// Current sidebar width in DIPs (next-level Phase 5). Read from
+    /// `app_state::sidebar_width` at construction (or the default
+    /// 220), threaded into `resizable_panel().size(...)` on every
+    /// render, and updated from the splitter's `on_resize` callback
+    /// when the user drags the handle.
+    pub sidebar_width: f32,
+    /// Current preview pane width. Same lifecycle as `sidebar_width`.
+    pub preview_width: f32,
+    /// Timestamp of the last persistence write for the splitter
+    /// widths. The on_resize callback fires per drag tick — we
+    /// debounce the file write to ~once per `SPLITTER_PERSIST_INTERVAL`
+    /// so a drag doesn't hammer the config file.
+    pub splitter_last_save: Option<std::time::Instant>,
     /// Sidebar tree state (Stage 9.c): which directories are
     /// currently expanded. Updated on caret-click and by the
     /// `--expand <path>` CLI flag (which walks the path's ancestors).
@@ -422,6 +435,18 @@ const FAVORITES: &[Favorite] = &[
 
 const ICON_WARM_CHUNK: usize = 16;
 const ICON_WARM_INTERVAL: Duration = Duration::from_millis(16);
+
+/// How often the splitter's drag callback is allowed to write the
+/// app_state config file. 500 ms means a continuous drag samples ~2
+/// times per second to disk; the final width at drag-end persists
+/// because the next render re-checks the interval and flushes.
+const SPLITTER_PERSIST_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Window viewport width (DIPs) below which the preview pane is
+/// auto-hidden regardless of `preview_visible`. The threshold leaves
+/// roughly: sidebar 220 + file list ~500 + preview 280 = 1000, so
+/// dropping under ~900 makes the file list painfully narrow.
+const PREVIEW_AUTOHIDE_THRESHOLD: f32 = 900.0;
 
 impl Favorite {
     fn path(&self) -> PathBuf {
@@ -614,6 +639,9 @@ impl Shell {
             ui_scale,
             preview_cache: crate::preview::PreviewCache::new(),
             splitter_state: cx.new(|_| gpui_component::resizable::ResizableState::default()),
+            sidebar_width: persisted.sidebar_width.unwrap_or(220.0).clamp(160.0, 400.0),
+            preview_width: persisted.preview_width.unwrap_or(280.0).clamp(220.0, 520.0),
+            splitter_last_save: None,
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
             ant_visits: HashMap::new(),
@@ -933,6 +961,30 @@ impl Shell {
     /// current directory. Spawns a new native window; if opening
     /// fails (rare — only when gpui can't allocate a window), the
     /// failure is logged-and-ignored.
+    /// Throttled persistence of the splitter pane widths. Called
+    /// from the `on_resize` callback (fires per drag tick at 60 Hz).
+    /// Writes the config file at most once per
+    /// `SPLITTER_PERSIST_INTERVAL`; the final width at drag-end
+    /// always lands because subsequent renders re-check the
+    /// interval and flush. Trades a few-hundred-millisecond
+    /// recoverability against not hammering the file system.
+    fn maybe_persist_splitter(&mut self) {
+        use std::time::Instant;
+        let now = Instant::now();
+        let should_save = match self.splitter_last_save {
+            Some(t) => now.duration_since(t) >= SPLITTER_PERSIST_INTERVAL,
+            None => true,
+        };
+        if !should_save {
+            return;
+        }
+        self.splitter_last_save = Some(now);
+        let mut state = app_state::load();
+        state.sidebar_width = Some(self.sidebar_width);
+        state.preview_width = Some(self.preview_width);
+        app_state::save(&state);
+    }
+
     pub fn on_open_disk_usage(
         &mut self,
         _: &OpenDiskUsage,
@@ -1143,13 +1195,11 @@ impl Shell {
         let ui_scale = self.ui_scale;
         cx.background_executor()
             .spawn(async move {
-                let existing = app_state::load();
-                app_state::save(&AppState {
-                    last_dir: Some(last_dir),
-                    show_hidden: Some(show_hidden),
-                    theme_pref: existing.theme_pref,
-                    ui_scale: Some(ui_scale),
-                });
+                let mut s = app_state::load();
+                s.last_dir = Some(last_dir);
+                s.show_hidden = Some(show_hidden);
+                s.ui_scale = Some(ui_scale);
+                app_state::save(&s);
             })
             .detach();
     }
@@ -2439,16 +2489,50 @@ impl Render for Shell {
                 // task summary + progress strip is always visible.
                 use gpui_component::resizable::{h_resizable, resizable_panel};
                 let file_body = self.file_pane_body(cx);
-                let preview_pane = if self.preview_visible {
+                // Auto-hide the preview when the window is too narrow
+                // to fit sidebar + file list + preview comfortably.
+                // The user's explicit `preview_visible` flag still
+                // wins when there's room — the threshold only
+                // suppresses the pane, never re-enables it.
+                let viewport_w = f32::from(window.viewport_size().width);
+                let preview_visible =
+                    self.preview_visible && viewport_w >= PREVIEW_AUTOHIDE_THRESHOLD;
+                let preview_pane = if preview_visible {
                     Some(self.preview(cx))
                 } else {
                     None
                 };
+                // Pull the persisted widths into the panels' initial
+                // `.size(...)` — they survive across launches because
+                // they're written through `on_resize` to app_state
+                // (debounced via SPLITTER_PERSIST_INTERVAL below).
+                let sidebar_width_px = px(self.sidebar_width);
+                let preview_width_px = px(self.preview_width);
+                let weak = cx.weak_entity();
                 let splitter = h_resizable("shell-splitter")
                     .with_state(&self.splitter_state)
+                    .on_resize(move |state, _window, cx| {
+                        // Callback fires per drag tick. Read sizes
+                        // out of the ResizableState, write them back
+                        // into Shell so the next render re-applies
+                        // them, and push to disk through the
+                        // throttled writer.
+                        let sizes = state.read(cx).sizes().clone();
+                        if let Some(s) = weak.upgrade() {
+                            s.update(cx, |this, _cx| {
+                                if let Some(sw) = sizes.first() {
+                                    this.sidebar_width = f32::from(*sw);
+                                }
+                                if preview_visible && sizes.len() >= 3 {
+                                    this.preview_width = f32::from(sizes[2]);
+                                }
+                                this.maybe_persist_splitter();
+                            });
+                        }
+                    })
                     .child(
                         resizable_panel()
-                            .size(px(220.0))
+                            .size(sidebar_width_px)
                             .size_range(px(160.0)..px(400.0))
                             .child(sidebar),
                     )
@@ -2465,7 +2549,7 @@ impl Render for Shell {
                 let splitter = if let Some(pane) = preview_pane {
                     splitter.child(
                         resizable_panel()
-                            .size(px(280.0))
+                            .size(preview_width_px)
                             .size_range(px(220.0)..px(520.0))
                             .child(pane),
                     )

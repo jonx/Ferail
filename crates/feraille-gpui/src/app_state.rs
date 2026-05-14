@@ -22,6 +22,12 @@ pub struct AppState {
     /// User UI zoom factor (Cmd+= / Cmd+- / Cmd+0). Clamped at
     /// load to the same `[0.6, 2.0]` range Shell uses.
     pub ui_scale: Option<f32>,
+    /// Sidebar width in DIPs (next-level Phase 5). Clamped at load
+    /// to the resizable_panel's accepted range so a stale value
+    /// can't force the splitter outside its min/max.
+    pub sidebar_width: Option<f32>,
+    /// Preview pane width in DIPs. Same clamp story.
+    pub preview_width: Option<f32>,
 }
 
 #[cfg(target_os = "macos")]
@@ -82,6 +88,20 @@ pub fn load() -> AppState {
                     .ok()
                     .map(|n| n.clamp(0.6, 2.0));
             }
+            "sidebar_width" => {
+                out.sidebar_width = val
+                    .trim()
+                    .parse::<f32>()
+                    .ok()
+                    .map(|n| n.clamp(160.0, 400.0));
+            }
+            "preview_width" => {
+                out.preview_width = val
+                    .trim()
+                    .parse::<f32>()
+                    .ok()
+                    .map(|n| n.clamp(220.0, 520.0));
+            }
             _ => {}
         }
     }
@@ -105,6 +125,12 @@ pub fn save(state: &AppState) {
     }
     if let Some(z) = state.ui_scale {
         s.push_str(&format!("ui_scale={z}\n"));
+    }
+    if let Some(w) = state.sidebar_width {
+        s.push_str(&format!("sidebar_width={w}\n"));
+    }
+    if let Some(w) = state.preview_width {
+        s.push_str(&format!("preview_width={w}\n"));
     }
     let _ = std::fs::write(dir.join(FILENAME), s);
 }
