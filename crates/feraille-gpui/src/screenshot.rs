@@ -296,7 +296,7 @@ pub fn run(args: Args) -> Result<()> {
         // Register the dock icon — see comment in main.rs::run_gui;
         // must happen post-NSApplication-init.
         const APP_ICON_PNG: &[u8] = include_bytes!("../resources/feraille.png");
-        let _ = feraille_shell_mac::set_app_icon_from_png_bytes(APP_ICON_PNG);
+        let _ = crate::platform_shell::set_app_icon_from_png_bytes(APP_ICON_PNG);
         if let Some(mode) = theme_mode {
             Theme::change(mode, None, cx);
         }

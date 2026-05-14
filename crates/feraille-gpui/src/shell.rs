@@ -113,7 +113,7 @@ const UNDO_STACK_CAP: usize = 20;
 pub const SHELL_CONTEXT: &str = "Shell";
 
 /// Phase 10: live System-Appearance follow. The macOS observer in
-/// `feraille_shell_mac::start_system_theme_observer` runs on the main
+/// `crate::platform_shell::start_system_theme_observer` runs on the main
 /// thread but has no `&mut App` — it can't call `Theme::change` itself.
 /// Instead it pushes the latest dark-mode bool here; Shell::render
 /// consumes the pending value (if any) and calls `Theme::change`
@@ -1865,7 +1865,7 @@ impl Shell {
             .unwrap_or_default();
         // Native NSAlert prompt — keeps the rename path simple and
         // matches macOS feel. Renaming the shortcut, not the folder.
-        let next = feraille_shell_mac::prompt_for_text(
+        let next = crate::platform_shell::prompt_for_text(
             "Rename Favorite",
             "Renames the shortcut\u{2019}s label only, not the folder on disk.",
             &current,

@@ -113,7 +113,7 @@ impl ThemePref {
             ThemePref::Light => ThemeMode::Light,
             ThemePref::Dark => ThemeMode::Dark,
             ThemePref::System => {
-                if feraille_shell_mac::system_is_dark() {
+                if crate::platform_shell::system_is_dark() {
                     ThemeMode::Dark
                 } else {
                     ThemeMode::Light

@@ -55,7 +55,7 @@ pub struct FileListDelegate {
     pub heats: Vec<f32>,
     /// Finder colour tags per row, parallel to `entries`. Populated
     /// lazily by `load()` (synchronous bulk read via
-    /// `feraille_shell_mac::read_canonical_tags`, capped at the first
+    /// `crate::platform_shell::read_canonical_tags`, capped at the first
     /// N rows so a 50k-file folder doesn't pay the per-row xattr
     /// lookup synchronously on the UI thread). Renderer pairs each
     /// row's slot with the name cell to draw small coloured dots.
@@ -167,7 +167,7 @@ impl FileListDelegate {
         for entry in self.entries.iter().take(TAG_PREFETCH_CAP) {
             let tags = self
                 .path_for_entry(entry.id)
-                .map(|p| feraille_shell_mac::read_canonical_tags(&p))
+                .map(|p| crate::platform_shell::read_canonical_tags(&p))
                 .unwrap_or_default();
             self.tags.push(tags);
         }
@@ -507,13 +507,13 @@ impl TableDelegate for FileListDelegate {
             .entries
             .get(row_ix)
             .and_then(|entry| self.path_for_entry(entry.id));
-        let open_with_candidates: Vec<feraille_shell_mac::OpenWithCandidate> = target_path
+        let open_with_candidates: Vec<crate::platform_shell::OpenWithCandidate> = target_path
             .as_ref()
-            .map(|p| feraille_shell_mac::open_with_candidates(p))
+            .map(|p| crate::platform_shell::open_with_candidates(p))
             .unwrap_or_default();
         let applied_tags: Vec<feraille_core::commands::TagColor> = target_path
             .as_ref()
-            .map(|p| feraille_shell_mac::read_canonical_tags(p))
+            .map(|p| crate::platform_shell::read_canonical_tags(p))
             .unwrap_or_default();
 
         // Tags submenu — built as a nested PopupMenu Entity via

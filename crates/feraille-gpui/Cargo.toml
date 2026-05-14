@@ -55,7 +55,16 @@ feraille-fs-native.workspace = true
 feraille-design.workspace = true
 feraille-meta.workspace = true
 feraille-disk-usage.workspace = true
+
+# Platform shell — one impl per target OS. The crate's `pub fn`
+# surface mirrors between the two so `crate::platform_shell` (in
+# `lib.rs`) can alias them with a single `#[cfg]` switch; gpui call
+# sites use `platform_shell::*` and don't care which is active.
+[target.'cfg(target_os = "macos")'.dependencies]
 feraille-shell-mac.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+feraille-shell-win32.workspace = true
 
 [dev-dependencies]
 # Phase 2 isolation test still lives here. It now ALSO doubles as a

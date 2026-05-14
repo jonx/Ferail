@@ -33,3 +33,19 @@ pub mod status_bar;
 pub mod task_panel;
 pub mod tasks;
 pub mod tree;
+
+/// Platform shell abstraction. Resolves to `feraille_shell_mac` on
+/// macOS and `feraille_shell_win32` on Windows; both crates expose the
+/// same `pub fn` / type surface. Call sites in this crate go through
+/// `platform_shell::*` so a single cfg switch picks the active impl.
+///
+/// New shell surfaces should land in **both** shell crates (mac with
+/// a real impl, win32 with at least a stub) so the alias keeps
+/// compiling on either target. The shell crates' own internal
+/// `cfg(not(target_os = "macos"))` / `cfg(not(windows))` arms exist
+/// purely so each crate compiles on the *other* host as a workspace
+/// member — they're not reached through this alias.
+#[cfg(target_os = "macos")]
+pub use feraille_shell_mac as platform_shell;
+#[cfg(windows)]
+pub use feraille_shell_win32 as platform_shell;

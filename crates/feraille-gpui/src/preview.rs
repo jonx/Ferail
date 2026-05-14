@@ -3,7 +3,7 @@
 //! Replaces the soft-renderer preview pane with real
 //! NSWorkspace-backed thumbnails. On selection change the Shell
 //! kicks off a background worker that runs
-//! `feraille_shell_mac::quick_look::fetch_thumbnail` (which shells
+//! `crate::platform_shell::quick_look::fetch_thumbnail` (which shells
 //! out to `qlmanage -t`), decodes the resulting PNG into RGBA, and
 //! delivers the bytes back to the foreground for rendering as a
 //! `gpui::img(...)`.
@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use feraille_shell_mac::fetch_quick_look_thumbnail;
+use crate::platform_shell::fetch_quick_look_thumbnail;
 use gpui::{App, AsyncApp, RenderImage};
 use image::{Frame, RgbaImage};
 use smallvec::SmallVec;

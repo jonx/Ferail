@@ -135,7 +135,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         for (_, _, path) in self.action_entries_visible_order(cx) {
-            let _ = feraille_shell_mac::toggle_tag(&path, color);
+            let _ = crate::platform_shell::toggle_tag(&path, color);
         }
     }
 
@@ -209,10 +209,10 @@ impl Shell {
             .map(|(_, _, path)| path)
             .collect();
         let Some(first) = paths.first() else { return };
-        let candidates = feraille_shell_mac::open_with_candidates(first);
+        let candidates = crate::platform_shell::open_with_candidates(first);
         if let Some(c) = candidates.get(slot) {
             for path in paths {
-                let _ = feraille_shell_mac::open_with_app(&path, &c.path);
+                let _ = crate::platform_shell::open_with_app(&path, &c.path);
             }
         }
     }
@@ -501,7 +501,7 @@ impl Shell {
             return;
         }
         let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
-        let _ = feraille_shell_mac::show_quick_look(&refs);
+        let _ = crate::platform_shell::show_quick_look(&refs);
     }
 
     pub(super) fn on_duplicate(&mut self, _: &Duplicate, _: &mut Window, cx: &mut Context<Self>) {
@@ -518,7 +518,7 @@ impl Shell {
             cur,
             move || {
                 for path in paths {
-                    feraille_shell_mac::duplicate_path(&path).map(|_| ())?;
+                    crate::platform_shell::duplicate_path(&path).map(|_| ())?;
                 }
                 Ok(())
             },
@@ -541,7 +541,7 @@ impl Shell {
             cur,
             move || {
                 for path in paths {
-                    feraille_shell_mac::make_alias(&path).map(|_| ())?;
+                    crate::platform_shell::make_alias(&path).map(|_| ())?;
                 }
                 Ok(())
             },
@@ -565,7 +565,7 @@ impl Shell {
             move || {
                 let targets: Vec<&std::path::Path> =
                     paths.iter().map(|path| path.as_path()).collect();
-                feraille_shell_mac::compress_paths(&targets).map(|_| ())
+                crate::platform_shell::compress_paths(&targets).map(|_| ())
             },
             "compress",
             cx,

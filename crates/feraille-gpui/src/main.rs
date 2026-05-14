@@ -250,13 +250,13 @@ fn run_gui(args: screenshot::Args) {
         // ("Ivar platform not found on class NSApplication"). The
         // old soft-renderer app did the same thing from winit's
         // `resumed()` for the same reason.
-        let icon_result = feraille_shell_mac::set_app_icon_from_png_bytes(APP_ICON_PNG);
+        let icon_result = feraille_gpui::platform_shell::set_app_icon_from_png_bytes(APP_ICON_PNG);
         feraille_gpui::log_info!(90, "set_app_icon: {:?}", icon_result);
         // Populate the About-panel dictionary so OpenAbout brings up a
         // dialog with our name + version instead of the AppKit bare
         // fallback. We're not calling install_app_menu (gpui drives the
         // menu via cx.set_menus), so this is the lightweight path.
-        feraille_shell_mac::set_about_options(
+        feraille_gpui::platform_shell::set_about_options(
             "Feraille",
             "macOS file explorer",
             env!("CARGO_PKG_VERSION"),
@@ -275,7 +275,7 @@ fn run_gui(args: screenshot::Args) {
             match s {
                 "light" => Some(gpui_component::ThemeMode::Light),
                 "dark" => Some(gpui_component::ThemeMode::Dark),
-                "system" | "auto" => Some(if feraille_shell_mac::system_is_dark() {
+                "system" | "auto" => Some(if feraille_gpui::platform_shell::system_is_dark() {
                     gpui_component::ThemeMode::Dark
                 } else {
                     gpui_component::ThemeMode::Light
@@ -287,7 +287,7 @@ fn run_gui(args: screenshot::Args) {
             .or_else(|| env_theme.as_deref().and_then(resolve_string))
             .or_else(|| persisted_theme.as_deref().and_then(resolve_string))
             .unwrap_or_else(|| {
-                if feraille_shell_mac::system_is_dark() {
+                if feraille_gpui::platform_shell::system_is_dark() {
                     gpui_component::ThemeMode::Dark
                 } else {
                     gpui_component::ThemeMode::Light
@@ -309,7 +309,7 @@ fn run_gui(args: screenshot::Args) {
             None | Some("system") | Some("auto") | Some("")
         );
         if follow_system {
-            feraille_shell_mac::start_system_theme_observer(Box::new(|is_dark| {
+            feraille_gpui::platform_shell::start_system_theme_observer(Box::new(|is_dark| {
                 feraille_gpui::shell::set_system_theme_pending(is_dark);
             }));
         }
@@ -337,7 +337,7 @@ fn run_gui(args: screenshot::Args) {
         // dictionary populated above. Stays an App-level fallback so
         // the menu item is always live.
         cx.on_action(|_: &OpenAbout, _cx| {
-            feraille_shell_mac::show_about_panel();
+            feraille_gpui::platform_shell::show_about_panel();
         });
 
         // Build the singleton ProcessState before opening any window

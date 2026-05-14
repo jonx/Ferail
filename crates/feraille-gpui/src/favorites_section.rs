@@ -442,7 +442,7 @@ fn render_favorite_row(
                         }
                     }
                     FavoriteState::Unmounted => {
-                        feraille_shell_mac::show_alert(
+                        crate::platform_shell::show_alert(
                             "Volume not mounted",
                             &format!(
                                 "\u{201C}{}\u{201D} isn\u{2019}t currently mounted.",
@@ -451,7 +451,7 @@ fn render_favorite_row(
                         );
                     }
                     FavoriteState::Missing => {
-                        feraille_shell_mac::show_alert(
+                        crate::platform_shell::show_alert(
                             "Favorite can\u{2019}t be found",
                             &format!(
                                 "\u{201C}{}\u{201D} may have been moved or deleted.\nUse the \u{201C}Remove from Favorites\u{201D} context menu to remove this shortcut, or restore the original location.",

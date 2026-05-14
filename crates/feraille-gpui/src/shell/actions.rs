@@ -88,7 +88,7 @@ actions!(
         // Phase 6 follow-on: Tags + Open-With submenus. Seven tag
         // colours match Finder's canonical Red/Orange/Yellow/Green/
         // Blue/Purple/Gray set; toggle behaviour mirrors
-        // `feraille_shell_mac::toggle_tag`.
+        // `crate::platform_shell::toggle_tag`.
         ToggleTagRed,
         ToggleTagOrange,
         ToggleTagYellow,
