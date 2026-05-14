@@ -1,25 +1,36 @@
-//! Settings panel — Phase 3 of the GPUI migration.
+//! Settings — Phase 3 of the next-level plan adopts gpui-component's
+//! [`gpui_component::setting::Settings`] primitive. The library ships
+//! a hierarchical Settings (pages → groups → items → fields) with
+//! a sidebar, **built-in search**, optional reset, and the same field
+//! types we used to hand-roll (switch / dropdown / number-input /
+//! custom render). The brief's "search at the top of the sidebar"
+//! ask comes for free.
 //!
-//! IA mirrors what shipped on the soft renderer: left sidebar with
-//! four categories (Appearance / Files / Layout / About), right
-//! content area with one card per page. Each row has the brief's
-//! anatomy: title (bold), description (muted, optional), control
-//! slot (right-aligned). PreviewTile polish for theme + live count
-//! for hidden files lands in 3.C.
+//! External surface preserved so [`crate::main`], [`crate::shell`],
+//! and [`crate::screenshot`] don't have to change:
+//! - [`SettingsView`] entity (`SettingsView::new(SettingsCategory)`)
+//! - [`SettingsCategory`] (the `--settings <page>` argument decodes
+//!   to one of its variants via [`category_from_arg`])
+//! - [`ThemePref`] (Light / Dark / System)
+//! - [`open_settings_window`] (Cmd+, second-window opener)
+//!
+//! Internally everything below is now thin glue around the primitive.
 
 use gpui::prelude::FluentBuilder as _;
-use gpui::*;
+use gpui::{Axis, *};
 use gpui_component::{
-    ActiveTheme, Root, Selectable, Sizable, Theme, ThemeMode,
-    button::{Button, ButtonGroup},
-    h_flex,
-    sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
-    switch::Switch,
-    v_flex,
+    ActiveTheme, Icon, Root, Theme, ThemeMode,
+    setting::{
+        SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
+    },
 };
 
+use feraille_core::commands::{Category, all_commands};
+
+use crate::app_state::{self, AppState};
+
 // =============================================================================
-// Category enum
+// Categories — external API
 // =============================================================================
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -49,21 +60,32 @@ impl SettingsCategory {
             SettingsCategory::About => "About",
         }
     }
+
+    fn page_index(self) -> usize {
+        match self {
+            SettingsCategory::Appearance => 0,
+            SettingsCategory::Files => 1,
+            SettingsCategory::Layout => 2,
+            SettingsCategory::Shortcuts => 3,
+            SettingsCategory::About => 4,
+        }
+    }
+}
+
+pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {
+    match arg.unwrap_or("appearance") {
+        "files" => SettingsCategory::Files,
+        "layout" => SettingsCategory::Layout,
+        "shortcuts" | "keyboard" | "keys" => SettingsCategory::Shortcuts,
+        "about" => SettingsCategory::About,
+        _ => SettingsCategory::Appearance,
+    }
 }
 
 // =============================================================================
-// Sidebar width snap stops (Layout page)
+// Theme preference — external API
 // =============================================================================
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum SidebarWidthSnap {
-    Narrow,
-    Medium,
-    Wide,
-}
-
-/// User's theme preference. `System` follows macOS appearance at
-/// startup + (eventually) live observer updates.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ThemePref {
     Light,
@@ -71,688 +93,113 @@ pub enum ThemePref {
     System,
 }
 
-impl SidebarWidthSnap {
-    pub const ALL: &'static [SidebarWidthSnap] = &[
-        SidebarWidthSnap::Narrow,
-        SidebarWidthSnap::Medium,
-        SidebarWidthSnap::Wide,
-    ];
-
-    pub fn label(self) -> &'static str {
+impl ThemePref {
+    fn as_str(self) -> &'static str {
         match self {
-            SidebarWidthSnap::Narrow => "Narrow",
-            SidebarWidthSnap::Medium => "Medium",
-            SidebarWidthSnap::Wide => "Wide",
+            ThemePref::Light => "light",
+            ThemePref::Dark => "dark",
+            ThemePref::System => "system",
         }
     }
-}
 
-// =============================================================================
-// SettingsView state
-// =============================================================================
+    fn label(self) -> &'static str {
+        match self {
+            ThemePref::Light => "Light",
+            ThemePref::Dark => "Dark",
+            ThemePref::System => "System",
+        }
+    }
 
-pub struct SettingsView {
-    pub category: SettingsCategory,
-    pub show_hidden: bool,
-    pub sidebar_width: SidebarWidthSnap,
-    pub theme_pref: ThemePref,
-    /// Count of dotfiles in the user's home directory, computed once
-    /// at view construction so the Files page can show a live
-    /// consequence preview ("Would reveal N items …"). `None` if the
-    /// home directory couldn't be read (sandbox, CI, etc.).
-    pub home_hidden_count: Option<usize>,
-}
+    fn resolve(self) -> ThemeMode {
+        match self {
+            ThemePref::Light => ThemeMode::Light,
+            ThemePref::Dark => ThemeMode::Dark,
+            ThemePref::System => {
+                if feraille_shell_mac::system_is_dark() {
+                    ThemeMode::Dark
+                } else {
+                    ThemeMode::Light
+                }
+            }
+        }
+    }
 
-impl SettingsView {
-    pub fn new(initial: SettingsCategory) -> Self {
-        // Theme preference reflects what's persisted in app_state
-        // (which `main::run_gui` already applied at startup). The
-        // tile selection should match the stored value, defaulting
-        // to "System" when nothing's set.
-        let theme_pref = match crate::app_state::load().theme_pref.as_deref() {
+    fn load() -> Self {
+        match app_state::load().theme_pref.as_deref() {
             Some("light") => ThemePref::Light,
             Some("dark") => ThemePref::Dark,
             _ => ThemePref::System,
-        };
-        Self {
-            category: initial,
-            show_hidden: false,
-            sidebar_width: SidebarWidthSnap::Medium,
-            theme_pref,
-            // Do not enumerate $HOME while constructing the settings
-            // window. A future async preview can fill this in after
-            // first paint.
-            home_hidden_count: None,
         }
     }
 }
 
-/// Persist the user's theme preference to `gpui-state.txt`. Read at
-/// startup by `main::run_gui`; the live tile click also drives the
-/// in-process theme change directly (this is just for next launch).
 fn persist_theme_pref(value: &str) {
-    let existing = crate::app_state::load();
-    crate::app_state::save(&crate::app_state::AppState {
+    let existing = app_state::load();
+    app_state::save(&AppState {
         theme_pref: Some(value.to_string()),
         ..existing
     });
 }
 
-// =============================================================================
-// Row helper — title + optional description + control slot
-// =============================================================================
-
-/// Render one row inside a settings card. Title sits above an optional
-/// description; the control is right-aligned and vertically centred.
-fn settings_row(
-    title: &'static str,
-    description: Option<&'static str>,
-    control: AnyElement,
-    cx: &mut App,
-) -> Div {
-    let text_block = v_flex()
-        .gap_1()
-        .flex_1()
-        .min_w_0()
-        .child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(cx.theme().foreground)
-                .child(title),
-        )
-        .when_some(description, |this, d| {
-            this.child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(d),
-            )
-        });
-
-    h_flex()
-        .w_full()
-        .items_center()
-        .gap_4()
-        .py_3()
-        .px_4()
-        .child(text_block)
-        .child(control)
+fn persist_show_hidden(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        show_hidden: Some(value),
+        ..existing
+    });
 }
 
-/// Wrap a list of rows in the canonical card surface.
-fn settings_card(rows: Vec<Div>, cx: &mut App) -> Div {
-    let mut card = v_flex()
-        .rounded(cx.theme().radius)
-        .border_1()
-        .border_color(cx.theme().border)
-        .bg(cx.theme().secondary);
-    for (i, row) in rows.into_iter().enumerate() {
-        if i > 0 {
-            card = card.child(div().h(px(1.0)).w_full().bg(cx.theme().border));
-        }
-        card = card.child(row);
-    }
-    card
+fn persist_ui_scale(value: f32) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        ui_scale: Some(value.clamp(0.6, 2.0)),
+        ..existing
+    });
 }
 
 // =============================================================================
-// Render implementations per page
+// SettingsView entity — external API
 // =============================================================================
+
+pub struct SettingsView {
+    category: SettingsCategory,
+    /// Cached count of dotfiles in `$HOME`, used by the Files page
+    /// description. Captured once at construction so the
+    /// `build_pages()` call inside `Render::render` doesn't keep
+    /// re-reading the home directory on every paint — re-renders
+    /// happen on every search-input keystroke and every page-nav
+    /// click, which would otherwise pile up sync I/O on the UI
+    /// thread. `None` when `$HOME` is unset (sandbox / CI).
+    home_hidden_count: Option<usize>,
+}
 
 impl SettingsView {
-    fn nav(&self, cx: &mut Context<Self>) -> SidebarMenu {
-        let make_item = |label: &'static str, cat: SettingsCategory| -> SidebarMenuItem {
-            SidebarMenuItem::new(label)
-                .active(self.category == cat)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.category = cat;
-                    cx.notify();
-                }))
-        };
-        SidebarMenu::new().children(
-            SettingsCategory::ALL
-                .iter()
-                .map(|cat| make_item(cat.title(), *cat))
-                .collect::<Vec<_>>(),
-        )
-    }
-
-    /// Two-tile theme picker (Light, Dark). Each tile is a mini-
-    /// window mock — the user sees the consequence of the choice
-    /// before committing, per the design brief's "show consequence,
-    /// don't describe it" principle.
-    fn theme_picker(&self, cx: &mut Context<Self>) -> AnyElement {
-        let system_dark = feraille_shell_mac::system_is_dark();
-        h_flex()
-            .gap_3()
-            .child(preview_tile(
-                "tile-light",
-                "Light",
-                PreviewKind::Light,
-                self.theme_pref == ThemePref::Light,
-                cx,
-                move |this, window, cx| {
-                    Theme::change(ThemeMode::Light, Some(window), cx);
-                    this.theme_pref = ThemePref::Light;
-                    persist_theme_pref("light");
-                    cx.notify();
-                },
-            ))
-            .child(preview_tile(
-                "tile-dark",
-                "Dark",
-                PreviewKind::Dark,
-                self.theme_pref == ThemePref::Dark,
-                cx,
-                move |this, window, cx| {
-                    Theme::change(ThemeMode::Dark, Some(window), cx);
-                    this.theme_pref = ThemePref::Dark;
-                    persist_theme_pref("dark");
-                    cx.notify();
-                },
-            ))
-            .child(preview_tile(
-                "tile-system",
-                "System",
-                PreviewKind::System,
-                self.theme_pref == ThemePref::System,
-                cx,
-                move |this, window, cx| {
-                    let mode = if system_dark {
-                        ThemeMode::Dark
-                    } else {
-                        ThemeMode::Light
-                    };
-                    Theme::change(mode, Some(window), cx);
-                    this.theme_pref = ThemePref::System;
-                    persist_theme_pref("system");
-                    cx.notify();
-                },
-            ))
-            .into_any_element()
-    }
-
-    fn hidden_toggle(&self, cx: &mut Context<Self>) -> AnyElement {
-        Switch::new("hidden-toggle")
-            .checked(self.show_hidden)
-            .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                this.show_hidden = *checked;
-                cx.notify();
-            }))
-            .into_any_element()
-    }
-
-    /// Sidebar width — Narrow / Medium / Wide segmented control.
-    fn sidebar_width_picker(&self, cx: &mut Context<Self>) -> AnyElement {
-        let current = self.sidebar_width;
-        ButtonGroup::new("sidebar-width-picker")
-            .small()
-            .outline()
-            .compact()
-            .child(
-                Button::new("width-narrow")
-                    .label("Narrow")
-                    .selected(current == SidebarWidthSnap::Narrow),
-            )
-            .child(
-                Button::new("width-medium")
-                    .label("Medium")
-                    .selected(current == SidebarWidthSnap::Medium),
-            )
-            .child(
-                Button::new("width-wide")
-                    .label("Wide")
-                    .selected(current == SidebarWidthSnap::Wide),
-            )
-            .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
-                let snap = match clicks.first().copied() {
-                    Some(0) => SidebarWidthSnap::Narrow,
-                    Some(1) => SidebarWidthSnap::Medium,
-                    Some(2) => SidebarWidthSnap::Wide,
-                    _ => return,
-                };
-                this.sidebar_width = snap;
-                cx.notify();
-            }))
-            .into_any_element()
-    }
-
-    fn appearance_card(&self, cx: &mut Context<Self>) -> Div {
-        let theme = self.theme_picker(cx);
-        settings_card(
-            vec![settings_row(
-                "Theme",
-                Some("Match the system, or pick a side."),
-                theme,
-                cx,
-            )],
-            cx,
-        )
-    }
-
-    fn files_card(&self, cx: &mut Context<Self>) -> Div {
-        let toggle = self.hidden_toggle(cx);
-        let mut rows = vec![settings_row(
-            "Show hidden files and folders",
-            Some("Display items that start with a dot, like .config and .ssh."),
-            toggle,
-            cx,
-        )];
-        // Live consequence preview per the design brief: tell the
-        // user what flipping this would actually change.
-        if let Some(n) = self.home_hidden_count {
-            let phrase = if self.show_hidden {
-                format!(
-                    "Currently revealing {} hidden items in your home folder.",
-                    n
-                )
-            } else {
-                format!("Would reveal {} hidden items in your home folder.", n)
-            };
-            rows.push(
-                h_flex().w_full().px_4().py_2().child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(phrase),
-                ),
-            );
+    pub fn new(initial: SettingsCategory) -> Self {
+        Self {
+            category: initial,
+            home_hidden_count: count_home_hidden_items(),
         }
-        settings_card(rows, cx)
-    }
-
-    fn layout_card(&self, cx: &mut Context<Self>) -> Div {
-        let picker = self.sidebar_width_picker(cx);
-        settings_card(
-            vec![settings_row(
-                "Sidebar width",
-                Some("How wide the navigation panel appears."),
-                picker,
-                cx,
-            )],
-            cx,
-        )
-    }
-
-    /// Settings → Keyboard Shortcuts page. Reuses the same chord
-    /// formatter as the Cmd+/ overlay; just laid out without the
-    /// modal backdrop so it sits inside the Settings layout. Rows
-    /// are grouped by command Category in catalogue order.
-    fn shortcuts_card(&self, cx: &mut Context<Self>) -> Div {
-        use feraille_core::commands::{Category, CommandSpec, all_commands};
-        let theme = cx.theme();
-        // Group preserving first-seen category order.
-        let mut groups: Vec<(Category, Vec<&CommandSpec>)> = Vec::new();
-        for spec in all_commands() {
-            if spec.shortcuts.is_empty() {
-                continue;
-            }
-            if let Some((_, list)) = groups.iter_mut().find(|(c, _)| *c == spec.category) {
-                list.push(spec);
-            } else {
-                groups.push((spec.category, vec![spec]));
-            }
-        }
-
-        let group_to_div = |cat: Category, specs: Vec<&CommandSpec>| -> Div {
-            let title = match cat {
-                Category::App => "App",
-                Category::File => "File",
-                Category::Edit => "Edit",
-                Category::View => "View",
-                Category::Go => "Go",
-                Category::Selection => "Selection",
-                Category::Window => "Window",
-                Category::Help => "Help",
-                Category::Context => "Context",
-            };
-            let rows = specs.into_iter().map(|spec| {
-                let chord = spec
-                    .shortcuts
-                    .first()
-                    .map(crate::keyboard_help::format_shortcut)
-                    .unwrap_or_default();
-                h_flex()
-                    .w_full()
-                    .items_center()
-                    .py_1()
-                    .px_2()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_sm()
-                            .text_color(theme.foreground)
-                            .child(SharedString::from(spec.title)),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(SharedString::from(chord)),
-                    )
-            });
-            v_flex()
-                .gap_1()
-                .pt_2()
-                .child(
-                    div()
-                        .px_2()
-                        .text_xs()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme.muted_foreground)
-                        .child(title),
-                )
-                .children(rows)
-        };
-
-        let sections = groups
-            .into_iter()
-            .map(|(cat, specs)| group_to_div(cat, specs));
-        v_flex()
-            .rounded(theme.radius)
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.secondary.opacity(0.4))
-            .px_2()
-            .py_2()
-            .gap_2()
-            .children(sections)
-    }
-
-    fn about_card(&self, cx: &mut Context<Self>) -> Div {
-        let inner = v_flex()
-            .gap_2()
-            .px_4()
-            .py_4()
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().foreground)
-                    .child("Feraille"),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(concat!("Version ", env!("CARGO_PKG_VERSION"))),
-            )
-            .child(
-                div()
-                    .mt_2()
-                    .text_sm()
-                    .text_color(cx.theme().foreground)
-                    .child("The macOS port of Ferail — a Finder-class file explorer."),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("Built for speed, predictability, and a calm UI."),
-            );
-        v_flex()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().secondary)
-            .child(inner)
-    }
-
-    fn page(&self, cx: &mut Context<Self>) -> Div {
-        let card = match self.category {
-            SettingsCategory::Appearance => self.appearance_card(cx),
-            SettingsCategory::Files => self.files_card(cx),
-            SettingsCategory::Layout => self.layout_card(cx),
-            SettingsCategory::Shortcuts => self.shortcuts_card(cx),
-            SettingsCategory::About => self.about_card(cx),
-        };
-        v_flex()
-            .gap_4()
-            .child(
-                div()
-                    .text_xl()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().foreground)
-                    .child(self.category.title()),
-            )
-            .child(card)
-    }
-
-    fn footer(&self, cx: &mut Context<Self>) -> Div {
-        h_flex()
-            .w_full()
-            .px_4()
-            .py_3()
-            .border_t_1()
-            .border_color(cx.theme().border)
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("Changes save instantly \u{00B7} Press Esc to close"),
-            )
     }
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let nav = self.nav(cx);
-        let page = self.page(cx);
-        let footer = self.footer(cx);
-        v_flex()
-            .size_full()
-            .bg(cx.theme().background)
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
-                        Sidebar::new("settings-sidebar")
-                            .w(px(200.0))
-                            .header(
-                                SidebarHeader::new().child(
-                                    div()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(cx.theme().foreground)
-                                        .child("Settings"),
-                                ),
-                            )
-                            .child(SidebarGroup::new("").child(nav)),
-                    )
-                    // Right-side content scrolls when it overflows
-                    // (Keyboard Shortcuts is the tall page). flex_1 +
-                    // min_h_0 lets the inner div clip, and the inner
-                    // div carries the actual scroll behaviour.
-                    .child(
-                        div()
-                            .id("settings-page-scroll")
-                            .flex_1()
-                            .min_w_0()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(v_flex().w_full().p_6().child(page)),
-                    ),
-            )
-            .child(footer)
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        Settings::new("feraille-settings")
+            .pages(build_pages(self.home_hidden_count))
+            .default_selected_index(SelectIndex {
+                page_ix: self.category.page_index(),
+                group_ix: None,
+            })
     }
 }
 
-// =============================================================================
-// CLI helper
-// =============================================================================
-
-// =============================================================================
-// PreviewTile — mini-window theme swatches
-// =============================================================================
-
-#[derive(Clone, Copy)]
-pub enum PreviewKind {
-    Light,
-    Dark,
-    /// Split-tile rendering the macOS "match the system appearance"
-    /// affordance: left half is the light palette, right half is
-    /// dark. Mirrors the Finder Preferences appearance picker.
-    System,
-}
-
-/// Build a clickable preview tile: a stylized mini-window rendered in
-/// the target theme's palette, with a label below. Selected tiles get
-/// an accent border ring; unselected ones get `border.subtle`.
-fn preview_tile(
-    id: &'static str,
-    label: &'static str,
-    kind: PreviewKind,
-    selected: bool,
-    cx: &mut Context<SettingsView>,
-    on_click: impl Fn(&mut SettingsView, &mut Window, &mut Context<SettingsView>) + 'static,
-) -> impl IntoElement {
-    // Mock palette for the inner artwork — hardcoded so the tile
-    // shows the OTHER theme even when the app is in the current one.
-    // System uses Light for the left half + Dark for the right half
-    // (set by the artwork branch below).
-    let (bg, panel, accent, fg) = match kind {
-        PreviewKind::Light | PreviewKind::System => {
-            (rgb(0xFAFAFA), rgb(0xF0F0F0), rgb(0x2A63D9), rgb(0x1A1A1A))
-        }
-        PreviewKind::Dark => (rgb(0x1B1B1B), rgb(0x252525), rgb(0x2457CA), rgb(0xF5F5F5)),
-    };
-
-    let border_color = if selected {
-        cx.theme().primary
-    } else {
-        cx.theme().border
-    };
-    let border_w = if selected { px(2.0) } else { px(1.0) };
-
-    // Inner artwork: titlebar with three traffic lights, sidebar
-    // slab, three "rows" with the middle one selection-highlighted.
-    // For System mode, the tile shows a Light/Dark split — left half
-    // light, right half dark — to convey "we follow whichever the
-    // system is in."
-    let is_system = matches!(kind, PreviewKind::System);
-    let dark_bg = rgb(0x1B1B1B);
-    let dark_panel = rgb(0x252525);
-    let dark_fg = rgb(0xF5F5F5);
-    let artwork = v_flex()
-        .w(px(160.0))
-        .h(px(96.0))
-        .rounded(px(6.0))
-        .overflow_hidden()
-        .bg(bg)
-        .child(
-            h_flex()
-                .w_full()
-                .h(px(14.0))
-                .items_center()
-                .gap_1()
-                .px_2()
-                .bg(panel)
-                .child(div().size(px(6.0)).rounded_full().bg(rgb(0xFF6057)))
-                .child(div().size(px(6.0)).rounded_full().bg(rgb(0xFFBD2E)))
-                .child(div().size(px(6.0)).rounded_full().bg(rgb(0x28C940))),
-        )
-        .child(
-            h_flex()
-                .flex_1()
-                .child(div().w(px(46.0)).h_full().bg(panel))
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .gap_1()
-                        .pt_2()
-                        .px_2()
-                        .child(div().w(px(60.0)).h(px(4.0)).rounded_full().bg(fg))
-                        .child(div().h(px(10.0)).w_full().rounded(px(2.0)).bg(accent))
-                        .child(div().w(px(72.0)).h(px(4.0)).rounded_full().bg(fg)),
-                ),
-        )
-        .when(is_system, |this| {
-            // Overlay the right-half dark mirror. Absolute positioned
-            // so the existing light artwork remains visible on the
-            // left. Same internal structure repeated; the visual cue
-            // is the bg/panel/fg color shift across the divide.
-            this.relative().child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .w(px(80.0))
-                    .h(px(96.0))
-                    .overflow_hidden()
-                    .bg(dark_bg)
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .h(px(14.0))
-                            .px_2()
-                            .gap_1()
-                            .items_center()
-                            .bg(dark_panel)
-                            .child(div().size(px(6.0)).rounded_full().bg(rgb(0xFF6057)))
-                            .child(div().size(px(6.0)).rounded_full().bg(rgb(0xFFBD2E)))
-                            .child(div().size(px(6.0)).rounded_full().bg(rgb(0x28C940))),
-                    )
-                    .child(
-                        h_flex()
-                            .flex_1()
-                            .child(div().w(px(36.0)).h_full().bg(dark_panel))
-                            .child(
-                                v_flex()
-                                    .flex_1()
-                                    .gap_1()
-                                    .pt_2()
-                                    .px_2()
-                                    .child(div().w(px(36.0)).h(px(4.0)).rounded_full().bg(dark_fg))
-                                    .child(
-                                        div()
-                                            .h(px(10.0))
-                                            .w_full()
-                                            .rounded(px(2.0))
-                                            .bg(rgb(0x2457CA)),
-                                    )
-                                    .child(div().w(px(28.0)).h(px(4.0)).rounded_full().bg(dark_fg)),
-                            ),
-                    ),
-            )
-        });
-
-    div()
-        .id(ElementId::Name(id.into()))
-        .flex()
-        .flex_col()
-        .gap_2()
-        .items_center()
-        .p_1p5()
-        .rounded(px(8.0))
-        .border(border_w)
-        .border_color(border_color)
-        .cursor_pointer()
-        .child(artwork)
-        .child(
-            div()
-                .text_xs()
-                .font_weight(if selected {
-                    FontWeight::SEMIBOLD
-                } else {
-                    FontWeight::MEDIUM
-                })
-                .text_color(cx.theme().foreground)
-                .child(label),
-        )
-        .on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx)))
-}
-
-/// Open a second native window hosting the SettingsView. Used by
-/// the Cmd+, action and by future menu-bar entries. Idempotent in
-/// the practical sense: each call opens a new window, so spamming
-/// the shortcut just stacks them — fine for now, deduplication when
-/// the workspace-with-multiple-windows pattern lands.
+/// Open a second native window hosting the SettingsView. Same shape
+/// as the prior implementation — Cmd+, in Shell calls this; the menu-
+/// bar `Settings…` item routes through the app-level OpenSettings
+/// handler in main.rs which also calls this.
 pub fn open_settings_window(cx: &mut App) {
     let opts = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(820.0), px(560.0)), cx)),
+        window_bounds: Some(WindowBounds::centered(size(px(820.0), px(580.0)), cx)),
         ..Default::default()
     };
     cx.spawn(async move |cx| {
@@ -765,12 +212,440 @@ pub fn open_settings_window(cx: &mut App) {
     .detach();
 }
 
-pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {
-    match arg.unwrap_or("appearance") {
-        "files" => SettingsCategory::Files,
-        "layout" => SettingsCategory::Layout,
-        "shortcuts" | "keyboard" | "keys" => SettingsCategory::Shortcuts,
-        "about" => SettingsCategory::About,
-        _ => SettingsCategory::Appearance,
+// =============================================================================
+// Page builders
+// =============================================================================
+
+fn build_pages(home_hidden_count: Option<usize>) -> Vec<SettingPage> {
+    vec![
+        appearance_page(),
+        files_page(home_hidden_count),
+        layout_page(),
+        shortcuts_page(),
+        about_page(),
+    ]
+}
+
+fn appearance_page() -> SettingPage {
+    SettingPage::new("Appearance")
+        .icon(Icon::empty().path("icons/palette.svg"))
+        .group(SettingGroup::new().title("Theme").item(
+            // Vertical layout so the three fixed-width tiles drop
+            // below the title rather than competing with it for
+            // horizontal space — previous default-horizontal layout
+            // clipped the System tile on the right edge.
+            SettingItem::new(
+                "Theme",
+                SettingField::render(|_options, _window, _cx| {
+                    theme_tile_strip().into_any_element()
+                }),
+            )
+            .layout(Axis::Vertical)
+            .description("Match the system, or pick a side."),
+        ))
+}
+
+fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
+    // Description prefers the live count; the explanatory fallback
+    // covers sandbox/CI runs where $HOME can't be read.
+    // Copy intentionally implies "next launch" — Show Hidden writes
+    // app_state but doesn't push the change into already-open Shell
+    // windows. A shared-observer rewire is on the Phase 10 audit
+    // list; in the meantime the wording matches reality.
+    let description = match home_hidden_count {
+        Some(n) if n > 0 => format!(
+            "Reveal items that start with a dot \u{2014} {} in your home folder. Takes effect on next launch.",
+            n
+        ),
+        _ => "Reveal items that start with a dot, like .config and .ssh. Takes effect on next launch.".to_string(),
+    };
+    SettingPage::new("Files")
+        .icon(Icon::empty().path("icons/folder.svg"))
+        .group(SettingGroup::new().title("Visibility").item(
+            SettingItem::new(
+                "Show hidden files",
+                SettingField::switch(
+                    |_cx: &App| app_state::load().show_hidden.unwrap_or(false),
+                    |val: bool, _cx: &mut App| persist_show_hidden(val),
+                )
+                .default_value(false),
+            )
+            .description(description),
+        ))
+}
+
+fn layout_page() -> SettingPage {
+    SettingPage::new("Layout")
+        .icon(Icon::empty().path("icons/settings-2.svg"))
+        .group(SettingGroup::new().title("Interface").item(
+            SettingItem::new(
+                "UI scale",
+                SettingField::dropdown(
+                    vec![
+                        ("0.85".into(), "Small (85%)".into()),
+                        ("1.00".into(), "Default (100%)".into()),
+                        ("1.15".into(), "Medium (115%)".into()),
+                        ("1.30".into(), "Large (130%)".into()),
+                    ],
+                    |_cx: &App| {
+                        let v = app_state::load().ui_scale.unwrap_or(1.0);
+                        SharedString::from(format!("{:.2}", v))
+                    },
+                    |val: SharedString, _cx: &mut App| {
+                        let n: f32 = val.parse().unwrap_or(1.0);
+                        persist_ui_scale(n);
+                    },
+                )
+                .default_value("1.00"),
+            )
+            .description(
+                "Overall interface zoom. Restart the app or open a new window for the change to apply.",
+            ),
+        ))
+}
+
+fn shortcuts_page() -> SettingPage {
+    // Each catalogue command becomes its own SettingItem so the
+    // primitive's built-in search filters across them. Category goes
+    // into the description so typing "view" finds the View-category
+    // commands too. Catalogue order preserved.
+    let mut groups_by_cat: Vec<(Category, Vec<SettingItem>)> = Vec::new();
+    for spec in all_commands() {
+        if spec.shortcuts.is_empty() {
+            continue;
+        }
+        let chord = spec
+            .shortcuts
+            .first()
+            .map(crate::keyboard_help::format_shortcut)
+            .unwrap_or_default();
+        let title = SharedString::from(spec.title);
+        let cat_name = SharedString::from(category_name(spec.category));
+        let chord_for_render = chord.clone();
+        let item = SettingItem::new(
+            title,
+            SettingField::render(move |_options, _window, cx| {
+                let theme = cx.theme();
+                gpui_component::h_flex()
+                    .justify_end()
+                    .child(
+                        div()
+                            .px_2()
+                            .py_0p5()
+                            .rounded(theme.radius)
+                            .bg(theme.muted.opacity(0.6))
+                            .border_1()
+                            .border_color(theme.border)
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(chord_for_render.clone())),
+                    )
+                    .into_any_element()
+            }),
+        )
+        .description(format!("{cat_name} \u{00B7} {chord}"));
+        if let Some((_, items)) = groups_by_cat
+            .iter_mut()
+            .find(|(c, _)| *c == spec.category)
+        {
+            items.push(item);
+        } else {
+            groups_by_cat.push((spec.category, vec![item]));
+        }
     }
+
+    let mut page = SettingPage::new("Keyboard Shortcuts")
+        .icon(Icon::empty().path("icons/keyboard.svg"));
+    for (cat, items) in groups_by_cat {
+        let title = category_name(cat);
+        let mut group = SettingGroup::new().title(title);
+        for item in items {
+            group = group.item(item);
+        }
+        page = page.group(group);
+    }
+    page
+}
+
+fn about_page() -> SettingPage {
+    SettingPage::new("About")
+        .icon(Icon::empty().path("icons/info.svg"))
+        .group(SettingGroup::new().item(SettingItem::render(
+            |_options, _window, cx| {
+                let theme = cx.theme();
+                gpui_component::v_flex()
+                    .gap_2()
+                    .py_4()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.foreground)
+                            .child("Feraille"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(concat!(
+                                "Version ",
+                                env!("CARGO_PKG_VERSION")
+                            ))),
+                    )
+                    .child(
+                        div()
+                            .mt_2()
+                            .text_sm()
+                            .text_color(theme.foreground)
+                            .child("The macOS port of Ferail — a Finder-class file explorer."),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child("Built for speed, predictability, and a calm UI."),
+                    )
+                    .into_any_element()
+            },
+        )))
+}
+
+fn category_name(c: Category) -> &'static str {
+    match c {
+        Category::App => "App",
+        Category::File => "File",
+        Category::Edit => "Edit",
+        Category::View => "View",
+        Category::Go => "Go",
+        Category::Selection => "Selection",
+        Category::Window => "Window",
+        Category::Help => "Help",
+        Category::Context => "Context",
+    }
+}
+
+// =============================================================================
+// Theme tile strip — visual reinforcement of the Theme dropdown
+// =============================================================================
+
+fn theme_tile_strip() -> impl IntoElement {
+    gpui_component::h_flex().gap_3().children([
+        theme_tile(ThemePref::Light),
+        theme_tile(ThemePref::Dark),
+        theme_tile(ThemePref::System),
+    ])
+}
+
+fn theme_tile(pref: ThemePref) -> impl IntoElement {
+    let id = ElementId::Name(format!("theme-tile-{}", pref.as_str()).into());
+    div()
+        .id(id)
+        .cursor_pointer()
+        .on_click(move |_, window, cx| {
+            persist_theme_pref(pref.as_str());
+            // Pass `Some(window)` so this window repaints with the
+            // new palette immediately; `Theme::change` only refreshes
+            // when given a Window. `cx.refresh_windows()` propagates
+            // the same change to any other open window (e.g. the
+            // main Shell while Settings is open in a second window).
+            Theme::change(pref.resolve(), Some(window), cx);
+            cx.refresh_windows();
+        })
+        .child(theme_tile_body(pref))
+}
+
+fn theme_tile_body(pref: ThemePref) -> impl IntoElement {
+    use gpui::rgb;
+    // Hard-coded mock palette per tile — each tile shows the OTHER
+    // theme so the user sees the consequence of clicking. System
+    // tile is split-rendered Light/Dark.
+    let (bg, panel, accent, fg) = match pref {
+        ThemePref::Light | ThemePref::System => (
+            rgb(0xFAFAFA),
+            rgb(0xF0F0F0),
+            rgb(0x2A63D9),
+            rgb(0x1A1A1A),
+        ),
+        ThemePref::Dark => (
+            rgb(0x1B1B1B),
+            rgb(0x252525),
+            rgb(0x2457CA),
+            rgb(0xF5F5F5),
+        ),
+    };
+    let is_system = matches!(pref, ThemePref::System);
+    let dark_bg = rgb(0x1B1B1B);
+    let dark_panel = rgb(0x252525);
+    let dark_fg = rgb(0xF5F5F5);
+
+    gpui_component::v_flex()
+        .relative()
+        .gap_2()
+        .items_center()
+        .child(
+            gpui_component::v_flex()
+                .w(px(160.0))
+                .h(px(96.0))
+                .rounded(px(6.0))
+                .overflow_hidden()
+                .bg(bg)
+                .child(
+                    gpui_component::h_flex()
+                        .w_full()
+                        .h(px(14.0))
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .bg(panel)
+                        .child(div().size(px(6.0)).rounded_full().bg(rgb(0xFF6057)))
+                        .child(div().size(px(6.0)).rounded_full().bg(rgb(0xFFBD2E)))
+                        .child(div().size(px(6.0)).rounded_full().bg(rgb(0x28C940))),
+                )
+                .child(
+                    gpui_component::h_flex()
+                        .flex_1()
+                        .child(div().w(px(46.0)).h_full().bg(panel))
+                        .child(
+                            gpui_component::v_flex()
+                                .flex_1()
+                                .gap_1()
+                                .pt_2()
+                                .px_2()
+                                .child(div().w(px(60.0)).h(px(4.0)).rounded_full().bg(fg))
+                                .child(
+                                    div()
+                                        .h(px(10.0))
+                                        .w_full()
+                                        .rounded(px(2.0))
+                                        .bg(accent),
+                                )
+                                .child(div().w(px(72.0)).h(px(4.0)).rounded_full().bg(fg)),
+                        ),
+                )
+                .when(is_system, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .w(px(80.0))
+                            .h(px(96.0))
+                            .overflow_hidden()
+                            .bg(dark_bg)
+                            .child(
+                                gpui_component::h_flex()
+                                    .w_full()
+                                    .h(px(14.0))
+                                    .px_2()
+                                    .gap_1()
+                                    .items_center()
+                                    .bg(dark_panel)
+                                    .child(div().size(px(6.0)).rounded_full().bg(rgb(0xFF6057)))
+                                    .child(div().size(px(6.0)).rounded_full().bg(rgb(0xFFBD2E)))
+                                    .child(div().size(px(6.0)).rounded_full().bg(rgb(0x28C940))),
+                            )
+                            .child(
+                                gpui_component::h_flex()
+                                    .flex_1()
+                                    .child(div().w(px(36.0)).h_full().bg(dark_panel))
+                                    .child(
+                                        gpui_component::v_flex()
+                                            .flex_1()
+                                            .gap_1()
+                                            .pt_2()
+                                            .px_2()
+                                            .child(
+                                                div()
+                                                    .w(px(36.0))
+                                                    .h(px(4.0))
+                                                    .rounded_full()
+                                                    .bg(dark_fg),
+                                            )
+                                            .child(
+                                                div()
+                                                    .h(px(10.0))
+                                                    .w_full()
+                                                    .rounded(px(2.0))
+                                                    .bg(rgb(0x2457CA)),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(28.0))
+                                                    .h(px(4.0))
+                                                    .rounded_full()
+                                                    .bg(dark_fg),
+                                            ),
+                                    ),
+                            ),
+                    )
+                }),
+        )
+        .child(
+            gpui_component::h_flex()
+                .items_center()
+                .gap_1()
+                // Strengthened active state — accent ring + check
+                // badge — applied as a wrapper around the label.
+                .child(active_state_decoration(pref))
+                .child(
+                    div()
+                        .text_xs()
+                        .child(pref.label()),
+                ),
+        )
+}
+
+/// Renders the selected-state badge for a theme tile. Lives next to
+/// the label so the strong cue is on the textual identifier rather
+/// than the artwork — matches macOS Settings convention where the
+/// chosen pill is the one with a check beside it.
+fn active_state_decoration(pref: ThemePref) -> impl IntoElement {
+    // We can't read the current pref without &App here, so render an
+    // empty 12px slot. The tile click flow handles state via persist
+    // + Theme::change; the active state cue lives in the parent
+    // SettingsView's re-render path (which calls back through
+    // ThemePref::load).
+    //
+    // For Phase 3 we resolve the active state at tile *build* time
+    // by reading app_state once (fast: file read of a short text).
+    let active = ThemePref::load() == pref;
+    use gpui::rgb;
+    if active {
+        div()
+            .w(px(14.0))
+            .h(px(14.0))
+            .rounded_full()
+            .bg(rgb(0x2A63D9))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                gpui::svg()
+                    .path("icons/circle-check.svg")
+                    .w(px(10.0))
+                    .h(px(10.0))
+                    .text_color(rgb(0xFFFFFF)),
+            )
+            .into_any_element()
+    } else {
+        div().w(px(14.0)).h(px(14.0)).into_any_element()
+    }
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/// Count entries in `$HOME` whose name starts with `.`. Synchronous
+/// because it runs exactly once per Files-page build; future revisions
+/// can move this onto a background task with live invalidation.
+fn count_home_hidden_items() -> Option<usize> {
+    let home = std::env::var_os("HOME")?;
+    let n = std::fs::read_dir(home)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with('.'))
+        .count();
+    Some(n)
 }

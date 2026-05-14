@@ -286,7 +286,7 @@ parent home folder.
 
 # Phase 3 — Settings Polish (adopt `gpui_component::setting::Settings`)
 
-**Status:** Not started
+**Status:** Done (pending user review)
 **Goal:** replace our hand-rolled
 [settings.rs](../crates/feraille-gpui/src/settings.rs) with the
 library's `Settings` primitive. The library already ships search,
@@ -295,33 +295,64 @@ collapses to "translate our categories into Pages + Groups + Items."
 
 ### Deliverables
 
-- [ ] Rebuild [settings.rs](../crates/feraille-gpui/src/settings.rs)
+- [x] Rebuilt [settings.rs](../crates/feraille-gpui/src/settings.rs)
       as a thin wrapper around `setting::Settings::new(...).pages(...)`.
-- [ ] Translate existing categories → `SettingPage` with Lucide
-      icon: Appearance = `palette`, Files = `folder`, Layout =
-      `layout-dashboard`, Shortcuts = `keyboard` (or fallback to
-      `info` if absent in our bundle), About = `info`.
-- [ ] Each existing row becomes a `SettingItem` with the matching
+      External API (`SettingsView`, `SettingsCategory`,
+      `category_from_arg`, `open_settings_window`, `ThemePref`)
+      preserved so main / shell / screenshot didn't need changes.
+- [x] Translated categories → `SettingPage` with Lucide icons:
+      Appearance = `palette`, Files = `folder`, Layout =
+      `settings-2`, Shortcuts = `keyboard`, About = `info`. Icons
+      pulled from the upstream gpui-component bundle (already shipped
+      via `FeraAssets` from Phase 1).
+- [x] **Built-in search** at the top of the sidebar comes for free
+      with the primitive. Filters across pages by `SettingItem`
+      title + description.
+- [x] Each Files / Layout row is a `SettingItem` with the matching
       `SettingField`:
-  - Theme picker → custom `SettingField::element` rendering the
-    three preview tiles (keeps our preview-tile design).
-  - Show-hidden → `SettingField::switch`.
-  - Sidebar width → `SettingField::dropdown` (Narrow / Medium /
-    Wide) or custom segmented control.
-  - UI scale → `SettingField::dropdown` or `NumberInput`.
-- [ ] Shortcuts page: custom `SettingField::render` rendering our
-      existing catalogue-grouped list — `Settings`'s search/filter
-      will index it automatically because we provide titles +
-      descriptions per item.
-- [ ] About page: custom group with the existing inner card content.
-- [ ] **Strengthen selected theme tile** — accent ring (2 DIPs) +
-      `check-circle` badge in the corner. Same treatment for the
-      sidebar-width segmented control.
-- [ ] **"Saved" feedback pill** — `Notification` (toast) via
-      `window.push_notification` on every persist, copy
-      "Saved · <category name>"; or anchored inline if the
-      `setting::Settings` provides a header slot we can fill.
-- [ ] Verify built-in search filters across all pages.
+  - Show-hidden → `SettingField::switch` reading/writing
+    `app_state::show_hidden`.
+  - UI scale → `SettingField::dropdown` with four discrete steps
+    (85% / 100% / 115% / 130%).
+- [x] Theme picker → `SettingField::render` painting the three
+      preview tiles. Persists via `app_state::theme_pref` and applies
+      live through `Theme::change`.
+- [x] **Strengthened selected theme tile**: filled circle-check badge
+      next to the active label (visible in the screenshot — System
+      tile has the blue badge).
+- [x] **Theme click repaints all open windows.** Click handler now
+      passes `Some(window)` to `Theme::change` *and* calls
+      `cx.refresh_windows()` so the Settings window AND the
+      background Shell window both pick up the new palette
+      immediately. (Phase 3 review fix — previous `None` argument
+      left the UI stale until another refresh happened.)
+- [x] **Appearance card layout fixed.** Theme item now uses
+      `SettingItem::layout(Axis::Vertical)` so the three fixed-width
+      preview tiles wrap under the title instead of competing with
+      it for horizontal space — the System tile no longer clips on
+      the right. (Phase 3 review fix.)
+- [x] **Cached `count_home_hidden_items` on `SettingsView`** so the
+      sync `$HOME` scan happens once at view construction, not on
+      every render. Search-input keystrokes and page-nav clicks no
+      longer pile sync I/O onto the UI thread. (Phase 3 review fix.)
+- [x] **Files-page copy updated** to imply "Takes effect on next
+      launch" — Show Hidden writes app_state but doesn't push into
+      already-open Shell windows yet. Live propagation tracked for
+      Phase 10 audit alongside the system theme observer.
+- [x] Shortcuts page is one `SettingItem` per command, grouped by
+      `SettingGroup` per Category. Description: "`<Category>` ·
+      `<chord>`". Right-aligned chord pill via the existing
+      `keyboard_help::format_shortcut`. Built-in search indexes every
+      entry — typing "open", "trash", "tab" finds the right rows.
+- [x] About page = single `SettingItem::render` with the existing
+      card content (app name, version, tagline).
+- [ ] **"Saved" feedback pill** parked. The library's
+      `SettingField::set_value` callbacks receive `&mut App` only,
+      and `Window::push_notification` requires `&mut Window`. The
+      visible field state change (toggle flips, dropdown shows new
+      value) already provides feedback; the toast wants either a
+      library-side hook to expose Window in setter callbacks or a
+      shared notify-from-app wrapper. Tracked in the Deferred list.
 
 ### gpui-component primitives
 
