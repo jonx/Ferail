@@ -1841,6 +1841,7 @@ name = "feraille-gpui"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
  "feraille-core",
  "feraille-design",
  "feraille-disk-usage",

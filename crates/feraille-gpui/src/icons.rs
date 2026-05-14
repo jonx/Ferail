@@ -6,14 +6,15 @@
 //! though the wrapping type is named `RgbaImage` — see
 //! `gpui::assets::RenderImage` docs), and caches the result.
 //!
-//! Cache key is the file's *kind* (extension lowercased, "Folder"
-//! for directories, "Symlink" for symlinks). This dedupes massively
-//! — a 200-PNG folder only stores one icon, fetched once.
+//! Cache key is the file's kind for files (extension lowercased,
+//! "Symlink" for symlinks) and the full path for directories. Files
+//! dedupe massively; folders stay path-specific so special/custom
+//! Finder folder icons don't bleed into every other directory.
 //!
 //! `NSWorkspace.iconForFile` is main-thread-only, so `icon_for` must
 //! be called from a Render path. The cost on miss is a single
 //! NSWorkspace round-trip (~1 ms); subsequent renders for the same
-//! kind are a HashMap hit.
+//! key are a HashMap hit.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -45,12 +46,16 @@ impl IconCache {
         Self::default()
     }
 
-    /// Lookup-or-fetch the icon for `entry` rooted at `path`. Cache
-    /// is keyed by kind so most calls are O(1) HashMap reads after
-    /// the first hit per extension. Returns the blank-placeholder
-    /// arc when NSWorkspace can't produce an icon (typical only on
-    /// non-macOS targets).
+    /// Lookup-or-fetch the icon for `entry` rooted at `path`. Files
+    /// are keyed by kind so most calls are O(1) HashMap reads after
+    /// the first hit per extension; directories are keyed by path so
+    /// custom/special folder artwork stays distinct. Returns the
+    /// blank-placeholder arc when NSWorkspace can't produce an icon
+    /// (typical only on non-macOS targets).
     pub fn icon_for(&mut self, entry: &FileEntry, path: &Path) -> Arc<RenderImage> {
+        if matches!(entry.kind, EntryKind::Directory) {
+            return self.folder_icon_for(path);
+        }
         let key = cache_key(entry, path);
         if let Some(arc) = self.by_kind.get(&key) {
             return arc.clone();
@@ -105,7 +110,7 @@ impl IconCache {
 
 fn cache_key(entry: &FileEntry, path: &Path) -> String {
     match entry.kind {
-        EntryKind::Directory => "<dir>".into(),
+        EntryKind::Directory => format!("path:{}", path.display()),
         EntryKind::Symlink => "<symlink>".into(),
         EntryKind::File => path
             .extension()

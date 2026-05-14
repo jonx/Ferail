@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn empty_returns_none() {
-        let mut buf = [0u8; HEADER_BYTES];
+        let buf = [0u8; HEADER_BYTES];
         // looks_textual on empty -> false; magic detection fails first on
         // read_header returning None for empty files via fs.
         assert!(!looks_textual(&buf[..0]));

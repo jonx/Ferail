@@ -31,6 +31,9 @@ rust-embed = { version = "8.7", features = ["interpolate-folder-path", "include-
 # ReadDirectoryChangesW on Windows). Pinned to the same major as
 # gpui-component's transitive use to keep one copy in the graph.
 notify = "7.0"
+# Streaming directory enumeration sends worker batches to a GPUI task
+# without timer polling.
+async-channel = "2.5"
 # Used to build the smallvec ExternalPaths expects for OS drag-out.
 smallvec = "1"
 # Wraps RGBA byte buffers we pull from NSWorkspace into a Frame the

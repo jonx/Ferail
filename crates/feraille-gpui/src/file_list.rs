@@ -166,6 +166,20 @@ impl FileListDelegate {
         self.entries = entries;
         self.paths = paths;
         self.heats = heats;
+        self.tags = vec![Vec::new(); self.entries.len()];
+    }
+
+    pub fn append_entries(
+        &mut self,
+        entries: Vec<FileEntry>,
+        paths: HashMap<NodeId, PathBuf>,
+        heats: Vec<f32>,
+    ) {
+        self.paths.extend(paths);
+        let n = entries.len();
+        self.entries.extend(entries);
+        self.heats.extend(heats);
+        self.tags.extend((0..n).map(|_| Vec::new()));
     }
 
     pub fn path_for_entry(&self, id: NodeId) -> Option<PathBuf> {

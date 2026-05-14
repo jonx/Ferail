@@ -9,14 +9,19 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use feraille_core::{
-    EntryKind, EnumerationError, FileEntry, FsBackend, NodeId, navigation::NavigationState,
+    EntryKind, EnumerationError, FileEntry, NodeId, navigation::NavigationState,
     node_store::NodeStore,
 };
-use feraille_fs_native::{NativeFs, VolumeInfo, home_dir, list_volumes, open_with_default};
+use feraille_fs_native::{
+    DEFAULT_ENUMERATION_BATCH, NativeFs, VolumeInfo, home_dir, list_volumes, open_with_default,
+};
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, Root, Sizable, TitleBar, WindowExt,
@@ -32,7 +37,7 @@ use crate::app_state;
 use crate::file_list::FileListDelegate;
 use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
 use crate::icons::IconCache;
-use crate::tasks::TaskRegistry;
+use crate::tasks::{TaskId, TaskKind, TaskRegistry};
 use crate::tree::{ShellSidebarItem, TreeChild, TreeRowIcon, TreeRowSpec, TreeSection};
 
 actions!(
@@ -272,6 +277,15 @@ pub struct Shell {
     /// Monotonic generation for directory loads. Background enumeration
     /// results apply only if their generation still matches.
     pub load_generation: u64,
+    /// Cooperative cancel flag for the active directory enumeration.
+    /// Replaced on every navigation/filter/show-hidden reload.
+    pub load_cancel: Option<Arc<AtomicBool>>,
+    /// Task-registry row for the active directory enumeration.
+    pub load_task: Option<TaskId>,
+    /// True after navigation starts and before the first batch lands.
+    /// While true, the old folder rows remain visible instead of
+    /// flashing an empty table.
+    pub load_pending_first_batch: bool,
     /// Background file-system watcher. `Rc<RefCell<>>` so the
     /// foreground-executor polling task can read it without taking
     /// a mutable borrow of the whole Shell. None if the platform
@@ -430,10 +444,14 @@ enum SelectionDelta {
     Last,
 }
 
-struct LoadResult {
+struct LoadBatch {
     entries: Vec<FileEntry>,
     paths: HashMap<NodeId, PathBuf>,
-    error: Option<EnumerationError>,
+}
+
+enum LoadMsg {
+    Batch(LoadBatch),
+    Done(Option<EnumerationError>),
 }
 
 fn now_unix_secs() -> i64 {
@@ -750,6 +768,9 @@ impl Shell {
             show_hidden,
             last_error: None,
             load_generation: 0,
+            load_cancel: None,
+            load_task: None,
+            load_pending_first_batch: false,
             watcher,
             context_row: None,
             context_target: None,
@@ -1632,12 +1653,19 @@ impl Shell {
         let generation = self.load_generation;
         let show_hidden = self.show_hidden;
         let filter = self.filter_text.clone();
-        let table = self.table.clone();
 
-        table.update(cx, |state, cx| {
-            state.delegate_mut().clear();
-            state.refresh(cx);
-        });
+        if let Some(cancel) = self.load_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        let task = self.tasks.borrow_mut().begin(
+            TaskKind::Enumeration,
+            format!("Reading {}", middle_truncate_path(&path.to_string_lossy(), 40)),
+            true,
+        );
+        if let Some(previous) = self.load_task.replace(task) {
+            self.tasks.borrow_mut().end(previous);
+        }
+        self.load_pending_first_batch = true;
 
         // Point the watcher at the new directory. Errors (path
         // doesn't exist, watcher saturated) are non-fatal — the
@@ -1648,65 +1676,123 @@ impl Shell {
         self.save_state_async(cx);
 
         let fs = self.fs.clone();
-        let weak = cx.weak_entity();
-        cx.spawn(async move |_this, cx| {
-            let path_for_worker = path.clone();
-            let result = cx
-                .background_executor()
-                .spawn(async move { run_directory_load(fs, path_for_worker, show_hidden, filter) })
-                .await;
-            let Some(shell) = weak.upgrade() else { return };
-            let _ = shell.update(cx, |this, cx| {
-                if this.load_generation != generation {
-                    return;
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.load_cancel = Some(cancel.clone());
+        let (tx, rx) = async_channel::unbounded();
+        let worker_path = path.clone();
+        cx.background_executor()
+            .spawn(async move {
+                run_directory_load_streaming(fs, worker_path, show_hidden, filter, cancel, tx);
+            })
+            .detach();
+
+        cx.spawn(async move |this, cx| {
+            while let Ok(msg) = rx.recv().await {
+                let done = matches!(msg, LoadMsg::Done(_));
+                let stale = this
+                    .update(cx, |this, cx| {
+                        if this.load_generation != generation
+                            || this.active_tab().current_dir != path
+                        {
+                            return true;
+                        }
+                        this.apply_directory_load_msg(msg, cx);
+                        false
+                    })
+                    .unwrap_or(true);
+                if stale || done {
+                    break;
                 }
-                this.apply_directory_load(result, cx);
-            });
+            }
         })
         .detach();
         cx.notify();
     }
 
-    fn apply_directory_load(&mut self, result: LoadResult, cx: &mut Context<Self>) {
-        for (id, path) in &result.paths {
+    fn apply_directory_load_msg(&mut self, msg: LoadMsg, cx: &mut Context<Self>) {
+        match msg {
+            LoadMsg::Batch(batch) => self.apply_directory_batch(batch, cx),
+            LoadMsg::Done(error) => self.finish_directory_load(error, cx),
+        }
+    }
+
+    fn apply_directory_batch(&mut self, batch: LoadBatch, cx: &mut Context<Self>) {
+        for (id, path) in &batch.paths {
             self.node_store
                 .get_or_create_path_with_id(path.clone(), *id);
         }
-        let icon_seeds: Vec<(FileEntry, PathBuf)> = result
-            .entries
-            .iter()
-            .filter_map(|entry| {
-                result
-                    .paths
-                    .get(&entry.id)
-                    .cloned()
-                    .map(|path| (entry.clone(), path))
-            })
-            .collect();
-        let heats: Vec<f32> = result
+        let heats: Vec<f32> = batch
             .entries
             .iter()
             .map(|entry| self.ant_heat(entry.id))
             .collect();
+        let first_batch = self.load_pending_first_batch;
+        self.load_pending_first_batch = false;
         let table = self.table.clone();
         table.update(cx, |state, cx| {
+            if first_batch {
+                state.delegate_mut().clear();
+            }
             state
                 .delegate_mut()
-                .replace_entries(result.entries, result.paths, heats);
+                .append_entries(batch.entries, batch.paths, heats);
             state.refresh(cx);
         });
-        self.last_error = result.error;
+        cx.notify();
+    }
+
+    fn finish_directory_load(
+        &mut self,
+        error: Option<EnumerationError>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(id) = self.load_task.take() {
+            self.tasks.borrow_mut().end(id);
+        }
+        self.load_cancel = None;
+        if self.load_pending_first_batch {
+            self.load_pending_first_batch = false;
+            let table = self.table.clone();
+            table.update(cx, |state, cx| {
+                state.delegate_mut().clear();
+                state.refresh(cx);
+            });
+        }
+        let row_count = self.table.read(cx).delegate().entries.len();
+        if row_count == 0 {
+            self.last_error = error;
+        } else {
+            if let Some(err) = error {
+                crate::log_warn!(90, "directory load ended with partial rows: {err:?}");
+            }
+            self.last_error = None;
+        }
 
         // Stage 4: kick off magic + quarantine prefetch after the
-        // foreground table state has received the new snapshot.
+        // foreground table state has received the final snapshot.
         let table = self.table.clone();
         let fs = self.fs.clone();
         let db = self.metadata_db.clone();
         let tasks = self.tasks.clone();
         let weak = cx.weak_entity();
         crate::prefetch::start(table, fs, db, tasks, weak, cx);
+        let icon_seeds = self.icon_seeds_from_table(cx);
         self.start_icon_warm(icon_seeds, cx);
         cx.notify();
+    }
+
+    fn icon_seeds_from_table(&self, cx: &App) -> Vec<(FileEntry, PathBuf)> {
+        let table = self.table.read(cx);
+        let delegate = table.delegate();
+        delegate
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                delegate
+                    .path_for_entry(entry.id)
+                    .map(|path| (entry.clone(), path))
+            })
+            .collect()
     }
 
     fn start_icon_warm(&self, seeds: Vec<(FileEntry, PathBuf)>, cx: &mut Context<Self>) {
@@ -3250,17 +3336,31 @@ impl Render for Shell {
     }
 }
 
-fn run_directory_load(
+fn run_directory_load_streaming(
     fs: Arc<NativeFs>,
     path: PathBuf,
     show_hidden: bool,
     filter_text: String,
-) -> LoadResult {
-    let id = fs.id_for_path(&path);
-    let handle = fs.enumerate(id);
+    cancel: Arc<AtomicBool>,
+    tx: async_channel::Sender<LoadMsg>,
+) {
     let needle = filter_text.trim().to_lowercase();
-    let entries: Vec<FileEntry> = handle
-        .initial
+    let error = fs.enumerate_streaming(&path, DEFAULT_ENUMERATION_BATCH, &cancel, |entries| {
+        let batch = filter_directory_batch(&fs, entries, show_hidden, &needle);
+        if !batch.entries.is_empty() && tx.send_blocking(LoadMsg::Batch(batch)).is_err() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    });
+    let _ = tx.send_blocking(LoadMsg::Done(error));
+}
+
+fn filter_directory_batch(
+    fs: &NativeFs,
+    entries: Vec<FileEntry>,
+    show_hidden: bool,
+    needle: &str,
+) -> LoadBatch {
+    let entries: Vec<FileEntry> = entries
         .into_iter()
         .filter(|e| show_hidden || !e.name.starts_with('.'))
         .filter(|e| {
@@ -3272,8 +3372,8 @@ fn run_directory_load(
                 // misses rows where the magic-detected text is the
                 // only place those phrases appear.
                 let (format, _) = e.format_label();
-                e.name.to_lowercase().contains(&needle)
-                    || format.to_lowercase().contains(&needle)
+                e.name.to_lowercase().contains(needle)
+                    || format.to_lowercase().contains(needle)
             }
         })
         .collect();
@@ -3283,11 +3383,7 @@ fn run_directory_load(
             paths.insert(entry.id, path);
         }
     }
-    LoadResult {
-        entries,
-        paths,
-        error: handle.error,
-    }
+    LoadBatch { entries, paths }
 }
 
 fn run_tree_children_load(fs: Arc<NativeFs>, path: PathBuf) -> Vec<TreeChild> {

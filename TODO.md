@@ -30,8 +30,9 @@ feature notes in [docs/features](docs/features).
 
 ## Responsiveness And Data Architecture
 
-- Finish streaming, cancellable directory enumeration in the active GPUI
-  shell, with stale-result dropping and no empty flash on slow folders.
+- Extend notification-driven worker plumbing to remaining long-running
+  flows that still poll for progress, especially disk usage scanning,
+  preview generation, search, copy/move, and duplicate finding.
 - Move all remaining expensive metadata reads out of synchronous UI paths,
   including Finder tags, context-menu warming, preview generation, and any
   large-folder bookkeeping.
