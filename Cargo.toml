@@ -3,18 +3,19 @@ resolver = "2"
 members = [
     "crates/feraille-core",
     "crates/feraille-design",
-    "crates/feraille-render",
-    "crates/feraille-controls",
     "crates/feraille-disk-usage",
     "crates/feraille-fs-native",
     "crates/feraille-meta",
     "crates/feraille-shell-mac",
     "crates/feraille-shell-win32",
-    "crates/feraille-app",
-    # GPUI migration target. Parallel to feraille-app; both compile
-    # and run until the Phase 6 cutover. See docs/GPUI_MIGRATION.md.
     "crates/feraille-gpui",
 ]
+
+# The old soft-renderer stack (`feraille-app`, `feraille-render`,
+# `feraille-controls`) lives under `crates/_archive/` and is **not** a
+# workspace member. It compiled and shipped through the GPUI migration
+# as reference / fallback; nothing in the active workspace depends on
+# it. Restore by moving back into `crates/` and re-adding to `members`.
 
 [workspace.package]
 version = "0.0.1"
@@ -25,16 +26,21 @@ rust-version = "1.78"
 [workspace.dependencies]
 feraille-core         = { path = "crates/feraille-core" }
 feraille-design       = { path = "crates/feraille-design" }
-feraille-render       = { path = "crates/feraille-render" }
-feraille-controls     = { path = "crates/feraille-controls" }
 feraille-disk-usage   = { path = "crates/feraille-disk-usage" }
 feraille-fs-native    = { path = "crates/feraille-fs-native" }
 feraille-meta         = { path = "crates/feraille-meta" }
 feraille-shell-mac    = { path = "crates/feraille-shell-mac" }
 feraille-shell-win32  = { path = "crates/feraille-shell-win32" }
 
-# External — old stack (feraille-app)
+# Still needed by feraille-shell-mac for the winit-window-taking subset
+# (begin_drag, show_context_menu, install_services_anchor, etc.) — those
+# functions are unreachable through the `platform_shell` alias today but
+# kept for parity / a possible re-introduction; revisit when the shell
+# surface is pruned.
 winit       = "0.30"
+# softbuffer / ab_glyph used to belong to the soft-renderer stack and are
+# unreferenced by anything in the active workspace today. Left declared
+# in case the archived crates are restored.
 softbuffer  = "0.4"
 ab_glyph    = "0.2"
 anyhow      = "1"
