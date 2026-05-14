@@ -19,12 +19,11 @@ use feraille_core::{
 use feraille_fs_native::{NativeFs, VolumeInfo, home_dir, list_volumes, open_with_default};
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Disableable, Root, Sizable, WindowExt,
-    button::Button,
+    ActiveTheme, Disableable, Root, Sizable, TitleBar, WindowExt,
+    button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
-    sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
-    switch::Switch,
+    sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
     table::{DataTable, TableEvent, TableState},
     v_flex,
 };
@@ -77,6 +76,47 @@ actions!(
         Duplicate,
         MakeAlias,
         Compress,
+        // Phase 6 (next-level): right-click context menus on the
+        // sidebar / breadcrumb / file-pane background. These four
+        // actions all operate on `Shell::context_target` instead
+        // of the file-list selection. The right-click event hands
+        // the closure in `context_menu(...)` a PathBuf; the
+        // closure stashes it on Shell, then dispatches one of the
+        // actions below. Handlers `take()` the target so the next
+        // keyboard-driven action falls back to the regular row
+        // selection.
+        RevealContextPath,
+        CopyContextPath,
+        OpenContextInNewTab,
+        NewFolderHere,
+        // Phase 6 follow-on: Tags + Open-With submenus. Seven tag
+        // colours match Finder's canonical Red/Orange/Yellow/Green/
+        // Blue/Purple/Gray set; toggle behaviour mirrors
+        // `feraille_shell_mac::toggle_tag`.
+        ToggleTagRed,
+        ToggleTagOrange,
+        ToggleTagYellow,
+        ToggleTagGreen,
+        ToggleTagBlue,
+        ToggleTagPurple,
+        ToggleTagGray,
+        // Twelve indexed slots for the Open-With submenu. The menu
+        // builder lays out at most this many candidate apps; each
+        // handler re-resolves the candidates for the target row at
+        // dispatch time and opens slot N. Twelve covers every file
+        // kind we've seen in practice (~5 is typical).
+        OpenWithSlot0,
+        OpenWithSlot1,
+        OpenWithSlot2,
+        OpenWithSlot3,
+        OpenWithSlot4,
+        OpenWithSlot5,
+        OpenWithSlot6,
+        OpenWithSlot7,
+        OpenWithSlot8,
+        OpenWithSlot9,
+        OpenWithSlot10,
+        OpenWithSlot11,
     ]
 );
 
@@ -178,6 +218,14 @@ pub struct Shell {
     /// fall back to the active tab's `selected`. Cleared after each
     /// context-menu action handler runs.
     pub context_row: Option<usize>,
+    /// Path target for the sidebar / breadcrumb / empty-space
+    /// context menus (Phase 6). Set by the `.context_menu(...)`
+    /// closure on right-click; consumed by `RevealContextPath` /
+    /// `CopyContextPath` / `OpenContextInNewTab` /
+    /// `NewFolderHere` handlers. Unlike `context_row` (which targets
+    /// file-list rows by index), this carries the full path because
+    /// sidebar items aren't part of the file list.
+    pub context_target: Option<PathBuf>,
     /// Persistent metadata database (rusqlite-backed) opened at
     /// startup. `None` when `$HOME` is unset or the DB couldn't be
     /// opened — in-memory state still works, just no persistence.
@@ -624,6 +672,7 @@ impl Shell {
             load_generation: 0,
             watcher,
             context_row: None,
+            context_target: None,
             metadata_db: None,
             icons,
             tasks: Rc::new(RefCell::new(TaskRegistry::new())),
@@ -704,6 +753,235 @@ impl Shell {
             .arg("-R")
             .arg(&path)
             .spawn();
+    }
+
+    // -- Phase 6 (next-level) ----------------------------------------
+    // Path-aware context-menu handlers. Each consumes
+    // `context_target` (set by the right-click closure) so the next
+    // keyboard action falls back to the file-row selection.
+
+    fn on_reveal_context_path(
+        &mut self,
+        _: &RevealContextPath,
+        _: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.context_target.take() else { return };
+        let _ = std::process::Command::new("/usr/bin/open")
+            .arg("-R")
+            .arg(&path)
+            .spawn();
+    }
+
+    fn on_copy_context_path(
+        &mut self,
+        _: &CopyContextPath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.context_target.take() else { return };
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            path.to_string_lossy().into_owned(),
+        ));
+    }
+
+    fn on_open_context_in_new_tab(
+        &mut self,
+        _: &OpenContextInNewTab,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.context_target.take() else { return };
+        let id = self.fs.id_for_path(&path);
+        self.node_store
+            .get_or_create_path_with_id(path.clone(), id);
+        let tab = Tab::new(path, id);
+        self.tabs.push(tab);
+        self.active = self.tabs.len() - 1;
+        let active_id = self.fs.id_for_path(&self.active_tab().current_dir);
+        self.navigate_node(active_id, cx);
+    }
+
+    fn on_new_folder_here(
+        &mut self,
+        _: &NewFolderHere,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Mirrors the existing NewFolder action but pins the parent
+        // to `context_target` rather than the current tab's dir.
+        // When no target is set (e.g. dispatched via menu without
+        // right-click priming), fall through to the regular handler.
+        if let Some(target) = self.context_target.take() {
+            let saved = self.active_tab().current_dir.clone();
+            self.active_tab_mut().current_dir = target;
+            self.on_new_folder(&NewFolder, window, cx);
+            self.active_tab_mut().current_dir = saved;
+        } else {
+            self.on_new_folder(&NewFolder, window, cx);
+        }
+    }
+
+    // -- Phase 6 follow-on: Tags submenu --------------------------
+
+    fn toggle_tag_on_target(
+        &mut self,
+        color: feraille_core::commands::TagColor,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(row) = self.target_row() else { return };
+        let Some(path) = self.path_for_row(row, cx) else { return };
+        let _ = feraille_shell_mac::toggle_tag(&path, color);
+    }
+
+    fn on_toggle_tag_red(&mut self, _: &ToggleTagRed, _: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Red, cx);
+    }
+    fn on_toggle_tag_orange(
+        &mut self,
+        _: &ToggleTagOrange,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Orange, cx);
+    }
+    fn on_toggle_tag_yellow(
+        &mut self,
+        _: &ToggleTagYellow,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Yellow, cx);
+    }
+    fn on_toggle_tag_green(
+        &mut self,
+        _: &ToggleTagGreen,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Green, cx);
+    }
+    fn on_toggle_tag_blue(&mut self, _: &ToggleTagBlue, _: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Blue, cx);
+    }
+    fn on_toggle_tag_purple(
+        &mut self,
+        _: &ToggleTagPurple,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Purple, cx);
+    }
+    fn on_toggle_tag_gray(&mut self, _: &ToggleTagGray, _: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Gray, cx);
+    }
+
+    // -- Phase 6 follow-on: Open With submenu ---------------------
+
+    fn open_with_slot(&mut self, slot: usize, cx: &mut Context<Self>) {
+        let Some(row) = self.target_row() else { return };
+        let Some(path) = self.path_for_row(row, cx) else { return };
+        let candidates = feraille_shell_mac::open_with_candidates(&path);
+        if let Some(c) = candidates.get(slot) {
+            let _ = feraille_shell_mac::open_with_app(&path, &c.path);
+        }
+    }
+
+    fn on_open_with_slot_0(
+        &mut self,
+        _: &OpenWithSlot0,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_with_slot(0, cx);
+    }
+    fn on_open_with_slot_1(
+        &mut self,
+        _: &OpenWithSlot1,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_with_slot(1, cx);
+    }
+    fn on_open_with_slot_2(
+        &mut self,
+        _: &OpenWithSlot2,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_with_slot(2, cx);
+    }
+    fn on_open_with_slot_3(
+        &mut self,
+        _: &OpenWithSlot3,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_with_slot(3, cx);
+    }
+    fn on_open_with_slot_4(
+        &mut self,
+        _: &OpenWithSlot4,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_with_slot(4, cx);
+    }
+    fn on_open_with_slot_5(
+        &mut self,
+        _: &OpenWithSlot5,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_with_slot(5, cx);
+    }
+    fn on_open_with_slot_6(
+        &mut self,
+        _: &OpenWithSlot6,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_with_slot(6, cx);
+    }
+    fn on_open_with_slot_7(
+        &mut self,
+        _: &OpenWithSlot7,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_with_slot(7, cx);
+    }
+    fn on_open_with_slot_8(
+        &mut self,
+        _: &OpenWithSlot8,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_with_slot(8, cx);
+    }
+    fn on_open_with_slot_9(
+        &mut self,
+        _: &OpenWithSlot9,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_with_slot(9, cx);
+    }
+    fn on_open_with_slot_10(
+        &mut self,
+        _: &OpenWithSlot10,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_with_slot(10, cx);
+    }
+    fn on_open_with_slot_11(
+        &mut self,
+        _: &OpenWithSlot11,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_with_slot(11, cx);
     }
 
     fn on_move_to_trash(&mut self, _: &MoveToTrash, _: &mut Window, cx: &mut Context<Self>) {
@@ -1740,6 +2018,8 @@ impl Shell {
                 .get_or_create_path_with_id(path.clone(), node_id);
             let active = path == current;
             let weak_for_click = weak.clone();
+            let weak_for_menu = weak.clone();
+            let path_for_menu = path.clone();
             menu = menu.child(
                 SidebarMenuItem::new(SharedString::from(fav.label))
                     .icon(Icon::empty().path(fav.icon))
@@ -1750,6 +2030,26 @@ impl Shell {
                                 shell.navigate_node(node_id, cx);
                             });
                         }
+                    })
+                    .context_menu(move |menu, _window, cx| {
+                        // Stash the right-clicked path on Shell so
+                        // the path-aware action handlers know which
+                        // path the user meant.
+                        if let Some(s) = weak_for_menu.upgrade() {
+                            s.update(cx, |shell, _| {
+                                shell.context_target = Some(path_for_menu.clone());
+                            });
+                        }
+                        menu.menu(
+                            "Open in New Tab",
+                            Box::new(OpenContextInNewTab),
+                        )
+                        .separator()
+                        .menu(
+                            "Reveal in Finder",
+                            Box::new(RevealContextPath),
+                        )
+                        .menu("Copy Path", Box::new(CopyContextPath))
                     }),
             );
         }
@@ -1991,59 +2291,70 @@ impl Shell {
     /// Toolbar row above the breadcrumb: Back / Forward buttons +
     /// "Show hidden" toggle. Disabled buttons grey out via Button's
     /// own disabled state — no manual styling.
-    fn toolbar(&self, cx: &mut Context<Self>) -> Div {
+    // Toolbar removed in Phase 7. Back / forward / filter went into
+    // the TitleBar; Show Hidden moved into the status bar; nothing
+    // useful was left to render between the tabstrip and the
+    // breadcrumb. Future density items (Refresh, New Folder, Sort,
+    // Group, Overflow) will reintroduce a toolbar when they land.
+
+    /// TitleBar built from elements that used to live in the sidebar
+    /// header + toolbar. Layout (left → right):
+    ///   • "Feraille" name
+    ///   • Back / forward navigation (history nav lives next to the
+    ///     brand — Finder convention)
+    ///   • flex spacer
+    ///   • Filter `Input` (~half its previous width, centred-ish via
+    ///     the trailing flex spacer)
+    ///   • trailing space so the right edge isn't crowded
+    ///
+    /// Show-Hidden moved out of here entirely and lives in the
+    /// status bar now (paired with the item count, where view-mode
+    /// state belongs).
+    fn title_bar(&self, cx: &mut Context<Self>) -> TitleBar {
         let can_back = self.active_tab().history_index > 0;
-        let can_forward = self.active_tab().history_index + 1 < self.active_tab().history.len();
-        h_flex()
-            .w_full()
-            .items_center()
-            .gap_2()
-            .px_4()
-            .py_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(
-                Button::new("nav-back")
-                    .small()
-                    .label("\u{2190}")
-                    .tooltip("Back  \u{2318}\u{5B}")
-                    .disabled(!can_back)
-                    .on_click(cx.listener(|this, _, _, cx| this.navigate_back(cx))),
-            )
-            .child(
-                Button::new("nav-forward")
-                    .small()
-                    .label("\u{2192}")
-                    .tooltip("Forward  \u{2318}\u{5D}")
-                    .disabled(!can_forward)
-                    .on_click(cx.listener(|this, _, _, cx| this.navigate_forward(cx))),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .max_w(px(360.0))
-                    .ml_4()
-                    .child(Input::new(&self.filter_input).small()),
-            )
-            .child(div().flex_1())
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Show hidden"),
-                    )
-                    .child(
-                        Switch::new("hidden-toggle-toolbar")
-                            .checked(self.show_hidden)
-                            .on_click(cx.listener(|this, _checked: &bool, _, cx| {
-                                this.toggle_hidden(cx);
-                            })),
-                    ),
-            )
+        let can_forward =
+            self.active_tab().history_index + 1 < self.active_tab().history.len();
+        TitleBar::new().child(
+            h_flex()
+                .w_full()
+                .items_center()
+                .gap_2()
+                .pr_3()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(cx.theme().foreground)
+                        .child("Feraille"),
+                )
+                .child(
+                    Button::new("nav-back")
+                        .small()
+                        .ghost()
+                        .icon(gpui_component::Icon::empty().path("icons/chevron-left.svg"))
+                        .tooltip("Back  \u{2318}\u{5B}")
+                        .disabled(!can_back)
+                        .on_click(cx.listener(|this, _, _, cx| this.navigate_back(cx))),
+                )
+                .child(
+                    Button::new("nav-forward")
+                        .small()
+                        .ghost()
+                        .icon(gpui_component::Icon::empty().path("icons/chevron-right.svg"))
+                        .tooltip("Forward  \u{2318}\u{5D}")
+                        .disabled(!can_forward)
+                        .on_click(cx.listener(|this, _, _, cx| this.navigate_forward(cx))),
+                )
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .w(px(220.0))
+                        .child(Input::new(&self.filter_input).small()),
+                )
+                .child(div().flex_1()),
+        )
     }
 
     /// Build the preview pane on the right of the file list. Shows
@@ -2326,6 +2637,15 @@ impl Shell {
             let label = label.clone();
             let path = path.clone();
             let tooltip_path = path.to_string_lossy().into_owned();
+            // Phase 6 (next-level): right-click on a breadcrumb
+            // segment offers "Open in New Tab" / "Reveal in Finder"
+            // / "Copy Path" — same right-click surface as the
+            // sidebar Favorites. context_target carries the path of
+            // *this* segment, not the active tab's current_dir.
+            use gpui_component::menu::ContextMenuExt as _;
+            let weak_for_crumb = cx.weak_entity();
+            let path_for_menu = path.clone();
+            let path_for_click = path.clone();
             let crumb = div()
                 .id(ElementId::Name(format!("crumb-{i}").into()))
                 .px_2()
@@ -2348,8 +2668,21 @@ impl Shell {
                     }
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.navigate(path.clone(), cx);
-                }));
+                    this.navigate(path_for_click.clone(), cx);
+                }))
+                .context_menu(move |menu, _window, cx| {
+                    if let Some(s) = weak_for_crumb.upgrade() {
+                        s.update(cx, |shell, _| {
+                            shell.context_target = Some(path_for_menu.clone());
+                        });
+                    }
+                    menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
+                        .separator()
+                        .menu("Reveal in Finder", Box::new(RevealContextPath))
+                        .menu("Copy Path", Box::new(CopyContextPath))
+                        .separator()
+                        .menu("New Folder Here", Box::new(NewFolderHere))
+                });
             row = row.child(crumb);
         }
         row
@@ -2382,17 +2715,11 @@ impl Render for Shell {
         // SidebarGroup labels and TreeSection headers) and Downloads
         // can no longer appear twice because Favorites items don't
         // expand.
+        // Sidebar no longer carries the "Feraille" header — that moved
+        // into the TitleBar at the top of the window (Phase 7).
         let mut sidebar = Sidebar::new("shell-sidebar")
             .collapsible(false)
             .w_full()
-            .header(
-                SidebarHeader::new().child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().foreground)
-                        .child("Feraille"),
-                ),
-            )
             .child(ShellSidebarItem::group(
                 SidebarGroup::new("Favorites").child(favorites_menu),
             ))
@@ -2414,7 +2741,6 @@ impl Render for Shell {
         let _ = path_str; // breadcrumb already shows the path
 
         let tabstrip = self.tabstrip(cx);
-        let toolbar = self.toolbar(cx);
         let entry_count = self.table.read(cx).delegate().entries.len();
         // Clicking the task region of the status bar toggles the
         // background-task panel popover. The listener takes `&mut
@@ -2430,11 +2756,24 @@ impl Render for Shell {
                 }
             })
         };
+        // Show-Hidden toggle moved into the status bar in Phase 7.
+        // The callback wraps Shell::toggle_hidden so the switch's
+        // built-in checked-state stays in sync via the next render.
+        let toggle_hidden_cb: Rc<dyn Fn(&mut Window, &mut App) + 'static> = {
+            let weak: WeakEntity<Self> = cx.weak_entity();
+            Rc::new(move |_window, cx| {
+                if let Some(s) = weak.upgrade() {
+                    s.update(cx, |this, cx| this.toggle_hidden(cx));
+                }
+            })
+        };
         let status_bar = crate::status_bar::render(
             entry_count,
             &self.tasks,
             self.simulated_progress,
             Some(toggle_task_panel),
+            self.show_hidden,
+            Some(toggle_hidden_cb),
             cx,
         );
         let task_panel = crate::task_panel::render_if_open(self.task_panel_open, &self.tasks, cx);
@@ -2480,6 +2819,29 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_duplicate))
             .on_action(cx.listener(Self::on_make_alias))
             .on_action(cx.listener(Self::on_compress))
+            .on_action(cx.listener(Self::on_reveal_context_path))
+            .on_action(cx.listener(Self::on_copy_context_path))
+            .on_action(cx.listener(Self::on_open_context_in_new_tab))
+            .on_action(cx.listener(Self::on_new_folder_here))
+            .on_action(cx.listener(Self::on_toggle_tag_red))
+            .on_action(cx.listener(Self::on_toggle_tag_orange))
+            .on_action(cx.listener(Self::on_toggle_tag_yellow))
+            .on_action(cx.listener(Self::on_toggle_tag_green))
+            .on_action(cx.listener(Self::on_toggle_tag_blue))
+            .on_action(cx.listener(Self::on_toggle_tag_purple))
+            .on_action(cx.listener(Self::on_toggle_tag_gray))
+            .on_action(cx.listener(Self::on_open_with_slot_0))
+            .on_action(cx.listener(Self::on_open_with_slot_1))
+            .on_action(cx.listener(Self::on_open_with_slot_2))
+            .on_action(cx.listener(Self::on_open_with_slot_3))
+            .on_action(cx.listener(Self::on_open_with_slot_4))
+            .on_action(cx.listener(Self::on_open_with_slot_5))
+            .on_action(cx.listener(Self::on_open_with_slot_6))
+            .on_action(cx.listener(Self::on_open_with_slot_7))
+            .on_action(cx.listener(Self::on_open_with_slot_8))
+            .on_action(cx.listener(Self::on_open_with_slot_9))
+            .on_action(cx.listener(Self::on_open_with_slot_10))
+            .on_action(cx.listener(Self::on_open_with_slot_11))
             .relative()
             .size_full()
             .bg(cx.theme().background)
@@ -2489,6 +2851,17 @@ impl Render for Shell {
                 // task summary + progress strip is always visible.
                 use gpui_component::resizable::{h_resizable, resizable_panel};
                 let file_body = self.file_pane_body(cx);
+                // Phase 6 review fix: an outer .context_menu on the
+                // file body wrapper consumed the click events bound
+                // for the inner DataTable row menu, causing every
+                // file-row menu selection to dismiss without firing.
+                // The empty-space menu (New Folder / Refresh / etc.)
+                // is parked until we can split the file pane's
+                // background from the rows at the event-routing
+                // layer — the toolbar already exposes those actions
+                // so users aren't blocked.
+                let file_body_wrapped =
+                    div().flex_1().min_h_0().min_w_0().child(file_body);
                 // Auto-hide the preview when the window is too narrow
                 // to fit sidebar + file list + preview comfortably.
                 // The user's explicit `preview_visible` flag still
@@ -2541,9 +2914,8 @@ impl Render for Shell {
                             v_flex()
                                 .size_full()
                                 .child(tabstrip)
-                                .child(toolbar)
                                 .child(breadcrumb)
-                                .child(div().flex_1().min_h_0().min_w_0().child(file_body)),
+                                .child(file_body_wrapped),
                         ),
                     );
                 let splitter = if let Some(pane) = preview_pane {
@@ -2556,9 +2928,16 @@ impl Render for Shell {
                 } else {
                     splitter
                 };
+                let title_bar = self.title_bar(cx);
                 v_flex()
                     .relative()
                     .size_full()
+                    // Phase 7: TitleBar sits across the top with the
+                    // app name + filter input + back/forward
+                    // navigation. Replaces the sidebar-header brand
+                    // mark and the toolbar's nav buttons + filter
+                    // input.
+                    .child(title_bar)
                     .child(div().flex_1().min_h_0().child(splitter))
                     .child(status_bar)
                     // Background-task panel popover sits absolute-

@@ -127,7 +127,20 @@ impl Drop for TempDirGuard {
 }
 
 fn decode_png_to_rgba(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
-    let decoder = png::Decoder::new(bytes);
+    let mut decoder = png::Decoder::new(bytes);
+    // Normalize unusual PNG variants to 8-bit-per-channel before the
+    // match below sees them:
+    // - `STRIP_16` downsamples 16-bit-per-channel PNGs (modern macOS
+    //   screenshots on wide-gamut / HDR displays sometimes ship as
+    //   RGBA16) to 8-bit. Without this the raw `buf` is twice as
+    //   wide, the wrong half gets read as colour data, and the
+    //   preview renders as blue-cast stripes.
+    // - `EXPAND` expands paletted / sub-byte grayscale to a regular
+    //   8-bit-per-channel layout so the match arms below see only
+    //   `Rgb`, `Rgba`, `Grayscale`, or `GrayscaleAlpha` at most.
+    decoder.set_transformations(
+        png::Transformations::EXPAND | png::Transformations::STRIP_16,
+    );
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).ok()?;

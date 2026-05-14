@@ -101,6 +101,15 @@ pub struct DiskUsageView {
     /// `Rc<RefCell>` so it has no built-in observers).
     notify_owner: Option<Rc<dyn Fn(&mut App)>>,
 
+    /// True once we've adopted the scanner's canonical root NodeId
+    /// from the first incoming fact. Phase 6 regression fix: the
+    /// constructor keeps the UI snappy by skipping `canonicalize()`,
+    /// but the scanner canonicalises internally, so its facts arrive
+    /// under a different NodeId than the one we computed up front.
+    /// Without this, focus_id() points at an orphan node and the
+    /// treemap layout renders empty even though tree.nodes has data.
+    root_resolved: bool,
+
     focus_handle: FocusHandle,
 }
 
@@ -159,6 +168,7 @@ impl DiskUsageView {
             tasks,
             task_id: None,
             notify_owner,
+            root_resolved: false,
             focus_handle: cx.focus_handle(),
         };
         view.start_scan(fs, cx);
@@ -327,7 +337,24 @@ impl DiskUsageView {
     /// drain loop batches those so they happen once per tick.
     fn apply_scan_msg(&mut self, msg: ScanMsg) {
         match msg {
-            ScanMsg::Batch(facts) => self.tree.apply_facts(&facts),
+            ScanMsg::Batch(facts) => {
+                // First scanner fact is a ContainerScanStarted for the
+                // *canonical* root NodeId. Adopt it as our root_id so
+                // focus_id() points at the node the rest of the
+                // facts actually populate. Without this, the layout
+                // is rooted at the as-passed (non-canonical) path's
+                // id which has no children → empty treemap.
+                if !self.root_resolved {
+                    for fact in &facts {
+                        if let DiskUsageFact::ContainerScanStarted { container } = fact {
+                            self.root_id = *container;
+                            self.root_resolved = true;
+                            break;
+                        }
+                    }
+                }
+                self.tree.apply_facts(&facts);
+            }
             ScanMsg::Progress(p) => self.stats = p,
             ScanMsg::Done(err) => {
                 self.scan_complete = true;
@@ -436,15 +463,21 @@ impl DiskUsageView {
         } else {
             format!("Scanning\u{2026} {files} files, {scanned}")
         };
+        // Phase 6 follow-on: header action buttons are icon-only.
+        // Each one carries a tooltip with the human-readable name
+        // so the affordance is recoverable on hover.
+        use gpui_component::Icon;
         let scan_button = if scanning {
             Button::new("du-cancel")
                 .small()
-                .label("Cancel")
+                .icon(Icon::empty().path("icons/close.svg"))
+                .tooltip("Cancel scan")
                 .on_click(cx.listener(|this, _, _, cx| this.cancel_scan(cx)))
         } else {
             Button::new("du-refresh")
                 .small()
-                .label("Refresh")
+                .icon(Icon::empty().path("icons/nav/refresh.svg"))
+                .tooltip("Refresh")
                 .on_click(cx.listener(|this, _, _, cx| this.restart_scan(cx)))
         };
         let mut col = v_flex()
@@ -472,7 +505,8 @@ impl DiskUsageView {
                     .child(
                         Button::new("du-up")
                             .small()
-                            .label("Up")
+                            .icon(Icon::empty().path("icons/arrow-up.svg"))
+                            .tooltip("Zoom out")
                             .disabled(self.zoom_path.is_empty())
                             .on_click(cx.listener(|this, _, _, cx| this.zoom_out(cx))),
                     )
@@ -480,10 +514,15 @@ impl DiskUsageView {
                     .child(
                         Button::new("du-topn")
                             .small()
-                            .label(if self.topn_visible {
-                                "Hide List"
+                            .icon(Icon::empty().path(if self.topn_visible {
+                                "icons/panel-right-close.svg"
                             } else {
-                                "Show List"
+                                "icons/panel-right-open.svg"
+                            }))
+                            .tooltip(if self.topn_visible {
+                                "Hide largest-files panel"
+                            } else {
+                                "Show largest-files panel"
                             })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.topn_visible = !this.topn_visible;
@@ -531,7 +570,7 @@ impl DiskUsageView {
                     .child(
                         Button::new("du-packages")
                             .small()
-                            .label("Packages")
+                            .icon(Icon::empty().path("icons/nav/package.svg"))
                             .selected(self.descend_packages)
                             .disabled(scanning)
                             .tooltip("Scan package folders as containers")

@@ -33,6 +33,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Collapsible, h_flex,
+    menu::ContextMenuExt as _,
     sidebar::{SidebarGroup, SidebarItem, SidebarMenu},
     v_flex,
 };
@@ -315,6 +316,33 @@ fn render_tree_row(
             }
         });
 
+    // Phase 6 (next-level): closure that adds the right-click menu
+    // to whichever final element the row renders into (the row
+    // alone, or the row+capacity-bar wrapper for volumes). Lives
+    // outside the row-building chain because `.context_menu(...)`
+    // changes the element's type to `ContextMenu<E>` — incompatible
+    // with the `row = row.child(...)` accumulator pattern above.
+    let shell_for_menu = shell.clone();
+    let path_for_menu = path.clone();
+    let attach_menu = move |el: gpui::Stateful<gpui::Div>| {
+        el.context_menu(move |menu, _window, cx| {
+            use crate::shell::{
+                CopyContextPath, NewFolderHere, OpenContextInNewTab, RevealContextPath,
+            };
+            if let Some(shell) = shell_for_menu.upgrade() {
+                shell.update(cx, |s, _| {
+                    s.context_target = Some(path_for_menu.clone());
+                });
+            }
+            menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
+                .separator()
+                .menu("Reveal in Finder", Box::new(RevealContextPath))
+                .menu("Copy Path", Box::new(CopyContextPath))
+                .separator()
+                .menu("New Folder Here", Box::new(NewFolderHere))
+        })
+    };
+
     // Capacity bar for volume rows. Finder draws this as a thin
     // line under the volume name, with the used portion filled in
     // accent and the rest in muted grey. Matches the
@@ -346,9 +374,14 @@ fn render_tree_row(
                         .bg(track_bg)
                         .child(div().h_full().w(fill_w).rounded(px(2.0)).bg(fill_bg)),
                 );
-            return v_flex().w_full().child(row).child(bar).into_any_element();
+            return v_flex()
+                .id(("tree-row-capacity", node_id.as_raw() as usize))
+                .w_full()
+                .child(attach_menu(row))
+                .child(bar)
+                .into_any_element();
         }
     }
 
-    row.into_any_element()
+    attach_menu(row).into_any_element()
 }

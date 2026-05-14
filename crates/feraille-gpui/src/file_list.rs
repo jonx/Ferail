@@ -22,7 +22,7 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme,
-    menu::PopupMenu,
+    menu::{PopupMenu, PopupMenuItem},
     table::{Column, TableDelegate, TableState},
     tooltip::Tooltip,
 };
@@ -337,16 +337,53 @@ impl TableDelegate for FileListDelegate {
 
     fn context_menu(
         &mut self,
-        _row_ix: usize,
+        row_ix: usize,
         menu: PopupMenu,
-        _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
         use crate::shell::{
             Compress, CopyPath, Duplicate, GetInfo, MakeAlias, MoveToTrash, OpenInNewTab,
-            OpenSelected, QuickLook, RenameSelected, RevealInFinder,
+            OpenSelected, OpenWithSlot0, OpenWithSlot1, OpenWithSlot2, OpenWithSlot3,
+            OpenWithSlot4, OpenWithSlot5, OpenWithSlot6, OpenWithSlot7, OpenWithSlot8,
+            OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook, RenameSelected,
+            RevealInFinder, ToggleTagBlue, ToggleTagGray, ToggleTagGreen, ToggleTagOrange,
+            ToggleTagPurple, ToggleTagRed, ToggleTagYellow,
         };
-        menu.menu("Open", Box::new(OpenSelected))
+
+        // Phase 6 follow-on: snapshot Open-With candidates and the
+        // currently-applied tags for this row, both via synchronous
+        // shell-mac calls (~10–50 ms each on macOS). The handlers
+        // re-fetch on dispatch — duplicate work is acceptable at
+        // human-scale right-click frequency, and avoids plumbing
+        // per-right-click state up to Shell.
+        let target_path = self
+            .entries
+            .get(row_ix)
+            .and_then(|entry| self.path_for_entry(entry.id));
+        let open_with_candidates: Vec<feraille_shell_mac::OpenWithCandidate> = target_path
+            .as_ref()
+            .map(|p| feraille_shell_mac::open_with_candidates(p))
+            .unwrap_or_default();
+        let applied_tags: Vec<feraille_core::commands::TagColor> = target_path
+            .as_ref()
+            .map(|p| feraille_shell_mac::read_canonical_tags(p))
+            .unwrap_or_default();
+
+        // Tags submenu — built as a nested PopupMenu Entity via
+        // PopupMenu::build. Each colour is a `menu_with_check` so
+        // applied tags render with a leading checkmark. Click
+        // toggles via the ToggleTagX action.
+        let tag_red_on = applied_tags.contains(&feraille_core::commands::TagColor::Red);
+        let tag_orange_on = applied_tags.contains(&feraille_core::commands::TagColor::Orange);
+        let tag_yellow_on = applied_tags.contains(&feraille_core::commands::TagColor::Yellow);
+        let tag_green_on = applied_tags.contains(&feraille_core::commands::TagColor::Green);
+        let tag_blue_on = applied_tags.contains(&feraille_core::commands::TagColor::Blue);
+        let tag_purple_on = applied_tags.contains(&feraille_core::commands::TagColor::Purple);
+        let tag_gray_on = applied_tags.contains(&feraille_core::commands::TagColor::Gray);
+
+        let mut menu = menu
+            .menu("Open", Box::new(OpenSelected))
             .menu("Open in New Tab", Box::new(OpenInNewTab))
             .separator()
             .menu("Get Info", Box::new(GetInfo))
@@ -358,9 +395,56 @@ impl TableDelegate for FileListDelegate {
             .menu("Rename\u{2026}", Box::new(RenameSelected))
             .menu("Duplicate", Box::new(Duplicate))
             .menu("Make Alias", Box::new(MakeAlias))
-            .menu("Compress", Box::new(Compress))
-            .separator()
-            .menu("Move to Trash", Box::new(MoveToTrash))
+            .menu("Compress", Box::new(Compress));
+
+        // Build submenu Entities via `PopupMenu::build`, which only
+        // needs `&mut App` (which we have via Context<TableState>'s
+        // deref). The parent menu accepts pre-built submenu entries
+        // through `PopupMenuItem::submenu(label, entity)`.
+        let app_cx: &mut gpui::App = cx;
+
+        if !open_with_candidates.is_empty() {
+            let candidates_for_build = open_with_candidates.clone();
+            let open_with_submenu = PopupMenu::build(window, app_cx, move |mut m, _w, _c| {
+                for (i, cand) in candidates_for_build.iter().take(12).enumerate() {
+                    let label = if cand.is_default {
+                        SharedString::from(format!("{} (default)", cand.name))
+                    } else {
+                        SharedString::from(cand.name.clone())
+                    };
+                    let action: Box<dyn gpui::Action> = match i {
+                        0 => Box::new(OpenWithSlot0),
+                        1 => Box::new(OpenWithSlot1),
+                        2 => Box::new(OpenWithSlot2),
+                        3 => Box::new(OpenWithSlot3),
+                        4 => Box::new(OpenWithSlot4),
+                        5 => Box::new(OpenWithSlot5),
+                        6 => Box::new(OpenWithSlot6),
+                        7 => Box::new(OpenWithSlot7),
+                        8 => Box::new(OpenWithSlot8),
+                        9 => Box::new(OpenWithSlot9),
+                        10 => Box::new(OpenWithSlot10),
+                        _ => Box::new(OpenWithSlot11),
+                    };
+                    m = m.menu(label, action);
+                }
+                m
+            });
+            menu = menu.item(PopupMenuItem::submenu("Open With", open_with_submenu));
+        }
+
+        let tags_submenu = PopupMenu::build(window, app_cx, move |m, _w, _c| {
+            m.menu_with_check("Red", tag_red_on, Box::new(ToggleTagRed))
+                .menu_with_check("Orange", tag_orange_on, Box::new(ToggleTagOrange))
+                .menu_with_check("Yellow", tag_yellow_on, Box::new(ToggleTagYellow))
+                .menu_with_check("Green", tag_green_on, Box::new(ToggleTagGreen))
+                .menu_with_check("Blue", tag_blue_on, Box::new(ToggleTagBlue))
+                .menu_with_check("Purple", tag_purple_on, Box::new(ToggleTagPurple))
+                .menu_with_check("Gray", tag_gray_on, Box::new(ToggleTagGray))
+        });
+        menu = menu.item(PopupMenuItem::submenu("Tags", tags_submenu));
+
+        menu.separator().menu("Move to Trash", Box::new(MoveToTrash))
     }
 
     fn render_empty(

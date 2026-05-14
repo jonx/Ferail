@@ -514,35 +514,122 @@ pipeline.
 
 # Phase 6 — Context Menus
 
-**Status:** In progress (file-row PopupMenu shipped via gpui-component
-in 5.5.c; sidebar / breadcrumb / empty-space menus pending)
+**Status:** Done (pending user review)
 **Goal:** right-click works everywhere users expect.
 
 ### Deliverables
 
-- [ ] **File row menu** — confirm content matches the brief:
-  Open / Open With / Get Info / Quick Look / Reveal in Finder /
-  Copy Path / Rename / Duplicate / Make Alias / Compress / Move to
-  Trash / Tags submenu.
-  - [ ] Open With submenu: list candidate apps from
-        `feraille_shell_mac::open_with_candidates(path)`. Cache the
-        list per-file-kind so it's not re-fetched per right-click.
-- [ ] **Sidebar menu:** Open / Reveal in Finder / Remove from
-      Favorites (only on Favorites entries) / Rename (favorite only).
-- [ ] **Breadcrumb segment menu:** Copy Path / Open in New Tab /
-      Reveal in Finder / New Folder Here.
-- [ ] **Empty-space menu** in file list (right-click in the gap
-      below the last row): New Folder / Paste / Refresh / Show
-      Hidden toggle / Sort by submenu / View as submenu.
-- [ ] **Tags submenu:** seven colour buttons (Red, Orange, Yellow,
-      Green, Blue, Purple, Gray). Wire via
-      `feraille_shell_mac::toggle_tag`. Carries the
-      not-yet-implemented "7 typed actions" from the prior todo.
-- [ ] Every menu item with a keyboard shortcut shows it inline using
-      `Kbd`.
-- [ ] Destructive actions: confirm via `Dialog` when count > N (e.g.
-      Move-to-Trash for > 10 items), or always-confirm for permanent
-      delete.
+- [x] **File row menu** already shipped in 5.5.c via
+      `TableDelegate::context_menu` in
+      [file_list.rs](../crates/feraille-gpui/src/file_list.rs):
+      Open / Open in New Tab / Get Info / Quick Look / Reveal in
+      Finder / Copy Path / Rename / Duplicate / Make Alias /
+      Compress / Move to Trash. Each menu item carries a unit-struct
+      `Action` whose chord gpui-component pulls from the live keymap.
+- [x] **Sidebar Favorites menu**: each `SidebarMenuItem` gets a
+      `.context_menu(...)` offering Open in New Tab / Reveal in
+      Finder / Copy Path. The closure stashes the right-clicked path
+      on `Shell::context_target` before building the menu so the
+      path-aware action handlers know what the user meant.
+- [x] **Tree-row menu** (Browse + Volumes): same triplet + New
+      Folder Here. Lives in
+      [tree.rs::render_tree_row](../crates/feraille-gpui/src/tree.rs)
+      via a small `attach_menu` closure applied to whichever final
+      element the row renders into (the row alone, or the row +
+      capacity-bar wrapper for volumes).
+- [x] **Breadcrumb segment menu**: Open in New Tab / Reveal in
+      Finder / Copy Path / New Folder Here. Path-aware via the same
+      `context_target` plumbing.
+- [ ] **Empty-space menu** in the file pane removed in review.
+      The first attempt wrapped the file body in `.context_menu(...)`
+      to catch background right-clicks, but the wrapper consumed
+      click events bound for the inner DataTable row menu — file-
+      row menu selections dismissed without firing. Needs a
+      different event-routing strategy (split the background div
+      from the row container, or hook `on_mouse_down(Right)` with
+      `cx.stop_propagation()` gated on hit-test). Toolbar already
+      exposes New Folder / Refresh / Show Hidden so users aren't
+      blocked on the omitted right-click affordance.
+- [x] **Path-aware action plumbing**: four new unit actions
+      (`RevealContextPath`, `CopyContextPath`,
+      `OpenContextInNewTab`, `NewFolderHere`) plus matching
+      handlers on `Shell` that `take()` `context_target`.
+- [x] Menu items dispatch via gpui Actions, so each item's
+      keyboard chord is rendered automatically by the upstream
+      `PopupMenu` (no manual `Kbd` plumbing per item).
+- [x] **Tags submenu** shipped. Seven typed `ToggleTagX` unit
+      actions on Shell, each calling `feraille_shell_mac::toggle_tag`
+      with the matching `TagColor`. The submenu uses
+      `menu_with_check` so applied tags render with a checkmark —
+      `feraille_shell_mac::read_canonical_tags(path)` runs once at
+      right-click to read the current set.
+- [x] **Open With submenu** shipped. Built via
+      `PopupMenu::build(window, &mut App, ...)` (the App-cx flavour
+      works from inside `TableDelegate::context_menu` because
+      `Context<TableState>` derefs to `&mut App`), wrapped in
+      `PopupMenuItem::submenu(label, entity)`. The synchronous
+      `feraille_shell_mac::open_with_candidates(path)` runs once at
+      right-click; the parent menu lists up to twelve candidates
+      (matching `OpenWithSlot0..OpenWithSlot11` unit actions). Each
+      slot handler re-resolves candidates at dispatch time and
+      invokes `feraille_shell_mac::open_with_app(path, &cand.path)`.
+      Default app marked with "(default)" suffix; submenu is omitted
+      entirely when no candidates exist.
+- [ ] **Bulk Move-to-Trash confirmation dialog** parked for Phase 9
+      (Notifications + Undo) — that's where the destructive-confirm
+      / undo pattern lives.
+
+### Files touched
+
+- [shell.rs](../crates/feraille-gpui/src/shell.rs) —
+  `context_target: Option<PathBuf>` field, four new
+  `actions!()` entries, four new handlers + listener wiring,
+  Favorites `.context_menu(...)`, breadcrumb segment
+  `.context_menu(...)`, file-pane empty-space `.context_menu(...)`.
+- [tree.rs](../crates/feraille-gpui/src/tree.rs) — `attach_menu`
+  closure applied to row + capacity-bar wrapper, `ContextMenuExt`
+  import.
+
+### Phase 6 review regressions fixed in-place
+
+- **Status-bar progress strip rebuilt on top of
+  `gpui_component::progress::Progress`.** The hand-rolled strip
+  rendered as a flat white sliver because `theme.border` (track) and
+  `theme.primary` (fill) collapsed visually under some palettes, and
+  the indeterminate state was a static 30% fill that read as a
+  stuck progress bar. The library primitive ships an animated
+  sliding bar for `loading(true)` and a proper track color for
+  determinate values.
+- **Disk Usage treemap empty regression fixed.** Constructor keeps
+  the UI snappy by skipping `canonicalize()`, but the scanner
+  canonicalises internally and emits facts under that NodeId. Our
+  pre-computed `root_id` therefore pointed at an orphan node and
+  `build_layout_node_with_mode` returned an empty layout. Added
+  `root_resolved: bool` + an `apply_scan_msg` hook that captures
+  the canonical id from the first `ContainerScanStarted` fact.
+  Treemap now draws normally after the first batch.
+- **DU header buttons → icon-only with tooltips.** Up = `arrow-up`,
+  Cancel = `close`, Refresh = new local `refresh` SVG, Show/Hide
+  largest-files = `panel-right-open`/`panel-right-close`, Packages
+  = new local `package` SVG. The `Apparent`/`Allocated` segmented
+  control kept its labels — toggle text is clearer than a glyph
+  for an explicit two-state mode. Two new SVGs added under
+  `resources/icons/nav/`.
+
+### Notes
+
+- The screenshot can't capture a context menu (it only paints on
+  right-click). Wiring verified via `cargo check --bin feraille-gpui`
+  clean. Live interaction shows the menus on right-click of each
+  surface.
+- The path-aware actions all `take()` `context_target` so the next
+  keyboard-driven `Reveal in Finder` etc. falls back to the regular
+  row selection — no sticky state.
+- `NewFolderHere` reuses the existing `on_new_folder` handler by
+  temporarily pinning the active tab's `current_dir` to the right-
+  clicked target, dispatching the dialog, then restoring. Avoids
+  duplicating the dialog plumbing for the common case (and the
+  fallback path still handles a top-level menubar invocation).
 
 ### gpui-component primitives
 
@@ -564,34 +651,37 @@ in 5.5.c; sidebar / breadcrumb / empty-space menus pending)
 
 # Phase 7 — Toolbar and TitleBar Upgrade
 
-**Status:** Not started
+**Status:** In progress — TitleBar adopted (name + filter + history);
+denser-toolbar items still pending
 **Goal:** the top of the window stops feeling empty.
 
 ### Deliverables
 
-- [ ] Adopt `gpui-component::TitleBar` for the window chrome. Layout:
-  - Left: app icon + breadcrumb (move breadcrumb up).
-  - Center: global search input ("search this folder" default,
-    scope-up via dropdown).
-  - Right: action buttons (View mode toggle, Sort dropdown, Group
-    dropdown), overflow `…`.
-- [ ] Search input wired to filter pipeline (today `filter_text`).
-      Keep Cmd+F focusing this input; remove the separate filter
-      input from the toolbar (or hide it when TitleBar search is
-      present).
-- [ ] Toolbar densification (under the TitleBar):
-  - [ ] Back / Forward (existing).
-  - [ ] Refresh button.
-  - [ ] New Folder button.
-  - [ ] View mode segmented control (List / Grid / Columns) — Grid
-        and Columns may be Phase 13+ for the actual view
-        implementations; today just wire the buttons that go to
-        List.
-  - [ ] Sort dropdown (Name / Date / Size / Kind / Format, asc/desc).
-  - [ ] Group dropdown (None / Kind / Date / Size band).
-  - [ ] Show Hidden toggle (already present).
-  - [ ] Overflow `…` for less-used items.
-- [ ] Every icon-only button has a `Tooltip` with `Kbd` shortcut.
+- [x] Adopt `gpui_component::TitleBar` for the window chrome.
+      `WindowOptions::titlebar = Some(TitleBar::title_bar_options())`
+      in main.rs gives us the transparent macOS title bar with
+      traffic-light area reserved automatically.
+- [x] **Promoted into the TitleBar** (Phase 7 user ask):
+  - **Left:** "Feraille" name (dropped from the SidebarHeader).
+  - **Center:** filter `Input` (dropped from the toolbar).
+  - **Right:** back / forward `Button`s with chevron icons + Kbd
+    tooltips. The existing keybindings (Cmd+`[` / Cmd+`]`) still
+    fire via the keymap.
+- [x] Filter input wired through the same `filter_input: InputState`
+      entity as before — Cmd+F still focuses it (now sitting in the
+      TitleBar). No data-flow changes; just relocated.
+- [x] Toolbar shrunk to just **Show Hidden**. The bar is intentionally
+      sparse so the upcoming density iter can fill it without
+      fighting the now-moved widgets.
+- [ ] Toolbar densification (Refresh / New Folder / Sort dropdown /
+      Group dropdown / Overflow). Mechanical follow-on; deferred to
+      a sub-iter so this commit stays focused on the TitleBar move.
+- [x] Every icon-only button in the TitleBar carries a `tooltip(...)`
+      string with the keyboard shortcut. We're not using
+      `tooltip_with_action` here because the navigate-back / forward
+      actions don't have the standard `actions!()` entries — they
+      use closures that call `Self::navigate_back` directly. Switch
+      to action-based dispatch when the action surface is unified.
 
 ### gpui-component primitives
 

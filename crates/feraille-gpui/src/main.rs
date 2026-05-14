@@ -140,6 +140,11 @@ fn run_gui(args: screenshot::Args) {
 
         let opts = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(width), px(height)), cx)),
+            // Phase 7: gpui-component's TitleBar replaces the macOS
+            // default title text + adopts the traffic-light area so
+            // our custom title-bar content (name + filter + nav)
+            // sits flush across the top of the window.
+            titlebar: Some(gpui_component::TitleBar::title_bar_options()),
             ..Default::default()
         };
 

@@ -22,7 +22,7 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::{ActiveTheme, h_flex};
+use gpui_component::{ActiveTheme, Sizable as _, h_flex};
 
 use crate::tasks::{TaskProgress, TaskRegistry};
 
@@ -38,6 +38,8 @@ pub fn render(
     tasks: &Rc<RefCell<TaskRegistry>>,
     simulated_progress: Option<f32>,
     on_toggle_task_panel: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    show_hidden: bool,
+    on_toggle_hidden: Option<Rc<dyn Fn(&mut Window, &mut App) + 'static>>,
     cx: &mut App,
 ) -> Div {
     let theme = cx.theme();
@@ -112,7 +114,25 @@ pub fn render(
                 progress_strip(indeterminate, fraction, cx),
                 "status-bar-progress",
             ))
-        });
+        })
+        // Phase 7 user ask: Show-Hidden moved out of the toolbar
+        // and lives here next to the count + task summary. View-mode
+        // toggle belongs alongside the rest of the status-bar state.
+        .child(div().flex_shrink_0().child("Show hidden"))
+        .child(
+            gpui_component::switch::Switch::new("status-bar-hidden-toggle")
+                .checked(show_hidden)
+                .xsmall()
+                .when_some(on_toggle_hidden, |sw, cb| {
+                    sw.on_click(move |_state, window, cx| {
+                        // Switch's on_click hands us the new bool
+                        // value; we don't need it here — Shell's
+                        // toggle_hidden flips its own state from
+                        // whatever the current Shell value is.
+                        cb(window, cx);
+                    })
+                }),
+        );
 
     bar
 }
@@ -145,24 +165,18 @@ fn compute_progress(registry: &TaskRegistry, simulated_progress: Option<f32>) ->
     (true, false, fraction)
 }
 
-/// Tiny 120-DIP-wide progress strip on the right of the status bar.
-/// Indeterminate mode shows a steady accent-coloured fill at 30 %
-/// width as a "something is happening" cue (no animation yet — the
-/// gpui-component animation primitives land in a follow-on iter so
-/// we don't reinvent the wheel).
-fn progress_strip(indeterminate: bool, fraction: f32, cx: &mut App) -> Div {
-    let theme = cx.theme();
-    let track_w = px(120.0);
-    let fill_w = if indeterminate {
-        track_w * 0.30
-    } else {
-        track_w * fraction.clamp(0.0, 1.0)
-    };
-    div()
-        .flex_shrink_0()
-        .w(track_w)
-        .h(px(3.0))
-        .rounded(px(1.5))
-        .bg(theme.border)
-        .child(div().h_full().w(fill_w).rounded(px(1.5)).bg(theme.primary))
+/// Status-bar progress strip — thin 120-DIP accent strip on the right.
+/// Uses `gpui_component::Progress` so the indeterminate state gets
+/// the library's built-in sliding animation (we used to paint a
+/// static 30%-wide fill, which read as a stuck progress bar rather
+/// than ongoing work, and at certain themes the track and fill
+/// merged into one flat white line).
+fn progress_strip(indeterminate: bool, fraction: f32, _cx: &mut App) -> Div {
+    use gpui_component::{Sizable as _, progress::Progress};
+    div().flex_shrink_0().w(px(120.0)).child(
+        Progress::new("status-progress")
+            .xsmall()
+            .loading(indeterminate)
+            .value(fraction.clamp(0.0, 1.0) * 100.0),
+    )
 }
