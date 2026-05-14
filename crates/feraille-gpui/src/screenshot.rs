@@ -52,6 +52,12 @@ pub struct Args {
     pub select_row: Option<usize>,
     /// Set cursor to the first row whose name matches.
     pub select_name: Option<String>,
+    /// Seed a multi-row selection by row index (comma-separated on
+    /// the CLI: `--select-rows 0,2,5`). The first index becomes
+    /// the anchor; the last becomes the lead. Drives screenshot
+    /// verification of the selection-set rendering without
+    /// simulating click+modifier sequences.
+    pub select_rows: Vec<usize>,
     /// Sidebar splitter position (DIPs). N/A in the GPUI shell —
     /// the sidebar width is currently a Settings choice, not a
     /// drag-resizable splitter.
@@ -149,6 +155,14 @@ pub fn parse_args() -> Args {
             }
             "--select-row" => args.select_row = iter.next().and_then(|s| s.parse().ok()),
             "--select-name" => args.select_name = iter.next(),
+            "--select-rows" => {
+                if let Some(raw) = iter.next() {
+                    args.select_rows = raw
+                        .split(',')
+                        .filter_map(|s| s.trim().parse::<usize>().ok())
+                        .collect();
+                }
+            }
             "--splitter" => args.splitter = iter.next().and_then(|s| s.parse().ok()),
             "--scroll" => args.scroll = iter.next().and_then(|s| s.parse().ok()),
             "--edit-mode" => args.edit_mode = true,
@@ -225,6 +239,7 @@ OPTIONS
   --expand <path>          Reveal & expand <path> in the sidebar tree. Repeatable.
   --select-row <N>         Set cursor to row N in the file pane.
   --select-name <name>     Set cursor to first row whose name equals <name>.
+  --select-rows <a,b,c>    Multi-select rows by index. First = anchor, last = lead.
   --splitter <x>           Sidebar splitter position. Stage-2 stub.
   --scroll <y>             List scroll offset. Stage-2 stub.
   --show-hidden            Include dotfiles.
@@ -382,6 +397,7 @@ struct ShellArgs {
     search: bool,
     select_row: Option<usize>,
     select_name: Option<String>,
+    select_rows: Vec<usize>,
     sort: Option<(String, bool)>,
     rename: bool,
     new_folder: bool,
@@ -411,6 +427,7 @@ impl From<&Args> for ShellArgs {
             search: a.search,
             select_row: a.select_row,
             select_name: a.select_name.clone(),
+            select_rows: a.select_rows.clone(),
             sort: a.sort.clone(),
             rename: a.rename || a.inline_rename,
             new_folder: a.new_folder,
@@ -501,10 +518,16 @@ impl ShellArgs {
         }
         if let Some(row) = self.select_row {
             let _ = shell.update(cx, |s, cx| {
-                s.active_tab_mut().selected = Some(row);
+                s.select_row_index(row, cx);
                 if let Some(p) = s.path_for_row(row, cx) {
                     crate::preview::request(s, p, cx);
                 }
+            });
+        }
+        if !self.select_rows.is_empty() {
+            let rows = self.select_rows.clone();
+            let _ = shell.update(cx, |s, cx| {
+                s.select_row_indices(&rows, cx);
             });
         }
         if let Some(name) = self.select_name.clone() {
@@ -517,7 +540,7 @@ impl ShellArgs {
                     .iter()
                     .position(|e| e.name == name);
                 if let Some(i) = idx {
-                    s.active_tab_mut().selected = Some(i);
+                    s.select_row_index(i, cx);
                     if let Some(p) = s.path_for_row(i, cx) {
                         crate::preview::request(s, p, cx);
                     }
@@ -533,9 +556,9 @@ impl ShellArgs {
             let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
                     // RenameSelected handler reads target_row; need
-                    // a selection.
-                    if s.active_tab().selected.is_none() {
-                        s.active_tab_mut().selected = Some(0);
+                    // a selection (the lead row in particular).
+                    if s.active_tab().lead.is_none() {
+                        s.select_row_index(0, cx);
                     }
                     s.trigger_rename(window, cx);
                 });

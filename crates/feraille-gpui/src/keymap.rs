@@ -297,8 +297,15 @@ pub(crate) fn install_extras(cx: &mut App) {
         // can move into the catalogue when other surfaces (menu
         // bar, command palette) need to enumerate them.
         KeyBinding::new("cmd-a", SelectAll, Some(shell::SHELL_CONTEXT)),
+        // Spec §2.5: Cmd+Up/Down → jump to first/last row (plain nav).
+        KeyBinding::new("cmd-up", CursorFirst, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("cmd-down", CursorLast, Some(shell::SHELL_CONTEXT)),
+        // Shift-extend variants for arrow, Home/End, PgUp/PgDn,
+        // and Cmd+Shift for first/last extend.
         KeyBinding::new("shift-up", CursorUpExtend, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("shift-down", CursorDownExtend, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("cmd-shift-up", CursorFirstExtend, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("cmd-shift-down", CursorLastExtend, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("shift-home", CursorFirstExtend, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("shift-end", CursorLastExtend, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("shift-pageup", PageUpExtend, Some(shell::SHELL_CONTEXT)),

@@ -20,6 +20,7 @@ pub mod fs_watcher;
 pub mod icons;
 pub mod keyboard_help;
 pub mod keymap;
+pub mod multi_table;
 pub mod obs;
 pub mod prefetch;
 pub mod preview;

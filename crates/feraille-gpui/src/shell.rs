@@ -29,7 +29,6 @@ use gpui_component::{
     h_flex,
     input::{Input, InputEvent, InputState},
     sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
-    table::{DataTable, TableEvent, TableState},
     v_flex,
 };
 
@@ -37,6 +36,7 @@ use crate::app_state;
 use crate::file_list::FileListDelegate;
 use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
 use crate::icons::IconCache;
+use crate::multi_table::{DataTable, TableEvent, TableState};
 use crate::tasks::{TaskId, TaskKind, TaskRegistry};
 use crate::tree::{ShellSidebarItem, TreeChild, TreeRowIcon, TreeRowSpec, TreeSection};
 
@@ -263,6 +263,30 @@ const UNDO_STACK_CAP: usize = 20;
 /// virtualized Table entity, and the FS watcher are shared at the
 /// Shell level — Finder-style "the active tab's location is what
 /// the rest of the chrome reflects."
+/// One entry in a tab's back/forward history. Spec §2.6 history
+/// exception: a back-navigation should restore the selection state
+/// that tab had for the destination directory, reconciled against
+/// the freshly streamed model on `Done`. Each push records the
+/// selection that was live at the moment of leaving.
+#[derive(Clone)]
+pub struct HistoryEntry {
+    pub path: PathBuf,
+    pub selection: HashSet<NodeId>,
+    pub anchor: Option<NodeId>,
+    pub lead: Option<NodeId>,
+}
+
+impl HistoryEntry {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            selection: HashSet::new(),
+            anchor: None,
+            lead: None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Tab {
     /// Authoritative location identity. `current_dir` remains as a
@@ -270,7 +294,7 @@ pub struct Tab {
     /// moves through this NodeId state first.
     pub nav: NavigationState,
     pub current_dir: PathBuf,
-    pub history: Vec<PathBuf>,
+    pub history: Vec<HistoryEntry>,
     pub history_index: usize,
     /// Multi-selection set keyed by `NodeId`. Per spec §2.2 this is
     /// in-memory interaction state, not persisted truth; reconciled
@@ -285,6 +309,19 @@ pub struct Tab {
     /// `TableState::selected_row` so the primitive's native focus
     /// overlay marks it.
     pub lead: Option<NodeId>,
+    /// Spec §2.6 filter holding set: NodeIds that were in
+    /// `selection` but got filtered out of the visible model. When
+    /// the filter loosens or clears, members whose rows reappear
+    /// move back to `selection`. Dropped entirely on navigation.
+    pub filtered_out: HashSet<NodeId>,
+    /// Spec §2.6 live Shift-range marker: when true the current
+    /// selection is the anchor→lead inclusive span and should be
+    /// recomputed against the model on every batch arrival, so
+    /// rows streaming in between the endpoints join the selection
+    /// automatically. Set by Shift-click / Cmd+Shift-click / any
+    /// Shift-extend keyboard nav; cleared on any non-range gesture
+    /// (plain click, Cmd-click, plain kbd nav, Cmd+A, Esc, sort).
+    pub range_live: bool,
 }
 
 impl Tab {
@@ -292,11 +329,13 @@ impl Tab {
         Self {
             nav: NavigationState::new(node_id),
             current_dir: at.clone(),
-            history: vec![at],
+            history: vec![HistoryEntry::new(at)],
             history_index: 0,
             selection: HashSet::new(),
             anchor: None,
             lead: None,
+            filtered_out: HashSet::new(),
+            range_live: false,
         }
     }
 
@@ -353,6 +392,7 @@ fn take_system_theme_pending() -> Option<bool> {
 }
 
 pub fn init(cx: &mut App) {
+    crate::multi_table::init(cx);
     crate::keymap::install(cx);
     crate::keymap::install_extras(cx);
 }
@@ -422,6 +462,13 @@ pub struct Shell {
     /// file-list rows by index), this carries the full path because
     /// sidebar items aren't part of the file list.
     pub context_target: Option<PathBuf>,
+    /// Screenshot-driver row index queued for selection once a
+    /// streaming batch lands. Cleared when applied or when the
+    /// active tab navigates elsewhere. Internal/CLI use only.
+    pub pending_select_row: Option<usize>,
+    /// Same as `pending_select_row` but for the multi-row
+    /// screenshot seed (`--select-rows`).
+    pub pending_select_rows: Vec<usize>,
     /// Path target for Favorites mutations
     /// (docs/features/FAVORITES.md). Set by every "Add to Favorites" /
     /// "Remove from Favorites" context-menu closure and by row-row drag
@@ -770,28 +817,45 @@ impl Shell {
                 .col_movable(true)
                 .col_resizable(true)
         });
-        // Bridge Table events (selection + double-click) to the
-        // Shell's own state. SelectRow runs through the modifier-
-        // aware gesture dispatch (spec §2.4) so Cmd / Shift /
-        // Cmd+Shift give the right anchor/lead/set update.
+        // Bridge table events to the Shell's own selection state.
+        // The local GPUI table carries the original click modifiers
+        // through RowClicked, unlike upstream gpui-component's
+        // single-select SelectRow event.
         // RightClickedRow obeys spec §2.4's "preserve selection if
         // row already in set; otherwise replace to just this row"
         // rule before the menu's target reads `context_row`.
         cx.subscribe_in(
             &table,
             window,
-            |this, _table, event: &TableEvent, window, cx| match event {
-                TableEvent::SelectRow(row_ix) => {
-                    let modifiers = window.modifiers();
-                    this.apply_row_click_gesture(*row_ix, modifiers, cx);
+            |this, _table, event: &TableEvent, _window, cx| match event {
+                TableEvent::RowClicked {
+                    row_ix,
+                    modifiers,
+                    ..
+                } => {
+                    this.apply_row_click_gesture(*row_ix, *modifiers, cx);
+                }
+                TableEvent::LeadMoved { row_ix, modifiers } => {
+                    this.apply_row_keyboard_gesture(*row_ix, *modifiers, cx);
                 }
                 TableEvent::DoubleClickedRow(row_ix) => {
                     this.activate_row(*row_ix, cx);
                 }
                 TableEvent::RightClickedRow(row_ix) => {
-                    this.context_row = *row_ix;
                     if let Some(r) = *row_ix {
+                        let row_was_selected = this
+                            .node_id_at_row(r, cx)
+                            .map(|id| this.active_tab().selection.contains(&id))
+                            .unwrap_or(false);
                         this.apply_row_right_click(r, cx);
+                        // Spec §2.4: if the user right-clicks inside
+                        // the current selection, the context menu
+                        // targets the whole selection. Only stash a
+                        // row-specific context target when the click
+                        // replaced selection to that unselected row.
+                        this.context_row = if row_was_selected { None } else { Some(r) };
+                    } else {
+                        this.context_row = None;
                     }
                 }
                 _ => {}
@@ -916,6 +980,8 @@ impl Shell {
             watcher,
             context_row: None,
             context_target: None,
+            pending_select_row: None,
+            pending_select_rows: Vec::new(),
             favorites_context_path: None,
             metadata_db: None,
             icons,
@@ -1003,22 +1069,87 @@ impl Shell {
             })
     }
 
+    fn entry_path_for_row(
+        &self,
+        row_ix: usize,
+        cx: &App,
+    ) -> Option<(usize, FileEntry, PathBuf)> {
+        let entry = self.table.read(cx).delegate().entries.get(row_ix)?.clone();
+        let path = self.path_for_row(row_ix, cx)?;
+        Some((row_ix, entry, path))
+    }
+
+    /// Visible-order selection snapshot for bulk commands and drag
+    /// payloads. This is intentionally model/cache-only: it reads the
+    /// active tab's NodeId set plus the delegate's current rows and
+    /// path cache, never the filesystem.
+    fn selected_entries_visible_order(&self, cx: &App) -> Vec<(usize, FileEntry, PathBuf)> {
+        let selection = &self.active_tab().selection;
+        if selection.is_empty() {
+            return Vec::new();
+        }
+        self.table
+            .read(cx)
+            .delegate()
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(row_ix, entry)| {
+                selection
+                    .contains(&entry.id)
+                    .then(|| self.entry_path_for_row(row_ix, cx))
+                    .flatten()
+            })
+            .collect()
+    }
+
+    /// Resolve the target set for a command. A right-click on an
+    /// unselected row consumes `context_row` and returns just that row;
+    /// a right-click inside a selected set leaves `context_row` empty,
+    /// so bulk-capable commands operate on the whole visible selection.
+    /// Keyboard/menu invocations also use the selection when present,
+    /// falling back to the lead row for legacy single-row commands.
+    fn action_entries_visible_order(&mut self, cx: &App) -> Vec<(usize, FileEntry, PathBuf)> {
+        if let Some(row) = self.context_row.take() {
+            return self.entry_path_for_row(row, cx).into_iter().collect();
+        }
+        let selected = self.selected_entries_visible_order(cx);
+        if !selected.is_empty() {
+            return selected;
+        }
+        self.active_tab()
+            .lead_row(&self.table.read(cx).delegate().entries)
+            .and_then(|row| self.entry_path_for_row(row, cx))
+            .into_iter()
+            .collect()
+    }
+
     fn on_copy_path(&mut self, _: &CopyPath, window: &mut Window, cx: &mut Context<Self>) {
         use gpui_component::notification::Notification;
-        let Some(row) = self.target_row(cx) else { return };
-        let Some(path) = self.path_for_row(row, cx) else {
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
             return;
-        };
+        }
         cx.write_to_clipboard(ClipboardItem::new_string(
-            path.to_string_lossy().into_owned(),
+            paths
+                .iter()
+                .map(|p| p.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("\n"),
         ));
         // Phase 9: quiet success toast so the user sees the
         // clipboard action acknowledged. Notification::success
         // autohides after a few seconds.
-        window.push_notification(
-            Notification::success("Path copied to clipboard"),
-            cx,
-        );
+        let msg = if paths.len() == 1 {
+            "Path copied to clipboard".to_string()
+        } else {
+            format!("{} paths copied to clipboard", paths.len())
+        };
+        window.push_notification(Notification::success(msg), cx);
     }
 
     fn on_reveal_in_finder(
@@ -1028,25 +1159,30 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
-        let Some(row) = self.target_row(cx) else { return };
-        let Some(path) = self.path_for_row(row, cx) else {
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
             return;
-        };
+        }
         // `open -R <path>` is the macOS canonical "reveal in
         // Finder". On other platforms this no-ops.
-        let _ = std::process::Command::new("/usr/bin/open")
-            .arg("-R")
-            .arg(&path)
-            .spawn();
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("item")
-            .to_string();
-        window.push_notification(
-            Notification::info(format!("Showing \u{201C}{}\u{201D} in Finder", name)),
-            cx,
-        );
+        let mut cmd = std::process::Command::new("/usr/bin/open");
+        cmd.arg("-R").args(&paths);
+        let _ = cmd.spawn();
+        let msg = if paths.len() == 1 {
+            let name = paths[0]
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("item")
+                .to_string();
+            format!("Showing \u{201C}{}\u{201D} in Finder", name)
+        } else {
+            format!("Showing {} items in Finder", paths.len())
+        };
+        window.push_notification(Notification::info(msg), cx);
     }
 
     // -- Phase 6 (next-level) ----------------------------------------
@@ -1123,9 +1259,9 @@ impl Shell {
         color: feraille_core::commands::TagColor,
         cx: &mut Context<Self>,
     ) {
-        let Some(row) = self.target_row(cx) else { return };
-        let Some(path) = self.path_for_row(row, cx) else { return };
-        let _ = feraille_shell_mac::toggle_tag(&path, color);
+        for (_, _, path) in self.action_entries_visible_order(cx) {
+            let _ = feraille_shell_mac::toggle_tag(&path, color);
+        }
     }
 
     fn on_toggle_tag_red(&mut self, _: &ToggleTagRed, _: &mut Window, cx: &mut Context<Self>) {
@@ -1173,11 +1309,17 @@ impl Shell {
     // -- Phase 6 follow-on: Open With submenu ---------------------
 
     fn open_with_slot(&mut self, slot: usize, cx: &mut Context<Self>) {
-        let Some(row) = self.target_row(cx) else { return };
-        let Some(path) = self.path_for_row(row, cx) else { return };
-        let candidates = feraille_shell_mac::open_with_candidates(&path);
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        let Some(first) = paths.first() else { return };
+        let candidates = feraille_shell_mac::open_with_candidates(first);
         if let Some(c) = candidates.get(slot) {
-            let _ = feraille_shell_mac::open_with_app(&path, &c.path);
+            for path in paths {
+                let _ = feraille_shell_mac::open_with_app(&path, &c.path);
+            }
         }
     }
 
@@ -1285,19 +1427,33 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
-        let Some(row) = self.target_row(cx) else { return };
-        let Some(path) = self.path_for_row(row, cx) else {
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
             return;
+        }
+        let count = paths.len();
+        let name = if count == 1 {
+            paths[0]
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("item")
+                .to_string()
+        } else {
+            format!("{count} items")
         };
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("item")
-            .to_string();
         let cur = self.active_tab().current_dir.clone();
         self.spawn_file_op(
             cur,
-            move || feraille_fs_native::move_to_trash(&path).map_err(|e| e.to_string()),
+            move || {
+                for path in paths {
+                    feraille_fs_native::move_to_trash(&path).map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            },
             "move-to-trash",
             cx,
         );
@@ -1318,9 +1474,32 @@ impl Shell {
         self.navigate_forward(cx);
     }
 
-    fn on_open_selected(&mut self, _: &OpenSelected, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(idx) = self.target_row(cx) {
-            self.activate_row(idx, cx);
+    fn on_open_selected(&mut self, _: &OpenSelected, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::notification::Notification;
+        let entries = self.action_entries_visible_order(cx);
+        if entries.is_empty() {
+            return;
+        }
+        if entries.len() == 1 {
+            self.activate_row(entries[0].0, cx);
+            return;
+        }
+        const OPEN_MANY_CAP: usize = 10;
+        if entries.len() > OPEN_MANY_CAP {
+            window.push_notification(
+                Notification::info(format!(
+                    "Select {OPEN_MANY_CAP} or fewer items to open them together"
+                )),
+                cx,
+            );
+            return;
+        }
+        for (_, entry, path) in entries {
+            if matches!(entry.kind, EntryKind::Directory) {
+                self.open_path_in_new_tab(path, cx);
+            } else {
+                let _ = open_with_default(&path);
+            }
         }
     }
 
@@ -1494,11 +1673,16 @@ impl Shell {
     /// `feraille_shell_mac::quick_look::show` bridge — same code
     /// the old app called.
     fn on_quick_look(&mut self, _: &QuickLook, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self.target_row(cx) else { return };
-        let Some(path) = self.path_for_row(row, cx) else {
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
             return;
-        };
-        let _ = feraille_shell_mac::show_quick_look(&[path.as_path()]);
+        }
+        let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
+        let _ = feraille_shell_mac::show_quick_look(&refs);
     }
 
     /// Cmd+Shift+H — navigate the active tab to the home directory.
@@ -1636,7 +1820,7 @@ impl Shell {
     /// (via `on_row_left_click → set_selected_row`); in every
     /// branch below the lead also lands on `row_ix`, so the
     /// primitive's focus overlay tracks the lead without our help.
-    fn apply_row_click_gesture(
+    pub(crate) fn apply_row_click_gesture(
         &mut self,
         row_ix: usize,
         modifiers: gpui::Modifiers,
@@ -1672,6 +1856,26 @@ impl Shell {
         cx.notify();
     }
 
+    fn apply_row_keyboard_gesture(
+        &mut self,
+        row_ix: usize,
+        modifiers: gpui::Modifiers,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.node_id_at_row(row_ix, cx) else {
+            return;
+        };
+        if modifiers.shift {
+            self.range_select(id, /* additive */ false, cx);
+        } else {
+            self.replace_select_one(id, cx);
+        }
+        if let Some(p) = self.path_for_row(row_ix, cx) {
+            crate::preview::request(self, p, cx);
+        }
+        cx.notify();
+    }
+
     /// Spec §2.4: right-click on a selected row leaves the
     /// selection alone (so "operate on all 12 selected" works);
     /// right-click on an unselected row replaces selection to
@@ -1688,18 +1892,82 @@ impl Shell {
         }
     }
 
+    /// Programmatic single-row select by row index. Used by the
+    /// screenshot driver (`--select-row N`, `--select-name foo`)
+    /// to seed a deterministic selection state without simulating
+    /// a click. Equivalent to a plain click on the row.
+    ///
+    /// The screenshot harness runs this BEFORE the streaming load
+    /// delivers any batches, so when `entries` is empty we stash
+    /// the row index in `pending_select_row` and consume it on the
+    /// next batch arrival. This preserves the old row-index-only
+    /// semantics the harness depends on while keeping the runtime
+    /// selection model NodeId-based.
+    pub fn select_row_index(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        if let Some(id) = self.node_id_at_row(row_ix, cx) {
+            self.replace_select_one(id, cx);
+            cx.notify();
+        } else {
+            self.pending_select_row = Some(row_ix);
+        }
+    }
+
+    /// Apply a deferred `select_row_index` once entries are
+    /// available. Called from `apply_directory_batch` after the
+    /// delegate has the new rows. Also drains any
+    /// `pending_select_rows` (multi-row screenshot seed).
+    fn apply_pending_select_row(&mut self, cx: &mut Context<Self>) {
+        if let Some(row_ix) = self.pending_select_row {
+            if let Some(id) = self.node_id_at_row(row_ix, cx) {
+                self.pending_select_row = None;
+                self.replace_select_one(id, cx);
+                cx.notify();
+            }
+        }
+        if !self.pending_select_rows.is_empty() {
+            let rows = std::mem::take(&mut self.pending_select_rows);
+            self.select_row_indices(&rows, cx);
+        }
+    }
+
+    /// Programmatic multi-row select used by the screenshot
+    /// harness (`--select-rows`). First index becomes the anchor,
+    /// last becomes the lead. If any index is out of range we
+    /// stash the whole list for retry on the next batch arrival.
+    pub fn select_row_indices(&mut self, rows: &[usize], cx: &mut Context<Self>) {
+        let ids: Option<Vec<NodeId>> = rows.iter().map(|r| self.node_id_at_row(*r, cx)).collect();
+        let Some(ids) = ids else {
+            self.pending_select_rows = rows.to_vec();
+            return;
+        };
+        if ids.is_empty() {
+            return;
+        }
+        let anchor = ids.first().copied();
+        let lead = ids.last().copied();
+        let tab = self.active_tab_mut();
+        tab.selection = ids.into_iter().collect();
+        tab.anchor = anchor;
+        tab.lead = lead;
+        self.refresh_file_list_selection(cx);
+        cx.notify();
+    }
+
     /// Plain-click semantics: selection = {id}, anchor = lead = id.
+    /// Non-range gesture → clears `range_live`.
     fn replace_select_one(&mut self, id: NodeId, cx: &mut Context<Self>) {
         let tab = self.active_tab_mut();
         tab.selection.clear();
         tab.selection.insert(id);
         tab.anchor = Some(id);
         tab.lead = Some(id);
+        tab.range_live = false;
         self.refresh_file_list_selection(cx);
     }
 
     /// Cmd+Click semantics: toggle `id` in the set. lead = id.
     /// Empty after toggle → anchor cleared; otherwise anchor = id.
+    /// Non-range gesture → clears `range_live`.
     fn toggle_select(&mut self, id: NodeId, cx: &mut Context<Self>) {
         let tab = self.active_tab_mut();
         if !tab.selection.remove(&id) {
@@ -1711,6 +1979,7 @@ impl Shell {
         } else {
             Some(id)
         };
+        tab.range_live = false;
         self.refresh_file_list_selection(cx);
     }
 
@@ -1753,6 +2022,9 @@ impl Shell {
                     tab.selection = span;
                 }
                 tab.lead = Some(id);
+                // Range gesture → mark live so the span keeps
+                // recomputing as rows stream in (spec §2.6).
+                tab.range_live = true;
                 // Anchor unchanged.
                 self.refresh_file_list_selection(cx);
             }
@@ -1761,6 +2033,7 @@ impl Shell {
 
     /// Spec §2.5: Cmd+A — select every row currently in the
     /// (filtered) model. anchor = first visible, lead = last.
+    /// Non-range gesture → clears `range_live`.
     fn select_all_visible(&mut self, cx: &mut Context<Self>) {
         let (all, first, last): (HashSet<NodeId>, Option<NodeId>, Option<NodeId>) = {
             let delegate = self.table.read(cx).delegate();
@@ -1773,16 +2046,21 @@ impl Shell {
         tab.selection = all;
         tab.anchor = first;
         tab.lead = last;
+        tab.range_live = false;
         self.refresh_file_list_selection(cx);
         cx.notify();
     }
 
-    /// Spec §2.5 Esc: clear selection, anchor, lead.
+    /// Spec §2.5 Esc: clear selection, anchor, lead. Also drains
+    /// the filter holding set so a subsequent filter-loosen
+    /// doesn't restore ghosts.
     pub fn clear_active_selection(&mut self, cx: &mut Context<Self>) {
         let tab = self.active_tab_mut();
         tab.selection.clear();
         tab.anchor = None;
         tab.lead = None;
+        tab.filtered_out.clear();
+        tab.range_live = false;
         self.refresh_file_list_selection(cx);
         cx.notify();
     }
@@ -1793,6 +2071,11 @@ impl Shell {
     /// `TableState::selected_row` so the primitive's focus overlay
     /// matches the keyboard cursor. Called after every selection
     /// mutation, after every streaming batch, and on `Done`.
+    ///
+    /// We only call `set_selected_row` when the row index actually
+    /// differs to avoid redundant redraw/scroll work. Semantic
+    /// selection comes from `RowClicked` / `LeadMoved`; `SelectRow`
+    /// is now just the table's internal lead mirror.
     pub fn refresh_file_list_selection(&mut self, cx: &mut Context<Self>) {
         // Snapshot the active tab's selection state so the
         // table.update closure doesn't need to borrow Shell again.
@@ -1801,27 +2084,20 @@ impl Shell {
         let table = self.table.clone();
         let lead_row = table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
-            delegate
-                .selected_in_set
-                .resize(delegate.entries.len(), false);
-            delegate.is_lead.resize(delegate.entries.len(), false);
-            let mut lead_row: Option<usize> = None;
-            for (i, entry) in delegate.entries.iter().enumerate() {
-                let in_set = selection.contains(&entry.id);
-                delegate.selected_in_set[i] = in_set;
-                let is_lead = Some(entry.id) == lead;
-                delegate.is_lead[i] = is_lead;
-                if is_lead {
-                    lead_row = Some(i);
-                }
-            }
+            delegate.selected_set = selection;
+            delegate.lead = lead;
+            let lead_row = lead
+                .and_then(|id| delegate.entries.iter().position(|e| e.id == id));
             state.refresh(cx);
             lead_row
         });
         if let Some(row) = lead_row {
-            table.update(cx, |state, cx| {
-                state.set_selected_row(row, cx);
-            });
+            let needs_set = table.read(cx).selected_row() != Some(row);
+            if needs_set {
+                table.update(cx, |state, cx| {
+                    state.set_selected_row(row, cx);
+                });
+            }
         }
     }
 
@@ -1836,6 +2112,145 @@ impl Shell {
             .entries
             .get(row_ix)
             .map(|e| e.id)
+    }
+
+    /// Spec §2.6 streaming arrival. For each NodeId currently in
+    /// the tab's `filtered_out` holding set whose row has now
+    /// arrived in the model, move it back into `selection`. Runs
+    /// after every batch and at `Done`. Doesn't drop anything —
+    /// dropping is `reconcile_done`'s job.
+    fn restore_filtered_out_against_model(&mut self, cx: &mut Context<Self>) {
+        let visible: HashSet<NodeId> = self
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        let tab = self.active_tab_mut();
+        if tab.filtered_out.is_empty() {
+            return;
+        }
+        let mut restored = false;
+        tab.filtered_out.retain(|id| {
+            if visible.contains(id) {
+                tab.selection.insert(*id);
+                restored = true;
+                false
+            } else {
+                true
+            }
+        });
+        if restored {
+            self.refresh_file_list_selection(cx);
+        }
+    }
+
+    /// Spec §2.6 live Shift-range recompute. When the tab's
+    /// `range_live` flag is set, the selection is logically the
+    /// anchor→lead inclusive span. As rows stream in, the visible
+    /// position of the endpoints may change and rows between them
+    /// may newly appear. Recompute the span on every batch + at
+    /// `Done`. No-op if either endpoint isn't visible yet — we
+    /// wait for the row that defines them to land before binding.
+    fn recompute_live_range(&mut self, cx: &mut Context<Self>) {
+        if !self.active_tab().range_live {
+            return;
+        }
+        let (anchor_id, lead_id) =
+            match (self.active_tab().anchor, self.active_tab().lead) {
+                (Some(a), Some(l)) => (a, l),
+                _ => return,
+            };
+        let entries: Vec<NodeId> = self
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        let anchor_idx = entries.iter().position(|x| *x == anchor_id);
+        let lead_idx = entries.iter().position(|x| *x == lead_id);
+        let (Some(a), Some(l)) = (anchor_idx, lead_idx) else {
+            return;
+        };
+        let (lo, hi) = if a <= l { (a, l) } else { (l, a) };
+        let span: HashSet<NodeId> = entries[lo..=hi].iter().copied().collect();
+        self.active_tab_mut().selection = span;
+        self.refresh_file_list_selection(cx);
+    }
+
+    /// Spec §2.6 `LoadMsg::Done` reconciliation. Drops NodeIds no
+    /// longer present in the final model from `selection` (or
+    /// holds them in `filtered_out` when a filter is active), and
+    /// re-seats `anchor` / `lead` if they vanished. Also runs the
+    /// other reconcile passes one last time so a range that just
+    /// became valid is bound by the time the load is "done."
+    fn reconcile_done(&mut self, cx: &mut Context<Self>) {
+        let visible: HashSet<NodeId> = self
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        let filter_active = !self.filter_text.trim().is_empty();
+        let tab = self.active_tab_mut();
+        let mut moved = false;
+        if filter_active {
+            // Move members not in the visible set into the filter
+            // holding set, preserving them across a future filter
+            // loosening (spec §2.6 filter rule).
+            tab.selection.retain(|id| {
+                if visible.contains(id) {
+                    true
+                } else {
+                    tab.filtered_out.insert(*id);
+                    moved = true;
+                    false
+                }
+            });
+        } else {
+            // Filter is empty → ghost ids are genuinely gone.
+            // Drop both selection and filter-holding entries that
+            // aren't in the model.
+            let before = tab.selection.len();
+            tab.selection.retain(|id| visible.contains(id));
+            let after = tab.selection.len();
+            moved = moved || (before != after);
+            let fo_before = tab.filtered_out.len();
+            tab.filtered_out.retain(|id| visible.contains(id));
+            moved = moved || (fo_before != tab.filtered_out.len());
+        }
+        // Re-seat anchor / lead if they're gone.
+        if let Some(a) = tab.anchor {
+            if !visible.contains(&a) {
+                tab.anchor = None;
+                moved = true;
+            }
+        }
+        if let Some(l) = tab.lead {
+            if !visible.contains(&l) {
+                tab.lead = None;
+                moved = true;
+            }
+        }
+        // If neither endpoint is in the model anymore, the live
+        // range can't reconcile — let it freeze.
+        if tab.range_live && (tab.anchor.is_none() || tab.lead.is_none()) {
+            tab.range_live = false;
+            moved = true;
+        }
+        if moved {
+            self.refresh_file_list_selection(cx);
+        }
+        // Final pass: restore any filtered_out members that did
+        // make it in and recompute a still-live range.
+        self.restore_filtered_out_against_model(cx);
+        self.recompute_live_range(cx);
     }
 
     /// Keyboard navigation: move the lead by `delta` and, when
@@ -1900,8 +2315,12 @@ impl Shell {
             };
             tab.selection = entries[lo..=hi].iter().copied().collect();
             tab.lead = Some(new_lead);
+            // Spec §2.6: a Shift-extend keyboard nav keeps the
+            // range live so subsequent batches recompute the span.
+            tab.range_live = true;
         } else {
-            // Plain navigation collapses selection.
+            // Plain navigation collapses selection — replace_select_one
+            // clears range_live.
             self.replace_select_one(new_lead, cx);
             return;
         }
@@ -2056,14 +2475,23 @@ impl Shell {
     /// macOS, std::fs::copy fallback elsewhere). The watcher picks
     /// up the new file; we also force-reload for snappiness.
     fn on_duplicate(&mut self, _: &Duplicate, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self.target_row(cx) else { return };
-        let Some(path) = self.path_for_row(row, cx) else {
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
             return;
-        };
+        }
         let cur = self.active_tab().current_dir.clone();
         self.spawn_file_op(
             cur,
-            move || feraille_shell_mac::duplicate_path(&path).map(|_| ()),
+            move || {
+                for path in paths {
+                    feraille_shell_mac::duplicate_path(&path).map(|_| ())?;
+                }
+                Ok(())
+            },
             "duplicate",
             cx,
         );
@@ -2072,32 +2500,46 @@ impl Shell {
     /// Right-click → Make Alias. Creates a Finder alias next to the
     /// source.
     fn on_make_alias(&mut self, _: &MakeAlias, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self.target_row(cx) else { return };
-        let Some(path) = self.path_for_row(row, cx) else {
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
             return;
-        };
+        }
         let cur = self.active_tab().current_dir.clone();
         self.spawn_file_op(
             cur,
-            move || feraille_shell_mac::make_alias(&path).map(|_| ()),
+            move || {
+                for path in paths {
+                    feraille_shell_mac::make_alias(&path).map(|_| ())?;
+                }
+                Ok(())
+            },
             "make-alias",
             cx,
         );
     }
 
-    /// Right-click → Compress. Zips the selected path (or a list,
-    /// when multi-select lands). The archive lands next to the
-    /// source with a `.zip` suffix.
+    /// Right-click → Compress. Zips the selected visible rows into
+    /// one archive, matching Finder's multi-item "Archive.zip"
+    /// behavior through `feraille_shell_mac::compress_paths`.
     fn on_compress(&mut self, _: &Compress, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self.target_row(cx) else { return };
-        let Some(path) = self.path_for_row(row, cx) else {
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
             return;
-        };
+        }
         let cur = self.active_tab().current_dir.clone();
         self.spawn_file_op(
             cur,
             move || {
-                let targets: Vec<&std::path::Path> = vec![path.as_path()];
+                let targets: Vec<&std::path::Path> =
+                    paths.iter().map(|path| path.as_path()).collect();
                 feraille_shell_mac::compress_paths(&targets).map(|_| ())
             },
             "compress",
@@ -2115,21 +2557,69 @@ impl Shell {
     }
 
     pub fn navigate_back(&mut self, cx: &mut Context<Self>) {
-        let tab = self.active_tab_mut();
-        if tab.history_index > 0 {
+        let (path, snapshot) = {
+            let tab = self.active_tab_mut();
+            if tab.history_index == 0 {
+                return;
+            }
+            // Save the current entry's selection before stepping
+            // back, so a subsequent Forward restores it.
+            if let Some(cur) = tab.history.get_mut(tab.history_index) {
+                cur.selection = tab.selection.clone();
+                cur.anchor = tab.anchor;
+                cur.lead = tab.lead;
+            }
             tab.history_index -= 1;
-            let path = tab.history[tab.history_index].clone();
-            self.load_path(path, cx);
-        }
+            let entry = tab.history[tab.history_index].clone();
+            (entry.path.clone(), entry)
+        };
+        self.restore_from_history(snapshot, path, cx);
     }
 
     pub fn navigate_forward(&mut self, cx: &mut Context<Self>) {
-        let tab = self.active_tab_mut();
-        if tab.history_index + 1 < tab.history.len() {
+        let (path, snapshot) = {
+            let tab = self.active_tab_mut();
+            if tab.history_index + 1 >= tab.history.len() {
+                return;
+            }
+            if let Some(cur) = tab.history.get_mut(tab.history_index) {
+                cur.selection = tab.selection.clone();
+                cur.anchor = tab.anchor;
+                cur.lead = tab.lead;
+            }
             tab.history_index += 1;
-            let path = tab.history[tab.history_index].clone();
-            self.load_path(path, cx);
+            let entry = tab.history[tab.history_index].clone();
+            (entry.path.clone(), entry)
+        };
+        self.restore_from_history(snapshot, path, cx);
+    }
+
+    /// Common back/forward landing: seed the tab's selection from
+    /// the history entry's snapshot, then issue a reload of the
+    /// destination. The reload preserves selection through
+    /// `load_path` (no longer clears it), and `finish_directory_load`
+    /// reconciles the snapshot against the freshly streamed model —
+    /// dropping NodeIds that no longer exist.
+    fn restore_from_history(
+        &mut self,
+        snapshot: HistoryEntry,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        {
+            let tab = self.active_tab_mut();
+            tab.selection = snapshot.selection;
+            tab.anchor = snapshot.anchor;
+            tab.lead = snapshot.lead;
+            tab.filtered_out.clear();
+            tab.range_live = false;
         }
+        self.pending_select_row = None;
+        self.pending_select_rows.clear();
+        let node_id = self.fs.id_for_path(&path);
+        self.active_tab_mut().nav.navigate_to(node_id);
+        self.record_ant_visit(node_id, cx);
+        self.load_path(path, cx);
     }
 
     /// Persist last-dir + show-hidden + UI-scale to disk off the UI
@@ -2162,16 +2652,13 @@ impl Shell {
             .get_or_create_path_with_id(path.clone(), node_id);
         self.active_tab_mut().nav.replace_current(node_id);
         self.active_tab_mut().current_dir = path.clone();
-        // Spec §2.6 navigation: the new path starts with empty
-        // selection by default. Back/forward history will restore
-        // a prior snapshot in iter 2 once tab history carries one;
-        // iter 1 always starts empty.
-        {
-            let tab = self.active_tab_mut();
-            tab.selection.clear();
-            tab.anchor = None;
-            tab.lead = None;
-        }
+        // Selection is preserved across `load_path` calls so
+        // filter/refresh/show-hidden/watcher reloads can reconcile
+        // against the new model (spec §2.6). `navigate`, which
+        // commits a new path, clears selection itself BEFORE
+        // delegating here. The screenshot harness still owns the
+        // `pending_select_row(s)` lifecycle and clears those on its
+        // own at navigate time.
         self.last_error = None;
         self.load_generation = self.load_generation.wrapping_add(1);
         let generation = self.load_generation;
@@ -2266,6 +2753,20 @@ impl Shell {
         // the favorites index. Cheap (HashMap lookups across the new
         // batch); runs once per batch on the load path.
         self.refresh_file_list_favorited(cx);
+        // Spec §2.6 streaming arrival passes:
+        //   1. Mirror current selection state into the delegate so
+        //      the parallel render view paints the rows that just
+        //      arrived.
+        //   2. Lift any filtered-out NodeIds back into the live
+        //      selection if their rows have now streamed in.
+        //   3. Recompute a still-live Shift-range so rows landing
+        //      between anchor and lead join the selection.
+        self.refresh_file_list_selection(cx);
+        self.restore_filtered_out_against_model(cx);
+        self.recompute_live_range(cx);
+        // Consume any queued screenshot-driver row select now that
+        // the model has data.
+        self.apply_pending_select_row(cx);
         cx.notify();
     }
 
@@ -2336,6 +2837,14 @@ impl Shell {
             }
             self.last_error = None;
         }
+
+        // Spec §2.6 `Done`: drop NodeIds no longer in the final
+        // model (or hold them in `filtered_out` when a filter is
+        // active), re-seat anchor / lead if they vanished. Runs
+        // once per load; iter-1 navigation that cleared selection
+        // upfront makes this a no-op there, but back/forward and
+        // any future external-mutation reload route through here.
+        self.reconcile_done(cx);
 
         // Stage 4: kick off magic + quarantine prefetch after the
         // foreground table state has received the final snapshot.
@@ -2980,21 +3489,51 @@ impl Shell {
         }
     }
 
-    /// Navigate to `path`: re-enumerate, refresh the Table, push to
-    /// the active tab's history (truncating any forward stack first),
-    /// reset selection. Also increments the Ant Trail visit count
-    /// for `path` (Stage 9.b) and persists through metadata_db.
+    /// Navigate to `path`: snapshot the current tab's selection
+    /// into the history entry we're leaving, re-enumerate, refresh
+    /// the Table, push to history (truncating any forward stack
+    /// first), reset selection for the new path, and increment the
+    /// Ant Trail visit count (Stage 9.b).
+    ///
+    /// Spec §2.6: navigation commits immediately and starts the
+    /// new path with empty selection unless this is a back/forward
+    /// (see `navigate_back` / `navigate_forward` which seed the
+    /// restored selection before calling here).
     pub fn navigate(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let node_id = self.fs.id_for_path(&path);
         self.node_store
             .get_or_create_path_with_id(path.clone(), node_id);
         let tab = self.active_tab_mut();
-        if tab.history.get(tab.history_index) != Some(&path) {
+        // Snapshot the selection we're leaving into the current
+        // history entry so a Back returns to where the user was.
+        if let Some(entry) = tab.history.get_mut(tab.history_index) {
+            entry.selection = tab.selection.clone();
+            entry.anchor = tab.anchor;
+            entry.lead = tab.lead;
+        }
+        let same_path = tab
+            .history
+            .get(tab.history_index)
+            .map(|e| &e.path == &path)
+            .unwrap_or(false);
+        if !same_path {
             tab.history.truncate(tab.history_index + 1);
-            tab.history.push(path.clone());
+            tab.history.push(HistoryEntry::new(path.clone()));
             tab.history_index = tab.history.len() - 1;
         }
+        // Fresh navigation: clear selection + filter holding +
+        // live-range. Back/forward override this with the restored
+        // snapshot just before calling us (see `restore_from_history`).
+        tab.selection.clear();
+        tab.anchor = None;
+        tab.lead = None;
+        tab.filtered_out.clear();
+        tab.range_live = false;
         tab.nav.navigate_to(node_id);
+        // Any pending screenshot select belongs to the previous
+        // path; drop it so a stale row index doesn't apply.
+        self.pending_select_row = None;
+        self.pending_select_rows.clear();
         self.record_ant_visit(node_id, cx);
         self.load_path(path, cx);
     }

@@ -7,7 +7,7 @@
 //! side per the UI_NONBLOCKING contract carried over from the old app.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -23,12 +23,12 @@ use gpui::{
 use gpui_component::{
     ActiveTheme,
     menu::{PopupMenu, PopupMenuItem},
-    table::{Column, TableDelegate, TableState},
     tooltip::Tooltip,
 };
 use smallvec::smallvec;
 
 use crate::icons::{IconCache, file_type_icon, tint_color};
+use crate::multi_table::{Column, ColumnSort, TableDelegate, TableState};
 
 /// Delegate that vends the current directory's entries to the
 /// Table. Holds the live `Vec<FileEntry>`; the Shell rotates it on
@@ -66,19 +66,17 @@ pub struct FileListDelegate {
     /// on every load and whenever the Favorites entity changes (the
     /// `cx.observe` subscription in `Shell::new`).
     pub is_favorited: Vec<bool>,
-    /// `selected_in_set[row]` is `true` when the entry's NodeId is in
-    /// the active tab's selection set (spec §2.2). Rebuilt by
-    /// `Shell::refresh_file_list_selection` after every selection
-    /// mutation and after every streaming batch / Done. Drives the
-    /// selection-fill paint in `render_tr`. The lead row is also a
-    /// member of the set; it gets the primitive's native
-    /// `selected_row` overlay on top as the focus ring.
-    pub selected_in_set: Vec<bool>,
-    /// `is_lead[row]` is `true` for at most one row — the
-    /// keyboard-cursor / range-lead. Cosmetic only; the Table
-    /// primitive's `selected_row` overlay is what visually distinguishes
-    /// the lead from set-only members.
-    pub is_lead: Vec<bool>,
+    /// NodeId-keyed selection set (spec §2.2), mirrored from the
+    /// active tab on every selection mutation, every streaming
+    /// batch, and `Done`. `render_tr` looks up `entries[row].id` to
+    /// decide whether to paint the selection fill. NodeId-keyed
+    /// (not row-indexed) so sort/filter/streaming changes can
+    /// reorder rows without desyncing the visual.
+    pub selected_set: HashSet<NodeId>,
+    /// The keyboard-cursor / range-lead, mirrored from the active
+    /// tab. At most one. Cosmetic only — the Table primitive's
+    /// `selected_row` overlay is the visible focus ring.
+    pub lead: Option<NodeId>,
 }
 
 impl FileListDelegate {
@@ -108,8 +106,8 @@ impl FileListDelegate {
             heats: Vec::new(),
             tags: Vec::new(),
             is_favorited: Vec::new(),
-            selected_in_set: Vec::new(),
-            is_lead: Vec::new(),
+            selected_set: HashSet::new(),
+            lead: None,
         }
     }
 
@@ -154,11 +152,10 @@ impl FileListDelegate {
         // Reset favorited bits; Shell repopulates from the favorites
         // entity right after load (Shell::refresh_file_list_favorited).
         self.is_favorited = vec![false; self.entries.len()];
-        // Reset selection parallel vecs; Shell repopulates from the
-        // active tab's selection set right after load
-        // (Shell::refresh_file_list_selection).
-        self.selected_in_set = vec![false; self.entries.len()];
-        self.is_lead = vec![false; self.entries.len()];
+        // Selection is not row-indexed, so we don't clear it here.
+        // Shell drives reconciliation against the new model from
+        // `apply_directory_batch` / `finish_directory_load` per
+        // spec §2.6.
         // Read Finder colour tags for the first `TAG_PREFETCH_CAP`
         // rows. xattr reads cost ~1ms each on macOS — fine for
         // typical folders (~50 entries), capped so a giant Downloads
@@ -186,8 +183,8 @@ impl FileListDelegate {
         self.heats.clear();
         self.tags.clear();
         self.is_favorited.clear();
-        self.selected_in_set.clear();
-        self.is_lead.clear();
+        // selected_set / lead are NodeId-keyed and reconciled by
+        // Shell against the new model; not cleared here.
     }
 
     pub fn replace_entries(
@@ -201,8 +198,8 @@ impl FileListDelegate {
         self.heats = heats;
         self.tags = vec![Vec::new(); self.entries.len()];
         self.is_favorited = vec![false; self.entries.len()];
-        self.selected_in_set = vec![false; self.entries.len()];
-        self.is_lead = vec![false; self.entries.len()];
+        // selected_set / lead are NodeId-keyed; reconciliation is
+        // Shell's job (see `refresh_file_list_selection`).
     }
 
     pub fn append_entries(
@@ -217,8 +214,7 @@ impl FileListDelegate {
         self.heats.extend(heats);
         self.tags.extend((0..n).map(|_| Vec::new()));
         self.is_favorited.extend((0..n).map(|_| false));
-        self.selected_in_set.extend((0..n).map(|_| false));
-        self.is_lead.extend((0..n).map(|_| false));
+        // selected_set / lead untouched — NodeId-keyed, not row-keyed.
     }
 
     pub fn path_for_entry(&self, id: NodeId) -> Option<PathBuf> {
@@ -258,8 +254,11 @@ impl TableDelegate for FileListDelegate {
             .get(row_ix)
             .map(|e| matches!(e.kind, EntryKind::Directory))
             .unwrap_or(false);
-        let in_set = self.selected_in_set.get(row_ix).copied().unwrap_or(false);
-        let is_lead = self.is_lead.get(row_ix).copied().unwrap_or(false);
+        let entry_id = self.entries.get(row_ix).map(|e| e.id);
+        let in_set = entry_id
+            .map(|id| self.selected_set.contains(&id))
+            .unwrap_or(false);
+        let is_lead = entry_id == self.lead && entry_id.is_some();
         let mut row = div().id(("file-row", row_ix));
         if kind_is_dir && heat > 0.0 {
             // Warm orange tint, scaled by heat. Stable hue across
@@ -277,23 +276,33 @@ impl TableDelegate for FileListDelegate {
         // Spec §2 multi-select fill. Painted for every set member
         // EXCEPT the lead — the Table primitive draws its own
         // `selected_row` overlay on the lead, which serves as the
-        // distinct focus ring spec §2.3 calls for. Painting both on
-        // the lead muddles the colour. The accent tint is
-        // intentionally lower-alpha than the primitive's overlay
-        // so a set with a defined lead reads as "lead is brighter,
-        // rest are tinted."
+        // distinct focus ring spec §2.3 calls for.
         if in_set && !is_lead {
-            row = row.bg(cx.theme().accent.opacity(0.35));
+            row = row.bg(cx.theme().table_active);
         }
         // OS drag-out: GPUI's macOS backend recognises ExternalPaths
-        // and uses NSFilePromise / NSPasteboard, so dragging a row
-        // to the Finder desktop drops the actual file there. Other
-        // apps (Mail, browsers) accept the same drag.
+        // and uses NSFilePromise / NSPasteboard, so dragging rows to
+        // Finder / other apps drops the actual files. Spec §3.1:
+        // pressing a selected row drags the full visible-order
+        // selection; pressing an unselected row drags just that row.
         if let Some(entry) = self.entries.get(row_ix) {
-            let path = self.path_for_entry(entry.id).unwrap_or_default();
-            if !path.as_os_str().is_empty() {
-                let paths = ExternalPaths(smallvec![path]);
-                return row.on_drag(paths, |paths, _, _, cx| cx.new(|_| paths.clone()));
+            let row_is_selected = self.selected_set.contains(&entry.id);
+            let mut drag_paths = smallvec![];
+            if row_is_selected {
+                for selected in &self.entries {
+                    if self.selected_set.contains(&selected.id) {
+                        if let Some(path) = self.path_for_entry(selected.id) {
+                            drag_paths.push(path);
+                        }
+                    }
+                }
+            } else if let Some(path) = self.path_for_entry(entry.id) {
+                drag_paths.push(path);
+            }
+            if !drag_paths.is_empty() {
+                return row.on_drag(ExternalPaths(drag_paths), |paths, _, _, cx| {
+                    cx.new(|_| paths.clone())
+                });
             }
         }
         row
@@ -629,23 +638,23 @@ impl TableDelegate for FileListDelegate {
     fn perform_sort(
         &mut self,
         col_ix: usize,
-        sort: gpui_component::table::ColumnSort,
+        sort: ColumnSort,
         _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) {
         let Some(col) = self.columns.get(col_ix) else { return };
         let Some(sort_col) = SortColumn::from_str(&col.key) else { return };
         match sort {
-            gpui_component::table::ColumnSort::Default => {
+            ColumnSort::Default => {
                 // "Reset to natural order" — sort by name ascending
                 // (Finder convention) as a deterministic fallback,
                 // since we don't retain the load-time order.
                 sort_in_place(&mut self.entries, SortColumn::Name, true);
             }
-            gpui_component::table::ColumnSort::Ascending => {
+            ColumnSort::Ascending => {
                 sort_in_place(&mut self.entries, sort_col, true);
             }
-            gpui_component::table::ColumnSort::Descending => {
+            ColumnSort::Descending => {
                 sort_in_place(&mut self.entries, sort_col, false);
             }
         }

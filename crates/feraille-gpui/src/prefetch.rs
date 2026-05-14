@@ -24,9 +24,9 @@ use feraille_core::FileEntry;
 use feraille_fs_native::{detect_magic, fetch_quarantine_info, NativeFs};
 use feraille_meta::{FileMetaRecord, MetadataDb};
 use gpui::Entity;
-use gpui_component::table::TableState;
 
 use crate::file_list::FileListDelegate;
+use crate::multi_table::TableState;
 use crate::shell::Shell;
 use crate::tasks::{TaskKind, TaskRegistry};
 
