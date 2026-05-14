@@ -452,14 +452,27 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        div()
-            .flex()
+        // Phase 10 polish: a centred, two-line empty state with the
+        // Lucide inbox glyph above the copy reads "considered" rather
+        // than "we forgot to handle this case."
+        gpui_component::v_flex()
             .size_full()
             .items_center()
             .justify_center()
-            .text_sm()
-            .text_color(cx.theme().muted_foreground)
-            .child("This folder is empty.")
+            .gap_3()
+            .child(
+                gpui::svg()
+                    .path("icons/inbox.svg")
+                    .w(px(48.0))
+                    .h(px(48.0))
+                    .text_color(cx.theme().muted_foreground.opacity(0.5)),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("This folder is empty."),
+            )
     }
 }
 

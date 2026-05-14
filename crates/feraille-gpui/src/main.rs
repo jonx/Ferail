@@ -105,6 +105,25 @@ fn run_gui(args: screenshot::Args) {
             });
         Theme::change(mode, None, cx);
 
+        // Phase 10 polish: System-Appearance follow via a global
+        // AtomicBool the Shell polls on each render. The native
+        // observer fires on the main thread but doesn't get an
+        // `&mut App`, so direct Theme::change isn't reachable —
+        // instead we publish to a shared cell and let the Shell
+        // pick it up on its next paint (Render is already invoked
+        // for any frame, so the lag is single-digit milliseconds).
+        // Skipped when the user explicitly chose Light or Dark so
+        // we don't override their pick on every system tick.
+        let follow_system = matches!(
+            feraille_gpui::app_state::load().theme_pref.as_deref(),
+            None | Some("system") | Some("auto") | Some("")
+        );
+        if follow_system {
+            feraille_shell_mac::start_system_theme_observer(Box::new(|is_dark| {
+                feraille_gpui::shell::set_system_theme_pending(is_dark);
+            }));
+        }
+
         // Quit action so Cmd+Q routes through gpui's normal app
         // shutdown rather than relying on the platform's default
         // (which still works, but having it as an Action means

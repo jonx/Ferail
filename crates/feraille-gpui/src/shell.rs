@@ -165,6 +165,31 @@ impl Tab {
 /// Stage 3; SHELL_CONTEXT gates them to the file-pane focus.
 pub const SHELL_CONTEXT: &str = "Shell";
 
+/// Phase 10: live System-Appearance follow. The macOS observer in
+/// `feraille_shell_mac::start_system_theme_observer` runs on the main
+/// thread but has no `&mut App` — it can't call `Theme::change` itself.
+/// Instead it pushes the latest dark-mode bool here; Shell::render
+/// consumes the pending value (if any) and calls `Theme::change`
+/// before painting. Single-digit-millisecond lag at worst.
+static SYSTEM_THEME_PENDING: std::sync::atomic::AtomicI8 =
+    std::sync::atomic::AtomicI8::new(-1);
+
+pub fn set_system_theme_pending(is_dark: bool) {
+    SYSTEM_THEME_PENDING.store(
+        if is_dark { 1 } else { 0 },
+        std::sync::atomic::Ordering::Release,
+    );
+}
+
+fn take_system_theme_pending() -> Option<bool> {
+    let v = SYSTEM_THEME_PENDING.swap(-1, std::sync::atomic::Ordering::AcqRel);
+    match v {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
+}
+
 pub fn init(cx: &mut App) {
     crate::keymap::install(cx);
     crate::keymap::install_extras(cx);
@@ -2733,6 +2758,19 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _path_guard = feraille_core::path_guard::enter_render();
+        // Phase 10: drain any pending system-appearance change the
+        // native observer pushed since the last paint, then flip the
+        // gpui Theme. The observer can only set an AtomicBool; the
+        // Theme::change call needs `&mut App + &mut Window` so it
+        // lives here.
+        if let Some(is_dark) = take_system_theme_pending() {
+            let mode = if is_dark {
+                gpui_component::ThemeMode::Dark
+            } else {
+                gpui_component::ThemeMode::Light
+            };
+            gpui_component::Theme::change(mode, Some(window), cx);
+        }
         let weak = cx.weak_entity();
         let favorites_menu = self.build_favorites_menu(weak.clone());
         let browse_rows = self.build_browse_rows();

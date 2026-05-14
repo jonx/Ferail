@@ -795,7 +795,39 @@ undoable.
 
 # Phase 10 — Full Interaction Audit
 
-**Status:** Not started
+**Status:** Highest-impact items shipped — system theme observer +
+empty-folder state. Remaining audit items (hover/focus rings,
+truncation tooltips beyond the existing ones, keyboard nav across
+every surface) are mechanical polish that lands as we touch each
+surface in future iters.
+
+### Shipped this round
+
+- **Live system-theme follow.** macOS observer publishes the latest
+  dark-mode bool to a `SYSTEM_THEME_PENDING: AtomicI8` in shell.rs;
+  `Shell::render` drains the cell on every paint and calls
+  `Theme::change(mode, Some(window), cx)` before building the rest
+  of the tree. Single-digit-millisecond lag — a system Appearance
+  flip now updates Feraille without a restart. Skipped when the
+  user explicitly chose Light or Dark (their pick wins).
+- **Empty folder state.** `FileListDelegate::render_empty` now
+  centres a large `inbox` glyph above the "This folder is empty."
+  copy. Replaces the bare single-line text. The status bar also
+  reads "Empty folder" instead of "0 items" for the same case.
+
+### Remaining items (out of scope for this batch)
+
+- Hover-state uniformity sweep across sidebar / breadcrumb / file
+  rows / theme tiles.
+- Truncation tooltips on every long string beyond the ones we've
+  already wired (name + path in preview, sidebar Volumes, etc.).
+- Cmd-shortcut visibility audit (we already use `tooltip_with_action`
+  on the preview action row and most context menus; remaining
+  icon-only buttons elsewhere don't carry tooltips yet).
+- Empty-error state copy refresh — `error_copy` still works but
+  could grow a Lucide icon prefix like the empty state above.
+- Keyboard navigation: Tab traversal between sidebar / file list /
+  preview / status-bar widgets isn't deterministic yet.
 **Goal:** the commercial polish pass — no mystery interactivity, no
 half-themed surfaces, no cut-off text.
 
