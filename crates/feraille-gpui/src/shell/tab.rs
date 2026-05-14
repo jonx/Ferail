@@ -186,4 +186,48 @@ impl Tab {
             .map(str::to_owned)
             .unwrap_or_else(|| self.current_dir.to_string_lossy().into_owned())
     }
+
+    /// Snapshot the parts of this tab the closed-tab stack needs to
+    /// reopen it later (Phase D, spec §3.3 "Reopen closed tab").
+    ///
+    /// Captures directory, history, filter, and selection. Drops
+    /// load-in-flight bookkeeping, the gpui-component `TableState`,
+    /// and the filter `Input` entity — those are remade fresh on
+    /// reopen, and the reopen path re-issues a streaming enumeration
+    /// like any new tab. Sort restore is deferred (TableState's
+    /// current sort isn't exposed on the public surface today); spec
+    /// acceptance lists sort under "restore on reopen" but it's a
+    /// follow-on polish item.
+    pub fn snapshot_for_close(&self) -> ClosedTab {
+        ClosedTab {
+            current_dir: self.current_dir.clone(),
+            history: self.history.clone(),
+            history_index: self.history_index,
+            filter_text: self.filter_text.clone(),
+            selection: self.selection.clone(),
+            anchor: self.anchor,
+            lead: self.lead,
+        }
+    }
+}
+
+/// Per-tab state captured at close time for `Cmd+Shift+T`. Lives on
+/// `ProcessState::closed_tabs` so it survives the tab's owning window
+/// closing — a closed window's tabs can still be reopened from any
+/// other window. Spec §3.3 + §3.4.
+///
+/// `ClosedTab` is intentionally plain data (no gpui entities, no
+/// `Subscription`s) so it can sit in a `VecDeque` indefinitely without
+/// pinning view-tree resources. The reopen path in `Shell` rebuilds
+/// the live `Tab` via `Shell::make_tab` and then applies these fields
+/// onto the fresh tab before scheduling its initial load.
+#[derive(Clone)]
+pub struct ClosedTab {
+    pub current_dir: PathBuf,
+    pub history: Vec<HistoryEntry>,
+    pub history_index: usize,
+    pub filter_text: String,
+    pub selection: HashSet<NodeId>,
+    pub anchor: Option<NodeId>,
+    pub lead: Option<NodeId>,
 }

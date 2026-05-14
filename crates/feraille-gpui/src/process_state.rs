@@ -37,8 +37,14 @@ use crate::favorites::Favorites;
 use crate::fs_watcher::FsWatcher;
 use crate::icons::IconCache;
 use crate::preview::PreviewCache;
-use crate::shell::{Shell, UndoOp};
+use crate::shell::{ClosedTab, Shell, UndoOp};
 use crate::tasks::TaskRegistry;
+
+/// Soft cap on the closed-tab stack. Cmd+Shift+T undoes the last N
+/// tab closes; older entries fall off the front. 16 matches Safari's
+/// "Recently Closed" reach (browsers cap somewhere in 10–20); the
+/// stack is in-memory only, not persisted across launches in v1.
+const CLOSED_TABS_CAP: usize = 16;
 
 pub struct ProcessState {
     /// Shared filesystem backend. Already `Arc` because background
@@ -114,6 +120,14 @@ pub struct ProcessState {
     /// this list and asks every matching tab in every live window to
     /// refresh. Dead windows are pruned opportunistically.
     pub shells: RefCell<Vec<WeakEntity<Shell>>>,
+
+    /// Process-wide closed-tab stack. Most-recently-closed at the
+    /// back (push) / popped first (pop_back). Capped at
+    /// `CLOSED_TABS_CAP`; older entries fall off the front. Process-
+    /// scoped (spec §3.3 + NOTES Phase A+B decision): a tab closed
+    /// in window A is reachable from `Cmd+Shift+T` in window B,
+    /// because the closed-tab stack lives on the singleton.
+    pub closed_tabs: RefCell<VecDeque<ClosedTab>>,
 }
 
 impl ProcessState {
@@ -142,6 +156,7 @@ impl ProcessState {
             metadata_loaded: Cell::new(false),
             favorites_section_collapsed: Cell::new(false),
             shells: RefCell::new(Vec::new()),
+            closed_tabs: RefCell::new(VecDeque::new()),
         })
     }
 
@@ -194,6 +209,25 @@ impl ProcessState {
         let mut shells = self.shells.borrow_mut();
         shells.retain(|weak| weak.upgrade().is_some());
         shells.clone()
+    }
+
+    /// Push the snapshot of a tab the user just closed onto the
+    /// process-wide stack. Caller produces the snapshot via
+    /// `Tab::snapshot_for_close()` before the tab is removed from
+    /// its `Shell::tabs` vec. Trims the oldest entry when over cap.
+    pub fn push_closed_tab(&self, snapshot: ClosedTab) {
+        let mut stack = self.closed_tabs.borrow_mut();
+        if stack.len() >= CLOSED_TABS_CAP {
+            stack.pop_front();
+        }
+        stack.push_back(snapshot);
+    }
+
+    /// Pop the most recently closed tab for `Cmd+Shift+T`. Returns
+    /// `None` when the stack is empty (the reopen action becomes a
+    /// no-op rather than a beep).
+    pub fn pop_closed_tab(&self) -> Option<ClosedTab> {
+        self.closed_tabs.borrow_mut().pop_back()
     }
 }
 

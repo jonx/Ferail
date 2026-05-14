@@ -24,8 +24,8 @@ use crate::shell::{
     FocusFilter, GetInfo, GoHome, MoveToTrash, NavigateBack, NavigateForward, NavigateParent,
     NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, PageDown,
     PageDownExtend, PageUp, PageUpExtend, PrevTab, QuickLook, Refresh, RenameSelected,
-    RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn, ZoomOut,
-    ZoomReset,
+    ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview,
+    ZoomIn, ZoomOut, ZoomReset,
 };
 
 /// Install keybindings for every command in `feraille_core::commands`
@@ -118,6 +118,9 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         // -- File -------------------------------------------------
         "file.new_tab" => cx.bind_keys([KeyBinding::new(kb_str, NewTab, ctx)]),
         "file.close_tab" => cx.bind_keys([KeyBinding::new(kb_str, CloseTab, ctx)]),
+        "file.reopen_closed_tab" => {
+            cx.bind_keys([KeyBinding::new(kb_str, ReopenClosedTab, ctx)])
+        }
         "file.new_folder" => cx.bind_keys([KeyBinding::new(kb_str, NewFolder, ctx)]),
         "file.move_to_trash" => cx.bind_keys([KeyBinding::new(kb_str, MoveToTrash, ctx)]),
         "file.copy_path" => cx.bind_keys([KeyBinding::new(kb_str, CopyPath, ctx)]),
@@ -241,6 +244,10 @@ pub(crate) fn install_extras(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-t", NewTab, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("cmd-w", CloseTab, Some(shell::SHELL_CONTEXT)),
+        // Phase D `cmd-shift-t` (ReopenClosedTab) goes through the
+        // command catalogue (`file.reopen_closed_tab`) so the menu
+        // bar and command palette pick it up automatically. No need
+        // to repeat the binding here.
         KeyBinding::new("ctrl-tab", NextTab, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("ctrl-shift-tab", PrevTab, Some(shell::SHELL_CONTEXT)),
         // Stage 8: macOS Quick Look. Space-bar on the selected row

@@ -24,6 +24,12 @@ actions!(
         /// but this is the "I mean *the window*" verb for users with
         /// many tabs open.
         CloseWindow,
+        /// Cmd+Shift+T — pop the most-recently-closed tab off
+        /// `ProcessState::closed_tabs` and reopen it (spec §3.3
+        /// "Reopen closed tab"). Restores directory, history, filter,
+        /// and best-effort selection; sort restore is deferred.
+        /// No-op when the stack is empty.
+        ReopenClosedTab,
         NextTab,
         PrevTab,
         QuickLook,

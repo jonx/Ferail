@@ -1,5 +1,62 @@
 use super::*;
 
+/// Payload carried by a tab-strip drag (Phase D, spec §3.3
+/// "Reorder tab"). The same Render-as-its-own-preview shape
+/// `FavoriteDragPayload` uses — a chip following the cursor with the
+/// dragged tab's label. The `id` is the source tab's process-local
+/// `TabId`; the drop target resolves it back to an index against the
+/// current `Shell::tabs` vec so concurrent reorder operations stay
+/// coherent.
+///
+/// Phase D drops are within-strip only. Cross-window tear-off / merge
+/// (spec §3.5) needs a different payload shape and lands in Phase F.
+#[derive(Clone)]
+pub struct TabDragPayload {
+    pub id: TabId,
+    pub label: SharedString,
+}
+
+impl Render for TabDragPayload {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        div()
+            .px_3()
+            .py_1()
+            .bg(theme.background)
+            .border_1()
+            .border_color(theme.border)
+            .rounded(theme.radius)
+            .text_sm()
+            .text_color(theme.foreground)
+            .child(self.label.clone())
+    }
+}
+
+/// One drop gap between (or at the ends of) tab chips. `pos` is the
+/// gap position in `0..=tabs.len()` — gap 0 is before the first tab,
+/// gap N is after the last. `drag_over` paints a 2-DIP vertical accent
+/// rule so the user sees exactly where the drop will land — same idea
+/// as `favorites_section::render_drop_gap` rotated 90°. On drop,
+/// `Shell::reorder_tab` resolves the source `TabId` and moves the tab
+/// into this position.
+fn tab_drop_gap(pos: usize, cx: &mut Context<Shell>) -> impl IntoElement {
+    let theme = cx.theme();
+    let accent = theme.primary;
+    div()
+        .id(("tab-gap", pos))
+        .h(px(24.0))
+        .w(px(6.0))
+        .flex_shrink_0()
+        .drag_over::<TabDragPayload>(move |style, _payload, _window, _cx| {
+            style.border_l_2().border_color(accent)
+        })
+        .on_drop(cx.listener(
+            move |this, payload: &TabDragPayload, _window, cx| {
+                this.reorder_tab(payload.id, pos, cx);
+            },
+        ))
+}
+
 impl Shell {
     /// Build the **Browse** section as a single-rooted, expandable
     /// tree starting at the home folder. (Phase 2: the flat
@@ -361,8 +418,15 @@ impl Shell {
             .bg(cx.theme().secondary);
 
         for (idx, tab) in self.tabs.iter().enumerate() {
+            // Phase D: drop gap *before* this tab. Catches a drag
+            // released between the previous chip and this one. The
+            // first iteration places gap 0 (before the first tab).
+            row = row.child(tab_drop_gap(idx, cx));
+
             let is_active = idx == active;
             let label = tab.label();
+            let tab_id = tab.id;
+            let drag_label: SharedString = label.clone().into();
             let theme = cx.theme();
             let mut chip = h_flex()
                 .id(("tab", idx))
@@ -387,7 +451,22 @@ impl Shell {
                 .child(div().truncate().max_w(px(160.0)).child(label))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.select_tab(idx, cx);
-                }));
+                }))
+                // Phase D drag-start: a press-then-move on a tab chip
+                // initiates a tab drag (gpui's built-in threshold keeps
+                // plain clicks from triggering this). The payload
+                // carries the source `TabId` so the drop handler can
+                // resolve the current index even if the strip changed
+                // between drag-start and drop. Spec §5.4: tab drags
+                // and node drags are distinguished by origin surface
+                // — this is the tab-strip origin.
+                .on_drag(
+                    TabDragPayload {
+                        id: tab_id,
+                        label: drag_label,
+                    },
+                    |payload, _offset, _window, cx| cx.new(|_| payload.clone()),
+                );
             if multi {
                 let close = div()
                     .id(("tab-close", idx))
@@ -401,11 +480,25 @@ impl Shell {
                         // Phase A+B+C: tabs own their own TableState,
                         // and closing the last tab closes the window
                         // (process stays resident).
+                        // Phase D: snapshot before removing so
+                        // Cmd+Shift+T can reopen this tab. The lookup
+                        // is by TabId, not the captured `idx`, because
+                        // a drag-reorder may have shifted positions
+                        // since this listener was constructed.
+                        let Some(target_idx) =
+                            this.tabs.iter().position(|t| t.id == tab_id)
+                        else {
+                            return;
+                        };
                         if this.tabs.len() <= 1 {
+                            this.process
+                                .push_closed_tab(this.tabs[target_idx].snapshot_for_close());
                             window.remove_window();
                             return;
                         }
-                        this.tabs.remove(idx);
+                        this.process
+                            .push_closed_tab(this.tabs[target_idx].snapshot_for_close());
+                        this.tabs.remove(target_idx);
                         // Adjust the active index relative to the closed
                         // tab's position. Closing a tab to the left of
                         // the active one shifts the active tab's index
@@ -414,7 +507,7 @@ impl Shell {
                         // (or clamps if it was the rightmost tab);
                         // closing a tab to the right of active is a
                         // no-op for the index.
-                        if idx < this.active {
+                        if target_idx < this.active {
                             this.active -= 1;
                         } else if this.active >= this.tabs.len() {
                             this.active = this.tabs.len() - 1;
@@ -425,6 +518,8 @@ impl Shell {
             }
             row = row.child(chip);
         }
+        // Phase D: trailing drop gap after the last tab.
+        row = row.child(tab_drop_gap(self.tabs.len(), cx));
         // Trailing "+" — new tab.
         row = row.child(
             div()
@@ -1097,6 +1192,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_new_tab))
             .on_action(cx.listener(Self::on_close_tab))
             .on_action(cx.listener(Self::on_close_window))
+            .on_action(cx.listener(Self::on_reopen_closed_tab))
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_prev_tab))
             .on_action(cx.listener(Self::on_quick_look))

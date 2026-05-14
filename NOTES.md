@@ -36,6 +36,46 @@ its filter." Flipped per user direction.
 
 ---
 
+## Phase D — closed-tab reopen + tab drag-reorder (landed)
+
+Goal: cover the spec §3.3 operations that the multi-window plumbing
+made meaningful. Cmd+Shift+T undoes a Cmd+W; tabs reorder by drag
+within the strip.
+
+### Decisions
+
+- **Closed-tab stack lives on `ProcessState`**, not per-window. Matches the spec §3.3 / §1.1 process-scope rule and the Phase A+B "Closed-tab stack is process-scoped" pre-decision. Cmd+Shift+T in window B can resurrect a tab closed in window A. Capped at 16 (`CLOSED_TABS_CAP`); older entries fall off the front. In-memory only — not persisted across launches in v1 (session restore lands in Phase J).
+- **`ClosedTab` is plain data, no GPUI entities.** Lives in `shell::tab` next to `Tab`. Captures: `current_dir`, `history`, `history_index`, `filter_text`, `selection`, `anchor`, `lead`. Drops the per-tab `Entity<TableState>` and `Entity<InputState>` — those are remade fresh on reopen via the normal `Shell::make_tab` path. The closed-tab stack can therefore sit in a `VecDeque<ClosedTab>` indefinitely without pinning view-tree resources.
+- **Sort restore deferred.** Spec acceptance lists sort under "restore on reopen", but `TableState`'s current sort column / direction isn't on its public surface today. The reopened tab gets the default name-asc; restoring sort is a follow-on polish piece. Filter and selection *do* restore.
+- **Selection restore is best-effort by spec design.** `NodeId`s captured at close are still valid (singleton `NodeStore`), so when the streaming reload's `Done` fires, the existing reconcile-against-model path filters the stale `NodeId`s out without ceremony. No new reconciliation code needed.
+- **Push happens at every close site**, not just `Cmd+W`. The tabstrip's `×` button, `Cmd+W` (both the multi-tab and last-tab→remove-window paths), and `Cmd+Shift+W` (all tabs in left-to-right order) push snapshots. The OS-red-button window close does *not* push — there's no hook for "this window is about to close" with the Phase C process-stays-resident model. Acceptable: closing the window via the title bar is a deliberate "I'm done with this window" gesture; user feedback can promote this if it bites.
+- **`ReopenClosedTab` action goes through the catalogue** (`file.reopen_closed_tab` in `feraille-core::commands`), not the keymap-extras list. The extras list is for shortcuts the catalogue can't yet express (modifier chords on Esc, etc.); a vanilla Cmd+Shift+T is exactly what the catalogue is for. Knock-on: the new entry surfaces automatically in the shortcuts/command palette + future menu-bar wiring.
+- **Cmd+Shift+T binds in `SHELL_CONTEXT`, not at the App level.** Requires an active window. With Phase C stay-resident-at-zero-windows, a user with no windows open hits Cmd+N first, then Cmd+Shift+T. Safari binds it App-level; we can promote later if zero-window reopen turns out to be a common path. Keeping it shell-scoped now avoids the action-shape complexity Cmd+N has (App `actions!` block, separate `cx.on_action` wiring).
+- **Tab drag-reorder uses `TabDragPayload { id: TabId, label }`** following the `FavoriteDragPayload` shape — the payload `impl Render` so it doubles as its own follow-the-cursor drag preview. Source is `TabId` (not index) so a drop arriving after a concurrent close still resolves correctly.
+- **Drop targets are 6-DIP-wide gaps interleaved with the chips**, mirroring `favorites_section::render_drop_gap` rotated 90°. Idle: invisible. `drag_over::<TabDragPayload>`: a 2-DIP vertical accent rule shows where the drop will land. Insertion-point pattern over chip-half-zones: more discoverable, hits cleanly, no edge-of-element math.
+- **Index math runs on the `Shell::reorder_tab` helper.** Gap positions number `0..=tabs.len()`; the helper resolves the source by `TabId`, rejects no-op drops (`to_pos == from_idx || to_pos == from_idx + 1`), and tracks the active tab by id across the move so `self.active` follows correctly whether the moved tab is the active one or not.
+- **Close-button listener now resolves by `TabId`, not by the captured `idx`.** A drag-reorder may have shifted `idx` since the listener closure was constructed; looking up the tab by id at click time keeps the right tab closing.
+
+### Outcome
+
+- `cargo check --workspace --all-targets` clean (1.7s).
+- `cargo test --workspace` all green (173+ tests across the workspace).
+- `screenshots/phase-d-baseline.png` renders three tabs with the second active — visually identical to Phase A+B's multi-tab screenshot, which is the goal: drag-reorder gaps are invisible at idle.
+- Manually verified end-to-end:
+  - Cmd+W → Cmd+Shift+T restores the closed tab at the same directory, with its filter text and history intact.
+  - Cmd+Shift+W → multiple Cmd+Shift+T's pop the window's tabs in reverse order (rightmost first).
+  - Drag-reorder of any tab updates `self.active` correctly whether the moved tab is the active one or another.
+  - Stack cap respected — closing 20 tabs leaves the 16 most recent reachable.
+
+### Trade-offs taken
+
+- **Sort isn't preserved on reopen.** Most users hit Cmd+Shift+T to recover from a misclick; the path/filter restoration is the load-bearing piece. Sort restore can land alongside the broader file-table sort persistence work in the TODO.md backlog ("Persist file-table column order after drag reorder, alongside column widths").
+- **OS-red-button window close doesn't snapshot tabs.** Phase C dropped the `on_window_closed` handler when it switched to stay-resident; restoring a hook just for closed-tab snapshotting is overkill for v1. Cmd+W and Cmd+Shift+W cover the deliberate close paths.
+- **Closed-tab stack is in-memory only.** Persisting it across launches is part of the session-restore work (Phase J). For now a relaunch clears the stack.
+- **Drop gaps are present in single-tab strips too.** Cheap (no hit during a node drag — `TabDragPayload` only originates from tab chips), and lets the eventual cross-window tear-off / merge work share the same gap rendering.
+
+---
+
 ## Phase C — Cmd+N, second window, stay-resident (landed)
 
 Goal: open a second window that shares the singleton `ProcessState`.

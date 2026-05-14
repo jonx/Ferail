@@ -190,6 +190,12 @@ const CATALOGUE: &[CommandSpec] = &[
         shortcuts: &[Shortcut::primary("W")],
     },
     CommandSpec {
+        id: CommandId("file.reopen_closed_tab"),
+        title: "Reopen Closed Tab",
+        category: Category::File,
+        shortcuts: &[Shortcut::primary_shift("T")],
+    },
+    CommandSpec {
         id: CommandId("file.new_folder"),
         title: "New Folder",
         category: Category::File,

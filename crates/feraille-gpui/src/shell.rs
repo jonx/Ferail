@@ -49,7 +49,7 @@ use loading::{
     run_tree_children_load,
 };
 pub use path::{parse_breadcrumb_path, path_segments};
-pub use tab::{HistoryEntry, Tab, TabId};
+pub use tab::{ClosedTab, HistoryEntry, Tab, TabId};
 
 /// Classification produced by `Shell::resolve_favorite_target` so
 /// the toggle handler can show the appropriate toast for files.
@@ -2032,11 +2032,19 @@ impl Shell {
     /// Cmd+W: close the active tab. Per spec §3.4: if it's the last
     /// tab, close the whole window. With multi-window (Phase C) the
     /// process stays resident at zero windows, so this is non-fatal.
+    /// Phase D: every closed tab pushes a snapshot onto
+    /// `ProcessState::closed_tabs` for `Cmd+Shift+T`. Closing the
+    /// last tab via this path pushes that final tab before the
+    /// window is removed.
     fn on_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
         if self.tabs.len() <= 1 {
+            self.process
+                .push_closed_tab(self.tabs[self.active].snapshot_for_close());
             window.remove_window();
             return;
         }
+        let snapshot = self.tabs[self.active].snapshot_for_close();
+        self.process.push_closed_tab(snapshot);
         self.tabs.remove(self.active);
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len() - 1;
@@ -2049,9 +2057,68 @@ impl Shell {
     /// Cmd+Shift+W: close the entire window regardless of how many
     /// tabs it has. Per spec §3.4 the "I mean the window" verb. The
     /// process stays resident at zero windows; the user can reopen
-    /// with Cmd+N.
+    /// with Cmd+N. Phase D: all tabs are pushed onto the closed-tab
+    /// stack in left-to-right order so the most-recent `Cmd+Shift+T`
+    /// brings back the rightmost tab first (chronological reverse of
+    /// individual closes).
     fn on_close_window(&mut self, _: &CloseWindow, window: &mut Window, _cx: &mut Context<Self>) {
+        for tab in &self.tabs {
+            self.process.push_closed_tab(tab.snapshot_for_close());
+        }
         window.remove_window();
+    }
+
+    /// Cmd+Shift+T: reopen the most recently closed tab. Pops the top
+    /// of `ProcessState::closed_tabs`, builds a fresh tab at the
+    /// recorded directory, restores filter/history/selection, and
+    /// schedules a streaming reload. Spec §3.3 "Reopen closed tab".
+    fn on_reopen_closed_tab(
+        &mut self,
+        _: &ReopenClosedTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(closed) = self.process.pop_closed_tab() else {
+            return;
+        };
+        let path = closed.current_dir.clone();
+        // Re-register the path in NodeStore to mint (or reuse) a
+        // stable NodeId. ProcessState is the singleton, so a NodeId
+        // captured before the tab closed is still valid — but we
+        // pass through `get_or_create_path_with_id` regardless, the
+        // same way Cmd+T does, so the reopen path stays a normal
+        // "new tab at this path" pipeline.
+        let node_id = self.process.fs.id_for_path(&path);
+        self.process
+            .node_store
+            .borrow_mut()
+            .get_or_create_path_with_id(path.clone(), node_id);
+
+        let mut tab = self.make_tab(path.clone(), node_id, window, cx);
+        // Apply the captured tab-local state onto the fresh Tab
+        // before inserting it. Filter goes onto both the Tab field
+        // (which the load reads) and the live `Input` entity so the
+        // title-bar field renders the restored text immediately.
+        tab.history = closed.history;
+        tab.history_index = closed.history_index;
+        tab.filter_text = closed.filter_text.clone();
+        tab.selection = closed.selection;
+        tab.anchor = closed.anchor;
+        tab.lead = closed.lead;
+        let filter_input = tab.filter_input.clone();
+        filter_input.update(cx, |state, cx| {
+            state.set_value(closed.filter_text, window, cx);
+        });
+
+        let insert_at = self.active + 1;
+        self.tabs.insert(insert_at, tab);
+        self.active = insert_at;
+        // Stream the directory fresh. The captured `selection` set
+        // is reconciled against the model on streaming `Done` via
+        // the standard reconciliation path — best-effort per spec
+        // §3.3 (rows that no longer exist drop, surviving rows
+        // re-light).
+        self.load_path(path, cx);
     }
 
     /// Ctrl+Tab: cycle to the next tab.
@@ -2080,6 +2147,43 @@ impl Shell {
             return;
         }
         self.active = idx;
+        cx.notify();
+    }
+
+    /// Phase D, spec §3.3 "Reorder tab" — move the tab identified by
+    /// `from_id` into gap position `to_pos`. Gap positions number
+    /// `0..=tabs.len()`: gap 0 is before the first tab, gap N is after
+    /// the last. Drops at gap-of-itself or gap-just-after-itself are
+    /// no-ops (dropping where you started). Active-tab tracking is by
+    /// `TabId`, so the active tab follows its own move and unrelated
+    /// reorders correctly shift `self.active`.
+    pub fn reorder_tab(&mut self, from_id: TabId, to_pos: usize, cx: &mut Context<Self>) {
+        let Some(from_idx) = self.tabs.iter().position(|t| t.id == from_id) else {
+            return;
+        };
+        if to_pos > self.tabs.len() {
+            return;
+        }
+        if to_pos == from_idx || to_pos == from_idx + 1 {
+            return;
+        }
+        let active_id = self.tabs[self.active].id;
+        let tab = self.tabs.remove(from_idx);
+        // After removal, indices `> from_idx` shift down by one. The
+        // gap at position `to_pos` in the *pre-remove* list maps to
+        // `to_pos - 1` in the post-remove list iff `from_idx < to_pos`;
+        // otherwise it stays at `to_pos`.
+        let insert_at = if from_idx < to_pos {
+            to_pos - 1
+        } else {
+            to_pos
+        };
+        self.tabs.insert(insert_at, tab);
+        self.active = self
+            .tabs
+            .iter()
+            .position(|t| t.id == active_id)
+            .unwrap_or(0);
         cx.notify();
     }
 
