@@ -39,6 +39,14 @@ pub fn install(cx: &mut App) {
         ClearFilter,
         Some(shell::SHELL_CONTEXT),
     )]);
+    // Undo (Cmd+Z) — not in the catalogue today because the action
+    // is a UI-layer Shell helper (replays UndoOp inverse from the
+    // Shell::undo_stack), not a catalogued command in feraille-core.
+    cx.bind_keys([KeyBinding::new(
+        "cmd-z",
+        crate::shell::UndoLastAction,
+        Some(shell::SHELL_CONTEXT),
+    )]);
 
     for spec in all_commands() {
         for shortcut in spec.shortcuts {

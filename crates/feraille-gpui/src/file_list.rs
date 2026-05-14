@@ -53,6 +53,13 @@ pub struct FileListDelegate {
     /// (no tint); 1.0 = the most-visited folder. Renderer maps to
     /// a low-opacity accent background.
     pub heats: Vec<f32>,
+    /// Finder colour tags per row, parallel to `entries`. Populated
+    /// lazily by `load()` (synchronous bulk read via
+    /// `feraille_shell_mac::read_canonical_tags`, capped at the first
+    /// N rows so a 50k-file folder doesn't pay the per-row xattr
+    /// lookup synchronously on the UI thread). Renderer pairs each
+    /// row's slot with the name cell to draw small coloured dots.
+    pub tags: Vec<Vec<feraille_core::commands::TagColor>>,
 }
 
 impl FileListDelegate {
@@ -80,6 +87,7 @@ impl FileListDelegate {
             paths: HashMap::new(),
             icons,
             heats: Vec::new(),
+            tags: Vec::new(),
         }
     }
 
@@ -121,6 +129,24 @@ impl FileListDelegate {
         }
         // Reset heats; Shell repopulates after load returns.
         self.heats = vec![0.0; self.entries.len()];
+        // Read Finder colour tags for the first `TAG_PREFETCH_CAP`
+        // rows. xattr reads cost ~1ms each on macOS — fine for
+        // typical folders (~50 entries), capped so a giant Downloads
+        // doesn't stall the UI thread. Beyond the cap, rows render
+        // tagless until either (a) we add a background prefetch
+        // pipeline or (b) the user explicitly Get-Info's the row.
+        const TAG_PREFETCH_CAP: usize = 200;
+        self.tags = Vec::with_capacity(self.entries.len());
+        for entry in self.entries.iter().take(TAG_PREFETCH_CAP) {
+            let tags = self
+                .path_for_entry(entry.id)
+                .map(|p| feraille_shell_mac::read_canonical_tags(&p))
+                .unwrap_or_default();
+            self.tags.push(tags);
+        }
+        for _ in TAG_PREFETCH_CAP..self.entries.len() {
+            self.tags.push(Vec::new());
+        }
         handle.error
     }
 
@@ -128,6 +154,7 @@ impl FileListDelegate {
         self.entries.clear();
         self.paths.clear();
         self.heats.clear();
+        self.tags.clear();
     }
 
     pub fn replace_entries(
@@ -262,6 +289,21 @@ impl TableDelegate for FileListDelegate {
                 };
                 let full_name = entry.name.clone();
                 let tooltip_name = full_name.clone();
+                // Inline tag chips — 6-DIP coloured dots after the
+                // filename, one per applied Finder tag (max 7). Read
+                // synchronously at load() time and stored in the
+                // delegate; render only consumes the cached Vec.
+                let row_tags = self.tags.get(row_ix).cloned().unwrap_or_default();
+                let mut chips = gpui_component::h_flex().gap_1().flex_shrink_0();
+                for color in row_tags.iter().take(7) {
+                    chips = chips.child(
+                        div()
+                            .w(px(6.0))
+                            .h(px(6.0))
+                            .rounded_full()
+                            .bg(tag_color_rgba(*color)),
+                    );
+                }
                 div()
                     .id(("file-row-name", row_ix))
                     .flex()
@@ -277,6 +319,7 @@ impl TableDelegate for FileListDelegate {
                             .truncate()
                             .child(SharedString::from(full_name)),
                     )
+                    .child(chips)
                     .tooltip(move |window, cx| {
                         Tooltip::new(tooltip_name.clone()).build(window, cx)
                     })
@@ -522,6 +565,23 @@ pub fn entry_at<'a>(delegate: &'a FileListDelegate, row_ix: usize) -> Option<&'a
 /// Resolve a file entry's NodeId to an absolute path via the FS.
 pub fn path_for(fs: &NativeFs, id: NodeId) -> Option<PathBuf> {
     fs.path_for(id)
+}
+
+/// Map a Finder colour tag to its render colour. Values mirror the
+/// stock macOS palette (NSColor systemRed/orange/etc. with a slight
+/// saturation bump so the 6-DIP dots stay readable on tinted row
+/// backgrounds).
+fn tag_color_rgba(c: feraille_core::commands::TagColor) -> gpui::Rgba {
+    use feraille_core::commands::TagColor;
+    match c {
+        TagColor::Red => gpui::Rgba { r: 1.0, g: 0.23, b: 0.19, a: 1.0 },
+        TagColor::Orange => gpui::Rgba { r: 1.0, g: 0.58, b: 0.0, a: 1.0 },
+        TagColor::Yellow => gpui::Rgba { r: 1.0, g: 0.80, b: 0.0, a: 1.0 },
+        TagColor::Green => gpui::Rgba { r: 0.30, g: 0.85, b: 0.39, a: 1.0 },
+        TagColor::Blue => gpui::Rgba { r: 0.0, g: 0.48, b: 1.0, a: 1.0 },
+        TagColor::Purple => gpui::Rgba { r: 0.69, g: 0.32, b: 0.87, a: 1.0 },
+        TagColor::Gray => gpui::Rgba { r: 0.56, g: 0.56, b: 0.58, a: 1.0 },
+    }
 }
 
 /// Mark-of-the-Web quarantine badge — small red dot in the icon's

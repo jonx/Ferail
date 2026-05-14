@@ -16,12 +16,63 @@ use gpui_component::{
 
 use crate::shell::Shell;
 
+/// Map a catalogue `CommandId` to a dispatchable `gpui::Action`.
+/// Used by the shortcuts-help overlay (which doubles as our Cmd+K
+/// command palette) so clicking a row fires the corresponding
+/// action. Returns the boxed action when we know how to dispatch it;
+/// `None` for commands that don't have a Shell-level handler yet
+/// (e.g. tag colours / open-with slots — context-only).
+fn action_for_command(id: feraille_core::commands::CommandId) -> Option<Box<dyn gpui::Action>> {
+    use crate::shell::*;
+    Some(match id.0 {
+        "file.new_tab" => Box::new(NewTab) as Box<dyn gpui::Action>,
+        "file.close_tab" => Box::new(CloseTab),
+        "file.new_folder" => Box::new(NewFolder),
+        "file.get_info" => Box::new(GetInfo),
+        "file.move_to_trash" => Box::new(MoveToTrash),
+        "file.copy_path" => Box::new(CopyPath),
+        "file.reveal_in_finder" => Box::new(RevealInFinder),
+        "file.refresh" => Box::new(Refresh),
+        "file.open" | "selection.activate" => Box::new(OpenSelected),
+        "file.duplicate" => Box::new(Duplicate),
+        "file.make_alias" => Box::new(MakeAlias),
+        "file.compress" => Box::new(Compress),
+        "file.rename" | "selection.start_rename" => Box::new(RenameSelected),
+        "file.quick_look" => Box::new(QuickLook),
+        "file.open_in_new_tab" => Box::new(OpenInNewTab),
+        "view.search" => Box::new(FocusFilter),
+        "view.edit_breadcrumb" => Box::new(EditBreadcrumb),
+        "view.toggle_preview" => Box::new(TogglePreview),
+        "view.toggle_hidden" => Box::new(ToggleHidden),
+        "view.zoom_in" => Box::new(ZoomIn),
+        "view.zoom_out" => Box::new(ZoomOut),
+        "view.zoom_reset" => Box::new(ZoomReset),
+        "view.disk_usage" => Box::new(OpenDiskUsage),
+        "app.settings" => Box::new(OpenSettings),
+        "go.back" => Box::new(NavigateBack),
+        "go.forward" => Box::new(NavigateForward),
+        "go.parent" => Box::new(NavigateParent),
+        "go.home" => Box::new(GoHome),
+        "help.shortcuts" => Box::new(ShortcutsHelp),
+        "selection.cursor_up" => Box::new(CursorUp),
+        "selection.cursor_down" => Box::new(CursorDown),
+        "selection.cursor_first" => Box::new(CursorFirst),
+        "selection.cursor_last" => Box::new(CursorLast),
+        "selection.page_up" => Box::new(PageUp),
+        "selection.page_down" => Box::new(PageDown),
+        "window.next_tab" => Box::new(NextTab),
+        "window.prev_tab" => Box::new(PrevTab),
+        _ => return None,
+    })
+}
+
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let filter = shell.shortcuts_help_filter.as_ref()?.clone();
     let bg = cx.theme().background;
     let border = cx.theme().border;
     let foreground = cx.theme().foreground;
     let muted = cx.theme().muted_foreground;
+    let accent = cx.theme().secondary;
     let input = shell.shortcuts_help_input.clone();
 
     let lower = filter.to_lowercase();
@@ -45,7 +96,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
 
     let body_sections: Vec<Div> = groups
         .into_iter()
-        .map(|(cat, list)| section(cat, list, foreground, muted))
+        .map(|(cat, list)| section(cat, list, foreground, muted, accent, cx))
         .collect();
 
     let header = v_flex()
@@ -116,6 +167,8 @@ fn section(
     specs: Vec<&CommandSpec>,
     foreground: gpui::Hsla,
     muted: gpui::Hsla,
+    accent: gpui::Hsla,
+    cx: &mut Context<Shell>,
 ) -> Div {
     let title = match cat {
         Category::App => "App",
@@ -128,9 +181,9 @@ fn section(
         Category::Help => "Help",
         Category::Context => "Context",
     };
-    let rows: Vec<Div> = specs
+    let rows: Vec<AnyElement> = specs
         .into_iter()
-        .map(|spec| row(spec, foreground, muted))
+        .map(|spec| row(spec, foreground, muted, accent, cx))
         .collect();
     v_flex()
         .gap_1()
@@ -144,7 +197,13 @@ fn section(
         .children(rows)
 }
 
-fn row(spec: &CommandSpec, foreground: gpui::Hsla, _muted: gpui::Hsla) -> Div {
+fn row(
+    spec: &CommandSpec,
+    foreground: gpui::Hsla,
+    _muted: gpui::Hsla,
+    accent: gpui::Hsla,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     // Convert the catalogue's first shortcut to a gpui Keystroke via
     // the same chord-string DSL keymap.rs uses, then hand it to
     // gpui-component's `Kbd` for boxed-glyph styling matching
@@ -153,11 +212,17 @@ fn row(spec: &CommandSpec, foreground: gpui::Hsla, _muted: gpui::Hsla) -> Div {
         let kb_str = keystroke_string(s)?;
         gpui::Keystroke::parse(&kb_str).ok().map(Kbd::new)
     });
+    let id = spec.id;
+    let dispatchable = action_for_command(id).is_some();
+    let row_id = SharedString::from(format!("cmd-{}", id.0));
     let mut row = h_flex()
+        .id(ElementId::Name(row_id))
         .w_full()
         .items_center()
         .py_1()
+        .px_2()
         .gap_2()
+        .rounded(px(4.0))
         .child(
             div()
                 .flex_1()
@@ -168,7 +233,23 @@ fn row(spec: &CommandSpec, foreground: gpui::Hsla, _muted: gpui::Hsla) -> Div {
     if let Some(k) = kbd {
         row = row.child(div().flex_shrink_0().child(k));
     }
-    row
+    if dispatchable {
+        // Clickable + hover-tinted when the command maps to a known
+        // action handler. Commands missing a dispatch (e.g. tag
+        // colours / open-with slots — context-only) render but stay
+        // inert.
+        row.cursor_pointer()
+            .hover(move |this| this.bg(accent))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if let Some(action) = action_for_command(id) {
+                    this.close_shortcuts_help(cx);
+                    window.dispatch_action(action, cx);
+                }
+            }))
+            .into_any_element()
+    } else {
+        row.into_any_element()
+    }
 }
 
 /// Mirror of `keymap::translate_shortcut` — produces the same

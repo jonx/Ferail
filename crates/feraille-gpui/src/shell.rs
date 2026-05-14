@@ -6,7 +6,7 @@
 //! 4.c brings the virtualized file list.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -117,8 +117,48 @@ actions!(
         OpenWithSlot9,
         OpenWithSlot10,
         OpenWithSlot11,
+        /// Cmd+Z — pop the most recent reversible action off
+        /// Shell::undo_stack and replay its inverse. Currently handles
+        /// Rename (rename back) and NewFolder (delete the created
+        /// folder); Move-to-Trash undo is documented in the deferred
+        /// list (needs NSFileManager.trashItemAt to return the trash
+        /// URL so we can move the file back).
+        UndoLastAction,
     ]
 );
+
+/// Reversible operation pushed onto `Shell::undo_stack` after a
+/// successful mutation. Applied (in reverse) by the UndoLastAction
+/// handler when the user hits Cmd+Z.
+#[derive(Clone, Debug)]
+pub enum UndoOp {
+    /// Rename `current` back to `original`.
+    Rename { current: PathBuf, original: PathBuf },
+    /// Delete the folder we just created.
+    DeleteFolder(PathBuf),
+}
+
+impl UndoOp {
+    fn apply(&self) -> Result<(), String> {
+        match self {
+            UndoOp::Rename { current, original } => {
+                std::fs::rename(current, original).map_err(|e| e.to_string())
+            }
+            UndoOp::DeleteFolder(p) => {
+                std::fs::remove_dir(p).map_err(|e| e.to_string())
+            }
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            UndoOp::Rename { .. } => "Undid rename",
+            UndoOp::DeleteFolder(_) => "Removed new folder",
+        }
+    }
+}
+
+const UNDO_STACK_CAP: usize = 20;
 
 /// Per-tab state. Each tab has its own current directory + nav
 /// history + cursor selection. Filter text, show-hidden, the
@@ -332,6 +372,10 @@ pub struct Shell {
     /// `app_state::sidebar_collapsed` so the choice survives
     /// restarts.
     pub sidebar_collapsed: bool,
+    /// Reversible-action history. Newest at the back. Capped at
+    /// UNDO_STACK_CAP so the stack doesn't grow unbounded across a
+    /// long session; older ops drop off the front silently.
+    pub undo_stack: VecDeque<UndoOp>,
     /// Sidebar tree state (Stage 9.c): which directories are
     /// currently expanded. Updated on caret-click and by the
     /// `--expand <path>` CLI flag (which walks the path's ancestors).
@@ -723,6 +767,7 @@ impl Shell {
             preview_width: persisted.preview_width.unwrap_or(280.0).clamp(220.0, 520.0),
             splitter_last_save: None,
             sidebar_collapsed: persisted.sidebar_collapsed.unwrap_or(false),
+            undo_stack: VecDeque::new(),
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
             ant_visits: HashMap::new(),
@@ -1142,13 +1187,18 @@ impl Shell {
                     path.push(&name);
                     let cur = parent.clone();
                     let op_path = path.clone();
+                    let undo_path = path.clone();
                     shell.update(cx, move |this, cx| {
                         this.spawn_file_op(
                             cur,
                             move || std::fs::create_dir(&op_path).map_err(|e| e.to_string()),
                             "new-folder",
                             cx,
-                        )
+                        );
+                        // Push the undo op optimistically — the file
+                        // op runs async; if it fails the undo would
+                        // be a no-op (the path doesn't exist).
+                        this.push_undo(UndoOp::DeleteFolder(undo_path));
                     });
                     true
                 })
@@ -1204,6 +1254,8 @@ impl Shell {
                     let cur = parent.clone();
                     let op_old_path = old_path.clone();
                     let op_new_path = new_path.clone();
+                    let undo_current = new_path.clone();
+                    let undo_original = old_path.clone();
                     shell.update(cx, move |this, cx| {
                         this.spawn_file_op(
                             cur,
@@ -1213,7 +1265,11 @@ impl Shell {
                             },
                             "rename",
                             cx,
-                        )
+                        );
+                        this.push_undo(UndoOp::Rename {
+                            current: undo_current,
+                            original: undo_original,
+                        });
                     });
                     true
                 })
@@ -1724,6 +1780,42 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// Append a reversible op to the undo stack, evicting the oldest
+    /// entry when capacity is exceeded.
+    fn push_undo(&mut self, op: UndoOp) {
+        if self.undo_stack.len() >= UNDO_STACK_CAP {
+            self.undo_stack.pop_front();
+        }
+        self.undo_stack.push_back(op);
+    }
+
+    pub fn on_undo_last_action(
+        &mut self,
+        _: &UndoLastAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let Some(op) = self.undo_stack.pop_back() else {
+            window.push_notification(Notification::info("Nothing to undo"), cx);
+            return;
+        };
+        let label = op.label();
+        match op.apply() {
+            Ok(()) => {
+                window.push_notification(Notification::success(label.to_string()), cx);
+                let path = self.active_tab().current_dir.clone();
+                self.load_path(path, cx);
+            }
+            Err(e) => {
+                window.push_notification(
+                    Notification::error(format!("Undo failed: {e}")),
+                    cx,
+                );
+            }
+        }
     }
 
     pub fn toggle_hidden(&mut self, cx: &mut Context<Self>) {
@@ -3011,6 +3103,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_with_slot_9))
             .on_action(cx.listener(Self::on_open_with_slot_10))
             .on_action(cx.listener(Self::on_open_with_slot_11))
+            .on_action(cx.listener(Self::on_undo_last_action))
             .relative()
             .size_full()
             .bg(cx.theme().background)
