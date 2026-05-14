@@ -732,7 +732,8 @@ impl Shell {
             })
     }
 
-    fn on_copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_copy_path(&mut self, _: &CopyPath, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::notification::Notification;
         let Some(row) = self.target_row() else { return };
         let Some(path) = self.path_for_row(row, cx) else {
             return;
@@ -740,9 +741,22 @@ impl Shell {
         cx.write_to_clipboard(ClipboardItem::new_string(
             path.to_string_lossy().into_owned(),
         ));
+        // Phase 9: quiet success toast so the user sees the
+        // clipboard action acknowledged. Notification::success
+        // autohides after a few seconds.
+        window.push_notification(
+            Notification::success("Path copied to clipboard"),
+            cx,
+        );
     }
 
-    fn on_reveal_in_finder(&mut self, _: &RevealInFinder, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_reveal_in_finder(
+        &mut self,
+        _: &RevealInFinder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
         let Some(row) = self.target_row() else { return };
         let Some(path) = self.path_for_row(row, cx) else {
             return;
@@ -753,6 +767,15 @@ impl Shell {
             .arg("-R")
             .arg(&path)
             .spawn();
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("item")
+            .to_string();
+        window.push_notification(
+            Notification::info(format!("Showing \u{201C}{}\u{201D} in Finder", name)),
+            cx,
+        );
     }
 
     // -- Phase 6 (next-level) ----------------------------------------
@@ -984,16 +1007,34 @@ impl Shell {
         self.open_with_slot(11, cx);
     }
 
-    fn on_move_to_trash(&mut self, _: &MoveToTrash, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_move_to_trash(
+        &mut self,
+        _: &MoveToTrash,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
         let Some(row) = self.target_row() else { return };
         let Some(path) = self.path_for_row(row, cx) else {
             return;
         };
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("item")
+            .to_string();
         let cur = self.active_tab().current_dir.clone();
         self.spawn_file_op(
             cur,
             move || feraille_fs_native::move_to_trash(&path).map_err(|e| e.to_string()),
             "move-to-trash",
+            cx,
+        );
+        // Quiet "in flight" toast — the trash op is near-instant
+        // on macOS, so by the time the user reads this the file
+        // list has already refreshed.
+        window.push_notification(
+            Notification::info(format!("Moved \u{201C}{}\u{201D} to Trash", name)),
             cx,
         );
     }
