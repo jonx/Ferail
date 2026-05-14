@@ -372,27 +372,51 @@ tile).
 
 # Phase 4 — Preview Pane Densification
 
-**Status:** Not started
+**Status:** Done (pending user review)
 **Goal:** more useful info in less vertical space; long names /
 paths recoverable.
 
 ### Deliverables
 
-- [ ] Replace stacked label/value blocks in
-      [preview.rs](../crates/feraille-gpui/src/preview.rs) with
-      `gpui-component::DescriptionList`. One row per metadata field
-      (Format, Size, Modified, Created, Permissions, Path).
-- [ ] Filename: truncate cleanly with the basename always visible.
-      `Tooltip` carries the full name.
-- [ ] Path: middle-truncate when long (helper `middle_truncate(s,
-      max_chars) -> String` in a shared util). Full path in Tooltip.
-- [ ] Compact action row at the bottom of the pane: Open / Reveal in
-      Finder / Copy Path / Get Info. Uses `gpui-component::Button`
-      with `compact()` and an icon. Each button has a Tooltip showing
-      its keyboard shortcut via `Kbd`.
-- [ ] Thumbnail/icon area: better sizing constraints (max-height,
-      preserved aspect ratio, fade-in when the BG fetch returns —
-      already partly there).
+- [x] Replaced the stacked `preview_field` blocks with
+      `gpui_component::description_list::DescriptionList::vertical()
+      .small().columns(1)` in
+      [shell.rs::preview](../crates/feraille-gpui/src/shell.rs).
+      Rows: Format / Size / Modified / Where / Quarantine (last only
+      when applicable). Dropped the unused `preview_field` helper.
+- [x] Filename: `truncate()` with a `Tooltip` carrying the full name.
+- [x] Path: new `middle_truncate_path(s, max)` helper (3 unit tests)
+      keeps the basename visible — produces `/Users/jkn/…/icon.png`
+      style at narrow widths. The value cell itself wraps in a div
+      that adds a `Tooltip` with the full path.
+- [x] Compact action row at the bottom: 4 **icon-only** `Button`s
+      (Open / Reveal in Finder / Copy Path / Get Info) using
+      `.xsmall().ghost()`. Each button's `tooltip_with_action(...)`
+      pulls the keyboard chord from the active keymap automatically
+      — hover reads "Open ⌘O", "Reveal in Finder ⌘⌥R", etc. No
+      truncation risk at the default ~280-DIP preview width.
+- [x] Thumbnail area: tightened to `h(200)` with
+      `max_w(248)`/`max_h(184)` so the image keeps aspect ratio
+      inside a fixed slot, leaving more vertical space for metadata.
+
+### Files touched
+
+- [shell.rs::preview](../crates/feraille-gpui/src/shell.rs) — full
+  body rewrite (DescriptionList, action row, tooltips).
+- [shell.rs::middle_truncate_path](../crates/feraille-gpui/src/shell.rs)
+  — new helper + 3 unit tests.
+
+### Notes
+
+- Format value is the same `FileEntry::format_label()` we land in
+  Phase 1, so the preview's Format row and the file list's Format
+  column read identically — single source of truth.
+- Quarantine row only appears when `entry.is_quarantined`. The
+  red badge below the list expands to "Quarantined · Mark of the
+  Web" copy for context.
+- Screenshot pipeline still misses the thumbnail (`qlmanage -t`
+  subprocess doesn't finish inside the one-shot render). The live
+  app shows it correctly on the next paint. Documented limitation.
 
 ### gpui-component primitives
 

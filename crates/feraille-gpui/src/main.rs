@@ -111,6 +111,16 @@ fn run_gui(args: screenshot::Args) {
         // the menu item below can advertise the shortcut hint).
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
+        // GPUI keeps the app loop running after the last window
+        // closes; on macOS that leaves a zombie process with no UI.
+        // on_window_closed fires *after* removal, so an empty
+        // cx.windows() means this was the final window.
+        cx.on_window_closed(|cx, _id| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
         // App-level OpenSettings handler so the menu-bar item is
         // always enabled, not just when a Shell window has focus.
         // The Shell-context listener for OpenSettings still wins
@@ -132,6 +142,11 @@ fn run_gui(args: screenshot::Args) {
             window_bounds: Some(WindowBounds::centered(size(px(width), px(height)), cx)),
             ..Default::default()
         };
+
+        // [NSApp activateIgnoringOtherApps:YES] — without this the
+        // terminal that invoked us keeps key-window status and our
+        // window opens unfocused behind it.
+        cx.activate(true);
 
         let settings_page = settings_page.clone();
         cx.spawn(async move |cx| {

@@ -2002,6 +2002,13 @@ impl Shell {
     /// selected. Format-specific previews (image, text, PDF) arrive
     /// in a follow-up polish iter.
     fn preview(&self, cx: &mut Context<Self>) -> Div {
+        use gpui_component::{
+            Sizable as _,
+            button::{Button, ButtonVariants as _},
+            description_list::{DescriptionItem, DescriptionList},
+            tooltip::Tooltip,
+        };
+
         let selected = self
             .active_tab()
             .selected
@@ -2024,14 +2031,22 @@ impl Shell {
                 .child("No selection")
                 .into_any_element(),
             Some(entry) => {
-                let kind_label = match entry.kind {
-                    EntryKind::Directory => "Folder",
-                    EntryKind::File => "File",
-                    EntryKind::Symlink => "Symlink",
-                };
                 let mut full_path = self.active_tab().current_dir.clone();
                 full_path.push(&entry.name);
                 let path_str = full_path.to_string_lossy().into_owned();
+                let format_label_text = {
+                    let (label, _) = entry.format_label();
+                    if label.is_empty() {
+                        match entry.kind {
+                            EntryKind::Directory => "Folder".to_string(),
+                            EntryKind::File => "File".to_string(),
+                            EntryKind::Symlink => "Symlink".to_string(),
+                        }
+                    } else {
+                        label
+                    }
+                };
+                let path_display = middle_truncate_path(&path_str, 44);
 
                 // Quick Look thumbnail (Stage 8 native preview).
                 // `preview::request` was kicked off when the row
@@ -2049,10 +2064,10 @@ impl Shell {
                             .items_center()
                             .justify_center()
                             .w_full()
-                            .h(px(240.0))
+                            .h(px(200.0))
                             .rounded(cx.theme().radius)
                             .bg(cx.theme().secondary.opacity(0.5))
-                            .child(gpui::img(img).max_w(px(248.0)).max_h(px(232.0))),
+                            .child(gpui::img(img).max_w(px(248.0)).max_h(px(184.0))),
                     );
                 } else if matches!(thumb_state, Some(crate::preview::PreviewState::Pending)) {
                     col = col.child(
@@ -2061,7 +2076,7 @@ impl Shell {
                             .items_center()
                             .justify_center()
                             .w_full()
-                            .h(px(240.0))
+                            .h(px(200.0))
                             .rounded(cx.theme().radius)
                             .bg(cx.theme().secondary.opacity(0.5))
                             .text_xs()
@@ -2070,51 +2085,136 @@ impl Shell {
                     );
                 }
 
-                col = col
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(cx.theme().foreground)
-                            .child(SharedString::from(entry.name.clone())),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(SharedString::from(entry.display_kind.clone())),
-                    )
-                    .child(preview_field("Kind", kind_label.to_string(), cx))
-                    .child(preview_field("Size", entry.display_size.clone(), cx))
-                    .child(preview_field("Modified", entry.display_mtime.clone(), cx))
-                    .child(preview_field("Where", path_str, cx));
+                // Filename header — truncated, with a tooltip that
+                // carries the full name. The format label that used
+                // to sit here as a subtitle has moved into the
+                // DescriptionList below as the "Format" row, so the
+                // same string isn't shown twice.
+                let name_for_tooltip = entry.name.clone();
+                col = col.child(
+                    div()
+                        .id(("preview-name", entry.id.as_raw() as usize))
+                        .text_lg()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(cx.theme().foreground)
+                        .truncate()
+                        .child(SharedString::from(entry.name.clone()))
+                        .tooltip(move |window, cx| {
+                            Tooltip::new(SharedString::from(name_for_tooltip.clone()))
+                                .build(window, cx)
+                        }),
+                );
 
-                // Magic byte sniff (Stage 4 prefetch populates this
-                // asynchronously). Empty string while prefetch is
-                // still running on a fresh directory.
-                if !entry.display_magic.is_empty() {
-                    col = col.child(preview_field("Magic", entry.display_magic.clone(), cx));
-                }
-                // Quarantine details. is_quarantined flag drives the
-                // section header even when individual fields are
-                // unknown; the Stage 4 prefetch + feraille-meta
-                // hydrate the rich fields lazily.
+                // DescriptionList: dense key/value rows. Path uses
+                // a middle-truncated value + tooltip with the full
+                // path. The library handles label-column sizing.
+                let path_for_tooltip = path_str.clone();
+                let path_value: AnyElement = div()
+                    .id(("preview-path", entry.id.as_raw() as usize))
+                    .truncate()
+                    .child(SharedString::from(path_display))
+                    .tooltip(move |window, cx| {
+                        Tooltip::new(SharedString::from(path_for_tooltip.clone()))
+                            .build(window, cx)
+                    })
+                    .into_any_element();
+
+                // `vertical()` is a constructor — label above value
+                // per row. `columns(1)` keeps it as a single column
+                // in narrow preview panes where multi-column would
+                // squeeze values to nothing.
+                let list = DescriptionList::vertical()
+                    .small()
+                    .columns(1)
+                    .child(
+                        DescriptionItem::new("Format")
+                            .value(SharedString::from(format_label_text)),
+                    )
+                    .child(
+                        DescriptionItem::new("Size")
+                            .value(SharedString::from(entry.display_size.clone())),
+                    )
+                    .child(
+                        DescriptionItem::new("Modified")
+                            .value(SharedString::from(entry.display_mtime.clone())),
+                    )
+                    .child(DescriptionItem::new("Where").value(path_value));
+                col = col.child(list);
+
+                // Quarantine surface — single signal via the red
+                // badge. (The DescriptionList "Quarantine" row that
+                // used to repeat `com.apple.quarantine` was dropped
+                // — the xattr name isn't actionable user info.) The
+                // rich originating-URL details from
+                // LSQuarantineDataURLKey still land in feraille-meta
+                // and can populate the badge tooltip in a follow-on
+                // polish iter.
                 if entry.is_quarantined {
-                    col = col
-                        .child(
-                            div()
-                                .mt_2()
-                                .text_xs()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(gpui::rgb(0xFF3B30))
-                                .child("Quarantined"),
-                        )
-                        .child(preview_field(
-                            "Mark of the Web",
-                            "com.apple.quarantine".to_string(),
-                            cx,
-                        ));
+                    col = col.child(
+                        div()
+                            .mt_1()
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(gpui::rgb(0xFF3B30))
+                            .child("Quarantined \u{00B7} Mark of the Web"),
+                    );
                 }
+
+                // Action row — icon-only buttons with tooltips that
+                // include the keyboard shortcut. Icon-only keeps the
+                // row dense enough that all four buttons fit even at
+                // the preview pane's narrow default width.
+                // `tooltip_with_action` pulls the chord from the
+                // keymap automatically so each hover reads "Open ⌘O".
+                let actions = h_flex()
+                    .mt_2()
+                    .gap_1()
+                    .child(
+                        Button::new("preview-open")
+                            .icon(gpui_component::Icon::empty().path("icons/external-link.svg"))
+                            .xsmall()
+                            .ghost()
+                            .tooltip_with_action("Open", &OpenSelected, Some(SHELL_CONTEXT))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.on_open_selected(&OpenSelected, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("preview-reveal")
+                            .icon(gpui_component::Icon::empty().path("icons/folder-open.svg"))
+                            .xsmall()
+                            .ghost()
+                            .tooltip_with_action(
+                                "Reveal in Finder",
+                                &RevealInFinder,
+                                Some(SHELL_CONTEXT),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.on_reveal_in_finder(&RevealInFinder, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("preview-copy-path")
+                            .icon(gpui_component::Icon::empty().path("icons/copy.svg"))
+                            .xsmall()
+                            .ghost()
+                            .tooltip_with_action("Copy Path", &CopyPath, Some(SHELL_CONTEXT))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.on_copy_path(&CopyPath, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("preview-get-info")
+                            .icon(gpui_component::Icon::empty().path("icons/info.svg"))
+                            .xsmall()
+                            .ghost()
+                            .tooltip_with_action("Get Info", &GetInfo, Some(SHELL_CONTEXT))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.on_get_info(&GetInfo, window, cx);
+                            })),
+                    );
+                col = col.child(actions);
+
                 col.into_any_element()
             }
         };
@@ -2491,23 +2591,57 @@ fn error_copy(err: &EnumerationError) -> (&'static str, String) {
     }
 }
 
-/// Two-line field for the preview pane: muted label on top, primary
-/// value below. Used for Kind / Size / Modified / Where.
-fn preview_field(label: &'static str, value: String, cx: &Context<Shell>) -> Div {
-    v_flex()
-        .gap_1()
-        .child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(label),
-        )
-        .child(
-            div()
-                .text_sm()
-                .text_color(cx.theme().foreground)
-                .child(SharedString::from(value)),
-        )
+/// Middle-truncate a path so the basename stays visible but the
+/// middle is collapsed to an ellipsis. Useful in the preview pane
+/// where the full path would otherwise blow out the column width.
+/// Falls back to a tail-truncation when the basename alone exceeds
+/// `max`. Char-based length counting (handles non-ASCII path
+/// components); byte indexing only ever lands on `/` which is ASCII.
+fn middle_truncate_path(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s.to_string();
+    }
+    let basename_start = s.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let basename: Vec<char> = s[basename_start..].chars().collect();
+    if basename.len() + 3 >= max {
+        let take = max.saturating_sub(1);
+        let start = basename.len().saturating_sub(take);
+        let tail: String = basename[start..].iter().collect();
+        return format!("\u{2026}{}", tail);
+    }
+    let prefix_budget = max - basename.len() - 2;
+    let prefix: String = chars[..prefix_budget].iter().collect();
+    let bn: String = basename.iter().collect();
+    format!("{}\u{2026}/{}", prefix, bn)
+}
+
+#[cfg(test)]
+mod middle_truncate_tests {
+    use super::middle_truncate_path;
+
+    #[test]
+    fn short_path_unchanged() {
+        assert_eq!(middle_truncate_path("/Users/x/file.txt", 40), "/Users/x/file.txt");
+    }
+
+    #[test]
+    fn long_path_keeps_basename() {
+        let out = middle_truncate_path(
+            "/Users/jkn/Library/Application Support/Feraille/file.txt",
+            30,
+        );
+        assert!(out.ends_with("/file.txt"), "basename preserved: {out}");
+        assert!(out.contains('\u{2026}'), "ellipsis inserted: {out}");
+    }
+
+    #[test]
+    fn very_long_basename_tail_truncates() {
+        let s = "/x/this-is-an-absurdly-long-filename-that-blows-past-the-limit.txt";
+        let out = middle_truncate_path(s, 20);
+        assert!(out.starts_with('\u{2026}'), "leading ellipsis: {out}");
+        assert!(out.len() <= 25, "approx max width respected: {out}");
+    }
 }
 
 /// Parse a user-typed breadcrumb-input string into a real path:
