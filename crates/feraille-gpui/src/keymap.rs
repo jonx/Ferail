@@ -149,7 +149,17 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "selection.page_down" => cx.bind_keys([KeyBinding::new(kb_str, PageDown, ctx)]),
 
         // -- Help -------------------------------------------------
-        "help.shortcuts" => cx.bind_keys([KeyBinding::new(kb_str, ShortcutsHelp, ctx)]),
+        "help.shortcuts" => {
+            // The shortcuts-help overlay doubles as our command
+            // palette today (searchable list of every catalogued
+            // command + its chord). Bind both Cmd+/ (the catalogue's
+            // declared shortcut) and Cmd+K (the de-facto command-
+            // palette key in modern apps) to the same action.
+            cx.bind_keys([
+                KeyBinding::new(kb_str, ShortcutsHelp, ctx),
+                KeyBinding::new("cmd-k", ShortcutsHelp, ctx),
+            ])
+        }
 
         // -- Disk Usage -------------------------------------------
         "view.disk_usage" => cx.bind_keys([KeyBinding::new(kb_str, OpenDiskUsage, ctx)]),

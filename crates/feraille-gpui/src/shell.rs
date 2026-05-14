@@ -2443,7 +2443,34 @@ impl Shell {
                         .w(px(220.0))
                         .child(Input::new(&self.filter_input).small()),
                 )
-                .child(div().flex_1()),
+                .child(div().flex_1())
+                // Phase 7 follow-on: density buttons on the right —
+                // Refresh and New Folder. Icon-only with tooltips so
+                // the bar stays narrow.
+                .child(
+                    Button::new("toolbar-new-folder")
+                        .small()
+                        .ghost()
+                        .icon(gpui_component::Icon::empty().path("icons/nav/folder.svg"))
+                        .tooltip_with_action(
+                            "New Folder",
+                            &NewFolder,
+                            Some(SHELL_CONTEXT),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_new_folder(&NewFolder, window, cx);
+                        })),
+                )
+                .child(
+                    Button::new("toolbar-refresh")
+                        .small()
+                        .ghost()
+                        .icon(gpui_component::Icon::empty().path("icons/nav/refresh.svg"))
+                        .tooltip_with_action("Refresh", &Refresh, Some(SHELL_CONTEXT))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_refresh(&Refresh, window, cx);
+                        })),
+                ),
         )
     }
 
