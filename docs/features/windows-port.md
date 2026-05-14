@@ -254,7 +254,29 @@ cargo test --workspace
 
 ---
 
-## 8. References
+## 8. Working on Windows without breaking Mac
+
+macOS is the established platform — `feraille-shell-mac` is a much bigger, more battle-tested crate than `feraille-shell-win32`, and the visible product lives there. Your job from Windows is to advance the Win32 side **without regressing the Mac side you can't see**. A few specific disciplines:
+
+**You can't cross-compile to macOS from Windows.** Apple restricts the toolchain to Apple hardware; there's no `cargo-xwin` equivalent for darwin targets. So **CI or a teammate's Mac is the gate for Mac correctness**. Push early and often; treat the Mac CI signal as load-bearing.
+
+**Every new `platform_shell::X` surface needs both crates.** When you add a function under `cfg(windows)` in `feraille-shell-win32`, add the matching signature to `feraille-shell-mac` too — real impl if you can write one, a `cfg(not(target_os = "macos"))`-style stub if you can't. The alias only works when both crates expose the symbol. The reverse is also true: if you find a shell-mac function you want to remove because it's dead on Mac too, remove it from both.
+
+**When you cfg-gate behavior in `feraille-gpui`, write both arms.** A `#[cfg(windows)] { ... } #[cfg(not(windows)) { ... }]` block forces you to think about the Mac side. `cfg(target_os = "macos")` is fine for the Mac arm; **don't** use `cfg(unix)` (it'd catch Linux too) or `cfg(not(windows))` (it'd catch every non-Windows target). Be specific.
+
+**Don't edit `feraille-shell-mac` source unless you're prepared for it to silently regress.** `cargo check --workspace` on Windows builds shell-mac's `cfg(not(target_os = "macos"))` no-op arms, not the real AppKit code — so a typo in a `cfg(target_os = "macos")` block won't catch fire until someone builds on Mac. Two safe ways to touch shell-mac from Windows: (a) keep edits to the no-op arms or to the API signature, (b) get a Mac dev to run `cargo check --target aarch64-apple-darwin` on the branch before you push.
+
+**The command catalogue is shared and platform-agnostic.** `crates/feraille-core/src/commands.rs` defines actions and shortcuts for both platforms. If you add a Windows-only command, that's fine — gate the handler, not the catalogue entry. If you change a shortcut, you're changing it for Mac too. The `Shortcut::primary("X")` helper maps to Cmd on Mac and Ctrl on Windows automatically, so the *binding* stays portable; just be aware that a chord like Cmd+Option+Shift maps to Ctrl+Alt+Shift on Windows and may collide with something native that Mac doesn't have.
+
+**Don't touch `crates/_archive/`.** Those are frozen as porting reference. If you need a sort algorithm or layout decision from the old soft-renderer, copy the *idea* into a new module; don't restore the crate.
+
+**Tests don't catch macOS regressions from Windows.** `cargo test --workspace` from Windows builds and runs only `cfg(not(target_os = "macos"))` paths. Test failures from Mac-only behavior will only show up on Mac CI / a Mac dev. Plan for it; don't assume green tests locally means green on Mac.
+
+**Things you *can* safely change from Windows** without Mac-side risk: `feraille-shell-win32` (the cfg(windows) arms), `cfg(windows)` arms anywhere else, the catalogue's shortcut declarations if you understand the cross-platform mapping, anything in `feraille-core` / `feraille-disk-usage` / `feraille-design` (no platform code by design), gpui code where you've added matching `cfg(target_os = "macos")` arms.
+
+---
+
+## 9. References
 
 **Within the repo:**
 
