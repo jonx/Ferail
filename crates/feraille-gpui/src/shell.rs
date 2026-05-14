@@ -33,7 +33,7 @@ use crate::file_list::FileListDelegate;
 use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
 use crate::icons::IconCache;
 use crate::tasks::TaskRegistry;
-use crate::tree::{ShellSidebarItem, TreeChild, TreeRowSpec, TreeSection};
+use crate::tree::{ShellSidebarItem, TreeChild, TreeRowIcon, TreeRowSpec, TreeSection};
 
 actions!(
     shell,
@@ -537,6 +537,11 @@ const FAVORITES: &[Favorite] = &[
         label: "Downloads",
         sub: Some("Downloads"),
         icon: "icons/nav/downloads.svg",
+    },
+    Favorite {
+        label: "Trash",
+        sub: Some(".Trash"),
+        icon: "icons/nav/trash.svg",
     },
     Favorite {
         label: "Movies",
@@ -2155,6 +2160,7 @@ impl Shell {
             is_expanded,
             is_active: home == current,
             capacity: None,
+            icon: TreeRowIcon::Folder,
         }];
         if is_expanded {
             self.append_tree_descendants_filtered(
@@ -2247,6 +2253,7 @@ impl Shell {
                 is_expanded,
                 is_active: path == current,
                 capacity,
+                icon: TreeRowIcon::Volume,
             });
             if is_expanded {
                 self.append_tree_descendants(&mut rows, &path, 1, &current);
@@ -2314,6 +2321,7 @@ impl Shell {
                 is_expanded,
                 is_active: &child.path == current,
                 capacity: None,
+                icon: TreeRowIcon::Folder,
             });
             if is_expanded {
                 self.append_tree_descendants(rows, &child.path, depth + 1, current);

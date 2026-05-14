@@ -1,103 +1,82 @@
 # Feraille
 
-Feraille is a blazing-fast macOS file explorer written in Rust. It is the
-Mac port and UI rewrite of the Windows project `../Ferail`, but it is not a
-skin of the old app: the UI is rebuilt around Feraille's own renderer/control
-stack, with the same feature ambition and stricter responsiveness rules.
+Feraille is a fast macOS file manager written in Rust with GPUI and
+gpui-component. It is the macOS successor to the Windows project
+`../Ferail`, but it is not a skin of the old app: the UI, native shell
+integration, and responsiveness model are macOS-first.
 
 The prime directive is simple:
 
-> The UI must never stop. Paint, hit-testing, scrolling, hover, and text input
-> must never perform filesystem, shell, database, network, thumbnail, preview,
-> or magic-sniffing I/O.
+> The UI must never stop. Render, hit testing, scrolling, hover, and text
+> input must not perform filesystem, shell, database, network, thumbnail,
+> preview, or magic-sniffing I/O.
 
-## Current State
+## Current App
 
-The app already has a usable Finder-style shell:
+The active app is `feraille-gpui`.
 
-- Home and `/Volumes` navigation through tree, breadcrumb, tabs, and list.
-- Virtualized file list with columns, sorting, hover, status bar, and scrollbar.
-- Breadcrumb edit mode with `Cmd+L` / `Ctrl+L`.
-- Open file, refresh, show hidden files, delete to Trash fallback.
-- macOS system icons through `NSWorkspace`.
-- macOS chrome inset, context menu slice, drag-out slice, reveal in Finder,
-  copy path, rename dialog, new-folder dialog, search/filter dialog, preview
-  info pane, and in-memory Ant Trail heat.
-- Magic sniffing is off the UI thread and feeds the Magic column when ready.
-- Headless screenshot CLI for visual verification.
+It currently provides:
 
-The feature parity ledger lives in [docs/FEATURE_LEDGER.md](docs/FEATURE_LEDGER.md).
-The Ferail source-doc mapping lives in [docs/porting/FERAIL_DOCS_MAP.md](docs/porting/FERAIL_DOCS_MAP.md).
+- Native macOS chrome with a GPUI title bar.
+- Favorites, Browse, Volumes, and Trash in the sidebar.
+- Virtualized file table with sortable, resizable, reorderable columns.
+- Magic-first `Format` column with extension fallback and mismatch cues.
+- Real file/folder icons, Finder tags, quarantine cues, and preview metadata.
+- Tabs, breadcrumbs, filtering, history navigation, context menus, and
+  resizable panels.
+- Settings built with gpui-component settings primitives.
+- Disk Usage window with async scanning and treemap/top-list views.
+- Status/task feedback and crash diagnostics.
+- Headless screenshot support for visual verification.
 
 ## Architecture
 
-```text
-feraille-app                  binary; owns window, event loop, app state
-   |-- feraille-controls      primitives and explorer controls
-   |-- feraille-design        tokens and visual constants
-   |-- feraille-render        renderer trait and soft renderer
-   |-- feraille-core          shared model types, NodeId, FileEntry, AntTrail
-   |-- feraille-fs-native     native filesystem and metadata helpers
-   |-- feraille-shell-mac     Cocoa/AppKit shell integrations
-   `-- feraille-shell-win32   placeholder/future Windows shell integrations
-```
+Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing crate
+boundaries, UI-thread behavior, filesystem access, native shell work, or
+worker scheduling.
 
-Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before moving feature
-boundaries. Read [docs/UI_NONBLOCKING.md](docs/UI_NONBLOCKING.md) before
-touching paint, navigation, enumeration, preview, icons, magic, context menus,
-or drag/drop.
+Open work lives in [TODO.md](TODO.md). Deeper feature notes live under
+[docs/features](docs/features).
 
 ## Running
 
 ```sh
-cargo run
+cargo run --bin feraille-gpui
 ```
 
-Useful bindings:
-
-- `Enter`: open selected folder/file.
-- `Backspace`: parent folder.
-- `Cmd+L` / `Ctrl+L`: edit path.
-- `Cmd+F` / `Ctrl+F`: filter current folder.
-- `Cmd+P` / `Ctrl+P`: toggle preview info pane.
-- `Cmd+I` / `Ctrl+I`: Get Info panel.
-- `F2`: rename dialog.
-- `Cmd+Shift+N` / `Ctrl+Shift+N`: new folder dialog.
-- `Cmd+Shift+C` / `Ctrl+Shift+C`: copy path.
-- `Cmd+R` / `Ctrl+R`: reveal in Finder.
-- `F5`: refresh.
-- `Cmd+Shift+.` / `Ctrl+H`: show/hide hidden files.
-
-## Screenshot CLI
-
-The binary can render deterministic PNGs without opening a window:
+Useful non-GUI commands:
 
 ```sh
-cargo run -- \
-  --screenshot /tmp/feraille.png \
+cargo run --bin feraille -- magic <path>...
+cargo run --bin feraille -- du [--top N] [--packages] <path>
+```
+
+Screenshot CLI:
+
+```sh
+cargo run --bin feraille-gpui -- \
+  --screenshot screenshots/feraille.png \
   --navigate ~/Source/Feraille \
   --width 1400 --height 900 \
   --select-name Cargo.toml \
   --preview
 ```
 
-Run:
+Reset local metadata:
 
 ```sh
-cargo run --bin Feraille -- --help
+cargo run --bin feraille-gpui -- --reset-db <scope>
 ```
 
-The CLI is the preferred way to verify visual changes in this repo. See
-[docs/TESTING_OVERLAYS.md](docs/TESTING_OVERLAYS.md) for planned debug states
-and visual overlays.
+## Development Notes
 
-## Specs
-
-- [specs/ux](specs/ux) covers product behavior and performance.
-- [specs/controls](specs/controls) covers tokens, primitives, controls, and
-  state machines.
-- [docs/features](docs/features) contains cleaned, Mac-aware reconstructions
-  of the major Ferail feature notes.
+- New product work belongs in `crates/feraille-gpui`.
+- Domain code belongs in `feraille-core`, `feraille-fs-native`,
+  `feraille-meta`, or `feraille-disk-usage` when it can stay UI-free.
+- The old soft-rendered crates are reference/fallback code until the GPUI
+  shell fully replaces them.
+- Do not run broad formatters casually; this repo often has local work in
+  progress.
 
 ## License
 

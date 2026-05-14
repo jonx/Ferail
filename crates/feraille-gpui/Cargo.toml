@@ -67,3 +67,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "feraille-gpui"
 path = "src/main.rs"
+
+[[bin]]
+name = "feraille"
+path = "src/bin/feraille.rs"

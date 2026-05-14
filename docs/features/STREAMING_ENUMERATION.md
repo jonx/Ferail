@@ -194,7 +194,7 @@ this work unblocks them.
 
 ## Cross-references
 
-- [docs/UI_NONBLOCKING.md](../UI_NONBLOCKING.md) — the principles.
+- [docs/ARCHITECTURE.md](../ARCHITECTURE.md) — the nonblocking principles.
 - [docs/features/LAZY_METADATA.md](LAZY_METADATA.md) — NodeStore /
   identity model that should land alongside or after this.
 - Iter-5.5 magic-prefetch ([crates/feraille-app/src/main.rs `start_magic_prefetch`](../../crates/feraille-app/src/main.rs))

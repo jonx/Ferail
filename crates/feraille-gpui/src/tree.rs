@@ -41,6 +41,12 @@ use gpui_component::{
 use crate::icons::IconCache;
 use crate::shell::Shell;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeRowIcon {
+    Folder,
+    Volume,
+}
+
 /// One row to render in the tree view. Computed by `Shell` (needs
 /// access to `expanded`, `tree_children`, `current_dir`), consumed by
 /// the `TreeSection::render` impl.
@@ -63,6 +69,7 @@ pub struct TreeRowSpec {
     /// Finder-style capacity bar under the label. Populated for
     /// volume rows; `None` for everything else.
     pub capacity: Option<(u64, u64)>,
+    pub icon: TreeRowIcon,
 }
 
 /// Cached representation of one direct child of an expanded folder.
@@ -219,6 +226,7 @@ fn render_tree_row(
         is_expanded,
         is_active,
         capacity,
+        icon,
     } = spec;
     let theme = cx.theme();
     let row_key: SharedString = format!("tree-row-{}", path.display()).into();
@@ -285,17 +293,28 @@ fn render_tree_row(
         row = row.child(div().flex_shrink_0().w(px(16.0)));
     }
 
-    // Real folder/volume icon between the caret and the label. The
-    // first call per path costs one NSWorkspace fetch (~1ms); the
-    // shared cache means subsequent renders are a HashMap hit.
-    let icon = icons.borrow_mut().folder_icon_for(&path);
-    row = row.child(
-        div()
-            .flex_shrink_0()
+    // Real icon between the caret and label. Folder descendants use
+    // NSWorkspace so custom folder artwork survives; volume roots use
+    // our vector drive glyph so the Volumes section reads distinctly
+    // even when AppKit returns a generic folder bitmap.
+    let icon_color = if is_active {
+        theme.sidebar_accent_foreground
+    } else {
+        theme.sidebar_foreground
+    };
+    let icon_el = match icon {
+        TreeRowIcon::Folder => {
+            let icon = icons.borrow_mut().folder_icon_for(&path);
+            img(icon).w(px(16.0)).h(px(16.0)).into_any_element()
+        }
+        TreeRowIcon::Volume => svg()
+            .path("icons/nav/drive.svg")
             .w(px(16.0))
             .h(px(16.0))
-            .child(img(icon).w(px(16.0)).h(px(16.0))),
-    );
+            .text_color(icon_color)
+            .into_any_element(),
+    };
+    row = row.child(div().flex_shrink_0().w(px(16.0)).h(px(16.0)).child(icon_el));
 
     let label_node = node_id;
     let shell_for_label = shell.clone();

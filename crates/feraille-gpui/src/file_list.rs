@@ -245,14 +245,20 @@ impl TableDelegate for FileListDelegate {
             return div().into_any_element();
         };
 
-        match col_ix {
+        let col_key = self
+            .columns
+            .get(col_ix)
+            .map(|col| col.key.as_ref())
+            .unwrap_or("");
+
+        match col_key {
             // Name — Lucide line-art icon tinted by category (files +
             // symlinks); macOS NSWorkspace bitmap for folders so
             // user-customised folder icons and cloud-sync overlays
             // still render. Optional quarantine badge in the top-right
             // corner. Tooltip carries the full filename so truncation
             // is recoverable. (Next-level Phase 1.)
-            0 => {
+            "name" => {
                 use feraille_core::EntryKind;
                 let path = self.path_for_entry(entry.id).unwrap_or_default();
                 let quarantined = entry.is_quarantined;
@@ -325,7 +331,7 @@ impl TableDelegate for FileListDelegate {
                     })
                     .into_any_element()
             }
-            1 => div()
+            "size" => div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(entry.display_size.clone()))
@@ -334,7 +340,7 @@ impl TableDelegate for FileListDelegate {
             // the old Kind + Magic duplication. Mismatch indicator
             // surfaces when extension and magic disagree (renamed or
             // corrupted file).
-            2 => {
+            "format" => {
                 let (label, mismatch) = entry.format_label();
                 if label.is_empty() {
                     return div().into_any_element();
@@ -375,7 +381,7 @@ impl TableDelegate for FileListDelegate {
                 }
                 row.into_any_element()
             }
-            3 => div()
+            "modified" => div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(entry.display_mtime.clone()))
@@ -494,6 +500,20 @@ impl TableDelegate for FileListDelegate {
         menu = menu.item(PopupMenuItem::submenu("Tags", tags_submenu));
 
         menu.separator().menu("Move to Trash", Box::new(MoveToTrash))
+    }
+
+    fn move_column(
+        &mut self,
+        col_ix: usize,
+        to_ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) {
+        if col_ix == to_ix || col_ix >= self.columns.len() || to_ix >= self.columns.len() {
+            return;
+        }
+        let column = self.columns.remove(col_ix);
+        self.columns.insert(to_ix, column);
     }
 
     /// Click on a header runs this — we delegate to the existing

@@ -1,117 +1,216 @@
-# Architecture
+# Feraille Architecture
 
-Feraille keeps the Ferail ambition but changes the platform center of gravity:
-macOS is the first-class target, and Windows-specific shell mechanics are
-replaced by Mac-native boundaries.
+Feraille is a macOS-first file manager written in Rust. It began as a
+port and UI rewrite of the Windows project at `/Users/jkn/Source/Ferail`,
+but the active application is now the GPUI shell:
 
-## Dependency Direction
+- `feraille-gpui` opens the desktop app.
+- `feraille` is the command-line entry point for non-GUI utilities.
+
+The old soft-rendered stack remains in the workspace as reference and
+fallback code during migration, but new product work belongs in
+`crates/feraille-gpui`.
+
+## Prime Directive
+
+The UI must never stop.
+
+Painting, rendering, hit testing, hover, selection, scrolling, text
+input, keyboard input, resize, and modal drawing must not perform I/O.
+That includes filesystem reads, directory enumeration, metadata queries,
+magic sniffing, SQLite queries, thumbnail or preview generation,
+network/cloud access, symlink or alias resolution, and shell queries that
+can block.
+
+The hot path may only read already-cached app state, update small
+in-memory interaction state, draw placeholders, and enqueue work through
+a constant-time scheduler.
+
+## Crate Boundaries
 
 ```text
-feraille-app
-  |-- feraille-controls
-  |     |-- feraille-design
-  |     `-- feraille-render
-  |-- feraille-core
-  |-- feraille-fs-native
-  |-- feraille-shell-mac
-  `-- feraille-shell-win32
+feraille-gpui        active GPUI app and CLI entry points
+  |-- feraille-core          domain types, command catalogue, NodeId, FileEntry
+  |-- feraille-fs-native     native filesystem, metadata, magic, volumes, trash
+  |-- feraille-shell-mac     AppKit/Cocoa integrations
+  |-- feraille-meta          SQLite-backed metadata and layout persistence
+  |-- feraille-disk-usage    pure disk-usage model, facts, aggregation, treemap
+  |-- feraille-design        shared visual constants kept for old/new bridge work
+  `-- gpui-component         UI primitives for shell, settings, tables, menus
+
+feraille-app         frozen old soft-rendered app
+feraille-controls    frozen old controls
+feraille-render      frozen old software renderer
+feraille-shell-win32 Windows reference/platform shell crate, not macOS v1 UI
 ```
 
 Rules:
 
-- Controls do not import filesystem or shell crates.
-- Renderers do not know about paths, windows, shell APIs, or app state.
-- Shell crates do not paint controls.
-- App owns orchestration, cancellation, generation ids, and stale-result
-  dropping.
+- `feraille-core` has no UI or platform dependencies.
+- Domain crates do not import GPUI, renderers, or app shell state.
+- UI code uses `NodeId`, `FsBackend`, cached display strings, and explicit
+  node/path handoff points.
+- Raw `PathBuf` use is allowed at controlled boundaries: filesystem
+  backends, worker setup, native shell calls, CLI commands, and persisted
+  user state. Rendering code must not resolve paths or query the filesystem.
+- `feraille-shell-mac` owns AppKit/Cocoa details and does not paint UI.
+- `feraille-disk-usage` is pure logic; scanning lives in
+  `feraille-fs-native`, and rendering lives in `feraille-gpui`.
 
-## Data Model Today
+## Data Model
 
-Feraille currently uses `FileEntry` batches for the active tab and tree nodes
-keyed by `NodeId`. `FileEntry` includes preformatted display data:
+`NodeId` is the opaque identity used by the UI for filesystem objects.
+`NativeFs` owns the current `NodeId <-> PathBuf` mapping. GPUI shell state
+keeps a `NodeStore` so tabs, sidebar rows, table rows, context menus, and
+worker results can speak in stable ids where possible.
+
+`FileEntry` is the file-list row model. It contains preformatted display
+fields:
 
 - `name`
 - `kind`
 - `size`
-- `mtime`
+- `mtime_unix`
 - `display_size`
 - `display_mtime`
 - `display_kind`
 - `display_magic`
+- `is_quarantined`
+- `quarantine`
 
-This is enough for current slices, but the Ferail docs point to a stronger
-destination: stable NodeId-native list/tree models backed by a NodeStore.
+`FileEntry::format_label()` is the shared rule for the file list's
+`Format` column: prefer magic-detected content, fall back to
+extension-derived kind, and flag real mismatches.
 
-## Target Model
+Each tab owns its current directory, node id, history, filter, sort,
+selection, and scroll state. The shell owns cross-tab state such as the
+sidebar, task registry, notifications, file watcher, preview cache, and
+metadata caches.
 
-One global store:
+## Work Scheduling
 
-- Owns NodeId identity.
-- Maps NodeId to path, parent, kind, display metadata, and cached shell data.
-- Emits updates when lazy data is ready.
+Expensive work follows one pattern:
 
-Per tab:
+1. A semantic event schedules work: navigation, selection, visible row,
+   preview request, context-menu request, disk-usage scan, or CLI command.
+2. The request carries enough identity to reject stale results:
+   generation id, tab/folder/node id, path where unavoidable, and file
+   metadata when needed.
+3. Work runs on a background executor or in a bounded main-thread chunk
+   when AppKit requires the main thread.
+4. Results return to the UI through GPUI `cx.spawn`/entity update
+   boundaries.
+5. The UI applies the result only if it still matches current state.
+6. Render reads the cached result on a later frame.
 
-- Owns current NodeId/path.
-- Owns back/forward history.
-- Owns filter, sort, selection, and scroll.
+Main-thread-only AppKit work, such as some `NSWorkspace` icon calls, must
+be chunked across ticks with small per-frame budgets. Chunking is a
+fallback for APIs that cannot safely move to workers.
 
-Views:
+## Active UI Structure
 
-- Render cached data.
-- Emit semantic events only.
-- Never resolve paths during paint.
+The GPUI shell uses native macOS chrome with a gpui-component title bar.
+The title bar owns global navigation controls and the filter input.
 
-Coordinator/app:
+The main shell is split into resizable panels:
 
-- Accepts intents from controls.
-- Schedules workers.
-- Applies results if still current.
-- Triggers minimal redraw.
+- Sidebar
+- Virtualized file table
+- Preview pane
 
-## Worker Boundaries
+The sidebar has three concepts:
 
-Every worker result needs enough identity to be safely applied:
+- **Favorites:** flat shortcuts such as Home, Applications, Desktop,
+  Documents, Downloads, Trash, Movies, Music, and Pictures.
+- **Browse:** a single expandable Home tree.
+- **Volumes:** mounted volumes with capacity bars and drive icons.
 
-- Generation/request id.
-- Folder path or NodeId.
-- Item name or NodeId.
-- Mtime/size if stale file results matter.
+The file table is backed by `gpui_component::table::TableState`.
+Columns are Name, Size, Format, and Modified. Columns can be sorted,
+resized, and reordered. Cell rendering is keyed by column id so moved
+columns keep headers and content aligned.
 
-Current example: magic detection sends `{ generation, dir, results }` back
-through winit user events. Results are ignored if the generation changed or the
-active tab moved to another folder.
+The preview pane is a dense metadata surface for the current selection.
+It uses shared file-entry formatting so the preview and table agree.
 
-## Mac Replacements For Windows Concepts
+Settings are implemented with `gpui_component::setting::Settings`.
+The settings sidebar is searchable, category rows have icons, and fields
+write directly to app state.
 
-| Ferail/Windows | Feraille/macOS |
-|---|---|
-| HWND/D2D/GDI coordinate conversion | winit window plus renderer-owned scale conversion |
-| IContextMenu and shell extensions | NSMenu, Finder actions, Services where possible |
-| IDataObject / IDropSource / IDropTarget | NSPasteboard and AppKit dragging |
-| IFileOperation | NSFileManager/NSWorkspace plus worker-managed file operations |
-| Recycle Bin | NSWorkspace trash API |
-| WSL roots | Not applicable; consider network volumes/SSHFS/iCloud later |
-| Shell namespace "This PC" | Finder-style Locations, Favorites, `/Volumes`, iCloud |
-| Direct2D renderer | Current soft renderer; future GPU/Vello or platform renderer |
+Disk Usage opens as a separate GPUI window. Scanning is performed by
+`NativeFs::scan_disk_usage`; aggregation and layout live in
+`feraille-disk-usage`.
 
-## Geometry And Rendering
+## Context Menus And Native Actions
 
-- Layout uses DIPs.
-- Renderer owns scale conversion.
-- Controls receive resolved bounds from the app layout, not window-global math.
-- Paint reads from state and caches only.
+Context menus use gpui-component menus where possible. Menu handlers set
+or read a semantic target: selected row, context row, sidebar path,
+tree path, breadcrumb segment, tab, or disk-usage item.
 
-The old Ferail DPI warnings remain conceptually useful, but the Mac renderer
-must keep the conversion hidden from controls.
+Native actions are delegated to platform crates:
 
-## Status And Progress
+- default open and reveal in Finder
+- macOS Trash
+- Open With candidates
+- Finder tags
+- share/services where wired
+- clipboard operations
 
-Long-running jobs should report into a status/task model:
+File mutations reload affected UI state through the shell rather than
+mutating rendered rows in place.
 
-- Determinate progress for copy, move, hash, scan.
-- Indeterminate pulse for enumeration, preview, metadata warming.
-- Multiple tasks aggregate into one status-bar presentation.
+## Persistence
 
-This comes from Ferail's status-bar progress doc, but the implementation should
-be renderer/control-native rather than Win32-control based.
+`feraille-meta` is the persistent store for app metadata and layout state.
+It stores derived file metadata, Ant Trail data, window/layout state, and
+other app-owned records.
+
+Simple UI preferences also flow through `crates/feraille-gpui/src/app_state.rs`.
+Anything persisted must be treated as a cache or user preference, never as
+the sole source of filesystem truth.
+
+## Command Surfaces
+
+Feraille has three command surfaces:
+
+- GPUI actions and keybindings in the app.
+- macOS menu items generated from the command catalogue.
+- CLI subcommands through the `feraille` binary.
+
+Useful CLI commands:
+
+```sh
+cargo run --bin feraille-gpui
+cargo run --bin feraille -- magic <path>...
+cargo run --bin feraille -- du [--top N] [--packages] <path>
+cargo run --bin feraille-gpui -- --screenshot screenshots/shell.png
+cargo run --bin feraille-gpui -- --reset-db <scope>
+```
+
+The command catalogue lives in `feraille-core` so menus, shortcuts,
+settings, and future command-palette work share one identity layer.
+
+## Observability And Failures
+
+The app installs a panic hook and compact crash report path through
+`crates/feraille-gpui/src/obs.rs`. Worker failures should surface through
+logs, status/task state, notifications, or visible error states. They
+must not freeze the interface.
+
+Failure policy:
+
+- Keep current UI usable.
+- Preserve selection and scroll where possible.
+- Prefer stale or missing metadata over blocking.
+- Drop stale worker results.
+- Report errors through the app, not only stderr.
+
+## Documentation Layout
+
+- This file is the architecture source of truth.
+- Root [TODO.md](../TODO.md) is the unfinished-work list.
+- [docs/features](features) contains deeper feature notes and design
+  references that are still useful.
+
+Do not add new phase ledgers or duplicate roadmaps under `docs/`. Put
+current architecture here and unfinished work in root `TODO.md`.

@@ -1,11 +1,17 @@
-//! Feraille — GPUI shell entry point.
-//!
-//! Dispatches between the live GUI and the headless `--screenshot`
-//! capture path. All real view code lives in `crate::shell`.
+// Feraille — GPUI shell entry point.
+//
+// Dispatches between the live GUI and the headless `--screenshot`
+// capture path. All real view code lives in `crate::shell`.
 
 use anyhow::Result;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
+
 use feraille_core::commands::{CommandId, find};
+use feraille_disk_usage::{DiskUsageTree, NodeKind, build_layout_node};
+use feraille_fs_native::{DEFAULT_DU_BATCH, NativeFs, detect_magic};
 use feraille_gpui::{
+    assets::FeraAssets,
     screenshot,
     settings::{SettingsView, category_from_arg},
     shell::{
@@ -14,7 +20,6 @@ use feraille_gpui::{
         RevealInFinder, Shell, ToggleHidden,
     },
 };
-use feraille_gpui::assets::FeraAssets;
 use gpui::*;
 use gpui_component::Theme;
 
@@ -26,11 +31,14 @@ actions!(app, [Quit, OpenAbout]);
 const APP_ICON_PNG: &[u8] = include_bytes!("../resources/feraille.png");
 
 fn main() -> Result<()> {
-    feraille_gpui::obs::init();
     // Pre-event-loop CLI handlers — run before the window opens.
     if let Some(code) = feraille_gpui::reset_db::handle_reset_db_cli() {
         std::process::exit(code);
     }
+    if let Some(code) = handle_cli_subcommand()? {
+        std::process::exit(code);
+    }
+    feraille_gpui::obs::init();
     let args = screenshot::parse_args();
     if args.screenshot.is_some() {
         feraille_gpui::log_info!(90, "headless screenshot path");
@@ -40,6 +48,180 @@ fn main() -> Result<()> {
     run_gui(args);
     feraille_gpui::log_info!(90, "event loop exited");
     Ok(())
+}
+
+fn handle_cli_subcommand() -> Result<Option<i32>> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let Some(cmd) = args.first().map(String::as_str) else {
+        return Ok(None);
+    };
+    match cmd {
+        "magic" => run_magic_cli(&args[1..]).map(Some),
+        "du" | "disk-usage" => run_disk_usage_cli(&args[1..]).map(Some),
+        "help" | "-h" | "--help" => {
+            print_cli_help();
+            Ok(Some(0))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn print_cli_help() {
+    println!(
+        "Feraille\n\nUsage:\n  feraille                 Open the GPUI file manager\n  feraille magic <path>...  Print magic-byte format, with extension fallback\n  feraille du [options] <path>  Print disk-usage summary\n\nDisk usage options:\n  --top <n>        Number of entries to show (default: 20)\n  --packages       Descend into macOS package directories"
+    );
+}
+
+fn run_magic_cli(args: &[String]) -> Result<i32> {
+    if args.is_empty() {
+        eprintln!("usage: feraille magic <path>...");
+        return Ok(2);
+    }
+    for raw in args {
+        let path = PathBuf::from(raw);
+        let label = detect_magic(&path)
+            .map(str::to_string)
+            .unwrap_or_else(|| extension_fallback_label(&path));
+        println!("{}\t{}", path.display(), label);
+    }
+    Ok(0)
+}
+
+fn run_disk_usage_cli(args: &[String]) -> Result<i32> {
+    let mut top = 20usize;
+    let mut descend_packages = false;
+    let mut paths: Vec<PathBuf> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--packages" => descend_packages = true,
+            "--top" => {
+                i += 1;
+                let Some(value) = args.get(i) else {
+                    eprintln!("feraille du: --top needs a number");
+                    return Ok(2);
+                };
+                top = value.parse().unwrap_or(top).clamp(1, 200);
+            }
+            s if s.starts_with("--top=") => {
+                top = s["--top=".len()..].parse().unwrap_or(top).clamp(1, 200);
+            }
+            "-h" | "--help" => {
+                println!("usage: feraille du [--top N] [--packages] <path>");
+                return Ok(0);
+            }
+            other => paths.push(PathBuf::from(other)),
+        }
+        i += 1;
+    }
+    if paths.is_empty() {
+        eprintln!("usage: feraille du [--top N] [--packages] <path>");
+        return Ok(2);
+    }
+
+    let fs = NativeFs::new();
+    for (idx, path) in paths.iter().enumerate() {
+        if idx > 0 {
+            println!();
+        }
+        print_disk_usage(&fs, path, top, descend_packages)?;
+    }
+    Ok(0)
+}
+
+fn print_disk_usage(fs: &NativeFs, path: &Path, top: usize, descend_packages: bool) -> Result<()> {
+    let root = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let root_id = fs.id_for_path(&root);
+    let cancel = AtomicBool::new(false);
+    let mut tree = DiskUsageTree::new(root_id);
+    let mut latest_stats = feraille_disk_usage::DiskUsageStats::default();
+    let err = fs.scan_disk_usage(
+        &root,
+        DEFAULT_DU_BATCH,
+        &cancel,
+        descend_packages,
+        |facts| tree.apply_facts(&facts),
+        |stats| latest_stats = stats,
+    );
+    if let Some(err) = err {
+        anyhow::bail!("disk usage scan failed for {}: {:?}", root.display(), err);
+    }
+
+    let layout = build_layout_node(&tree, root_id, 3);
+    println!("Disk usage: {}", root.display());
+    println!(
+        "Total: {}  Files: {}  Folders: {}",
+        humanize_bytes(layout.size_bytes),
+        latest_stats.files_scanned,
+        latest_stats.dirs_scanned,
+    );
+    println!();
+    println!("Largest children:");
+    for child in layout.children.iter().take(top) {
+        let name = tree
+            .nodes
+            .get(&child.node_id)
+            .map(|n| n.display_name.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("(unnamed)");
+        let pct = if layout.size_bytes == 0 {
+            0.0
+        } else {
+            child.size_bytes as f64 * 100.0 / layout.size_bytes as f64
+        };
+        println!(
+            "  {:>10}  {:>5.1}%  {}",
+            humanize_bytes(child.size_bytes),
+            pct,
+            name
+        );
+    }
+
+    let mut files: Vec<_> = tree
+        .nodes
+        .values()
+        .filter(|n| n.kind == NodeKind::File && n.size_bytes > 0)
+        .collect();
+    files.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    println!();
+    println!("Largest files:");
+    for file in files.into_iter().take(top) {
+        let name = if file.display_name.is_empty() {
+            "(unnamed)"
+        } else {
+            file.display_name.as_str()
+        };
+        println!("  {:>10}  {}", humanize_bytes(file.size_bytes), name);
+    }
+    Ok(())
+}
+
+fn extension_fallback_label(path: &Path) -> String {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_dir() => "Folder".to_string(),
+        Ok(meta) if meta.file_type().is_symlink() => "Symlink".to_string(),
+        _ => path
+            .extension()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_uppercase())
+            .unwrap_or_else(|| "File".to_string()),
+    }
+}
+
+fn humanize_bytes(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 fn run_gui(args: screenshot::Args) {
