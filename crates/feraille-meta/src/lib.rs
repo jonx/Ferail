@@ -21,6 +21,9 @@ pub use db::{
     AntTrailEntry, FileMetaRecord, LayoutState, MetadataDb, MetadataError, ResetScope,
     Result, TabState, WindowState,
 };
+pub use feraille_core::favorites::{
+    Favorite, FavoriteIcon, FavoriteId, FavoriteKind, FavoriteSort, FavoriteState, FavoriteTarget,
+};
 
 /// Default on-disk location for the metadata DB on macOS:
 /// `~/Library/Application Support/Feraille/metadata.db`. Returns

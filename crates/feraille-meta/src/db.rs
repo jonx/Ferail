@@ -11,10 +11,18 @@
 
 use std::path::Path;
 
+use feraille_core::favorites::{
+    Favorite, FavoriteIcon, FavoriteId, FavoriteKind, FavoriteTarget,
+};
 use rusqlite::{params, Connection};
 
 /// Schema version. Bump on any structural change.
-pub const DB_VERSION: u32 = 1;
+///
+/// `2` adds the `favorites` table (separate from the older
+/// `pinned_items` placeholder, which is now unused). Migration from
+/// `1 → 2` is additive — `init_schema` is idempotent (`CREATE TABLE
+/// IF NOT EXISTS`), so existing caches survive the upgrade.
+pub const DB_VERSION: u32 = 2;
 
 #[derive(Debug)]
 pub enum MetadataError {
@@ -66,6 +74,10 @@ pub enum ResetScope {
     Magic,
     /// `files.quarantine_*` only. Keeps magic + hash data.
     Quarantine,
+    /// User-curated favorites. Not bundled into `Ui` because
+    /// favorites are deliberately user-pinned and shouldn't be lost
+    /// when someone resets window/layout state.
+    Favorites,
 }
 
 impl ResetScope {
@@ -79,6 +91,7 @@ impl ResetScope {
             "ant-trail" | "anttrail" | "ant_trail" => Some(Self::AntTrail),
             "magic" => Some(Self::Magic),
             "quarantine" => Some(Self::Quarantine),
+            "favorites" | "favourites" => Some(Self::Favorites),
             _ => None,
         }
     }
@@ -92,6 +105,7 @@ impl ResetScope {
             Self::AntTrail => "Ant Trail heat (folder_usage)",
             Self::Magic => "files.magic_label only",
             Self::Quarantine => "files.quarantine_* only",
+            Self::Favorites => "user-curated Favorites only",
         }
     }
 }
@@ -170,25 +184,35 @@ impl MetadataDb {
     /// and recreated. Caller is responsible for ensuring the parent
     /// directory exists ([`crate::ensure_parent_dir`]).
     pub fn open(path: &Path) -> Result<Self> {
+        let mut wipe = false;
         if path.exists() {
-            if let Ok(conn) = Connection::open(path) {
-                let stored: Option<u32> = conn
-                    .query_row(
-                        "SELECT value FROM preferences WHERE key = 'db_version'",
-                        [],
-                        |row| {
-                            let v: String = row.get(0)?;
-                            Ok(v.parse().ok())
-                        },
-                    )
-                    .ok()
-                    .flatten();
-                if stored != Some(DB_VERSION) {
+            match Connection::open(path) {
+                Ok(conn) => {
+                    let stored: Option<u32> = conn
+                        .query_row(
+                            "SELECT value FROM preferences WHERE key = 'db_version'",
+                            [],
+                            |row| {
+                                let v: String = row.get(0)?;
+                                Ok(v.parse().ok())
+                            },
+                        )
+                        .ok()
+                        .flatten();
+                    match stored {
+                        Some(v) if v == DB_VERSION => {}
+                        // Forward-only additive migrations: init_schema is
+                        // idempotent, so v1 → v2 just adds the new table.
+                        Some(v) if v < DB_VERSION => {}
+                        // Future version we don't understand, or no row at
+                        // all → wipe and start over.
+                        _ => wipe = true,
+                    }
                     drop(conn);
-                    let _ = std::fs::remove_file(path);
                 }
-            } else {
-                // Couldn't even open — corrupted file. Wipe and start over.
+                Err(_) => wipe = true,
+            }
+            if wipe {
                 let _ = std::fs::remove_file(path);
             }
         }
@@ -278,12 +302,32 @@ impl MetadataDb {
                 sort_ascending INTEGER NOT NULL DEFAULT 1
             );
 
-            -- Pinned sidebar items (ordered).
+            -- Pinned sidebar items (ordered). Legacy placeholder kept
+            -- around for one schema cycle; superseded by `favorites`.
             CREATE TABLE IF NOT EXISTS pinned_items (
                 id INTEGER PRIMARY KEY,
                 path TEXT NOT NULL,
                 sort_order INTEGER NOT NULL
             );
+
+            -- User-curated Favorites (docs/features/FAVORITES.md).
+            -- `id` is a UUID string; `kind` is FavoriteKind::as_db_code;
+            -- (target_kind, target_value) is FavoriteTarget split into
+            -- discriminant + payload; `display_name` NULL means "follow
+            -- target basename"; `custom_icon` NULL means "default for kind".
+            -- `sort_index` is a fractional order key — reorders touch one
+            -- row, not the whole list.
+            CREATE TABLE IF NOT EXISTS favorites (
+                id TEXT PRIMARY KEY,
+                kind INTEGER NOT NULL,
+                target_kind TEXT NOT NULL,
+                target_value TEXT NOT NULL,
+                display_name TEXT,
+                custom_icon TEXT,
+                sort_index REAL NOT NULL,
+                date_added INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_favorites_sort ON favorites(sort_index);
             "#,
         )?;
         Ok(())
@@ -615,6 +659,7 @@ impl MetadataDb {
                     DELETE FROM layout_state;
                     DELETE FROM tabs;
                     DELETE FROM pinned_items;
+                    DELETE FROM favorites;
                     DELETE FROM preferences WHERE key != 'db_version';
                     "#,
                 )?;
@@ -654,6 +699,13 @@ impl MetadataDb {
                     [],
                 )?;
             }
+            ResetScope::Favorites => {
+                self.conn.execute("DELETE FROM favorites", [])?;
+                self.conn.execute(
+                    "DELETE FROM preferences WHERE key = 'favorites_section_collapsed'",
+                    [],
+                )?;
+            }
         }
         Ok(())
     }
@@ -667,6 +719,142 @@ impl MetadataDb {
             .filter_map(|r| r.ok())
             .collect();
         Ok(rows)
+    }
+
+    // ---- favorites ----
+
+    /// Load all favorites, ordered by `sort_index` ascending. Per-row
+    /// parse failures (bad UUID, unknown kind/target/icon code) are
+    /// skipped and logged to stderr; the table itself is never wiped
+    /// or corrupted by a single bad row. If the SQL query itself fails
+    /// (e.g. the table is structurally damaged), the error propagates
+    /// to the caller — `feraille-gpui` is responsible for the
+    /// load-empty-and-keep-`.bak` recovery policy at that layer.
+    pub fn load_favorites(&self) -> Result<Vec<Favorite>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, kind, target_kind, target_value, display_name, custom_icon, \
+                    sort_index, date_added \
+             FROM favorites ORDER BY sort_index ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, f64>(6)?,
+                row.get::<_, i64>(7)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id_str, kind_code, tk, tv, name, icon, sort_index, date_added) = match row {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("favorites: skipping unreadable row: {e}");
+                    continue;
+                }
+            };
+            let Some(id) = FavoriteId::from_str(&id_str) else {
+                eprintln!("favorites: skipping row with bad UUID: {id_str}");
+                continue;
+            };
+            let Some(kind) = FavoriteKind::from_db_code(kind_code) else {
+                eprintln!("favorites: skipping row {id_str} with unknown kind {kind_code}");
+                continue;
+            };
+            let Some(target) = FavoriteTarget::from_db(&tk, &tv) else {
+                eprintln!("favorites: skipping row {id_str} with bad target ({tk}, {tv})");
+                continue;
+            };
+            let custom_icon = icon.as_deref().and_then(FavoriteIcon::from_db);
+            out.push(Favorite {
+                id,
+                kind,
+                target,
+                display_name: name,
+                custom_icon,
+                sort_index,
+                date_added,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Insert or update a single favorite. Used by every mutation in
+    /// the spec's "every mutation persists immediately" contract.
+    pub fn save_favorite(&self, fav: &Favorite) -> Result<()> {
+        let (tk, tv) = fav.target.to_db();
+        let icon_str: Option<String> = fav.custom_icon.as_ref().map(|i| i.to_db());
+        self.conn.execute(
+            "INSERT INTO favorites \
+               (id, kind, target_kind, target_value, display_name, custom_icon, \
+                sort_index, date_added) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+             ON CONFLICT(id) DO UPDATE SET \
+               kind = excluded.kind, \
+               target_kind = excluded.target_kind, \
+               target_value = excluded.target_value, \
+               display_name = excluded.display_name, \
+               custom_icon = excluded.custom_icon, \
+               sort_index = excluded.sort_index, \
+               date_added = excluded.date_added",
+            params![
+                fav.id.to_string(),
+                fav.kind.as_db_code(),
+                tk,
+                tv,
+                fav.display_name,
+                icon_str,
+                fav.sort_index,
+                fav.date_added,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_favorite(&self, id: FavoriteId) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM favorites WHERE id = ?1",
+            params![id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Replace the whole favorites table atomically. Used by one-shot
+    /// sorts (§4.5) and by background renormalize passes.
+    pub fn replace_favorites(&self, favs: &[Favorite]) -> Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> Result<()> {
+            self.conn.execute("DELETE FROM favorites", [])?;
+            for f in favs {
+                self.save_favorite(f)?;
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = self.conn.execute_batch("ROLLBACK");
+            return result;
+        }
+        self.conn.execute_batch("COMMIT")?;
+        Ok(())
+    }
+
+    /// Section-collapsed bit for the Favorites sidebar group.
+    pub fn set_favorites_section_collapsed(&self, collapsed: bool) -> Result<()> {
+        self.set_preference(
+            "favorites_section_collapsed",
+            if collapsed { "1" } else { "0" },
+        )
+    }
+    pub fn favorites_section_collapsed(&self) -> bool {
+        self.get_preference("favorites_section_collapsed")
+            .ok()
+            .flatten()
+            .map(|v| v == "1")
+            .unwrap_or(false)
     }
 }
 
@@ -973,6 +1161,179 @@ mod tests {
         assert_eq!(ResetScope::from_cli("ant_trail"), Some(ResetScope::AntTrail));
         assert_eq!(ResetScope::from_cli("magic"), Some(ResetScope::Magic));
         assert_eq!(ResetScope::from_cli("quarantine"), Some(ResetScope::Quarantine));
+        assert_eq!(ResetScope::from_cli("favorites"), Some(ResetScope::Favorites));
+        assert_eq!(ResetScope::from_cli("favourites"), Some(ResetScope::Favorites));
         assert!(ResetScope::from_cli("bogus").is_none());
+    }
+
+    // ---- favorites ----
+
+    fn fav(label: &str, path: &str, sort_index: f64) -> Favorite {
+        Favorite {
+            id: FavoriteId::new(),
+            kind: FavoriteKind::Folder,
+            target: FavoriteTarget::Path(std::path::PathBuf::from(path)),
+            display_name: Some(label.to_string()),
+            custom_icon: None,
+            sort_index,
+            date_added: 1_700_000_000,
+        }
+    }
+
+    #[test]
+    fn favorites_save_load_round_trip_preserves_order_and_fields() {
+        let db = MetadataDb::in_memory().unwrap();
+        let a = fav("Alpha", "/a", 1024.0);
+        let b = fav("Beta", "/b", 2048.0);
+        let c = fav("Gamma", "/c", 3072.0);
+        // Save out of order — load_favorites must sort by sort_index.
+        db.save_favorite(&c).unwrap();
+        db.save_favorite(&a).unwrap();
+        db.save_favorite(&b).unwrap();
+        let loaded = db.load_favorites().unwrap();
+        let labels: Vec<&str> = loaded
+            .iter()
+            .map(|f| f.display_name.as_deref().unwrap_or(""))
+            .collect();
+        assert_eq!(labels, ["Alpha", "Beta", "Gamma"]);
+        assert_eq!(loaded[0].id, a.id);
+        assert_eq!(loaded[0].target, a.target);
+    }
+
+    #[test]
+    fn favorites_save_is_upsert() {
+        let db = MetadataDb::in_memory().unwrap();
+        let mut f = fav("Old", "/x", 1.0);
+        db.save_favorite(&f).unwrap();
+        f.display_name = Some("New".into());
+        f.sort_index = 2.0;
+        db.save_favorite(&f).unwrap();
+        let loaded = db.load_favorites().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].display_name.as_deref(), Some("New"));
+        assert_eq!(loaded[0].sort_index, 2.0);
+    }
+
+    #[test]
+    fn favorites_delete_removes_one_row() {
+        let db = MetadataDb::in_memory().unwrap();
+        let a = fav("A", "/a", 1.0);
+        let b = fav("B", "/b", 2.0);
+        db.save_favorite(&a).unwrap();
+        db.save_favorite(&b).unwrap();
+        db.delete_favorite(a.id).unwrap();
+        let loaded = db.load_favorites().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, b.id);
+    }
+
+    #[test]
+    fn favorites_replace_is_atomic() {
+        let db = MetadataDb::in_memory().unwrap();
+        db.save_favorite(&fav("Old", "/old", 1.0)).unwrap();
+        let fresh = vec![fav("X", "/x", 1.0), fav("Y", "/y", 2.0)];
+        db.replace_favorites(&fresh).unwrap();
+        let loaded = db.load_favorites().unwrap();
+        let labels: Vec<&str> = loaded
+            .iter()
+            .map(|f| f.display_name.as_deref().unwrap_or(""))
+            .collect();
+        assert_eq!(labels, ["X", "Y"]);
+    }
+
+    #[test]
+    fn favorites_load_skips_unparseable_rows() {
+        let db = MetadataDb::in_memory().unwrap();
+        // Insert one good row and three broken rows directly.
+        let good = fav("Good", "/good", 1.0);
+        db.save_favorite(&good).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO favorites (id, kind, target_kind, target_value, display_name, \
+                  custom_icon, sort_index, date_added) \
+                 VALUES ('not-a-uuid', 1, 'path', '/bad-uuid', NULL, NULL, 2.0, 0)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO favorites (id, kind, target_kind, target_value, display_name, \
+                  custom_icon, sort_index, date_added) \
+                 VALUES ('11111111-1111-1111-1111-111111111111', 99, 'path', '/bad-kind', \
+                  NULL, NULL, 3.0, 0)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO favorites (id, kind, target_kind, target_value, display_name, \
+                  custom_icon, sort_index, date_added) \
+                 VALUES ('22222222-2222-2222-2222-222222222222', 1, 'galaxy', 'andromeda', \
+                  NULL, NULL, 4.0, 0)",
+                [],
+            )
+            .unwrap();
+
+        let loaded = db.load_favorites().unwrap();
+        assert_eq!(loaded.len(), 1, "only the good row should survive");
+        assert_eq!(loaded[0].id, good.id);
+    }
+
+    #[test]
+    fn favorites_custom_icon_round_trip() {
+        let db = MetadataDb::in_memory().unwrap();
+        let mut f = fav("Iconic", "/i", 1.0);
+        f.custom_icon = Some(FavoriteIcon::Lucide("star".into()));
+        db.save_favorite(&f).unwrap();
+        let loaded = db.load_favorites().unwrap();
+        assert_eq!(
+            loaded[0].custom_icon,
+            Some(FavoriteIcon::Lucide("star".into()))
+        );
+    }
+
+    #[test]
+    fn favorites_section_collapsed_round_trip() {
+        let db = MetadataDb::in_memory().unwrap();
+        assert!(!db.favorites_section_collapsed());
+        db.set_favorites_section_collapsed(true).unwrap();
+        assert!(db.favorites_section_collapsed());
+        db.set_favorites_section_collapsed(false).unwrap();
+        assert!(!db.favorites_section_collapsed());
+    }
+
+    #[test]
+    fn reset_favorites_scope_only_touches_favorites() {
+        let db = MetadataDb::in_memory().unwrap();
+        seed_state(&db);
+        db.save_favorite(&fav("F", "/f", 1.0)).unwrap();
+        db.set_favorites_section_collapsed(true).unwrap();
+
+        db.reset(ResetScope::Favorites).unwrap();
+
+        assert!(db.load_favorites().unwrap().is_empty());
+        assert!(!db.favorites_section_collapsed());
+        // Other state survives.
+        assert!(db.get_file("/f").unwrap().is_some());
+        assert!(db.load_window_state().unwrap().is_some());
+        assert!(!db.load_tabs().unwrap().is_empty());
+    }
+
+    #[test]
+    fn reset_ui_leaves_favorites_intact() {
+        let db = MetadataDb::in_memory().unwrap();
+        seed_state(&db);
+        db.save_favorite(&fav("F", "/f", 1.0)).unwrap();
+        db.reset(ResetScope::Ui).unwrap();
+        assert_eq!(db.load_favorites().unwrap().len(), 1, "Ui must not wipe Favorites");
+    }
+
+    #[test]
+    fn reset_all_wipes_favorites_too() {
+        let db = MetadataDb::in_memory().unwrap();
+        seed_state(&db);
+        db.save_favorite(&fav("F", "/f", 1.0)).unwrap();
+        db.reset(ResetScope::All).unwrap();
+        assert!(db.load_favorites().unwrap().is_empty());
     }
 }

@@ -39,6 +39,9 @@ softbuffer  = "0.4"
 ab_glyph    = "0.2"
 anyhow      = "1"
 
+# UUIDs for favorite identity (stable across sessions, separate from NodeId).
+uuid        = { version = "1", features = ["v4"] }
+
 # External — new stack (feraille-gpui).
 #
 # Pinning strategy: `gpui-component` is pinned to a specific rev (it

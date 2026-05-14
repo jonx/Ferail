@@ -72,6 +72,26 @@ actions!(
         CursorLast,
         PageUp,
         PageDown,
+        // Spec §2.5 — Shift-extend variants. The plain `Cursor*` /
+        // `Page*` set above move the lead and collapse the selection
+        // to just that row; the extend variants move the lead and
+        // make the selection the inclusive span from anchor to lead.
+        CursorUpExtend,
+        CursorDownExtend,
+        CursorFirstExtend,
+        CursorLastExtend,
+        PageUpExtend,
+        PageDownExtend,
+        /// Cmd+A — selection becomes every row currently in the
+        /// (filtered) model. anchor = first visible row, lead = last
+        /// visible row. Spec §2.5.
+        SelectAll,
+        /// Esc on a non-empty selection — clear the selection set,
+        /// anchor and lead. Higher-precedence Esc behaviors
+        /// (close-shortcuts-overlay, ClearFilter) are still bound
+        /// against the filter input's own focus context; this fires
+        /// only when the shell pane itself owns focus.
+        ClearSelection,
         TogglePreview,
         GetInfo,
         ZoomIn,
@@ -129,28 +149,99 @@ actions!(
         /// list (needs NSFileManager.trashItemAt to return the trash
         /// URL so we can move the file back).
         UndoLastAction,
+        // Favorites (docs/features/FAVORITES.md). The toggle action
+        // is the unified Cmd+D / menu-bar / row-context-menu entry
+        // point: it adds the target if absent, removes it if present,
+        // pulses the row on a dedup attempt (which can't happen via
+        // toggle, but matches the spec's verb shape). The target is
+        // either:
+        //   - `Shell::favorites_context_path` (right-clicked source row,
+        //     or right-clicked favorite row), if set
+        //   - the file list selection (a folder), or
+        //   - the active tab's current_dir as a last fallback.
+        ToggleFavoriteForTarget,
+        /// Append the active tab's current directory to Favorites.
+        /// Backs the section-header `+` button and the menu bar item.
+        AddCurrentFolderToFavorites,
+        /// Section header click handler — also reachable via menu bar
+        /// "Window → Toggle Favorites Section".
+        ToggleFavoritesSection,
+        // One-shot sorts (§4.5). Each rewrites every `sort_index` in
+        // place; subsequent drags continue to work — the order isn't
+        // "locked", it's just set.
+        SortFavoritesByName,
+        SortFavoritesByDateAddedNewest,
+        SortFavoritesByDateAddedOldest,
+        SortFavoritesByKind,
+        /// Cmd+Option+Up — shift the most-recently-focused favorite
+        /// up one slot in the section list (§4.4).
+        MoveFavoriteUp,
+        /// Cmd+Option+Down — shift down one slot.
+        MoveFavoriteDown,
+        /// Rename the favorite under `favorites_context_path` via a
+        /// native NSAlert prompt (§6).
+        RenameFavorite,
+        /// Clear the favorite's custom display_name so it tracks the
+        /// folder's on-disk basename again (§6 "Reset to Original Name").
+        ResetFavoriteName,
+        /// Strip a custom icon, falling back to kind+target default (§7).
+        ResetFavoriteIcon,
+        // Curated icon picks (§7 "Change Icon" submenu). Each sets
+        // `custom_icon = Some(Lucide(subpath))` on the contextual
+        // favorite, where the subpath references an asset under
+        // `crates/feraille-gpui/resources/icons/` (e.g. "nav/star",
+        // "file/code"). Six pre-curated picks; a full picker UI is a
+        // future polish piece.
+        SetFavoriteIconStar,
+        SetFavoriteIconFolder,
+        SetFavoriteIconCode,
+        SetFavoriteIconImage,
+        SetFavoriteIconMusic,
+        SetFavoriteIconArchive,
     ]
 );
 
+/// Classification produced by `Shell::resolve_favorite_target` so
+/// the toggle handler can show the appropriate toast for files.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FavoriteResolved {
+    Folder,
+    NotAFolder,
+}
+
 /// Reversible operation pushed onto `Shell::undo_stack` after a
-/// successful mutation. Applied (in reverse) by the UndoLastAction
-/// handler when the user hits Cmd+Z.
+/// successful mutation. Filesystem variants apply synchronously via
+/// [`UndoOp::apply_fs`]; favorites variants (`AddFavorite` /
+/// `RemoveFavorite`) need Shell + cx and are handled inline by
+/// `Shell::on_undo_last_action`.
 #[derive(Clone, Debug)]
 pub enum UndoOp {
     /// Rename `current` back to `original`.
     Rename { current: PathBuf, original: PathBuf },
     /// Delete the folder we just created.
     DeleteFolder(PathBuf),
+    /// Undo an add: remove the favorite that was just created.
+    AddFavorite(feraille_core::favorites::FavoriteId),
+    /// Undo a remove: restore the captured favorite at its prior
+    /// `sort_index`, with prior `display_name` / `custom_icon` /
+    /// `date_added`. Identity (`FavoriteId`) is preserved so any
+    /// toggle elsewhere stays consistent (§3.2).
+    RemoveFavorite(feraille_core::favorites::Favorite),
 }
 
 impl UndoOp {
-    fn apply(&self) -> Result<(), String> {
+    /// Apply filesystem-only variants. Favorites variants return
+    /// `Err` here — the caller routes them through Shell + cx.
+    fn apply_fs(&self) -> Result<(), String> {
         match self {
             UndoOp::Rename { current, original } => {
                 std::fs::rename(current, original).map_err(|e| e.to_string())
             }
             UndoOp::DeleteFolder(p) => {
                 std::fs::remove_dir(p).map_err(|e| e.to_string())
+            }
+            UndoOp::AddFavorite(_) | UndoOp::RemoveFavorite(_) => {
+                Err("favorite undo handled by Shell".into())
             }
         }
     }
@@ -159,6 +250,8 @@ impl UndoOp {
         match self {
             UndoOp::Rename { .. } => "Undid rename",
             UndoOp::DeleteFolder(_) => "Removed new folder",
+            UndoOp::AddFavorite(_) => "Removed Favorite",
+            UndoOp::RemoveFavorite(_) => "Restored Favorite",
         }
     }
 }
@@ -179,7 +272,19 @@ pub struct Tab {
     pub current_dir: PathBuf,
     pub history: Vec<PathBuf>,
     pub history_index: usize,
-    pub selected: Option<usize>,
+    /// Multi-selection set keyed by `NodeId`. Per spec §2.2 this is
+    /// in-memory interaction state, not persisted truth; reconciled
+    /// against the model on streaming `Done` and on every model
+    /// change. Empty is a valid common state.
+    pub selection: HashSet<NodeId>,
+    /// Anchor — fixed end of a Shift-range; set on plain click or
+    /// the first Cmd-click into an empty selection. (Spec §2.3.)
+    pub anchor: Option<NodeId>,
+    /// Lead / cursor — moving end of a range, target of keyboard
+    /// navigation, focus-ring row. Mirrored to the underlying
+    /// `TableState::selected_row` so the primitive's native focus
+    /// overlay marks it.
+    pub lead: Option<NodeId>,
 }
 
 impl Tab {
@@ -189,8 +294,20 @@ impl Tab {
             current_dir: at.clone(),
             history: vec![at],
             history_index: 0,
-            selected: None,
+            selection: HashSet::new(),
+            anchor: None,
+            lead: None,
         }
+    }
+
+    /// Row index of the lead within `entries`, or `None` if no lead
+    /// is set or the lead is not currently in the view's model.
+    /// Used by every site that previously read `Tab::selected` as a
+    /// row index — preview pane, status bar, screenshot driver,
+    /// activate_row's keyboard fallback.
+    pub fn lead_row(&self, entries: &[FileEntry]) -> Option<usize> {
+        let lead = self.lead?;
+        entries.iter().position(|e| e.id == lead)
     }
 
     /// Short label for the tabstrip. Last path component, or "/" for
@@ -305,6 +422,13 @@ pub struct Shell {
     /// file-list rows by index), this carries the full path because
     /// sidebar items aren't part of the file list.
     pub context_target: Option<PathBuf>,
+    /// Path target for Favorites mutations
+    /// (docs/features/FAVORITES.md). Set by every "Add to Favorites" /
+    /// "Remove from Favorites" context-menu closure and by row-row drag
+    /// handlers; consumed (`take()`-style) by
+    /// `on_toggle_favorite_for_target`. Fallback chain when unset:
+    /// file-list selection → active tab `current_dir`.
+    pub favorites_context_path: Option<PathBuf>,
     /// Persistent metadata database (rusqlite-backed) opened at
     /// startup. `None` when `$HOME` is unset or the DB couldn't be
     /// opened — in-memory state still works, just no persistence.
@@ -386,6 +510,22 @@ pub struct Shell {
     /// `app_state::sidebar_collapsed` so the choice survives
     /// restarts.
     pub sidebar_collapsed: bool,
+    /// Favorites sidebar section collapsed (disclosure-triangle).
+    /// Independent of the sidebar-wide icon-collapse; persisted via
+    /// `MetadataDb::favorites_section_collapsed` so the choice
+    /// survives restarts. Hydrated in `start_metadata_load`.
+    pub favorites_section_collapsed: bool,
+    /// Most-recently-focused favorite id. Set by clicks on a favorite
+    /// row; consumed by the keyboard-reorder actions (§4.4) so
+    /// `Cmd+Option+Up/Down` operates on the row the user just selected.
+    /// `None` when no favorite has been clicked this session.
+    pub focused_favorite: Option<feraille_core::favorites::FavoriteId>,
+    /// User-curated favorites entity. Source of truth for the sidebar
+    /// Favorites section, the §5 favorited-indicator badge across the
+    /// file list / tree / breadcrumb, and all add/remove/reorder
+    /// mutations. Persistence is delegated to `metadata_db`; this
+    /// entity owns the in-memory list and the path → id lookup index.
+    pub favorites: Entity<crate::favorites::Favorites>,
     /// Reversible-action history. Newest at the back. Capped at
     /// UNDO_STACK_CAP so the stack doesn't grow unbounded across a
     /// long session; older ops drop off the front silently.
@@ -516,62 +656,64 @@ fn open_metadata_db() -> Option<Arc<Mutex<feraille_meta::MetadataDb>>> {
     }
 }
 
-/// A user-pinned filesystem shortcut shown in the sidebar's
-/// **Favorites** section. Flat — no expand/collapse, no descendants
-/// — so a click navigates and that's it. Tree-style hierarchical
-/// browsing lives in the separate Browse section below the favorites.
-struct Favorite {
+/// One of the macOS-standard sidebar destinations shown in the
+/// **Locations** section. Flat — no expand/collapse, no descendants
+/// — so a click navigates and that's it. The user-curated **Favorites**
+/// section (separate, below Locations) is a runtime data structure;
+/// this type covers only the fixed OS folders. Tree-style hierarchical
+/// browsing lives in the separate Browse section below.
+struct Location {
     label: &'static str,
     /// `home`-relative subpath (None ⇒ the home directory itself).
     sub: Option<&'static str>,
     /// Asset path for the row's prefix icon. Resolved via
-    /// `FeraAssets` (Phase 1 composite source) so both our local
-    /// bundle and the upstream gpui-component pack work.
+    /// `FeraAssets` so both our local bundle and the upstream
+    /// gpui-component pack work.
     icon: &'static str,
 }
 
-const FAVORITES: &[Favorite] = &[
-    Favorite {
+const LOCATIONS: &[Location] = &[
+    Location {
         label: "Home",
         sub: None,
         icon: "icons/nav/home.svg",
     },
-    Favorite {
+    Location {
         label: "Applications",
         sub: Some("Applications"),
         icon: "icons/nav/apps.svg",
     },
-    Favorite {
+    Location {
         label: "Desktop",
         sub: Some("Desktop"),
         icon: "icons/nav/desktop.svg",
     },
-    Favorite {
+    Location {
         label: "Documents",
         sub: Some("Documents"),
         icon: "icons/nav/documents.svg",
     },
-    Favorite {
+    Location {
         label: "Downloads",
         sub: Some("Downloads"),
         icon: "icons/nav/downloads.svg",
     },
-    Favorite {
+    Location {
         label: "Trash",
         sub: Some(".Trash"),
         icon: "icons/nav/trash.svg",
     },
-    Favorite {
+    Location {
         label: "Movies",
         sub: Some("Movies"),
         icon: "icons/nav/movies.svg",
     },
-    Favorite {
+    Location {
         label: "Music",
         sub: Some("Music"),
         icon: "icons/nav/music.svg",
     },
-    Favorite {
+    Location {
         label: "Pictures",
         sub: Some("Pictures"),
         icon: "icons/nav/pictures.svg",
@@ -593,7 +735,7 @@ const SPLITTER_PERSIST_INTERVAL: Duration = Duration::from_millis(500);
 /// dropping under ~900 makes the file list painfully narrow.
 const PREVIEW_AUTOHIDE_THRESHOLD: f32 = 900.0;
 
-impl Favorite {
+impl Location {
     fn path(&self) -> PathBuf {
         let mut p = home_dir();
         if let Some(sub) = self.sub {
@@ -629,28 +771,28 @@ impl Shell {
                 .col_resizable(true)
         });
         // Bridge Table events (selection + double-click) to the
-        // Shell's own state so the preview pane sees the live row.
+        // Shell's own state. SelectRow runs through the modifier-
+        // aware gesture dispatch (spec §2.4) so Cmd / Shift /
+        // Cmd+Shift give the right anchor/lead/set update.
+        // RightClickedRow obeys spec §2.4's "preserve selection if
+        // row already in set; otherwise replace to just this row"
+        // rule before the menu's target reads `context_row`.
         cx.subscribe_in(
             &table,
             window,
-            |this, _table, event: &TableEvent, _window, cx| match event {
+            |this, _table, event: &TableEvent, window, cx| match event {
                 TableEvent::SelectRow(row_ix) => {
-                    this.active_tab_mut().selected = Some(*row_ix);
-                    // Kick off a Quick Look thumbnail fetch for the
-                    // newly-selected row. Cheap (cache hit on
-                    // re-select); cold paths run on the background
-                    // executor and the worker writes back into
-                    // `preview_cache` via cx.spawn.
-                    if let Some(p) = this.path_for_row(*row_ix, cx) {
-                        crate::preview::request(this, p, cx);
-                    }
-                    cx.notify();
+                    let modifiers = window.modifiers();
+                    this.apply_row_click_gesture(*row_ix, modifiers, cx);
                 }
                 TableEvent::DoubleClickedRow(row_ix) => {
                     this.activate_row(*row_ix, cx);
                 }
                 TableEvent::RightClickedRow(row_ix) => {
                     this.context_row = *row_ix;
+                    if let Some(r) = *row_ix {
+                        this.apply_row_right_click(r, cx);
+                    }
                 }
                 _ => {}
             },
@@ -774,6 +916,7 @@ impl Shell {
             watcher,
             context_row: None,
             context_target: None,
+            favorites_context_path: None,
             metadata_db: None,
             icons,
             tasks: Rc::new(RefCell::new(TaskRegistry::new())),
@@ -793,6 +936,9 @@ impl Shell {
             preview_width: persisted.preview_width.unwrap_or(280.0).clamp(220.0, 520.0),
             splitter_last_save: None,
             sidebar_collapsed: persisted.sidebar_collapsed.unwrap_or(false),
+            favorites_section_collapsed: false,
+            favorites: cx.new(|_| crate::favorites::Favorites::new(None)),
+            focused_favorite: None,
             undo_stack: VecDeque::new(),
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
@@ -804,6 +950,20 @@ impl Shell {
                 shortcuts_help_subscription,
             ],
         };
+        // §5.3 live-sync: every folder-rendering view observes the
+        // Favorites entity through Shell, so a single `cx.notify()`
+        // here re-renders the sidebar (FavoritesSection), the
+        // breadcrumb (star indicator), and the title-bar header.
+        // The file list reads its own delegate's `is_favorited`
+        // parallel vec, which `load_path` recomputes from the same
+        // entity, so it picks up the change on the next load — for
+        // truly synchronous list updates we also push a refresh here.
+        let fav_subscription = cx.observe(&shell.favorites, |this, _favs, cx| {
+            this.refresh_file_list_favorited(cx);
+            cx.notify();
+        });
+        shell._subscriptions.push(fav_subscription);
+
         shell.start_metadata_load(cx);
         shell.load_path(start, cx);
         shell
@@ -813,11 +973,19 @@ impl Shell {
     /// (right-click triggered), then selected (keyboard / single-
     /// click). Consumes context_row so the next keyboard action uses
     /// the keyboard selection.
-    fn target_row(&mut self) -> Option<usize> {
+    ///
+    /// After the multi-select rework, the keyboard fallback is the
+    /// **lead's row index in the current model** — the row index
+    /// derived from `Tab::lead` against the delegate's `entries`.
+    /// The lead is the right semantic target: a single-row action
+    /// like Rename or Compress on a multi-selection should operate
+    /// on the focused row, the same way Finder does.
+    fn target_row(&mut self, cx: &App) -> Option<usize> {
         if let Some(r) = self.context_row.take() {
             Some(r)
         } else {
-            self.active_tab().selected
+            self.active_tab()
+                .lead_row(&self.table.read(cx).delegate().entries)
         }
     }
 
@@ -837,7 +1005,7 @@ impl Shell {
 
     fn on_copy_path(&mut self, _: &CopyPath, window: &mut Window, cx: &mut Context<Self>) {
         use gpui_component::notification::Notification;
-        let Some(row) = self.target_row() else { return };
+        let Some(row) = self.target_row(cx) else { return };
         let Some(path) = self.path_for_row(row, cx) else {
             return;
         };
@@ -860,7 +1028,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
-        let Some(row) = self.target_row() else { return };
+        let Some(row) = self.target_row(cx) else { return };
         let Some(path) = self.path_for_row(row, cx) else {
             return;
         };
@@ -955,7 +1123,7 @@ impl Shell {
         color: feraille_core::commands::TagColor,
         cx: &mut Context<Self>,
     ) {
-        let Some(row) = self.target_row() else { return };
+        let Some(row) = self.target_row(cx) else { return };
         let Some(path) = self.path_for_row(row, cx) else { return };
         let _ = feraille_shell_mac::toggle_tag(&path, color);
     }
@@ -1005,7 +1173,7 @@ impl Shell {
     // -- Phase 6 follow-on: Open With submenu ---------------------
 
     fn open_with_slot(&mut self, slot: usize, cx: &mut Context<Self>) {
-        let Some(row) = self.target_row() else { return };
+        let Some(row) = self.target_row(cx) else { return };
         let Some(path) = self.path_for_row(row, cx) else { return };
         let candidates = feraille_shell_mac::open_with_candidates(&path);
         if let Some(c) = candidates.get(slot) {
@@ -1117,7 +1285,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
-        let Some(row) = self.target_row() else { return };
+        let Some(row) = self.target_row(cx) else { return };
         let Some(path) = self.path_for_row(row, cx) else {
             return;
         };
@@ -1151,7 +1319,7 @@ impl Shell {
     }
 
     fn on_open_selected(&mut self, _: &OpenSelected, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(idx) = self.target_row() {
+        if let Some(idx) = self.target_row(cx) {
             self.activate_row(idx, cx);
         }
     }
@@ -1238,7 +1406,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(row) = self.target_row() else { return };
+        let Some(row) = self.target_row(cx) else { return };
         let Some(entry) = self.table.read(cx).delegate().entries.get(row).cloned() else {
             return;
         };
@@ -1303,6 +1471,16 @@ impl Shell {
     }
 
     fn on_clear_filter(&mut self, _: &ClearFilter, window: &mut Window, cx: &mut Context<Self>) {
+        // Spec §2.5 escape priority: clear selection first if
+        // non-empty; only fall through to clearing the filter when
+        // selection is already empty. Avoids stealing Esc from a
+        // user trying to drop a selection without losing their
+        // filter context.
+        if !self.active_tab().selection.is_empty() {
+            self.clear_active_selection(cx);
+            self.focus_handle.focus(window, cx);
+            return;
+        }
         self.filter_input.update(cx, |state, cx| {
             state.set_value("", window, cx);
         });
@@ -1316,7 +1494,7 @@ impl Shell {
     /// `feraille_shell_mac::quick_look::show` bridge — same code
     /// the old app called.
     fn on_quick_look(&mut self, _: &QuickLook, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self.target_row() else { return };
+        let Some(row) = self.target_row(cx) else { return };
         let Some(path) = self.path_for_row(row, cx) else {
             return;
         };
@@ -1442,48 +1620,378 @@ impl Shell {
         }
     }
 
-    /// File-list keyboard navigation — up/down/home/end/pgup/pgdn.
-    /// Bounds-clamped against `entries.len()`; no-op when the list
-    /// is empty.
-    fn move_selection(&mut self, delta: SelectionDelta, cx: &mut Context<Self>) {
-        let len = self.table.read(cx).delegate().entries.len();
+    // -- Selection model (spec §2) ---------------------------------
+    //
+    // Selection state lives on `Tab` as a HashSet<NodeId> + anchor +
+    // lead. Every selection mutation routes through one of the
+    // helpers in this block so the parallel render vecs in the
+    // delegate (`selected_in_set`, `is_lead`) and the underlying
+    // `TableState::selected_row` stay in lockstep. Read paths
+    // (`target_row`, status bar, preview, screenshot driver) derive
+    // a row index from the lead via `Tab::lead_row`.
+
+    /// Apply a mouse-click gesture on a row, dispatching by
+    /// modifiers per spec §2.4. The Table primitive has already
+    /// stamped its own `selected_row = row_ix` before this fires
+    /// (via `on_row_left_click → set_selected_row`); in every
+    /// branch below the lead also lands on `row_ix`, so the
+    /// primitive's focus overlay tracks the lead without our help.
+    fn apply_row_click_gesture(
+        &mut self,
+        row_ix: usize,
+        modifiers: gpui::Modifiers,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.node_id_at_row(row_ix, cx) else {
+            return;
+        };
+        let cmd = modifiers.secondary();
+        let shift = modifiers.shift;
+        if shift && cmd {
+            // Cmd+Shift+Click: additive range — union anchor→row
+            // into the existing set, lead = row, anchor unchanged.
+            self.range_select(id, /* additive */ true, cx);
+        } else if shift {
+            // Shift+Click: replacement range from anchor to row,
+            // lead = row. If no anchor, treat as plain click.
+            self.range_select(id, /* additive */ false, cx);
+        } else if cmd {
+            // Cmd+Click: toggle membership; lead = row; anchor =
+            // row when set non-empty, cleared when it just emptied.
+            self.toggle_select(id, cx);
+        } else {
+            // Plain click: replace selection to just this row.
+            self.replace_select_one(id, cx);
+        }
+        // Preview always follows the lead — keeps the right pane
+        // and the table in lockstep regardless of which gesture
+        // ran. Same cost as the old single-click behavior.
+        if let Some(p) = self.path_for_row(row_ix, cx) {
+            crate::preview::request(self, p, cx);
+        }
+        cx.notify();
+    }
+
+    /// Spec §2.4: right-click on a selected row leaves the
+    /// selection alone (so "operate on all 12 selected" works);
+    /// right-click on an unselected row replaces selection to
+    /// that single row before the menu opens. The menu's target
+    /// reads `context_row` which is set by the caller before this
+    /// runs.
+    fn apply_row_right_click(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        let Some(id) = self.node_id_at_row(row_ix, cx) else {
+            return;
+        };
+        if !self.active_tab().selection.contains(&id) {
+            self.replace_select_one(id, cx);
+            cx.notify();
+        }
+    }
+
+    /// Plain-click semantics: selection = {id}, anchor = lead = id.
+    fn replace_select_one(&mut self, id: NodeId, cx: &mut Context<Self>) {
+        let tab = self.active_tab_mut();
+        tab.selection.clear();
+        tab.selection.insert(id);
+        tab.anchor = Some(id);
+        tab.lead = Some(id);
+        self.refresh_file_list_selection(cx);
+    }
+
+    /// Cmd+Click semantics: toggle `id` in the set. lead = id.
+    /// Empty after toggle → anchor cleared; otherwise anchor = id.
+    fn toggle_select(&mut self, id: NodeId, cx: &mut Context<Self>) {
+        let tab = self.active_tab_mut();
+        if !tab.selection.remove(&id) {
+            tab.selection.insert(id);
+        }
+        tab.lead = Some(id);
+        tab.anchor = if tab.selection.is_empty() {
+            None
+        } else {
+            Some(id)
+        };
+        self.refresh_file_list_selection(cx);
+    }
+
+    /// Shift+Click and Cmd+Shift+Click: compute the inclusive
+    /// span from anchor to `id` in visible (delegate) order; if
+    /// `additive` (Cmd+Shift), union it into the existing set,
+    /// otherwise replace. lead = id; anchor unchanged (or seeded
+    /// to id when there was none, matching spec's "treat as plain
+    /// click").
+    fn range_select(&mut self, id: NodeId, additive: bool, cx: &mut Context<Self>) {
+        let entries: Vec<NodeId> = self
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        let Some(target_idx) = entries.iter().position(|x| *x == id) else {
+            return;
+        };
+        let anchor_id = self.active_tab().anchor;
+        let anchor_idx = anchor_id.and_then(|a| entries.iter().position(|x| *x == a));
+        match anchor_idx {
+            None => {
+                // No anchor → treat as plain click (spec §2.4).
+                self.replace_select_one(id, cx);
+            }
+            Some(a_idx) => {
+                let (lo, hi) = if a_idx <= target_idx {
+                    (a_idx, target_idx)
+                } else {
+                    (target_idx, a_idx)
+                };
+                let span: HashSet<NodeId> = entries[lo..=hi].iter().copied().collect();
+                let tab = self.active_tab_mut();
+                if additive {
+                    tab.selection.extend(span);
+                } else {
+                    tab.selection = span;
+                }
+                tab.lead = Some(id);
+                // Anchor unchanged.
+                self.refresh_file_list_selection(cx);
+            }
+        }
+    }
+
+    /// Spec §2.5: Cmd+A — select every row currently in the
+    /// (filtered) model. anchor = first visible, lead = last.
+    fn select_all_visible(&mut self, cx: &mut Context<Self>) {
+        let (all, first, last): (HashSet<NodeId>, Option<NodeId>, Option<NodeId>) = {
+            let delegate = self.table.read(cx).delegate();
+            let ids: Vec<NodeId> = delegate.entries.iter().map(|e| e.id).collect();
+            let first = ids.first().copied();
+            let last = ids.last().copied();
+            (ids.into_iter().collect(), first, last)
+        };
+        let tab = self.active_tab_mut();
+        tab.selection = all;
+        tab.anchor = first;
+        tab.lead = last;
+        self.refresh_file_list_selection(cx);
+        cx.notify();
+    }
+
+    /// Spec §2.5 Esc: clear selection, anchor, lead.
+    pub fn clear_active_selection(&mut self, cx: &mut Context<Self>) {
+        let tab = self.active_tab_mut();
+        tab.selection.clear();
+        tab.anchor = None;
+        tab.lead = None;
+        self.refresh_file_list_selection(cx);
+        cx.notify();
+    }
+
+    /// Rebuild the delegate's per-row `selected_in_set` + `is_lead`
+    /// parallel vecs from the active tab's selection state, and
+    /// mirror the lead's row index into the underlying
+    /// `TableState::selected_row` so the primitive's focus overlay
+    /// matches the keyboard cursor. Called after every selection
+    /// mutation, after every streaming batch, and on `Done`.
+    pub fn refresh_file_list_selection(&mut self, cx: &mut Context<Self>) {
+        // Snapshot the active tab's selection state so the
+        // table.update closure doesn't need to borrow Shell again.
+        let selection = self.active_tab().selection.clone();
+        let lead = self.active_tab().lead;
+        let table = self.table.clone();
+        let lead_row = table.update(cx, |state, cx| {
+            let delegate = state.delegate_mut();
+            delegate
+                .selected_in_set
+                .resize(delegate.entries.len(), false);
+            delegate.is_lead.resize(delegate.entries.len(), false);
+            let mut lead_row: Option<usize> = None;
+            for (i, entry) in delegate.entries.iter().enumerate() {
+                let in_set = selection.contains(&entry.id);
+                delegate.selected_in_set[i] = in_set;
+                let is_lead = Some(entry.id) == lead;
+                delegate.is_lead[i] = is_lead;
+                if is_lead {
+                    lead_row = Some(i);
+                }
+            }
+            state.refresh(cx);
+            lead_row
+        });
+        if let Some(row) = lead_row {
+            table.update(cx, |state, cx| {
+                state.set_selected_row(row, cx);
+            });
+        }
+    }
+
+    /// Resolve the NodeId at a given row index by reading the
+    /// delegate's `entries`. Cheap (one indexed access). Returns
+    /// `None` if the row index is out of bounds — possible if the
+    /// model changed between an event being queued and dispatched.
+    fn node_id_at_row(&self, row_ix: usize, cx: &App) -> Option<NodeId> {
+        self.table
+            .read(cx)
+            .delegate()
+            .entries
+            .get(row_ix)
+            .map(|e| e.id)
+    }
+
+    /// Keyboard navigation: move the lead by `delta` and, when
+    /// `extend` is true (Shift-extend variants), make the
+    /// selection the inclusive span from anchor to the new lead.
+    /// Plain moves replace the selection with just the new lead
+    /// (spec §2.5).
+    fn move_selection(
+        &mut self,
+        delta: SelectionDelta,
+        extend: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let entries: Vec<NodeId> = self
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        let len = entries.len();
         if len == 0 {
-            self.active_tab_mut().selected = None;
+            self.clear_active_selection(cx);
             return;
         }
-        let page = 12usize;
-        let cur = self.active_tab().selected.unwrap_or(0) as i64;
+        let page = 12i64;
         let last = len as i64 - 1;
+        let cur_idx: i64 = self
+            .active_tab()
+            .lead
+            .and_then(|id| entries.iter().position(|x| *x == id))
+            .map(|i| i as i64)
+            .unwrap_or(0);
         let next: i64 = match delta {
-            SelectionDelta::Up => cur - 1,
-            SelectionDelta::Down => cur + 1,
-            SelectionDelta::PageUp => cur - page as i64,
-            SelectionDelta::PageDown => cur + page as i64,
+            SelectionDelta::Up => cur_idx - 1,
+            SelectionDelta::Down => cur_idx + 1,
+            SelectionDelta::PageUp => cur_idx - page,
+            SelectionDelta::PageDown => cur_idx + page,
             SelectionDelta::First => 0,
             SelectionDelta::Last => last,
         };
         let clamped = next.clamp(0, last) as usize;
-        self.active_tab_mut().selected = Some(clamped);
+        let new_lead = entries[clamped];
+        if extend {
+            // Range-extend keeps anchor fixed; if there was no
+            // anchor, seed it at the previous lead (or the new
+            // one, which collapses to plain navigation).
+            let tab = self.active_tab_mut();
+            if tab.anchor.is_none() {
+                tab.anchor = tab.lead.or(Some(new_lead));
+            }
+            let anchor_id = tab.anchor.unwrap_or(new_lead);
+            let anchor_idx = entries
+                .iter()
+                .position(|x| *x == anchor_id)
+                .unwrap_or(clamped);
+            let (lo, hi) = if anchor_idx <= clamped {
+                (anchor_idx, clamped)
+            } else {
+                (clamped, anchor_idx)
+            };
+            tab.selection = entries[lo..=hi].iter().copied().collect();
+            tab.lead = Some(new_lead);
+        } else {
+            // Plain navigation collapses selection.
+            self.replace_select_one(new_lead, cx);
+            return;
+        }
+        self.refresh_file_list_selection(cx);
+        // Preview pane follows the lead.
+        if let Some(p) = self.path_for_row(clamped, cx) {
+            crate::preview::request(self, p, cx);
+        }
         cx.notify();
     }
 
     fn on_cursor_up(&mut self, _: &CursorUp, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_selection(SelectionDelta::Up, cx);
+        self.move_selection(SelectionDelta::Up, false, cx);
     }
     fn on_cursor_down(&mut self, _: &CursorDown, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_selection(SelectionDelta::Down, cx);
+        self.move_selection(SelectionDelta::Down, false, cx);
     }
     fn on_cursor_first(&mut self, _: &CursorFirst, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_selection(SelectionDelta::First, cx);
+        self.move_selection(SelectionDelta::First, false, cx);
     }
     fn on_cursor_last(&mut self, _: &CursorLast, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_selection(SelectionDelta::Last, cx);
+        self.move_selection(SelectionDelta::Last, false, cx);
     }
     fn on_page_up(&mut self, _: &PageUp, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_selection(SelectionDelta::PageUp, cx);
+        self.move_selection(SelectionDelta::PageUp, false, cx);
     }
     fn on_page_down(&mut self, _: &PageDown, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_selection(SelectionDelta::PageDown, cx);
+        self.move_selection(SelectionDelta::PageDown, false, cx);
+    }
+
+    fn on_cursor_up_extend(
+        &mut self,
+        _: &CursorUpExtend,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_selection(SelectionDelta::Up, true, cx);
+    }
+    fn on_cursor_down_extend(
+        &mut self,
+        _: &CursorDownExtend,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_selection(SelectionDelta::Down, true, cx);
+    }
+    fn on_cursor_first_extend(
+        &mut self,
+        _: &CursorFirstExtend,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_selection(SelectionDelta::First, true, cx);
+    }
+    fn on_cursor_last_extend(
+        &mut self,
+        _: &CursorLastExtend,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_selection(SelectionDelta::Last, true, cx);
+    }
+    fn on_page_up_extend(
+        &mut self,
+        _: &PageUpExtend,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_selection(SelectionDelta::PageUp, true, cx);
+    }
+    fn on_page_down_extend(
+        &mut self,
+        _: &PageDownExtend,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_selection(SelectionDelta::PageDown, true, cx);
+    }
+
+    fn on_select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_all_visible(cx);
+    }
+
+    fn on_clear_selection(
+        &mut self,
+        _: &ClearSelection,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_active_selection(cx);
     }
 
     /// Cmd+P — toggle preview-pane visibility. The pane defaults to
@@ -1524,10 +2032,17 @@ impl Shell {
     /// command). Falls back to the active tab's current dir when
     /// nothing is selected.
     fn on_open_in_new_tab(&mut self, _: &OpenInNewTab, _: &mut Window, cx: &mut Context<Self>) {
-        let path = match self.target_row().and_then(|r| self.path_for_row(r, cx)) {
+        let path = match self.target_row(cx).and_then(|r| self.path_for_row(r, cx)) {
             Some(p) => p,
             None => self.active_tab().current_dir.clone(),
         };
+        self.open_path_in_new_tab(path, cx);
+    }
+
+    /// Push a new tab at `path` and switch to it. Shared entry point
+    /// for modifier-click in the file list / sidebar / Favorites
+    /// section so each surface doesn't reimplement the tab push.
+    pub fn open_path_in_new_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let id = self.fs.id_for_path(&path);
         self.node_store.get_or_create_path_with_id(path.clone(), id);
         self.tabs.push(Tab::new(path, id));
@@ -1541,7 +2056,7 @@ impl Shell {
     /// macOS, std::fs::copy fallback elsewhere). The watcher picks
     /// up the new file; we also force-reload for snappiness.
     fn on_duplicate(&mut self, _: &Duplicate, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self.target_row() else { return };
+        let Some(row) = self.target_row(cx) else { return };
         let Some(path) = self.path_for_row(row, cx) else {
             return;
         };
@@ -1557,7 +2072,7 @@ impl Shell {
     /// Right-click → Make Alias. Creates a Finder alias next to the
     /// source.
     fn on_make_alias(&mut self, _: &MakeAlias, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self.target_row() else { return };
+        let Some(row) = self.target_row(cx) else { return };
         let Some(path) = self.path_for_row(row, cx) else {
             return;
         };
@@ -1574,7 +2089,7 @@ impl Shell {
     /// when multi-select lands). The archive lands next to the
     /// source with a `.zip` suffix.
     fn on_compress(&mut self, _: &Compress, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self.target_row() else { return };
+        let Some(row) = self.target_row(cx) else { return };
         let Some(path) = self.path_for_row(row, cx) else {
             return;
         };
@@ -1647,7 +2162,16 @@ impl Shell {
             .get_or_create_path_with_id(path.clone(), node_id);
         self.active_tab_mut().nav.replace_current(node_id);
         self.active_tab_mut().current_dir = path.clone();
-        self.active_tab_mut().selected = None;
+        // Spec §2.6 navigation: the new path starts with empty
+        // selection by default. Back/forward history will restore
+        // a prior snapshot in iter 2 once tab history carries one;
+        // iter 1 always starts empty.
+        {
+            let tab = self.active_tab_mut();
+            tab.selection.clear();
+            tab.anchor = None;
+            tab.lead = None;
+        }
         self.last_error = None;
         self.load_generation = self.load_generation.wrapping_add(1);
         let generation = self.load_generation;
@@ -1738,7 +2262,52 @@ impl Shell {
                 .append_entries(batch.entries, batch.paths, heats);
             state.refresh(cx);
         });
+        // Repaint the §5 star badge on each row whose path is now in
+        // the favorites index. Cheap (HashMap lookups across the new
+        // batch); runs once per batch on the load path.
+        self.refresh_file_list_favorited(cx);
         cx.notify();
+    }
+
+    /// Recompute the file list's per-row `is_favorited` parallel vec
+    /// from the current Favorites entity index. Called from:
+    /// - `apply_directory_batch` (after rows arrive)
+    /// - The `cx.observe(&self.favorites, …)` subscription registered
+    ///   in `Shell::new` (so add / remove / repoint repaints star
+    ///   badges in the same frame, §5.3).
+    pub fn refresh_file_list_favorited(&mut self, cx: &mut Context<Self>) {
+        let favs = self.favorites.clone();
+        let table = self.table.clone();
+        let favs_ref = favs.read(cx);
+        // Pre-collect each row's path so the table-update closure
+        // doesn't need to borrow Shell again.
+        let bits: Vec<bool> = table
+            .read(cx)
+            .delegate()
+            .entries
+            .iter()
+            .map(|entry| {
+                table
+                    .read(cx)
+                    .delegate()
+                    .path_for_entry(entry.id)
+                    .map(|p| favs_ref.contains_path(&p))
+                    .unwrap_or(false)
+            })
+            .collect();
+        let _ = favs_ref;
+        table.update(cx, |state, cx| {
+            let delegate = state.delegate_mut();
+            // Resize defensively — the table may have been cleared
+            // between the snapshot and this update.
+            delegate.is_favorited.resize(delegate.entries.len(), false);
+            for (i, b) in bits.into_iter().enumerate() {
+                if let Some(slot) = delegate.is_favorited.get_mut(i) {
+                    *slot = b;
+                }
+            }
+            state.refresh(cx);
+        });
     }
 
     fn finish_directory_load(
@@ -1827,14 +2396,35 @@ impl Shell {
                 .spawn(async move {
                     let db = open_metadata_db();
                     let (ant_visits, ant_max) = hydrate_ant_trail(db.as_ref());
-                    (db, ant_visits, ant_max)
+                    let favs_collapsed = db
+                        .as_ref()
+                        .and_then(|d| d.lock().ok().map(|g| g.favorites_section_collapsed()))
+                        .unwrap_or(false);
+                    let favorites = db
+                        .as_ref()
+                        .and_then(|d| d.lock().ok().and_then(|g| g.load_favorites().ok()))
+                        .unwrap_or_default();
+                    (db, ant_visits, ant_max, favs_collapsed, favorites)
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                let (db, ant_visits, ant_max) = loaded;
-                this.metadata_db = db;
+                let (db, ant_visits, ant_max, favs_collapsed, favorites) = loaded;
+                this.metadata_db = db.clone();
                 this.ant_visits = ant_visits;
                 this.ant_max = ant_max;
+                this.favorites_section_collapsed = favs_collapsed;
+                // Attach the writable DB to the favorites entity and
+                // hydrate. The dev seed runs only when the entry list
+                // is empty AND `FERAILLE_DEV_SEED_FAVORITES=1` — see
+                // `crate::favorites::maybe_seed_dev_favorites`.
+                let fav_entity = this.favorites.clone();
+                fav_entity.update(cx, |f, cx| {
+                    if let Some(d) = db.clone() {
+                        f.attach_db(d);
+                    }
+                    f.hydrate(favorites, cx);
+                    crate::favorites::maybe_seed_dev_favorites(f, cx);
+                });
                 let table = this.table.clone();
                 table.update(cx, |state, cx| {
                     let delegate = state.delegate_mut();
@@ -1894,18 +2484,32 @@ impl Shell {
             return;
         };
         let label = op.label();
-        match op.apply() {
-            Ok(()) => {
+        match op {
+            UndoOp::AddFavorite(id) => {
+                self.favorites.update(cx, |f, cx| {
+                    f.remove(id, cx);
+                });
                 window.push_notification(Notification::success(label.to_string()), cx);
-                let path = self.active_tab().current_dir.clone();
-                self.load_path(path, cx);
             }
-            Err(e) => {
-                window.push_notification(
-                    Notification::error(format!("Undo failed: {e}")),
-                    cx,
-                );
+            UndoOp::RemoveFavorite(fav) => {
+                self.favorites.update(cx, |f, cx| {
+                    f.restore(fav, cx);
+                });
+                window.push_notification(Notification::success(label.to_string()), cx);
             }
+            fs_op => match fs_op.apply_fs() {
+                Ok(()) => {
+                    window.push_notification(Notification::success(label.to_string()), cx);
+                    let path = self.active_tab().current_dir.clone();
+                    self.load_path(path, cx);
+                }
+                Err(e) => {
+                    window.push_notification(
+                        Notification::error(format!("Undo failed: {e}")),
+                        cx,
+                    );
+                }
+            },
         }
     }
 
@@ -1913,6 +2517,367 @@ impl Shell {
         self.show_hidden = !self.show_hidden;
         let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
+    }
+
+    // ----- Favorites mutations (iter 4) ---------------------------
+
+    /// Cmd+D / context-menu / menu-bar toggle. Reads the target from
+    /// `favorites_context_path` (set by every "Add to Favorites" /
+    /// "Remove from Favorites" closure), falling back to the file-list
+    /// selection's path, then to the active tab's `current_dir`.
+    /// Files are rejected with a toast (§2.3).
+    pub fn on_toggle_favorite_for_target(
+        &mut self,
+        _: &ToggleFavoriteForTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let target = self.resolve_favorite_target(cx);
+        let Some((path, kind)) = target else {
+            window.push_notification(
+                Notification::info("No folder available to add to Favorites."),
+                cx,
+            );
+            return;
+        };
+        match kind {
+            FavoriteResolved::Folder => {
+                let canonical = std::fs::canonicalize(&path).unwrap_or(path.clone());
+                let already = self.favorites.read(cx).contains_path(&canonical);
+                let favs = self.favorites.clone();
+                if already {
+                    let id = self
+                        .favorites
+                        .read(cx)
+                        .id_for_path(&canonical)
+                        .expect("contains_path returned true");
+                    let label = self
+                        .favorites
+                        .read(cx)
+                        .entry_by_id(id)
+                        .map(|f| f.effective_label())
+                        .unwrap_or_else(|| "favorite".to_string());
+                    // Capture the full entry before removal so the undo
+                    // restores name + icon + sort_index + date_added.
+                    let removed_for_undo = self
+                        .favorites
+                        .read(cx)
+                        .entry_by_id(id)
+                        .cloned();
+                    favs.update(cx, |f, cx| {
+                        f.remove(id, cx);
+                    });
+                    if let Some(fav) = removed_for_undo {
+                        self.push_undo(UndoOp::RemoveFavorite(fav));
+                    }
+                    window.push_notification(
+                        Notification::info(format!(
+                            "Removed \u{201C}{label}\u{201D} from Favorites · Cmd+Z to undo"
+                        )),
+                        cx,
+                    );
+                } else {
+                    let label = canonical
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| canonical.to_string_lossy().into_owned());
+                    let added_id = favs.update(cx, |f, cx| {
+                        match f.add_path(
+                            canonical.clone(),
+                            feraille_core::favorites::FavoriteKind::Folder,
+                            cx,
+                        ) {
+                            crate::favorites::AddOutcome::Added(id) => Some(id),
+                            crate::favorites::AddOutcome::Existing(_) => None,
+                        }
+                    });
+                    if let Some(id) = added_id {
+                        self.push_undo(UndoOp::AddFavorite(id));
+                    }
+                    window.push_notification(
+                        Notification::success(format!("Added \u{201C}{label}\u{201D} to Favorites")),
+                        cx,
+                    );
+                }
+            }
+            FavoriteResolved::NotAFolder => {
+                window.push_notification(
+                    Notification::info("Only folders can be added to Favorites."),
+                    cx,
+                );
+            }
+        }
+    }
+
+    /// Backs `File → Add to Favorites` and the section-header `+`
+    /// button. No-op if the current folder is already a favorite
+    /// (dedup pulse is emitted by the entity).
+    pub fn on_add_current_folder_to_favorites(
+        &mut self,
+        _: &AddCurrentFolderToFavorites,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let path = self.active_tab().current_dir.clone();
+        self.favorites_context_path = Some(path);
+        self.on_toggle_favorite_for_target(&ToggleFavoriteForTarget, window, cx);
+    }
+
+    pub fn on_toggle_favorites_section(
+        &mut self,
+        _: &ToggleFavoritesSection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_favorites_section_collapsed(cx);
+    }
+
+    // ----- Favorites: one-shot sorts (§4.5) ------------------------
+
+    pub fn on_sort_favorites_by_name(
+        &mut self,
+        _: &SortFavoritesByName,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.favorites.update(cx, |f, cx| {
+            f.one_shot_sort(feraille_core::favorites::FavoriteSort::NameAsc, cx);
+        });
+    }
+
+    pub fn on_sort_favorites_by_date_added_newest(
+        &mut self,
+        _: &SortFavoritesByDateAddedNewest,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.favorites.update(cx, |f, cx| {
+            f.one_shot_sort(
+                feraille_core::favorites::FavoriteSort::DateAddedNewest,
+                cx,
+            );
+        });
+    }
+
+    pub fn on_sort_favorites_by_date_added_oldest(
+        &mut self,
+        _: &SortFavoritesByDateAddedOldest,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.favorites.update(cx, |f, cx| {
+            f.one_shot_sort(
+                feraille_core::favorites::FavoriteSort::DateAddedOldest,
+                cx,
+            );
+        });
+    }
+
+    pub fn on_sort_favorites_by_kind(
+        &mut self,
+        _: &SortFavoritesByKind,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.favorites.update(cx, |f, cx| {
+            f.one_shot_sort(feraille_core::favorites::FavoriteSort::Kind, cx);
+        });
+    }
+
+    // ----- Favorites: keyboard reorder (§4.4) ----------------------
+
+    pub fn on_move_favorite_up(
+        &mut self,
+        _: &MoveFavoriteUp,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(id) = self.focused_favorite {
+            self.favorites.update(cx, |f, cx| f.shift(id, -1, cx));
+        }
+    }
+
+    pub fn on_move_favorite_down(
+        &mut self,
+        _: &MoveFavoriteDown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(id) = self.focused_favorite {
+            self.favorites.update(cx, |f, cx| f.shift(id, 1, cx));
+        }
+    }
+
+    // ----- Favorites: rename + custom icons (iter 9 / §6 / §7) -----
+
+    /// Resolve the favorite id for the next rename/icon action. The
+    /// row-level context menu sets `favorites_context_path` before
+    /// dispatching, so we look the id up by canonical path.
+    fn pop_favorite_id_for_action(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<feraille_core::favorites::FavoriteId> {
+        let path = self.favorites_context_path.take()?;
+        let canonical = std::fs::canonicalize(&path).unwrap_or(path);
+        self.favorites.read(cx).id_for_path(&canonical)
+    }
+
+    pub fn on_rename_favorite(
+        &mut self,
+        _: &RenameFavorite,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let Some(id) = self.pop_favorite_id_for_action(cx) else {
+            return;
+        };
+        let current = self
+            .favorites
+            .read(cx)
+            .entry_by_id(id)
+            .map(|f| f.effective_label())
+            .unwrap_or_default();
+        // Native NSAlert prompt — keeps the rename path simple and
+        // matches macOS feel. Renaming the shortcut, not the folder.
+        let next = feraille_shell_mac::prompt_for_text(
+            "Rename Favorite",
+            "Renames the shortcut\u{2019}s label only, not the folder on disk.",
+            &current,
+        );
+        let Some(value) = next else { return };
+        let trimmed = value.trim().to_string();
+        if trimmed.is_empty() {
+            window.push_notification(Notification::info("Name can\u{2019}t be empty."), cx);
+            return;
+        }
+        self.favorites
+            .update(cx, |f, cx| f.rename(id, Some(trimmed), cx));
+    }
+
+    pub fn on_reset_favorite_name(
+        &mut self,
+        _: &ResetFavoriteName,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.pop_favorite_id_for_action(cx) else {
+            return;
+        };
+        self.favorites.update(cx, |f, cx| f.rename(id, None, cx));
+    }
+
+    pub fn on_reset_favorite_icon(
+        &mut self,
+        _: &ResetFavoriteIcon,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.pop_favorite_id_for_action(cx) else {
+            return;
+        };
+        self.favorites.update(cx, |f, cx| f.set_icon(id, None, cx));
+    }
+
+    fn set_favorite_lucide(&mut self, name: &'static str, cx: &mut Context<Self>) {
+        let Some(id) = self.pop_favorite_id_for_action(cx) else {
+            return;
+        };
+        let icon = feraille_core::favorites::FavoriteIcon::Lucide(name.into());
+        self.favorites
+            .update(cx, |f, cx| f.set_icon(id, Some(icon), cx));
+    }
+
+    pub fn on_set_favorite_icon_star(
+        &mut self,
+        _: &SetFavoriteIconStar,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_favorite_lucide("nav/star", cx);
+    }
+    pub fn on_set_favorite_icon_folder(
+        &mut self,
+        _: &SetFavoriteIconFolder,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_favorite_lucide("nav/folder", cx);
+    }
+    pub fn on_set_favorite_icon_code(
+        &mut self,
+        _: &SetFavoriteIconCode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_favorite_lucide("file/code", cx);
+    }
+    pub fn on_set_favorite_icon_image(
+        &mut self,
+        _: &SetFavoriteIconImage,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_favorite_lucide("file/image", cx);
+    }
+    pub fn on_set_favorite_icon_music(
+        &mut self,
+        _: &SetFavoriteIconMusic,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_favorite_lucide("nav/music", cx);
+    }
+    pub fn on_set_favorite_icon_archive(
+        &mut self,
+        _: &SetFavoriteIconArchive,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_favorite_lucide("file/archive", cx);
+    }
+
+    /// Pick the path the next favorites mutation should target.
+    /// Order of precedence:
+    ///   1. `favorites_context_path` (set by sidebar / breadcrumb /
+    ///      favorite-row context menus before dispatching the action)
+    ///   2. The file-list row most recently right-clicked or selected
+    ///      via [`Shell::target_row`].
+    ///   3. The active tab's `current_dir` (so a keyboard Cmd+D with
+    ///      nothing selected toggles the current folder).
+    fn resolve_favorite_target(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<(PathBuf, FavoriteResolved)> {
+        // A path that is already in the favorites index must be
+        // classifiable as `Folder` even when its on-disk presence is
+        // gone (Missing or Unmounted state) — otherwise "Remove from
+        // Favorites" on a broken row routes to the NotAFolder rejection
+        // toast and the user can never remove the stale shortcut.
+        let already_favorite =
+            |path: &Path, this: &Self| this.favorites.read(cx).contains_path(path);
+        if let Some(p) = self.favorites_context_path.take() {
+            let kind = if already_favorite(&p, self) || p.is_dir() {
+                FavoriteResolved::Folder
+            } else {
+                FavoriteResolved::NotAFolder
+            };
+            return Some((p, kind));
+        }
+        if let Some(row) = self.target_row(cx) {
+            if let Some(path) = self.path_for_row(row, cx) {
+                let kind = if already_favorite(&path, self) || path.is_dir() {
+                    FavoriteResolved::Folder
+                } else {
+                    FavoriteResolved::NotAFolder
+                };
+                return Some((path, kind));
+            }
+        }
+        let current = self.active_tab().current_dir.clone();
+        Some((current, FavoriteResolved::Folder))
     }
 
     // ----- Tab management (5.5.d) ---------------------------------
@@ -2228,15 +3193,33 @@ impl Shell {
     /// hierarchy. Deeper descendants are untouched: expanding
     /// `Library/Application Support` is fine because that's already
     /// not pinned anywhere.
-    fn build_browse_rows(&mut self) -> Vec<TreeRowSpec> {
+    fn build_browse_rows(&mut self, cx: &App) -> Vec<TreeRowSpec> {
         let home = home_dir();
-        let favorite_paths: HashSet<PathBuf> =
-            FAVORITES.iter().map(|f| f.path()).collect();
+        // Hide Locations from the Browse tree so the same depth-1 entry
+        // (Documents, Downloads, etc.) doesn't appear twice. User-curated
+        // Favorites are *not* hidden — those are intentional shortcuts.
+        let location_paths: HashSet<PathBuf> =
+            LOCATIONS.iter().map(|f| f.path()).collect();
         let current = self.active_tab().current_dir.clone();
         let node_id = self.fs.id_for_path(&home);
         self.node_store
             .get_or_create_path_with_id(home.clone(), node_id);
         let is_expanded = self.expanded.contains(&home);
+        let favorited = self.favorites.read(cx).contains_path(&home);
+        {
+            let f = self.favorites.read(cx);
+            eprintln!(
+                "build_browse_rows: home={:?} entries={} favorited={}",
+                home,
+                f.entries().len(),
+                favorited
+            );
+            for e in f.entries() {
+                if let feraille_core::favorites::FavoriteTarget::Path(p) = &e.target {
+                    eprintln!("  fav target: {:?}  eq_home={}", p, p == &home);
+                }
+            }
+        }
         let mut rows: Vec<TreeRowSpec> = vec![TreeRowSpec {
             node_id,
             path: home.clone(),
@@ -2247,6 +3230,7 @@ impl Shell {
             is_active: home == current,
             capacity: None,
             icon: TreeRowIcon::Folder,
+            favorited,
         }];
         if is_expanded {
             self.append_tree_descendants_filtered(
@@ -2254,62 +3238,123 @@ impl Shell {
                 &home,
                 1,
                 &current,
-                Some(&favorite_paths),
+                Some(&location_paths),
+                cx,
             );
         }
         rows
     }
 
-    /// Build the Favorites section: a flat `SidebarMenu` of icon-
-    /// prefixed shortcuts. Each item navigates straight to its
-    /// path; none expand, so the IA stays unambiguous next to the
-    /// expandable Browse tree below.
-    fn build_favorites_menu(&mut self, weak: WeakEntity<Self>) -> SidebarMenu {
+    /// Build the user-curated **Favorites** section (separate from the
+    /// fixed Locations menu above). Iter 2 renders an empty section
+    /// with the empty-state prompt; iter 3 wires the live entity and
+    /// the §5 favorited-indicator index. The section's collapse state
+    /// flows through `favorites_section_collapsed`, persisted in
+    /// `MetadataDb`.
+    fn build_user_favorites_section(
+        &mut self,
+        weak: WeakEntity<Self>,
+        cx: &mut Context<Self>,
+    ) -> ShellSidebarItem {
+        // Snapshot the current entry list; the entity is observed at
+        // construction time below so any mutation (add / remove /
+        // reorder / rename) drives a Shell repaint, which re-runs
+        // `build_user_favorites_section` with the fresh list.
+        let entries = self.favorites.read(cx).entries().to_vec();
+        ShellSidebarItem::favorites(crate::favorites_section::FavoritesSection::new(
+            entries,
+            self.favorites_section_collapsed,
+            weak,
+            self.icons.clone(),
+        ))
+    }
+
+    /// Flip the Favorites section's disclosure-triangle and persist
+    /// the new state. Called from the section header click handler.
+    pub fn toggle_favorites_section_collapsed(&mut self, cx: &mut Context<Self>) {
+        self.favorites_section_collapsed = !self.favorites_section_collapsed;
+        let collapsed = self.favorites_section_collapsed;
+        if let Some(db) = self.metadata_db.clone() {
+            cx.background_spawn(async move {
+                if let Ok(g) = db.lock() {
+                    let _ = g.set_favorites_section_collapsed(collapsed);
+                }
+            })
+            .detach();
+        }
+        cx.notify();
+    }
+
+    /// Build the **Locations** section: a flat `SidebarMenu` of icon-
+    /// prefixed shortcuts to the macOS-standard folders. Each item
+    /// navigates straight to its path; none expand, so the IA stays
+    /// unambiguous next to the user-curated Favorites section below
+    /// and the expandable Browse tree underneath.
+    fn build_locations_menu(&mut self, weak: WeakEntity<Self>, cx: &App) -> SidebarMenu {
         use gpui_component::Icon;
         let current = self.active_tab().current_dir.clone();
         let mut menu = SidebarMenu::new();
-        for fav in FAVORITES {
-            let path = fav.path();
+        let favs = self.favorites.read(cx);
+        for loc in LOCATIONS {
+            let path = loc.path();
             let node_id = self.fs.id_for_path(&path);
             self.node_store
                 .get_or_create_path_with_id(path.clone(), node_id);
             let active = path == current;
+            let favorited = favs.contains_path(&path);
             let weak_for_click = weak.clone();
             let weak_for_menu = weak.clone();
             let path_for_menu = path.clone();
-            menu = menu.child(
-                SidebarMenuItem::new(SharedString::from(fav.label))
-                    .icon(Icon::empty().path(fav.icon))
-                    .active(active)
-                    .on_click(move |_window, _evt, cx| {
-                        if let Some(s) = weak_for_click.upgrade() {
-                            s.update(cx, |shell, cx| {
+            let path_for_modclick = path.clone();
+            let item = SidebarMenuItem::new(SharedString::from(loc.label))
+                .icon(Icon::empty().path(loc.icon))
+                .active(active)
+                .on_click(move |event, _window, cx| {
+                    if let Some(s) = weak_for_click.upgrade() {
+                        let modifiers = event.modifiers();
+                        let path = path_for_modclick.clone();
+                        s.update(cx, |shell, cx| {
+                            if modifiers.platform {
+                                shell.open_path_in_new_tab(path, cx);
+                            } else {
                                 shell.navigate_node(node_id, cx);
-                            });
-                        }
-                    })
-                    .context_menu(move |menu, _window, cx| {
-                        // Stash the right-clicked path on Shell so
-                        // the path-aware action handlers know which
-                        // path the user meant.
-                        if let Some(s) = weak_for_menu.upgrade() {
-                            s.update(cx, |shell, _| {
-                                shell.context_target = Some(path_for_menu.clone());
-                            });
-                        }
-                        menu.menu(
-                            "Open in New Tab",
-                            Box::new(OpenContextInNewTab),
-                        )
+                            }
+                        });
+                    }
+                })
+                .context_menu(move |menu, _window, cx| {
+                    // Stash the right-clicked path on Shell so
+                    // the path-aware action handlers know which
+                    // path the user meant.
+                    if let Some(s) = weak_for_menu.upgrade() {
+                        s.update(cx, |shell, _| {
+                            shell.context_target = Some(path_for_menu.clone());
+                        });
+                    }
+                    menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
                         .separator()
-                        .menu(
-                            "Reveal in Finder",
-                            Box::new(RevealContextPath),
-                        )
+                        .menu("Reveal in Finder", Box::new(RevealContextPath))
                         .menu("Copy Path", Box::new(CopyContextPath))
-                    }),
-            );
+                });
+            // §5: a Locations entry that's also a user Favorite gets the
+            // same trailing star treatment as everywhere else.
+            let item = if favorited {
+                item.suffix(|_, cx| {
+                    use gpui::svg;
+                    svg()
+                        .path("icons/nav/star.svg")
+                        .w(px(11.0))
+                        .h(px(11.0))
+                        .text_color(cx.theme().primary)
+                        .flex_shrink_0()
+                        .into_any_element()
+                })
+            } else {
+                item
+            };
+            menu = menu.child(item);
         }
+        let _ = favs;
         menu
     }
 
@@ -2317,32 +3362,50 @@ impl Shell {
     /// shape as Locations, but the depth-0 volume row carries a
     /// `(total, available)` capacity so the renderer can draw a
     /// Finder-style capacity bar.
-    fn build_volumes_rows(&mut self) -> Vec<TreeRowSpec> {
+    fn build_volumes_rows(&mut self, cx: &App) -> Vec<TreeRowSpec> {
         let current = self.active_tab().current_dir.clone();
         let mut rows: Vec<TreeRowSpec> = Vec::new();
-        for v in &self.volumes {
-            let path = v.path.clone();
+        // Snapshot the favorites paths once so the inner loop doesn't
+        // re-read the entity per row.
+        let favs = self.favorites.read(cx);
+        let volume_paths: Vec<(PathBuf, String, Option<(u64, u64)>)> = self
+            .volumes
+            .iter()
+            .map(|v| {
+                let cap = match (v.total_bytes, v.available_bytes) {
+                    (Some(t), Some(a)) if t > 0 => Some((t, a)),
+                    _ => None,
+                };
+                (v.path.clone(), v.name.clone(), cap)
+            })
+            .collect();
+        let mut entries: Vec<(PathBuf, String, Option<(u64, u64)>, bool)> = volume_paths
+            .into_iter()
+            .map(|(p, n, c)| {
+                let fav = favs.contains_path(&p);
+                (p, n, c, fav)
+            })
+            .collect();
+        let _ = favs;
+        for (path, name, capacity, favorited) in entries.drain(..) {
             let node_id = self.fs.id_for_path(&path);
             self.node_store
                 .get_or_create_path_with_id(path.clone(), node_id);
             let is_expanded = self.expanded.contains(&path);
-            let capacity = match (v.total_bytes, v.available_bytes) {
-                (Some(t), Some(a)) if t > 0 => Some((t, a)),
-                _ => None,
-            };
             rows.push(TreeRowSpec {
                 node_id,
                 path: path.clone(),
-                label: SharedString::from(v.name.clone()),
+                label: SharedString::from(name),
                 depth: 0,
                 is_expandable: true,
                 is_expanded,
                 is_active: path == current,
                 capacity,
                 icon: TreeRowIcon::Volume,
+                favorited,
             });
             if is_expanded {
-                self.append_tree_descendants(&mut rows, &path, 1, &current);
+                self.append_tree_descendants(&mut rows, &path, 1, &current, cx);
             }
         }
         rows
@@ -2363,16 +3426,16 @@ impl Shell {
         parent: &Path,
         depth: usize,
         current: &Path,
+        cx: &App,
     ) {
-        self.append_tree_descendants_filtered(rows, parent, depth, current, None);
+        self.append_tree_descendants_filtered(rows, parent, depth, current, None, cx);
     }
 
     /// Same as [`append_tree_descendants`] but with an optional
     /// `skip_paths` filter applied to direct children only. Used by
     /// Browse to suppress depth-1 Home children that are already
-    /// pinned in Favorites. The filter is *not* propagated to deeper
-    /// levels: once we're inside `Library/`, recursion ignores it so
-    /// `Library/Application Support` still lists.
+    /// pinned in Locations. The filter is *not* propagated to deeper
+    /// levels.
     fn append_tree_descendants_filtered(
         &self,
         rows: &mut Vec<TreeRowSpec>,
@@ -2380,24 +3443,23 @@ impl Shell {
         depth: usize,
         current: &Path,
         skip_paths: Option<&HashSet<PathBuf>>,
+        cx: &App,
     ) {
         let Some(children) = self.tree_children.get(parent) else {
             return;
         };
+        let favs = self.favorites.read(cx);
         for child in children {
             if !self.show_hidden && child.label.starts_with('.') {
                 continue;
             }
-            // Filter is applied at this depth only — passes `None`
-            // to the recursive call, so grandchildren are never
-            // filtered. Keeps Browse complete past the depth-1
-            // Favorites overlap.
             if let Some(skip) = skip_paths {
                 if skip.contains(&child.path) {
                     continue;
                 }
             }
             let is_expanded = self.expanded.contains(&child.path);
+            let favorited = favs.contains_path(&child.path);
             rows.push(TreeRowSpec {
                 node_id: child.node_id,
                 path: child.path.clone(),
@@ -2408,9 +3470,10 @@ impl Shell {
                 is_active: &child.path == current,
                 capacity: None,
                 icon: TreeRowIcon::Folder,
+                favorited,
             });
             if is_expanded {
-                self.append_tree_descendants(rows, &child.path, depth + 1, current);
+                self.append_tree_descendants(rows, &child.path, depth + 1, current, cx);
             }
         }
     }
@@ -2673,10 +3736,13 @@ impl Shell {
             tooltip::Tooltip,
         };
 
-        let selected = self
-            .active_tab()
-            .selected
-            .and_then(|i| self.table.read(cx).delegate().entries.get(i).cloned());
+        // Preview always reflects the **lead** row, even with a
+        // multi-selection. Matches Finder's "the focused one of
+        // many" semantics.
+        let selected = {
+            let entries = &self.table.read(cx).delegate().entries;
+            self.active_tab().lead_row(entries).and_then(|i| entries.get(i).cloned())
+        };
 
         let header = div()
             .text_xs()
@@ -2949,12 +4015,20 @@ impl Shell {
             let weak_for_crumb = cx.weak_entity();
             let path_for_menu = path.clone();
             let path_for_click = path.clone();
+            // §5 favorited indicator: trailing star on any breadcrumb
+            // segment whose path is in the Favorites index. The last
+            // segment is the current-folder header per §5.1, so the
+            // current-folder header is covered by the same render path.
+            let favorited = self.favorites.read(cx).contains_path(&path);
             let crumb = div()
                 .id(ElementId::Name(format!("crumb-{i}").into()))
                 .px_2()
                 .py_1()
                 .rounded(cx.theme().radius)
                 .text_sm()
+                .flex()
+                .items_center()
+                .gap_1()
                 .text_color(if is_last {
                     cx.theme().foreground
                 } else {
@@ -2964,6 +4038,16 @@ impl Shell {
                 .cursor_pointer()
                 .hover(|this| this.bg(cx.theme().secondary))
                 .child(label)
+                .when(favorited, |this| {
+                    this.child(
+                        svg()
+                            .path("icons/nav/star.svg")
+                            .w(px(11.0))
+                            .h(px(11.0))
+                            .text_color(cx.theme().primary)
+                            .flex_shrink_0(),
+                    )
+                })
                 .tooltip({
                     let t = SharedString::from(tooltip_path);
                     move |window, cx| {
@@ -2974,15 +4058,28 @@ impl Shell {
                     this.navigate(path_for_click.clone(), cx);
                 }))
                 .context_menu(move |menu, _window, cx| {
-                    if let Some(s) = weak_for_crumb.upgrade() {
+                    let favorited_now = if let Some(s) = weak_for_crumb.upgrade() {
+                        let already =
+                            s.read(cx).favorites.read(cx).contains_path(&path_for_menu);
                         s.update(cx, |shell, _| {
                             shell.context_target = Some(path_for_menu.clone());
+                            shell.favorites_context_path = Some(path_for_menu.clone());
                         });
-                    }
+                        already
+                    } else {
+                        false
+                    };
+                    let favorite_label = if favorited_now {
+                        "Remove from Favorites"
+                    } else {
+                        "Add to Favorites"
+                    };
                     menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
                         .separator()
                         .menu("Reveal in Finder", Box::new(RevealContextPath))
                         .menu("Copy Path", Box::new(CopyContextPath))
+                        .separator()
+                        .menu(favorite_label, Box::new(ToggleFavoriteForTarget))
                         .separator()
                         .menu("New Folder Here", Box::new(NewFolderHere))
                 });
@@ -3009,9 +4106,10 @@ impl Render for Shell {
             gpui_component::Theme::change(mode, Some(window), cx);
         }
         let weak = cx.weak_entity();
-        let favorites_menu = self.build_favorites_menu(weak.clone());
-        let browse_rows = self.build_browse_rows();
-        let volumes_rows = self.build_volumes_rows();
+        let locations_menu = self.build_locations_menu(weak.clone(), cx);
+        let favorites_section = self.build_user_favorites_section(weak.clone(), cx);
+        let browse_rows = self.build_browse_rows(cx);
+        let volumes_rows = self.build_volumes_rows(cx);
         let has_volumes = !self.volumes.is_empty();
         let breadcrumb = self.breadcrumb(cx);
         let path_str = self.active_tab().current_dir.to_string_lossy().into_owned();
@@ -3024,24 +4122,22 @@ impl Render for Shell {
         // each row container, so the labels grow as the user
         // drags the splitter.
         //
-        // Phase 2 IA: Favorites = flat icon-prefixed shortcuts
-        // (SidebarMenu primitive); Browse = single-rooted expandable
-        // tree at Home; Volumes = expandable per-volume tree. Each
-        // section is visually distinct (header style differs between
-        // SidebarGroup labels and TreeSection headers) and Downloads
-        // can no longer appear twice because Favorites items don't
-        // expand.
+        // Sidebar IA: Locations = fixed OS-standard folders (flat
+        // SidebarMenu); Favorites = user-curated, persisted, reorderable
+        // shortcuts (docs/features/FAVORITES.md); Browse = single-rooted
+        // expandable Home tree; Volumes = expandable per-volume tree.
         // Sidebar no longer carries the "Feraille" header — that moved
-        // into the TitleBar at the top of the window (Phase 7).
-        // Icon-mode collapse is enabled so the toggle button in the
-        // TitleBar can shrink the sidebar to a 48-DIP icon strip.
+        // into the TitleBar at the top of the window. Icon-mode collapse
+        // is enabled so the toggle button in the TitleBar can shrink the
+        // sidebar to a 48-DIP icon strip.
         let mut sidebar = Sidebar::new("shell-sidebar")
             .collapsible(gpui_component::sidebar::SidebarCollapsible::Icon)
             .collapsed(self.sidebar_collapsed)
             .w_full()
             .child(ShellSidebarItem::group(
-                SidebarGroup::new("Favorites").child(favorites_menu),
+                SidebarGroup::new("Locations").child(locations_menu),
             ))
+            .child(favorites_section)
             .child(ShellSidebarItem::tree(TreeSection::new(
                 "Browse",
                 browse_rows,
@@ -3068,13 +4164,17 @@ impl Render for Shell {
         let entries = &delegate.entries;
         let entry_count = entries.len();
         let total_size: u64 = entries.iter().map(|e| e.size).sum();
-        let selected_count = self.active_tab().selected.map(|_| 1).unwrap_or(0);
-        let selected_size: u64 = self
-            .active_tab()
-            .selected
-            .and_then(|i| entries.get(i))
+        // Multi-select stats: count the whole selection set and sum
+        // the visible entries' sizes for the rows that are members.
+        // Iterating `entries` once is O(N) and the membership check
+        // is an O(1) HashSet hit per row.
+        let selection = &self.active_tab().selection;
+        let selected_count = selection.len();
+        let selected_size: u64 = entries
+            .iter()
+            .filter(|e| selection.contains(&e.id))
             .map(|e| e.size)
-            .unwrap_or(0);
+            .sum();
         // Free-space query — sync, very cheap on macOS (statvfs).
         // Returns None on non-macOS or for paths we can't reach.
         let volume_info = feraille_fs_native::volume_info_for_path(
@@ -3165,6 +4265,14 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_cursor_last))
             .on_action(cx.listener(Self::on_page_up))
             .on_action(cx.listener(Self::on_page_down))
+            .on_action(cx.listener(Self::on_cursor_up_extend))
+            .on_action(cx.listener(Self::on_cursor_down_extend))
+            .on_action(cx.listener(Self::on_cursor_first_extend))
+            .on_action(cx.listener(Self::on_cursor_last_extend))
+            .on_action(cx.listener(Self::on_page_up_extend))
+            .on_action(cx.listener(Self::on_page_down_extend))
+            .on_action(cx.listener(Self::on_select_all))
+            .on_action(cx.listener(Self::on_clear_selection))
             .on_action(cx.listener(Self::on_toggle_preview))
             .on_action(cx.listener(Self::on_get_info))
             .on_action(cx.listener(Self::on_zoom_in))
@@ -3198,6 +4306,55 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_with_slot_10))
             .on_action(cx.listener(Self::on_open_with_slot_11))
             .on_action(cx.listener(Self::on_undo_last_action))
+            .on_action(cx.listener(Self::on_toggle_favorite_for_target))
+            .on_action(cx.listener(Self::on_add_current_folder_to_favorites))
+            .on_action(cx.listener(Self::on_toggle_favorites_section))
+            .on_action(cx.listener(Self::on_sort_favorites_by_name))
+            .on_action(cx.listener(Self::on_sort_favorites_by_date_added_newest))
+            .on_action(cx.listener(Self::on_sort_favorites_by_date_added_oldest))
+            .on_action(cx.listener(Self::on_sort_favorites_by_kind))
+            .on_action(cx.listener(Self::on_move_favorite_up))
+            .on_action(cx.listener(Self::on_move_favorite_down))
+            .on_action(cx.listener(Self::on_rename_favorite))
+            .on_action(cx.listener(Self::on_reset_favorite_name))
+            .on_action(cx.listener(Self::on_reset_favorite_icon))
+            .on_action(cx.listener(Self::on_set_favorite_icon_star))
+            .on_action(cx.listener(Self::on_set_favorite_icon_folder))
+            .on_action(cx.listener(Self::on_set_favorite_icon_code))
+            .on_action(cx.listener(Self::on_set_favorite_icon_image))
+            .on_action(cx.listener(Self::on_set_favorite_icon_music))
+            .on_action(cx.listener(Self::on_set_favorite_icon_archive))
+            // §3.1 tear-off remove. The favorites section's drop gaps
+            // already intercept FavoriteDragPayload to reorder; any
+            // drop that falls through to the shell's outer container
+            // is by definition outside the section — treat it as a
+            // remove with undo (§3.2). Same code path as the menu /
+            // keyboard remove, so Cmd+Z restores at the prior index.
+            .on_drop(cx.listener(
+                |this, payload: &crate::favorites_section::FavoriteDragPayload, window, cx| {
+                    use gpui_component::notification::Notification;
+                    let id = payload.id;
+                    let label = this
+                        .favorites
+                        .read(cx)
+                        .entry_by_id(id)
+                        .map(|f| f.effective_label())
+                        .unwrap_or_else(|| "favorite".to_string());
+                    let removed_for_undo = this.favorites.read(cx).entry_by_id(id).cloned();
+                    this.favorites.update(cx, |f, cx| {
+                        f.remove(id, cx);
+                    });
+                    if let Some(fav) = removed_for_undo {
+                        this.push_undo(UndoOp::RemoveFavorite(fav));
+                    }
+                    window.push_notification(
+                        Notification::info(format!(
+                            "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo"
+                        )),
+                        cx,
+                    );
+                },
+            ))
             .relative()
             .size_full()
             .bg(cx.theme().background)

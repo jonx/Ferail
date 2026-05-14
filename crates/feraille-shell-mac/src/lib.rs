@@ -141,6 +141,40 @@ pub fn show_alert(title: &str, body: &str) {
 #[cfg(not(target_os = "macos"))]
 pub fn show_alert(_title: &str, _body: &str) {}
 
+/// Show a modal NSAlert with a single-line text input. Returns
+/// `Some(value)` on OK, `None` if the user cancelled (or non-macOS).
+/// Used by the Favorites rename flow and the Locate… repoint flow.
+/// Must be called on the main thread.
+#[cfg(target_os = "macos")]
+pub fn prompt_for_text(title: &str, body: &str, default: &str) -> Option<String> {
+    use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSAlertStyle, NSTextField};
+    use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString};
+
+    let mtm = MainThreadMarker::new()?;
+    unsafe {
+        let alert = NSAlert::new(mtm);
+        alert.setMessageText(&NSString::from_str(title));
+        alert.setInformativeText(&NSString::from_str(body));
+        alert.setAlertStyle(NSAlertStyle::Informational);
+        alert.addButtonWithTitle(&NSString::from_str("OK"));
+        alert.addButtonWithTitle(&NSString::from_str("Cancel"));
+        let input = NSTextField::new(mtm);
+        let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(280.0, 24.0));
+        input.setFrame(frame);
+        input.setStringValue(&NSString::from_str(default));
+        alert.setAccessoryView(Some(&input));
+        if alert.runModal() != NSAlertFirstButtonReturn {
+            return None;
+        }
+        Some(input.stringValue().to_string())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn prompt_for_text(_title: &str, _body: &str, _default: &str) -> Option<String> {
+    None
+}
+
 /// Open `url` in the user's default handler (typically the browser).
 /// Best-effort — failures are logged at the AppKit level and we don't
 /// surface them. macOS uses NSWorkspace; non-macOS falls back to the

@@ -6,3 +6,4 @@ license.workspace = true
 description = "Core domain types for Feraille — filesystem-agnostic, UI-agnostic"
 
 [dependencies]
+uuid = { version = "1", features = ["v4"] }

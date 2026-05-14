@@ -92,6 +92,7 @@ fn print_reset_db_usage() {
         ResetScope::AntTrail,
         ResetScope::Magic,
         ResetScope::Quarantine,
+        ResetScope::Favorites,
     ] {
         let name = match scope {
             ResetScope::All => "all",
@@ -100,6 +101,7 @@ fn print_reset_db_usage() {
             ResetScope::AntTrail => "ant-trail",
             ResetScope::Magic => "magic",
             ResetScope::Quarantine => "quarantine",
+            ResetScope::Favorites => "favorites",
         };
         eprintln!("  {:<12} {}", name, scope.help_label());
     }

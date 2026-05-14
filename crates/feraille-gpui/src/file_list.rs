@@ -60,6 +60,25 @@ pub struct FileListDelegate {
     /// lookup synchronously on the UI thread). Renderer pairs each
     /// row's slot with the name cell to draw small coloured dots.
     pub tags: Vec<Vec<feraille_core::commands::TagColor>>,
+    /// `is_favorited[row]` is `true` when the entry's path is currently
+    /// in the user-curated Favorites list — drives the §5 star indicator
+    /// on the Name cell. Recomputed by `Shell::refresh_file_list_favorited`
+    /// on every load and whenever the Favorites entity changes (the
+    /// `cx.observe` subscription in `Shell::new`).
+    pub is_favorited: Vec<bool>,
+    /// `selected_in_set[row]` is `true` when the entry's NodeId is in
+    /// the active tab's selection set (spec §2.2). Rebuilt by
+    /// `Shell::refresh_file_list_selection` after every selection
+    /// mutation and after every streaming batch / Done. Drives the
+    /// selection-fill paint in `render_tr`. The lead row is also a
+    /// member of the set; it gets the primitive's native
+    /// `selected_row` overlay on top as the focus ring.
+    pub selected_in_set: Vec<bool>,
+    /// `is_lead[row]` is `true` for at most one row — the
+    /// keyboard-cursor / range-lead. Cosmetic only; the Table
+    /// primitive's `selected_row` overlay is what visually distinguishes
+    /// the lead from set-only members.
+    pub is_lead: Vec<bool>,
 }
 
 impl FileListDelegate {
@@ -88,6 +107,9 @@ impl FileListDelegate {
             icons,
             heats: Vec::new(),
             tags: Vec::new(),
+            is_favorited: Vec::new(),
+            selected_in_set: Vec::new(),
+            is_lead: Vec::new(),
         }
     }
 
@@ -129,6 +151,14 @@ impl FileListDelegate {
         }
         // Reset heats; Shell repopulates after load returns.
         self.heats = vec![0.0; self.entries.len()];
+        // Reset favorited bits; Shell repopulates from the favorites
+        // entity right after load (Shell::refresh_file_list_favorited).
+        self.is_favorited = vec![false; self.entries.len()];
+        // Reset selection parallel vecs; Shell repopulates from the
+        // active tab's selection set right after load
+        // (Shell::refresh_file_list_selection).
+        self.selected_in_set = vec![false; self.entries.len()];
+        self.is_lead = vec![false; self.entries.len()];
         // Read Finder colour tags for the first `TAG_PREFETCH_CAP`
         // rows. xattr reads cost ~1ms each on macOS — fine for
         // typical folders (~50 entries), capped so a giant Downloads
@@ -155,6 +185,9 @@ impl FileListDelegate {
         self.paths.clear();
         self.heats.clear();
         self.tags.clear();
+        self.is_favorited.clear();
+        self.selected_in_set.clear();
+        self.is_lead.clear();
     }
 
     pub fn replace_entries(
@@ -167,6 +200,9 @@ impl FileListDelegate {
         self.paths = paths;
         self.heats = heats;
         self.tags = vec![Vec::new(); self.entries.len()];
+        self.is_favorited = vec![false; self.entries.len()];
+        self.selected_in_set = vec![false; self.entries.len()];
+        self.is_lead = vec![false; self.entries.len()];
     }
 
     pub fn append_entries(
@@ -180,6 +216,9 @@ impl FileListDelegate {
         self.entries.extend(entries);
         self.heats.extend(heats);
         self.tags.extend((0..n).map(|_| Vec::new()));
+        self.is_favorited.extend((0..n).map(|_| false));
+        self.selected_in_set.extend((0..n).map(|_| false));
+        self.is_lead.extend((0..n).map(|_| false));
     }
 
     pub fn path_for_entry(&self, id: NodeId) -> Option<PathBuf> {
@@ -204,7 +243,7 @@ impl TableDelegate for FileListDelegate {
         &mut self,
         row_ix: usize,
         _window: &mut Window,
-        _cx: &mut Context<TableState<Self>>,
+        cx: &mut Context<TableState<Self>>,
     ) -> Stateful<Div> {
         let _path_guard = feraille_core::path_guard::enter_render();
         // Ant Trail heat tint (Stage 9.b). Renders only on directory
@@ -219,6 +258,8 @@ impl TableDelegate for FileListDelegate {
             .get(row_ix)
             .map(|e| matches!(e.kind, EntryKind::Directory))
             .unwrap_or(false);
+        let in_set = self.selected_in_set.get(row_ix).copied().unwrap_or(false);
+        let is_lead = self.is_lead.get(row_ix).copied().unwrap_or(false);
         let mut row = div().id(("file-row", row_ix));
         if kind_is_dir && heat > 0.0 {
             // Warm orange tint, scaled by heat. Stable hue across
@@ -232,6 +273,17 @@ impl TableDelegate for FileListDelegate {
                 b: 0.26,
                 a: alpha,
             });
+        }
+        // Spec §2 multi-select fill. Painted for every set member
+        // EXCEPT the lead — the Table primitive draws its own
+        // `selected_row` overlay on the lead, which serves as the
+        // distinct focus ring spec §2.3 calls for. Painting both on
+        // the lead muddles the colour. The accent tint is
+        // intentionally lower-alpha than the primitive's overlay
+        // so a set with a defined lead reads as "lead is brighter,
+        // rest are tinted."
+        if in_set && !is_lead {
+            row = row.bg(cx.theme().accent.opacity(0.35));
         }
         // OS drag-out: GPUI's macOS backend recognises ExternalPaths
         // and uses NSFilePromise / NSPasteboard, so dragging a row
@@ -324,6 +376,23 @@ impl TableDelegate for FileListDelegate {
                             .bg(tag_color_rgba(*color)),
                     );
                 }
+                // §5 favorited indicator: small accent star trailing
+                // the name. Only painted for folder rows (files can't
+                // be favorited) where the row's path is in the favorites
+                // index. The parallel vec is refreshed by Shell on every
+                // load + every favorites mutation.
+                let is_favorited = self.is_favorited.get(row_ix).copied().unwrap_or(false);
+                let star_color = cx.theme().primary;
+                let star = if is_favorited && matches!(entry.kind, EntryKind::Directory) {
+                    svg()
+                        .path("icons/nav/star.svg")
+                        .w(px(12.0))
+                        .h(px(12.0))
+                        .text_color(star_color)
+                        .into_any_element()
+                } else {
+                    div().w(px(0.0)).h(px(12.0)).into_any_element()
+                };
                 div()
                     .id(("file-row-name", row_ix))
                     .flex()
@@ -340,6 +409,7 @@ impl TableDelegate for FileListDelegate {
                             .child(SharedString::from(full_name)),
                     )
                     .child(chips)
+                    .child(star)
                     .tooltip(move |window, cx| {
                         Tooltip::new(tooltip_name.clone()).build(window, cx)
                     })
@@ -416,8 +486,8 @@ impl TableDelegate for FileListDelegate {
             OpenSelected, OpenWithSlot0, OpenWithSlot1, OpenWithSlot2, OpenWithSlot3,
             OpenWithSlot4, OpenWithSlot5, OpenWithSlot6, OpenWithSlot7, OpenWithSlot8,
             OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook, RenameSelected,
-            RevealInFinder, ToggleTagBlue, ToggleTagGray, ToggleTagGreen, ToggleTagOrange,
-            ToggleTagPurple, ToggleTagRed, ToggleTagYellow,
+            RevealInFinder, ToggleFavoriteForTarget, ToggleTagBlue, ToggleTagGray, ToggleTagGreen,
+            ToggleTagOrange, ToggleTagPurple, ToggleTagRed, ToggleTagYellow,
         };
 
         // Phase 6 follow-on: snapshot Open-With candidates and the
@@ -451,6 +521,18 @@ impl TableDelegate for FileListDelegate {
         let tag_purple_on = applied_tags.contains(&feraille_core::commands::TagColor::Purple);
         let tag_gray_on = applied_tags.contains(&feraille_core::commands::TagColor::Gray);
 
+        let is_folder = self
+            .entries
+            .get(row_ix)
+            .map(|e| matches!(e.kind, EntryKind::Directory))
+            .unwrap_or(false);
+        let already_favorited = self.is_favorited.get(row_ix).copied().unwrap_or(false);
+        let favorite_label = if already_favorited {
+            "Remove from Favorites"
+        } else {
+            "Add to Favorites"
+        };
+
         let mut menu = menu
             .menu("Open", Box::new(OpenSelected))
             .menu("Open in New Tab", Box::new(OpenInNewTab))
@@ -465,6 +547,15 @@ impl TableDelegate for FileListDelegate {
             .menu("Duplicate", Box::new(Duplicate))
             .menu("Make Alias", Box::new(MakeAlias))
             .menu("Compress", Box::new(Compress));
+        if is_folder {
+            // Toggle the row's path against the user's Favorites
+            // (docs/features/FAVORITES.md §2.1). The right-click already
+            // set `context_row`; `resolve_favorite_target` picks the
+            // row's path from there.
+            menu = menu
+                .separator()
+                .menu(favorite_label, Box::new(ToggleFavoriteForTarget));
+        }
 
         // Build submenu Entities via `PopupMenu::build`, which only
         // needs `&mut App` (which we have via Context<TableState>'s

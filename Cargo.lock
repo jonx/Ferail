@@ -1811,6 +1811,9 @@ dependencies = [
 [[package]]
 name = "feraille-core"
 version = "0.0.1"
+dependencies = [
+ "uuid",
+]
 
 [[package]]
 name = "feraille-design"
@@ -1864,6 +1867,7 @@ version = "0.0.1"
 dependencies = [
  "feraille-core",
  "rusqlite",
+ "uuid",
 ]
 
 [[package]]

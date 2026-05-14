@@ -13,6 +13,8 @@
 pub mod app_state;
 pub mod assets;
 pub mod disk_usage;
+pub mod favorites;
+pub mod favorites_section;
 pub mod file_list;
 pub mod fs_watcher;
 pub mod icons;

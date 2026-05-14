@@ -8,3 +8,4 @@ description = "Persistent metadata store for Feraille — SQLite-backed, schema-
 [dependencies]
 feraille-core.workspace = true
 rusqlite = { version = "0.31", features = ["bundled"] }
+uuid.workspace = true

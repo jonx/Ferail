@@ -42,5 +42,9 @@ objc2-app-kit = { version = "0.2", features = [
     "NSAlert",
     "NSButton",
     "NSControl",
+    "NSTextField",
+    "NSText",
+    "NSResponder",
+    "NSView",
 ] }
 raw-window-handle = "0.6"

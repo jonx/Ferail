@@ -19,11 +19,13 @@ use feraille_core::commands::{all_commands, CommandId, Shortcut};
 use gpui::{App, KeyBinding};
 
 use crate::shell::{
-    self, ClearFilter, CloseTab, CopyPath, CursorDown, CursorFirst, CursorLast, CursorUp,
-    EditBreadcrumb, FocusFilter, GetInfo, GoHome, MoveToTrash, NavigateBack, NavigateForward,
-    NavigateParent, NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected,
-    OpenSettings, PageDown, PageUp, PrevTab, QuickLook, Refresh, RenameSelected,
-    RevealInFinder, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
+    self, ClearFilter, CloseTab, CopyPath, CursorDown, CursorDownExtend, CursorFirst,
+    CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp, CursorUpExtend, EditBreadcrumb,
+    FocusFilter, GetInfo, GoHome, MoveToTrash, NavigateBack, NavigateForward, NavigateParent,
+    NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings,
+    PageDown, PageDownExtend, PageUp, PageUpExtend, PrevTab, QuickLook, Refresh,
+    RenameSelected, RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview,
+    ZoomIn, ZoomOut, ZoomReset,
 };
 
 /// Install keybindings for every command in `feraille_core::commands`
@@ -264,5 +266,42 @@ pub(crate) fn install_extras(cx: &mut App) {
         // Look is a macOS-specific affordance; the binding lives
         // here alongside other shell-context extras.
         KeyBinding::new("space", QuickLook, Some(shell::SHELL_CONTEXT)),
+        // Favorites toggle on the currently-selected folder
+        // (docs/features/FAVORITES.md). Cmd+D mirrors Finder's
+        // "Add to Sidebar" muscle memory and avoids the Cmd+T
+        // collision with NewTab.
+        KeyBinding::new(
+            "cmd-d",
+            crate::shell::ToggleFavoriteForTarget,
+            Some(shell::SHELL_CONTEXT),
+        ),
+        // Keyboard reorder of the focused favorite (§4.4).
+        KeyBinding::new(
+            "cmd-alt-up",
+            crate::shell::MoveFavoriteUp,
+            Some(shell::SHELL_CONTEXT),
+        ),
+        KeyBinding::new(
+            "cmd-alt-down",
+            crate::shell::MoveFavoriteDown,
+            Some(shell::SHELL_CONTEXT),
+        ),
+        // Spec §2.5 multi-select keyboard:
+        //   Cmd+A — select every visible row.
+        //   Shift+Up/Down/Home/End/PgUp/PgDn — Shift-extend the lead
+        //   keeping the anchor fixed. The non-Shift variants are
+        //   already bound through the command catalogue
+        //   (`selection.cursor_up` etc.); these augment them.
+        // The catalogue stays the source of truth for the plain
+        // variants; the extend variants are shell-local for now and
+        // can move into the catalogue when other surfaces (menu
+        // bar, command palette) need to enumerate them.
+        KeyBinding::new("cmd-a", SelectAll, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("shift-up", CursorUpExtend, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("shift-down", CursorDownExtend, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("shift-home", CursorFirstExtend, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("shift-end", CursorLastExtend, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("shift-pageup", PageUpExtend, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("shift-pagedown", PageDownExtend, Some(shell::SHELL_CONTEXT)),
     ]);
 }

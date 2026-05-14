@@ -6,8 +6,15 @@ feature notes in [docs/features](docs/features).
 
 ## Highest Priority
 
-- Persist user-owned Favorites: pin, remove, reorder, drag-to-add, and
-  reload by canonical path/NodeId on launch.
+- Favorites polish — the v1 shipped per [docs/features/FAVORITES.md](docs/features/FAVORITES.md);
+  remaining items are inline-rename text field (today's rename uses a
+  native NSAlert prompt), live filesystem-watcher integration for
+  Missing/Unmounted state transitions, NSWorkspace mount/unmount
+  notifications + Locate-via-NSOpenPanel, ~150ms fade/collapse +
+  dedup-pulse animations, arrow-key sidebar focus + Delete-on-focus
+  removal + Cmd+Option+click new-window modifier, drop-file-onto-
+  favorite move/copy (waiting on the file-op workers below), and the
+  full acceptance-checklist sweep with screenshots.
 - Add Recents as a first-class sidebar section, fed by Ant Trail or a
   dedicated recent-open list, with clear/remove actions.
 - Persist file-table column order after drag reorder, alongside column

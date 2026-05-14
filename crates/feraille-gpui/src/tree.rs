@@ -31,6 +31,7 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
+use smallvec::smallvec;
 use gpui_component::{
     ActiveTheme, Collapsible, h_flex,
     menu::ContextMenuExt as _,
@@ -70,6 +71,10 @@ pub struct TreeRowSpec {
     /// volume rows; `None` for everything else.
     pub capacity: Option<(u64, u64)>,
     pub icon: TreeRowIcon,
+    /// §5 favorited indicator: `true` when this path is in the user-
+    /// curated Favorites list. Computed from `Shell::favorites` at row
+    /// build time; render paints a small accent star trailing the label.
+    pub favorited: bool,
 }
 
 /// Cached representation of one direct child of an expanded folder.
@@ -122,20 +127,26 @@ impl Collapsible for TreeSection {
     }
 }
 
-/// Unifies the two kinds of section the shell's sidebar contains
-/// (flat icon-prefixed menu groups for Favorites, custom tree
-/// sections for Browse / Volumes) into a single `SidebarItem` so
-/// `gpui_component::Sidebar<E>` can hold a mixed sequence — gpui-
+/// Unifies the kinds of section the shell's sidebar contains:
+/// flat icon-prefixed menu groups (Locations), the user-curated
+/// Favorites section with its own collapse + rendering rules
+/// (docs/features/FAVORITES.md), and custom tree sections (Browse,
+/// Volumes). Wrapping them in a single `SidebarItem` enum lets
+/// `gpui_component::Sidebar<E>` hold the mixed sequence — gpui-
 /// component otherwise pins one `E` for all of a sidebar's children.
 #[derive(Clone)]
 pub enum ShellSidebarItem {
     Group(SidebarGroup<SidebarMenu>),
+    Favorites(crate::favorites_section::FavoritesSection),
     Tree(TreeSection),
 }
 
 impl ShellSidebarItem {
     pub fn group(g: SidebarGroup<SidebarMenu>) -> Self {
         ShellSidebarItem::Group(g)
+    }
+    pub fn favorites(f: crate::favorites_section::FavoritesSection) -> Self {
+        ShellSidebarItem::Favorites(f)
     }
     pub fn tree(t: TreeSection) -> Self {
         ShellSidebarItem::Tree(t)
@@ -146,12 +157,14 @@ impl Collapsible for ShellSidebarItem {
     fn is_collapsed(&self) -> bool {
         match self {
             ShellSidebarItem::Group(g) => g.is_collapsed(),
+            ShellSidebarItem::Favorites(f) => f.is_collapsed(),
             ShellSidebarItem::Tree(t) => t.is_collapsed(),
         }
     }
     fn collapsed(self, c: bool) -> Self {
         match self {
             ShellSidebarItem::Group(g) => ShellSidebarItem::Group(g.collapsed(c)),
+            ShellSidebarItem::Favorites(f) => ShellSidebarItem::Favorites(f.collapsed(c)),
             ShellSidebarItem::Tree(t) => ShellSidebarItem::Tree(t.collapsed(c)),
         }
     }
@@ -166,6 +179,7 @@ impl SidebarItem for ShellSidebarItem {
     ) -> impl IntoElement {
         match self {
             ShellSidebarItem::Group(g) => g.render(id, window, cx).into_any_element(),
+            ShellSidebarItem::Favorites(f) => f.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Tree(t) => t.render(id, window, cx).into_any_element(),
         }
     }
@@ -227,6 +241,7 @@ fn render_tree_row(
         is_active,
         capacity,
         icon,
+        favorited,
     } = spec;
     let theme = cx.theme();
     let row_key: SharedString = format!("tree-row-{}", path.display()).into();
@@ -236,6 +251,7 @@ fn render_tree_row(
     // without taking too much sidebar width.
     let indent = px(8.0 + 14.0 * depth as f32);
 
+    let drag_path = path.clone();
     let mut row = h_flex()
         .id(ElementId::Name(row_key))
         .w_full()
@@ -251,7 +267,11 @@ fn render_tree_row(
             theme.sidebar_accent_foreground
         } else {
             theme.sidebar_foreground
-        });
+        })
+        .on_drag(
+            gpui::ExternalPaths(smallvec![drag_path]),
+            |paths, _offset, _window, cx| cx.new(|_| paths.clone()),
+        );
     if is_active {
         row = row.bg(theme.sidebar_accent);
     } else {
@@ -327,11 +347,33 @@ fn render_tree_row(
                 .child(label)
                 .when(is_active, |this| this.font_weight(FontWeight::SEMIBOLD)),
         )
-        .on_click(move |_, _window, cx| {
-            if let Some(shell) = shell_for_label.upgrade() {
-                shell.update(cx, |s, cx| {
-                    s.navigate_node(label_node, cx);
-                });
+        .when(favorited, |this| {
+            // §5 favorited indicator: trailing accent star. Same
+            // glyph used in the file list and breadcrumb so the
+            // visual language is consistent across surfaces.
+            this.child(
+                svg()
+                    .path("icons/nav/star.svg")
+                    .w(px(12.0))
+                    .h(px(12.0))
+                    .text_color(cx.theme().primary)
+                    .flex_shrink_0(),
+            )
+        })
+        .on_click({
+            let path = path.clone();
+            move |event, _window, cx| {
+                if let Some(shell) = shell_for_label.upgrade() {
+                    let modifiers = event.modifiers();
+                    let path = path.clone();
+                    shell.update(cx, |s, cx| {
+                        if modifiers.platform {
+                            s.open_path_in_new_tab(path, cx);
+                        } else {
+                            s.navigate_node(label_node, cx);
+                        }
+                    });
+                }
             }
         });
 
@@ -343,20 +385,32 @@ fn render_tree_row(
     // with the `row = row.child(...)` accumulator pattern above.
     let shell_for_menu = shell.clone();
     let path_for_menu = path.clone();
+    let favorite_label = if favorited {
+        "Remove from Favorites"
+    } else {
+        "Add to Favorites"
+    };
     let attach_menu = move |el: gpui::Stateful<gpui::Div>| {
         el.context_menu(move |menu, _window, cx| {
             use crate::shell::{
                 CopyContextPath, NewFolderHere, OpenContextInNewTab, RevealContextPath,
+                ToggleFavoriteForTarget,
             };
             if let Some(shell) = shell_for_menu.upgrade() {
                 shell.update(cx, |s, _| {
                     s.context_target = Some(path_for_menu.clone());
+                    // Toggle action reads from `favorites_context_path`,
+                    // distinct from `context_target` which the Reveal /
+                    // Copy / OpenInNewTab handlers consume.
+                    s.favorites_context_path = Some(path_for_menu.clone());
                 });
             }
             menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
                 .separator()
                 .menu("Reveal in Finder", Box::new(RevealContextPath))
                 .menu("Copy Path", Box::new(CopyContextPath))
+                .separator()
+                .menu(favorite_label, Box::new(ToggleFavoriteForTarget))
                 .separator()
                 .menu("New Folder Here", Box::new(NewFolderHere))
         })
