@@ -3,7 +3,7 @@
 // Dispatches between the live GUI and the headless `--screenshot`
 // capture path. All real view code lives in `crate::shell`.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
@@ -66,9 +66,20 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
     match cmd {
         "magic" => run_magic_cli(&args[1..]).map(Some),
         "du" | "disk-usage" => run_disk_usage_cli(&args[1..]).map(Some),
+        "thumb" | "thumbnail" => run_thumb_cli(&args[1..]).map(Some),
         "help" | "-h" | "--help" => {
             print_cli_help();
             Ok(Some(0))
+        }
+        // Flags that belong to the GUI / screenshot path (`--screenshot`,
+        // `--theme`, `--width`, etc.) pass through to `screenshot::parse_args`.
+        // Anything else that looks like a subcommand attempt — a bare word
+        // or unknown flag — surfaces the help text and exits with code 2
+        // rather than silently launching the GUI with confusing args.
+        other if !other.starts_with('-') => {
+            eprintln!("feraille: unknown subcommand: {other:?}\n");
+            print_cli_help();
+            Ok(Some(2))
         }
         _ => Ok(None),
     }
@@ -76,23 +87,49 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
 
 fn print_cli_help() {
     println!(
-        "Feraille\n\nUsage:\n  feraille                 Open the GPUI file manager\n  feraille magic <path>...  Print magic-byte format, with extension fallback\n  feraille du [options] <path>  Print disk-usage summary\n\nDisk usage options:\n  --top <n>        Number of entries to show (default: 20)\n  --packages       Descend into macOS package directories"
+        "Feraille\n\nUsage:\n  feraille                 Open the GPUI file manager\n  feraille magic [path]...  Print magic-byte format (defaults to current directory; directories are listed shallow)\n  feraille du [options] <path>  Print disk-usage summary\n  feraille thumb <path> [--out <png>] [--size N]  Extract a file's thumbnail/preview to a PNG\n\nDisk usage options:\n  --top <n>        Number of entries to show (default: 20)\n  --packages       Descend into macOS package directories\n\nThumb options:\n  --out <path>     Output PNG path (default: thumb.png)\n  --size <px>      Max edge in pixels (default: 512)"
     );
 }
 
 fn run_magic_cli(args: &[String]) -> Result<i32> {
-    if args.is_empty() {
-        eprintln!("usage: feraille magic <path>...");
-        return Ok(2);
-    }
-    for raw in args {
-        let path = PathBuf::from(raw);
-        let label = detect_magic(&path)
-            .map(str::to_string)
-            .unwrap_or_else(|| extension_fallback_label(&path));
-        println!("{}\t{}", path.display(), label);
+    // No paths → scan the current directory's files. A single
+    // directory argument behaves the same way. File arguments are
+    // probed individually as before.
+    let paths: Vec<PathBuf> = if args.is_empty() {
+        vec![PathBuf::from(".")]
+    } else {
+        args.iter().map(PathBuf::from).collect()
+    };
+    for path in paths {
+        if path.is_dir() {
+            let entries = match std::fs::read_dir(&path) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("feraille magic: {}: {}", path.display(), e);
+                    continue;
+                }
+            };
+            let mut files: Vec<PathBuf> = entries
+                .flatten()
+                .filter(|d| d.file_type().map(|t| t.is_file()).unwrap_or(false))
+                .map(|d| d.path())
+                .collect();
+            files.sort();
+            for f in files {
+                print_magic_line(&f);
+            }
+        } else {
+            print_magic_line(&path);
+        }
     }
     Ok(0)
+}
+
+fn print_magic_line(path: &Path) {
+    let label = detect_magic(path)
+        .map(str::to_string)
+        .unwrap_or_else(|| extension_fallback_label(path));
+    println!("{}\t{}", path.display(), label);
 }
 
 fn run_disk_usage_cli(args: &[String]) -> Result<i32> {
@@ -135,6 +172,80 @@ fn run_disk_usage_cli(args: &[String]) -> Result<i32> {
         print_disk_usage(&fs, path, top, descend_packages)?;
     }
     Ok(0)
+}
+
+/// `feraille thumb <path> [--out <png>] [--size N]`
+///
+/// Calls `platform_shell::fetch_quick_look_thumbnail` (which runs the
+/// full thumbnail / preview-handler pipeline on Windows; macOS
+/// `qlmanage -t` shell-out on Mac) and writes the result as a PNG.
+/// Useful for testing the preview pipeline without launching the GUI
+/// and for scripting (batch thumbnail extraction).
+fn run_thumb_cli(args: &[String]) -> Result<i32> {
+    let mut out: Option<PathBuf> = None;
+    let mut size: u32 = 512;
+    let mut input: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--out" => {
+                i += 1;
+                let Some(value) = args.get(i) else {
+                    eprintln!("feraille thumb: --out needs a path");
+                    return Ok(2);
+                };
+                out = Some(PathBuf::from(value));
+            }
+            s if s.starts_with("--out=") => {
+                out = Some(PathBuf::from(&s["--out=".len()..]));
+            }
+            "--size" => {
+                i += 1;
+                let Some(value) = args.get(i) else {
+                    eprintln!("feraille thumb: --size needs a number");
+                    return Ok(2);
+                };
+                size = value.parse().unwrap_or(size).clamp(16, 4096);
+            }
+            s if s.starts_with("--size=") => {
+                size = s["--size=".len()..].parse().unwrap_or(size).clamp(16, 4096);
+            }
+            "-h" | "--help" => {
+                println!("usage: feraille thumb <path> [--out <png>] [--size N]");
+                return Ok(0);
+            }
+            other => {
+                if input.is_some() {
+                    eprintln!("feraille thumb: extra positional argument {other:?}");
+                    return Ok(2);
+                }
+                input = Some(PathBuf::from(other));
+            }
+        }
+        i += 1;
+    }
+    let Some(path) = input else {
+        eprintln!("usage: feraille thumb <path> [--out <png>] [--size N]");
+        return Ok(2);
+    };
+    let out = out.unwrap_or_else(|| PathBuf::from("thumb.png"));
+
+    match feraille_gpui::platform_shell::fetch_quick_look_thumbnail(&path, size) {
+        Some((rgba, w, h)) => {
+            let buf = image::RgbaImage::from_raw(w, h, rgba)
+                .ok_or_else(|| anyhow::anyhow!("thumbnail RGBA dimensions don't match"))?;
+            buf.save(&out).context("write PNG")?;
+            println!("{}\t{}x{}\t{}", path.display(), w, h, out.display());
+            Ok(0)
+        }
+        None => {
+            eprintln!(
+                "feraille thumb: no thumbnail/preview available for {}",
+                path.display()
+            );
+            Ok(1)
+        }
+    }
 }
 
 fn print_disk_usage(fs: &NativeFs, path: &Path, top: usize, descend_packages: bool) -> Result<()> {
@@ -233,6 +344,13 @@ fn humanize_bytes(bytes: u64) -> String {
 }
 
 fn run_gui(args: screenshot::Args) {
+    // Windows shell: assign our own AppUserModelID so the taskbar
+    // groups Feraille windows under their own icon/label instead of
+    // inheriting the launching console's identity (PowerShell, etc.).
+    // No-op on macOS. Must run before any window is created — the
+    // shell caches the ID on first-window-show.
+    feraille_gpui::platform_shell::set_app_user_model_id("Knipper.Feraille");
+
     // FeraAssets stacks our local SVG bundle (file-type icons, etc.)
     // in front of the upstream gpui-component icon pack. Both surface
     // through one `icons/X.svg` namespace.
@@ -333,11 +451,17 @@ fn run_gui(args: screenshot::Args) {
         cx.on_action(|_: &OpenSettings, cx| {
             feraille_gpui::settings::open_settings_window(cx);
         });
-        // OpenAbout brings up the standard macOS About panel using the
-        // dictionary populated above. Stays an App-level fallback so
-        // the menu item is always live.
-        cx.on_action(|_: &OpenAbout, _cx| {
-            feraille_gpui::platform_shell::show_about_panel();
+        // OpenAbout opens our custom About dialog as a modal overlay
+        // on the active window via gpui-component's Dialog primitive
+        // (ESC, click-outside, close button all built in). Replaces
+        // both the Mac NSAboutPanel and the Windows MessageBoxW. The
+        // latter had a quirk where the menu stayed visually pinned
+        // because the system-modal MessageBox took focus before the
+        // menu finished dismissing — an overlay dialog inside the
+        // existing window has none of that interaction with the
+        // menu.
+        cx.on_action(|_: &OpenAbout, cx| {
+            feraille_gpui::about::open_about_dialog(cx);
         });
 
         // Build the singleton ProcessState before opening any window
@@ -357,6 +481,19 @@ fn run_gui(args: screenshot::Args) {
         });
 
         install_app_menus(cx);
+
+        // Windows/Linux: quit the process when the last window closes.
+        // macOS keeps the process resident (Finder/Safari model) and
+        // relies on Cmd+Q or the app menu to exit; this matches the
+        // platform's convention. The subscription leaks intentionally
+        // (lives the whole app run).
+        #[cfg(not(target_os = "macos"))]
+        cx.on_window_closed(|cx, _| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
 
         // [NSApp activateIgnoringOtherApps:YES] — without this the
         // terminal that invoked us keeps key-window status and our
@@ -475,11 +612,14 @@ fn install_app_menus(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action(title("selection.activate", "Open"), OpenSelected),
                 MenuItem::action(
-                    title("file.reveal_in_finder", "Reveal in Finder"),
+                    title("file.reveal_in_finder", feraille_core::commands::REVEAL_LABEL),
                     RevealInFinder,
                 ),
                 MenuItem::separator(),
-                MenuItem::action(title("file.move_to_trash", "Move to Trash"), MoveToTrash),
+                MenuItem::action(
+                    title("file.move_to_trash", feraille_core::commands::TRASH_LABEL),
+                    MoveToTrash,
+                ),
             ],
             disabled: false,
         },
@@ -517,6 +657,13 @@ fn install_app_menus(cx: &mut App) {
             disabled: false,
         },
     ]);
+
+    // Mirror the menu list into gpui-component's GlobalState. macOS
+    // ignores this (uses its NSApp menu); Windows/Linux's AppMenuBar
+    // reads from here. One source of truth for the menu spec.
+    if let Some(menus) = cx.get_menus() {
+        gpui_component::global_state::GlobalState::global_mut(cx).set_app_menus(menus);
+    }
 }
 
 /// Look up a command's title in `feraille_core::commands`, falling

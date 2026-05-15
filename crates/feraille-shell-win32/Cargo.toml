@@ -8,6 +8,10 @@ description = "Windows shell integration: namespace, IContextMenu, drag-drop, ch
 [dependencies]
 feraille-core.workspace = true
 
+# compress_paths writes Explorer-style .zip archives. Pure-Rust, no
+# extra C deps. Same major used elsewhere in the Rust ecosystem.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
 [target.'cfg(windows)'.dependencies]
 # Microsoft's official Win32 bindings. Features are pulled per-call-site
 # rather than enumerated up-front; tighten / prune once the surface
@@ -22,4 +26,17 @@ windows = { version = "0.58", features = [
     "Win32_System_DataExchange",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    # fetch_quick_look_thumbnail → SHCreateItemFromParsingName +
+    # IShellItemImageFactory + GDI GetDIBits
+    "Win32_UI_Shell",
+    "Win32_System_Com",
+    "Win32_Graphics_Gdi",
+    # IPreviewHandler fallback (preview_handler.rs)
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_Storage_Xps",
 ] }
+
+[target.'cfg(windows)'.dev-dependencies]
+# Used by examples/thumb.rs to dump the extracted thumbnail to disk
+# so we can eyeball it without launching the GUI.
+image = { version = "0.25", default-features = false, features = ["png"] }

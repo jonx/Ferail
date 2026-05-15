@@ -57,6 +57,14 @@ pub struct FileEntry {
     /// Empty string when not yet detected or no match. Populated lazily by
     /// the host (App) — `feraille-core` never blocks on file I/O.
     pub display_magic: String,
+    /// Rich ` · `-joined fact string for the Description column,
+    /// e.g. `"Windows PE · 64-bit · x86-64 · GUI · .NET"`,
+    /// `"PNG image · 1920×1080 · alpha"`,
+    /// `"MP3 · stereo · 44 kHz · 192 kbps · 03:24"`.
+    /// Empty when not yet detected or no extra facts to report.
+    /// Populated lazily by the host (prefetch worker), same contract as
+    /// `display_magic`.
+    pub display_description: String,
     /// Hot-path flag for the icon-overlay dot. True when the file carries
     /// `com.apple.quarantine` (macOS Mark-of-the-Web equivalent). Populated
     /// lazily by the host alongside `quarantine`; defaults to false.
@@ -132,6 +140,30 @@ fn formats_compatible(kind: &str, magic: &str) -> bool {
     if m.contains("zip") && zip_kindly.iter().any(|t| k.contains(t)) {
         return true;
     }
+    // Office-app pairings: when the magic detector identifies the
+    // ZIP-wrapped Office subtype directly ("PowerPoint presentation",
+    // "Word document", "Excel spreadsheet") the extension still
+    // says "DOCX" / "XLSX" / "PPTX". These agree semantically; the
+    // string forms just differ. Match them explicitly so the file
+    // list doesn't flag every Office file as a content mismatch.
+    let office_pairs: &[(&str, &[&str])] = &[
+        ("docx", &["word", "docx"]),
+        ("xlsx", &["excel", "xlsx", "spreadsheet"]),
+        ("pptx", &["powerpoint", "pptx", "presentation"]),
+        ("doc", &["word", "doc"]),
+        ("xls", &["excel", "xls", "spreadsheet"]),
+        ("ppt", &["powerpoint", "ppt", "presentation"]),
+        ("odt", &["opendocument", "writer", "odt"]),
+        ("ods", &["opendocument", "calc", "ods", "spreadsheet"]),
+        ("odp", &["opendocument", "impress", "odp", "presentation"]),
+        ("epub", &["epub", "publication"]),
+        ("rtf", &["rich text"]),
+    ];
+    for (ext, magic_keywords) in office_pairs {
+        if k.contains(ext) && magic_keywords.iter().any(|kw| m.contains(kw)) {
+            return true;
+        }
+    }
     false
 }
 
@@ -180,6 +212,7 @@ mod format_label_tests {
             display_mtime: String::new(),
             display_kind: kind.into(),
             display_magic: magic.into(),
+            display_description: String::new(),
             is_quarantined: false,
             quarantine: None,
         }
@@ -247,6 +280,27 @@ mod format_label_tests {
     fn yml_kind_vs_yaml_magic_is_compatible() {
         let (_, mismatch) = entry("YML", "YAML data").format_label();
         assert!(!mismatch, "yml ≡ yaml");
+    }
+
+    // Regression: magic detector reports Office subtypes directly
+    // ("PowerPoint presentation" etc.) rather than the underlying
+    // "Zip archive" — the old zip-kindly check missed these.
+    #[test]
+    fn pptx_vs_powerpoint_presentation_is_compatible() {
+        let (_, mismatch) = entry("PPTX", "PowerPoint presentation").format_label();
+        assert!(!mismatch, "pptx ≡ PowerPoint presentation");
+    }
+
+    #[test]
+    fn docx_vs_word_document_is_compatible() {
+        let (_, mismatch) = entry("DOCX", "Word document").format_label();
+        assert!(!mismatch, "docx ≡ Word document");
+    }
+
+    #[test]
+    fn xlsx_vs_excel_spreadsheet_is_compatible() {
+        let (_, mismatch) = entry("XLSX", "Excel spreadsheet").format_label();
+        assert!(!mismatch, "xlsx ≡ Excel spreadsheet");
     }
 
     #[test]

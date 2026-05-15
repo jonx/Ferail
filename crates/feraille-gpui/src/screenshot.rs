@@ -311,11 +311,24 @@ pub fn run(args: Args) -> Result<()> {
         let shell_args = shell_args.clone();
         let disk_usage_root = disk_usage_root.clone();
         cx.spawn(async move |cx| {
+            // Headless capture goes through gpui's `Window::render_to_image`
+            // on both platforms now that `gpui_windows` has a D3D11
+            // staging-texture readback (upstream patch on branch
+            // `gpui-windows-render-to-image` — see
+            // `[patch."https://github.com/zed-industries/zed"]` in the
+            // workspace Cargo.toml while this is local). Window stays
+            // hidden on every platform.
             let opts = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
                     origin: gpui::Point::default(),
                     size: gpui::size(px(width), px(height)),
                 })),
+                // Match the live GUI's title-bar mode (see
+                // main.rs::open_shell_window_sized) so the screenshot
+                // captures the same chrome the user actually sees —
+                // gpui-component's TitleBar widget replaces the OS
+                // default and hosts our brand + filter + nav row.
+                titlebar: Some(gpui_component::TitleBar::title_bar_options()),
                 show: false,
                 focus: false,
                 ..Default::default()
@@ -369,10 +382,7 @@ pub fn run(args: Args) -> Result<()> {
                 .timer(std::time::Duration::from_millis(2500))
                 .await;
 
-            let img = cx
-                .update_window(handle.into(), |_, window, _| window.render_to_image())
-                .and_then(|r| r)
-                .expect("render_to_image failed");
+            let img = capture_window(&handle, cx).expect("screenshot capture failed");
 
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -385,6 +395,27 @@ pub fn run(args: Args) -> Result<()> {
         .detach();
     });
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Headless capture — unified across platforms.
+// ---------------------------------------------------------------------------
+//
+// Both platforms now go through gpui's `Window::render_to_image`. The
+// macOS path uses gpui_macos's MetalRenderer (always present). The
+// Windows path uses gpui_windows's DirectX staging-texture readback
+// (added in the upstream `gpui-windows-render-to-image` patch — under
+// `[patch]` in this repo's root Cargo.toml while local). With both
+// implementations in place we can finally keep the screenshot window
+// hidden on every target.
+
+fn capture_window(
+    handle: &AnyWindowHandle,
+    cx: &mut AsyncApp,
+) -> Result<image::RgbaImage> {
+    cx.update_window(*handle, |_, window, _| window.render_to_image())
+        .map_err(|e| anyhow::anyhow!("update_window failed: {e}"))?
+        .map_err(|e| anyhow::anyhow!("render_to_image failed: {e}"))
 }
 
 // ---------------------------------------------------------------------------

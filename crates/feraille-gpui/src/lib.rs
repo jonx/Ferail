@@ -10,6 +10,7 @@
 // recommendation comes straight from rustc's error message.
 #![recursion_limit = "256"]
 
+pub mod about;
 pub mod app_state;
 pub mod assets;
 pub mod disk_usage;

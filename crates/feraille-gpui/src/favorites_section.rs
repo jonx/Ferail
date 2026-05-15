@@ -499,7 +499,7 @@ fn render_favorite_row(
             .menu("Reset to Original Name", Box::new(ResetFavoriteName))
             .item(PopupMenuItem::submenu("Change Icon", icon_submenu))
             .separator()
-            .menu("Reveal in Finder", Box::new(RevealContextPath))
+            .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealContextPath))
             .menu("Copy Path", Box::new(CopyContextPath))
             .separator()
             .menu("Remove from Favorites", Box::new(ToggleFavoriteForTarget))

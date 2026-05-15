@@ -93,6 +93,7 @@ mod tests {
             mtime_unix: mtime,
             size: 0,
             magic_label: None,
+            description: None,
             partial_hash: None,
             full_hash: None,
             mime: None,

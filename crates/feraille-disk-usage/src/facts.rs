@@ -61,7 +61,7 @@ impl DiskUsageTree {
                 // Containers are always Container-kind even before they're
                 // formally announced — the link itself implies as much.
                 self.ensure_node(*container).kind = NodeKind::Container;
-                self.add_link(*container, *node);
+                self.add_link_unchecked(*container, *node);
             }
             DiskUsageFact::NodeSizeAdded { node, size_bytes } => {
                 self.add_size(*node, *size_bytes);

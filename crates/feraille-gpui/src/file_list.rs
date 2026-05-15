@@ -99,6 +99,16 @@ impl FileListDelegate {
                 Column::new("size", "Size").width(100.0).sortable(),
                 Column::new("format", "Format").width(220.0).sortable(),
                 Column::new("modified", "Modified").width(160.0).sortable(),
+                // Description column: rich ` · `-joined facts derived
+                // from the magic-byte parse (bitness/arch/subsystem
+                // for binaries, w×h for images, channels/kHz/duration
+                // for audio, etc.). Populated by the prefetch worker —
+                // empty until the worker batch lands, then never
+                // touched by paint. Not sortable in v1: lex sort of
+                // description strings groups MP3s near MP4s but
+                // separates 32-bit from 64-bit binaries, which is
+                // confusing. Revisit if users ask.
+                Column::new("description", "Description").width(320.0),
             ],
             fs,
             paths: HashMap::new(),
@@ -477,6 +487,14 @@ impl TableDelegate for FileListDelegate {
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(entry.display_mtime.clone()))
                 .into_any_element(),
+            // Description: rich facts from the magic-byte parse,
+            // populated lazily by the prefetch worker. Empty string
+            // renders as an empty cell — no skeleton shimmer in v1.
+            "description" => div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(SharedString::from(entry.display_description.clone()))
+                .into_any_element(),
             _ => div().into_any_element(),
         }
     }
@@ -547,7 +565,7 @@ impl TableDelegate for FileListDelegate {
             .menu("Get Info", Box::new(GetInfo))
             .menu("Quick Look", Box::new(QuickLook))
             .separator()
-            .menu("Reveal in Finder", Box::new(RevealInFinder))
+            .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealInFinder))
             .menu("Copy Path", Box::new(CopyPath))
             .separator()
             .menu("Rename\u{2026}", Box::new(RenameSelected))
@@ -612,7 +630,7 @@ impl TableDelegate for FileListDelegate {
         menu = menu.item(PopupMenuItem::submenu("Tags", tags_submenu));
 
         menu.separator()
-            .menu("Move to Trash", Box::new(MoveToTrash))
+            .menu(feraille_core::commands::TRASH_LABEL, Box::new(MoveToTrash))
     }
 
     fn move_column(

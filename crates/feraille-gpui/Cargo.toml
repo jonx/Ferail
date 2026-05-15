@@ -39,7 +39,11 @@ smallvec = "1"
 # Wraps RGBA byte buffers we pull from NSWorkspace into a Frame the
 # gpui RenderImage type accepts. gpui-component pulls the same major
 # transitively, so this stays single-copy in the graph.
-image = { version = "0.25", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
+# Used by the --screenshot harness on Windows to pull the HWND out of
+# gpui::Window (which implements HasWindowHandle). Same major as
+# gpui's transitive use so we stay single-copy in the graph.
+raw-window-handle = "0.6"
 
 # Domain wiring. feraille-gpui consumes the domain layer the same
 # way feraille-app did, through the same trait surface audited in
@@ -65,6 +69,12 @@ feraille-shell-mac.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 feraille-shell-win32.workspace = true
+
+# Windows-only build script that embeds resources/feraille.ico and a
+# VERSIONINFO block into the .exe. On non-Windows the build script
+# is a no-op and this dep isn't pulled in.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
 
 [dev-dependencies]
 # Phase 2 isolation test still lives here. It now ALSO doubles as a

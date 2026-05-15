@@ -1,111 +1,267 @@
-//! Magic-byte file detection. Reads the first ~512 bytes of a file
-//! and matches against a hand-curated table of patterns.
+//! Magic-byte file detection. Reads the first 4 KB of a file and
+//! dispatches to per-format parsers that extract structured metadata
+//! (bitness, arch, dimensions, channels, sample rate, etc.).
 //!
-//! This is a *small* port of the spirit of Ferail's magic module — not
-//! the 104 KB type database. iter-3.8 covers ~30 common file types
-//! (images, archives, executables, audio, video, code/data) by friendly
-//! label. Iter-7 ports the full DB if it earns its keep.
+//! Public API:
 //!
-//! The detector is synchronous and pure (no allocation past the read
-//! buffer + label clone). Callers should cache by `(path, mtime)`.
+//! - [`detect_magic`] returns a friendly label string for the Format
+//!   column. Same return shape as the pre-Description detector — all
+//!   existing callers keep working unchanged.
+//! - [`detect_magic_info`] returns the full structured [`MagicInfo`]
+//!   from which the Description column is rendered.
+//!
+//! Reading 4 KB instead of 512 is required to give the per-format
+//! parsers enough buffer to find their metadata fields (JPEG SOF
+//! markers can sit after EXIF; PE optional headers + CLR data dirs
+//! land around 0x200; ZIP local file headers iterate through the
+//! buffer for Office macro detection). The cost is negligible — one
+//! disk block on most filesystems.
+//!
+//! Ported from bfe-explorer (`crates/ferail-ui/src/magic/`); see
+//! [docs/features/MAGIC_DESCRIPTION.md] for design notes.
 
 use std::path::Path;
 
-const HEADER_BYTES: usize = 512;
+mod audio;
+mod exe;
+mod image;
+mod text;
+pub mod types;
+mod video;
+mod zip;
 
-/// One entry in the magic table. `offset` is where in the file's first
-/// `HEADER_BYTES` to look; `pattern` is the bytes to match (`None` byte
-/// = wildcard).
-struct Magic {
-    offset: usize,
-    pattern: &'static [Option<u8>],
-    label: &'static str,
-}
+pub use types::{CpuArch, MagicInfo, MagicType, PeSubsystem};
 
-const fn b(byte: u8) -> Option<u8> {
-    Some(byte)
-}
+const HEADER_BYTES: usize = 4096;
 
-const ANY: Option<u8> = None;
-
-/// Magic table. Order matters when patterns overlap — first match wins.
-/// Keep this list short and high-confidence; we'd rather say "Unknown"
-/// than misclassify.
-static TABLE: &[Magic] = &[
-    // Images
-    Magic { offset: 0, pattern: &[b(0x89), b(b'P'), b(b'N'), b(b'G'), b(0x0D), b(0x0A), b(0x1A), b(0x0A)], label: "PNG image" },
-    Magic { offset: 0, pattern: &[b(0xFF), b(0xD8), b(0xFF)], label: "JPEG image" },
-    Magic { offset: 0, pattern: &[b(b'G'), b(b'I'), b(b'F'), b(b'8'), ANY, b(b'a')], label: "GIF image" },
-    Magic { offset: 0, pattern: &[b(b'B'), b(b'M')], label: "BMP image" },
-    Magic { offset: 0, pattern: &[b(b'R'), b(b'I'), b(b'F'), b(b'F'), ANY, ANY, ANY, ANY, b(b'W'), b(b'E'), b(b'B'), b(b'P')], label: "WebP image" },
-    Magic { offset: 4, pattern: &[b(b'f'), b(b't'), b(b'y'), b(b'p'), b(b'h'), b(b'e'), b(b'i')], label: "HEIC image" },
-    Magic { offset: 0, pattern: &[b(b'<'), b(b'?'), b(b'x'), b(b'm'), b(b'l')], label: "XML / SVG" },
-    // Documents
-    Magic { offset: 0, pattern: &[b(b'%'), b(b'P'), b(b'D'), b(b'F'), b(b'-')], label: "PDF document" },
-    Magic { offset: 0, pattern: &[b(0xD0), b(0xCF), b(0x11), b(0xE0)], label: "MS Office (legacy)" },
-    // Archives
-    Magic { offset: 0, pattern: &[b(b'P'), b(b'K'), b(0x03), b(0x04)], label: "ZIP archive" },
-    Magic { offset: 0, pattern: &[b(b'P'), b(b'K'), b(0x05), b(0x06)], label: "ZIP archive (empty)" },
-    Magic { offset: 0, pattern: &[b(0x1F), b(0x8B)], label: "Gzip archive" },
-    Magic { offset: 0, pattern: &[b(b'B'), b(b'Z'), b(b'h')], label: "Bzip2 archive" },
-    Magic { offset: 0, pattern: &[b(0xFD), b(b'7'), b(b'z'), b(b'X'), b(b'Z')], label: "XZ archive" },
-    Magic { offset: 0, pattern: &[b(b'7'), b(b'z'), b(0xBC), b(0xAF), b(0x27), b(0x1C)], label: "7z archive" },
-    Magic { offset: 0, pattern: &[b(b'R'), b(b'a'), b(b'r'), b(b'!'), b(0x1A), b(0x07)], label: "RAR archive" },
-    Magic { offset: 257, pattern: &[b(b'u'), b(b's'), b(b't'), b(b'a'), b(b'r')], label: "TAR archive" },
-    Magic { offset: 0, pattern: &[b(0x28), b(0xB5), b(0x2F), b(0xFD)], label: "Zstandard archive" },
-    // Executables
-    Magic { offset: 0, pattern: &[b(0x7F), b(b'E'), b(b'L'), b(b'F')], label: "ELF executable" },
-    Magic { offset: 0, pattern: &[b(0xCF), b(0xFA), b(0xED), b(0xFE)], label: "Mach-O 64-bit" },
-    Magic { offset: 0, pattern: &[b(0xCE), b(0xFA), b(0xED), b(0xFE)], label: "Mach-O 32-bit" },
-    Magic { offset: 0, pattern: &[b(0xCA), b(0xFE), b(0xBA), b(0xBE)], label: "Mach-O fat / Java class" },
-    Magic { offset: 0, pattern: &[b(b'M'), b(b'Z')], label: "PE / DOS executable" },
-    Magic { offset: 0, pattern: &[b(b'#'), b(b'!'), b(b'/')], label: "Shell script" },
-    // Audio
-    Magic { offset: 0, pattern: &[b(b'I'), b(b'D'), b(b'3')], label: "MP3 audio (ID3)" },
-    Magic { offset: 0, pattern: &[b(0xFF), b(0xFB)], label: "MP3 audio" },
-    Magic { offset: 0, pattern: &[b(b'O'), b(b'g'), b(b'g'), b(b'S')], label: "Ogg audio" },
-    Magic { offset: 0, pattern: &[b(b'f'), b(b'L'), b(b'a'), b(b'C')], label: "FLAC audio" },
-    Magic { offset: 0, pattern: &[b(b'R'), b(b'I'), b(b'F'), b(b'F'), ANY, ANY, ANY, ANY, b(b'W'), b(b'A'), b(b'V'), b(b'E')], label: "WAV audio" },
-    // Video
-    Magic { offset: 4, pattern: &[b(b'f'), b(b't'), b(b'y'), b(b'p'), b(b'M'), b(b'P'), b(b'4')], label: "MP4 video" },
-    Magic { offset: 4, pattern: &[b(b'f'), b(b't'), b(b'y'), b(b'p'), b(b'i'), b(b's'), b(b'o')], label: "MP4 video (ISO)" },
-    Magic { offset: 4, pattern: &[b(b'f'), b(b't'), b(b'y'), b(b'p'), b(b'q'), b(b't'), b(b' '), b(b' ')], label: "QuickTime movie" },
-    Magic { offset: 0, pattern: &[b(0x1A), b(0x45), b(0xDF), b(0xA3)], label: "Matroska / WebM" },
-    // Fonts
-    Magic { offset: 0, pattern: &[b(b'O'), b(b'T'), b(b'T'), b(b'O')], label: "OpenType font" },
-    Magic { offset: 0, pattern: &[b(0x00), b(0x01), b(0x00), b(0x00), b(0x00)], label: "TrueType font" },
-    // Databases
-    Magic { offset: 0, pattern: &[b(b'S'), b(b'Q'), b(b'L'), b(b'i'), b(b't'), b(b'e'), b(b' '), b(b'f')], label: "SQLite database" },
-    // Plain text BOMs
-    Magic { offset: 0, pattern: &[b(0xEF), b(0xBB), b(0xBF)], label: "UTF-8 text" },
-    Magic { offset: 0, pattern: &[b(0xFF), b(0xFE)], label: "UTF-16 LE text" },
-    Magic { offset: 0, pattern: &[b(0xFE), b(0xFF)], label: "UTF-16 BE text" },
-];
-
-/// Return the friendly label for a file's magic, or `None` if no entry
-/// matched. Reads the first 512 bytes (or the full file if smaller).
-/// Empty / unreadable files return `None`.
+/// Return a friendly label for the file's content, or `None` if no
+/// match. Wraps [`detect_magic_info`] for callers that only want the
+/// label string (the Format column, icon classification, file
+/// category).
 pub fn detect_magic(path: &Path) -> Option<&'static str> {
+    let info = detect_magic_info(path)?;
+    let label = info.magic_type.display_name();
+    if label.is_empty() {
+        None
+    } else {
+        Some(label)
+    }
+}
+
+/// Return full structured info derived from the file's first ~4 KB,
+/// plus — for ZIP-based types — a second 4 KB read at the file tail
+/// to walk the central directory and fill `file_count` / `zip_root` /
+/// reclassify into Office / JAR / APK as appropriate.
+///
+/// `None` only for empty or unreadable files. The tail read is
+/// skipped silently when it fails (the header-only classification
+/// remains).
+pub fn detect_magic_info(path: &Path) -> Option<MagicInfo> {
     let mut header = [0u8; HEADER_BYTES];
-    let bytes_read = read_header(path, &mut header)?;
-    let header = &header[..bytes_read];
-    for entry in TABLE {
-        if entry.offset + entry.pattern.len() > header.len() {
-            continue;
-        }
-        let slice = &header[entry.offset..entry.offset + entry.pattern.len()];
-        if slice
-            .iter()
-            .zip(entry.pattern.iter())
-            .all(|(b, p)| matches!(p, None) || matches!(p, Some(v) if v == b))
-        {
-            return Some(entry.label);
+    let n_header = read_header(path, &mut header)?;
+    let mut info = sniff_bytes_info(&header[..n_header]);
+
+    if is_zip_family(info.magic_type) {
+        let mut tail = [0u8; HEADER_BYTES];
+        if let Some((n_tail, file_size)) = read_tail_into(path, &mut tail) {
+            zip::refine_with_central_directory(
+                &mut info,
+                &header[..n_header],
+                &tail[..n_tail],
+                file_size,
+            );
         }
     }
-    // Heuristic fallback: if the header is mostly printable ASCII / UTF-8,
-    // call it text. ~95% of real "this file has no magic" cases.
-    if looks_textual(header) {
-        return Some("Plain text");
+    Some(info)
+}
+
+fn is_zip_family(mt: MagicType) -> bool {
+    matches!(
+        mt,
+        MagicType::Zip
+            | MagicType::ZipEncrypted
+            | MagicType::DocWord
+            | MagicType::DocWordMacro
+            | MagicType::DocExcel
+            | MagicType::DocExcelMacro
+            | MagicType::DocPowerPoint
+            | MagicType::DocPowerPointMacro
+            | MagicType::AppJar
+            | MagicType::AppApk
+    )
+}
+
+/// Read the last [`HEADER_BYTES`] of `path` into `buf`. Returns
+/// `(bytes_read, total_file_size)` on success. The file_size value is
+/// what the central-directory parser needs to map EOCD's `cd_offset`
+/// (an absolute file offset) into the tail buffer.
+fn read_tail_into(path: &Path, buf: &mut [u8; HEADER_BYTES]) -> Option<(usize, u64)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.seek(SeekFrom::End(0)).ok()?;
+    if len == 0 {
+        return None;
+    }
+    let want = (buf.len() as u64).min(len);
+    f.seek(SeekFrom::End(-(want as i64))).ok()?;
+    let mut total = 0usize;
+    while total < want as usize {
+        match f.read(&mut buf[total..want as usize]) {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(_) => return None,
+        }
+    }
+    if total == 0 {
+        None
+    } else {
+        Some((total, len))
+    }
+}
+
+/// Pure dispatch over an already-read buffer. Useful for tests and
+/// for callers that batch their I/O elsewhere.
+pub fn sniff_bytes_info(buf: &[u8]) -> MagicInfo {
+    if buf.is_empty() {
+        return MagicInfo::new(MagicType::Unknown);
+    }
+
+    // 1. Executables — full structured parse.
+    if let Some(info) = exe::sniff(buf) {
+        return info;
+    }
+
+    // 2. ZIP-based (Office / JAR / APK / generic).
+    if let Some(info) = zip::sniff(buf) {
+        return info;
+    }
+
+    // 3. Images — extract dimensions + alpha.
+    if let Some(info) = image::sniff(buf) {
+        return info;
+    }
+
+    // 4. Audio — channels / sample rate / duration where cheap.
+    if let Some(info) = audio::sniff(buf) {
+        return info;
+    }
+
+    // 5. Video containers — has_video / has_audio.
+    if let Some(info) = video::sniff(buf) {
+        return info;
+    }
+
+    // 6. Signature-table fast path for remaining binary formats that
+    //    don't need structured parsing.
+    if let Some(mt) = sniff_signature_table(buf) {
+        return MagicInfo::new(mt);
+    }
+
+    // 7. Text / script heuristic (shebang, UTF-16, XML/HTML/JSON/INI/...)
+    if let Some(info) = text::sniff(buf) {
+        return info;
+    }
+
+    // 8. Binary fallback.
+    let sample = &buf[..buf.len().min(512)];
+    let printable = sample
+        .iter()
+        .filter(|&&b| {
+            b.is_ascii_graphic() || b == b' ' || b == b'\n' || b == b'\r' || b == b'\t'
+        })
+        .count();
+    if printable * 100 / sample.len().max(1) < 85 {
+        return MagicInfo::new(MagicType::Binary);
+    }
+    MagicInfo::new(MagicType::Unknown)
+}
+
+/// Plain byte-pattern lookup for formats where the dispatcher hasn't
+/// already claimed the buffer. Wildcards aren't expressed here — every
+/// pattern is a literal byte run at a fixed offset.
+fn sniff_signature_table(buf: &[u8]) -> Option<MagicType> {
+    const fn b_(c: u8) -> u8 {
+        c
+    }
+    struct Sig {
+        magic: MagicType,
+        offset: usize,
+        bytes: &'static [u8],
+    }
+    static SIGS: &[Sig] = &[
+        Sig {
+            magic: MagicType::Pdf,
+            offset: 0,
+            bytes: b"%PDF-",
+        },
+        Sig {
+            magic: MagicType::Rar,
+            offset: 0,
+            bytes: b"Rar!\x1a\x07",
+        },
+        Sig {
+            magic: MagicType::SevenZip,
+            offset: 0,
+            bytes: b"7z\xbc\xaf\x27\x1c",
+        },
+        Sig {
+            magic: MagicType::Gzip,
+            offset: 0,
+            bytes: &[0x1f, 0x8b],
+        },
+        Sig {
+            magic: MagicType::Xz,
+            offset: 0,
+            bytes: &[0xfd, b_(b'7'), b_(b'z'), b_(b'X'), b_(b'Z')],
+        },
+        Sig {
+            magic: MagicType::Bzip2,
+            offset: 0,
+            bytes: b"BZh",
+        },
+        Sig {
+            magic: MagicType::Zstd,
+            offset: 0,
+            bytes: &[0x28, 0xb5, 0x2f, 0xfd],
+        },
+        Sig {
+            magic: MagicType::Sqlite,
+            offset: 0,
+            bytes: b"SQLite format 3\0",
+        },
+        Sig {
+            magic: MagicType::Lnk,
+            offset: 0,
+            bytes: &[
+                0x4c, 0x00, 0x00, 0x00, 0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
+            ],
+        },
+        // TAR: "ustar" magic at offset 257
+        Sig {
+            magic: MagicType::Tar,
+            offset: 257,
+            bytes: b"ustar",
+        },
+        // Fonts
+        Sig {
+            magic: MagicType::OpenType,
+            offset: 0,
+            bytes: b"OTTO",
+        },
+        Sig {
+            magic: MagicType::TrueType,
+            offset: 0,
+            bytes: &[0x00, 0x01, 0x00, 0x00, 0x00],
+        },
+    ];
+
+    for sig in SIGS {
+        if buf.len() >= sig.offset + sig.bytes.len()
+            && &buf[sig.offset..sig.offset + sig.bytes.len()] == sig.bytes
+        {
+            return Some(sig.magic);
+        }
     }
     None
 }
@@ -133,55 +289,86 @@ fn read_header(path: &Path, buf: &mut [u8; HEADER_BYTES]) -> Option<usize> {
     }
 }
 
-/// Treats the buffer as text iff it parses as valid UTF-8 (allowing the
-/// last char to be cut at the buffer boundary) AND has very few control
-/// characters. Catches plain text + Markdown + JSON + YAML + source code
-/// across most real languages; rejects pseudorandom binary cleanly.
-fn looks_textual(bytes: &[u8]) -> bool {
-    if bytes.is_empty() {
-        return false;
-    }
-    let valid_end = match std::str::from_utf8(bytes) {
-        Ok(_) => bytes.len(),
-        Err(e) => e.valid_up_to(),
-    };
-    if valid_end < bytes.len().saturating_sub(4) || valid_end < 8 {
-        return false;
-    }
-    let valid = &bytes[..valid_end];
-    let mut control = 0_usize;
-    for &b in valid {
-        match b {
-            0x00..=0x08 | 0x0B | 0x0C | 0x0E..=0x1F | 0x7F => control += 1,
-            _ => {}
-        }
-    }
-    control * 20 < valid.len()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn empty_returns_none() {
-        let buf = [0u8; HEADER_BYTES];
-        // looks_textual on empty -> false; magic detection fails first on
-        // read_header returning None for empty files via fs.
-        assert!(!looks_textual(&buf[..0]));
+    fn empty_buf_is_unknown() {
+        let info = sniff_bytes_info(&[]);
+        assert_eq!(info.magic_type, MagicType::Unknown);
     }
 
     #[test]
-    fn ascii_text_detects_as_text() {
-        let s = b"hello world\nthis is a plain text file with several lines\n";
-        assert!(looks_textual(s));
+    fn pdf_signature_detected() {
+        let mut buf = vec![0u8; 32];
+        buf[..5].copy_from_slice(b"%PDF-");
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::Pdf);
+        assert_eq!(detect_magic_info_label(&info), "PDF document");
     }
 
     #[test]
-    fn random_bytes_dont_detect_as_text() {
+    fn png_signature_with_dimensions() {
+        // PNG sig + IHDR chunk with 320x200 RGBA (color type 6).
+        let mut buf = vec![0u8; 64];
+        buf[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+        // chunk length (13) + "IHDR"
+        buf[8..12].copy_from_slice(&[0, 0, 0, 13]);
+        buf[12..16].copy_from_slice(b"IHDR");
+        buf[16..20].copy_from_slice(&320u32.to_be_bytes());
+        buf[20..24].copy_from_slice(&200u32.to_be_bytes());
+        buf[24] = 8; // bit depth
+        buf[25] = 6; // color type RGBA
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::Png);
+        assert_eq!(info.width, Some(320));
+        assert_eq!(info.height, Some(200));
+        assert!(info.has_alpha);
+    }
+
+    #[test]
+    fn elf_64bit_x64() {
+        let mut buf = vec![0u8; 32];
+        buf[..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
+        buf[4] = 2; // 64-bit
+        buf[5] = 1; // LE
+        buf[16] = 2; // ET_EXEC (LE)
+        buf[18] = 0x3e; // EM_X86_64 (LE)
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::ExeLinux);
+        assert_eq!(info.is_64bit, Some(true));
+        assert_eq!(info.arch, CpuArch::X64);
+    }
+
+    #[test]
+    fn shebang_python() {
+        let info = sniff_bytes_info(b"#!/usr/bin/env python3\nprint('hi')\n");
+        assert_eq!(info.magic_type, MagicType::ScriptPython);
+    }
+
+    #[test]
+    fn json_brace_prefix() {
+        let info = sniff_bytes_info(b"{\n  \"key\": \"value\"\n}\n");
+        assert_eq!(info.magic_type, MagicType::Json);
+    }
+
+    #[test]
+    fn random_bytes_classify_as_binary() {
         let bytes: Vec<u8> = (0..512u32).map(|i| (i * 7 + 13) as u8).collect();
-        let textual = looks_textual(&bytes);
-        // Mostly low / control bytes — should NOT look textual.
-        assert!(!textual);
+        let info = sniff_bytes_info(&bytes);
+        assert_eq!(info.magic_type, MagicType::Binary);
+    }
+
+    #[test]
+    fn detect_magic_returns_legacy_label() {
+        let mut buf = vec![0u8; 16];
+        buf[..5].copy_from_slice(b"%PDF-");
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type.display_name(), "PDF document");
+    }
+
+    fn detect_magic_info_label(info: &MagicInfo) -> &'static str {
+        info.magic_type.display_name()
     }
 }

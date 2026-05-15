@@ -7,12 +7,14 @@
 //! code is just orchestration + GPUI rendering.
 //!
 //! Streaming pattern: the BG scan pushes fact batches into an
-//! `Arc<Mutex<Vec<ScanMsg>>>` queue; a FG timer drains the queue every
-//! 80 ms and applies batches to the tree, debouncing layout rebuilds
-//! the same way the old `disk_usage_state` did. Cancellation is
-//! cooperative via `AtomicBool`.
+//! `Arc<Mutex<VecDeque<ScanMsg>>>` queue; a FG timer drains bounded
+//! FIFO chunks on a dynamic cadence and applies them to the tree,
+//! debouncing layout rebuilds the same way the old
+//! `disk_usage_state` did. Cancellation is cooperative via
+//! `AtomicBool`.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,7 +30,7 @@ use feraille_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Disableable, Root, Selectable, Sizable,
+    ActiveTheme, Disableable, ElementExt, Root, Selectable, Sizable,
     button::{Button, ButtonGroup},
     h_flex, v_flex,
 };
@@ -38,9 +40,15 @@ use crate::tasks::{TaskId, TaskKind, TaskRegistry};
 /// Treemap recursion depth used by the DU window. Matches the old
 /// app's DU_LAYOUT_DEPTH.
 const DU_LAYOUT_DEPTH: u32 = 4;
-/// FG drain interval — bounded so the user sees incremental progress
-/// without thrashing layout on every batch.
-const DU_DRAIN_INTERVAL: Duration = Duration::from_millis(80);
+/// Foreground drain cadence while the backlog is small.
+const DU_DRAIN_INTERVAL_IDLE: Duration = Duration::from_millis(80);
+/// When the worker gets ahead, keep draining more often, but still in
+/// bounded chunks so the UI thread gets to breathe between updates.
+const DU_DRAIN_INTERVAL_BUSY: Duration = Duration::from_millis(16);
+/// Hard cap on how many queue messages one foreground drain tick may
+/// apply. Prevents a large scan backlog from collapsing into one giant
+/// main-thread update.
+const DU_MAX_MSGS_PER_TICK: usize = 12;
 /// Top-N rebuild is O(n) in tree size + O(n log n) for the sort. At
 /// large folders it dominates each drain tick, so we throttle it to a
 /// human-scale refresh rate. The Done message always forces a final
@@ -60,13 +68,13 @@ pub struct DiskUsageView {
 
     /// Queue of messages produced by the BG scanner; drained by the
     /// FG timer task. `Arc<Mutex<_>>` for cross-thread share.
-    msg_queue: Arc<Mutex<Vec<ScanMsg>>>,
+    msg_queue: Arc<Mutex<VecDeque<ScanMsg>>>,
 
-    /// Cached layout for the current scan + bounds; invalidated when
-    /// new facts come in or the user clicks a rect to zoom.
+    /// Cached layout for the current scan + treemap size; invalidated
+    /// when new facts come in or the user clicks a rect to zoom.
     layout_cache: Option<DiskUsageLayoutNode>,
     rects_cache: Vec<TreemapRect>,
-    rects_bounds: Option<(f32, f32, f32, f32)>,
+    treemap_size: Option<(f32, f32)>,
     scan_generation: u64,
 
     /// `last() == focus` — the deepest folder the user has clicked
@@ -139,7 +147,7 @@ impl DiskUsageView {
         let canonical = root_path.clone();
         let root_id = fs.id_for_path(&canonical);
         let cancel = Arc::new(AtomicBool::new(false));
-        let msg_queue = Arc::new(Mutex::new(Vec::new()));
+        let msg_queue = Arc::new(Mutex::new(VecDeque::new()));
         // Resolve volume capacity for the header capacity bar.
         // None on non-macOS or when the volume info lookup failed.
         let volume = feraille_fs_native::volume_info_for_path(&canonical);
@@ -155,7 +163,7 @@ impl DiskUsageView {
             msg_queue: msg_queue.clone(),
             layout_cache: None,
             rects_cache: Vec::new(),
-            rects_bounds: None,
+            treemap_size: None,
             scan_generation: 0,
             zoom_path: Vec::new(),
             selected_node: None,
@@ -196,7 +204,14 @@ impl DiskUsageView {
     /// Recompute the Top-N largest-files list from the current tree.
     /// Single pass + partial sort, capped at `TOPN_CAP`.
     fn rebuild_top_files(&mut self) {
-        let mut all: Vec<TopFileEntry> = self
+        #[derive(Clone, Copy)]
+        struct TopFileCandidate {
+            node_id: NodeId,
+            category: FileCategory,
+            size_bytes: u64,
+        }
+
+        let mut all: Vec<TopFileCandidate> = self
             .tree
             .nodes
             .iter()
@@ -214,17 +229,32 @@ impl DiskUsageView {
                 if size_bytes == 0 {
                     return None;
                 }
-                Some(TopFileEntry {
+                Some(TopFileCandidate {
                     node_id: *id,
                     category: n.file_category,
-                    name: n.display_name.clone(),
                     size_bytes,
                 })
             })
             .collect();
-        all.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
-        all.truncate(TOPN_CAP);
-        self.top_files = all;
+        if all.len() > TOPN_CAP {
+            all.select_nth_unstable_by(TOPN_CAP - 1, |a, b| b.size_bytes.cmp(&a.size_bytes));
+            all.truncate(TOPN_CAP);
+        }
+        all.sort_unstable_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+        self.top_files = all
+            .into_iter()
+            .map(|e| TopFileEntry {
+                node_id: e.node_id,
+                category: e.category,
+                name: self
+                    .tree
+                    .nodes
+                    .get(&e.node_id)
+                    .map(|n| n.display_name.clone())
+                    .unwrap_or_default(),
+                size_bytes: e.size_bytes,
+            })
+            .collect();
     }
 
     /// Spawn the disk-usage scan on the background executor + start
@@ -257,17 +287,21 @@ impl DiskUsageView {
                     descend,
                     |batch| {
                         if let Ok(mut q) = queue_for_scan.lock() {
-                            q.push(ScanMsg::Batch(batch));
+                            q.push_back(ScanMsg::Batch(batch));
                         }
                     },
                     |progress| {
                         if let Ok(mut q) = queue_for_progress.lock() {
-                            q.push(ScanMsg::Progress(progress));
+                            if let Some(ScanMsg::Progress(last)) = q.back_mut() {
+                                *last = progress;
+                            } else {
+                                q.push_back(ScanMsg::Progress(progress));
+                            }
                         }
                     },
                 );
                 if let Ok(mut q) = queue_for_done.lock() {
-                    q.push(ScanMsg::Done(err));
+                    q.push_back(ScanMsg::Done(err));
                 }
             })
             .detach();
@@ -281,15 +315,31 @@ impl DiskUsageView {
         let queue_for_drain = self.msg_queue.clone();
         cx.spawn(async move |this, cx| {
             let mut last_topn_rebuild = Instant::now() - DU_TOPN_REBUILD_INTERVAL;
+            let mut interval = DU_DRAIN_INTERVAL_IDLE;
             loop {
-                cx.background_executor().timer(DU_DRAIN_INTERVAL).await;
-                let msgs: Vec<ScanMsg> = match queue_for_drain.lock() {
-                    Ok(mut q) => std::mem::take(&mut *q),
+                cx.background_executor().timer(interval).await;
+                let (msgs, more_pending): (Vec<ScanMsg>, bool) = match queue_for_drain.lock() {
+                    Ok(mut q) => {
+                        let take = q.len().min(DU_MAX_MSGS_PER_TICK);
+                        let mut msgs = Vec::with_capacity(take);
+                        for _ in 0..take {
+                            if let Some(msg) = q.pop_front() {
+                                msgs.push(msg);
+                            }
+                        }
+                        (msgs, !q.is_empty())
+                    }
                     Err(_) => break,
                 };
                 if msgs.is_empty() {
+                    interval = DU_DRAIN_INTERVAL_IDLE;
                     continue;
                 }
+                interval = if more_pending {
+                    DU_DRAIN_INTERVAL_BUSY
+                } else {
+                    DU_DRAIN_INTERVAL_IDLE
+                };
                 let mut done = false;
                 let mut had_batch = false;
                 let mut stale = false;
@@ -308,6 +358,7 @@ impl DiskUsageView {
                     }
                     if had_batch || done {
                         v.invalidate_layout();
+                        v.rebuild_layout_if_ready();
                         let rebuild_topn =
                             done || last_topn_rebuild.elapsed() >= DU_TOPN_REBUILD_INTERVAL;
                         if rebuild_topn {
@@ -366,7 +417,31 @@ impl DiskUsageView {
     fn invalidate_layout(&mut self) {
         self.layout_cache = None;
         self.rects_cache.clear();
-        self.rects_bounds = None;
+    }
+
+    fn rebuild_layout_if_ready(&mut self) {
+        let Some((w, h)) = self.treemap_size else {
+            return;
+        };
+        self.layout_cache = Some(build_layout_node_with_mode(
+            &self.tree,
+            self.focus_id(),
+            DU_LAYOUT_DEPTH,
+            self.size_mode,
+        ));
+        if let Some(layout) = &self.layout_cache {
+            self.rects_cache = compute_treemap(layout, (0.0, 0.0, w, h), DU_LAYOUT_DEPTH);
+        }
+    }
+
+    fn update_treemap_size(&mut self, width: f32, height: f32, cx: &mut Context<Self>) {
+        let next = (width.max(260.0).round(), height.max(220.0).round());
+        if self.treemap_size == Some(next) {
+            return;
+        }
+        self.treemap_size = Some(next);
+        self.rebuild_layout_if_ready();
+        cx.notify();
     }
 
     fn restart_scan(&mut self, cx: &mut Context<Self>) {
@@ -379,11 +454,12 @@ impl DiskUsageView {
         self.scan_complete = false;
         self.error = None;
         self.cancel = Arc::new(AtomicBool::new(false));
-        self.msg_queue = Arc::new(Mutex::new(Vec::new()));
+        self.msg_queue = Arc::new(Mutex::new(VecDeque::new()));
         self.zoom_path.clear();
         self.selected_node = None;
         self.top_files.clear();
         self.invalidate_layout();
+        self.rebuild_layout_if_ready();
         self.start_scan(self.fs.clone(), cx);
         cx.notify();
     }
@@ -420,6 +496,7 @@ impl DiskUsageView {
         }
         self.size_mode = mode;
         self.invalidate_layout();
+        self.rebuild_layout_if_ready();
         self.rebuild_top_files();
         cx.notify();
     }
@@ -430,25 +507,6 @@ impl DiskUsageView {
         }
         self.descend_packages = !self.descend_packages;
         self.restart_scan(cx);
-    }
-
-    fn ensure_layout(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        let bounds_match = self.rects_bounds == Some((x, y, w, h));
-        if bounds_match && !self.rects_cache.is_empty() {
-            return;
-        }
-        if self.layout_cache.is_none() {
-            self.layout_cache = Some(build_layout_node_with_mode(
-                &self.tree,
-                self.focus_id(),
-                DU_LAYOUT_DEPTH,
-                self.size_mode,
-            ));
-        }
-        if let Some(layout) = &self.layout_cache {
-            self.rects_cache = compute_treemap(layout, (x, y, w, h), DU_LAYOUT_DEPTH);
-            self.rects_bounds = Some((x, y, w, h));
-        }
     }
 
     fn header(&self, cx: &mut Context<Self>) -> Div {
@@ -567,15 +625,21 @@ impl DiskUsageView {
                                 }
                             })),
                     )
-                    .child(
-                        Button::new("du-packages")
-                            .small()
-                            .icon(Icon::empty().path("icons/nav/package.svg"))
-                            .selected(self.descend_packages)
-                            .disabled(scanning)
-                            .tooltip("Scan package folders as containers")
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_packages(cx))),
-                    ),
+                    // Package-descend toggle controls a macOS-specific
+                    // concept (.app/.bundle/.framework directories) —
+                    // Windows has no equivalent, so hide the button
+                    // there to avoid offering a meaningless toggle.
+                    .when(cfg!(target_os = "macos"), |this| {
+                        this.child(
+                            Button::new("du-packages")
+                                .small()
+                                .icon(Icon::empty().path("icons/nav/package.svg"))
+                                .selected(self.descend_packages)
+                                .disabled(scanning)
+                                .tooltip("Scan package folders as containers")
+                                .on_click(cx.listener(|this, _, _, cx| this.toggle_packages(cx))),
+                        )
+                    }),
             );
         // Volume capacity bar — "X.X GB free of Y.Y GB" with the
         // used portion filled in muted_foreground.
@@ -806,33 +870,37 @@ impl DiskUsageView {
             )
     }
 
-    fn treemap(&mut self, w: f32, h: f32, cx: &mut Context<Self>) -> Div {
+    fn treemap(&self, w: f32, h: f32, cx: &mut Context<Self>) -> Div {
         let (w, h) = (w.max(260.0), h.max(220.0));
-        self.ensure_layout(0.0, 0.0, w, h);
-        let rects = self.rects_cache.clone();
-        // Snapshot display name + size string per rect — drops the
-        // tree borrow before we build click handlers below.
-        let labels: Vec<(String, String)> = rects
-            .iter()
-            .map(|r| {
-                let name = self
-                    .tree
-                    .nodes
-                    .get(&r.node_id)
-                    .map(|n| n.display_name.clone())
-                    .unwrap_or_default();
-                (name, humanize_bytes(r.size_bytes))
-            })
-            .collect();
-        let mut container = div().relative().w(px(w)).h(px(h)).bg(cx.theme().background);
-        for (ix, r) in rects.iter().enumerate() {
+        let view = cx.entity().clone();
+        let mut container = div()
+            .relative()
+            .w(px(w))
+            .h(px(h))
+            .bg(cx.theme().background)
+            .on_prepaint(move |bounds, _, cx| {
+                view.update(cx, |this, cx| {
+                    this.update_treemap_size(
+                        f32::from(bounds.size.width),
+                        f32::from(bounds.size.height),
+                        cx,
+                    );
+                });
+            });
+        for (ix, r) in self.rects_cache.iter().enumerate() {
             if r.width < 1.0 || r.height < 1.0 {
                 continue;
             }
             let color = category_color(r.file_category);
             let node_id = r.node_id;
             let has_children = r.has_children;
-            let (name, size) = labels[ix].clone();
+            let name = self
+                .tree
+                .nodes
+                .get(&r.node_id)
+                .map(|n| n.display_name.clone())
+                .unwrap_or_default();
+            let size = humanize_bytes(r.size_bytes);
             let show_label = r.width >= 60.0 && r.height >= 24.0;
             let show_size = r.width >= 80.0 && r.height >= 40.0;
             let selected = self.selected_node == Some(node_id);
@@ -898,7 +966,8 @@ impl DiskUsageView {
     }
 
     /// Zoom into `target` (clicked container rect). Pushes onto the
-    /// zoom path, drops cached layout so the next paint recomputes.
+    /// zoom path and rebuilds the cached layout against the current
+    /// treemap size.
     pub fn zoom_into(&mut self, target: NodeId, cx: &mut Context<Self>) {
         // Ignore the root — already focused.
         if target == self.focus_id() {
@@ -906,14 +975,16 @@ impl DiskUsageView {
         }
         self.zoom_path.push(target);
         self.invalidate_layout();
+        self.rebuild_layout_if_ready();
         cx.notify();
     }
 
-    /// Pop one level of zoom (Cmd+Up or backspace-like). Returns to
-    /// the parent focus.
+    /// Pop one level of zoom (Cmd+Up or backspace-like) and rebuild
+    /// the cached layout against the current treemap size.
     pub fn zoom_out(&mut self, cx: &mut Context<Self>) {
         if self.zoom_path.pop().is_some() {
             self.invalidate_layout();
+            self.rebuild_layout_if_ready();
             cx.notify();
         }
     }

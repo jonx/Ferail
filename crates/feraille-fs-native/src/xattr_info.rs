@@ -74,7 +74,120 @@ pub fn fetch_quarantine_info(path: &Path) -> QuarantineInfo {
     info
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows arm: read the NTFS Alternate Data Stream
+/// `<file>:Zone.Identifier`, which Windows writes whenever a file
+/// arrives from the Internet zone (downloaded via a browser, copied
+/// from an email attachment, extracted from an archive flagged as
+/// Internet, etc.). Format is a tiny INI:
+///
+/// ```text
+/// [ZoneTransfer]
+/// ZoneId=3
+/// ReferrerUrl=https://example.com/
+/// HostUrl=https://example.com/file.zip
+/// ```
+///
+/// ZoneId values: 0=Local, 1=Intranet, 2=Trusted, 3=Internet,
+/// 4=Restricted. We treat 3+ as "quarantined" — the cases Windows
+/// itself flags in Explorer's Security tab.
+///
+/// File timestamps don't live in the ADS; the file's own creation
+/// time is the best proxy and the UI displays it as the
+/// "downloaded at" value.
+#[cfg(windows)]
+pub fn fetch_quarantine_info(path: &Path) -> QuarantineInfo {
+    let mut info = QuarantineInfo::empty();
+
+    // The stream is opened by appending `:Zone.Identifier` to the
+    // path. `std::fs::read` routes through CreateFileW on Windows
+    // which recognizes ADS syntax.
+    let mut ads_path = path.as_os_str().to_os_string();
+    ads_path.push(":Zone.Identifier");
+    let Ok(bytes) = std::fs::read(&ads_path) else {
+        return info;
+    };
+    let text = String::from_utf8_lossy(&bytes);
+
+    let mut zone_id: Option<i32> = None;
+    let mut host_url: Option<String> = None;
+    let mut referrer: Option<String> = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("ZoneId=") {
+            zone_id = rest.trim().parse().ok();
+        } else if let Some(rest) = line.strip_prefix("HostUrl=") {
+            let s = rest.trim();
+            if !s.is_empty() {
+                host_url = Some(s.to_string());
+            }
+        } else if let Some(rest) = line.strip_prefix("ReferrerUrl=") {
+            let s = rest.trim();
+            if !s.is_empty() {
+                referrer = Some(s.to_string());
+            }
+        }
+    }
+
+    // Treat Internet (3) and Restricted (4) as quarantined — that's
+    // what Explorer's "this came from another computer" notice keys
+    // on. Local / Intranet / Trusted aren't flagged.
+    let internet_or_restricted = matches!(zone_id, Some(3) | Some(4));
+    if !internet_or_restricted && host_url.is_none() && referrer.is_none() {
+        // ADS present but contains nothing actionable — leave as
+        // not-quarantined.
+        return info;
+    }
+
+    info.quarantined = internet_or_restricted;
+
+    // "Agent" doesn't map cleanly on Windows; the closest thing is
+    // the host URL's domain. Browsers that write Zone.Identifier
+    // (Edge, Chrome, Firefox) don't all populate HostUrl, but when
+    // present it's the most useful "downloaded from" label.
+    info.agent = host_url
+        .as_deref()
+        .and_then(parse_url_host)
+        .map(str::to_string);
+
+    // Downloaded-at proxy: the file's creation time. NTFS preserves
+    // this even when the file is moved within the same volume.
+    if let Ok(meta) = std::fs::metadata(path) {
+        if let Ok(ctime) = meta.created() {
+            if let Ok(d) = ctime.duration_since(std::time::UNIX_EPOCH) {
+                info.downloaded_at = Some(d.as_secs() as i64);
+            }
+        }
+    }
+
+    if let Some(h) = host_url {
+        info.where_from.push(h);
+    }
+    if let Some(r) = referrer {
+        if !info.where_from.contains(&r) {
+            info.where_from.push(r);
+        }
+    }
+
+    info
+}
+
+#[cfg(windows)]
+fn parse_url_host(url: &str) -> Option<&str> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .or_else(|| url.strip_prefix("ftp://"))
+        .unwrap_or(url);
+    let end = rest.find(['/', '?', '#', ':']).unwrap_or(rest.len());
+    let host = &rest[..end];
+    if host.is_empty() {
+        None
+    } else {
+        Some(host)
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn fetch_quarantine_info(_path: &Path) -> QuarantineInfo {
     QuarantineInfo::empty()
 }

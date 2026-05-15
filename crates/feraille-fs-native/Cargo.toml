@@ -9,6 +9,21 @@ description = "Cross-platform std::fs implementation of feraille-core::FsBackend
 feraille-core.workspace = true
 feraille-disk-usage.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# Win32 bindings for drive enumeration + volume info. Same version as
+# feraille-shell-win32 to keep the dep graph tight.
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    # GetLogicalDrives, GetDriveTypeW, GetVolumeInformationW, GetDiskFreeSpaceExW
+    "Win32_Storage_FileSystem",
+    # move_to_trash → SHFileOperationW, icons → SHGetFileInfoW
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    # fetch_icon_rgba (icons.rs) needs CoInitializeEx
+    "Win32_System_Com",
+] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 xattr = "1"
 plist = "1"

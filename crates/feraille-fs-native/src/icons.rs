@@ -87,7 +87,101 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows arm: `IShellItemImageFactory::GetImage` with
+/// `SIIGBF_ICONONLY` so we get the system icon for the file's type
+/// without the shell trying to render a preview / thumbnail. Result
+/// is read via a DIB section (same pattern as
+/// `feraille-shell-win32::fetch_quick_look_thumbnail`) so transparent
+/// icon backgrounds are preserved.
+///
+/// Returns straight (non-premultiplied) RGBA — the shell's icon
+/// pipeline gives back premultiplied BGRA, we swap channels here.
+/// (For most file icons the premultiplied vs straight distinction
+/// is invisible because the alpha is 0 or 255 everywhere; soft-edge
+/// glyphs are the cases where it'd matter.)
+#[cfg(windows)]
+pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::SIZE;
+    use windows::Win32::Graphics::Gdi::{DeleteObject, GetObjectW, DIBSECTION, HBITMAP};
+    use windows::Win32::System::Com::{
+        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{
+        IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_ICONONLY, SIIGBF_RESIZETOFIT,
+    };
+
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide.push(0);
+
+    unsafe {
+        let co_hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let we_initialized = co_hr.is_ok();
+
+        let result = (|| -> Option<(Vec<u8>, u32, u32)> {
+            let factory: IShellItemImageFactory =
+                SHCreateItemFromParsingName(PCWSTR::from_raw(wide.as_ptr()), None).ok()?;
+            let size = SIZE {
+                cx: size_px as i32,
+                cy: size_px as i32,
+            };
+            let hbitmap: HBITMAP = factory
+                .GetImage(size, SIIGBF_ICONONLY | SIIGBF_RESIZETOFIT)
+                .ok()?;
+
+            let mut ds = DIBSECTION::default();
+            let nb = GetObjectW(
+                hbitmap,
+                std::mem::size_of::<DIBSECTION>() as i32,
+                Some(&mut ds as *mut _ as *mut _),
+            );
+            if nb == 0 || ds.dsBm.bmBits.is_null() || ds.dsBm.bmBitsPixel != 32 {
+                let _ = DeleteObject(hbitmap);
+                return None;
+            }
+            let w = ds.dsBm.bmWidth as u32;
+            let h = ds.dsBmih.biHeight.unsigned_abs();
+            let stride = ds.dsBm.bmWidthBytes as usize;
+            let src = ds.dsBm.bmBits as *const u8;
+            let row_bytes = (w as usize) * 4;
+            // SIIGBF_ICONONLY returns bitmaps from the system icon
+            // resources, which are bottom-up by Win32 ICON convention
+            // (the THUMBNAILONLY pathway is the exception that gave
+            // back top-down). Walk the source from last row to first
+            // so the output is top-down.
+            let mut pixels = vec![0u8; (w as usize) * (h as usize) * 4];
+            for y in 0..(h as usize) {
+                let src_row = (h as usize) - 1 - y;
+                std::ptr::copy_nonoverlapping(
+                    src.add(src_row * stride),
+                    pixels.as_mut_ptr().add(y * row_bytes),
+                    row_bytes,
+                );
+            }
+            let _ = DeleteObject(hbitmap);
+
+            // BGRA → straight RGBA. Force alpha=255 only when alpha
+            // is zero everywhere (some legacy file types' icons
+            // arrive with the alpha channel zeroed).
+            let all_alpha_zero = pixels.chunks_exact(4).all(|px| px[3] == 0);
+            for px in pixels.chunks_exact_mut(4) {
+                px.swap(0, 2);
+                if all_alpha_zero {
+                    px[3] = 0xFF;
+                }
+            }
+            Some((pixels, w, h))
+        })();
+
+        if we_initialized {
+            CoUninitialize();
+        }
+        result
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn fetch_icon_rgba(_path: &Path, _size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     None
 }

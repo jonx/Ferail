@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use feraille_gpui::shell::path_segments;
 
+#[cfg(unix)]
 #[test]
 fn segments_root_only() {
     let segs = path_segments(Path::new("/"));
@@ -17,6 +18,7 @@ fn segments_root_only() {
     assert_eq!(segs[0].1, PathBuf::from("/"));
 }
 
+#[cfg(unix)]
 #[test]
 fn segments_user_home() {
     let segs = path_segments(Path::new("/Users/jkn"));
@@ -25,6 +27,7 @@ fn segments_user_home() {
     assert_eq!(segs.last().unwrap().1, PathBuf::from("/Users/jkn"));
 }
 
+#[cfg(unix)]
 #[test]
 fn segments_deep_path() {
     let segs = path_segments(Path::new("/Users/jkn/Source/Feraille/crates"));
@@ -34,5 +37,39 @@ fn segments_deep_path() {
     assert_eq!(
         segs[5].1,
         PathBuf::from("/Users/jkn/Source/Feraille/crates")
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn segments_drive_root_only() {
+    let segs = path_segments(Path::new(r"C:\"));
+    assert_eq!(segs.len(), 1);
+    assert_eq!(segs[0].0, r"C:\");
+    assert_eq!(segs[0].1, PathBuf::from(r"C:\"));
+}
+
+#[cfg(windows)]
+#[test]
+fn segments_drive_user_home() {
+    let segs = path_segments(Path::new(r"C:\Users\JohnKNIPPER"));
+    let labels: Vec<&str> = segs.iter().map(|(l, _)| l.as_str()).collect();
+    assert_eq!(labels, vec![r"C:\", "Users", "JohnKNIPPER"]);
+    assert_eq!(
+        segs.last().unwrap().1,
+        PathBuf::from(r"C:\Users\JohnKNIPPER")
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn segments_drive_deep_path() {
+    let segs = path_segments(Path::new(r"D:\Source\Feraille\crates"));
+    assert_eq!(segs.len(), 4);
+    assert_eq!(segs[0].0, r"D:\");
+    assert_eq!(segs[3].0, "crates");
+    assert_eq!(
+        segs[3].1,
+        PathBuf::from(r"D:\Source\Feraille\crates")
     );
 }

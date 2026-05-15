@@ -46,18 +46,19 @@ impl Shell {
         if paths.is_empty() {
             return;
         }
-        let mut cmd = std::process::Command::new("/usr/bin/open");
-        cmd.arg("-R").args(&paths);
-        let _ = cmd.spawn();
+        for path in &paths {
+            crate::platform_shell::reveal_in_finder(path);
+        }
+        let reveal_target = if cfg!(windows) { "Explorer" } else { "Finder" };
         let msg = if paths.len() == 1 {
             let name = paths[0]
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("item")
                 .to_string();
-            format!("Showing \u{201C}{}\u{201D} in Finder", name)
+            format!("Showing \u{201C}{}\u{201D} in {}", name, reveal_target)
         } else {
-            format!("Showing {} items in Finder", paths.len())
+            format!("Showing {} items in {}", paths.len(), reveal_target)
         };
         window.push_notification(Notification::info(msg), cx);
     }
@@ -71,10 +72,7 @@ impl Shell {
         let Some(path) = self.context_target.take() else {
             return;
         };
-        let _ = std::process::Command::new("/usr/bin/open")
-            .arg("-R")
-            .arg(&path)
-            .spawn();
+        crate::platform_shell::reveal_in_finder(&path);
     }
 
     pub(super) fn on_copy_context_path(
@@ -491,7 +489,12 @@ impl Shell {
         });
     }
 
-    pub(super) fn on_quick_look(&mut self, _: &QuickLook, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_quick_look(
+        &mut self,
+        _: &QuickLook,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
@@ -500,8 +503,22 @@ impl Shell {
         if paths.is_empty() {
             return;
         }
-        let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
-        let _ = crate::platform_shell::show_quick_look(&refs);
+        // macOS pops a Quick Look HUD with the selected file's
+        // content; the closest equivalent on Windows/Linux (no Quick
+        // Look API) is to make sure the in-process preview pane is
+        // visible, since it already shows the same content via the
+        // IPreviewHandler pipeline. Toggling rather than just
+        // showing matches Spacebar's "open/dismiss" Mac feel.
+        #[cfg(target_os = "macos")]
+        {
+            let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
+            let _ = crate::platform_shell::show_quick_look(&refs);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.on_toggle_preview(&TogglePreview, window, cx);
+        }
+        let _ = window;
     }
 
     pub(super) fn on_duplicate(&mut self, _: &Duplicate, _: &mut Window, cx: &mut Context<Self>) {

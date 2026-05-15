@@ -638,6 +638,12 @@ pub fn set_app_icon_from_png_bytes(_png_bytes: &[u8]) -> SetIconResult {
     SetIconResult::NotMacOs
 }
 
+/// AppUserModelID is a Windows-shell concept (taskbar grouping,
+/// jump-list, pin-to-Start). No equivalent on macOS — the Dock
+/// groups by bundle identifier, set elsewhere. Stub kept so the
+/// `platform_shell` alias compiles symmetrically on both targets.
+pub fn set_app_user_model_id(_id: &str) {}
+
 /// `true` if the system is currently in Dark Mode. Reads
 /// `NSApp.effectiveAppearance.name` and compares against
 /// `NSAppearanceNameDarkAqua`, picking up both system Dark mode and

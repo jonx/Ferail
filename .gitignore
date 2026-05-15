@@ -1,4 +1,6 @@
 /target
+/codex-target
+.claude/settings.local.json
 **/*.rs.bk
 *.pdb
 .DS_Store

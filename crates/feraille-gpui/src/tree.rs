@@ -407,7 +407,7 @@ fn render_tree_row(
             }
             menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
                 .separator()
-                .menu("Reveal in Finder", Box::new(RevealContextPath))
+                .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealContextPath))
                 .menu("Copy Path", Box::new(CopyContextPath))
                 .separator()
                 .menu(favorite_label, Box::new(ToggleFavoriteForTarget))

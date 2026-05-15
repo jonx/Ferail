@@ -135,6 +135,12 @@ impl DiskUsageTree {
         }
     }
 
+    /// Fast path for fact streams that already guarantee link
+    /// uniqueness. Avoids the O(n) sibling scan in `add_link`.
+    pub fn add_link_unchecked(&mut self, container: NodeId, node: NodeId) {
+        self.containers.entry(container).or_default().push(node);
+    }
+
     pub fn add_size(&mut self, id: NodeId, size_bytes: u64) {
         let entry = self.nodes.entry(id).or_insert_with(|| DiskUsageNode::new(id));
         entry.size_bytes = entry.size_bytes.saturating_add(size_bytes);

@@ -22,7 +22,12 @@ use rusqlite::{params, Connection};
 /// `pinned_items` placeholder, which is now unused). Migration from
 /// `1 → 2` is additive — `init_schema` is idempotent (`CREATE TABLE
 /// IF NOT EXISTS`), so existing caches survive the upgrade.
-pub const DB_VERSION: u32 = 2;
+///
+/// `3` adds the `files.description` column for the structured
+/// magic-derived Description column. Forward migration is also
+/// additive — `init_schema` issues an `ALTER TABLE ... ADD COLUMN`
+/// and tolerates "duplicate column" on already-migrated DBs.
+pub const DB_VERSION: u32 = 3;
 
 #[derive(Debug)]
 pub enum MetadataError {
@@ -128,6 +133,10 @@ pub struct FileMetaRecord {
     pub mtime_unix: i64,
     pub size: u64,
     pub magic_label: Option<String>,
+    /// Rich ` · `-joined fact string for the Description column,
+    /// derived from the structured magic-byte parse. NULL until the
+    /// magic prefetch worker fills it.
+    pub description: Option<String>,
     pub partial_hash: Option<String>,
     pub full_hash: Option<String>,
     pub mime: Option<String>,
@@ -249,6 +258,7 @@ impl MetadataDb {
                 mtime_unix INTEGER NOT NULL,
                 size INTEGER NOT NULL,
                 magic_label TEXT,
+                description TEXT,
                 partial_hash TEXT,
                 full_hash TEXT,
                 mime TEXT,
@@ -330,6 +340,12 @@ impl MetadataDb {
             CREATE INDEX IF NOT EXISTS idx_favorites_sort ON favorites(sort_index);
             "#,
         )?;
+        // v2 → v3 forward migration. SQLite has no IF NOT EXISTS for
+        // ADD COLUMN; "duplicate column" errors mean we already
+        // migrated and can ignore the failure.
+        let _ = self
+            .conn
+            .execute("ALTER TABLE files ADD COLUMN description TEXT", []);
         Ok(())
     }
 
@@ -422,7 +438,7 @@ impl MetadataDb {
     /// the row is still valid.
     pub fn get_file(&self, path: &str) -> Result<Option<FileMetaRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT path, mtime_unix, size, magic_label, partial_hash, full_hash, \
+            "SELECT path, mtime_unix, size, magic_label, description, partial_hash, full_hash, \
                     mime, quarantined, quarantine_agent, quarantine_iso, \
                     quarantine_where_from, indexed_at_unix \
              FROM files WHERE path = ?1",
@@ -433,16 +449,17 @@ impl MetadataDb {
                 mtime_unix: row.get(1)?,
                 size: row.get::<_, i64>(2)? as u64,
                 magic_label: row.get(3)?,
-                partial_hash: row.get(4)?,
-                full_hash: row.get(5)?,
-                mime: row.get(6)?,
+                description: row.get(4)?,
+                partial_hash: row.get(5)?,
+                full_hash: row.get(6)?,
+                mime: row.get(7)?,
                 quarantined: row
-                    .get::<_, Option<i64>>(7)?
+                    .get::<_, Option<i64>>(8)?
                     .map(|v| v != 0),
-                quarantine_agent: row.get(8)?,
-                quarantine_iso: row.get(9)?,
-                quarantine_where_from: row.get(10)?,
-                indexed_at_unix: row.get(11)?,
+                quarantine_agent: row.get(9)?,
+                quarantine_iso: row.get(10)?,
+                quarantine_where_from: row.get(11)?,
+                indexed_at_unix: row.get(12)?,
             })
         }) {
             Ok(r) => Ok(Some(r)),
@@ -473,14 +490,15 @@ impl MetadataDb {
             }
         }
         self.conn.execute(
-            "INSERT INTO files (path, mtime_unix, size, magic_label, partial_hash, \
+            "INSERT INTO files (path, mtime_unix, size, magic_label, description, partial_hash, \
                                 full_hash, mime, quarantined, quarantine_agent, \
                                 quarantine_iso, quarantine_where_from, indexed_at_unix) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
              ON CONFLICT(path) DO UPDATE SET \
                mtime_unix = excluded.mtime_unix, \
                size = excluded.size, \
                magic_label = COALESCE(excluded.magic_label, files.magic_label), \
+               description = COALESCE(excluded.description, files.description), \
                partial_hash = COALESCE(excluded.partial_hash, files.partial_hash), \
                full_hash = COALESCE(excluded.full_hash, files.full_hash), \
                mime = COALESCE(excluded.mime, files.mime), \
@@ -494,6 +512,7 @@ impl MetadataDb {
                 rec.mtime_unix,
                 rec.size as i64,
                 rec.magic_label,
+                rec.description,
                 rec.partial_hash,
                 rec.full_hash,
                 rec.mime,
@@ -686,8 +705,10 @@ impl MetadataDb {
                 self.conn.execute("DELETE FROM folder_usage", [])?;
             }
             ResetScope::Magic => {
-                self.conn
-                    .execute("UPDATE files SET magic_label = NULL", [])?;
+                self.conn.execute(
+                    "UPDATE files SET magic_label = NULL, description = NULL",
+                    [],
+                )?;
             }
             ResetScope::Quarantine => {
                 self.conn.execute(
@@ -913,6 +934,7 @@ mod tests {
             mtime_unix: 100,
             size: 10,
             magic_label: Some("Plain text".into()),
+            description: None,
             partial_hash: Some("abc".into()),
             full_hash: Some("def".into()),
             mime: None,
@@ -929,6 +951,7 @@ mod tests {
             mtime_unix: 100,
             size: 10,
             magic_label: None,
+            description: None,
             partial_hash: None,
             full_hash: None,
             mime: Some("text/plain".into()),
@@ -950,6 +973,7 @@ mod tests {
             mtime_unix: 999,
             size: 20,
             magic_label: None,
+            description: None,
             partial_hash: None,
             full_hash: None,
             mime: None,
@@ -1044,6 +1068,7 @@ mod tests {
             mtime_unix: 100,
             size: 10,
             magic_label: Some("Plain text".into()),
+            description: None,
             partial_hash: Some("abc".into()),
             full_hash: Some("def".into()),
             mime: None,

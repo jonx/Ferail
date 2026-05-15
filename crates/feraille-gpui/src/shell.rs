@@ -247,6 +247,14 @@ pub struct Shell {
     /// `Cmd+Option+Up/Down` operates on the row the user just selected.
     /// `None` when no favorite has been clicked this session.
     pub focused_favorite: Option<feraille_core::favorites::FavoriteId>,
+    /// Windows/Linux app menu bar (`gpui-component::AppMenuBar`).
+    /// `Some(_)` only on non-macOS — those platforms have no global
+    /// menu bar, so we render the menu strip in-window beneath the
+    /// title bar. macOS uses `cx.set_menus()` for its NSApp menu and
+    /// leaves this `None`. Reads from the same `cx.set_menus()`
+    /// global state that the Mac path populates, so the menu spec
+    /// has a single source of truth.
+    pub menu_bar: Option<Entity<gpui_component::menu::AppMenuBar>>,
     /// Sidebar tree state (Stage 9.c): which directories are
     /// currently expanded. Updated on caret-click and by the
     /// `--expand <path>` CLI flag (which walks the path's ancestors).
@@ -357,69 +365,6 @@ fn open_metadata_db() -> Option<Arc<Mutex<feraille_meta::MetadataDb>>> {
 }
 
 /// One of the macOS-standard sidebar destinations shown in the
-/// **Locations** section. Flat — no expand/collapse, no descendants
-/// — so a click navigates and that's it. The user-curated **Favorites**
-/// section (separate, below Locations) is a runtime data structure;
-/// this type covers only the fixed OS folders. Tree-style hierarchical
-/// browsing lives in the separate Browse section below.
-struct Location {
-    label: &'static str,
-    /// `home`-relative subpath (None ⇒ the home directory itself).
-    sub: Option<&'static str>,
-    /// Asset path for the row's prefix icon. Resolved via
-    /// `FeraAssets` so both our local bundle and the upstream
-    /// gpui-component pack work.
-    icon: &'static str,
-}
-
-const LOCATIONS: &[Location] = &[
-    Location {
-        label: "Home",
-        sub: None,
-        icon: "icons/nav/home.svg",
-    },
-    Location {
-        label: "Applications",
-        sub: Some("Applications"),
-        icon: "icons/nav/apps.svg",
-    },
-    Location {
-        label: "Desktop",
-        sub: Some("Desktop"),
-        icon: "icons/nav/desktop.svg",
-    },
-    Location {
-        label: "Documents",
-        sub: Some("Documents"),
-        icon: "icons/nav/documents.svg",
-    },
-    Location {
-        label: "Downloads",
-        sub: Some("Downloads"),
-        icon: "icons/nav/downloads.svg",
-    },
-    Location {
-        label: "Trash",
-        sub: Some(".Trash"),
-        icon: "icons/nav/trash.svg",
-    },
-    Location {
-        label: "Movies",
-        sub: Some("Movies"),
-        icon: "icons/nav/movies.svg",
-    },
-    Location {
-        label: "Music",
-        sub: Some("Music"),
-        icon: "icons/nav/music.svg",
-    },
-    Location {
-        label: "Pictures",
-        sub: Some("Pictures"),
-        icon: "icons/nav/pictures.svg",
-    },
-];
-
 const ICON_WARM_CHUNK: usize = 16;
 const ICON_WARM_INTERVAL: Duration = Duration::from_millis(16);
 
@@ -434,16 +379,6 @@ const SPLITTER_PERSIST_INTERVAL: Duration = Duration::from_millis(500);
 /// roughly: sidebar 220 + file list ~500 + preview 280 = 1000, so
 /// dropping under ~900 makes the file list painfully narrow.
 const PREVIEW_AUTOHIDE_THRESHOLD: f32 = 900.0;
-
-impl Location {
-    fn path(&self) -> PathBuf {
-        let mut p = home_dir();
-        if let Some(sub) = self.sub {
-            p.push(sub);
-        }
-        p
-    }
-}
 
 impl Shell {
     /// Construct the singleton `ProcessState` for this process.
@@ -566,6 +501,16 @@ impl Shell {
         .detach();
 
         let initial_tab = Shell::build_tab(process.clone(), start.clone(), start_id, window, cx);
+        // gpui-component's AppMenuBar is the Win/Linux equivalent of
+        // macOS's NSApp menu. Reads from the same `cx.set_menus()`
+        // global state, so the menu spec lives once in
+        // `install_app_menus`. None on macOS — the global menu bar
+        // covers it natively.
+        let menu_bar = if cfg!(target_os = "macos") {
+            None
+        } else {
+            Some(gpui_component::menu::AppMenuBar::new(cx))
+        };
         let mut shell = Self {
             process: process.clone(),
             tabs: vec![initial_tab],
@@ -581,7 +526,15 @@ impl Shell {
             breadcrumb_input,
             shortcuts_help_filter: None,
             shortcuts_help_input,
-            preview_visible: true,
+            // Default off: the preview pane eats ~250-300px on the
+            // right and pushes file-list columns (Description in
+            // particular) out of view at the default window size.
+            // Cmd+P (or whatever shortcut binds the toggle in keymap)
+            // brings it back. Once DB-persistence for layout state
+            // wires into Shell::new the user's last choice will
+            // override this default — until then this is the boot
+            // state on every launch.
+            preview_visible: false,
             ui_scale,
             splitter_state: cx.new(|_| gpui_component::resizable::ResizableState::default()),
             sidebar_width: persisted.sidebar_width.unwrap_or(220.0).clamp(160.0, 400.0),
@@ -590,6 +543,7 @@ impl Shell {
             sidebar_collapsed: persisted.sidebar_collapsed.unwrap_or(false),
             favorites_section_collapsed: false,
             focused_favorite: None,
+            menu_bar,
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
             _subscriptions: vec![breadcrumb_subscription, shortcuts_help_subscription],

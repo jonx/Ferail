@@ -77,7 +77,10 @@ impl Shell {
         // Hide Locations from the Browse tree so the same depth-1 entry
         // (Documents, Downloads, etc.) doesn't appear twice. User-curated
         // Favorites are *not* hidden — those are intentional shortcuts.
-        let location_paths: HashSet<PathBuf> = LOCATIONS.iter().map(|f| f.path()).collect();
+        let location_paths: HashSet<PathBuf> = feraille_fs_native::paths::well_known_locations()
+            .into_iter()
+            .map(|loc| loc.path)
+            .collect();
         let current = self.active_tab().current_dir.clone();
         let node_id = self.process.fs.id_for_path(&home);
         self.process
@@ -86,20 +89,6 @@ impl Shell {
             .get_or_create_path_with_id(home.clone(), node_id);
         let is_expanded = self.expanded.contains(&home);
         let favorited = self.process.favorites.read(cx).contains_path(&home);
-        {
-            let f = self.process.favorites.read(cx);
-            eprintln!(
-                "build_browse_rows: home={:?} entries={} favorited={}",
-                home,
-                f.entries().len(),
-                favorited
-            );
-            for e in f.entries() {
-                if let feraille_core::favorites::FavoriteTarget::Path(p) = &e.target {
-                    eprintln!("  fav target: {:?}  eq_home={}", p, p == &home);
-                }
-            }
-        }
         let mut rows: Vec<TreeRowSpec> = vec![TreeRowSpec {
             node_id,
             path: home.clone(),
@@ -176,8 +165,8 @@ impl Shell {
         let current = self.active_tab().current_dir.clone();
         let mut menu = SidebarMenu::new();
         let favs = self.process.favorites.read(cx);
-        for loc in LOCATIONS {
-            let path = loc.path();
+        for loc in feraille_fs_native::paths::well_known_locations() {
+            let path = loc.path.clone();
             let node_id = self.process.fs.id_for_path(&path);
             self.process
                 .node_store
@@ -216,7 +205,7 @@ impl Shell {
                     }
                     menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
                         .separator()
-                        .menu("Reveal in Finder", Box::new(RevealContextPath))
+                        .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealContextPath))
                         .menu("Copy Path", Box::new(CopyContextPath))
                 });
             // §5: a Locations entry that's also a user Favorite gets the
@@ -590,15 +579,21 @@ impl Shell {
                 // flag (panel-left-open vs panel-left-close) so the
                 // user can read what clicking will do.
                 .child(
-                    SidebarToggleButton::new()
-                        .collapsed(collapsed)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.sidebar_collapsed = !this.sidebar_collapsed;
-                            let mut s = app_state::load();
-                            s.sidebar_collapsed = Some(this.sidebar_collapsed);
-                            app_state::save(&s);
-                            cx.notify();
-                        })),
+                    div()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .child(
+                            SidebarToggleButton::new()
+                                .collapsed(collapsed)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.sidebar_collapsed = !this.sidebar_collapsed;
+                                    let mut s = app_state::load();
+                                    s.sidebar_collapsed = Some(this.sidebar_collapsed);
+                                    app_state::save(&s);
+                                    cx.notify();
+                                })),
+                        ),
                 )
                 .child(
                     div()
@@ -615,6 +610,9 @@ impl Shell {
                         .icon(gpui_component::Icon::empty().path("icons/chevron-left.svg"))
                         .tooltip("Back  \u{2318}\u{5B}")
                         .disabled(!can_back)
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
                         .on_click(cx.listener(|this, _, _, cx| this.navigate_back(cx))),
                 )
                 .child(
@@ -624,6 +622,9 @@ impl Shell {
                         .icon(gpui_component::Icon::empty().path("icons/chevron-right.svg"))
                         .tooltip("Forward  \u{2318}\u{5D}")
                         .disabled(!can_forward)
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
                         .on_click(cx.listener(|this, _, _, cx| this.navigate_forward(cx))),
                 )
                 .child(div().flex_1())
@@ -631,18 +632,39 @@ impl Shell {
                     div()
                         .flex_shrink_0()
                         .w(px(220.0))
+                        // Filter input — also lives inside TitleBar's
+                        // drag region. Stop mouse-down propagation so
+                        // Win32 doesn't capture the click as window
+                        // drag (same bug as the toolbar buttons; see
+                        // §Title bar drag capture above).
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
                         .child(Input::new(&self.active_tab().filter_input).small()),
                 )
                 .child(div().flex_1())
                 // Phase 7 follow-on: density buttons on the right —
                 // Refresh and New Folder. Icon-only with tooltips so
                 // the bar stays narrow.
+                //
+                // Title-bar drag capture: on Windows, gpui-component's
+                // TitleBar treats its content as a draggable caption
+                // region. Without `cx.stop_propagation()` on mouse-down
+                // here, Win32's NCHITTEST returns HTCAPTION for the
+                // button's screen rect, the OS captures the mouse for
+                // window-drag, and the button's mouse-up never fires
+                // — leaving the button visually pressed forever and
+                // never running the click handler. Matches the pattern
+                // `gpui_component::AppMenuBar` uses for its own buttons.
                 .child(
                     Button::new("toolbar-new-folder")
                         .small()
                         .ghost()
                         .icon(gpui_component::Icon::empty().path("icons/nav/folder.svg"))
                         .tooltip_with_action("New Folder", &NewFolder, Some(SHELL_CONTEXT))
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.on_new_folder(&NewFolder, window, cx);
                         })),
@@ -653,6 +675,9 @@ impl Shell {
                         .ghost()
                         .icon(gpui_component::Icon::empty().path("icons/nav/refresh.svg"))
                         .tooltip_with_action("Refresh", &Refresh, Some(SHELL_CONTEXT))
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.on_refresh(&Refresh, window, cx);
                         })),
@@ -852,7 +877,7 @@ impl Shell {
                             .xsmall()
                             .ghost()
                             .tooltip_with_action(
-                                "Reveal in Finder",
+                                feraille_core::commands::REVEAL_LABEL,
                                 &RevealInFinder,
                                 Some(SHELL_CONTEXT),
                             )
@@ -1017,7 +1042,7 @@ impl Shell {
                     };
                     menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
                         .separator()
-                        .menu("Reveal in Finder", Box::new(RevealContextPath))
+                        .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealContextPath))
                         .menu("Copy Path", Box::new(CopyContextPath))
                         .separator()
                         .menu(favorite_label, Box::new(ToggleFavoriteForTarget))
@@ -1400,6 +1425,7 @@ impl Render for Shell {
                     splitter
                 };
                 let title_bar = self.title_bar(cx);
+                let menu_bar = self.menu_bar.clone();
                 v_flex()
                     .relative()
                     .size_full()
@@ -1409,6 +1435,20 @@ impl Render for Shell {
                     // mark and the toolbar's nav buttons + filter
                     // input.
                     .child(title_bar)
+                    // Windows/Linux app menu strip — File/Edit/View/Go
+                    // dropdowns reading from the same `cx.set_menus()`
+                    // spec the macOS NSApp menu uses. `None` on macOS,
+                    // so the closure runs zero-cost there.
+                    .when_some(menu_bar, |this, mb| {
+                        this.child(
+                            div()
+                                .h(px(28.))
+                                .px_2()
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .child(mb),
+                        )
+                    })
                     .child(div().flex_1().min_h_0().child(splitter))
                     .child(status_bar)
                     // Background-task panel popover sits absolute-

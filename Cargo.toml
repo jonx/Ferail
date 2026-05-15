@@ -65,6 +65,23 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["fo
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "ba44512e0cfe633869714054e8ea1afd133d4a28" }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "ba44512e0cfe633869714054e8ea1afd133d4a28" }
 
+# =============================================================================
+# LOCAL-ONLY PATCH — DO NOT COMMIT
+# =============================================================================
+# Temporary override pointing at a local clone of zed-industries/zed with an
+# in-progress `gpui_windows::render_to_image` patch (branch
+# `gpui-windows-render-to-image`). Used to verify the upstream change works
+# end-to-end with feraille's screenshot harness before opening the PR.
+#
+# Remove this entire `[patch]` block before pushing the feraille branch —
+# the relative `../zed` path only exists on this dev machine, so leaving it
+# in would break every other build (notably Mac, which has its own working
+# `render_to_image` and doesn't need this patch at all).
+[patch."https://github.com/zed-industries/zed"]
+gpui = { path = "../zed/crates/gpui" }
+gpui_platform = { path = "../zed/crates/gpui_platform" }
+gpui_windows = { path = "../zed/crates/gpui_windows" }
+
 [profile.dev]
 # Text rasterization is sluggish at -Copt-level=0 — keep some optimization in dev.
 opt-level = 1

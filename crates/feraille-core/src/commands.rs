@@ -15,6 +15,22 @@
 //! the platform's responder chain unchanged. Only Feraille-owned
 //! behaviour goes here.
 
+/// User-facing label for "show in OS file browser" — Finder on macOS,
+/// Explorer on Windows, "File Manager" elsewhere.
+#[cfg(target_os = "macos")]
+pub const REVEAL_LABEL: &str = "Reveal in Finder";
+#[cfg(windows)]
+pub const REVEAL_LABEL: &str = "Reveal in Explorer";
+#[cfg(not(any(target_os = "macos", windows)))]
+pub const REVEAL_LABEL: &str = "Reveal in File Manager";
+
+/// User-facing label for "send to OS trash" — macOS Trash, Windows
+/// Recycle Bin.
+#[cfg(target_os = "macos")]
+pub const TRASH_LABEL: &str = "Move to Trash";
+#[cfg(not(target_os = "macos"))]
+pub const TRASH_LABEL: &str = "Move to Recycle Bin";
+
 /// Stable identifier for a user-invokable action. Format
 /// `"category.action_name"`, lowercase, dot-separated. Use
 /// [`find`] to look up the metadata for an id.
@@ -209,7 +225,7 @@ const CATALOGUE: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId("file.move_to_trash"),
-        title: "Move to Trash",
+        title: TRASH_LABEL,
         category: Category::File,
         // Cmd+Backspace is the canonical Finder binding; bare Delete
         // is a friendly alternate for users coming from Windows/Linux.
@@ -223,7 +239,7 @@ const CATALOGUE: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId("file.reveal_in_finder"),
-        title: "Reveal in Finder",
+        title: REVEAL_LABEL,
         category: Category::File,
         shortcuts: &[Shortcut::primary_alt("R")],
     },

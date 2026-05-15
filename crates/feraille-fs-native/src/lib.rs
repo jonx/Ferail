@@ -20,10 +20,19 @@ use feraille_core::{
 mod disk_usage_scanner;
 mod icons;
 mod magic;
+pub mod paths;
+mod volumes;
 pub mod xattr_info;
 pub use disk_usage_scanner::DEFAULT_DU_BATCH;
 pub use icons::fetch_icon_rgba;
-pub use magic::detect_magic;
+pub use magic::{
+    detect_magic, detect_magic_info, sniff_bytes_info, CpuArch, MagicInfo, MagicType,
+    PeSubsystem,
+};
+pub use paths::home_dir;
+pub use volumes::list_volumes;
+#[cfg(not(target_os = "macos"))]
+pub use volumes::volume_info_for_path;
 pub use xattr_info::{details_from as quarantine_details_from, fetch_quarantine_info, QuarantineInfo};
 
 const ROOT_NODE_RAW: u64 = 1;
@@ -177,6 +186,7 @@ impl NativeFs {
             display_mtime,
             display_kind,
             display_magic: String::new(),
+            display_description: String::new(),
             is_quarantined: false,
             quarantine: None,
         })
@@ -260,6 +270,7 @@ impl FsBackend for NativeFs {
                 display_mtime,
                 display_kind,
                 display_magic: String::new(),
+                display_description: String::new(),
                 is_quarantined: false,
                 quarantine: None,
             });
@@ -277,11 +288,6 @@ impl FsBackend for NativeFs {
     }
 }
 
-pub fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
-}
 
 /// Hand `path` to the OS for default-app open. macOS: `open(1)`. Windows:
 /// `cmd /C start`. Linux: `xdg-open`. Returns `Err` only if the launcher
@@ -337,9 +343,53 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<()> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Send `path` to the Windows Recycle Bin via `SHFileOperationW`
+/// with `FO_DELETE` + `FOF_ALLOWUNDO`. The legacy API rather than
+/// `IFileOperation` because it's a single function call with no COM
+/// init / reference counting — sufficient for moving one item to
+/// the Recycle Bin.
+///
+/// Suppresses confirmation prompts and error UI (`FOF_NOCONFIRMATION
+/// | FOF_NOERRORUI | FOF_SILENT`) so the worker doesn't pop a system
+/// dialog. Errors come back through the `SHFileOperationW` return.
+#[cfg(windows)]
 pub fn move_to_trash(path: &Path) -> std::io::Result<()> {
-    // Conservative on non-macOS — refuse rather than silently delete.
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::UI::Shell::{
+        SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE,
+        SHFILEOPSTRUCTW,
+    };
+
+    // SHFileOperationW takes a double-null-terminated wide string
+    // list. For a single path that's `<path>\0\0`.
+    let mut pfrom: Vec<u16> = path.as_os_str().encode_wide().collect();
+    pfrom.push(0); // path terminator
+    pfrom.push(0); // list terminator
+
+    let mut op = SHFILEOPSTRUCTW::default();
+    op.wFunc = FO_DELETE as u32;
+    op.pFrom = windows::core::PCWSTR::from_raw(pfrom.as_ptr());
+    op.fFlags = (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT).0 as u16;
+
+    let rc = unsafe { SHFileOperationW(&mut op) };
+    if rc == 0 && !op.fAnyOperationsAborted.as_bool() {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!(
+                "SHFileOperationW failed for {} (rc={}, aborted={})",
+                path.display(),
+                rc,
+                op.fAnyOperationsAborted.as_bool()
+            ),
+        ))
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+pub fn move_to_trash(path: &Path) -> std::io::Result<()> {
+    // Conservative on non-macOS/Windows — refuse rather than silently delete.
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         format!("move_to_trash not implemented on this OS for {}", path.display()),
@@ -460,40 +510,6 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
             is_removable,
         })
     }
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn volume_info_for_path(_path: &Path) -> Option<VolumeInfo> {
-    None
-}
-
-/// Volume metadata for every directory under `/Volumes` (macOS),
-/// resolved through [`volume_info_for_path`]. Falls back to a
-/// path-derived `VolumeInfo` when the NSURL lookup fails. Empty on
-/// Linux/Windows for now.
-pub fn list_volumes() -> Vec<VolumeInfo> {
-    let mut out: Vec<VolumeInfo> = Vec::new();
-    let Ok(read_dir) = std::fs::read_dir("/Volumes") else {
-        return out;
-    };
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        let info = volume_info_for_path(&path).unwrap_or_else(|| VolumeInfo {
-            name: path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .map(str::to_string)
-                .unwrap_or_else(|| path.display().to_string()),
-            path: path.clone(),
-            total_bytes: None,
-            available_bytes: None,
-            is_local: true,
-            is_removable: false,
-        });
-        out.push(info);
-    }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    out
 }
 
 fn describe_kind(kind: EntryKind, name: &str) -> String {

@@ -21,7 +21,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use feraille_core::FileEntry;
-use feraille_fs_native::{NativeFs, detect_magic, fetch_quarantine_info};
+use feraille_fs_native::{detect_magic_info, fetch_quarantine_info, NativeFs};
 use feraille_meta::{FileMetaRecord, MetadataDb};
 use gpui::Entity;
 
@@ -39,6 +39,9 @@ struct PrefetchRow {
     /// Same-or-newer snapshot of `display_magic`. Empty string when
     /// we couldn't determine.
     magic_label: String,
+    /// Same-or-newer snapshot of `display_description`. Empty when
+    /// the type has no extra facts (or we couldn't determine).
+    description: String,
     /// Same-or-newer snapshot of `is_quarantined`.
     is_quarantined: bool,
 }
@@ -51,6 +54,7 @@ struct PrefetchSeed {
     mtime_unix: i64,
     size: u64,
     has_magic: bool,
+    has_description: bool,
     has_quarantine: bool,
 }
 
@@ -88,6 +92,7 @@ pub fn start(
                 mtime_unix: e.mtime_unix,
                 size: e.size,
                 has_magic: !e.display_magic.is_empty(),
+                has_description: !e.display_description.is_empty(),
                 has_quarantine: e.is_quarantined,
             })
         })
@@ -151,9 +156,9 @@ pub fn start(
 fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> Vec<PrefetchRow> {
     let mut out = Vec::with_capacity(seeds.len());
     for seed in seeds {
-        // If FileEntry already carries the data (rare — only when
+        // If FileEntry already carries everything (rare — only when
         // hydrate-from-DB on enumerate gets implemented), skip.
-        if seed.has_magic && seed.has_quarantine {
+        if seed.has_magic && seed.has_description && seed.has_quarantine {
             continue;
         }
         let path_str = seed.path.to_string_lossy().into_owned();
@@ -164,12 +169,25 @@ fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> V
             guard.get_file(&path_str).ok().flatten()
         });
 
-        // Determine magic label.
-        let magic_label = match cached.as_ref().and_then(|r| r.magic_label.clone()) {
-            Some(s) => s,
-            None => {
-                let detected = detect_magic(&seed.path).unwrap_or("").to_string();
-                detected
+        // Determine magic label + description in one shot. The new
+        // detector reads 4 KB once and returns a structured info
+        // struct; the label and description are derived from that
+        // same parse. Cached values short-circuit the I/O.
+        let cached_label = cached.as_ref().and_then(|r| r.magic_label.clone());
+        let cached_desc = cached.as_ref().and_then(|r| r.description.clone());
+        let (magic_label, description) = match (cached_label, cached_desc) {
+            (Some(l), Some(d)) => (l, d),
+            (cached_l, cached_d) => {
+                let info = detect_magic_info(&seed.path);
+                let label = cached_l.unwrap_or_else(|| {
+                    info.as_ref()
+                        .map(|i| i.magic_type.display_name().to_string())
+                        .unwrap_or_default()
+                });
+                let desc = cached_d.unwrap_or_else(|| {
+                    info.as_ref().map(|i| i.description()).unwrap_or_default()
+                });
+                (label, desc)
             }
         };
 
@@ -208,6 +226,11 @@ fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> V
                     } else {
                         Some(magic_label.clone())
                     },
+                    description: if description.is_empty() {
+                        None
+                    } else {
+                        Some(description.clone())
+                    },
                     partial_hash: cached.as_ref().and_then(|r| r.partial_hash.clone()),
                     full_hash: cached.as_ref().and_then(|r| r.full_hash.clone()),
                     mime: cached.as_ref().and_then(|r| r.mime.clone()),
@@ -224,6 +247,7 @@ fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> V
         out.push(PrefetchRow {
             row_ix: seed.row_ix,
             magic_label,
+            description,
             is_quarantined: quarantined,
         });
     }
@@ -239,6 +263,9 @@ fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<PrefetchRow>) {
         if let Some(e) = entries.get_mut(row.row_ix) {
             if !row.magic_label.is_empty() {
                 e.display_magic = row.magic_label;
+            }
+            if !row.description.is_empty() {
+                e.display_description = row.description;
             }
             e.is_quarantined = row.is_quarantined;
         }

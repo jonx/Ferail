@@ -35,22 +35,29 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
     let theme_radius = theme.radius;
     let registry = tasks.borrow();
 
-    let header = div()
+    let header_text = if registry.is_empty() {
+        "Background tasks".to_string()
+    } else if registry.len() == 1 {
+        "1 background task".to_string()
+    } else {
+        format!("{} background tasks", registry.len())
+    };
+    let header = h_flex()
         .w_full()
+        .items_center()
+        .gap_2()
         .px_3()
-        .py_2()
+        .py_2p5()
         .border_b_1()
         .border_color(theme_border)
-        .text_xs()
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(theme_muted)
-        .child(SharedString::from(if registry.is_empty() {
-            "Background tasks".to_string()
-        } else if registry.len() == 1 {
-            "1 background task".to_string()
-        } else {
-            format!("{} background tasks", registry.len())
-        }));
+        .bg(theme_muted.opacity(0.06))
+        .child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme_fg)
+                .child(SharedString::from(header_text)),
+        );
 
     let body: AnyElement = if registry.is_empty() {
         div()
@@ -72,8 +79,8 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                 let elapsed = humanize_secs(t.started_at.elapsed().as_secs());
                 v_flex()
                     .w_full()
-                    .gap_1()
-                    .py_2()
+                    .gap_1p5()
+                    .py_3()
                     .px_3()
                     .child(
                         h_flex()
@@ -85,6 +92,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                                     .min_w_0()
                                     .truncate()
                                     .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
                                     .text_color(theme_fg)
                                     .child(label),
                             )
@@ -99,11 +107,12 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                     .child(
                         h_flex()
                             .w_full()
+                            .items_center()
+                            .gap_2()
                             .child(progress_strip(t.progress, theme_border, theme_primary))
                             .child(
                                 div()
                                     .flex_shrink_0()
-                                    .pl_2()
                                     .text_xs()
                                     .text_color(theme_muted)
                                     .child(SharedString::from(elapsed)),
@@ -141,18 +150,22 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
 }
 
 fn progress_strip(progress: TaskProgress, track_bg: gpui::Hsla, fill_bg: gpui::Hsla) -> Div {
-    let track_w = px(180.0);
-    let fill_w = match progress {
-        TaskProgress::Indeterminate => track_w * 0.30,
-        TaskProgress::Determinate(p) => track_w * p.clamp(0.0, 1.0),
+    let fill_frac = match progress {
+        TaskProgress::Indeterminate => 0.30,
+        TaskProgress::Determinate(p) => p.clamp(0.0, 1.0),
     };
     div()
-        .flex_shrink_0()
-        .w(track_w)
-        .h(px(3.0))
-        .rounded(px(1.5))
-        .bg(track_bg)
-        .child(div().h_full().w(fill_w).rounded(px(1.5)).bg(fill_bg))
+        .flex_1()
+        .h(px(5.0))
+        .rounded(px(2.5))
+        .bg(track_bg.opacity(0.5))
+        .child(
+            div()
+                .h_full()
+                .w(relative(fill_frac))
+                .rounded(px(2.5))
+                .bg(fill_bg),
+        )
 }
 
 fn humanize_secs(s: u64) -> String {
