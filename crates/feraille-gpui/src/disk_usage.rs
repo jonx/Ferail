@@ -464,8 +464,30 @@ impl DiskUsageView {
         cx.notify();
     }
 
+    /// User clicked the header's stop button. Three things happen
+    /// together so the UI feedback is instant rather than waiting on
+    /// the cooperative cancel to actually unwind:
+    ///   1. Tell the worker to stop (it'll exit at the next dirent
+    ///      or directory boundary; harmless if it finishes naturally
+    ///      first).
+    ///   2. Bump `scan_generation` so the drain task sees a stale
+    ///      generation at its next tick and breaks. Late
+    ///      `ScanMsg::Batch`/`Done` from the dying worker land in the
+    ///      orphan queue and are never applied — accumulated tree
+    ///      data stays exactly where it was at click time.
+    ///   3. Flip `scan_complete = true` locally so the header swaps
+    ///      from "Scanning…" / Stop button to the final summary +
+    ///      Refresh button immediately.
+    /// Also ends the registry task entry so the parent Shell's
+    /// status-bar progress strip stops showing this scan as in
+    /// flight.
     fn cancel_scan(&mut self, cx: &mut Context<Self>) {
         self.cancel.store(true, Ordering::Relaxed);
+        self.scan_generation = self.scan_generation.wrapping_add(1);
+        self.scan_complete = true;
+        if let Some(id) = self.task_id.take() {
+            self.with_tasks(cx, |reg| reg.end(id));
+        }
         cx.notify();
     }
 
@@ -993,6 +1015,32 @@ impl DiskUsageView {
 impl Focusable for DiskUsageView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+impl Drop for DiskUsageView {
+    /// Closing the Disk Usage window must stop the still-running
+    /// scanner — without this, the worker keeps walking the volume
+    /// in the background long after the user has dismissed the
+    /// window. The scanner checks `cancel` at every dirent boundary
+    /// and exits cleanly once it sees the flag flip; the drain task
+    /// is already gone by the time we get here (it broke out of its
+    /// loop when `this.update` started returning `Err` on the dead
+    /// entity), so the worker's final messages land in an orphan
+    /// queue that's dropped with the rest of `self`.
+    ///
+    /// Also ends the registry task entry so the parent Shell's
+    /// status-bar progress strip doesn't show a phantom in-flight
+    /// scan. The owner-notify callback isn't reachable from `drop`
+    /// (no `&mut App`), but next paint of the Shell picks up the
+    /// missing task naturally.
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        if let Some(id) = self.task_id.take() {
+            if let Ok(mut reg) = self.tasks.try_borrow_mut() {
+                reg.end(id);
+            }
+        }
     }
 }
 
