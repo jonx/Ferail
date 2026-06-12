@@ -725,6 +725,83 @@ pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static>) {
 #[cfg(not(target_os = "macos"))]
 pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static>) {}
 
+/// Write the given paths to the general pasteboard as file URLs —
+/// the cross-app file-copy verb (Finder pastes what we copy and vice
+/// versa). Replaces the pasteboard's previous contents. Main-thread
+/// only (AppKit). docs/features/FILE_OPS.md.
+#[cfg(target_os = "macos")]
+pub fn clipboard_copy_file_urls(paths: &[&std::path::Path]) {
+    use objc2::runtime::ProtocolObject;
+    use objc2_app_kit::{NSPasteboard, NSPasteboardWriting};
+    use objc2_foundation::{NSArray, NSString, NSURL};
+    if objc2_foundation::MainThreadMarker::new().is_none() {
+        return;
+    }
+    unsafe {
+        let pb = NSPasteboard::generalPasteboard();
+        pb.clearContents();
+        let writers: Vec<objc2::rc::Retained<ProtocolObject<dyn NSPasteboardWriting>>> = paths
+            .iter()
+            .filter_map(|p| {
+                let s = p.to_str()?;
+                let url = NSURL::fileURLWithPath_isDirectory(&NSString::from_str(s), p.is_dir());
+                Some(ProtocolObject::from_id(url))
+            })
+            .collect();
+        if writers.is_empty() {
+            return;
+        }
+        let array: objc2::rc::Retained<NSArray<ProtocolObject<dyn NSPasteboardWriting>>> =
+            NSArray::from_vec(writers);
+        let _: bool = objc2::msg_send![&*pb, writeObjects: &*array];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn clipboard_copy_file_urls(_paths: &[&std::path::Path]) {}
+
+/// Read file URLs off the general pasteboard (what Cmd+V pastes).
+/// Empty when the pasteboard holds no file URLs. Main-thread only.
+#[cfg(target_os = "macos")]
+pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
+    use objc2::ClassType as _;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::NSPasteboard;
+    use objc2_foundation::{NSArray, NSURL};
+    if objc2_foundation::MainThreadMarker::new().is_none() {
+        return Vec::new();
+    }
+    unsafe {
+        let pb = NSPasteboard::generalPasteboard();
+        let classes: objc2::rc::Retained<NSArray<AnyObject>> = {
+            let url_cls: &AnyObject = std::mem::transmute(NSURL::class());
+            objc2::msg_send_id![objc2::class!(NSArray), arrayWithObject: url_cls]
+        };
+        let read: Option<objc2::rc::Retained<NSArray<NSURL>>> =
+            objc2::msg_send_id![&*pb, readObjectsForClasses: &*classes, options: std::ptr::null::<AnyObject>()];
+        let Some(urls) = read else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for i in 0..urls.count() {
+            let url = urls.objectAtIndex(i);
+            let is_file: bool = objc2::msg_send![&*url, isFileURL];
+            if !is_file {
+                continue;
+            }
+            if let Some(path) = url.path() {
+                out.push(std::path::PathBuf::from(path.to_string()));
+            }
+        }
+        out
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
+    Vec::new()
+}
+
 /// Begin observing volume mount/unmount/rename via NSWorkspace's
 /// notification center. The callback runs on the main thread after
 /// every change; hosts re-list volumes and fan out. Main-thread-only,

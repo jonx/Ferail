@@ -25,8 +25,11 @@ feature notes in [docs/features/](docs/features/README.md).
 - Finish Trash as a first-class model: restore/original location, empty
   trash, per-volume trash awareness, confirmations for destructive bulk
   operations, and undo where possible.
-- Add copy, cut, paste, duplicate, and move workers with visible task
-  progress and collision handling.
+- File-ops follow-ups (docs/features/FILE_OPS.md — Cmd+C/V/Option+V
+  with progress, cancel, and collision dialog shipped 2026-06-13):
+  per-item collision resolution, Windows pasteboard (CF_HDROP) and
+  volume-identity parity, cross-volume move undo, and a decision on
+  cut semantics.
 - Add drag-into-app support for file list, folder rows, tabs, and empty
   folder space.
 - Complete toolbar density: refresh, new folder, sort, group, view mode,

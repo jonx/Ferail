@@ -19,14 +19,13 @@ use feraille_core::commands::{CommandId, Shortcut, all_commands};
 use gpui::{App, KeyBinding};
 
 use crate::shell::{
-    self, ClearFilter, CloseTab, CloseWindow, CopyPath, CursorDown, CursorDownExtend, CursorFirst,
-    CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp, CursorUpExtend, EditBreadcrumb,
-    FocusFilter, GetInfo, GoHome, MoveToTrash, NavigateBack, NavigateForward, NavigateParent,
-    NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings,
-    OpenViewer, PageDown, PageDownExtend, PageUp, PageUpExtend, PrevTab, QuickLook, Refresh,
-    RenameSelected,
-    ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview,
-    ZoomIn, ZoomOut, ZoomReset,
+    self, ClearFilter, CloseTab, CloseWindow, CopyFiles, CopyPath, CursorDown, CursorDownExtend,
+    CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp, CursorUpExtend,
+    EditBreadcrumb, FocusFilter, GetInfo, GoHome, MovePasteFiles, MoveToTrash, NavigateBack,
+    NavigateForward, NavigateParent, NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab,
+    OpenSelected, OpenSettings, OpenViewer, PageDown, PageDownExtend, PageUp, PageUpExtend,
+    PasteFiles, PrevTab, QuickLook, Refresh, RenameSelected, ReopenClosedTab, RevealInFinder,
+    SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::viewer::window::{
     VIEWER_CONTEXT, ViewerActualSize, ViewerDismiss, ViewerNext, ViewerPrev,
@@ -129,6 +128,9 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "file.new_folder" => cx.bind_keys([KeyBinding::new(kb_str, NewFolder, ctx)]),
         "file.move_to_trash" => cx.bind_keys([KeyBinding::new(kb_str, MoveToTrash, ctx)]),
         "file.copy_path" => cx.bind_keys([KeyBinding::new(kb_str, CopyPath, ctx)]),
+        "file.copy" => cx.bind_keys([KeyBinding::new(kb_str, CopyFiles, ctx)]),
+        "file.paste" => cx.bind_keys([KeyBinding::new(kb_str, PasteFiles, ctx)]),
+        "file.move_paste" => cx.bind_keys([KeyBinding::new(kb_str, MovePasteFiles, ctx)]),
         "file.reveal_in_finder" => cx.bind_keys([KeyBinding::new(kb_str, RevealInFinder, ctx)]),
         "file.refresh" => cx.bind_keys([KeyBinding::new(kb_str, Refresh, ctx)]),
 

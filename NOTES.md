@@ -7,6 +7,50 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-13 file ops: copy/paste/move with progress + collisions (landed)
+
+Spec: `docs/features/FILE_OPS.md`. The biggest TODO gap — Feraille
+can now actually manage files, not just browse them.
+
+- **Engine in `feraille-fs-native/src/file_ops.rs`** — pure,
+  synchronous, worker-thread: `plan_transfer` (walk + byte totals +
+  top-level conflict scan, rejects copy-into-own-subtree),
+  `run_copy`/`run_move` under one `CollisionPolicy`
+  (Replace/KeepBoth/Skip). 8 MiB chunked copies so progress ticks and
+  cancel lands mid-file; a cancelled partial file is deleted, files
+  whose last byte landed survive (the cancel check sits *after* the
+  read, before the write — first version deleted complete files).
+  Symlinks recreated, never followed. Same-volume detection via
+  `MetadataExt::dev()` gives move its rename fast path. 8 tempdir
+  unit tests.
+- **Cancel buttons are real now.** `ActiveTask` carries
+  `Option<Arc<AtomicBool>>` (`begin_with_cancel`); the task panel
+  renders ✕ for tasks that have one. First consumer: transfers.
+- **`spawn_transfer_op`** (shell/file_ops.rs): plan on bg → collision
+  dialog if needed (gpui dialog, NOT NSAlert; all three policies as
+  explicit buttons since the pinned gpui-component rev won't draw the
+  ok/cancel footer next to custom children; dialog dismiss = cancel
+  via dropped channel senders, so nothing can wedge the task) → run
+  with progress coalesced to ~10 Hz registry updates → end + reload
+  broadcast + notification + undo. Same-directory paste skips the
+  dialog (auto Keep Both, like pasting next to the original should).
+- **Clipboard verbs**: Cmd+C writes real file URLs to the general
+  pasteboard [mac] (Finder interop both directions), Cmd+V copies,
+  Cmd+Option+V moves — Finder semantics, no Cut in v1. Pasteboard
+  *reading* (`clipboard_read_file_urls`) is new; win32 stubs document
+  the CF_HDROP parity path.
+- **Undo**: `MoveBack` (same-volume moves only) and `RemoveCreated`
+  (copies that replaced nothing) — both deliberately conservative;
+  undoing a replace would delete the only surviving version.
+- **`spawn_file_op` failures now notify** instead of log-only —
+  duplicate/compress/trash/rename/new-folder all surface errors.
+- Verified end-to-end by driving real keystrokes through the
+  screenshot harness: Cmd+C in one process, Cmd+V in another
+  (pasteboard persists), byte-identical results, collision dialog
+  screenshot (`screenshots/file-ops-collision.png`), Esc-cancel
+  leaves dest untouched, move empties the source. The cancel button
+  and a cross-volume transfer need interactive testing.
+
 # 2026-06-13 honest tree chevrons, ancestry guides, sidebar polish (landed)
 
 Browse/Volumes tree affordances stopped lying:

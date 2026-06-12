@@ -79,6 +79,15 @@ pub enum UndoOp {
     /// `date_added`. Identity (`FavoriteId`) is preserved so any
     /// toggle elsewhere stays consistent (§3.2).
     RemoveFavorite(feraille_core::favorites::Favorite),
+    /// Undo a move: rename each `(from, to)` pair's `to` back to
+    /// `from`. Only registered when every item took the same-volume
+    /// rename path (docs/features/FILE_OPS.md) — cross-volume undo
+    /// is deferred.
+    MoveBack(Vec<(PathBuf, PathBuf)>),
+    /// Undo a copy: delete the items it created. Only registered when
+    /// the copy replaced nothing — undoing a replace would delete the
+    /// sole remaining version.
+    RemoveCreated(Vec<PathBuf>),
 }
 
 impl UndoOp {
@@ -90,6 +99,23 @@ impl UndoOp {
                 std::fs::rename(current, original).map_err(|e| e.to_string())
             }
             UndoOp::DeleteFolder(p) => std::fs::remove_dir(p).map_err(|e| e.to_string()),
+            UndoOp::MoveBack(pairs) => {
+                for (from, to) in pairs {
+                    std::fs::rename(to, from).map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            }
+            UndoOp::RemoveCreated(paths) => {
+                for p in paths {
+                    let meta = std::fs::symlink_metadata(p).map_err(|e| e.to_string())?;
+                    if meta.is_dir() && !meta.is_symlink() {
+                        std::fs::remove_dir_all(p).map_err(|e| e.to_string())?;
+                    } else {
+                        std::fs::remove_file(p).map_err(|e| e.to_string())?;
+                    }
+                }
+                Ok(())
+            }
             UndoOp::AddFavorite(_) | UndoOp::RemoveFavorite(_) => {
                 Err("favorite undo handled by Shell".into())
             }
@@ -102,6 +128,8 @@ impl UndoOp {
             UndoOp::DeleteFolder(_) => "Removed new folder",
             UndoOp::AddFavorite(_) => "Removed Favorite",
             UndoOp::RemoveFavorite(_) => "Restored Favorite",
+            UndoOp::MoveBack(_) => "Moved items back",
+            UndoOp::RemoveCreated(_) => "Removed pasted items",
         }
     }
 }
@@ -1735,14 +1763,25 @@ impl Shell {
         reload_path: PathBuf,
         op: impl FnOnce() -> Result<(), String> + Send + 'static,
         label: &'static str,
+        window: &Window,
         cx: &mut Context<Self>,
     ) {
         let process = self.process.clone();
+        let win = window.window_handle();
         cx.spawn(async move |_this, cx| {
             let result = cx.background_executor().spawn(async move { op() }).await;
             match result {
                 Ok(()) => Shell::broadcast_reload_for_process(&process, vec![reload_path], cx),
-                Err(e) => crate::log_warn!(90, "{label} failed: {e}"),
+                Err(e) => {
+                    crate::log_warn!(90, "{label} failed: {e}");
+                    let _ = win.update(cx, |_, window, cx| {
+                        use gpui_component::notification::Notification;
+                        window.push_notification(
+                            Notification::error(format!("{label} failed: {e}")),
+                            cx,
+                        );
+                    });
+                }
             }
         })
         .detach();

@@ -11,10 +11,20 @@
 //! Bridging to GPUI happens in the Shell (which owns the registry
 //! as a `Rc<RefCell<TaskRegistry>>`) and the status-bar render.
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TaskId(u64);
+
+impl TaskId {
+    /// Stable numeric form for element ids (task-panel cancel
+    /// buttons need a per-task `ElementId`).
+    pub fn raw(&self) -> u64 {
+        self.0
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TaskKind {
@@ -43,6 +53,12 @@ pub struct ActiveTask {
     pub started_at: Instant,
     pub progress: TaskProgress,
     pub cancellable: bool,
+    /// Cooperative cancel flag for tasks that support it. The task
+    /// panel renders a ✕ that stores `true`; the worker polls it
+    /// (docs/features/FILE_OPS.md). `None` for legacy `begin` callers
+    /// whose cancellation runs through other plumbing (tab cancel
+    /// flags etc.).
+    pub cancel: Option<Arc<AtomicBool>>,
 }
 
 pub struct TaskRegistry {
@@ -74,7 +90,23 @@ impl TaskRegistry {
             started_at: Instant::now(),
             progress: TaskProgress::Indeterminate,
             cancellable,
+            cancel: None,
         });
+        id
+    }
+
+    /// `begin` for tasks with a user-facing cancel button: the panel
+    /// flips `cancel` to true, the worker honors it cooperatively.
+    pub fn begin_with_cancel(
+        &mut self,
+        kind: TaskKind,
+        label: impl Into<String>,
+        cancel: Arc<AtomicBool>,
+    ) -> TaskId {
+        let id = self.begin(kind, label, true);
+        if let Some(t) = self.tasks.iter_mut().find(|t| t.id == id) {
+            t.cancel = Some(cancel);
+        }
         id
     }
 

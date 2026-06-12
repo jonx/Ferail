@@ -18,6 +18,7 @@ use feraille_core::{
 };
 
 mod disk_usage_scanner;
+pub mod file_ops;
 mod icons;
 mod magic;
 pub mod paths;

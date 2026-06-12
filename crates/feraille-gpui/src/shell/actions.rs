@@ -18,6 +18,14 @@ actions!(
         /// `OpenTerminalAtContext`, which reads `context_target`.
         OpenTerminalHere,
         MoveToTrash,
+        /// Cmd+C — selection's file URLs onto the general pasteboard
+        /// (cross-app: Finder pastes what we copy). FILE_OPS.md.
+        CopyFiles,
+        /// Cmd+V — paste (copy) the pasteboard's file URLs into the
+        /// current folder, with progress + collision handling.
+        PasteFiles,
+        /// Cmd+Option+V — Finder's "Move Items Here".
+        MovePasteFiles,
         RevealInFinder,
         FocusFilter,
         ClearFilter,

@@ -1173,6 +1173,16 @@ pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static + Send>)
 #[cfg(not(windows))]
 pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static + Send>) {}
 
+/// File-URL clipboard — Windows parity stubs. The real
+/// implementations use `CF_HDROP` (write via `DROPFILES`, read via
+/// `DragQueryFileW`), giving Explorer interop the same way the mac
+/// impl gives Finder interop. docs/features/FILE_OPS.md.
+pub fn clipboard_copy_file_urls(_paths: &[&std::path::Path]) {}
+
+pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
+    Vec::new()
+}
+
 /// Volume mount/unmount observer — Windows parity stub. The real
 /// implementation listens for `WM_DEVICECHANGE`
 /// (`DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE`) on the same

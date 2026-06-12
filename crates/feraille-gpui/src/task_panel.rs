@@ -3,16 +3,19 @@
 //! of the status bar (Stage 5.c). Positioned absolutely in the bottom-
 //! left of the shell window, sitting just above the status bar.
 //!
-//! Read-only today: cancel buttons land when individual task kinds
-//! pick up their per-task cancel hooks. For now the popover is purely
-//! visibility — answering "what is the app doing right now?" which
-//! the old soft-renderer app surfaced in its right-aligned status arm.
+//! Tasks that carry a cooperative cancel flag (file transfers —
+//! docs/features/FILE_OPS.md) get a ✕ button that flips it; the
+//! worker notices at its next checkpoint. Everything else stays
+//! read-only visibility — answering "what is the app doing right
+//! now?" which the old soft-renderer app surfaced in its
+//! right-aligned status arm.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::{ActiveTheme, h_flex, v_flex};
+use gpui_component::{ActiveTheme, Sizable as _, h_flex, v_flex};
 
 use crate::tasks::{TaskProgress, TaskRegistry};
 
@@ -77,6 +80,18 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                     TaskProgress::Determinate(p) => format!("{:.0}%", p * 100.0),
                 };
                 let elapsed = humanize_secs(t.started_at.elapsed().as_secs());
+                // Cancel button for tasks that carry a cooperative
+                // flag (docs/features/FILE_OPS.md). Flipping the flag
+                // is the whole gesture — the worker notices at its
+                // next checkpoint and ends the task itself.
+                let cancel = t.cancel.clone().map(|flag| {
+                    gpui_component::button::Button::new(("task-cancel", t.id.raw()))
+                        .icon(gpui_component::Icon::empty().path("icons/close.svg"))
+                        .xsmall()
+                        .on_click(move |_, _, _| {
+                            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        })
+                });
                 v_flex()
                     .w_full()
                     .gap_1p5()
@@ -102,7 +117,8 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                                     .text_xs()
                                     .text_color(theme_muted)
                                     .child(SharedString::from(progress_text)),
-                            ),
+                            )
+                            .when_some(cancel, |this, btn| this.child(btn)),
                     )
                     .child(
                         h_flex()

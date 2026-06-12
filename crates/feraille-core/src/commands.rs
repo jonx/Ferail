@@ -246,6 +246,26 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::File,
         shortcuts: &[Shortcut::primary_shift("C")],
     },
+    // Clipboard file verbs (docs/features/FILE_OPS.md). Finder
+    // semantics: Copy + Paste + Move-Paste; no Cut.
+    CommandSpec {
+        id: CommandId("file.copy"),
+        title: "Copy",
+        category: Category::File,
+        shortcuts: &[Shortcut::primary("C")],
+    },
+    CommandSpec {
+        id: CommandId("file.paste"),
+        title: "Paste",
+        category: Category::File,
+        shortcuts: &[Shortcut::primary("V")],
+    },
+    CommandSpec {
+        id: CommandId("file.move_paste"),
+        title: "Move Items Here",
+        category: Category::File,
+        shortcuts: &[Shortcut::primary_alt("V")],
+    },
     CommandSpec {
         id: CommandId("file.reveal_in_finder"),
         title: REVEAL_LABEL,

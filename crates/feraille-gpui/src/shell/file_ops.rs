@@ -1,6 +1,373 @@
 use super::*;
 
+/// Copy vs move for [`Shell::spawn_transfer_op`]. Future drop-target
+/// work (drag-into-app, drop-onto-favorite) feeds the same worker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TransferMode {
+    Copy,
+    Move,
+}
+
 impl Shell {
+    /// Cmd+C — write the selection's file URLs to the pasteboard.
+    pub(super) fn on_copy_files(
+        &mut self,
+        _: &CopyFiles,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
+        crate::platform_shell::clipboard_copy_file_urls(&refs);
+        let msg = match paths.as_slice() {
+            [single] => format!(
+                "Copied \u{201c}{}\u{201d}",
+                single.file_name().unwrap_or_default().to_string_lossy()
+            ),
+            many => format!("Copied {} items", many.len()),
+        };
+        window.push_notification(Notification::success(msg), cx);
+    }
+
+    /// Cmd+V — paste (copy) the pasteboard's files into this folder.
+    pub(super) fn on_paste_files(
+        &mut self,
+        _: &PasteFiles,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.paste_from_clipboard(TransferMode::Copy, window, cx);
+    }
+
+    /// Cmd+Option+V — Finder's "Move Items Here".
+    pub(super) fn on_move_paste_files(
+        &mut self,
+        _: &MovePasteFiles,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.paste_from_clipboard(TransferMode::Move, window, cx);
+    }
+
+    fn paste_from_clipboard(
+        &mut self,
+        mode: TransferMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        // Pasteboard read is a semantic event (action handler), same
+        // boundary as Quick Look — never from render.
+        let sources = crate::platform_shell::clipboard_read_file_urls();
+        if sources.is_empty() {
+            window.push_notification(Notification::info("No files on the clipboard"), cx);
+            return;
+        }
+        let dest = self.active_tab().current_dir.clone();
+        self.spawn_transfer_op(sources, dest, mode, window, cx);
+    }
+
+    /// The transfer worker (docs/features/FILE_OPS.md): plan on the
+    /// background executor, raise the collision dialog if needed, run
+    /// the engine with throttled progress into the task registry
+    /// (cancellable from the task panel), then notify + reload +
+    /// register undo.
+    pub(crate) fn spawn_transfer_op(
+        &mut self,
+        sources: Vec<PathBuf>,
+        dest: PathBuf,
+        mode: TransferMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use feraille_fs_native::file_ops::{self as engine, CollisionPolicy};
+        use gpui_component::button::ButtonVariants as _;
+        use gpui_component::notification::Notification;
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let verb = match mode {
+            TransferMode::Copy => "Copying",
+            TransferMode::Move => "Moving",
+        };
+        let noun = match sources.as_slice() {
+            [single] => format!(
+                "\u{201c}{}\u{201d}",
+                single.file_name().unwrap_or_default().to_string_lossy()
+            ),
+            many => format!("{} items", many.len()),
+        };
+        let task_id = self.process.tasks.borrow_mut().begin_with_cancel(
+            crate::tasks::TaskKind::FileOp,
+            format!("{verb} {noun}\u{2026}"),
+            cancel.clone(),
+        );
+
+        // Engine progress ticks land on this channel from the worker
+        // thread; the drain task coalesces them into ~10 Hz registry
+        // updates so the UI never repaints per chunk.
+        let (progress_tx, progress_rx) = async_channel::unbounded::<(u64, u64)>();
+        {
+            let weak = cx.weak_entity();
+            cx.spawn(async move |_this, cx| {
+                while let Ok(mut tick) = progress_rx.recv().await {
+                    while let Ok(t) = progress_rx.try_recv() {
+                        tick = t;
+                    }
+                    let frac = if tick.1 == 0 {
+                        1.0
+                    } else {
+                        tick.0 as f32 / tick.1 as f32
+                    };
+                    let Some(shell) = weak.upgrade() else { break };
+                    shell.update(cx, |this, cx| {
+                        this.process.tasks.borrow_mut().update(task_id, frac);
+                        cx.notify();
+                    });
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(100))
+                        .await;
+                }
+            })
+            .detach();
+        }
+
+        let win = window.window_handle();
+        let process = self.process.clone();
+        let weak = cx.weak_entity();
+        cx.spawn(async move |_this, cx| {
+            let end_task = |cx: &mut AsyncApp| {
+                if let Some(shell) = weak.upgrade() {
+                    shell.update(cx, |this, cx| {
+                        this.process.tasks.borrow_mut().end(task_id);
+                        cx.notify();
+                    });
+                }
+            };
+
+            // 1. Plan (walk + conflict scan) off the UI thread.
+            let plan = {
+                let (s, d, c) = (sources.clone(), dest.clone(), cancel.clone());
+                cx.background_executor()
+                    .spawn(async move { engine::plan_transfer(&s, &d, &c) })
+                    .await
+            };
+            let plan = match plan {
+                Ok(p) => p,
+                Err(e) => {
+                    end_task(cx);
+                    let _ = win.update(cx, |_, window, cx| {
+                        window.push_notification(
+                            Notification::error(format!("{verb} failed: {e}")),
+                            cx,
+                        );
+                    });
+                    return;
+                }
+            };
+
+            // 2. Collision policy. Pasting next to the originals
+            // obviously means "make me a copy" — no dialog.
+            let same_dir = sources.iter().all(|s| s.parent() == Some(dest.as_path()));
+            let policy = if plan.conflicts.is_empty() || same_dir {
+                CollisionPolicy::KeepBoth
+            } else {
+                let (choice_tx, choice_rx) =
+                    async_channel::bounded::<Option<CollisionPolicy>>(1);
+                let conflict_count = plan.conflicts.len();
+                let dest_label = dest
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| dest.display().to_string());
+                let opened = win.update(cx, |_, window, cx| {
+                    let tx = choice_tx.clone();
+                    window.open_dialog(cx, move |dialog, _window, _cx| {
+                        let tx_ok = tx.clone();
+                        let tx_cancel = tx.clone();
+                        let tx_replace = tx.clone();
+                        let tx_skip = tx.clone();
+                        let body = if conflict_count == 1 {
+                            format!(
+                                "An item with the same name already exists in \u{201c}{dest_label}\u{201d}."
+                            )
+                        } else {
+                            format!(
+                                "{conflict_count} items with the same names already exist in \u{201c}{dest_label}\u{201d}."
+                            )
+                        };
+                        // All three policies as explicit buttons (the
+                        // plain Dialog's ok/cancel footer doesn't
+                        // render alongside custom children in the
+                        // pinned gpui-component rev); ✕ / Esc cancel
+                        // the whole operation via the dropped-sender
+                        // path below.
+                        dialog
+                            .title("Items already exist")
+                            .child(div().text_sm().child(body))
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .pt_2()
+                                    .child(
+                                        Button::new("collision-keep-both")
+                                            .label("Keep Both")
+                                            .primary()
+                                            .small()
+                                            .on_click(move |_, window, cx| {
+                                                let _ = tx_ok
+                                                    .try_send(Some(CollisionPolicy::KeepBoth));
+                                                window.close_dialog(cx);
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("collision-replace")
+                                            .label("Replace")
+                                            .small()
+                                            .on_click(move |_, window, cx| {
+                                                let _ = tx_replace
+                                                    .try_send(Some(CollisionPolicy::Replace));
+                                                window.close_dialog(cx);
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("collision-skip")
+                                            .label("Skip Existing")
+                                            .small()
+                                            .on_click(move |_, window, cx| {
+                                                let _ = tx_skip
+                                                    .try_send(Some(CollisionPolicy::Skip));
+                                                window.close_dialog(cx);
+                                            }),
+                                    ),
+                            )
+                            .on_cancel(move |_, _, _| {
+                                let _ = tx_cancel.try_send(None);
+                                true
+                            })
+                    });
+                });
+                if opened.is_err() {
+                    end_task(cx);
+                    return;
+                }
+                // A dismissed dialog drops the senders → recv errors →
+                // treated as cancel. Nothing can wedge the task open.
+                match choice_rx.recv().await {
+                    Ok(Some(p)) => p,
+                    _ => {
+                        end_task(cx);
+                        return;
+                    }
+                }
+            };
+
+            // 3. Run the engine on the background executor. The
+            // same-volume answer rides along for move-undo
+            // eligibility (stat — not allowed on the UI thread).
+            let result = {
+                let c = cancel.clone();
+                cx.background_executor()
+                    .spawn(async move {
+                        let all_same_volume = plan
+                            .sources
+                            .iter()
+                            .all(|s| engine::same_volume(s, &plan.dest_dir));
+                        let mut progress =
+                            |d: u64, t: u64| {
+                                let _ = progress_tx.try_send((d, t));
+                            };
+                        let outcome = match mode {
+                            TransferMode::Copy => {
+                                engine::run_copy(&plan, policy, &mut progress, &c)
+                            }
+                            TransferMode::Move => {
+                                engine::run_move(&plan, policy, &mut progress, &c)
+                            }
+                        };
+                        outcome.map(|o| (o, all_same_volume))
+                    })
+                    .await
+            };
+
+            // 4. Finish: end task, register undo, reload, notify.
+            if let Some(shell) = weak.upgrade() {
+                shell.update(cx, |this, cx| {
+                    this.process.tasks.borrow_mut().end(task_id);
+                    if let Ok((outcome, all_same_volume)) = &result {
+                        if !outcome.created.is_empty() {
+                            match mode {
+                                TransferMode::Move if *all_same_volume => {
+                                    this.push_undo(UndoOp::MoveBack(outcome.created.clone()));
+                                }
+                                TransferMode::Copy if outcome.replaced == 0 => {
+                                    this.push_undo(UndoOp::RemoveCreated(
+                                        outcome.created.iter().map(|(_, d)| d.clone()).collect(),
+                                    ));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            let mut reload = vec![dest.clone()];
+            if mode == TransferMode::Move {
+                for s in &sources {
+                    if let Some(p) = s.parent() {
+                        let p = p.to_path_buf();
+                        if !reload.contains(&p) {
+                            reload.push(p);
+                        }
+                    }
+                }
+            }
+            Shell::broadcast_reload_for_process(&process, reload, cx);
+            let _ = win.update(cx, |_, window, cx| {
+                let done_verb = match mode {
+                    TransferMode::Copy => "Copied",
+                    TransferMode::Move => "Moved",
+                };
+                match &result {
+                    Ok((outcome, _)) => {
+                        let n = outcome.created.len();
+                        let items = if n == 1 { "item" } else { "items" };
+                        let mut msg = if outcome.cancelled {
+                            format!(
+                                "Cancelled \u{2014} {n} {items} {}",
+                                done_verb.to_lowercase()
+                            )
+                        } else {
+                            format!("{done_verb} {n} {items}")
+                        };
+                        if outcome.skipped > 0 {
+                            msg.push_str(&format!(", {} skipped", outcome.skipped));
+                        }
+                        let note = if outcome.cancelled {
+                            Notification::info(msg)
+                        } else {
+                            Notification::success(msg)
+                        };
+                        window.push_notification(note, cx);
+                    }
+                    Err(e) => {
+                        window.push_notification(
+                            Notification::error(format!("{verb} failed: {e}")),
+                            cx,
+                        );
+                    }
+                }
+            });
+        })
+        .detach();
+    }
     pub(super) fn on_copy_path(
         &mut self,
         _: &CopyPath,
@@ -427,6 +794,7 @@ impl Shell {
                 Ok(())
             },
             "move-to-trash",
+            window,
             cx,
         );
         window.push_notification(
@@ -461,7 +829,7 @@ impl Shell {
             dialog
                 .title("New Folder")
                 .child(Input::new(&input).small())
-                .on_ok(move |_, _window, cx: &mut App| {
+                .on_ok(move |_, window, cx: &mut App| {
                     let name = input_for_ok.read(cx).value().trim().to_string();
                     if name.is_empty() {
                         return true;
@@ -476,6 +844,7 @@ impl Shell {
                             cur,
                             move || std::fs::create_dir(&op_path).map_err(|e| e.to_string()),
                             "new-folder",
+                            window,
                             cx,
                         );
                         this.push_undo(UndoOp::DeleteFolder(undo_path));
@@ -526,7 +895,7 @@ impl Shell {
             dialog
                 .title("Rename")
                 .child(Input::new(&input).small())
-                .on_ok(move |_, _window, cx: &mut App| {
+                .on_ok(move |_, window, cx: &mut App| {
                     let new_name = input_for_ok.read(cx).value().trim().to_string();
                     if new_name.is_empty() || new_name == original_name {
                         return true;
@@ -546,6 +915,7 @@ impl Shell {
                                     .map_err(|e| e.to_string())
                             },
                             "rename",
+                            window,
                             cx,
                         );
                         this.push_undo(UndoOp::Rename {
@@ -590,7 +960,7 @@ impl Shell {
         let _ = window;
     }
 
-    pub(super) fn on_duplicate(&mut self, _: &Duplicate, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_duplicate(&mut self, _: &Duplicate, window: &mut Window, cx: &mut Context<Self>) {
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
@@ -609,11 +979,12 @@ impl Shell {
                 Ok(())
             },
             "duplicate",
+            window,
             cx,
         );
     }
 
-    pub(super) fn on_make_alias(&mut self, _: &MakeAlias, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_make_alias(&mut self, _: &MakeAlias, window: &mut Window, cx: &mut Context<Self>) {
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
@@ -632,11 +1003,12 @@ impl Shell {
                 Ok(())
             },
             "make-alias",
+            window,
             cx,
         );
     }
 
-    pub(super) fn on_compress(&mut self, _: &Compress, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_compress(&mut self, _: &Compress, window: &mut Window, cx: &mut Context<Self>) {
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
@@ -654,6 +1026,7 @@ impl Shell {
                 crate::platform_shell::compress_paths(&targets).map(|_| ())
             },
             "compress",
+            window,
             cx,
         );
     }

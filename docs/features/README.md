@@ -48,6 +48,8 @@ keep the UI off the I/O path.
 - [PREVIEW.md](PREVIEW.md) — preview pane with async text/image rendering.
 - [VIEWER.md](VIEWER.md) — viewer window: big preview, slideshow, sticky
   zoom across entries.
+- [FILE_OPS.md](FILE_OPS.md) — copy/paste/move engine: progress,
+  cancellation, collision policy, clipboard verbs.
 - [DISK_USAGE.md](DISK_USAGE.md) — disk-usage window: scanning, treemap, and
   top-list views.
 
