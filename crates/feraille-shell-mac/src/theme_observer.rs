@@ -26,6 +26,9 @@ use objc2_foundation::{
     NSString,
 };
 
+/// Host-supplied theme-change callback; `true` = Dark mode active.
+type ThemeCallback = Box<dyn Fn(bool) + 'static>;
+
 thread_local! {
     /// Owned reference to our notification target. Like `AppMenuTarget`,
     /// the notification center keeps observers as unsafe pointers, so
@@ -36,7 +39,7 @@ thread_local! {
 
     /// Host-supplied callback. `bool` argument is `true` when the
     /// system is now in Dark mode.
-    static THEME_CALLBACK: RefCell<Option<Box<dyn Fn(bool) + 'static>>> =
+    static THEME_CALLBACK: RefCell<Option<ThemeCallback>> =
         const { RefCell::new(None) };
 }
 
@@ -105,7 +108,7 @@ pub fn start(callback: Box<dyn Fn(bool) + 'static>) {
         let center = NSDistributedNotificationCenter::defaultCenter();
         let name = NSString::from_str("AppleInterfaceThemeChangedNotification");
         // NSNotificationName is a typealias for NSString.
-        let observer_ref: &objc2::runtime::AnyObject = &*observer;
+        let observer_ref: &objc2::runtime::AnyObject = &observer;
         center.addObserver_selector_name_object(
             observer_ref,
             sel!(themeChanged:),

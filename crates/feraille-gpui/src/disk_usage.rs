@@ -37,6 +37,11 @@ use gpui_component::{
 
 use crate::tasks::{TaskId, TaskKind, TaskRegistry};
 
+/// Callback invoked after a task-registry mutation so the owning
+/// Shell can `cx.notify` itself (the registry is plain `Rc<RefCell>`
+/// with no built-in observers).
+pub type NotifyOwner = Rc<dyn Fn(&mut App)>;
+
 /// Treemap recursion depth used by the DU window. Matches the old
 /// app's DU_LAYOUT_DEPTH.
 const DU_LAYOUT_DEPTH: u32 = 4;
@@ -107,7 +112,7 @@ pub struct DiskUsageView {
     /// Optional callback invoked after a `tasks` mutation so the
     /// owning Shell can `cx.notify` itself (the registry is plain
     /// `Rc<RefCell>` so it has no built-in observers).
-    notify_owner: Option<Rc<dyn Fn(&mut App)>>,
+    notify_owner: Option<NotifyOwner>,
 
     /// True once we've adopted the scanner's canonical root NodeId
     /// from the first incoming fact. Phase 6 regression fix: the
@@ -138,7 +143,7 @@ impl DiskUsageView {
         root_path: PathBuf,
         fs: Arc<NativeFs>,
         tasks: Rc<RefCell<TaskRegistry>>,
-        notify_owner: Option<Rc<dyn Fn(&mut App)>>,
+        notify_owner: Option<NotifyOwner>,
         cx: &mut Context<Self>,
     ) -> Self {
         // Keep construction UI-cheap. The background scanner performs
@@ -240,7 +245,7 @@ impl DiskUsageView {
             all.select_nth_unstable_by(TOPN_CAP - 1, |a, b| b.size_bytes.cmp(&a.size_bytes));
             all.truncate(TOPN_CAP);
         }
-        all.sort_unstable_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+        all.sort_unstable_by_key(|e| std::cmp::Reverse(e.size_bytes));
         self.top_files = all
             .into_iter()
             .map(|e| TopFileEntry {
@@ -478,6 +483,7 @@ impl DiskUsageView {
     ///   3. Flip `scan_complete = true` locally so the header swaps
     ///      from "Scanning…" / Stop button to the final summary +
     ///      Refresh button immediately.
+    ///
     /// Also ends the registry task entry so the parent Shell's
     /// status-bar progress strip stops showing this scan as in
     /// flight.
@@ -1180,7 +1186,7 @@ pub fn open_window(
     root: PathBuf,
     fs: Arc<NativeFs>,
     tasks: Rc<RefCell<TaskRegistry>>,
-    notify_owner: Option<Rc<dyn Fn(&mut App)>>,
+    notify_owner: Option<NotifyOwner>,
     cx: &mut App,
 ) -> Result<WindowHandle<Root>, anyhow::Error> {
     let opts = WindowOptions {

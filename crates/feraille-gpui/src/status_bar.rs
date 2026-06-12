@@ -26,6 +26,14 @@ use gpui_component::{ActiveTheme, Sizable as _, h_flex};
 
 use crate::tasks::{TaskProgress, TaskRegistry};
 
+/// Click-event callback the owning Shell hands to status-bar regions
+/// (task area, progress strip).
+pub type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+
+/// Window-level action callback with no event payload (e.g. the
+/// Show-Hidden switch, which carries its own state).
+pub type ActionHandler = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
+
 /// Status-bar-local byte-size formatter. Mirrors the one in
 /// disk_usage.rs (1 KB = 1024 B; 1 decimal place above KB).
 fn humanize_bytes(b: u64) -> String {
@@ -67,9 +75,9 @@ pub fn render(
     metrics: StatusMetrics,
     tasks: &Rc<RefCell<TaskRegistry>>,
     simulated_progress: Option<f32>,
-    on_toggle_task_panel: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_toggle_task_panel: Option<ClickHandler>,
     show_hidden: bool,
-    on_toggle_hidden: Option<Rc<dyn Fn(&mut Window, &mut App) + 'static>>,
+    on_toggle_hidden: Option<ActionHandler>,
     cx: &mut App,
 ) -> Div {
     // Snapshot theme colours up-front — the later progress_strip

@@ -242,6 +242,26 @@ fn push_with_cap<T>(stack: &mut VecDeque<T>, item: T, cap: usize) {
     stack.push_back(item);
 }
 
+/// Newtype around `Rc<ProcessState>` so it can be stored as a GPUI
+/// `Global`. App-level handlers (Cmd+N, "New Window", future Apple
+/// Event delegates) all reach the singleton through `cx.global::<…>()`
+/// rather than threading the Rc through every closure capture.
+///
+/// `Rc<ProcessState>` is `'static` (no lifetimes) and `Global` only
+/// requires `'static`, so no `Send`/`Sync` gymnastics needed. The
+/// global is set once in `main.rs::run_gui` before any window opens
+/// and never replaced.
+pub struct ProcessStateGlobal(pub Rc<ProcessState>);
+
+impl gpui::Global for ProcessStateGlobal {}
+
+/// Helper: read the global Rc<ProcessState>. Panics if the global
+/// isn't set, which is a programmer error (the global must be set
+/// before any window opens).
+pub fn process_state(cx: &App) -> Rc<ProcessState> {
+    cx.global::<ProcessStateGlobal>().0.clone()
+}
+
 #[cfg(test)]
 mod closed_tab_stack_tests {
     use super::push_with_cap;
@@ -281,24 +301,4 @@ mod closed_tab_stack_tests {
         assert_eq!(stack.len(), 1);
         assert_eq!(stack.pop_back(), Some(2));
     }
-}
-
-/// Newtype around `Rc<ProcessState>` so it can be stored as a GPUI
-/// `Global`. App-level handlers (Cmd+N, "New Window", future Apple
-/// Event delegates) all reach the singleton through `cx.global::<…>()`
-/// rather than threading the Rc through every closure capture.
-///
-/// `Rc<ProcessState>` is `'static` (no lifetimes) and `Global` only
-/// requires `'static`, so no `Send`/`Sync` gymnastics needed. The
-/// global is set once in `main.rs::run_gui` before any window opens
-/// and never replaced.
-pub struct ProcessStateGlobal(pub Rc<ProcessState>);
-
-impl gpui::Global for ProcessStateGlobal {}
-
-/// Helper: read the global Rc<ProcessState>. Panics if the global
-/// isn't set, which is a programmer error (the global must be set
-/// before any window opens).
-pub fn process_state(cx: &App) -> Rc<ProcessState> {
-    cx.global::<ProcessStateGlobal>().0.clone()
 }

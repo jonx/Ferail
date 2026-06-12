@@ -711,7 +711,7 @@ impl TableDelegate for FileListDelegate {
         let Some(col) = self.columns.get(col_ix) else {
             return;
         };
-        let Some(sort_col) = SortColumn::from_str(&col.key) else {
+        let Ok(sort_col) = col.key.parse::<SortColumn>() else {
             return;
         };
         match sort {
@@ -882,14 +882,15 @@ pub enum SortColumn {
     Modified,
 }
 
-impl SortColumn {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for SortColumn {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "name" => Some(Self::Name),
-            "size" => Some(Self::Size),
-            "format" | "kind" | "magic" => Some(Self::Format),
-            "modified" | "mtime" => Some(Self::Modified),
-            _ => None,
+            "name" => Ok(Self::Name),
+            "size" => Ok(Self::Size),
+            "format" | "kind" | "magic" => Ok(Self::Format),
+            "modified" | "mtime" => Ok(Self::Modified),
+            _ => Err(()),
         }
     }
 }
@@ -938,7 +939,7 @@ pub fn apply_sort<C: gpui::AppContext>(
     ascending: bool,
     cx: &mut C,
 ) {
-    let Some(col) = SortColumn::from_str(column_name) else {
+    let Ok(col) = column_name.parse::<SortColumn>() else {
         crate::log_warn!(90, "unknown sort column: {column_name}");
         return;
     };

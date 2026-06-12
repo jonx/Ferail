@@ -301,7 +301,7 @@ fn print_disk_usage(fs: &NativeFs, path: &Path, top: usize, descend_packages: bo
         .values()
         .filter(|n| n.kind == NodeKind::File && n.size_bytes > 0)
         .collect();
-    files.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    files.sort_by_key(|f| std::cmp::Reverse(f.size_bytes));
     println!();
     println!("Largest files:");
     for file in files.into_iter().take(top) {

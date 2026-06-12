@@ -120,9 +120,11 @@ pub struct Args {
 }
 
 pub fn parse_args() -> Args {
-    let mut args = Args::default();
-    args.disk_usage_depth = 4;
-    args.disk_usage_coloring = "category".to_string();
+    let mut args = Args {
+        disk_usage_depth: 4,
+        disk_usage_coloring: "category".to_string(),
+        ..Args::default()
+    };
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {

@@ -29,6 +29,9 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{MainThreadMarker, NSDictionary, NSObject, NSObjectProtocol, NSString};
 
+/// Host-app command dispatch callback, registered at menu install.
+type CommandCallback = Box<dyn Fn(CommandId) + 'static>;
+
 thread_local! {
     /// Pre-built dictionary passed to `orderFrontStandardAboutPanelWithOptions:`.
     /// Built once in [`install_app_menu`].
@@ -51,7 +54,7 @@ thread_local! {
     /// Callback registered by the host app. `Box<dyn Fn>` so the host
     /// can close over an `EventLoopProxy` or whatever it needs to
     /// reach its main state.
-    static COMMAND_CALLBACK: RefCell<Option<Box<dyn Fn(CommandId) + 'static>>> =
+    static COMMAND_CALLBACK: RefCell<Option<CommandCallback>> =
         const { RefCell::new(None) };
 
     /// Snapshot of the host app's tab count. Read by `validateMenuItem:`

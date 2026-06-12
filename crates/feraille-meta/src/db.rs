@@ -778,7 +778,7 @@ impl MetadataDb {
                     continue;
                 }
             };
-            let Some(id) = FavoriteId::from_str(&id_str) else {
+            let Ok(id) = id_str.parse::<FavoriteId>() else {
                 eprintln!("favorites: skipping row with bad UUID: {id_str}");
                 continue;
             };

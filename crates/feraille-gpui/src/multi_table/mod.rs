@@ -23,6 +23,22 @@
 //! - **Per-cell click intercept** — modifier-aware cell clicks for
 //!   future inline rename or cell-level context menus.
 
+// Lint policy: this module is a pinned fork — keeping the diff
+// against upstream gpui-component reviewable beats lint cleanliness,
+// so style lints that would rewrite inherited code are allowed here.
+// Correctness lints stay on. Don't add these allows elsewhere.
+#![allow(
+    clippy::new_without_default,
+    clippy::type_complexity,
+    clippy::question_mark,
+    clippy::needless_borrow,
+    clippy::unused_enumerate_index,
+    clippy::len_zero,
+    clippy::let_and_return,
+    clippy::unwrap_or_default,
+    clippy::redundant_static_lifetimes
+)]
+
 use gpui::App;
 
 mod actions;

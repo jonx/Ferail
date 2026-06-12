@@ -44,6 +44,12 @@ impl Render for TabDragPayload {
 /// as `favorites_section::render_drop_gap` rotated 90°. On drop,
 /// `Shell::reorder_tab` resolves the source `TabId` and moves the tab
 /// into this position.
+/// One mounted volume for the sidebar Volumes section:
+/// `(path, display name, Some((total, available)) capacity bytes)`.
+type VolumeRow = (PathBuf, String, Option<(u64, u64)>);
+/// `VolumeRow` plus the "is favorited" star flag.
+type VolumeRowFav = (PathBuf, String, Option<(u64, u64)>, bool);
+
 fn tab_drop_gap(pos: usize, cx: &mut Context<Shell>) -> impl IntoElement {
     let theme = cx.theme();
     let accent = theme.primary;
@@ -245,7 +251,7 @@ impl Shell {
         // Snapshot the favorites paths once so the inner loop doesn't
         // re-read the entity per row.
         let favs = self.process.favorites.read(cx);
-        let volume_paths: Vec<(PathBuf, String, Option<(u64, u64)>)> = self
+        let volume_paths: Vec<VolumeRow> = self
             .process
             .volumes
             .borrow()
@@ -258,7 +264,7 @@ impl Shell {
                 (v.path.clone(), v.name.clone(), cap)
             })
             .collect();
-        let mut entries: Vec<(PathBuf, String, Option<(u64, u64)>, bool)> = volume_paths
+        let mut entries: Vec<VolumeRowFav> = volume_paths
             .into_iter()
             .map(|(p, n, c)| {
                 let fav = favs.contains_path(&p);
@@ -585,9 +591,6 @@ impl Shell {
         row
     }
 
-    /// Toolbar row above the breadcrumb: Back / Forward buttons +
-    /// "Show hidden" toggle. Disabled buttons grey out via Button's
-    /// own disabled state — no manual styling.
     // Toolbar removed in Phase 7. Back / forward / filter went into
     // the TitleBar; Show Hidden moved into the status bar; nothing
     // useful was left to render between the tabstrip and the
@@ -1207,7 +1210,7 @@ impl Render for Shell {
         // Clicking the task region of the status bar toggles the
         // background-task panel popover. The listener takes `&mut
         // Self` directly so we don't re-enter the entity update.
-        let toggle_task_panel: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> = {
+        let toggle_task_panel: crate::status_bar::ClickHandler = {
             let weak: WeakEntity<Self> = cx.weak_entity();
             Rc::new(move |_evt, _window, cx| {
                 if let Some(s) = weak.upgrade() {
@@ -1221,7 +1224,7 @@ impl Render for Shell {
         // Show-Hidden toggle moved into the status bar in Phase 7.
         // The callback wraps Shell::toggle_hidden so the switch's
         // built-in checked-state stays in sync via the next render.
-        let toggle_hidden_cb: Rc<dyn Fn(&mut Window, &mut App) + 'static> = {
+        let toggle_hidden_cb: crate::status_bar::ActionHandler = {
             let weak: WeakEntity<Self> = cx.weak_entity();
             Rc::new(move |_window, cx| {
                 if let Some(s) = weak.upgrade() {

@@ -399,7 +399,7 @@ impl Favorites {
                     .sort_by_key(|a| a.effective_label());
             }
             FavoriteSort::DateAddedNewest => {
-                self.entries.sort_by(|a, b| b.date_added.cmp(&a.date_added));
+                self.entries.sort_by_key(|f| std::cmp::Reverse(f.date_added));
             }
             FavoriteSort::DateAddedOldest => {
                 self.entries.sort_by_key(|a| a.date_added);

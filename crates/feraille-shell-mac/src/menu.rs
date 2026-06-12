@@ -196,9 +196,7 @@ pub fn show_context_menu(
     plan: MenuPlan,
     cursor_dips: (f32, f32),
 ) -> Option<MenuPick> {
-    let Some(mtm) = MainThreadMarker::new() else {
-        return None;
-    };
+    let mtm = MainThreadMarker::new()?;
     let Ok(handle) = window.window_handle() else {
         return None;
     };

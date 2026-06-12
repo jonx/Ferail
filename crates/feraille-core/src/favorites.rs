@@ -19,8 +19,12 @@ impl FavoriteId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
-    pub fn from_str(s: &str) -> Option<Self> {
-        Uuid::parse_str(s).ok().map(Self)
+}
+
+impl std::str::FromStr for FavoriteId {
+    type Err = uuid::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(s).map(Self)
     }
 }
 
@@ -308,8 +312,8 @@ mod tests {
     fn id_string_round_trip() {
         let id = FavoriteId::new();
         let s = id.to_string();
-        assert_eq!(FavoriteId::from_str(&s), Some(id));
-        assert!(FavoriteId::from_str("not-a-uuid").is_none());
+        assert_eq!(s.parse::<FavoriteId>().ok(), Some(id));
+        assert!("not-a-uuid".parse::<FavoriteId>().is_err());
     }
 
     #[test]

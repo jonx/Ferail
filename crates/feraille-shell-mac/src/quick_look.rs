@@ -52,10 +52,7 @@ pub fn show(paths: &[&Path]) -> Result<(), String> {
 /// `<basename>.png` (or `<basename>.<ext>.png` for some types). We
 /// decode the PNG and clean up the temp dir before returning.
 pub fn fetch_thumbnail(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
-    let tmpdir = match make_temp_dir() {
-        Some(d) => d,
-        None => return None,
-    };
+    let tmpdir = make_temp_dir()?;
     let _guard = TempDirGuard(tmpdir.clone());
 
     let mut child = Command::new("/usr/bin/qlmanage")

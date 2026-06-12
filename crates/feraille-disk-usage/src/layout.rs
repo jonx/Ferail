@@ -165,10 +165,11 @@ fn squarify(
     }
 }
 
-fn find_best_row(
-    items: &[(usize, f32)],
-    edge_length: f32,
-) -> (Vec<(usize, f32)>, Vec<(usize, f32)>) {
+/// `(child index, scaled area)` pair flowing through the squarify
+/// row-packing loop.
+type AreaItem = (usize, f32);
+
+fn find_best_row(items: &[AreaItem], edge_length: f32) -> (Vec<AreaItem>, Vec<AreaItem>) {
     if items.is_empty() {
         return (Vec::new(), Vec::new());
     }
