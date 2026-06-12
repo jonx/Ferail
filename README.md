@@ -17,7 +17,7 @@ One rule shapes the whole design — **the UI must never stop:**
 See [Architecture → Prime Directive](docs/ARCHITECTURE.md#prime-directive)
 for how this is enforced across the codebase.
 
-![Feraille main window](screenshots/readme-shell.png)
+![Feraille main window](docs/images/readme-shell.png)
 
 ## Features
 
@@ -43,7 +43,7 @@ for how this is enforced across the codebase.
 
 | Preview pane | Disk Usage | Settings |
 |---|---|---|
-| ![Preview pane](screenshots/readme-preview.png) | ![Disk Usage](screenshots/readme-disk-usage.png) | ![Settings](screenshots/readme-settings.png) |
+| ![Preview pane](docs/images/readme-preview.png) | ![Disk Usage](docs/images/readme-disk-usage.png) | ![Settings](docs/images/readme-settings.png) |
 
 ## Quick Start
 

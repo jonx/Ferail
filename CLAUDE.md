@@ -83,5 +83,8 @@ Before finishing code changes:
 - For UI changes, render at least one screenshot with
   `cargo run --bin feraille-gpui -- --screenshot ...` and inspect it.
 - Write screenshots to `screenshots/<feature>.png`, not `/tmp`.
+  `screenshots/` is gitignored scratch — any image a committed document
+  references (README, docs/) must live in `docs/images/` instead, or it
+  will be broken on GitHub.
 - Do not run whole-repo formatters casually; this repo may have local dirty
   work.
