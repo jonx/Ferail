@@ -55,6 +55,10 @@ pub struct Args {
     /// Enter breadcrumb edit mode (Cmd+L) and simulate typing this
     /// text, so the path-autocomplete menu renders for capture.
     pub breadcrumb: Option<String>,
+    /// Whitespace-separated keystrokes (gpui DSL, e.g. "down down
+    /// enter") dispatched through the real window key path after the
+    /// other flags apply. Verifies focus/keybinding routing headlessly.
+    pub keys: Option<String>,
     /// Seed a multi-row selection by row index (comma-separated on
     /// the CLI: `--select-rows 0,2,5`). The first index becomes
     /// the anchor; the last becomes the lead. Drives screenshot
@@ -162,6 +166,7 @@ pub fn parse_args() -> Args {
             "--select-row" => args.select_row = iter.next().and_then(|s| s.parse().ok()),
             "--select-name" => args.select_name = iter.next(),
             "--breadcrumb" => args.breadcrumb = iter.next(),
+            "--keys" => args.keys = iter.next(),
             "--select-rows" => {
                 if let Some(raw) = iter.next() {
                     args.select_rows = raw
@@ -443,6 +448,7 @@ struct ShellArgs {
     select_name: Option<String>,
     select_rows: Vec<usize>,
     breadcrumb: Option<String>,
+    keys: Option<String>,
     preview: bool,
     sort: Option<(String, bool)>,
     rename: bool,
@@ -475,6 +481,7 @@ impl From<&Args> for ShellArgs {
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
             breadcrumb: a.breadcrumb.clone(),
+            keys: a.keys.clone(),
             preview: a.preview,
             sort: a.sort.clone(),
             rename: a.rename || a.inline_rename,
@@ -601,6 +608,35 @@ impl ShellArgs {
                     cx.notify();
                 });
             });
+        }
+        if let Some(keys) = self.keys.clone() {
+            // Let async UI (e.g. the completion menu's provider task)
+            // land before dispatching, then send each keystroke
+            // through the window's REAL dispatch path — focus,
+            // contexts, and keymap all behave exactly as a physical
+            // key press would.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(400))
+                .await;
+            for k in keys.split_whitespace() {
+                // "pause" waits out async UI between keys (e.g. the
+                // completion menu's accept inserts on a spawned task —
+                // a human's next keystroke lands after it).
+                if k == "pause" {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(300))
+                        .await;
+                    continue;
+                }
+                let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                    match gpui::Keystroke::parse(k) {
+                        Ok(ks) => {
+                            window.dispatch_keystroke(ks, cx);
+                        }
+                        Err(e) => crate::log_warn!(90, "--keys: bad keystroke {k:?}: {e}"),
+                    }
+                });
+            }
         }
         if self.select_row.is_some() || self.select_name.is_some() || !self.select_rows.is_empty()
         {

@@ -1060,6 +1060,29 @@ impl Shell {
     /// commits the path, Blur cancels.
     fn breadcrumb(&self, cx: &mut Context<Self>) -> Div {
         if self.breadcrumb_editing {
+            // Key routing for the autocomplete menu. Two upstream
+            // quirks would otherwise leak keystrokes to the Shell
+            // keymap (moving the FILE LIST cursor / opening rows
+            // while the user is driving the menu):
+            //
+            //  1. gpui-component only registers the input's MoveUp/
+            //     MoveDown handlers on MULTI-line inputs, so on this
+            //     single-line field the "Input"-context binding
+            //     matches but goes unhandled and the keystroke falls
+            //     through to the Shell's CursorUp/CursorDown. The
+            //     wrapper handlers below catch the actions and
+            //     forward them to the completion menu.
+            //  2. CompletionMenu::handle_action calls cx.propagate()
+            //     unconditionally, which re-opens the dispatch even
+            //     after the menu handled the key — Enter would both
+            //     accept the completion AND fall through to the
+            //     Shell's OpenSelected. Every handler here ends with
+            //     stop_propagation; the Enter/Escape backstops only
+            //     run at all when that leak re-propagates past the
+            //     input's own handler (menu-open case), so normal
+            //     PressEnter commit / Escape blur are unaffected.
+            let input_for_up = self.breadcrumb_input.clone();
+            let input_for_down = self.breadcrumb_input.clone();
             return h_flex()
                 .w_full()
                 .items_center()
@@ -1068,6 +1091,24 @@ impl Shell {
                 .py_2()
                 .border_b_1()
                 .border_color(cx.theme().border)
+                .on_action(move |a: &gpui_component::input::MoveUp, window, cx| {
+                    input_for_up.update(cx, |state, cx| {
+                        state.handle_action_for_context_menu(Box::new(a.clone()), window, cx);
+                    });
+                    cx.stop_propagation();
+                })
+                .on_action(move |a: &gpui_component::input::MoveDown, window, cx| {
+                    input_for_down.update(cx, |state, cx| {
+                        state.handle_action_for_context_menu(Box::new(a.clone()), window, cx);
+                    });
+                    cx.stop_propagation();
+                })
+                .on_action(move |_: &gpui_component::input::Enter, _window, cx| {
+                    cx.stop_propagation();
+                })
+                .on_action(move |_: &gpui_component::input::Escape, _window, cx| {
+                    cx.stop_propagation();
+                })
                 .child(
                     div()
                         .flex_1()

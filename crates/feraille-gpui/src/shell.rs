@@ -472,6 +472,7 @@ impl Shell {
             move |this, _state, ev: &InputEvent, _window, cx| match ev {
                 InputEvent::PressEnter { .. } => {
                     let raw = breadcrumb_input.read(cx).value().to_string();
+                    crate::log_info!(90, "breadcrumb: commit {raw:?}");
                     let path = parse_breadcrumb_path(&raw);
                     this.breadcrumb_editing = false;
                     // External boundary: typed input canonicalizes on
@@ -2288,6 +2289,7 @@ impl Shell {
     /// (see `navigate_back` / `navigate_forward` which seed the
     /// restored selection before calling here).
     pub fn navigate(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        crate::log_info!(90, "navigate: {}", path.display());
         let node_id = self.process.fs.id_for_path(&path);
         self.process
             .node_store
