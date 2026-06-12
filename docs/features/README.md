@@ -46,6 +46,8 @@ keep the UI off the I/O path.
 ## Panels & tools
 
 - [PREVIEW.md](PREVIEW.md) — preview pane with async text/image rendering.
+- [VIEWER.md](VIEWER.md) — viewer window: big preview, slideshow, sticky
+  zoom across entries.
 - [DISK_USAGE.md](DISK_USAGE.md) — disk-usage window: scanning, treemap, and
   top-list views.
 

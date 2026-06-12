@@ -22,10 +22,15 @@ use crate::shell::{
     self, ClearFilter, CloseTab, CloseWindow, CopyPath, CursorDown, CursorDownExtend, CursorFirst,
     CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp, CursorUpExtend, EditBreadcrumb,
     FocusFilter, GetInfo, GoHome, MoveToTrash, NavigateBack, NavigateForward, NavigateParent,
-    NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, PageDown,
-    PageDownExtend, PageUp, PageUpExtend, PrevTab, QuickLook, Refresh, RenameSelected,
+    NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings,
+    OpenViewer, PageDown, PageDownExtend, PageUp, PageUpExtend, PrevTab, QuickLook, Refresh,
+    RenameSelected,
     ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview,
     ZoomIn, ZoomOut, ZoomReset,
+};
+use crate::viewer::window::{
+    VIEWER_CONTEXT, ViewerActualSize, ViewerDismiss, ViewerNext, ViewerPrev,
+    ViewerToggleFullscreen, ViewerTogglePlay, ViewerZoomIn, ViewerZoomOut, ViewerZoomReset,
 };
 
 /// Install keybindings for every command in `feraille_core::commands`
@@ -132,6 +137,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "view.toggle_hidden" => cx.bind_keys([KeyBinding::new(kb_str, ToggleHidden, ctx)]),
         "view.edit_breadcrumb" => cx.bind_keys([KeyBinding::new(kb_str, EditBreadcrumb, ctx)]),
         "view.toggle_preview" => cx.bind_keys([KeyBinding::new(kb_str, TogglePreview, ctx)]),
+        "view.open_viewer" => cx.bind_keys([KeyBinding::new(kb_str, OpenViewer, ctx)]),
         "view.zoom_in" => cx.bind_keys([KeyBinding::new(kb_str, ZoomIn, ctx)]),
         "view.zoom_out" => cx.bind_keys([KeyBinding::new(kb_str, ZoomOut, ctx)]),
         "view.zoom_reset" => cx.bind_keys([KeyBinding::new(kb_str, ZoomReset, ctx)]),
@@ -307,5 +313,23 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("shift-end", CursorLastExtend, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("shift-pageup", PageUpExtend, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("shift-pagedown", PageDownExtend, Some(shell::SHELL_CONTEXT)),
+        // Viewer window (docs/features/VIEWER.md). Not in the
+        // catalogue: these are window-local keys, like a dialog's —
+        // the catalogue carries the commands other surfaces (menu
+        // bar, palette) must enumerate, and for the viewer that's
+        // only `view.open_viewer`. [mac] Cmd-chords + Cmd+Ctrl+F;
+        // win-parity remaps to Ctrl / F11 when the Windows shell
+        // lands.
+        KeyBinding::new("left", ViewerPrev, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("up", ViewerPrev, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("right", ViewerNext, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("down", ViewerNext, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("escape", ViewerDismiss, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("space", ViewerTogglePlay, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("cmd-=", ViewerZoomIn, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("cmd--", ViewerZoomOut, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("cmd-0", ViewerZoomReset, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("cmd-1", ViewerActualSize, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("cmd-ctrl-f", ViewerToggleFullscreen, Some(VIEWER_CONTEXT)),
     ]);
 }

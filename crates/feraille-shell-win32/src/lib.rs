@@ -1173,6 +1173,24 @@ pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static + Send>)
 #[cfg(not(windows))]
 pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static + Send>) {}
 
+/// Video overlay — Windows parity stubs. The mac implementation
+/// floats an AVPlayerView over the viewer's stage rect
+/// (docs/features/VIEWER.md); the Windows equivalent is a Media
+/// Foundation / MFPlay child HWND. Until that lands, the viewer
+/// shows the static poster (handle 0 = "no overlay").
+pub fn video_overlay_show(
+    _container_ns_view: *mut std::ffi::c_void,
+    _path: &std::path::Path,
+    _frame: (f64, f64, f64, f64),
+    _on_ended: Box<dyn Fn() + 'static + Send>,
+) -> u64 {
+    0
+}
+
+pub fn video_overlay_set_frame(_id: u64, _frame: (f64, f64, f64, f64)) {}
+
+pub fn video_overlay_remove(_id: u64) {}
+
 // =============================================================
 // Internal helpers
 // =============================================================

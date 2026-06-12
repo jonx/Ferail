@@ -75,7 +75,16 @@ feature notes in [docs/features/](docs/features/README.md).
 ## Preview, Metadata, And Intelligence
 
 - Add real previews: text, image, PDF, Quick Look, audio/video thumbnails,
-  all async and cancellable.
+  all async and cancellable. (The viewer window now covers big image
+  viewing — docs/features/VIEWER.md; this bullet is the preview *pane*
+  provider system.)
+- Viewer follow-ups (docs/features/VIEWER.md): swap the qlmanage
+  shell-out for `QLThumbnailGenerator`, pinch-to-zoom gesture mapping,
+  live playlist sync via the watcher (skip deleted entries), Windows
+  parity (Ctrl/F11 chords, `IShellItemImageFactory` fallback, Media
+  Foundation video overlay), audio-file playback, a watchdog for
+  eligible-but-unplayable videos stalling slideshow auto-advance, and
+  slideshow transitions once the animation budget review lands.
 - Expand magic detection beyond the small high-confidence table; add
   recursive/mismatch-only CLI modes and structured output.
 - Improve quarantine/provenance UI: Gatekeeper assessment, code-signature

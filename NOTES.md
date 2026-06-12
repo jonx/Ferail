@@ -7,6 +7,76 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-12 video playback in the viewer/slideshow (landed)
+
+AVPlayerView overlay
+[mac] over the stage rect — native aspect-fit, hardware decode,
+audio, inline hover controls. Key wrinkle: the objc2 0.2-generation
+framework crates we pin predate AVFoundation bindings (start at objc2
+0.6), so `video_overlay.rs` reaches AVPlayer/AVPlayerView through
+runtime `AnyClass::get` + `msg_send`, with two `#[link]` blocks to
+load the frameworks. Eligible: mp4/m4v/mov; auto-play on becoming
+current; slideshow does NOT arm the interval timer on video entries —
+`AVPlayerItemDidPlayToEndTimeNotification` advances instead, path-
+tagged through a channel so an end queued behind a manual nav is
+dropped. Overlay lifecycle is render-time change-detected sync (same
+trick as title sync); `Drop` is the teardown backstop. Known v1
+limits in VIEWER.md (no zoom on video, fullscreen hover chrome sits
+under the overlay, screenshots can't capture it). Smoke-tested
+through the headless harness with an ffmpeg test clip — full AVKit
+path runs clean; interactive playback check is on the user.
+
+# 2026-06-12 viewer window: big preview, slideshow, sticky zoom (landed)
+
+Spec: `docs/features/VIEWER.md`. Six iterations, all green
+(`cargo clippy --workspace` zero, full test suite, screenshots
+`screenshots/viewer-window.png` / `viewer-preview-pane.png`).
+
+- **New module `feraille-gpui/src/viewer/`** in four layers: `loader`
+  (full-res decode + byte-budget LRU), `stage` (pure zoom/pan
+  geometry, zero gpui types), `window` (the entity), `playback`
+  (slideshow epoch state). 27 new unit tests across the pure layers.
+- **Two-tier decode.** `image` crate (now with jpeg/gif/webp/bmp/tiff
+  features) decodes raster formats off-thread, longest edge capped at
+  8192 px; everything else (HEIC, PDF, video) falls back to a 2048 px
+  Quick Look thumbnail [mac]. Cache budget 384 MB, LRU by bytes,
+  Pending markers dedup in-flight decodes and are never evicted.
+- **Sticky zoom is window state, not image state.** `StageState
+  {mode, center-as-image-fraction}` survives navigation verbatim —
+  zoom 2.5× into the top-right corner and every next image shows its
+  top-right corner at 2.5×. Pan center being *relative* is what makes
+  it transfer between differently-sized images (unit-tested).
+- **One reusable window.** `ProcessState.viewer_window` holds
+  `(WindowHandle, WeakEntity)`; reopening retargets + activates
+  instead of stacking. Stale weak handle after close = next open
+  builds fresh. No Drop bookkeeping needed.
+- **Slideshow with epoch staleness.** Timer ticks carry an epoch;
+  play/pause/manual-nav/interval-change bumps it, so a stale tick is
+  inert — same idiom as enumeration cancel flags. Manual nav while
+  playing re-arms; zoom/pan *pauses* (inspecting beats advancing).
+  Interval cycles 2/3/5/10 s via toolbar button (deviation from the
+  spec's dropdown — fewer moving parts, same reach) and persists as
+  `viewer_slideshow_interval` in gpui-state.txt.
+- **Fullscreen** via `window.toggle_fullscreen()`; chrome hides, the
+  top 56 px strip reveals the toolbar on hover (pure mouse-position
+  state, no timers). Esc exits fullscreen first, then closes.
+- **Keys**: `Cmd+Y` opens (catalogue command `view.open_viewer`, so
+  menu/palette pick it up); viewer-local keys (arrows, Space
+  play/pause, Cmd+=/−/0/1, Cmd+Ctrl+F, Esc) bind in the new
+  `"Viewer"` key context in `keymap::install_extras` — first
+  secondary window with its own context. [mac] chords; win-parity
+  remaps tagged in the spec.
+- **Preview-pane thumbnail is now a button** that opens the viewer.
+- **Screenshot harness** gained `--viewer <path>` (mirrors the
+  `--disk-usage` arm).
+- Deviations from spec, deliberate: stale decode results still
+  cx.notify (render reads current index; a no-op repaint is cheaper
+  than generation plumbing); footer omits file size for now; interval
+  control is a cycle button, not a dropdown.
+- Also: zeroed the two clippy warnings the folder-sizes session left
+  (`large_enum_variant` on ShellSidebarItem, `too_many_arguments` on
+  the tree walker) with targeted, justified allows.
+
 # 2026-06-12 folder sizes in the Size column (landed)
 
 Directory rows now get recursive sizes: computed off the UI thread,

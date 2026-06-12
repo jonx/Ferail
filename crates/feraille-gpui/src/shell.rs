@@ -996,6 +996,47 @@ impl Shell {
         }
     }
 
+    /// Cmd+Y — open the viewer window (docs/features/VIEWER.md) on a
+    /// snapshot of the current tab's visible files (sorted + filtered
+    /// order, directories skipped), starting at the lead row. The
+    /// snapshot is in-memory only: entries are already enumerated and
+    /// paths resolve through the NodeStore, so no filesystem I/O
+    /// happens on this path.
+    pub fn on_open_viewer(
+        &mut self,
+        _: &OpenViewer,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut playlist = Vec::new();
+        let mut start = 0usize;
+        {
+            let tab = self.active_tab();
+            let entries = &tab.table.read(cx).delegate().entries;
+            let lead = tab.lead_row(entries);
+            for (ix, e) in entries.iter().enumerate() {
+                if matches!(e.kind, EntryKind::Directory) {
+                    continue;
+                }
+                if lead == Some(ix) {
+                    start = playlist.len();
+                }
+                if let Some(path) = self.path_for_row(ix, cx) {
+                    playlist.push(crate::viewer::PlaylistEntry {
+                        path,
+                        name: e.name.clone(),
+                    });
+                }
+            }
+        }
+        if playlist.is_empty() {
+            use gpui_component::notification::Notification;
+            window.push_notification(Notification::info("No files to view in this folder"), cx);
+            return;
+        }
+        crate::viewer::open_viewer(playlist, start, cx);
+    }
+
     /// Cmd+P — toggle preview-pane visibility. The pane defaults to
     /// shown; toggling off gives the file list the full content width.
     fn on_toggle_preview(&mut self, _: &TogglePreview, _: &mut Window, cx: &mut Context<Self>) {

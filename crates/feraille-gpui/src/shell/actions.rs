@@ -39,6 +39,9 @@ actions!(
         NextTab,
         PrevTab,
         QuickLook,
+        /// Cmd+Y — open the viewer window on the current folder's
+        /// files (docs/features/VIEWER.md). Space stays Quick Look.
+        OpenViewer,
         GoHome,
         EditBreadcrumb,
         ShortcutsHelp,

@@ -278,6 +278,12 @@ const CATALOGUE: &[CommandSpec] = &[
         shortcuts: &[Shortcut::primary("P")],
     },
     CommandSpec {
+        id: CommandId("view.open_viewer"),
+        title: "Open Viewer",
+        category: Category::View,
+        shortcuts: &[Shortcut::primary("Y")],
+    },
+    CommandSpec {
         id: CommandId("view.toggle_hidden"),
         title: "Show Hidden Files",
         category: Category::View,

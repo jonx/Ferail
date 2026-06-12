@@ -125,6 +125,10 @@ pub struct Args {
     /// `Some(page)` opens the Settings view at that page (kept from
     /// Phase 3 / 5).
     pub settings: Option<String>,
+    /// Open the viewer window (docs/features/VIEWER.md) instead of the
+    /// shell. A directory renders its first file with the full
+    /// playlist; a single file renders a one-entry playlist.
+    pub viewer: Option<PathBuf>,
 }
 
 pub fn parse_args() -> Args {
@@ -222,6 +226,7 @@ pub fn parse_args() -> Args {
             "--settings" => {
                 args.settings = Some(iter.next().unwrap_or_default());
             }
+            "--viewer" => args.viewer = iter.next().map(PathBuf::from),
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -275,6 +280,8 @@ OPTIONS
   --du-coloring <mode>     'category' (default) or 'depth'.
   --settings <page>        Open Settings instead of Shell.
                            appearance / files / layout / about.
+  --viewer <path>          Render the viewer window for <path> (file or
+                           folder) instead of the shell.
   -h, --help               Print this help.
 
 EXAMPLES
@@ -298,6 +305,7 @@ pub fn run(args: Args) -> Result<()> {
     let theme_mode = args.theme;
     let settings_page = args.settings.clone();
     let disk_usage_root = args.disk_usage.clone();
+    let viewer_target = args.viewer.clone();
 
     let shell_args = ShellArgs::from(&args);
 
@@ -322,6 +330,7 @@ pub fn run(args: Args) -> Result<()> {
         let settings_page = settings_page.clone();
         let shell_args = shell_args.clone();
         let disk_usage_root = disk_usage_root.clone();
+        let viewer_target = viewer_target.clone();
         cx.spawn(async move |cx| {
             // Headless capture goes through gpui's `Window::render_to_image`
             // on both platforms now that `gpui_windows` has a D3D11
@@ -365,6 +374,44 @@ pub fn run(args: Args) -> Result<()> {
                         ));
                         let view = cx.new(|cx| {
                             crate::disk_usage::DiskUsageView::new(canonical, fs, tasks, None, cx)
+                        });
+                        cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                    } else if let Some(target) = viewer_target.clone() {
+                        // Headless viewer window: build the playlist
+                        // straight from the filesystem (setup phase,
+                        // not a render path).
+                        let process = crate::process_state::process_state(cx);
+                        let canonical = std::fs::canonicalize(&target).unwrap_or(target.clone());
+                        let mut playlist = Vec::new();
+                        if canonical.is_dir() {
+                            let mut files: Vec<PathBuf> = std::fs::read_dir(&canonical)
+                                .map(|rd| {
+                                    rd.filter_map(|e| e.ok())
+                                        .map(|e| e.path())
+                                        .filter(|p| p.is_file())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            files.sort();
+                            playlist.extend(files.into_iter().map(|p| {
+                                let name = p
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_default();
+                                crate::viewer::PlaylistEntry { path: p, name }
+                            }));
+                        } else {
+                            let name = canonical
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            playlist.push(crate::viewer::PlaylistEntry {
+                                path: canonical.clone(),
+                                name,
+                            });
+                        }
+                        let view = cx.new(|cx| {
+                            crate::viewer::ViewerWindow::new(playlist, 0, process, window, cx)
                         });
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if let Some(page) = settings_page.as_deref() {

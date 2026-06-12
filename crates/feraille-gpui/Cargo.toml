@@ -38,8 +38,11 @@ async-channel = "2.5"
 smallvec = "1"
 # Wraps RGBA byte buffers we pull from NSWorkspace into a Frame the
 # gpui RenderImage type accepts. gpui-component pulls the same major
-# transitively, so this stays single-copy in the graph.
-image = { version = "0.25", default-features = false, features = ["png"] }
+# transitively, so this stays single-copy in the graph. The raster
+# decode features beyond `png` feed the viewer window's full-res
+# loader (docs/features/VIEWER.md); non-raster formats fall back to
+# Quick Look thumbnails.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 # Used by the --screenshot harness on Windows to pull the HWND out of
 # gpui::Window (which implements HasWindowHandle). Same major as
 # gpui's transitive use so we stay single-copy in the graph.

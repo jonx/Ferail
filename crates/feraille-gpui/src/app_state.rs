@@ -31,6 +31,9 @@ pub struct AppState {
     /// Whether the sidebar is collapsed to icons-only. None == the
     /// user has never expressed a preference (defaults to expanded).
     pub sidebar_collapsed: Option<bool>,
+    /// Viewer slideshow auto-advance interval in seconds
+    /// (docs/features/VIEWER.md). Clamped at load to [1, 60].
+    pub viewer_slideshow_interval: Option<u64>,
 }
 
 #[cfg(target_os = "macos")]
@@ -109,6 +112,10 @@ pub fn load() -> AppState {
             "sidebar_collapsed" => {
                 out.sidebar_collapsed = parse_bool(val);
             }
+            "viewer_slideshow_interval" => {
+                out.viewer_slideshow_interval =
+                    val.trim().parse::<u64>().ok().map(|n| n.clamp(1, 60));
+            }
             _ => {}
         }
     }
@@ -141,6 +148,9 @@ pub fn save(state: &AppState) {
     }
     if let Some(b) = state.sidebar_collapsed {
         s.push_str(&format!("sidebar_collapsed={b}\n"));
+    }
+    if let Some(n) = state.viewer_slideshow_interval {
+        s.push_str(&format!("viewer_slideshow_interval={n}\n"));
     }
     let _ = std::fs::write(dir.join(FILENAME), s);
 }

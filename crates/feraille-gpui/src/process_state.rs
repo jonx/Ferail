@@ -31,7 +31,7 @@ use std::sync::{Arc, Mutex};
 
 use feraille_core::node_store::NodeStore;
 use feraille_fs_native::{NativeFs, VolumeInfo, list_volumes};
-use gpui::{App, Entity, WeakEntity};
+use gpui::{App, Entity, WeakEntity, WindowHandle};
 
 use crate::favorites::Favorites;
 use crate::fs_watcher::FsWatcher;
@@ -128,6 +128,18 @@ pub struct ProcessState {
     /// in window A is reachable from `Cmd+Shift+T` in window B,
     /// because the closed-tab stack lives on the singleton.
     pub closed_tabs: RefCell<VecDeque<ClosedTab>>,
+
+    /// The single reusable viewer window (docs/features/VIEWER.md).
+    /// Invoking Open Viewer while one is live retargets it instead of
+    /// stacking windows. The weak entity goes stale when the window
+    /// closes; the next open simply overwrites the slot.
+    #[allow(clippy::type_complexity)]
+    pub viewer_window: RefCell<
+        Option<(
+            WindowHandle<gpui_component::Root>,
+            WeakEntity<crate::viewer::ViewerWindow>,
+        )>,
+    >,
 }
 
 impl ProcessState {
@@ -157,6 +169,7 @@ impl ProcessState {
             favorites_section_collapsed: Cell::new(false),
             shells: RefCell::new(Vec::new()),
             closed_tabs: RefCell::new(VecDeque::new()),
+            viewer_window: RefCell::new(None),
         })
     }
 

@@ -819,8 +819,12 @@ impl Shell {
 
                 let mut col = v_flex().gap_3();
                 if let Some(img) = thumb_img {
+                    // Clicking the thumbnail opens the big viewer
+                    // window (docs/features/VIEWER.md) on the current
+                    // folder, same as Cmd+Y.
                     col = col.child(
                         div()
+                            .id("preview-thumb-open")
                             .flex()
                             .items_center()
                             .justify_center()
@@ -828,6 +832,11 @@ impl Shell {
                             .h(px(200.0))
                             .rounded(cx.theme().radius)
                             .bg(cx.theme().secondary.opacity(0.5))
+                            .cursor_pointer()
+                            .hover(|this| this.bg(cx.theme().secondary.opacity(0.8)))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.on_open_viewer(&OpenViewer, window, cx)
+                            }))
                             .child(gpui::img(img).max_w(px(248.0)).max_h(px(184.0))),
                     );
                 } else if matches!(thumb_state, Some(crate::preview::PreviewState::Pending)) {
@@ -1397,6 +1406,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_edit_breadcrumb))
             .on_action(cx.listener(Self::on_shortcuts_help))
             .on_action(cx.listener(Self::on_open_disk_usage))
+            .on_action(cx.listener(Self::on_open_viewer))
             .on_action(cx.listener(Self::on_cursor_up))
             .on_action(cx.listener(Self::on_cursor_down))
             .on_action(cx.listener(Self::on_cursor_first))

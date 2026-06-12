@@ -36,6 +36,7 @@ pub mod status_bar;
 pub mod task_panel;
 pub mod tasks;
 pub mod tree;
+pub mod viewer;
 
 /// Platform shell abstraction. Resolves to `feraille_shell_mac` on
 /// macOS and `feraille_shell_win32` on Windows; both crates expose the

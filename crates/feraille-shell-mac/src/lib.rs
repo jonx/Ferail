@@ -42,6 +42,9 @@ mod tags;
 #[cfg(target_os = "macos")]
 mod theme_observer;
 
+#[cfg(target_os = "macos")]
+mod video_overlay;
+
 /// Install the application menu bar (`NSApp.mainMenu`) and configure the
 /// standard About panel content. Call once at startup, on the main thread,
 /// after [`set_app_icon_from_png_bytes`]. No-op on non-macOS.
@@ -718,6 +721,51 @@ pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static>) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static>) {}
+
+/// Mount a native AVPlayerView video overlay inside the given content
+/// NSView at `frame` (gpui top-left logical coordinates) and start
+/// playback. Returns an overlay handle, 0 on failure. Main-thread
+/// only. `on_ended` fires on the main thread when the video plays to
+/// the end; it must defer (e.g. through a channel), not call overlay
+/// APIs synchronously. See docs/features/VIEWER.md.
+#[cfg(target_os = "macos")]
+pub fn video_overlay_show(
+    container_ns_view: *mut std::ffi::c_void,
+    path: &std::path::Path,
+    frame: (f64, f64, f64, f64),
+    on_ended: Box<dyn Fn() + 'static>,
+) -> u64 {
+    video_overlay::show(container_ns_view, path, frame, on_ended)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn video_overlay_show(
+    _container_ns_view: *mut std::ffi::c_void,
+    _path: &std::path::Path,
+    _frame: (f64, f64, f64, f64),
+    _on_ended: Box<dyn Fn() + 'static>,
+) -> u64 {
+    0
+}
+
+/// Reposition a live video overlay. Main-thread only; stale ids no-op.
+#[cfg(target_os = "macos")]
+pub fn video_overlay_set_frame(id: u64, frame: (f64, f64, f64, f64)) {
+    video_overlay::set_frame(id, frame);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn video_overlay_set_frame(_id: u64, _frame: (f64, f64, f64, f64)) {}
+
+/// Stop playback and remove a video overlay. Main-thread only; stale
+/// ids no-op.
+#[cfg(target_os = "macos")]
+pub fn video_overlay_remove(id: u64) {
+    video_overlay::remove(id);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn video_overlay_remove(_id: u64) {}
 
 /// Width to reserve at the leading edge of the tabstrip so the OS
 /// traffic-light buttons (close / minimize / zoom) don't overlap our
