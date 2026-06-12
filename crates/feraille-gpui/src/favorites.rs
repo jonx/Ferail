@@ -117,8 +117,16 @@ impl Favorites {
             .unwrap_or(FavoriteState::Available)
     }
 
+    /// Process-wide volume watch hook: a disk mounted/unmounted, so
+    /// volume favorites may have flipped Available ↔ Unmounted.
+    /// Same background probe as the post-hydrate pass.
+    pub fn refresh_mount_states(&self, cx: &mut Context<Self>) {
+        self.refresh_state(cx);
+    }
+
     /// Recompute state for every favorite off the UI thread. Called
-    /// after hydrate, add, repoint, and (eventually) on watcher
+    /// after hydrate, add, repoint, volume mount/unmount (via
+    /// [`Self::refresh_mount_states`]), and (eventually) on watcher
     /// events. Touches the filesystem (`.exists()`) so it must not
     /// run synchronously on the render path.
     fn refresh_state(&self, cx: &mut Context<Self>) {

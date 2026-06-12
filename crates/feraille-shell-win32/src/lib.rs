@@ -1173,6 +1173,15 @@ pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static + Send>)
 #[cfg(not(windows))]
 pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static + Send>) {}
 
+/// Volume mount/unmount observer — Windows parity stub. The real
+/// implementation listens for `WM_DEVICECHANGE`
+/// (`DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE`) on the same
+/// message-only-window pattern as [`start_system_theme_observer`],
+/// which means the callback will fire on the observer's worker
+/// thread — hence `Send`, and callers must marshal (the gpui host
+/// uses a channel either way).
+pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static + Send>) {}
+
 /// Video overlay — Windows parity stubs. The mac implementation
 /// floats an AVPlayerView over the viewer's stage rect
 /// (docs/features/VIEWER.md); the Windows equivalent is a Media

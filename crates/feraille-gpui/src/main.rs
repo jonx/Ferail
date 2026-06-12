@@ -471,6 +471,12 @@ fn run_gui(args: screenshot::Args) {
         let process = feraille_gpui::shell::Shell::build_process_state(cx);
         cx.set_global(feraille_gpui::process_state::ProcessStateGlobal(process));
 
+        // Live volume mount/unmount watch: NSWorkspace notifications
+        // [mac] feed a coalescing channel; the drain task re-lists
+        // volumes off-thread and fans the change out to every window's
+        // sidebar + the Favorites mount states.
+        feraille_gpui::process_state::start_volume_watch(cx);
+
         // Cmd+N → new window. The handler runs at App level so the
         // binding works regardless of which window holds focus, and
         // works with zero windows (after the last window closes the

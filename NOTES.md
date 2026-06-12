@@ -7,6 +7,21 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-12 live volume mount watch (landed)
+
+`volume_observer.rs` in shell-mac
+mirrors the theme observer (declare_class target, thread_local
+Retained, idempotent start) but registers on *NSWorkspace's own*
+notification center for DidMount/DidUnmount/DidRenameVolume.
+`process_state::start_volume_watch` (called once in main.rs) drains a
+coalescing channel: re-lists volumes on the background executor
+(cached NSURL keys, O(mounted)), swaps `ProcessState.volumes`,
+re-probes Favorites Available↔Unmounted (`refresh_mount_states`, the
+existing background pass), and notifies every live shell. Sidebar
+Volumes section updates without restart. Win32: stub; real impl is
+WM_DEVICECHANGE on the theme observer's message window. Hardware
+verification (plug/unplug a disk) is on the user.
+
 # 2026-06-12 video playback in the viewer/slideshow (landed)
 
 AVPlayerView overlay

@@ -275,6 +275,45 @@ pub fn process_state(cx: &App) -> Rc<ProcessState> {
     cx.global::<ProcessStateGlobal>().0.clone()
 }
 
+/// Start the live volume watch. Platform mount/unmount/rename
+/// notifications ([mac] NSWorkspace; win-parity stub today) feed a
+/// coalescing channel; the foreground drain task re-lists volumes on
+/// the background executor (O(mounted volumes) of cached NSURL keys),
+/// swaps [`ProcessState::volumes`], re-probes Favorites
+/// Available/Unmounted states, and notifies every live shell so the
+/// sidebar repaints. Call once at startup, after the ProcessState
+/// global is set.
+pub fn start_volume_watch(cx: &mut App) {
+    let (tx, rx) = async_channel::unbounded::<()>();
+    crate::platform_shell::start_volume_observer(Box::new(move || {
+        let _ = tx.try_send(());
+    }));
+    cx.spawn(async move |cx| {
+        while rx.recv().await.is_ok() {
+            // Coalesce bursts — a mount often arrives with a rename
+            // right behind it; one re-list covers both.
+            while rx.try_recv().is_ok() {}
+            let vols = cx
+                .background_executor()
+                .spawn(async { list_volumes() })
+                .await;
+            cx.update(|cx| {
+                let process = process_state(cx);
+                *process.volumes.borrow_mut() = vols;
+                process
+                    .favorites
+                    .update(cx, |favs, cx| favs.refresh_mount_states(cx));
+                for weak in process.live_shells() {
+                    if let Some(shell) = weak.upgrade() {
+                        shell.update(cx, |_, cx| cx.notify());
+                    }
+                }
+            });
+        }
+    })
+    .detach();
+}
+
 #[cfg(test)]
 mod closed_tab_stack_tests {
     use super::push_with_cap;

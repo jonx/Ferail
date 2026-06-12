@@ -12,8 +12,8 @@ feature notes in [docs/features/](docs/features/README.md).
 - Favorites polish — the v1 shipped per [docs/features/FAVORITES.md](docs/features/FAVORITES.md);
   remaining items are inline-rename text field (today's rename uses a
   native NSAlert prompt), live filesystem-watcher integration for
-  Missing/Unmounted state transitions, NSWorkspace mount/unmount
-  notifications + Locate-via-NSOpenPanel, ~150ms fade/collapse +
+  Missing state transitions (mount/unmount transitions now ship via
+  the NSWorkspace volume watch), Locate-via-NSOpenPanel, ~150ms fade/collapse +
   dedup-pulse animations, arrow-key sidebar focus + Delete-on-focus
   removal + Cmd+Option+click new-window modifier, drop-file-onto-
   favorite move/copy (waiting on the file-op workers below), and the

@@ -43,6 +43,9 @@ mod tags;
 mod theme_observer;
 
 #[cfg(target_os = "macos")]
+mod volume_observer;
+
+#[cfg(target_os = "macos")]
 mod video_overlay;
 
 /// Install the application menu bar (`NSApp.mainMenu`) and configure the
@@ -721,6 +724,18 @@ pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static>) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static>) {}
+
+/// Begin observing volume mount/unmount/rename via NSWorkspace's
+/// notification center. The callback runs on the main thread after
+/// every change; hosts re-list volumes and fan out. Main-thread-only,
+/// idempotent (see [`start_system_theme_observer`] for the contract).
+#[cfg(target_os = "macos")]
+pub fn start_volume_observer(callback: Box<dyn Fn() + 'static>) {
+    volume_observer::start(callback);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static>) {}
 
 /// Mount a native AVPlayerView video overlay inside the given content
 /// NSView at `frame` (gpui top-left logical coordinates) and start
