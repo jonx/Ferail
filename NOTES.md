@@ -7,6 +7,40 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-12 correctness review sweep (landed)
+
+Full-project audit (correctness / stability / portability / design
+precision) followed by a fix sweep, one commit per finding:
+
+- `cfa561e` hidden-file semantics: `FileEntry::hidden` resolved at
+  enumerate time (UF_HIDDEN / FILE_ATTRIBUTE_HIDDEN), all filters off
+  name heuristics. macOS gains Finder-correct `~/Library` hiding.
+- `51379fa` metadata DB path per platform — Windows persisted nothing
+  before (%APPDATA% arm added; XDG fallback for other unix).
+- `2548358` context menu builds with zero shell queries: Open With
+  warm cache + dispatch resolves slots against the same cache
+  (re-fetch could reorder and open the wrong app); tags reuse row data.
+- `586b04b` favorites "+"/drop validate on workers, not the UI thread.
+- `74774cf` shell-win32: clipboard HGLOBAL freed on SetClipboardData
+  failure; symlink/junction skip in both recursive walkers; DC checks.
+- `29ff68b` streaming pipeline addresses tabs by index — active-swap
+  hack retired (see the struck-through Phase A+B trade-off below).
+- `4f73bde` tabstrip select resolves by TabId (uniform with close);
+  theme-observer thread contract documented in both shell crates.
+- `09e9f20` pure-logic tests: reorder gap math, closed-tab stack
+  eviction, Zone.Identifier parsing (extracted platform-neutral).
+- `05af43a` clippy gate unblocked (deny-level approx_constant) +
+  mechanical sweep; multi_table fork left untouched by policy.
+- `9e40fca` path-identity contract: lexical `normalize_path_key` in
+  both NodeId maps; case/symlink/`..` deliberately not folded —
+  contract + rationale in ARCHITECTURE.md Data Model.
+
+Verification per item: cargo check (mac + windows-msvc cross where
+applicable), full test sweep (132 → 149 tests over the sweep), and
+screenshots for UI-touching changes.
+
+---
+
 # Windows / Instances / Tabs (in progress)
 
 ## Phase A+B-iter3 — filter on Tab (landed)
