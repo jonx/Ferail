@@ -7,6 +7,33 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-12 review-sweep leftovers (landed)
+
+Closed the items the correctness sweep below deliberately parked:
+
+- `1ee08e6` tab drag-reorder actually works: the chips themselves are
+  now drop targets (the natural release-over-a-tab gesture previously
+  landed on a chip with no `on_drop` — the only targets were the 6-DIP
+  gaps). Drop on chip = take its slot; accent edge previews the side.
+  Pure `chip_drop_gap_index` + tests. Needs one interactive drag to
+  confirm visually.
+- `8b6e03c` boundary canonicalization: the ARCHITECTURE.md identity
+  contract is now true at every external edge — typed breadcrumb
+  (background canonicalize via `navigate_external`), persisted
+  last_dir, favorites DB hydrate, watcher root — and the two UI-thread
+  `canonicalize` stats in the favorite-toggle handlers moved to
+  workers (`spawn_in` + `apply_toggle_favorite_canonical`). Shared
+  helper `shell::path::canonicalize_for_identity` + symlink test.
+- `7543f1c` clippy to zero (46 → 0): multi_table fork gets a policy
+  `#![allow]` for style lints; type aliases for the complex handler/
+  tuple types; FavoriteId + SortColumn implement `FromStr`; the rest
+  mechanical. Keep the gate at zero from here.
+
+Still parked on purpose: the cross-platform `[patch]` decision
+(TODO.md "Cross-Platform Build") and pushing the branch.
+
+---
+
 # 2026-06-12 correctness review sweep (landed)
 
 Full-project audit (correctness / stability / portability / design

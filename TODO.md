@@ -44,8 +44,9 @@ feature notes in [docs/features/](docs/features/README.md).
   flows that still poll for progress, especially disk usage scanning,
   preview generation, search, copy/move, and duplicate finding.
 - Move all remaining expensive metadata reads out of synchronous UI paths,
-  including Finder tags, context-menu warming, preview generation, and any
-  large-folder bookkeeping.
+  including preview generation and any large-folder bookkeeping
+  (context-menu warming and Finder-tag reads moved off-thread in the
+  2026-06 sweep).
 - Audit render paths for accidental `PathBuf` resolution or filesystem
   calls; keep path resolution behind controlled filesystem/native-shell
   boundaries.
@@ -145,13 +146,10 @@ feature notes in [docs/features/](docs/features/README.md).
 
 ## Cleanup
 
-- Burn down the remaining ~58 clippy style warnings. The deny-level
-  error and the mechanical lints were fixed in the 2026-06 review
-  sweep; what's left is mostly `very complex type` (wants type
-  aliases) plus a handful in `multi_table/` — that module is the
-  pinned gpui-component fork, where upstream-diff fidelity beats
-  lint cleanliness, so exclude it (module-level `#![allow]`) rather
-  than rewrite it.
+- Keep `cargo clippy --workspace --all-targets` at zero warnings (it
+  is, as of 2026-06-12). `multi_table/` carries a module-level
+  `#![allow]` for style lints by policy — it's the pinned
+  gpui-component fork; don't extend those allows elsewhere.
 - Delete old soft-renderer crates when the GPUI shell is the only shipped
   app and no longer needs them as parity reference.
 - Remove stale references to old specs or deleted migration ledgers as code
