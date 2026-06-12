@@ -1243,15 +1243,14 @@ impl Shell {
                         {
                             return true;
                         }
-                        // Helpers below operate on `self.active_tab()`.
-                        // Temporarily swap `active` to the loading tab
-                        // so the helpers update its state; restore on
-                        // the way out. Safe because helpers don't paint
-                        // synchronously — `cx.notify()` only schedules.
-                        let prev_active = this.active;
-                        this.active = idx;
-                        this.apply_directory_load_msg(msg, cx);
-                        this.active = prev_active;
+                        // Helpers address the loading tab by index —
+                        // the Phase A+B "swap self.active and restore"
+                        // hack is gone. It was re-entrancy-fragile: an
+                        // observer firing synchronously inside the
+                        // apply (e.g. the favorites subscription) read
+                        // `active_tab()` and saw the loading tab
+                        // instead of the user's.
+                        this.apply_directory_load_msg_in_tab(idx, msg, cx);
                         false
                     })
                     .unwrap_or(true);
@@ -1264,14 +1263,14 @@ impl Shell {
         cx.notify();
     }
 
-    fn apply_directory_load_msg(&mut self, msg: LoadMsg, cx: &mut Context<Self>) {
+    fn apply_directory_load_msg_in_tab(&mut self, idx: usize, msg: LoadMsg, cx: &mut Context<Self>) {
         match msg {
-            LoadMsg::Batch(batch) => self.apply_directory_batch(batch, cx),
-            LoadMsg::Done(error) => self.finish_directory_load(error, cx),
+            LoadMsg::Batch(batch) => self.apply_directory_batch_in_tab(idx, batch, cx),
+            LoadMsg::Done(error) => self.finish_directory_load_in_tab(idx, error, cx),
         }
     }
 
-    fn apply_directory_batch(&mut self, batch: LoadBatch, cx: &mut Context<Self>) {
+    fn apply_directory_batch_in_tab(&mut self, idx: usize, batch: LoadBatch, cx: &mut Context<Self>) {
         for (id, path) in &batch.paths {
             self.process
                 .node_store
@@ -1283,9 +1282,12 @@ impl Shell {
             .iter()
             .map(|entry| self.ant_heat(entry.id))
             .collect();
-        let first_batch = self.active_tab_mut().load_pending_first_batch;
-        self.active_tab_mut().load_pending_first_batch = false;
-        let table = self.active_tab().table.clone();
+        let Some(tab) = self.tabs.get_mut(idx) else {
+            return;
+        };
+        let first_batch = tab.load_pending_first_batch;
+        tab.load_pending_first_batch = false;
+        let table = tab.table.clone();
         table.update(cx, |state, cx| {
             if first_batch {
                 state.delegate_mut().clear();
@@ -1298,7 +1300,7 @@ impl Shell {
         // Repaint the §5 star badge on each row whose path is now in
         // the favorites index. Cheap (HashMap lookups across the new
         // batch); runs once per batch on the load path.
-        self.refresh_file_list_favorited(cx);
+        self.refresh_file_list_favorited_in_tab(idx, cx);
         // Spec §2.6 streaming arrival passes:
         //   1. Mirror current selection state into the delegate so
         //      the parallel render view paints the rows that just
@@ -1307,12 +1309,12 @@ impl Shell {
         //      selection if their rows have now streamed in.
         //   3. Recompute a still-live Shift-range so rows landing
         //      between anchor and lead join the selection.
-        self.refresh_file_list_selection(cx);
-        self.restore_filtered_out_against_model(cx);
-        self.recompute_live_range(cx);
+        self.refresh_file_list_selection_in_tab(idx, cx);
+        self.restore_filtered_out_against_model_in_tab(idx, cx);
+        self.recompute_live_range_in_tab(idx, cx);
         // Consume any queued screenshot-driver row select now that
         // the model has data.
-        self.apply_pending_select_row(cx);
+        self.apply_pending_select_row_in_tab(idx, cx);
         cx.notify();
     }
 
@@ -1323,8 +1325,17 @@ impl Shell {
     ///   in `Shell::new` (so add / remove / repoint repaints star
     ///   badges in the same frame, §5.3).
     pub fn refresh_file_list_favorited(&mut self, cx: &mut Context<Self>) {
+        let idx = self.active;
+        self.refresh_file_list_favorited_in_tab(idx, cx);
+    }
+
+    /// Tab-explicit variant used by the streaming pipeline.
+    fn refresh_file_list_favorited_in_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(idx) else {
+            return;
+        };
         let favs = self.process.favorites.clone();
-        let table = self.active_tab().table.clone();
+        let table = tab.table.clone();
         let favs_ref = favs.read(cx);
         // Pre-collect each row's path so the table-update closure
         // doesn't need to borrow Shell again.
@@ -1357,27 +1368,36 @@ impl Shell {
         });
     }
 
-    fn finish_directory_load(&mut self, error: Option<EnumerationError>, cx: &mut Context<Self>) {
-        if let Some(id) = self.active_tab_mut().load_task.take() {
+    fn finish_directory_load_in_tab(
+        &mut self,
+        idx: usize,
+        error: Option<EnumerationError>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.get_mut(idx) else {
+            return;
+        };
+        if let Some(id) = tab.load_task.take() {
             self.process.tasks.borrow_mut().end(id);
         }
-        self.active_tab_mut().load_cancel = None;
-        if self.active_tab_mut().load_pending_first_batch {
-            self.active_tab_mut().load_pending_first_batch = false;
-            let table = self.active_tab().table.clone();
+        let tab = &mut self.tabs[idx];
+        tab.load_cancel = None;
+        if tab.load_pending_first_batch {
+            tab.load_pending_first_batch = false;
+            let table = tab.table.clone();
             table.update(cx, |state, cx| {
                 state.delegate_mut().clear();
                 state.refresh(cx);
             });
         }
-        let row_count = self.active_tab().table.read(cx).delegate().entries.len();
+        let row_count = self.tabs[idx].table.read(cx).delegate().entries.len();
         if row_count == 0 {
-            self.active_tab_mut().last_error = error;
+            self.tabs[idx].last_error = error;
         } else {
             if let Some(err) = error {
                 crate::log_warn!(90, "directory load ended with partial rows: {err:?}");
             }
-            self.active_tab_mut().last_error = None;
+            self.tabs[idx].last_error = None;
         }
 
         // Spec §2.6 `Done`: drop NodeIds no longer in the final
@@ -1386,23 +1406,26 @@ impl Shell {
         // once per load; iter-1 navigation that cleared selection
         // upfront makes this a no-op there, but back/forward and
         // any future external-mutation reload route through here.
-        self.reconcile_done(cx);
+        self.reconcile_done_in_tab(idx, cx);
 
         // Stage 4: kick off magic + quarantine prefetch after the
         // foreground table state has received the final snapshot.
-        let table = self.active_tab().table.clone();
+        let table = self.tabs[idx].table.clone();
         let fs = self.process.fs.clone();
         let db = self.process.db_snapshot();
         let tasks = self.process.tasks.clone();
         let weak = cx.weak_entity();
         crate::prefetch::start(table, fs, db, tasks, weak, cx);
-        let icon_seeds = self.icon_seeds_from_table(cx);
+        let icon_seeds = self.icon_seeds_from_table_in_tab(idx, cx);
         self.start_icon_warm(icon_seeds, cx);
         cx.notify();
     }
 
-    fn icon_seeds_from_table(&self, cx: &App) -> Vec<(FileEntry, PathBuf)> {
-        let table = self.active_tab().table.read(cx);
+    fn icon_seeds_from_table_in_tab(&self, idx: usize, cx: &App) -> Vec<(FileEntry, PathBuf)> {
+        let Some(tab) = self.tabs.get(idx) else {
+            return Vec::new();
+        };
+        let table = tab.table.read(cx);
         let delegate = table.delegate();
         delegate
             .entries

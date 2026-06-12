@@ -118,18 +118,29 @@ impl Shell {
     }
 
     /// Apply a deferred `select_row_index` once entries are
-    /// available. Called from `apply_directory_batch` after the
-    /// delegate has the new rows. Also drains any
+    /// available. Called from `apply_directory_batch_in_tab` after
+    /// the delegate has the new rows. Also drains any
     /// `pending_select_rows` (multi-row screenshot seed).
-    pub(super) fn apply_pending_select_row(&mut self, cx: &mut Context<Self>) {
-        if let Some(row_ix) = self.active_tab_mut().pending_select_row {
+    ///
+    /// Only acts when `idx` IS the active tab: the pending-select
+    /// seed is a screenshot-harness affordance and the harness only
+    /// loads the active tab; the inner select helpers
+    /// (`replace_select_one` / `select_row_indices`) are
+    /// active-tab-scoped gesture paths. A pending seed on a
+    /// background tab stays queued until that tab's next batch
+    /// while active.
+    pub(super) fn apply_pending_select_row_in_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if idx != self.active {
+            return;
+        }
+        if let Some(row_ix) = self.active_tab().pending_select_row {
             if let Some(id) = self.node_id_at_row(row_ix, cx) {
                 self.active_tab_mut().pending_select_row = None;
                 self.replace_select_one(id, cx);
                 cx.notify();
             }
         }
-        if !self.active_tab_mut().pending_select_rows.is_empty() {
+        if !self.active_tab().pending_select_rows.is_empty() {
             let rows = std::mem::take(&mut self.active_tab_mut().pending_select_rows);
             self.select_row_indices(&rows, cx);
         }
@@ -283,11 +294,27 @@ impl Shell {
     /// selection comes from `RowClicked` / `LeadMoved`; `SelectRow`
     /// is now just the table's internal lead mirror.
     pub fn refresh_file_list_selection(&mut self, cx: &mut Context<Self>) {
-        // Snapshot the active tab's selection state so the
-        // table.update closure doesn't need to borrow Shell again.
-        let selection = self.active_tab().selection.clone();
-        let lead = self.active_tab().lead;
-        let table = self.active_tab().table.clone();
+        let idx = self.active;
+        self.refresh_file_list_selection_in_tab(idx, cx);
+    }
+
+    /// Tab-explicit variant for the streaming pipeline, which targets
+    /// the loading tab by index rather than whatever tab happens to be
+    /// active when a batch lands (Phase A+B's active-swap hack is
+    /// gone; helpers now address the tab directly).
+    pub(super) fn refresh_file_list_selection_in_tab(
+        &mut self,
+        idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        // Snapshot the tab's selection state so the table.update
+        // closure doesn't need to borrow Shell again.
+        let Some(tab) = self.tabs.get(idx) else {
+            return;
+        };
+        let selection = tab.selection.clone();
+        let lead = tab.lead;
+        let table = tab.table.clone();
         let lead_row = table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
             delegate.selected_set = selection;
@@ -325,9 +352,15 @@ impl Shell {
     /// arrived in the model, move it back into `selection`. Runs
     /// after every batch and at `Done`. Doesn't drop anything —
     /// dropping is `reconcile_done`'s job.
-    pub(super) fn restore_filtered_out_against_model(&mut self, cx: &mut Context<Self>) {
-        let visible: HashSet<NodeId> = self
-            .active_tab()
+    pub(super) fn restore_filtered_out_against_model_in_tab(
+        &mut self,
+        idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.get(idx) else {
+            return;
+        };
+        let visible: HashSet<NodeId> = tab
             .table
             .read(cx)
             .delegate()
@@ -335,7 +368,7 @@ impl Shell {
             .iter()
             .map(|e| e.id)
             .collect();
-        let tab = self.active_tab_mut();
+        let tab = &mut self.tabs[idx];
         if tab.filtered_out.is_empty() {
             return;
         }
@@ -350,7 +383,7 @@ impl Shell {
             }
         });
         if restored {
-            self.refresh_file_list_selection(cx);
+            self.refresh_file_list_selection_in_tab(idx, cx);
         }
     }
 
@@ -361,16 +394,18 @@ impl Shell {
     /// may newly appear. Recompute the span on every batch + at
     /// `Done`. No-op if either endpoint isn't visible yet — we
     /// wait for the row that defines them to land before binding.
-    pub(super) fn recompute_live_range(&mut self, cx: &mut Context<Self>) {
-        if !self.active_tab().range_live {
+    pub(super) fn recompute_live_range_in_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(idx) else {
+            return;
+        };
+        if !tab.range_live {
             return;
         }
-        let (anchor_id, lead_id) = match (self.active_tab().anchor, self.active_tab().lead) {
+        let (anchor_id, lead_id) = match (tab.anchor, tab.lead) {
             (Some(a), Some(l)) => (a, l),
             _ => return,
         };
-        let entries: Vec<NodeId> = self
-            .active_tab()
+        let entries: Vec<NodeId> = tab
             .table
             .read(cx)
             .delegate()
@@ -385,8 +420,8 @@ impl Shell {
         };
         let (lo, hi) = if a <= l { (a, l) } else { (l, a) };
         let span: HashSet<NodeId> = entries[lo..=hi].iter().copied().collect();
-        self.active_tab_mut().selection = span;
-        self.refresh_file_list_selection(cx);
+        self.tabs[idx].selection = span;
+        self.refresh_file_list_selection_in_tab(idx, cx);
     }
 
     /// Spec §2.6 `LoadMsg::Done` reconciliation. Drops NodeIds no
@@ -395,9 +430,11 @@ impl Shell {
     /// re-seats `anchor` / `lead` if they vanished. Also runs the
     /// other reconcile passes one last time so a range that just
     /// became valid is bound by the time the load is "done."
-    pub(super) fn reconcile_done(&mut self, cx: &mut Context<Self>) {
-        let visible: HashSet<NodeId> = self
-            .active_tab()
+    pub(super) fn reconcile_done_in_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(idx) else {
+            return;
+        };
+        let visible: HashSet<NodeId> = tab
             .table
             .read(cx)
             .delegate()
@@ -405,8 +442,8 @@ impl Shell {
             .iter()
             .map(|e| e.id)
             .collect();
-        let filter_active = !self.active_tab().filter_text.trim().is_empty();
-        let tab = self.active_tab_mut();
+        let filter_active = !tab.filter_text.trim().is_empty();
+        let tab = &mut self.tabs[idx];
         let mut moved = false;
         if filter_active {
             // Move members not in the visible set into the filter
@@ -453,12 +490,12 @@ impl Shell {
             moved = true;
         }
         if moved {
-            self.refresh_file_list_selection(cx);
+            self.refresh_file_list_selection_in_tab(idx, cx);
         }
         // Final pass: restore any filtered_out members that did
         // make it in and recompute a still-live range.
-        self.restore_filtered_out_against_model(cx);
-        self.recompute_live_range(cx);
+        self.restore_filtered_out_against_model_in_tab(idx, cx);
+        self.recompute_live_range_in_tab(idx, cx);
     }
 
     /// Keyboard navigation: move the lead by `delta` and, when

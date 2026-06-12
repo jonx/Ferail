@@ -155,7 +155,7 @@ multi-window, tear-off, and cross-window reload fan-out.
 
 ### Trade-offs taken in this phase
 
-- The `self.active = idx; …; self.active = prev_active` swap inside the streaming closure is a hack. It keeps the existing per-active-tab helpers unchanged at the cost of a momentary "active tab pointer" anomaly. The user can't observe it — helpers only mutate state and schedule a `cx.notify()`, no synchronous paint. Cleaner alternative (thread `tab_id` through every helper) is more invasive; we'll revisit when Phase E (cross-window reload fan-out) needs to update arbitrary tabs from external events.
+- ~~The `self.active = idx; …; self.active = prev_active` swap inside the streaming closure is a hack.~~ **Retired (2026-06-12 review).** The 2026-06 audit found the swap was re-entrancy-fragile: an observer firing synchronously inside the apply (e.g. the favorites `cx.observe` subscription) read `active_tab()` and saw the loading tab instead of the user's. The streaming pipeline now threads the tab index explicitly: `apply_directory_load_msg_in_tab(idx, …)` → `apply_directory_batch_in_tab` / `finish_directory_load_in_tab` → `_in_tab` variants of the selection-reconcile helpers. Gesture-path call sites keep the old names as thin wrappers that pass `self.active`.
 - Volumes is `RefCell<Vec<VolumeInfo>>` even though it's only read after construction today. Future-proofs against a Disk Arbitration listener that refreshes it from any thread.
 - The undo stack is process-wide. Spec §1.1 implies process-scoped state; a Cmd+Z in any window undoes the most recent op anywhere. If user feedback wants per-window undo, easy to move later.
 
