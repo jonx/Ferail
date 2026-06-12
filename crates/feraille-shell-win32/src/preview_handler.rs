@@ -339,8 +339,25 @@ unsafe fn capture_window(hwnd: HWND, w: u32, h: u32) -> Option<(Vec<u8>, u32, u3
     // the GDI driver chain the result came out flipped 180° for
     // out-of-proc preview handlers (PowerPoint, Excel). Going
     // straight to a DIB section avoids the question.
+    // Check both DCs — under GDI handle pressure either call can
+    // fail (null DC), and every downstream call would then fail
+    // silently with no way to diagnose. capture.rs already does
+    // this; mirror it.
     let screen_dc = GetDC(HWND::default());
+    if screen_dc.is_invalid() {
+        if debug() {
+            eprintln!("capture_window: GetDC failed");
+        }
+        return None;
+    }
     let mem_dc = CreateCompatibleDC(screen_dc);
+    if mem_dc.is_invalid() {
+        if debug() {
+            eprintln!("capture_window: CreateCompatibleDC failed");
+        }
+        ReleaseDC(HWND::default(), screen_dc);
+        return None;
+    }
 
     let dib_info = make_top_down_dib(w, h);
     let mut dib_bits: *mut std::ffi::c_void = std::ptr::null_mut();

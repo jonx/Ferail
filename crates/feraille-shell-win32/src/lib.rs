@@ -259,10 +259,17 @@ pub fn copy_to_clipboard(text: &str) {
         std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
         let _ = GlobalUnlock(handle);
         // HGLOBAL → HANDLE for SetClipboardData per CF_UNICODETEXT.
-        let _ = SetClipboardData(
+        // Ownership contract: on SUCCESS the system owns the HGLOBAL
+        // (we must not free); on FAILURE ownership stays with us and
+        // we must GlobalFree or the allocation leaks.
+        if SetClipboardData(
             CF_UNICODETEXT.0 as u32,
             windows::Win32::Foundation::HANDLE(handle.0),
-        );
+        )
+        .is_err()
+        {
+            let _ = windows::Win32::Foundation::GlobalFree(handle);
+        }
     }
 }
 
@@ -345,13 +352,26 @@ pub fn duplicate_path(src: &std::path::Path) -> Result<std::path::PathBuf, Strin
 
 /// Recursive directory copy, used by `duplicate_path` because the
 /// std doesn't ship one. Bails on the first I/O error.
+///
+/// Symlinks (and NTFS junctions, which std reports as symlinks) are
+/// SKIPPED, for two reasons: (a) `fs::copy` on a symlink-to-dir
+/// errors out, which used to fail the whole duplicate as soon as a
+/// folder contained one; (b) following links invites cycles
+/// (`mklink /D loop ..`) that would recurse forever. Explorer's own
+/// folder-copy behavior for real symlinks is inconsistent across
+/// versions; skipping is the conservative, never-hangs choice.
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
+        // DirEntry::file_type does NOT follow symlinks — is_symlink
+        // is reliable here without an extra stat.
         let ft = entry.file_type()?;
+        if ft.is_symlink() {
+            continue;
+        }
         if ft.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
@@ -530,6 +550,13 @@ fn walk_into_zip(
                 .map_err(|_| format!("compress_paths: invalid filename in {}", dir.display()))?;
             let arc_path = format!("{arc}/{name}");
             let ft = entry.file_type().map_err(|e| format!("file_type: {e}"))?;
+            // Skip symlinks/junctions — same rationale as
+            // copy_dir_recursive: a link cycle would otherwise grow
+            // the walk stack forever, and archiving link targets
+            // through their parent dir double-stores content.
+            if ft.is_symlink() {
+                continue;
+            }
             if ft.is_dir() {
                 stack.push((path, arc_path));
             } else if ft.is_file() {
