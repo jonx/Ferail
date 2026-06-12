@@ -107,44 +107,22 @@ pub fn fetch_quarantine_info(path: &Path) -> QuarantineInfo {
         return info;
     };
     let text = String::from_utf8_lossy(&bytes);
+    let zt = parse_zone_identifier(&text);
 
-    let mut zone_id: Option<i32> = None;
-    let mut host_url: Option<String> = None;
-    let mut referrer: Option<String> = None;
-    for line in text.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("ZoneId=") {
-            zone_id = rest.trim().parse().ok();
-        } else if let Some(rest) = line.strip_prefix("HostUrl=") {
-            let s = rest.trim();
-            if !s.is_empty() {
-                host_url = Some(s.to_string());
-            }
-        } else if let Some(rest) = line.strip_prefix("ReferrerUrl=") {
-            let s = rest.trim();
-            if !s.is_empty() {
-                referrer = Some(s.to_string());
-            }
-        }
-    }
-
-    // Treat Internet (3) and Restricted (4) as quarantined — that's
-    // what Explorer's "this came from another computer" notice keys
-    // on. Local / Intranet / Trusted aren't flagged.
-    let internet_or_restricted = matches!(zone_id, Some(3) | Some(4));
-    if !internet_or_restricted && host_url.is_none() && referrer.is_none() {
+    if !zt.internet_or_restricted() && zt.host_url.is_none() && zt.referrer.is_none() {
         // ADS present but contains nothing actionable — leave as
         // not-quarantined.
         return info;
     }
 
-    info.quarantined = internet_or_restricted;
+    info.quarantined = zt.internet_or_restricted();
 
     // "Agent" doesn't map cleanly on Windows; the closest thing is
     // the host URL's domain. Browsers that write Zone.Identifier
     // (Edge, Chrome, Firefox) don't all populate HostUrl, but when
     // present it's the most useful "downloaded from" label.
-    info.agent = host_url
+    info.agent = zt
+        .host_url
         .as_deref()
         .and_then(parse_url_host)
         .map(str::to_string);
@@ -159,10 +137,10 @@ pub fn fetch_quarantine_info(path: &Path) -> QuarantineInfo {
         }
     }
 
-    if let Some(h) = host_url {
+    if let Some(h) = zt.host_url {
         info.where_from.push(h);
     }
-    if let Some(r) = referrer {
+    if let Some(r) = zt.referrer {
         if !info.where_from.contains(&r) {
             info.where_from.push(r);
         }
@@ -171,8 +149,55 @@ pub fn fetch_quarantine_info(path: &Path) -> QuarantineInfo {
     info
 }
 
-#[cfg(windows)]
-fn parse_url_host(url: &str) -> Option<&str> {
+/// Parsed view of a `Zone.Identifier` ADS body. Compiled on every
+/// platform (pure string parsing) so the logic is unit-testable from
+/// the macOS dev/CI hosts even though only the Windows arm reads it
+/// from disk.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ZoneTransfer {
+    pub zone_id: Option<i32>,
+    pub host_url: Option<String>,
+    pub referrer: Option<String>,
+}
+
+impl ZoneTransfer {
+    /// Internet (3) and Restricted (4) are what Explorer's "this file
+    /// came from another computer" notice keys on; Local / Intranet /
+    /// Trusted aren't flagged.
+    pub fn internet_or_restricted(&self) -> bool {
+        matches!(self.zone_id, Some(3) | Some(4))
+    }
+}
+
+/// Parse the tiny INI-ish `[ZoneTransfer]` body. Tolerant by design:
+/// unknown lines ignored, values trimmed (CRLF endings handled by
+/// `str::lines`), empty values treated as absent, malformed ZoneId
+/// treated as absent.
+pub fn parse_zone_identifier(text: &str) -> ZoneTransfer {
+    let mut zt = ZoneTransfer::default();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("ZoneId=") {
+            zt.zone_id = rest.trim().parse().ok();
+        } else if let Some(rest) = line.strip_prefix("HostUrl=") {
+            let s = rest.trim();
+            if !s.is_empty() {
+                zt.host_url = Some(s.to_string());
+            }
+        } else if let Some(rest) = line.strip_prefix("ReferrerUrl=") {
+            let s = rest.trim();
+            if !s.is_empty() {
+                zt.referrer = Some(s.to_string());
+            }
+        }
+    }
+    zt
+}
+
+/// Extract the host from a URL without pulling a URL crate: strip a
+/// known scheme prefix, cut at the first delimiter. Pure; compiled
+/// everywhere for testability (only the Windows arm calls it today).
+pub fn parse_url_host(url: &str) -> Option<&str> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
@@ -269,5 +294,52 @@ mod tests {
         assert_eq!(d.agent.as_deref(), Some("Safari"));
         assert_eq!(d.downloaded_iso.as_deref(), Some("2024-05-19 00:00 UTC"));
         assert_eq!(d.where_from, vec!["https://example.com/x".to_string()]);
+    }
+
+    // ---- Zone.Identifier parsing (Windows Mark-of-the-Web) ----
+    // The parser is pure and compiled on every platform; these run
+    // on macOS CI even though only the Windows arm reads ADS data.
+
+    #[test]
+    fn zone_identifier_typical_browser_download() {
+        // CRLF endings, exactly as Edge/Chrome write them.
+        let text = "[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=https://example.com/page\r\nHostUrl=https://cdn.example.com/file.zip\r\n";
+        let zt = parse_zone_identifier(text);
+        assert_eq!(zt.zone_id, Some(3));
+        assert!(zt.internet_or_restricted());
+        assert_eq!(zt.host_url.as_deref(), Some("https://cdn.example.com/file.zip"));
+        assert_eq!(zt.referrer.as_deref(), Some("https://example.com/page"));
+    }
+
+    #[test]
+    fn zone_identifier_trusted_zone_not_flagged() {
+        let zt = parse_zone_identifier("[ZoneTransfer]\nZoneId=2\n");
+        assert_eq!(zt.zone_id, Some(2));
+        assert!(!zt.internet_or_restricted());
+    }
+
+    #[test]
+    fn zone_identifier_tolerates_garbage_and_gaps() {
+        // Missing ZoneId, unknown keys, empty values, no section header.
+        let zt = parse_zone_identifier("Garbage\nHostUrl=\nReferrerUrl=https://r.example\nFoo=Bar");
+        assert_eq!(zt.zone_id, None);
+        assert!(!zt.internet_or_restricted());
+        assert_eq!(zt.host_url, None); // empty value → absent
+        assert_eq!(zt.referrer.as_deref(), Some("https://r.example"));
+        // Malformed ZoneId → absent, not a panic.
+        let zt = parse_zone_identifier("ZoneId=banana");
+        assert_eq!(zt.zone_id, None);
+        // Empty input.
+        assert_eq!(parse_zone_identifier(""), ZoneTransfer::default());
+    }
+
+    #[test]
+    fn url_host_extraction() {
+        assert_eq!(parse_url_host("https://cdn.example.com/a/b.zip"), Some("cdn.example.com"));
+        assert_eq!(parse_url_host("http://example.com:8080/x"), Some("example.com"));
+        assert_eq!(parse_url_host("ftp://files.example.org"), Some("files.example.org"));
+        assert_eq!(parse_url_host("bare-host/path"), Some("bare-host"));
+        assert_eq!(parse_url_host("https://"), None);
+        assert_eq!(parse_url_host(""), None);
     }
 }

@@ -2142,23 +2142,13 @@ impl Shell {
         let Some(from_idx) = self.tabs.iter().position(|t| t.id == from_id) else {
             return;
         };
-        if to_pos > self.tabs.len() {
+        // Index math (incl. the no-op and out-of-range rules) lives
+        // in the pure, unit-tested `tab::reorder_insert_index`.
+        let Some(insert_at) = tab::reorder_insert_index(from_idx, to_pos, self.tabs.len()) else {
             return;
-        }
-        if to_pos == from_idx || to_pos == from_idx + 1 {
-            return;
-        }
+        };
         let active_id = self.tabs[self.active].id;
         let tab = self.tabs.remove(from_idx);
-        // After removal, indices `> from_idx` shift down by one. The
-        // gap at position `to_pos` in the *pre-remove* list maps to
-        // `to_pos - 1` in the post-remove list iff `from_idx < to_pos`;
-        // otherwise it stays at `to_pos`.
-        let insert_at = if from_idx < to_pos {
-            to_pos - 1
-        } else {
-            to_pos
-        };
         self.tabs.insert(insert_at, tab);
         self.active = self
             .tabs

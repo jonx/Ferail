@@ -211,6 +211,76 @@ impl Tab {
     }
 }
 
+/// Pure index math for within-strip tab drag-reorder (spec §3.3).
+/// Gap positions number `0..=len`: gap 0 before the first tab, gap
+/// `len` after the last. Returns the index to `insert` at AFTER
+/// `remove(from_idx)`, or `None` when the drop is invalid or a no-op
+/// (dropping into the gap on either side of the dragged tab itself).
+///
+/// Extracted from `Shell::reorder_tab` so the arithmetic is testable
+/// without a gpui harness — the active-index bookkeeping stays in
+/// the Shell method.
+pub fn reorder_insert_index(from_idx: usize, to_pos: usize, len: usize) -> Option<usize> {
+    if from_idx >= len || to_pos > len {
+        return None;
+    }
+    if to_pos == from_idx || to_pos == from_idx + 1 {
+        return None;
+    }
+    // After removal, indices > from_idx shift down by one: a gap to
+    // the RIGHT of the dragged tab maps to `to_pos - 1` in the
+    // post-remove list; a gap to the left is unchanged.
+    Some(if from_idx < to_pos { to_pos - 1 } else { to_pos })
+}
+
+#[cfg(test)]
+mod reorder_tests {
+    use super::reorder_insert_index;
+
+    #[test]
+    fn forward_move_adjusts_for_removal_shift() {
+        // [A B C D], drag A (0) to gap 2 (between B and C) → remove A,
+        // insert at 1 → [B A C D].
+        assert_eq!(reorder_insert_index(0, 2, 4), Some(1));
+        // Drag A to the far end (gap 4) → insert at 3 → [B C D A].
+        assert_eq!(reorder_insert_index(0, 4, 4), Some(3));
+    }
+
+    #[test]
+    fn backward_move_keeps_position() {
+        // [A B C D], drag D (3) to gap 0 → insert at 0 → [D A B C].
+        assert_eq!(reorder_insert_index(3, 0, 4), Some(0));
+        // Drag C (2) to gap 1 → insert at 1 → [A C B D].
+        assert_eq!(reorder_insert_index(2, 1, 4), Some(1));
+    }
+
+    #[test]
+    fn adjacent_gaps_are_noops() {
+        // Gap to the immediate left and right of the dragged tab.
+        assert_eq!(reorder_insert_index(1, 1, 4), None);
+        assert_eq!(reorder_insert_index(1, 2, 4), None);
+        // First and last tabs' own gaps.
+        assert_eq!(reorder_insert_index(0, 0, 4), None);
+        assert_eq!(reorder_insert_index(0, 1, 4), None);
+        assert_eq!(reorder_insert_index(3, 3, 4), None);
+        assert_eq!(reorder_insert_index(3, 4, 4), None);
+    }
+
+    #[test]
+    fn out_of_range_is_rejected() {
+        assert_eq!(reorder_insert_index(4, 0, 4), None); // from beyond end
+        assert_eq!(reorder_insert_index(0, 5, 4), None); // gap beyond end
+        assert_eq!(reorder_insert_index(0, 0, 0), None); // empty strip
+    }
+
+    #[test]
+    fn single_tab_strip_has_no_valid_moves() {
+        for gap in 0..=1 {
+            assert_eq!(reorder_insert_index(0, gap, 1), None);
+        }
+    }
+}
+
 /// Per-tab state captured at close time for `Cmd+Shift+T`. Lives on
 /// `ProcessState::closed_tabs` so it survives the tab's owning window
 /// closing — a closed window's tabs can still be reopened from any

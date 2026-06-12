@@ -216,11 +216,11 @@ impl ProcessState {
     /// `Tab::snapshot_for_close()` before the tab is removed from
     /// its `Shell::tabs` vec. Trims the oldest entry when over cap.
     pub fn push_closed_tab(&self, snapshot: ClosedTab) {
-        let mut stack = self.closed_tabs.borrow_mut();
-        if stack.len() >= CLOSED_TABS_CAP {
-            stack.pop_front();
-        }
-        stack.push_back(snapshot);
+        push_with_cap(
+            &mut self.closed_tabs.borrow_mut(),
+            snapshot,
+            CLOSED_TABS_CAP,
+        );
     }
 
     /// Pop the most recently closed tab for `Cmd+Shift+T`. Returns
@@ -228,6 +228,58 @@ impl ProcessState {
     /// no-op rather than a beep).
     pub fn pop_closed_tab(&self) -> Option<ClosedTab> {
         self.closed_tabs.borrow_mut().pop_back()
+    }
+}
+
+/// Bounded LIFO push: evicts the OLDEST entry (front) when at `cap`,
+/// then pushes to the back. Most-recent entry is always `pop_back`.
+/// Extracted from `push_closed_tab` so the eviction order is pinned
+/// by unit tests without constructing a full `ProcessState`.
+fn push_with_cap<T>(stack: &mut VecDeque<T>, item: T, cap: usize) {
+    if stack.len() >= cap {
+        stack.pop_front();
+    }
+    stack.push_back(item);
+}
+
+#[cfg(test)]
+mod closed_tab_stack_tests {
+    use super::push_with_cap;
+    use std::collections::VecDeque;
+
+    #[test]
+    fn pop_back_yields_most_recently_pushed() {
+        let mut stack: VecDeque<u32> = VecDeque::new();
+        for n in 1..=3 {
+            push_with_cap(&mut stack, n, 16);
+        }
+        assert_eq!(stack.pop_back(), Some(3));
+        assert_eq!(stack.pop_back(), Some(2));
+        assert_eq!(stack.pop_back(), Some(1));
+        assert_eq!(stack.pop_back(), None);
+    }
+
+    #[test]
+    fn cap_evicts_oldest_first() {
+        let mut stack: VecDeque<u32> = VecDeque::new();
+        // Push 20 with cap 16 → 1..=4 fall off the front; the 16
+        // most recent (5..=20) survive, newest still on top.
+        for n in 1..=20 {
+            push_with_cap(&mut stack, n, 16);
+        }
+        assert_eq!(stack.len(), 16);
+        assert_eq!(stack.front().copied(), Some(5));
+        assert_eq!(stack.pop_back(), Some(20));
+    }
+
+    #[test]
+    fn zero_cap_never_grows_unbounded() {
+        // Degenerate cap: still bounded (single element), no panic.
+        let mut stack: VecDeque<u32> = VecDeque::new();
+        push_with_cap(&mut stack, 1, 1);
+        push_with_cap(&mut stack, 2, 1);
+        assert_eq!(stack.len(), 1);
+        assert_eq!(stack.pop_back(), Some(2));
     }
 }
 
