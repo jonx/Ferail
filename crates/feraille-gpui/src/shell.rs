@@ -337,15 +337,19 @@ fn hydrate_ant_trail(
     (map, max)
 }
 
-/// Open the persistent metadata DB at the default location
-/// (`~/Library/Application Support/Feraille/metadata.db`). Returns
-/// `None` and logs a warning when `$HOME` is unset, mkdir fails, or
+/// Open the persistent metadata DB at the platform default location
+/// (`feraille_meta::default_db_path`: Application Support on macOS,
+/// %APPDATA% on Windows, XDG data dir elsewhere). Returns `None` and
+/// logs a warning when the base env var is unset, mkdir fails, or
 /// open fails — in-memory state still works in those cases, just
 /// without persistence. Reuses the path resolution + parent-dir
 /// helpers from `feraille_meta`.
 fn open_metadata_db() -> Option<Arc<Mutex<feraille_meta::MetadataDb>>> {
     let Some(path) = feraille_meta::default_db_path() else {
-        crate::log_warn!(90, "metadata: $HOME unset; persistence disabled");
+        crate::log_warn!(
+            90,
+            "metadata: no base dir (HOME/APPDATA/XDG unset); persistence disabled"
+        );
         return None;
     };
     if let Err(e) = feraille_meta::ensure_parent_dir(&path) {
