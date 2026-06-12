@@ -1060,6 +1060,17 @@ pub fn system_is_dark() -> bool {
 /// Apps dark/light setting) and on each match re-reads
 /// [`system_is_dark`] and forwards the result via the callback.
 ///
+/// # Thread contract — read before changing the callback
+///
+/// **The callback is invoked ON THE OBSERVER'S WORKER THREAD**, not
+/// the UI thread (this differs from shell-mac, whose observer fires
+/// on the main thread). It must not touch gpui entities, `Window`s,
+/// or any main-thread-only state. The supported pattern is what
+/// `main.rs` does today: write to a thread-safe cell
+/// (`shell::set_system_theme_pending` — an atomic the Shell polls at
+/// render). If a future caller needs more, marshal to the main
+/// thread yourself; do not widen this callback's responsibilities.
+///
 /// The thread, window, and callback live for the lifetime of the
 /// process. Each `start_system_theme_observer` call adds another
 /// observer — callers should avoid invoking it repeatedly.

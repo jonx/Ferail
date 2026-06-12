@@ -441,7 +441,13 @@ impl Shell {
             chip = chip
                 .child(div().truncate().max_w(px(160.0)).child(label))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.select_tab(idx, cx);
+                    // Resolve by TabId, not the render-time `idx` —
+                    // same staleness rule as the close button: a
+                    // drag-reorder can shift positions between the
+                    // frame this listener was built and the click.
+                    if let Some(target_idx) = this.tabs.iter().position(|t| t.id == tab_id) {
+                        this.select_tab(target_idx, cx);
+                    }
                 }))
                 // Phase D drag-start: a press-then-move on a tab chip
                 // initiates a tab drag (gpui's built-in threshold keeps

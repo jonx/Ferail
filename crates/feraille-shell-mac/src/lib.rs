@@ -699,6 +699,14 @@ pub fn system_is_dark() -> bool {
 /// the user toggles System Settings → Appearance, or "Auto" mode
 /// crosses the day/night boundary.
 ///
+/// Thread contract: on macOS the callback fires on the MAIN thread —
+/// but the shell-win32 twin of this function fires its callback on a
+/// WORKER thread. Cross-platform callers must write the callback to
+/// the weaker (win32) contract: thread-safe state only, no gpui
+/// entities. `main.rs` does this via the atomic
+/// `shell::set_system_theme_pending` cell that the Shell polls at
+/// render.
+///
 /// Idempotent: re-registering replaces the callback without stacking
 /// duplicate observers. Must be called on the main thread (after
 /// winit has built its event loop / NSApp); off-thread or non-macOS
