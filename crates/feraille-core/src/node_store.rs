@@ -5,9 +5,40 @@
 //! resolution happens only at action/job boundaries.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::{path_guard, NodeId};
+
+/// Normalize a path for use as an identity-map key. **Lexical only —
+/// never touches the filesystem**, so it's safe at every call depth
+/// including under the path guard.
+///
+/// What it folds together (mechanical aliases of the same spelling):
+///   - trailing separators           `/Users/x/`  → `/Users/x`
+///   - `.` segments                  `/Users/./x` → `/Users/x`
+///   - redundant separators          `/Users//x`  → `/Users/x`
+///
+/// What it deliberately does NOT fold, and why:
+///   - **case** — APFS and NTFS are *usually* case-insensitive but
+///     it's a per-volume property; case-folding keys would wrongly
+///     merge distinct files on case-sensitive volumes. Identity
+///     stays case-preserving; case-insensitive *aliasing* is a
+///     boundary concern (canonicalize at input edges).
+///   - **`..` segments** — `a/../b` is not lexically `b` when `a`
+///     is a symlink; collapsing requires filesystem knowledge this
+///     function must not have. Typed input containing `..` is
+///     canonicalized at the boundary (breadcrumb parse, CLI args).
+///   - **symlinks** — same reason; boundary canonicalization owns it.
+pub fn normalize_path_key(path: &Path) -> PathBuf {
+    let mut out = PathBuf::with_capacity(path.as_os_str().len());
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum NodeKind {
@@ -74,7 +105,10 @@ impl NodeStore {
     }
 
     pub fn get_or_create_path(&mut self, path: impl Into<PathBuf>) -> NodeId {
-        let path = path.into();
+        // Identity contract: keys are lexically normalized so the
+        // mechanical spellings of one path (trailing slash, ./, //)
+        // can't mint two NodeIds. See `normalize_path_key`.
+        let path = normalize_path_key(&path.into());
         if let Some(id) = self.path_index.get(&path) {
             return *id;
         }
@@ -87,7 +121,7 @@ impl NodeStore {
     /// platform filesystem adapter and the shared NodeStore agree on identity
     /// during an incremental migration.
     pub fn get_or_create_path_with_id(&mut self, path: impl Into<PathBuf>, id: NodeId) -> NodeId {
-        let path = path.into();
+        let path = normalize_path_key(&path.into());
         if let Some(existing) = self.path_index.get(&path) {
             return *existing;
         }
@@ -207,5 +241,48 @@ mod tests {
             store.path_snapshot_for_job(id, "test"),
             Some(PathBuf::from("/tmp"))
         );
+    }
+
+    // ---- identity contract (normalize_path_key) ----
+
+    #[test]
+    fn mechanical_spellings_share_one_id() {
+        let mut store = NodeStore::new();
+        let canonical = store.get_or_create_path("/Users/x/docs");
+        assert_eq!(store.get_or_create_path("/Users/x/docs/"), canonical);
+        assert_eq!(store.get_or_create_path("/Users/x/./docs"), canonical);
+        assert_eq!(store.get_or_create_path("/Users/x//docs"), canonical);
+    }
+
+    #[test]
+    fn case_variants_stay_distinct_by_design() {
+        // Case-folding is a per-volume property; identity must not
+        // merge spellings that are distinct files on case-sensitive
+        // volumes. Case-insensitive aliasing is handled by boundary
+        // canonicalization, not the key.
+        let mut store = NodeStore::new();
+        let lower = store.get_or_create_path("/users/x/docs");
+        let upper = store.get_or_create_path("/Users/x/docs");
+        assert_ne!(lower, upper);
+    }
+
+    #[test]
+    fn parent_dir_segments_not_collapsed() {
+        // `a/../b` ≠ lexical `b` when `a` is a symlink — collapsing
+        // needs filesystem knowledge this layer must not have.
+        let mut store = NodeStore::new();
+        let direct = store.get_or_create_path("/Users/b");
+        let dotted = store.get_or_create_path("/Users/a/../b");
+        assert_ne!(direct, dotted);
+    }
+
+    #[test]
+    fn normalize_is_prefix_stable() {
+        // parent() of a normalized path is itself normalized — the
+        // parent-index lookup in insert_path relies on this.
+        let n = normalize_path_key(Path::new("/Users/x/./docs//"));
+        assert_eq!(n, PathBuf::from("/Users/x/docs"));
+        assert_eq!(n.parent(), Some(Path::new("/Users/x")));
+        assert_eq!(normalize_path_key(n.parent().unwrap()), PathBuf::from("/Users/x"));
     }
 }

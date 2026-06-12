@@ -70,14 +70,20 @@ impl NativeFs {
     }
 
     pub fn id_for_path(&self, path: &Path) -> NodeId {
+        // Identity contract (shared with feraille-core::NodeStore):
+        // keys are lexically normalized — trailing slash, `./`, and
+        // doubled separators can't mint two NodeIds for one path.
+        // Case and symlinks are deliberately NOT folded here; see
+        // `normalize_path_key`'s doc for the boundary rules.
+        let path = feraille_core::node_store::normalize_path_key(path);
         let mut inner = self.inner.lock().expect("fs lock");
-        if let Some(id) = inner.by_path.get(path) {
+        if let Some(id) = inner.by_path.get(&path) {
             return *id;
         }
         let id = NodeId::from_raw(inner.next_id).expect("nonzero");
         inner.next_id += 1;
-        inner.paths.insert(id, path.to_path_buf());
-        inner.by_path.insert(path.to_path_buf(), id);
+        inner.paths.insert(id, path.clone());
+        inner.by_path.insert(path, id);
         id
     }
 }
@@ -665,6 +671,23 @@ mod tests {
             assert!(!e.name.contains('/'));
             assert!(!e.display_mtime.is_empty());
         }
+    }
+
+    #[test]
+    fn id_for_path_folds_mechanical_spellings() {
+        let fs = NativeFs::new();
+        let canonical = fs.id_for_path(Path::new("/tmp/feraille-id-test"));
+        assert_eq!(fs.id_for_path(Path::new("/tmp/feraille-id-test/")), canonical);
+        assert_eq!(fs.id_for_path(Path::new("/tmp/./feraille-id-test")), canonical);
+        assert_eq!(fs.id_for_path(Path::new("/tmp//feraille-id-test")), canonical);
+        // Stored path is the normalized spelling.
+        assert_eq!(
+            fs.path_for(canonical),
+            Some(PathBuf::from("/tmp/feraille-id-test"))
+        );
+        // Case variants stay distinct (per-volume property; see
+        // feraille_core::node_store::normalize_path_key).
+        assert_ne!(fs.id_for_path(Path::new("/tmp/FERAILLE-ID-TEST")), canonical);
     }
 
     #[test]

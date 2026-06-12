@@ -67,6 +67,17 @@ Rules:
 keeps a `NodeStore` so tabs, sidebar rows, table rows, context menus, and
 worker results can speak in stable ids where possible.
 
+Path-identity contract: both maps key on
+`feraille_core::node_store::normalize_path_key`, a lexical-only
+normalization (trailing slashes, `.` segments, doubled separators fold
+together; no filesystem access). Case, symlinks, and `..` are
+deliberately NOT folded by the key — case-insensitivity is a per-volume
+property and folding would corrupt identity on case-sensitive volumes;
+the other two need filesystem knowledge. Paths from outside the app
+(typed breadcrumbs, CLI args, external drops) are canonicalized once at
+their entry boundary; internal flows are consistent by construction
+because children are built from already-registered parent paths.
+
 `FileEntry` is the file-list row model. It contains preformatted display
 fields:
 
