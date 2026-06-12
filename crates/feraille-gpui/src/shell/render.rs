@@ -121,6 +121,7 @@ impl Shell {
             path: home.clone(),
             label: SharedString::from("Home"),
             depth: 0,
+            guides: Vec::new(),
             is_expandable: true,
             is_expanded,
             is_active: home == current,
@@ -135,6 +136,7 @@ impl Shell {
                 1,
                 &current,
                 Some(&location_paths),
+                &mut Vec::new(),
                 cx,
             );
         }
@@ -304,6 +306,7 @@ impl Shell {
                 path: path.clone(),
                 label: SharedString::from(name),
                 depth: 0,
+                guides: Vec::new(),
                 is_expandable: true,
                 is_expanded,
                 is_active: path == current,
@@ -312,7 +315,7 @@ impl Shell {
                 favorited,
             });
             if is_expanded {
-                self.append_tree_descendants(&mut rows, &path, 1, &current, cx);
+                self.append_tree_descendants(&mut rows, &path, 1, &current, &mut Vec::new(), cx);
             }
         }
         rows
@@ -333,9 +336,10 @@ impl Shell {
         parent: &Path,
         depth: usize,
         current: &Path,
+        trunk: &mut Vec<bool>,
         cx: &App,
     ) {
-        self.append_tree_descendants_filtered(rows, parent, depth, current, None, cx);
+        self.append_tree_descendants_filtered(rows, parent, depth, current, None, trunk, cx);
     }
 
     /// Same as [`append_tree_descendants`] but with an optional
@@ -343,6 +347,15 @@ impl Shell {
     /// Browse to suppress depth-1 Home children that are already
     /// pinned in Locations. The filter is *not* propagated to deeper
     /// levels.
+    ///
+    /// `trunk` carries one bool per ancestor level above `depth`:
+    /// `true` while that ancestor still has visible siblings below
+    /// it (its connector line continues through these rows). The
+    /// recursion pushes/pops as it descends so each row's `guides`
+    /// column list comes out precomputed — render stays a pure read.
+    // 8 args, all load-bearing per recursion level; a param struct
+    // would be rebuilt at every level of the walk for style points.
+    #[allow(clippy::too_many_arguments)]
     fn append_tree_descendants_filtered(
         &self,
         rows: &mut Vec<TreeRowSpec>,
@@ -350,31 +363,60 @@ impl Shell {
         depth: usize,
         current: &Path,
         skip_paths: Option<&HashSet<PathBuf>>,
+        trunk: &mut Vec<bool>,
         cx: &App,
     ) {
         let Some(children) = self.tree_children.get(parent) else {
             return;
         };
-        let favs = self.process.favorites.read(cx);
-        for child in children {
-            // `hidden` resolved at load time with platform semantics
-            // (FileEntry::hidden contract) — pure flag read on render.
-            if !self.show_hidden && child.hidden {
-                continue;
-            }
-            if let Some(skip) = skip_paths {
-                if skip.contains(&child.path) {
-                    continue;
+        // Resolve visibility up front — last-visible-child status
+        // decides between the `├` and `└` connector, so hidden /
+        // skipped children must not count.
+        let visible: Vec<&TreeChild> = children
+            .iter()
+            .filter(|child| {
+                // `hidden` resolved at load time with platform
+                // semantics (FileEntry::hidden contract) — pure flag
+                // read on render.
+                if !self.show_hidden && child.hidden {
+                    return false;
                 }
-            }
+                if let Some(skip) = skip_paths {
+                    if skip.contains(&child.path) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
+        let last_ix = visible.len().saturating_sub(1);
+        let favs = self.process.favorites.read(cx);
+        for (ix, child) in visible.into_iter().enumerate() {
+            let is_last = ix == last_ix;
             let is_expanded = self.expanded.contains(&child.path);
             let favorited = favs.contains_path(&child.path);
+            let mut guides: Vec<TreeGuide> = trunk
+                .iter()
+                .map(|&continues| {
+                    if continues {
+                        TreeGuide::Vertical
+                    } else {
+                        TreeGuide::Blank
+                    }
+                })
+                .collect();
+            guides.push(if is_last {
+                TreeGuide::Corner
+            } else {
+                TreeGuide::Tee
+            });
             rows.push(TreeRowSpec {
                 node_id: child.node_id,
                 path: child.path.clone(),
                 label: SharedString::from(child.label.clone()),
                 depth,
-                is_expandable: true,
+                guides,
+                is_expandable: child.has_subdirs,
                 is_expanded,
                 is_active: child.path == current,
                 capacity: None,
@@ -382,7 +424,9 @@ impl Shell {
                 favorited,
             });
             if is_expanded {
-                self.append_tree_descendants(rows, &child.path, depth + 1, current, cx);
+                trunk.push(!is_last);
+                self.append_tree_descendants(rows, &child.path, depth + 1, current, trunk, cx);
+                trunk.pop();
             }
         }
     }
@@ -757,11 +801,12 @@ impl Shell {
     /// row. Falls back to a neutral empty state when nothing is
     /// selected. Format-specific previews (image, text, PDF) arrive
     /// in a follow-up polish iter.
-    fn preview(&self, cx: &mut Context<Self>) -> Div {
+    fn preview(&mut self, cx: &mut Context<Self>) -> Div {
         use gpui_component::{
             Sizable as _,
             button::{Button, ButtonVariants as _},
             description_list::{DescriptionItem, DescriptionList},
+            scroll::Scrollbar,
             tooltip::Tooltip,
         };
 
@@ -774,6 +819,19 @@ impl Shell {
                 .lead_row(entries)
                 .and_then(|i| entries.get(i).cloned())
         };
+
+        // Scroll position carries across renders (the body scrolls
+        // when the window is shorter than the metadata stack), but a
+        // different file starts back at the top.
+        let selected_path = selected.as_ref().map(|entry| {
+            let mut p = self.active_tab().current_dir.clone();
+            p.push(&entry.name);
+            p
+        });
+        if self.preview_scroll_path != selected_path {
+            self.preview_scroll_path = selected_path;
+            self.preview_scroll.set_offset(gpui::Point::default());
+        }
 
         let header = div()
             .text_xs()
@@ -1050,16 +1108,44 @@ impl Shell {
             }
         };
 
+        // Pinned header; the body scrolls when the window is shorter
+        // than the thumbnail + metadata + actions stack, with a
+        // gpui-component scrollbar overlaid on the pane's right edge
+        // (it only shows while the content actually overflows).
         v_flex()
             .size_full()
             .min_h_0()
             .border_l_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().background)
-            .p_4()
-            .gap_3()
-            .child(header)
-            .child(body)
+            .child(div().px_4().pt_4().pb_3().child(header))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .id("preview-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.preview_scroll)
+                            .flex()
+                            .flex_col()
+                            .px_4()
+                            .pb_4()
+                            .child(body),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .bottom_0()
+                            .w(px(16.0))
+                            .child(Scrollbar::vertical(&self.preview_scroll)),
+                    ),
+            )
     }
 
     /// Build the breadcrumb row from `current_dir`. Each ancestor is
@@ -1257,6 +1343,31 @@ impl Render for Shell {
         let browse_rows = self.build_browse_rows(cx);
         let volumes_rows = self.build_volumes_rows(cx);
         let has_volumes = !self.process.volumes.borrow().is_empty();
+
+        // Render never fetches icons (the path guard makes cache
+        // misses return the blank placeholder), so collect the
+        // sidebar paths whose icon isn't cached yet and schedule a
+        // background warm. `warm_folder_icon` caches even on fetch
+        // failure, so this set empties out instead of respawning
+        // every frame. Favorites ride along: their rows use the same
+        // path-keyed cache.
+        let mut icon_warm: Vec<PathBuf> = Vec::new();
+        {
+            let icons = self.process.icons.borrow();
+            for row in browse_rows.iter().chain(volumes_rows.iter()) {
+                if matches!(row.icon, TreeRowIcon::Folder) && !icons.has_folder_icon(&row.path) {
+                    icon_warm.push(row.path.clone());
+                }
+            }
+            for fav in self.process.favorites.read(cx).entries() {
+                if let feraille_core::favorites::FavoriteTarget::Path(p) = &fav.target {
+                    if fav.custom_icon.is_none() && !icons.has_folder_icon(p) {
+                        icon_warm.push(p.clone());
+                    }
+                }
+            }
+        }
+        self.start_tree_icon_warm(icon_warm, cx);
         let breadcrumb = self.breadcrumb(cx);
         let path_str = self.active_tab().current_dir.to_string_lossy().into_owned();
 
@@ -1280,9 +1391,10 @@ impl Render for Shell {
             .collapsible(gpui_component::sidebar::SidebarCollapsible::Icon)
             .collapsed(self.sidebar_collapsed)
             .w_full()
-            .child(ShellSidebarItem::group(
-                SidebarGroup::new("Locations").child(locations_menu),
-            ))
+            .child(ShellSidebarItem::group(LabeledMenu::new(
+                "Locations",
+                locations_menu,
+            )))
             .child(favorites_section)
             .child(ShellSidebarItem::tree(TreeSection::new(
                 "Browse",

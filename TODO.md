@@ -66,8 +66,6 @@ feature notes in [docs/features/](docs/features/README.md).
 - Add "Reveal in Browse" and "Remove from Favorites" context actions.
 - Add Finder-style roots beyond Home and Volumes where useful: iCloud,
   Network, external disks, removable media, and user custom locations.
-- Make tree expandability honest: do not show a strong chevron for proven
-  leaf folders; use async child peeking or streaming enumeration data.
 - Add breadcrumb completion and richer segment menus.
 - Persist per-tab sort/filter/scroll state where it is not already stable.
 - Add configurable visible columns and column widths/order reset.

@@ -95,6 +95,33 @@ impl IconCache {
         }
     }
 
+    /// Whether a path-keyed (folder/sidebar) icon is already cached.
+    /// Lets the shell decide which rows still need a background warm
+    /// without mutating the cache from a render pass.
+    pub fn has_folder_icon(&self, path: &Path) -> bool {
+        self.by_kind.contains_key(&format!("path:{}", path.display()))
+    }
+
+    /// Fetch-and-cache a path-keyed icon outside the render path.
+    /// Unlike `folder_icon_for`, a failed NSWorkspace fetch caches the
+    /// blank placeholder under the key so the warm scheduler (which
+    /// re-collects "not cached yet" paths every render) converges
+    /// instead of re-requesting the same unfetchable path forever.
+    pub fn warm_folder_icon(&mut self, path: &Path) {
+        let key = format!("path:{}", path.display());
+        if self.by_kind.contains_key(&key) {
+            return;
+        }
+        if feraille_core::path_guard::is_rendering() {
+            return;
+        }
+        let icon = match fetch_icon_rgba(path, ICON_PX) {
+            Some((rgba, w, h)) => Arc::new(build_render_image(rgba, w, h)),
+            None => self.blank_icon(),
+        };
+        self.by_kind.insert(key, icon);
+    }
+
     fn blank_icon(&mut self) -> Arc<RenderImage> {
         if let Some(b) = &self.blank {
             return b.clone();

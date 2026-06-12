@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -99,16 +99,45 @@ pub(super) fn run_tree_children_load(fs: Arc<NativeFs>, path: PathBuf) -> Vec<Tr
                 .map(|m| feraille_fs_native::entry_is_hidden(&name, &m))
                 .unwrap_or_else(|_| name.starts_with('.'));
             let node_id = fs.id_for_path(&p);
+            let has_subdirs = dir_has_subdir(&p);
             children.push(TreeChild {
                 node_id,
                 path: p,
                 label: name,
                 hidden,
+                has_subdirs,
             });
         }
         children.sort_by_key(|a| a.label.to_lowercase());
     }
     children
+}
+
+/// Whether `path` has at least one directory child (symlinks-to-dir
+/// count, matching the tree's own child filter). Early-exits on the
+/// first hit so the common case touches a handful of dirents; an
+/// unreadable directory reports `false` — expanding it would show
+/// nothing anyway. Worker-thread only: this is a real read_dir.
+pub(super) fn dir_has_subdir(path: &Path) -> bool {
+    let Ok(rd) = std::fs::read_dir(path) else {
+        return false;
+    };
+    for dirent in rd.flatten() {
+        let Ok(ft) = dirent.file_type() else {
+            continue;
+        };
+        if ft.is_dir() {
+            return true;
+        }
+        if ft.is_symlink()
+            && std::fs::metadata(dirent.path())
+                .map(|m| m.is_dir())
+                .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Map an `EnumerationError` to (title, body) copy for the in-pane

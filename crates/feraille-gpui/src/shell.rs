@@ -23,7 +23,7 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
-    sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
+    sidebar::{Sidebar, SidebarMenu, SidebarMenuItem},
     v_flex,
 };
 
@@ -32,7 +32,9 @@ use crate::file_list::FileListDelegate;
 use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
 use crate::multi_table::{DataTable, TableEvent, TableState};
 use crate::tasks::TaskKind;
-use crate::tree::{ShellSidebarItem, TreeChild, TreeRowIcon, TreeRowSpec, TreeSection};
+use crate::tree::{
+    LabeledMenu, ShellSidebarItem, TreeChild, TreeGuide, TreeRowIcon, TreeRowSpec, TreeSection,
+};
 use gpui::prelude::FluentBuilder as _;
 
 mod actions;
@@ -45,8 +47,8 @@ mod tab;
 
 pub use actions::*;
 use loading::{
-    LoadBatch, LoadMsg, error_copy, middle_truncate_path, run_directory_load_streaming,
-    run_tree_children_load,
+    LoadBatch, LoadMsg, dir_has_subdir, error_copy, middle_truncate_path,
+    run_directory_load_streaming, run_tree_children_load,
 };
 pub use path::{canonicalize_for_identity, parse_breadcrumb_path, path_segments};
 pub use tab::{ClosedTab, HistoryEntry, Tab, TabId};
@@ -211,6 +213,15 @@ pub struct Shell {
     /// it; Cmd+I focuses the preview's Get Info section (today it's
     /// the only thing in the pane).
     pub preview_visible: bool,
+    /// Scroll position of the preview pane's body, so the content
+    /// stays reachable (with a scrollbar) when the window is shorter
+    /// than the metadata + actions stack. Persistent across renders;
+    /// `Shell::preview` resets it on selection change so a new file
+    /// starts at the top.
+    pub preview_scroll: ScrollHandle,
+    /// Path the preview pane showed last frame — the selection-change
+    /// edge detector for the scroll reset above.
+    pub preview_scroll_path: Option<PathBuf>,
     /// UI zoom factor (Stage 9.b.5). 1.0 = default; bumped by Cmd+=
     /// and Cmd+-. Applied to font sizes / icon sizes via Tokens-
     /// derived scaling at render time. Persisted in app_state.
@@ -547,6 +558,8 @@ impl Shell {
             // override this default — until then this is the boot
             // state on every launch.
             preview_visible: false,
+            preview_scroll: ScrollHandle::new(),
+            preview_scroll_path: None,
             ui_scale,
             splitter_state: cx.new(|_| gpui_component::resizable::ResizableState::default()),
             sidebar_width: persisted.sidebar_width.unwrap_or(220.0).clamp(160.0, 400.0),
@@ -1530,6 +1543,39 @@ impl Shell {
                         let mut icons = this.process.icons.borrow_mut();
                         for (entry, path) in &rows {
                             let _ = icons.icon_for(entry, path);
+                        }
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Warm path-keyed sidebar icons (tree rows, favorites) in the
+    /// background. The render path never fetches — `folder_icon_for`
+    /// returns the blank placeholder under the render guard — so
+    /// without this, rows revealed by expanding a folder kept their
+    /// blank icon until some unrelated file-list warm happened to
+    /// cache the same path. `Shell::render` collects the not-yet-
+    /// cached paths each frame; `warm_folder_icon` caches even on
+    /// fetch failure, so this converges instead of respawning.
+    fn start_tree_icon_warm(&self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        if paths.is_empty() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            for chunk in paths.chunks(ICON_WARM_CHUNK) {
+                cx.background_executor().timer(ICON_WARM_INTERVAL).await;
+                let batch = chunk.to_vec();
+                if this
+                    .update(cx, |this, cx| {
+                        let mut icons = this.process.icons.borrow_mut();
+                        for path in &batch {
+                            icons.warm_folder_icon(path);
                         }
                         cx.notify();
                     })
@@ -2599,11 +2645,13 @@ impl Shell {
                     .node_store
                     .borrow_mut()
                     .get_or_create_path_with_id(p.clone(), node_id);
+                let has_subdirs = dir_has_subdir(&p);
                 children.push(TreeChild {
                     node_id,
                     path: p,
                     label: name,
                     hidden,
+                    has_subdirs,
                 });
             }
             children.sort_by_key(|a| a.label.to_lowercase());

@@ -7,6 +7,38 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-13 honest tree chevrons, ancestry guides, sidebar polish (landed)
+
+Browse/Volumes tree affordances stopped lying:
+
+- **Honest chevrons.** `TreeChild.has_subdirs` is resolved at
+  enumeration time (`dir_has_subdir`: early-exit read_dir, worker
+  thread on the async path; the documented-sync `ensure_tree_children`
+  reveal path carries it too). Leaf folders render no caret instead of
+  a chevron that expands to nothing. Hidden subdirs count — the caret
+  may reveal nothing while Show Hidden is off, which beats scanning
+  twice.
+- **Ancestry guide lines.** `TreeGuide` (Blank/Vertical/Tee/Corner)
+  per indent column, computed by the row builder which alone knows
+  last-visible-child status (`trunk` push/pop during the walk); render
+  is a pure read. Absolutely-positioned 1px lines span the row height
+  so connectors join across rows; leaf rows extend a stub through the
+  empty caret slot so line lengths read consistently.
+- **Icon warming.** `IconCache::warm_folder_icon` caches even failed
+  NSWorkspace fetches so the every-render "what's still uncached"
+  collection converges; `start_tree_icon_warm` chunks fetches on a
+  timer off the render path.
+- **Unified section headers.** New `LabeledMenu` replaces
+  `SidebarGroup<SidebarMenu>` for Locations so all four sidebar
+  sections share one semibold `section_header`.
+- **Preview-pane scroll.** The pane body gets a persistent
+  `ScrollHandle` with a selection-change edge detector resetting it,
+  so short windows can reach the action buttons.
+- Verified: `screenshots/tree-guides.png` (guides join across rows,
+  `Games` carets, leaf folders don't), workspace tests green, clippy
+  zero (two targeted allows: `large_enum_variant` on ShellSidebarItem,
+  `too_many_arguments` on the recursive row builder).
+
 # 2026-06-12 live volume mount watch (landed)
 
 `volume_observer.rs` in shell-mac

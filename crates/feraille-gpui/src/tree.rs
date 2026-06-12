@@ -34,7 +34,7 @@ use gpui::*;
 use gpui_component::{
     ActiveTheme, Collapsible, h_flex,
     menu::ContextMenuExt as _,
-    sidebar::{SidebarGroup, SidebarItem, SidebarMenu},
+    sidebar::{SidebarItem, SidebarMenu},
     v_flex,
 };
 use smallvec::smallvec;
@@ -56,6 +56,24 @@ pub enum TreeRowIcon {
     Volume,
 }
 
+/// One indent-column of ancestry connector to draw left of a tree
+/// row. Index 0 is the outermost ancestor level; the last entry is
+/// always the row's own connector (`Tee` or `Corner`). Earlier
+/// entries are `Vertical` while that ancestor still has siblings
+/// below, `Blank` once its subtree is the trailing one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeGuide {
+    /// Empty 14px spacer — ancestor at this level was its parent's
+    /// last child, so no line continues through here.
+    Blank,
+    /// `│` — an outer ancestor's line passing through this row.
+    Vertical,
+    /// `├` — this row, with more siblings below it.
+    Tee,
+    /// `└` — this row as its parent's last visible child.
+    Corner,
+}
+
 /// One row to render in the tree view. Computed by `Shell` (needs
 /// access to `expanded`, `tree_children`, `current_dir`), consumed by
 /// the `TreeSection::render` impl.
@@ -65,10 +83,13 @@ pub struct TreeRowSpec {
     pub path: PathBuf,
     pub label: SharedString,
     pub depth: usize,
-    /// True when the row represents a directory we know can be
-    /// expanded (everything in our tree is a directory today; kept
-    /// as a flag so a future "tree shows files too" mode is one
-    /// boolean away).
+    /// Connector glyphs to draw left of the caret, one per depth
+    /// level (`guides.len() == depth`). Computed by the row builder,
+    /// which knows each row's last-visible-child status.
+    pub guides: Vec<TreeGuide>,
+    /// True when the row represents a directory we know contains at
+    /// least one subdirectory (resolved at enumeration time on the
+    /// worker). Rows without one render no disclosure caret.
     pub is_expandable: bool,
     /// Whether this directory is currently open in `Shell::expanded`.
     pub is_expanded: bool,
@@ -98,6 +119,13 @@ pub struct TreeChild {
     /// FILE_ATTRIBUTE_HIDDEN on Windows, dot-prefix everywhere) — same
     /// contract as `FileEntry::hidden`.
     pub hidden: bool,
+    /// Whether this directory itself contains at least one
+    /// subdirectory, resolved at enumeration time (worker thread) by
+    /// `shell::loading::dir_has_subdir`. Drives the caret: leaf
+    /// folders render no disclosure mark. Hidden subdirectories
+    /// count — the chevron may reveal nothing while Show Hidden is
+    /// off, which beats scanning twice per child.
+    pub has_subdirs: bool,
 }
 
 /// Pre-built tree section: a header label + a flat list of rows in
@@ -140,6 +168,78 @@ impl Collapsible for TreeSection {
     }
 }
 
+/// Section header shared by every sidebar section (Locations,
+/// Favorites, Browse, Volumes) so the labels read as one family.
+/// `SidebarGroup`'s built-in header is identical except it lacks the
+/// SEMIBOLD weight — which is why Locations uses [`LabeledMenu`]
+/// below instead of `SidebarGroup`.
+pub(crate) fn section_header(label: SharedString, cx: &App) -> Div {
+    let theme = cx.theme();
+    h_flex()
+        .flex_shrink_0()
+        .px_2()
+        .rounded(theme.radius)
+        .text_xs()
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(theme.sidebar_foreground.opacity(0.7))
+        .h_8()
+        .child(label)
+}
+
+/// A flat `SidebarMenu` under a [`section_header`]-styled label.
+/// Replaces `SidebarGroup<SidebarMenu>` for the Locations section so
+/// its header matches Browse/Volumes (`SidebarGroup` renders its
+/// label in regular weight).
+#[derive(Clone)]
+pub struct LabeledMenu {
+    label: SharedString,
+    menu: SidebarMenu,
+    collapsed: bool,
+}
+
+impl LabeledMenu {
+    pub fn new(label: impl Into<SharedString>, menu: SidebarMenu) -> Self {
+        Self {
+            label: label.into(),
+            menu,
+            collapsed: false,
+        }
+    }
+}
+
+impl Collapsible for LabeledMenu {
+    fn is_collapsed(&self) -> bool {
+        self.collapsed
+    }
+    fn collapsed(mut self, c: bool) -> Self {
+        self.collapsed = c;
+        self
+    }
+}
+
+impl SidebarItem for LabeledMenu {
+    fn render(
+        self,
+        id: impl Into<ElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        v_flex()
+            .w_full()
+            // Icon-collapsed sidebar hides section labels, same as
+            // `SidebarGroup` does.
+            .when(!self.collapsed, |this| {
+                this.child(section_header(self.label.clone(), cx))
+            })
+            .child(
+                self.menu
+                    .collapsed(self.collapsed)
+                    .render(id, window, cx)
+                    .into_any_element(),
+            )
+    }
+}
+
 /// Unifies the kinds of section the shell's sidebar contains:
 /// flat icon-prefixed menu groups (Locations), the user-curated
 /// Favorites section with its own collapse + rendering rules
@@ -147,15 +247,20 @@ impl Collapsible for TreeSection {
 /// Volumes). Wrapping them in a single `SidebarItem` enum lets
 /// `gpui_component::Sidebar<E>` hold the mixed sequence — gpui-
 /// component otherwise pins one `E` for all of a sidebar's children.
+// The size spread (Group ≈ 700 B vs Tree ≈ 96 B) is fine here: the
+// sidebar builds a handful of these per render and drops them with
+// the frame — boxing the large variant would add an allocation per
+// section per frame for no win.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum ShellSidebarItem {
-    Group(SidebarGroup<SidebarMenu>),
+    Group(LabeledMenu),
     Favorites(crate::favorites_section::FavoritesSection),
     Tree(TreeSection),
 }
 
 impl ShellSidebarItem {
-    pub fn group(g: SidebarGroup<SidebarMenu>) -> Self {
+    pub fn group(g: LabeledMenu) -> Self {
         ShellSidebarItem::Group(g)
     }
     pub fn favorites(f: crate::favorites_section::FavoritesSection) -> Self {
@@ -205,16 +310,7 @@ impl SidebarItem for TreeSection {
         _window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        let theme = cx.theme();
-        let header = h_flex()
-            .flex_shrink_0()
-            .px_2()
-            .rounded(theme.radius)
-            .text_xs()
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(theme.sidebar_foreground.opacity(0.7))
-            .h_8()
-            .child(self.label);
+        let header = section_header(self.label.clone(), cx);
 
         let shell = self.shell.clone();
         let icons = self.icons.clone();
@@ -249,6 +345,7 @@ fn render_tree_row(
         path,
         label,
         depth,
+        guides,
         is_expandable,
         is_expanded,
         is_active,
@@ -267,6 +364,7 @@ fn render_tree_row(
     let drag_path = path.clone();
     let mut row = h_flex()
         .id(ElementId::Name(row_key))
+        .relative()
         .w_full()
         .pl(indent)
         .pr_2()
@@ -292,10 +390,63 @@ fn render_tree_row(
         row = row.hover(move |this| this.bg(hover_bg));
     }
 
+    // Ancestry connector lines, absolutely positioned inside the
+    // row's left indent so they span the full row height (through
+    // the `py_1` padding) and join seamlessly with the rows above
+    // and below. One 14px column per depth level mirrors the indent
+    // math; each column centres its 1px line at x = 7. The corner /
+    // tee elbow is a 16px-tall box (half the 32px row) whose left +
+    // bottom borders draw the `└` shape ending at the caret column.
+    let line = theme.sidebar_border;
+    let guide_count = guides.len();
+    for (level, guide) in guides.iter().enumerate() {
+        if matches!(guide, TreeGuide::Blank) {
+            continue;
+        }
+        // The row's own connector (last level) normally hands off to
+        // the caret right where its column ends. Leaf rows have no
+        // caret, so extend the stub through the empty caret slot to
+        // where an arrow tip would end (~12px in) — connector lengths
+        // read consistently whether or not a row is expandable.
+        let stub_extra = if level + 1 == guide_count && !is_expandable {
+            12.0
+        } else {
+            0.0
+        };
+        let cell = div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(8.0 + 14.0 * level as f32))
+            .w(px(14.0 + stub_extra))
+            .flex()
+            .flex_col();
+        let elbow = || {
+            div()
+                .ml(px(7.0))
+                .w(px(7.0 + stub_extra))
+                .h(px(16.0))
+                .border_l_1()
+                .border_b_1()
+                .border_color(line)
+        };
+        let cell = match guide {
+            TreeGuide::Blank => cell,
+            TreeGuide::Vertical => {
+                cell.child(div().ml(px(7.0)).w(px(1.0)).h_full().bg(line))
+            }
+            TreeGuide::Tee => cell
+                .child(elbow())
+                .child(div().ml(px(7.0)).w(px(1.0)).flex_1().bg(line)),
+            TreeGuide::Corner => cell.child(elbow()),
+        };
+        row = row.child(cell);
+    }
+
     // Caret slot. Reserves the same width for non-expandable rows so
-    // labels align across rows that don't have a caret (none today,
-    // but the layout supports it). `▼` / `▶` render larger than the
-    // small `▾`/`▸` glyphs at our font size.
+    // labels align across rows that don't have a caret — leaf
+    // folders without subdirectories. `▼` / `▶` render larger than
+    // the small `▾`/`▸` glyphs at our font size.
     if is_expandable {
         let caret_node = node_id;
         let shell_for_caret = shell.clone();
