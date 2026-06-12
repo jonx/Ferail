@@ -121,19 +121,35 @@ impl SidebarItem for FavoritesSection {
             .child("+")
             .on_click(move |_, _window, cx| {
                 cx.stop_propagation();
-                if let Some(shell) = shell_for_plus.upgrade() {
-                    shell.update(cx, |s, cx| {
-                        let path = s.active_tab().current_dir.clone();
-                        let canonical = std::fs::canonicalize(&path).unwrap_or(path);
-                        s.process.favorites.update(cx, |f, cx| {
-                            f.add_path(
-                                canonical,
-                                feraille_core::favorites::FavoriteKind::Folder,
-                                cx,
-                            );
+                let Some(shell) = shell_for_plus.upgrade() else {
+                    return;
+                };
+                // Prime directive: `canonicalize` stats the filesystem
+                // (unbounded on network volumes) — run it on a worker
+                // and apply the favorite on completion. The click
+                // itself stays I/O-free.
+                let path = shell.read(cx).active_tab().current_dir.clone();
+                let shell_weak = shell.downgrade();
+                cx.spawn(async move |cx| {
+                    let canonical = {
+                        let p = path.clone();
+                        cx.background_executor()
+                            .spawn(async move { std::fs::canonicalize(&p).unwrap_or(p) })
+                            .await
+                    };
+                    if let Some(shell) = shell_weak.upgrade() {
+                        let _ = shell.update(cx, |s, cx| {
+                            s.process.favorites.update(cx, |f, cx| {
+                                f.add_path(
+                                    canonical,
+                                    feraille_core::favorites::FavoriteKind::Folder,
+                                    cx,
+                                );
+                            });
                         });
-                    });
-                }
+                    }
+                })
+                .detach();
             });
 
         // Disclosure triangle + label + trailing + button.
@@ -549,41 +565,63 @@ fn render_drop_gap(
         })
         .on_drop(move |paths: &ExternalPaths, _window, cx| {
             // Drag-to-add (§4.3, §2.3): folder paths dropped from the
-            // file list, tree, breadcrumb, or Finder land here. Files
-            // are rejected with a toast — only folders can be favorited.
-            if let Some(s) = shell_for_external.upgrade() {
-                let collected: Vec<_> = paths.paths().to_vec();
-                s.update(cx, |shell, cx| {
+            // file list, tree, breadcrumb, or Finder land here. Only
+            // folders can be favorited.
+            //
+            // Prime directive: canonicalize + is_dir are stat calls —
+            // a 50-item drop from a network volume could block the UI
+            // for seconds. Validate the whole batch on a worker, then
+            // apply the surviving folders in drop order on completion.
+            let Some(shell) = shell_for_external.upgrade() else {
+                return;
+            };
+            let collected: Vec<_> = paths.paths().to_vec();
+            if collected.is_empty() {
+                return;
+            }
+            let shell_weak = shell.downgrade();
+            cx.spawn(async move |cx| {
+                let (valid, rejected): (Vec<std::path::PathBuf>, usize) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let mut valid = Vec::with_capacity(collected.len());
+                        let mut rejected = 0usize;
+                        for raw in collected {
+                            let canonical = std::fs::canonicalize(&raw).unwrap_or(raw);
+                            if canonical.is_dir() {
+                                valid.push(canonical);
+                            } else {
+                                rejected += 1;
+                            }
+                        }
+                        (valid, rejected)
+                    })
+                    .await;
+                if rejected > 0 {
+                    // Toast needs a Window we don't have in a drop
+                    // closure; log-only until iter 11 routes this
+                    // through an action (pre-existing limitation).
+                    crate::log_warn!(
+                        90,
+                        "favorites drop: rejected {rejected} non-folder item(s)"
+                    );
+                }
+                let Some(shell) = shell_weak.upgrade() else {
+                    return;
+                };
+                let _ = shell.update(cx, |shell, cx| {
                     let mut cursor = before;
                     let upper = after;
-                    let mut added = 0usize;
-                    let mut rejected = 0usize;
-                    for raw in collected {
-                        let canonical = std::fs::canonicalize(&raw).unwrap_or(raw);
-                        if !canonical.is_dir() {
-                            rejected += 1;
-                            continue;
-                        }
+                    for canonical in valid {
                         let slot = feraille_core::favorites::fractional_between(cursor, upper);
                         shell.process.favorites.update(cx, |f, cx| {
                             f.add_path_at(canonical.clone(), FavoriteKind::Folder, slot, cx);
                         });
                         cursor = slot;
-                        added += 1;
-                    }
-                    if rejected > 0 {
-                        use gpui_component::notification::Notification;
-                        let _ = (added, rejected);
-                        // No `window` in scope to push notifications;
-                        // the toast is best-effort. Notification needs
-                        // a Window — relax to log-only for the rejected
-                        // case (iter 11 routes through an action to
-                        // get a Window). Successful adds already emit
-                        // a section repaint.
-                        let _ = Notification::info("");
                     }
                 });
-            }
+            })
+            .detach();
         })
         .into_any_element()
 }
