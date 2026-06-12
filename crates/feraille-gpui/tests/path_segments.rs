@@ -73,3 +73,33 @@ fn segments_drive_deep_path() {
         PathBuf::from(r"D:\Source\Feraille\crates")
     );
 }
+
+// ---- canonicalize_for_identity (path-identity contract boundary) ----
+
+#[cfg(unix)]
+#[test]
+fn canonicalize_resolves_symlinks_for_identity() {
+    use feraille_gpui::shell::canonicalize_for_identity;
+    let base = std::env::temp_dir().join(format!(
+        "feraille-canon-test-{}",
+        std::process::id()
+    ));
+    let real = base.join("real");
+    let link = base.join("link");
+    std::fs::create_dir_all(&real).unwrap();
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let via_link = canonicalize_for_identity(link.clone());
+    let via_real = canonicalize_for_identity(real.clone());
+    // The two spellings converge on one identity key.
+    assert_eq!(via_link, via_real);
+
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[test]
+fn canonicalize_falls_back_on_missing_path() {
+    use feraille_gpui::shell::canonicalize_for_identity;
+    let ghost = PathBuf::from("/definitely/not/a/real/path/feraille");
+    assert_eq!(canonicalize_for_identity(ghost.clone()), ghost);
+}

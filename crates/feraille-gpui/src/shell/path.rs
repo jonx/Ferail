@@ -24,6 +24,20 @@ pub fn parse_breadcrumb_path(raw: &str) -> PathBuf {
     }
 }
 
+/// Canonicalize an external path for identity registration (the
+/// ARCHITECTURE.md path-identity contract: paths from outside the app
+/// — typed input, persisted state, external drops — are canonicalized
+/// once at their entry boundary). Falls back to the input unchanged
+/// when canonicalization fails (nonexistent path, permission error):
+/// navigation's background enumeration owns the error reporting.
+///
+/// This STATS THE FILESYSTEM — never call it on a render or input
+/// path; run it at init, on the background executor, or inside an
+/// already-async load.
+pub fn canonicalize_for_identity(path: PathBuf) -> PathBuf {
+    std::fs::canonicalize(&path).unwrap_or(path)
+}
+
 /// Split `path` into clickable breadcrumb segments. Each entry is
 /// `(visible_label, path_to_navigate_to_on_click)`. The first entry
 /// represents the filesystem root — on macOS/Linux always `/`; on

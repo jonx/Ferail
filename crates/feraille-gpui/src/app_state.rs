@@ -72,7 +72,12 @@ pub fn load() -> AppState {
             "last_dir" => {
                 let path = PathBuf::from(val);
                 if path.is_dir() {
-                    out.last_dir = Some(path);
+                    // Persisted state is an external boundary for the
+                    // path-identity contract: re-canonicalize so a
+                    // symlinked spelling saved last session can't
+                    // mint a second NodeId. `load()` runs at init
+                    // (it already stats via `is_dir` above).
+                    out.last_dir = Some(crate::shell::canonicalize_for_identity(path));
                 }
             }
             "show_hidden" => {

@@ -48,7 +48,7 @@ use loading::{
     LoadBatch, LoadMsg, error_copy, middle_truncate_path, run_directory_load_streaming,
     run_tree_children_load,
 };
-pub use path::{parse_breadcrumb_path, path_segments};
+pub use path::{canonicalize_for_identity, parse_breadcrumb_path, path_segments};
 pub use tab::{ClosedTab, HistoryEntry, Tab, TabId};
 
 /// Classification produced by `Shell::resolve_favorite_target` so
@@ -467,7 +467,9 @@ impl Shell {
                     let raw = breadcrumb_input.read(cx).value().to_string();
                     let path = parse_breadcrumb_path(&raw);
                     this.breadcrumb_editing = false;
-                    this.navigate(path, cx);
+                    // External boundary: typed input canonicalizes on
+                    // a worker before navigation registers identity.
+                    this.navigate_external(path, cx);
                 }
                 InputEvent::Blur
                     if this.breadcrumb_editing => {
@@ -1491,10 +1493,25 @@ impl Shell {
                         .as_ref()
                         .and_then(|d| d.lock().ok().map(|g| g.favorites_section_collapsed()))
                         .unwrap_or(false);
-                    let favorites = db
+                    let favorites: Vec<feraille_core::favorites::Favorite> = db
                         .as_ref()
                         .and_then(|d| d.lock().ok().and_then(|g| g.load_favorites().ok()))
-                        .unwrap_or_default();
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|mut fav| {
+                            // Path-identity contract: persisted paths
+                            // re-enter the app here, so re-canonicalize
+                            // (already on the background executor; a
+                            // missing target falls through unchanged
+                            // and keeps its Missing-state handling).
+                            if let feraille_core::favorites::FavoriteTarget::Path(p) = fav.target {
+                                fav.target = feraille_core::favorites::FavoriteTarget::Path(
+                                    path::canonicalize_for_identity(p),
+                                );
+                            }
+                            fav
+                        })
+                        .collect();
                     (db, ant_visits, ant_max, favs_collapsed, favorites)
                 })
                 .await;
@@ -1646,64 +1663,20 @@ impl Shell {
         };
         match kind {
             FavoriteResolved::Folder => {
-                let canonical = std::fs::canonicalize(&path).unwrap_or(path.clone());
-                let already = self.process.favorites.read(cx).contains_path(&canonical);
-                let favs = self.process.favorites.clone();
-                if already {
-                    let id = self
-                        .process
-                        .favorites
-                        .read(cx)
-                        .id_for_path(&canonical)
-                        .expect("contains_path returned true");
-                    let label = self
-                        .process
-                        .favorites
-                        .read(cx)
-                        .entry_by_id(id)
-                        .map(|f| f.effective_label())
-                        .unwrap_or_else(|| "favorite".to_string());
-                    // Capture the full entry before removal so the undo
-                    // restores name + icon + sort_index + date_added.
-                    let removed_for_undo = self.process.favorites.read(cx).entry_by_id(id).cloned();
-                    favs.update(cx, |f, cx| {
-                        f.remove(id, cx);
+                // Path-identity boundary + prime directive: the
+                // canonicalize stat runs on a worker; the toggle
+                // applies back on the main thread with the window
+                // still available for the notification.
+                cx.spawn_in(window, async move |this, cx| {
+                    let canonical = cx
+                        .background_executor()
+                        .spawn(async move { path::canonicalize_for_identity(path) })
+                        .await;
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        this.apply_toggle_favorite_canonical(canonical, window, cx);
                     });
-                    if let Some(fav) = removed_for_undo {
-                        self.push_undo(UndoOp::RemoveFavorite(fav));
-                    }
-                    window.push_notification(
-                        Notification::info(format!(
-                            "Removed \u{201C}{label}\u{201D} from Favorites · Cmd+Z to undo"
-                        )),
-                        cx,
-                    );
-                } else {
-                    let label = canonical
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| canonical.to_string_lossy().into_owned());
-                    let added_id = favs.update(cx, |f, cx| {
-                        match f.add_path(
-                            canonical.clone(),
-                            feraille_core::favorites::FavoriteKind::Folder,
-                            cx,
-                        ) {
-                            crate::favorites::AddOutcome::Added(id) => Some(id),
-                            crate::favorites::AddOutcome::Existing(_) => None,
-                        }
-                    });
-                    if let Some(id) = added_id {
-                        self.push_undo(UndoOp::AddFavorite(id));
-                    }
-                    window.push_notification(
-                        Notification::success(format!(
-                            "Added \u{201C}{label}\u{201D} to Favorites"
-                        )),
-                        cx,
-                    );
-                }
+                })
+                .detach();
             }
             FavoriteResolved::NotAFolder => {
                 window.push_notification(
@@ -1711,6 +1684,75 @@ impl Shell {
                     cx,
                 );
             }
+        }
+    }
+
+    /// Second half of `on_toggle_favorite_for_target`, after the
+    /// background canonicalize: add or remove `canonical` from
+    /// Favorites with undo + notification. Main thread, no I/O.
+    fn apply_toggle_favorite_canonical(
+        &mut self,
+        canonical: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let already = self.process.favorites.read(cx).contains_path(&canonical);
+        let favs = self.process.favorites.clone();
+        if already {
+            let id = self
+                .process
+                .favorites
+                .read(cx)
+                .id_for_path(&canonical)
+                .expect("contains_path returned true");
+            let label = self
+                .process
+                .favorites
+                .read(cx)
+                .entry_by_id(id)
+                .map(|f| f.effective_label())
+                .unwrap_or_else(|| "favorite".to_string());
+            // Capture the full entry before removal so the undo
+            // restores name + icon + sort_index + date_added.
+            let removed_for_undo = self.process.favorites.read(cx).entry_by_id(id).cloned();
+            favs.update(cx, |f, cx| {
+                f.remove(id, cx);
+            });
+            if let Some(fav) = removed_for_undo {
+                self.push_undo(UndoOp::RemoveFavorite(fav));
+            }
+            window.push_notification(
+                Notification::info(format!(
+                    "Removed \u{201C}{label}\u{201D} from Favorites · Cmd+Z to undo"
+                )),
+                cx,
+            );
+        } else {
+            let label = canonical
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| canonical.to_string_lossy().into_owned());
+            let added_id = favs.update(cx, |f, cx| {
+                match f.add_path(
+                    canonical.clone(),
+                    feraille_core::favorites::FavoriteKind::Folder,
+                    cx,
+                ) {
+                    crate::favorites::AddOutcome::Added(id) => Some(id),
+                    crate::favorites::AddOutcome::Existing(_) => None,
+                }
+            });
+            if let Some(id) = added_id {
+                self.push_undo(UndoOp::AddFavorite(id));
+            }
+            window.push_notification(
+                Notification::success(format!(
+                    "Added \u{201C}{label}\u{201D} to Favorites"
+                )),
+                cx,
+            );
         }
     }
 
@@ -1815,14 +1857,17 @@ impl Shell {
 
     /// Resolve the favorite id for the next rename/icon action. The
     /// row-level context menu sets `favorites_context_path` before
-    /// dispatching, so we look the id up by canonical path.
+    /// dispatching. Rename/icon actions only exist on favorite rows,
+    /// and favorite paths are canonicalized at every entry boundary
+    /// (hydrate, add, external drop) — so the lookup needs no stat
+    /// here, which matters: this runs in a menu-dispatch handler on
+    /// the UI thread.
     fn pop_favorite_id_for_action(
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<feraille_core::favorites::FavoriteId> {
         let path = self.favorites_context_path.take()?;
-        let canonical = std::fs::canonicalize(&path).unwrap_or(path);
-        self.process.favorites.read(cx).id_for_path(&canonical)
+        self.process.favorites.read(cx).id_for_path(&path)
     }
 
     pub fn on_rename_favorite(
@@ -2204,6 +2249,25 @@ impl Shell {
                 self.navigate(parent, cx);
             }
         }
+    }
+
+    /// Navigate to a path that entered the app from OUTSIDE (typed
+    /// breadcrumb input today; any future "go to folder" prompt).
+    /// The path-identity contract says external paths canonicalize
+    /// once at their entry boundary — but canonicalize is a stat
+    /// call, so it runs on the background executor, then the real
+    /// `navigate` applies on the main thread. A failed canonicalize
+    /// falls back to the typed path; navigation's enumeration owns
+    /// the error reporting.
+    pub fn navigate_external(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let canonical = cx
+                .background_executor()
+                .spawn(async move { path::canonicalize_for_identity(path) })
+                .await;
+            let _ = this.update(cx, |this, cx| this.navigate(canonical, cx));
+        })
+        .detach();
     }
 
     /// Navigate to `path`: snapshot the current tab's selection

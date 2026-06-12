@@ -134,7 +134,7 @@ impl SidebarItem for FavoritesSection {
                     let canonical = {
                         let p = path.clone();
                         cx.background_executor()
-                            .spawn(async move { std::fs::canonicalize(&p).unwrap_or(p) })
+                            .spawn(async move { crate::shell::canonicalize_for_identity(p) })
                             .await
                     };
                     if let Some(shell) = shell_weak.upgrade() {
@@ -587,7 +587,7 @@ fn render_drop_gap(
                         let mut valid = Vec::with_capacity(collected.len());
                         let mut rejected = 0usize;
                         for raw in collected {
-                            let canonical = std::fs::canonicalize(&raw).unwrap_or(raw);
+                            let canonical = crate::shell::canonicalize_for_identity(raw);
                             if canonical.is_dir() {
                                 valid.push(canonical);
                             } else {
