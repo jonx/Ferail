@@ -77,6 +77,20 @@ pub struct FileListDelegate {
     /// tab. At most one. Cosmetic only — the Table primitive's
     /// `selected_row` overlay is the visible focus ring.
     pub lead: Option<NodeId>,
+    /// Warm cache for the right-click "Open With" submenu: the most
+    /// recently fetched `(path, LaunchServices candidates)` pair.
+    /// Populated off the UI thread by [`spawn_open_with_warm`] —
+    /// triggered on selection-lead changes and on a cache-miss menu
+    /// build. The menu builder reads ONLY this cache (prime
+    /// directive: no shell queries at menu-open time); a miss shows
+    /// a disabled placeholder for that one open, exactly like
+    /// Finder's "Fetching…" when LaunchServices is slow.
+    ///
+    /// Dispatch handlers (`Shell::open_with_slot`) resolve slot
+    /// indices against this same cache so the app at slot N when
+    /// the menu was BUILT is the app that opens — re-fetching at
+    /// dispatch could reorder candidates and launch the wrong app.
+    pub open_with_warm: Option<(PathBuf, Vec<crate::platform_shell::OpenWithCandidate>)>,
 }
 
 impl FileListDelegate {
@@ -118,6 +132,7 @@ impl FileListDelegate {
             is_favorited: Vec::new(),
             selected_set: HashSet::new(),
             lead: None,
+            open_with_warm: None,
         }
     }
 
@@ -517,24 +532,37 @@ impl TableDelegate for FileListDelegate {
             ToggleTagOrange, ToggleTagPurple, ToggleTagRed, ToggleTagYellow,
         };
 
-        // Phase 6 follow-on: snapshot Open-With candidates and the
-        // currently-applied tags for this row, both via synchronous
-        // shell-mac calls (~10–50 ms each on macOS). The handlers
-        // re-fetch on dispatch — duplicate work is acceptable at
-        // human-scale right-click frequency, and avoids plumbing
-        // per-right-click state up to Shell.
+        // Prime directive: menu building is read-only — no shell or
+        // filesystem queries at menu-open time.
+        //
+        // Tags come from the per-row `self.tags` slots the bulk load
+        // already populated; the checkmarks therefore always agree
+        // with the row's visible tag dots (rows past the load cap
+        // show no dots and no checkmarks — consistent).
+        //
+        // Open With candidates come from the `open_with_warm` cache,
+        // populated off-thread on selection-lead changes (see
+        // `Shell::warm_open_with_for_row`). On a cache miss — e.g.
+        // a direct right-click on a row that was never selected —
+        // we show a disabled placeholder this one time, kick the
+        // warm fetch, and the next open has the real submenu. Same
+        // UX as Finder's "Fetching…" under a slow LaunchServices.
         let target_path = self
             .entries
             .get(row_ix)
             .and_then(|entry| self.path_for_entry(entry.id));
-        let open_with_candidates: Vec<crate::platform_shell::OpenWithCandidate> = target_path
-            .as_ref()
-            .map(|p| crate::platform_shell::open_with_candidates(p))
-            .unwrap_or_default();
-        let applied_tags: Vec<feraille_core::commands::TagColor> = target_path
-            .as_ref()
-            .map(|p| crate::platform_shell::read_canonical_tags(p))
-            .unwrap_or_default();
+        let warmed_candidates: Option<Vec<crate::platform_shell::OpenWithCandidate>> =
+            match (&target_path, &self.open_with_warm) {
+                (Some(p), Some((warm_path, cands))) if warm_path == p => Some(cands.clone()),
+                _ => None,
+            };
+        if warmed_candidates.is_none() {
+            if let Some(p) = &target_path {
+                spawn_open_with_warm(cx.entity().clone(), p.clone(), cx);
+            }
+        }
+        let applied_tags: Vec<feraille_core::commands::TagColor> =
+            self.tags.get(row_ix).cloned().unwrap_or_default();
 
         // Tags submenu — built as a nested PopupMenu Entity via
         // PopupMenu::build. Each colour is a `menu_with_check` so
@@ -590,34 +618,46 @@ impl TableDelegate for FileListDelegate {
         // through `PopupMenuItem::submenu(label, entity)`.
         let app_cx: &mut gpui::App = cx;
 
-        if !open_with_candidates.is_empty() {
-            let candidates_for_build = open_with_candidates.clone();
-            let open_with_submenu = PopupMenu::build(window, app_cx, move |mut m, _w, _c| {
-                for (i, cand) in candidates_for_build.iter().take(12).enumerate() {
-                    let label = if cand.is_default {
-                        SharedString::from(format!("{} (default)", cand.name))
-                    } else {
-                        SharedString::from(cand.name.clone())
-                    };
-                    let action: Box<dyn gpui::Action> = match i {
-                        0 => Box::new(OpenWithSlot0),
-                        1 => Box::new(OpenWithSlot1),
-                        2 => Box::new(OpenWithSlot2),
-                        3 => Box::new(OpenWithSlot3),
-                        4 => Box::new(OpenWithSlot4),
-                        5 => Box::new(OpenWithSlot5),
-                        6 => Box::new(OpenWithSlot6),
-                        7 => Box::new(OpenWithSlot7),
-                        8 => Box::new(OpenWithSlot8),
-                        9 => Box::new(OpenWithSlot9),
-                        10 => Box::new(OpenWithSlot10),
-                        _ => Box::new(OpenWithSlot11),
-                    };
-                    m = m.menu(label, action);
-                }
-                m
-            });
-            menu = menu.item(PopupMenuItem::submenu("Open With", open_with_submenu));
+        match &warmed_candidates {
+            Some(candidates) if !candidates.is_empty() => {
+                let candidates_for_build = candidates.clone();
+                let open_with_submenu = PopupMenu::build(window, app_cx, move |mut m, _w, _c| {
+                    for (i, cand) in candidates_for_build.iter().take(12).enumerate() {
+                        let label = if cand.is_default {
+                            SharedString::from(format!("{} (default)", cand.name))
+                        } else {
+                            SharedString::from(cand.name.clone())
+                        };
+                        let action: Box<dyn gpui::Action> = match i {
+                            0 => Box::new(OpenWithSlot0),
+                            1 => Box::new(OpenWithSlot1),
+                            2 => Box::new(OpenWithSlot2),
+                            3 => Box::new(OpenWithSlot3),
+                            4 => Box::new(OpenWithSlot4),
+                            5 => Box::new(OpenWithSlot5),
+                            6 => Box::new(OpenWithSlot6),
+                            7 => Box::new(OpenWithSlot7),
+                            8 => Box::new(OpenWithSlot8),
+                            9 => Box::new(OpenWithSlot9),
+                            10 => Box::new(OpenWithSlot10),
+                            _ => Box::new(OpenWithSlot11),
+                        };
+                        m = m.menu(label, action);
+                    }
+                    m
+                });
+                menu = menu.item(PopupMenuItem::submenu("Open With", open_with_submenu));
+            }
+            // Cache warm but LaunchServices offered nothing: omit the
+            // submenu entirely (pre-existing behavior for empty sets).
+            Some(_) => {}
+            // Cache miss — the warm fetch was kicked above; show a
+            // disabled placeholder for this one open.
+            None => {
+                menu = menu.item(
+                    PopupMenuItem::new("Open With (indexing\u{2026})").disabled(true),
+                );
+            }
         }
 
         let tags_submenu = PopupMenu::build(window, app_cx, move |m, _w, _c| {
@@ -710,6 +750,33 @@ impl TableDelegate for FileListDelegate {
                     .child("This folder is empty."),
             )
     }
+}
+
+/// Fetch Open With candidates for `path` on the background executor
+/// and store them in the delegate's [`FileListDelegate::open_with_warm`]
+/// cache. The fetch (`open_with_candidates`, ~10–50 ms of
+/// LaunchServices / IAssocHandler work) never runs on the UI thread.
+/// Last-writer-wins by design: the cache holds one entry — the most
+/// recently warmed path — which is always the row the user is about
+/// to right-click.
+pub fn spawn_open_with_warm(
+    table: gpui::Entity<TableState<FileListDelegate>>,
+    path: PathBuf,
+    cx: &mut gpui::App,
+) {
+    let weak = table.downgrade();
+    let fetch_path = path.clone();
+    cx.spawn(async move |cx| {
+        let candidates = cx
+            .background_executor()
+            .spawn(async move { crate::platform_shell::open_with_candidates(&fetch_path) })
+            .await;
+        let _ = weak.update(cx, |state, cx| {
+            state.delegate_mut().open_with_warm = Some((path, candidates));
+            cx.notify();
+        });
+    })
+    .detach();
 }
 
 /// Lookup helper for double-click open / Enter key — turn a row

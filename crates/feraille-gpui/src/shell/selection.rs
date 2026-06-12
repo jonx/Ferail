@@ -50,6 +50,9 @@ impl Shell {
         if let Some(p) = self.path_for_row(row_ix, cx) {
             crate::preview::request(self, p, cx);
         }
+        // Pre-warm the Open With cache so a follow-up right-click
+        // builds its submenu without a synchronous shell query.
+        self.warm_open_with_for_row(row_ix, cx);
         cx.notify();
     }
 
@@ -70,6 +73,7 @@ impl Shell {
         if let Some(p) = self.path_for_row(row_ix, cx) {
             crate::preview::request(self, p, cx);
         }
+        self.warm_open_with_for_row(row_ix, cx);
         cx.notify();
     }
 
@@ -87,6 +91,10 @@ impl Shell {
             self.replace_select_one(id, cx);
             cx.notify();
         }
+        // Warm Open With for the menu target. Usually a no-op (the
+        // click/keyboard gesture already warmed this row); covers
+        // right-click-inside-selection where the lead never moved.
+        self.warm_open_with_for_row(row_ix, cx);
     }
 
     /// Programmatic single-row select by row index. Used by the

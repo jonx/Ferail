@@ -207,12 +207,51 @@ impl Shell {
             .map(|(_, _, path)| path)
             .collect();
         let Some(first) = paths.first() else { return };
-        let candidates = crate::platform_shell::open_with_candidates(first);
-        if let Some(c) = candidates.get(slot) {
+        // Resolve the slot against the SAME warm cache the menu was
+        // built from. Re-fetching here used to be both a sync
+        // LaunchServices stall on action dispatch and a correctness
+        // hazard: a fresh fetch can order candidates differently than
+        // the list the user just looked at, silently opening the
+        // wrong app for slot N. Cache mismatch (possible only if the
+        // lead changed between menu open and click) is a no-op.
+        let app_path: Option<PathBuf> = {
+            let delegate = self.active_tab().table.read(cx).delegate();
+            match &delegate.open_with_warm {
+                Some((warm_path, cands)) if warm_path == first => {
+                    cands.get(slot).map(|c| c.path.clone())
+                }
+                _ => {
+                    crate::log_warn!(
+                        90,
+                        "open_with_slot {slot}: warm cache miss for {}; ignoring",
+                        first.display()
+                    );
+                    None
+                }
+            }
+        };
+        if let Some(app) = app_path {
             for path in paths {
-                let _ = crate::platform_shell::open_with_app(&path, &c.path);
+                let _ = crate::platform_shell::open_with_app(&path, &app);
             }
         }
+    }
+
+    /// Warm the Open With cache for the row the user just selected /
+    /// right-clicked, so the context menu can build its submenu
+    /// without any synchronous shell query (prime directive). Cheap
+    /// no-op when the cache already holds this row's path.
+    pub(super) fn warm_open_with_for_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        let Some(path) = self.path_for_row(row_ix, cx) else {
+            return;
+        };
+        let table = self.active_tab().table.clone();
+        if let Some((warm_path, _)) = &table.read(cx).delegate().open_with_warm {
+            if *warm_path == path {
+                return;
+            }
+        }
+        crate::file_list::spawn_open_with_warm(table, path, cx);
     }
 
     pub(super) fn on_open_with_slot_0(
