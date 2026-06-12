@@ -89,6 +89,36 @@ impl Shell {
         ));
     }
 
+    /// File-list "Open Terminal Here". Folder-only menu item; resolves
+    /// the right-clicked (or selected) directory via the same path as
+    /// `CopyPath`, then hands it to the platform shell.
+    pub(super) fn on_open_terminal_here(
+        &mut self,
+        _: &OpenTerminalHere,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((_, _, path)) = self.action_entries_visible_order(cx).into_iter().next() else {
+            return;
+        };
+        crate::platform_shell::open_terminal(&path);
+    }
+
+    /// Sidebar/tree/breadcrumb "Open Terminal Here". Resolves the
+    /// right-clicked folder from `context_target` (mirrors
+    /// `on_copy_context_path`).
+    pub(super) fn on_open_terminal_at_context(
+        &mut self,
+        _: &OpenTerminalAtContext,
+        _: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.context_target.take() else {
+            return;
+        };
+        crate::platform_shell::open_terminal(&path);
+    }
+
     pub(super) fn on_open_context_in_new_tab(
         &mut self,
         _: &OpenContextInNewTab,

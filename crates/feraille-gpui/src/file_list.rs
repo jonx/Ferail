@@ -525,7 +525,7 @@ impl TableDelegate for FileListDelegate {
     ) -> PopupMenu {
         use crate::shell::{
             Compress, CopyPath, Duplicate, GetInfo, MakeAlias, MoveToTrash, OpenInNewTab,
-            OpenSelected, OpenWithSlot0, OpenWithSlot1, OpenWithSlot2, OpenWithSlot3,
+            OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1, OpenWithSlot2, OpenWithSlot3,
             OpenWithSlot4, OpenWithSlot5, OpenWithSlot6, OpenWithSlot7, OpenWithSlot8,
             OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook, RenameSelected,
             RevealInFinder, ToggleFavoriteForTarget, ToggleTagBlue, ToggleTagGray, ToggleTagGreen,
@@ -596,7 +596,14 @@ impl TableDelegate for FileListDelegate {
             .menu("Quick Look", Box::new(QuickLook))
             .separator()
             .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealInFinder))
-            .menu("Copy Path", Box::new(CopyPath))
+            .menu("Copy Path", Box::new(CopyPath));
+        if is_folder {
+            // Folder-only: open a terminal at the right-clicked directory,
+            // sitting directly under Copy Path so the two path-oriented
+            // actions group together.
+            menu = menu.menu("Open Terminal Here", Box::new(OpenTerminalHere));
+        }
+        let mut menu = menu
             .separator()
             .menu("Rename\u{2026}", Box::new(RenameSelected))
             .menu("Duplicate", Box::new(Duplicate))

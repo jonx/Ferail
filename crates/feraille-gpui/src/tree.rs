@@ -398,8 +398,8 @@ fn render_tree_row(
     let attach_menu = move |el: gpui::Stateful<gpui::Div>| {
         el.context_menu(move |menu, _window, cx| {
             use crate::shell::{
-                CopyContextPath, NewFolderHere, OpenContextInNewTab, RevealContextPath,
-                ToggleFavoriteForTarget,
+                CopyContextPath, NewFolderHere, OpenContextInNewTab, OpenTerminalAtContext,
+                RevealContextPath, ToggleFavoriteForTarget,
             };
             if let Some(shell) = shell_for_menu.upgrade() {
                 shell.update(cx, |s, _| {
@@ -414,6 +414,7 @@ fn render_tree_row(
                 .separator()
                 .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealContextPath))
                 .menu("Copy Path", Box::new(CopyContextPath))
+                .menu("Open Terminal Here", Box::new(OpenTerminalAtContext))
                 .separator()
                 .menu(favorite_label, Box::new(ToggleFavoriteForTarget))
                 .separator()

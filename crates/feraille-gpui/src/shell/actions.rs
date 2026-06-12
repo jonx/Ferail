@@ -11,6 +11,12 @@ actions!(
         ToggleHidden,
         OpenSettings,
         CopyPath,
+        /// Folder-only file-list context action — open a terminal at the
+        /// right-clicked directory. Resolves its target the same way
+        /// `CopyPath` does (`action_entries_visible_order`, consuming
+        /// `context_row`); the sidebar/tree equivalent is
+        /// `OpenTerminalAtContext`, which reads `context_target`.
+        OpenTerminalHere,
         MoveToTrash,
         RevealInFinder,
         FocusFilter,
@@ -83,6 +89,11 @@ actions!(
         // selection.
         RevealContextPath,
         CopyContextPath,
+        /// Sidebar/tree/breadcrumb sibling of `OpenTerminalHere` — open a
+        /// terminal at `context_target` (the right-clicked folder). Split
+        /// from the file-list `OpenTerminalHere` so a dismissed sidebar
+        /// menu's stale `context_target` can't hijack a file-list action.
+        OpenTerminalAtContext,
         OpenContextInNewTab,
         NewFolderHere,
         // Phase 6 follow-on: Tags + Open-With submenus. Seven tag

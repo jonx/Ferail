@@ -629,6 +629,15 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::Context,
         shortcuts: &[],
     },
+    // Folder-only context action: open a terminal at the right-clicked
+    // directory. Reachable from both the file-list and sidebar/tree
+    // right-click menus; no keyboard shortcut yet.
+    CommandSpec {
+        id: CommandId("file.open_terminal_here"),
+        title: "Open Terminal Here",
+        category: Category::Context,
+        shortcuts: &[],
+    },
 ];
 
 pub fn all_commands() -> &'static [CommandSpec] {

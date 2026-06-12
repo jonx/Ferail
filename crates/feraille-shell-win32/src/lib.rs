@@ -281,6 +281,20 @@ pub fn reveal_in_finder(path: &std::path::Path) {
 #[cfg(not(windows))]
 pub fn reveal_in_finder(_path: &std::path::Path) {}
 
+/// Open a terminal at `path` (a directory). Windows: Windows Terminal
+/// (`wt.exe -d <dir>`) opens a new tab whose working directory is
+/// `path`. Non-Windows: no-op.
+#[cfg(windows)]
+pub fn open_terminal(path: &std::path::Path) {
+    let _ = std::process::Command::new("wt.exe")
+        .arg("-d")
+        .arg(path)
+        .spawn();
+}
+
+#[cfg(not(windows))]
+pub fn open_terminal(_path: &std::path::Path) {}
+
 // =============================================================
 // File operations
 // =============================================================

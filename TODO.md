@@ -1,8 +1,11 @@
 # Feraille TODO
 
+← [Project README](README.md) · [Architecture](docs/ARCHITECTURE.md) ·
+[Feature notes](docs/features/README.md)
+
 This is the single list of unfinished work. Keep architecture and current
 program rules in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); keep deep
-feature notes in [docs/features](docs/features).
+feature notes in [docs/features/](docs/features/README.md).
 
 ## Highest Priority
 

@@ -1,80 +1,107 @@
 # Feraille
 
-Feraille is a fast macOS file manager written in Rust with GPUI and
-gpui-component. It is the macOS successor to the Windows project
-`../Ferail`, but it is not a skin of the old app: the UI, native shell
-integration, and responsiveness model are macOS-first.
+**A fast, native macOS file manager written in Rust.**
 
-The prime directive is simple:
+Feraille is built on [GPUI](https://www.gpui.rs/) and
+[gpui-component](https://github.com/longbridge/gpui-component). It is the macOS
+successor to the Windows project `Ferail`, but it is not a reskin: the UI,
+native shell integration, and responsiveness model are macOS-first.
 
-> The UI must never stop. Render, hit testing, scrolling, hover, and text
-> input must not perform filesystem, shell, database, network, thumbnail,
-> preview, or magic-sniffing I/O.
+One rule shapes the whole design — **the UI must never stop:**
 
-## Current App
+> Render, hit testing, scrolling, hover, and text input never perform
+> filesystem, shell, database, network, thumbnail, preview, or
+> magic-sniffing I/O. Expensive work is scheduled off the hot path and
+> dropped if the user has already moved on.
 
-The active app is `feraille-gpui`.
+See [Architecture → Prime Directive](docs/ARCHITECTURE.md#prime-directive)
+for how this is enforced across the codebase.
 
-It currently provides:
+![Feraille main window](screenshots/readme-shell.png)
 
-- Native macOS chrome with a GPUI title bar.
-- Favorites, Browse, Volumes, and Trash in the sidebar.
-- Virtualized file table with sortable, resizable, reorderable columns.
-- Magic-first `Format` column with extension fallback and mismatch cues.
-- Real file/folder icons, Finder tags, quarantine cues, and preview metadata.
-- Tabs, breadcrumbs, filtering, history navigation, context menus, and
-  resizable panels.
-- Settings built with gpui-component settings primitives.
-- Disk Usage window with async scanning and treemap/top-list views.
-- Status/task feedback and crash diagnostics.
-- Headless screenshot support for visual verification.
+## Features
 
-## Architecture
+- **Native macOS chrome** — GPUI title bar, transparent titlebar, system theme.
+- **Virtualized file table** — sortable, resizable, reorderable columns over
+  large directories without jank.
+- **Magic-first `Format` column** — content sniffing with extension fallback
+  and mismatch / quarantine cues.
+  ([spec](docs/features/MAGIC_DESCRIPTION.md))
+- **Rich sidebar** — Favorites, Browse tree, Volumes with capacity bars, and
+  Trash, with drag-and-drop. ([spec](docs/features/FAVORITES.md))
+- **Tabs & windows** — per-tab directory, history, filter, sort, and selection;
+  multi-window with closed-tab undo.
+  ([spec](docs/features/feraille-windows-instances-tabs-spec.md))
+- **Preview pane** — dense, async metadata surface for the current selection.
+  ([spec](docs/features/PREVIEW.md))
+- **Disk Usage window** — async scanning with squarified treemap and top-list
+  views. ([spec](docs/features/DISK_USAGE.md))
+- **Persistent metadata** — SQLite-backed store for derived metadata, layout,
+  and Ant Trail history. ([spec](docs/features/METADATA_DB.md))
+- **CLI utilities** and **headless screenshots** for scripting and visual
+  verification.
 
-Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing crate
-boundaries, UI-thread behavior, filesystem access, native shell work, or
-worker scheduling.
+| Preview pane | Disk Usage | Settings |
+|---|---|---|
+| ![Preview pane](screenshots/readme-preview.png) | ![Disk Usage](screenshots/readme-disk-usage.png) | ![Settings](screenshots/readme-settings.png) |
 
-Open work lives in [TODO.md](TODO.md). Deeper feature notes live under
-[docs/features](docs/features).
-
-## Running
+## Quick Start
 
 ```sh
+# Run the app
 cargo run --bin feraille-gpui
-```
 
-Useful non-GUI commands:
+# CLI utilities
+cargo run --bin feraille -- magic <path>...                    # identify file types
+cargo run --bin feraille -- du [--top N] [--packages] <path>   # disk usage
 
-```sh
-cargo run --bin feraille -- magic <path>...
-cargo run --bin feraille -- du [--top N] [--packages] <path>
-```
-
-Screenshot CLI:
-
-```sh
+# Headless screenshot (used for visual verification)
 cargo run --bin feraille-gpui -- \
   --screenshot screenshots/feraille.png \
   --navigate ~/Source/Feraille \
   --width 1400 --height 900 \
-  --select-name Cargo.toml \
-  --preview
-```
+  --select-name Cargo.toml --preview
 
-Reset local metadata:
-
-```sh
+# Reset local metadata
 cargo run --bin feraille-gpui -- --reset-db <scope>
 ```
 
-## Development Notes
+## Project Layout
+
+The active app is `feraille-gpui`. Domain logic lives in UI-free crates; the
+old soft-rendered stack is archived under `crates/_archive/` as reference.
+
+| Crate | Responsibility |
+|---|---|
+| `feraille-gpui` | Active GPUI app + CLI entry points; views, actions, scheduling, shell state |
+| `feraille-core` | Platform-neutral domain types, command catalogue, `NodeId`, `FileEntry` |
+| `feraille-fs-native` | Native filesystem: enumeration, metadata, magic, volumes, trash |
+| `feraille-shell-mac` | AppKit/Cocoa integration (drag-drop, menus, tags, icons) — no painting |
+| `feraille-meta` | SQLite-backed metadata, layout, and Ant Trail persistence |
+| `feraille-disk-usage` | Pure disk-usage model, aggregation, and treemap layout |
+| `feraille-design` | Shared design tokens (color, spacing, typography) |
+| `feraille-shell-win32` | Windows shell reference crate (not macOS v1 UI) |
+
+The full crate-boundary rules are in
+[docs/ARCHITECTURE.md → Crate Boundaries](docs/ARCHITECTURE.md#crate-boundaries).
+
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **Source of truth** for crate boundaries, data model, scheduling, and UI structure. Read before changing those. |
+| [TODO.md](TODO.md) | Open work and roadmap. |
+| [docs/features/](docs/features/README.md) | Deeper design notes per feature — start at the [feature index](docs/features/README.md). |
+| [NOTES.md](NOTES.md) | Architecture and decision log for in-progress spec work. |
+| [CLAUDE.md](CLAUDE.md) | Operating manual for AI/human contributors. |
+
+## Contributing
 
 - New product work belongs in `crates/feraille-gpui`.
 - Domain code belongs in `feraille-core`, `feraille-fs-native`,
-  `feraille-meta`, or `feraille-disk-usage` when it can stay UI-free.
-- The old soft-rendered crates are reference/fallback code until the GPUI
-  shell fully replaces them.
+  `feraille-meta`, or `feraille-disk-usage` whenever it can stay UI-free.
+- Before finishing changes: `cargo check`, `cargo test`, and for UI changes a
+  fresh screenshot in `screenshots/`. See [CLAUDE.md](CLAUDE.md#verification).
 - Do not run broad formatters casually; this repo often has local work in
   progress.
 

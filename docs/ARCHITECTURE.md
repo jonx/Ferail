@@ -1,5 +1,8 @@
 # Feraille Architecture
 
+← [Project README](../README.md) · [Feature notes](features/README.md) ·
+[Open work (TODO)](../TODO.md)
+
 Feraille is a macOS-first file manager written in Rust. It began as a
 port and UI rewrite of the Windows project at `/Users/jkn/Source/Ferail`,
 but the active application is now the GPUI shell:
@@ -207,10 +210,12 @@ Failure policy:
 
 ## Documentation Layout
 
+- The [project README](../README.md) is the entry point and overview.
 - This file is the architecture source of truth.
 - Root [TODO.md](../TODO.md) is the unfinished-work list.
-- [docs/features](features) contains deeper feature notes and design
-  references that are still useful.
+- [docs/features/](features/README.md) contains deeper feature notes and
+  design references, organized by the [feature index](features/README.md).
+- Root [NOTES.md](../NOTES.md) is the decision log for in-progress spec work.
 
 Do not add new phase ledgers or duplicate roadmaps under `docs/`. Put
 current architecture here and unfinished work in root `TODO.md`.

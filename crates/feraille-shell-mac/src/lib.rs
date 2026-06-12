@@ -364,6 +364,21 @@ pub fn reveal_in_finder(path: &std::path::Path) {
 #[cfg(not(target_os = "macos"))]
 pub fn reveal_in_finder(_path: &std::path::Path) {}
 
+/// Open a terminal at `path` (a directory). macOS: `open -a Terminal
+/// <dir>`, which launches Terminal.app with `path` as the working
+/// directory. Non-macOS: no-op.
+#[cfg(target_os = "macos")]
+pub fn open_terminal(path: &std::path::Path) {
+    let _ = std::process::Command::new("open")
+        .arg("-a")
+        .arg("Terminal")
+        .arg(path)
+        .spawn();
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn open_terminal(_path: &std::path::Path) {}
+
 /// Duplicate `src` next to itself with Finder's " copy" / " copy 2"
 /// naming. Returns the destination path on success, or an error
 /// string on failure (collision exhausted, IO error). Synchronous —
