@@ -56,6 +56,14 @@ pub enum TableEvent {
     },
     /// Keyboard or programmatic row movement changed the lead row.
     LeadMoved { row_ix: usize, modifiers: Modifiers },
+    /// OS file paths were dropped onto a row. Fork addition
+    /// (docs/features/FILE_OPS.md): the delegate's folder rows
+    /// register `on_drop::<ExternalPaths>` and surface the drop here
+    /// so the host shell can run the transfer into that folder.
+    ExternalDrop {
+        row_ix: usize,
+        paths: Vec<std::path::PathBuf>,
+    },
     /// Single click or move to selected row.
     SelectRow(usize),
     /// Double click on the row.

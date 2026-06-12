@@ -30,8 +30,10 @@ feature notes in [docs/features/](docs/features/README.md).
   per-item collision resolution, Windows pasteboard (CF_HDROP) and
   volume-identity parity, cross-volume move undo, and a decision on
   cut semantics.
-- Add drag-into-app support for file list, folder rows, tabs, and empty
-  folder space.
+- Drag-into-app follow-ups (file list folder rows, pane background, and
+  sidebar tree rows shipped 2026-06-13 — docs/features/FILE_OPS.md):
+  drops on tabs, breadcrumb segments, and favorites; auto-scroll and
+  auto-expand during drag; Cmd+Option alias-drop.
 - Complete toolbar density: refresh, new folder, sort, group, view mode,
   action overflow, and discoverable tooltips/shortcuts.
 - Complete status/task feedback: selected count and size, total visible

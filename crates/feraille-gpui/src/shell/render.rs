@@ -1639,7 +1639,26 @@ impl Render for Shell {
                 // background from the rows at the event-routing
                 // layer — the toolbar already exposes those actions
                 // so users aren't blocked.
-                let file_body_wrapped = div().flex_1().min_h_0().min_w_0().child(file_body);
+                // Drop target for OS file drags (Finder → Feraille,
+                // and row drag-outs landing back in our own pane):
+                // anywhere in the pane that a folder row didn't claim
+                // first drops into the current directory
+                // (docs/features/FILE_OPS.md; dnd-spec §3.5 "empty
+                // space"). Folder rows stop propagation so their drop
+                // wins.
+                let file_body_wrapped = div()
+                    .id("file-pane-drop")
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .drag_over::<ExternalPaths>(|style, _, _, cx| {
+                        style.bg(cx.theme().accent.opacity(0.06))
+                    })
+                    .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                        let dest = this.active_tab().current_dir.clone();
+                        this.handle_external_drop(paths.paths().to_vec(), dest, window, cx);
+                    }))
+                    .child(file_body);
                 // Auto-hide the preview when the window is too narrow
                 // to fit sidebar + file list + preview comfortably.
                 // The user's explicit `preview_visible` flag still

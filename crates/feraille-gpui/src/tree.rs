@@ -390,6 +390,25 @@ fn render_tree_row(
         row = row.hover(move |this| this.bg(hover_bg));
     }
 
+    // Tree folders are drop targets (dnd-spec §3.5): Browse/Volumes
+    // rows accept OS file drags into the folder they represent. The
+    // transfer itself runs through Shell::handle_external_drop —
+    // nothing filesystem-y happens here.
+    let drop_shell = shell.clone();
+    let drop_dest = path.clone();
+    row = row
+        .drag_over::<ExternalPaths>(|style, _, _, cx| {
+            style.bg(cx.theme().accent.opacity(0.12))
+        })
+        .on_drop(move |paths: &ExternalPaths, window, cx| {
+            let Some(shell) = drop_shell.upgrade() else { return };
+            let dropped = paths.paths().to_vec();
+            let dest = drop_dest.clone();
+            shell.update(cx, |this, cx| {
+                this.handle_external_drop(dropped, dest, window, cx);
+            });
+        });
+
     // Ancestry connector lines, absolutely positioned inside the
     // row's left indent so they span the full row height (through
     // the `py_1` padding) and join seamlessly with the rows above

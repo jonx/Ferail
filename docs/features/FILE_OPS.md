@@ -23,10 +23,22 @@ clipboard verbs shipped. Deviations from the design, deliberate:
   keystrokes: Cmd+C → Cmd+V round-trip (byte-identical), collision
   dialog capture, Esc-cancel, Cmd+Option+V same-volume move.
 
-Open follow-ups in [TODO.md](../../TODO.md): drag-into-app drop
-targets feeding `spawn_transfer_op`, per-item collision resolution,
-Windows pasteboard (CF_HDROP) + volume identity, cut semantics
-decision.
+**Drag-into-app (v1) also landed 2026-06-13**: folder rows in the file
+table (accent ring on hover, drop surfaces as the fork's
+`TableEvent::ExternalDrop`), the file pane background (drops into the
+current directory), and Browse/Volumes tree rows all feed
+`Shell::handle_external_drop`. Operation per dnd-spec §3.6 via
+`TransferMode::Auto` — the worker resolves same-volume → Move,
+cross-volume → Copy; Option forces Copy, Cmd forces Move; dropping
+items onto the folder they're already in is a no-op (Option-drop
+duplicates). Covers internal row drags and external Finder drags
+through the same `ExternalPaths` payload. OS drag gestures can't be
+driven headlessly — interactive verification pending.
+
+Open follow-ups in [TODO.md](../../TODO.md): drops on tabs /
+breadcrumb segments / favorites, auto-scroll + auto-expand during
+drag, Cmd+Option alias-drop, per-item collision resolution, Windows
+pasteboard (CF_HDROP) + volume identity, cut semantics decision.
 
 ## Platform tags
 

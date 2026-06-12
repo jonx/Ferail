@@ -7,6 +7,31 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-13 drag-into-app: drop targets feeding the transfer worker (landed)
+
+Same-day follow-on to the file-ops arc; dnd-spec §3.5/§3.6.
+
+- **Three drop surfaces**, one handler: folder rows in the file table
+  (fork addition `TableEvent::ExternalDrop` — the delegate can't
+  reach the Shell, so the drop rides the existing event channel,
+  with `stop_propagation` so the pane target underneath doesn't
+  double-fire), the file-pane background (→ current directory), and
+  Browse/Volumes tree rows (they hold a weak Shell handle already).
+  All converge on `Shell::handle_external_drop`.
+- **`TransferMode::Auto`** — the spec's modifier table: same volume →
+  Move, cross-volume → Copy, Option forces Copy, Cmd forces Move.
+  Resolution happens *in the worker* next to the existing
+  same-volume probe (stat is banned on the UI thread); the task label
+  reads "Transferring…" until resolved, the completion notification
+  uses the effective verb. Same-folder drops no-op; Option-drop
+  duplicates (Finder parity).
+- Internal row drags and external Finder drags arrive as the same
+  `ExternalPaths` payload, so one path covers both.
+- gpui can't synthesize OS drag sessions headlessly — compile/tests/
+  clippy green and the handler logic reuses the verified
+  spawn_transfer_op; the drag gesture itself needs interactive
+  verification (drop from Finder, drop row-onto-folder, Option-drop).
+
 # 2026-06-13 file ops: copy/paste/move with progress + collisions (landed)
 
 Spec: `docs/features/FILE_OPS.md`. The biggest TODO gap — Feraille

@@ -28,7 +28,7 @@ use gpui_component::{
 use smallvec::smallvec;
 
 use crate::icons::{IconCache, file_type_icon, tint_color};
-use crate::multi_table::{Column, ColumnSort, TableDelegate, TableState};
+use crate::multi_table::{Column, ColumnSort, TableDelegate, TableEvent, TableState};
 
 /// Delegate that vends the current directory's entries to the
 /// Table. Holds the live `Vec<FileEntry>`; the Shell rotates it on
@@ -293,6 +293,29 @@ impl TableDelegate for FileListDelegate {
             .unwrap_or(false);
         let is_lead = entry_id == self.lead && entry_id.is_some();
         let mut row = div().id(("file-row", row_ix));
+        // Folder rows are drop targets for OS file drags (dnd-spec
+        // §3.5): accent ring on hover, drop surfaces as a TableEvent
+        // for the shell to run the transfer into this folder. Stop
+        // propagation so the pane-background target underneath
+        // doesn't also fire.
+        if kind_is_dir {
+            row = row
+                .drag_over::<ExternalPaths>(|style, _, _, cx| {
+                    style
+                        .border_1()
+                        .border_color(cx.theme().accent)
+                        .bg(cx.theme().accent.opacity(0.10))
+                })
+                .on_drop(cx.listener(
+                    move |_state, paths: &ExternalPaths, _window, cx| {
+                        cx.stop_propagation();
+                        cx.emit(TableEvent::ExternalDrop {
+                            row_ix,
+                            paths: paths.paths().to_vec(),
+                        });
+                    },
+                ));
+        }
         if kind_is_dir && heat > 0.0 {
             // Warm orange tint, scaled by heat. Stable hue across
             // light/dark themes (a theme-color .opacity() would

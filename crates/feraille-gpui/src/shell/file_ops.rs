@@ -1,11 +1,15 @@
 use super::*;
 
-/// Copy vs move for [`Shell::spawn_transfer_op`]. Future drop-target
-/// work (drag-into-app, drop-onto-favorite) feeds the same worker.
+/// Copy vs move for [`Shell::spawn_transfer_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TransferMode {
     Copy,
     Move,
+    /// Resolve in the worker per dnd-spec §3.6: same volume → Move,
+    /// cross-volume → Copy. The drop handler can't stat on the UI
+    /// thread, so drag-and-drop lands here unless a modifier forced
+    /// the mode.
+    Auto,
 }
 
 impl Shell {
@@ -75,6 +79,37 @@ impl Shell {
         self.spawn_transfer_op(sources, dest, mode, window, cx);
     }
 
+    /// Files dropped into the window (Finder drags, or our own rows
+    /// dropped on a folder/the pane). Operation per dnd-spec §3.6:
+    /// Option forces Copy, Cmd forces Move, otherwise Auto (worker
+    /// resolves same-volume → Move, cross-volume → Copy). Dropping
+    /// items where they already live is a no-op unless Option asks
+    /// for duplicates.
+    pub(crate) fn handle_external_drop(
+        &mut self,
+        paths: Vec<PathBuf>,
+        dest: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if paths.is_empty() {
+            return;
+        }
+        let mods = window.modifiers();
+        let mode = if mods.alt {
+            TransferMode::Copy
+        } else if mods.platform {
+            TransferMode::Move
+        } else {
+            TransferMode::Auto
+        };
+        let same_dir = paths.iter().all(|s| s.parent() == Some(dest.as_path()));
+        if same_dir && !mods.alt {
+            return;
+        }
+        self.spawn_transfer_op(paths, dest, mode, window, cx);
+    }
+
     /// The transfer worker (docs/features/FILE_OPS.md): plan on the
     /// background executor, raise the collision dialog if needed, run
     /// the engine with throttled progress into the task registry
@@ -96,6 +131,7 @@ impl Shell {
         let verb = match mode {
             TransferMode::Copy => "Copying",
             TransferMode::Move => "Moving",
+            TransferMode::Auto => "Transferring",
         };
         let noun = match sources.as_slice() {
             [single] => format!(
@@ -283,15 +319,20 @@ impl Shell {
                             |d: u64, t: u64| {
                                 let _ = progress_tx.try_send((d, t));
                             };
-                        let outcome = match mode {
-                            TransferMode::Copy => {
-                                engine::run_copy(&plan, policy, &mut progress, &c)
-                            }
+                        // dnd-spec §3.6: Auto resolves here, in the
+                        // worker, where stat is allowed.
+                        let effective = match mode {
+                            TransferMode::Auto if all_same_volume => TransferMode::Move,
+                            TransferMode::Auto => TransferMode::Copy,
+                            m => m,
+                        };
+                        let outcome = match effective {
                             TransferMode::Move => {
                                 engine::run_move(&plan, policy, &mut progress, &c)
                             }
+                            _ => engine::run_copy(&plan, policy, &mut progress, &c),
                         };
-                        outcome.map(|o| (o, all_same_volume))
+                        outcome.map(|o| (o, all_same_volume, effective))
                     })
                     .await
             };
@@ -300,9 +341,9 @@ impl Shell {
             if let Some(shell) = weak.upgrade() {
                 shell.update(cx, |this, cx| {
                     this.process.tasks.borrow_mut().end(task_id);
-                    if let Ok((outcome, all_same_volume)) = &result {
+                    if let Ok((outcome, all_same_volume, effective)) = &result {
                         if !outcome.created.is_empty() {
-                            match mode {
+                            match effective {
                                 TransferMode::Move if *all_same_volume => {
                                     this.push_undo(UndoOp::MoveBack(outcome.created.clone()));
                                 }
@@ -319,7 +360,11 @@ impl Shell {
                 });
             }
             let mut reload = vec![dest.clone()];
-            if mode == TransferMode::Move {
+            // Anything that may have moved needs its source parents
+            // refreshed too (Auto may have resolved to Move; on error
+            // a partial move may have happened — over-reloading is
+            // harmless).
+            if mode != TransferMode::Copy {
                 for s in &sources {
                     if let Some(p) = s.parent() {
                         let p = p.to_path_buf();
@@ -331,12 +376,12 @@ impl Shell {
             }
             Shell::broadcast_reload_for_process(&process, reload, cx);
             let _ = win.update(cx, |_, window, cx| {
-                let done_verb = match mode {
-                    TransferMode::Copy => "Copied",
-                    TransferMode::Move => "Moved",
-                };
                 match &result {
-                    Ok((outcome, _)) => {
+                    Ok((outcome, _, effective)) => {
+                        let done_verb = match effective {
+                            TransferMode::Move => "Moved",
+                            _ => "Copied",
+                        };
                         let n = outcome.created.len();
                         let items = if n == 1 { "item" } else { "items" };
                         let mut msg = if outcome.cancelled {

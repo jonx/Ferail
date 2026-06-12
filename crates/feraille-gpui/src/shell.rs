@@ -652,7 +652,7 @@ impl Shell {
         let subscription = cx.subscribe_in(
             &table,
             window,
-            move |this, _table, event: &TableEvent, _window, cx| {
+            move |this, _table, event: &TableEvent, window, cx| {
                 if this.active_tab().id != tab_id {
                     return;
                 }
@@ -661,6 +661,15 @@ impl Shell {
                         row_ix, modifiers, ..
                     } => {
                         this.apply_row_click_gesture(*row_ix, *modifiers, cx);
+                    }
+                    TableEvent::ExternalDrop { row_ix, paths } => {
+                        // Dropped onto a folder row — transfer into
+                        // that folder (dnd-spec §3.5). Non-folder rows
+                        // never emit this; the pane background target
+                        // covers them with current-dir semantics.
+                        if let Some(dest) = this.path_for_row(*row_ix, cx) {
+                            this.handle_external_drop(paths.clone(), dest, window, cx);
+                        }
                     }
                     TableEvent::LeadMoved { row_ix, modifiers } => {
                         this.apply_row_keyboard_gesture(*row_ix, *modifiers, cx);
