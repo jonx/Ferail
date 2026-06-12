@@ -390,7 +390,7 @@ pub fn run(args: Args) -> Result<()> {
             img.save(&path).expect("write PNG");
             eprintln!("wrote {}", path.display());
 
-            let _ = cx.update(|cx| cx.quit());
+            cx.update(|cx| cx.quit());
         })
         .detach();
     });
@@ -493,12 +493,12 @@ impl ShellArgs {
         handle: &WindowHandle<gpui_component::Root>,
         cx: &mut AsyncApp,
     ) {
-        for path in self.navigate.iter().cloned() {
-            let p = canonicalize_or_passthrough(&path);
-            let _ = shell.update(cx, |s, cx| s.navigate(p, cx));
+        for path in self.navigate.iter() {
+            let p = canonicalize_or_passthrough(path);
+            shell.update(cx, |s, cx| s.navigate(p, cx));
         }
-        for path in self.new_tabs.iter().cloned() {
-            let p = canonicalize_or_passthrough(&path);
+        for path in self.new_tabs.iter() {
+            let p = canonicalize_or_passthrough(path);
             // `make_tab` needs `&mut Window` to build the TableState
             // entity and subscribe to it, so route through the
             // window handle rather than the shell entity directly.
@@ -519,17 +519,17 @@ impl ShellArgs {
             });
         }
         if let Some(idx) = self.tab {
-            let _ = shell.update(cx, |s, cx| s.select_tab(idx, cx));
+            shell.update(cx, |s, cx| s.select_tab(idx, cx));
         }
-        for path in self.expand.iter().cloned() {
-            let p = canonicalize_or_passthrough(&path);
-            let _ = shell.update(cx, |s, cx| {
+        for path in self.expand.iter() {
+            let p = canonicalize_or_passthrough(path);
+            shell.update(cx, |s, cx| {
                 s.reveal_path_in_tree(&p);
                 cx.notify();
             });
         }
         if self.show_hidden {
-            let _ = shell.update(cx, |s, cx| {
+            shell.update(cx, |s, cx| {
                 if !s.show_hidden {
                     s.toggle_hidden(cx);
                 }
@@ -542,7 +542,7 @@ impl ShellArgs {
             // we have to plumb both ends manually from the CLI.
             let text_for_input = text.clone();
             let text_for_data = text.clone();
-            let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
                     let input = s.active_tab().filter_input.clone();
                     input.update(cx, |state, cx| {
@@ -558,14 +558,14 @@ impl ShellArgs {
             // Focus the filter input. cx.update_window threads the
             // Window through; we have to use update_window_in here
             // so the input gets a real window reference.
-            let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
                     s.focus_filter_input(window, cx);
                 });
             });
         }
         if let Some(row) = self.select_row {
-            let _ = shell.update(cx, |s, cx| {
+            shell.update(cx, |s, cx| {
                 s.select_row_index(row, cx);
                 if let Some(p) = s.path_for_row(row, cx) {
                     crate::preview::request(s, p, cx);
@@ -574,12 +574,12 @@ impl ShellArgs {
         }
         if !self.select_rows.is_empty() {
             let rows = self.select_rows.clone();
-            let _ = shell.update(cx, |s, cx| {
+            shell.update(cx, |s, cx| {
                 s.select_row_indices(&rows, cx);
             });
         }
         if let Some(name) = self.select_name.clone() {
-            let _ = shell.update(cx, |s, cx| {
+            shell.update(cx, |s, cx| {
                 let idx = s
                     .active_tab()
                     .table
@@ -597,12 +597,12 @@ impl ShellArgs {
             });
         }
         if let Some((col, asc)) = self.sort.clone() {
-            let _ = shell.update(cx, |s, cx| {
+            shell.update(cx, |s, cx| {
                 crate::file_list::apply_sort(&s.active_tab().table, &col, asc, cx);
             });
         }
         if self.rename {
-            let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
                     // RenameSelected handler reads target_row; need
                     // a selection (the lead row in particular).
@@ -614,7 +614,7 @@ impl ShellArgs {
             });
         }
         if self.new_folder {
-            let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
                     s.trigger_new_folder(window, cx);
                 });
@@ -623,13 +623,13 @@ impl ShellArgs {
 
         // Stage 5.b: status-bar progress / task panel simulation.
         if let Some(p) = self.simulate_progress {
-            let _ = shell.update(cx, |s, cx| {
+            shell.update(cx, |s, cx| {
                 s.simulated_progress = Some(p);
                 cx.notify();
             });
         }
         if self.simulate_task_panel {
-            let _ = shell.update(cx, |s, cx| {
+            shell.update(cx, |s, cx| {
                 let mut reg = s.process.tasks.borrow_mut();
                 let _ = reg.begin(
                     crate::tasks::TaskKind::Enumeration,
@@ -648,7 +648,7 @@ impl ShellArgs {
 
         // Stage 9.b: open breadcrumb edit mode (Cmd+L).
         if self.edit_mode {
-            let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
                     s.on_edit_breadcrumb(&crate::shell::EditBreadcrumb, window, cx);
                 });
@@ -675,13 +675,13 @@ impl ShellArgs {
         // list both bleed through partial state in headless capture).
         // The toast still surfaces correctly in the live window.
         if let Some(text) = self.simulate_toast.clone() {
-            let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 window.push_notification(Notification::error(text).autohide(false), cx);
             });
         }
         // Stage 9.b: open keyboard-shortcuts help overlay.
         if let Some(initial_filter) = self.shortcuts_help.clone() {
-            let _ = cx.update_window(handle.clone().into(), |_, window, cx| {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
                     s.open_shortcuts_help(initial_filter, window, cx);
                 });

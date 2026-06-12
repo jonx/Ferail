@@ -106,7 +106,7 @@ pub(super) fn run_tree_children_load(fs: Arc<NativeFs>, path: PathBuf) -> Vec<Tr
                 hidden,
             });
         }
-        children.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        children.sort_by_key(|a| a.label.to_lowercase());
     }
     children
 }

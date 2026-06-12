@@ -789,7 +789,7 @@ pub fn spawn_open_with_warm(
 /// Lookup helper for double-click open / Enter key — turn a row
 /// selection into the path that should be navigated to (for a folder)
 /// or opened with the default app (for a file).
-pub fn entry_at<'a>(delegate: &'a FileListDelegate, row_ix: usize) -> Option<&'a FileEntry> {
+pub fn entry_at(delegate: &FileListDelegate, row_ix: usize) -> Option<&FileEntry> {
     delegate.entries.get(row_ix)
 }
 

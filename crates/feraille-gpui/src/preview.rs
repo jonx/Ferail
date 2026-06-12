@@ -123,7 +123,7 @@ async fn apply_result(
         None => PreviewState::Failed,
     };
     let Some(shell) = weak.upgrade() else { return };
-    let _ = shell.update(cx, |shell, cx| {
+    shell.update(cx, |shell, cx| {
         shell.process.preview_cache.borrow_mut().insert(path, state);
         cx.notify();
     });

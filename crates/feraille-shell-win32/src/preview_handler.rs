@@ -32,8 +32,8 @@ use std::time::{Duration, Instant};
 use windows::core::{Interface, GUID, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateSolidBrush, DeleteDC, DeleteObject,
-    FillRect, GetDC, GetObjectW, ReleaseDC, SelectObject, DIBSECTION, HBRUSH, SRCCOPY,
+    CreateCompatibleDC, CreateSolidBrush, DeleteDC, DeleteObject,
+    FillRect, GetDC, GetObjectW, ReleaseDC, SelectObject, DIBSECTION, HBRUSH,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CLSCTX_INPROC_SERVER, CLSCTX_LOCAL_SERVER,

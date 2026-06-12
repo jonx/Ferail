@@ -9,6 +9,10 @@
 //! a sidebar refresh operation, not a per-frame call. Per the prime
 //! directive, callers must not invoke this from the paint path.
 
+// Only the windows + fallback arms of `volume_info_for_path` take
+// &Path here; the macOS arm lives in lib.rs. cfg the import so the
+// mac build doesn't warn.
+#[cfg(not(target_os = "macos"))]
 use std::path::Path;
 
 use crate::VolumeInfo;
@@ -141,7 +145,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
         });
         out.push(info);
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     out
 }
 

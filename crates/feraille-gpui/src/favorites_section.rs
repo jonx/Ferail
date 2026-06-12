@@ -138,7 +138,7 @@ impl SidebarItem for FavoritesSection {
                             .await
                     };
                     if let Some(shell) = shell_weak.upgrade() {
-                        let _ = shell.update(cx, |s, cx| {
+                        shell.update(cx, |s, cx| {
                             s.process.favorites.update(cx, |f, cx| {
                                 f.add_path(
                                     canonical,
@@ -609,7 +609,7 @@ fn render_drop_gap(
                 let Some(shell) = shell_weak.upgrade() else {
                     return;
                 };
-                let _ = shell.update(cx, |shell, cx| {
+                shell.update(cx, |shell, cx| {
                     let mut cursor = before;
                     let upper = after;
                     for canonical in valid {

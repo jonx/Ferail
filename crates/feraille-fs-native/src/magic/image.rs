@@ -29,11 +29,10 @@ pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
     if buf.len() >= 22 && buf.starts_with(&[0x00, 0x00, 0x01, 0x00]) {
         return Some(sniff_ico(buf));
     }
-    if buf.len() >= 8 {
-        if buf.starts_with(&[0x49, 0x49, 0x2a, 0x00]) || buf.starts_with(&[0x4d, 0x4d, 0x00, 0x2a]) {
+    if buf.len() >= 8
+        && (buf.starts_with(&[0x49, 0x49, 0x2a, 0x00]) || buf.starts_with(&[0x4d, 0x4d, 0x00, 0x2a])) {
             return Some(sniff_tiff(buf));
         }
-    }
     // HEIC: ftyp box with brand "heic" (or "heix" / "mif1" with HEIC inside)
     if buf.len() >= 12 && &buf[4..8] == b"ftyp" {
         let brand = &buf[8..12];

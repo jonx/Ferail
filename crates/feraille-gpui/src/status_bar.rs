@@ -144,7 +144,9 @@ pub fn render(
         }
     };
 
-    let bar = h_flex()
+    
+
+    h_flex()
         .w_full()
         .flex_shrink_0()
         .items_center()
@@ -201,9 +203,7 @@ pub fn render(
                         cb(window, cx);
                     })
                 }),
-        );
-
-    bar
+        )
 }
 
 fn task_label_none(registry: &TaskRegistry, simulated_progress: Option<f32>) -> bool {

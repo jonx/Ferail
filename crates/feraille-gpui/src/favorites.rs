@@ -396,13 +396,13 @@ impl Favorites {
         match by {
             FavoriteSort::NameAsc => {
                 self.entries
-                    .sort_by(|a, b| a.effective_label().cmp(&b.effective_label()));
+                    .sort_by_key(|a| a.effective_label());
             }
             FavoriteSort::DateAddedNewest => {
                 self.entries.sort_by(|a, b| b.date_added.cmp(&a.date_added));
             }
             FavoriteSort::DateAddedOldest => {
-                self.entries.sort_by(|a, b| a.date_added.cmp(&b.date_added));
+                self.entries.sort_by_key(|a| a.date_added);
             }
             FavoriteSort::Kind => {
                 self.entries.sort_by(|a, b| {

@@ -522,7 +522,7 @@ fn run_gui(args: screenshot::Args) {
         } else {
             let initial_size = (width, height);
             cx.spawn(async move |cx| {
-                let _ = cx.update(|cx| {
+                cx.update(|cx| {
                     open_shell_window_sized(cx, Some(initial_size));
                 });
             })

@@ -345,7 +345,7 @@ impl Shell {
                 depth,
                 is_expandable: true,
                 is_expanded,
-                is_active: &child.path == current,
+                is_active: child.path == current,
                 capacity: None,
                 icon: TreeRowIcon::Folder,
                 favorited,

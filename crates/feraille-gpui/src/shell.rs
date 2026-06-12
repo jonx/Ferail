@@ -447,13 +447,12 @@ impl Shell {
         let shortcuts_help_subscription = cx.subscribe_in(&shortcuts_help_input, window, {
             let shortcuts_help_input = shortcuts_help_input.clone();
             move |this, _state, ev: &InputEvent, _window, cx| {
-                if matches!(ev, InputEvent::Change) {
-                    if this.shortcuts_help_filter.is_some() {
+                if matches!(ev, InputEvent::Change)
+                    && this.shortcuts_help_filter.is_some() {
                         let v = shortcuts_help_input.read(cx).value().to_string();
                         this.shortcuts_help_filter = Some(v);
                         cx.notify();
                     }
-                }
             }
         });
 
@@ -470,12 +469,11 @@ impl Shell {
                     this.breadcrumb_editing = false;
                     this.navigate(path, cx);
                 }
-                InputEvent::Blur => {
-                    if this.breadcrumb_editing {
+                InputEvent::Blur
+                    if this.breadcrumb_editing => {
                         this.breadcrumb_editing = false;
                         cx.notify();
                     }
-                }
                 _ => {}
             }
         });
@@ -1549,7 +1547,7 @@ impl Shell {
         for weak in process.live_shells() {
             if let Some(shell) = weak.upgrade() {
                 let paths = paths.clone();
-                let _ = shell.update(cx, |this, cx| {
+                shell.update(cx, |this, cx| {
                     this.reload_tabs_matching_paths(&paths, cx);
                 });
             }
@@ -2235,7 +2233,7 @@ impl Shell {
         let same_path = tab
             .history
             .get(tab.history_index)
-            .map(|e| &e.path == &path)
+            .map(|e| e.path == path)
             .unwrap_or(false);
         if !same_path {
             tab.history.truncate(tab.history_index + 1);
@@ -2367,7 +2365,7 @@ impl Shell {
                 .spawn(async move { run_tree_children_load(fs, parent.clone()) })
                 .await;
             let Some(shell) = weak.upgrade() else { return };
-            let _ = shell.update(cx, |this, cx| {
+            shell.update(cx, |this, cx| {
                 for child in &children {
                     this.process
                         .node_store
@@ -2430,7 +2428,7 @@ impl Shell {
                     hidden,
                 });
             }
-            children.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+            children.sort_by_key(|a| a.label.to_lowercase());
         }
         self.tree_children.insert(path.to_path_buf(), children);
     }

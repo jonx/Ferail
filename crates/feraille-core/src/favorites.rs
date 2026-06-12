@@ -125,11 +125,7 @@ impl FavoriteIcon {
     pub fn from_db(s: &str) -> Option<Self> {
         if let Some(name) = s.strip_prefix("lucide:") {
             Some(Self::Lucide(name.to_string()))
-        } else if let Some(color) = s.strip_prefix("tint:") {
-            Some(Self::TintedFolder(color.to_string()))
-        } else {
-            None
-        }
+        } else { s.strip_prefix("tint:").map(|color| Self::TintedFolder(color.to_string())) }
     }
 }
 
@@ -266,7 +262,9 @@ mod tests {
         let a = FavoriteId::new();
         let b = FavoriteId::new();
         let c = FavoriteId::new();
-        let mut v = vec![(a, 3.14), (b, -1.0), (c, 999.0)];
+        // Arbitrary mid value — NOT 3.14, which trips the deny-level
+        // clippy::approx_constant and fails `cargo clippy --all-targets`.
+        let mut v = vec![(a, 2.5), (b, -1.0), (c, 999.0)];
         renormalize_sort_indices(&mut v);
         assert_eq!(v[0], (b, 0.0));
         assert_eq!(v[1], (a, 1024.0));

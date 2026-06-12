@@ -78,6 +78,11 @@ pub fn register_command_callback(
 /// Process-wide About-panel content. Populated by
 /// [`set_about_options`]; read by [`show_about_panel`]. A future
 /// gpui modal will read the same struct.
+///
+/// The fields are only READ under cfg(windows) (`show_about_panel`'s
+/// real arm); the unconditional writer keeps the API symmetric, so
+/// non-Windows builds see write-only fields — expected, not dead.
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Default, Clone)]
 struct AboutInfo {
     app_name: String,
