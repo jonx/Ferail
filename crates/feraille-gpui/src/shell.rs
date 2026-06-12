@@ -457,9 +457,16 @@ impl Shell {
         });
 
         // Stage 9.b: breadcrumb-edit Input. Subscribed for
-        // PressEnter (commit) and Blur (cancel).
-        let breadcrumb_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("/path/to/folder"));
+        // PressEnter (commit) and Blur (cancel). The completion
+        // provider gives Cmd+L folder autocomplete: matching child
+        // folders pop up as you type (background-enumerated; see
+        // `crate::path_complete`).
+        let breadcrumb_input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx).placeholder("/path/to/folder");
+            state.lsp.completion_provider =
+                Some(Rc::new(crate::path_complete::PathCompletionProvider));
+            state
+        });
         let breadcrumb_subscription = cx.subscribe_in(&breadcrumb_input, window, {
             let breadcrumb_input = breadcrumb_input.clone();
             move |this, _state, ev: &InputEvent, _window, cx| match ev {

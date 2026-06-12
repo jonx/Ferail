@@ -44,6 +44,11 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # gpui::Window (which implements HasWindowHandle). Same major as
 # gpui's transitive use so we stay single-copy in the graph.
 raw-window-handle = "0.6"
+# Breadcrumb path autocomplete implements gpui-component's
+# LSP-flavoured CompletionProvider, whose item types come from
+# lsp-types. Same version as gpui-component's so the trait's types
+# unify (it only re-exports Position).
+lsp-types = "0.97.0"
 
 # Domain wiring. feraille-gpui consumes the domain layer the same
 # way feraille-app did, through the same trait surface audited in

@@ -23,6 +23,7 @@ pub mod keyboard_help;
 pub mod keymap;
 pub mod multi_table;
 pub mod obs;
+pub mod path_complete;
 pub mod prefetch;
 pub mod preview;
 pub mod process_state;

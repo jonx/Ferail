@@ -52,6 +52,9 @@ pub struct Args {
     pub select_row: Option<usize>,
     /// Set cursor to the first row whose name matches.
     pub select_name: Option<String>,
+    /// Enter breadcrumb edit mode (Cmd+L) and simulate typing this
+    /// text, so the path-autocomplete menu renders for capture.
+    pub breadcrumb: Option<String>,
     /// Seed a multi-row selection by row index (comma-separated on
     /// the CLI: `--select-rows 0,2,5`). The first index becomes
     /// the anchor; the last becomes the lead. Drives screenshot
@@ -158,6 +161,7 @@ pub fn parse_args() -> Args {
             }
             "--select-row" => args.select_row = iter.next().and_then(|s| s.parse().ok()),
             "--select-name" => args.select_name = iter.next(),
+            "--breadcrumb" => args.breadcrumb = iter.next(),
             "--select-rows" => {
                 if let Some(raw) = iter.next() {
                     args.select_rows = raw
@@ -438,6 +442,7 @@ struct ShellArgs {
     select_row: Option<usize>,
     select_name: Option<String>,
     select_rows: Vec<usize>,
+    breadcrumb: Option<String>,
     preview: bool,
     sort: Option<(String, bool)>,
     rename: bool,
@@ -469,6 +474,7 @@ impl From<&Args> for ShellArgs {
             select_row: a.select_row,
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
+            breadcrumb: a.breadcrumb.clone(),
             preview: a.preview,
             sort: a.sort.clone(),
             rename: a.rename || a.inline_rename,
@@ -573,6 +579,27 @@ impl ShellArgs {
             shell.update(cx, |s, cx| {
                 s.preview_visible = true;
                 cx.notify();
+            });
+        }
+        if let Some(text) = self.breadcrumb.clone() {
+            // Enter breadcrumb edit mode and SIMULATE TYPING `text`
+            // (via the EntityInputHandler trait method, so the
+            // completion-provider trigger path runs exactly as it
+            // does for real keystrokes). Used to capture the Cmd+L
+            // autocomplete menu.
+            let shell_for_edit = shell.clone();
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell_for_edit.update(cx, |s, cx| {
+                    s.breadcrumb_editing = true;
+                    let input = s.breadcrumb_input.clone();
+                    input.update(cx, |state, cx| {
+                        state.focus(window, cx);
+                        use gpui::EntityInputHandler;
+                        let end = state.value().encode_utf16().count();
+                        state.replace_text_in_range(Some(0..end), &text, window, cx);
+                    });
+                    cx.notify();
+                });
             });
         }
         if self.select_row.is_some() || self.select_name.is_some() || !self.select_rows.is_empty()
