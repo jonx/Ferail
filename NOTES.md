@@ -7,6 +7,44 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-12 folder sizes in the Size column (landed)
+
+Directory rows now get recursive sizes: computed off the UI thread,
+cached in the metadata DB, revalidated against the folder's mtime.
+
+- **Walker reuse, not a new walker.** `bundle_rolled_up_size` in the
+  disk-usage scanner was already the exact cancel-aware, symlink-safe,
+  error-absorbing DFS we needed; it's now `pub fn recursive_size` in
+  `feraille-fs-native` and the bundle path calls it.
+- **Cache = `folder_sizes` table** (DB v3 → v4, additive): path PK,
+  the folder's own `mtime_unix` at compute time, logical size,
+  `computed_at_unix`. Validity check is `cached mtime == live mtime`,
+  same contract as the `files` cache. Wired into `ResetScope::All`
+  and `::Caches`.
+- **Worker (`folder_sizes.rs`) mirrors `prefetch.rs`** but *streams*:
+  one instant batch of cache hits first, then each computed folder as
+  its walk finishes — a deep folder doesn't hold up the shallow ones.
+  Results are keyed by `NodeId`, not row index, because rows can
+  re-sort mid-flight. Cancel flag lives on the Tab next to
+  `load_cancel` and is flipped by the same navigation paths.
+- **DB-attach re-kick.** The metadata DB opens asynchronously, so the
+  startup load's size pass runs cache-blind and can't persist.
+  `start_metadata_load` completion calls
+  `restart_folder_size_passes` — one redundant walk of the startup
+  dir on a cold start buys a durable cache for everything after.
+- **Sort honesty.** `FileListDelegate.current_sort` records the
+  active header sort; when sizes land while sorted by Size, the
+  delegate re-sorts so folders don't sit in stale positions (Finder
+  behaves the same). Folder rows now also carry their real `size`,
+  so Size-sorting and the status-bar total include them.
+- **Known limitation (by design):** POSIX dir mtime only changes on
+  *direct*-child changes, so deep edits don't invalidate the cache.
+  FSEvents-driven invalidation through the existing watcher is the
+  follow-up if this bites.
+- Verified: `screenshots/folder-sizes.png` (~/mars shows 389.1 MB /
+  12.2 MB), DB rows match `du` ground truth, scratch-dir mtime-bump
+  recomputes (102,400 → 153,600 bytes), workspace tests green.
+
 # 2026-06-12 review-sweep leftovers (landed)
 
 Closed the items the correctness sweep below deliberately parked:

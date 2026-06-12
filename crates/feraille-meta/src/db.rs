@@ -27,7 +27,11 @@ use rusqlite::{params, Connection};
 /// magic-derived Description column. Forward migration is also
 /// additive — `init_schema` issues an `ALTER TABLE ... ADD COLUMN`
 /// and tolerates "duplicate column" on already-migrated DBs.
-pub const DB_VERSION: u32 = 3;
+///
+/// `4` adds the `folder_sizes` table (recursive folder-size cache
+/// for the file list's Size column). Additive — `CREATE TABLE IF
+/// NOT EXISTS` covers the `3 → 4` migration.
+pub const DB_VERSION: u32 = 4;
 
 #[derive(Debug)]
 pub enum MetadataError {
@@ -154,6 +158,22 @@ pub struct FileMetaRecord {
     pub indexed_at_unix: i64,
 }
 
+/// One row from the `folder_sizes` table — cached recursive folder
+/// size for the file list's Size column. `mtime_unix` is the folder's
+/// own mtime at compute time; the caller compares it against the live
+/// filesystem to decide whether the row is still valid. Note the
+/// caveat: a directory's mtime only changes when its *direct*
+/// children change, so deep edits don't invalidate this row.
+#[derive(Debug, Clone)]
+pub struct FolderSizeRecord {
+    pub path: String,
+    pub mtime_unix: i64,
+    /// Logical bytes — sum of `metadata.len()` over every regular
+    /// file underneath, symlinks excluded. Finder "Size" semantics.
+    pub size: u64,
+    pub computed_at_unix: i64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WindowState {
     pub width: i32,
@@ -271,6 +291,16 @@ impl MetadataDb {
             CREATE INDEX IF NOT EXISTS idx_files_full_hash ON files(full_hash);
             CREATE INDEX IF NOT EXISTS idx_files_partial_hash ON files(partial_hash);
             CREATE INDEX IF NOT EXISTS idx_files_size ON files(size);
+
+            -- Recursive folder-size cache for the Size column.
+            -- mtime_unix is the folder's own mtime at compute time;
+            -- callers compare against the live mtime to validate.
+            CREATE TABLE IF NOT EXISTS folder_sizes (
+                path TEXT PRIMARY KEY,
+                mtime_unix INTEGER NOT NULL,
+                size INTEGER NOT NULL,
+                computed_at_unix INTEGER NOT NULL
+            );
 
             -- Ant Trail folder-usage. `score` is computed at read time
             -- from hits + last_access; we only persist the raw signal.
@@ -526,6 +556,47 @@ impl MetadataDb {
         Ok(())
     }
 
+    // ---- folder sizes ----
+
+    /// Look up a cached folder size by path. Caller checks
+    /// `mtime_unix` against the live filesystem to decide whether
+    /// the row is still valid.
+    pub fn get_folder_size(&self, path: &str) -> Result<Option<FolderSizeRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, mtime_unix, size, computed_at_unix \
+             FROM folder_sizes WHERE path = ?1",
+        )?;
+        match stmt.query_row(params![path], |row| {
+            Ok(FolderSizeRecord {
+                path: row.get(0)?,
+                mtime_unix: row.get(1)?,
+                size: row.get::<_, i64>(2)? as u64,
+                computed_at_unix: row.get(3)?,
+            })
+        }) {
+            Ok(r) => Ok(Some(r)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Insert or replace a folder-size row. The table holds a single
+    /// derived value, so a whole-row replace is always correct.
+    pub fn upsert_folder_size(&self, rec: &FolderSizeRecord) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO folder_sizes \
+               (path, mtime_unix, size, computed_at_unix) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                rec.path,
+                rec.mtime_unix,
+                rec.size as i64,
+                rec.computed_at_unix,
+            ],
+        )?;
+        Ok(())
+    }
+
     // ---- window / layout / tabs ----
 
     pub fn save_window_state(&self, s: &WindowState) -> Result<()> {
@@ -673,6 +744,7 @@ impl MetadataDb {
                 self.conn.execute_batch(
                     r#"
                     DELETE FROM files;
+                    DELETE FROM folder_sizes;
                     DELETE FROM folder_usage;
                     DELETE FROM window_state;
                     DELETE FROM layout_state;
@@ -697,6 +769,7 @@ impl MetadataDb {
                 self.conn.execute_batch(
                     r#"
                     DELETE FROM files;
+                    DELETE FROM folder_sizes;
                     DELETE FROM folder_usage;
                     "#,
                 )?;
@@ -924,6 +997,48 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].folder_path, "/x");
         assert_eq!(rows[0].hits, 5);
+    }
+
+    #[test]
+    fn folder_size_round_trip_and_replace() {
+        let db = MetadataDb::in_memory().unwrap();
+        assert!(db.get_folder_size("/dir").unwrap().is_none());
+        db.upsert_folder_size(&FolderSizeRecord {
+            path: "/dir".into(),
+            mtime_unix: 100,
+            size: 12_345,
+            computed_at_unix: 100,
+        })
+        .unwrap();
+        let r = db.get_folder_size("/dir").unwrap().unwrap();
+        assert_eq!(r.mtime_unix, 100);
+        assert_eq!(r.size, 12_345);
+
+        // Recompute after the folder changed — whole-row replace.
+        db.upsert_folder_size(&FolderSizeRecord {
+            path: "/dir".into(),
+            mtime_unix: 200,
+            size: 99,
+            computed_at_unix: 200,
+        })
+        .unwrap();
+        let r = db.get_folder_size("/dir").unwrap().unwrap();
+        assert_eq!(r.mtime_unix, 200);
+        assert_eq!(r.size, 99);
+    }
+
+    #[test]
+    fn reset_caches_wipes_folder_sizes() {
+        let db = MetadataDb::in_memory().unwrap();
+        db.upsert_folder_size(&FolderSizeRecord {
+            path: "/dir".into(),
+            mtime_unix: 100,
+            size: 1,
+            computed_at_unix: 100,
+        })
+        .unwrap();
+        db.reset(ResetScope::Caches).unwrap();
+        assert!(db.get_folder_size("/dir").unwrap().is_none());
     }
 
     #[test]

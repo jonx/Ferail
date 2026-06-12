@@ -159,7 +159,7 @@ impl NativeFs {
                         // Finder-style rolled-up total, not the
                         // useless inode-stat size. Walk the package
                         // contents and sum them.
-                        bundle_rolled_up_size(&child_path, cancel)
+                        recursive_size(&child_path, cancel)
                     } else {
                         metadata.len()
                     };
@@ -234,18 +234,18 @@ impl NativeFs {
     }
 }
 
-/// Sum every regular file under `bundle` to give a Finder-style
-/// rolled-up bundle size. Used when a macOS package (`.app`,
-/// `.framework`, …) is treated as an opaque leaf — without this the
-/// bundle would report only the inode-stat of the directory (~96 B).
+/// Sum every regular file under `root` — logical bytes
+/// (`metadata.len()`), the same semantic Finder's "Size" column uses.
+/// Serves two callers: bundle rolled-up sizes inside the disk-usage
+/// scan, and the file-list folder-size worker in `feraille-gpui`.
 ///
 /// Iterative DFS, `symlink_metadata` only (no follow), absorbs
 /// per-subdir read failures (returns whatever was summed before the
-/// failure). Honors the same cancel flag the outer scanner uses; on
-/// cancel returns `0` and lets the caller move on.
-fn bundle_rolled_up_size(bundle: &Path, cancel: &AtomicBool) -> u64 {
+/// failure). `cancel` is checked between dirents; on cancel returns
+/// the partial sum, which callers must treat as invalid (don't cache).
+pub fn recursive_size(root: &Path, cancel: &AtomicBool) -> u64 {
     let mut total: u64 = 0;
-    let mut stack: Vec<PathBuf> = vec![bundle.to_path_buf()];
+    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         if cancel.load(Ordering::Relaxed) {
             return total;
@@ -383,6 +383,21 @@ mod tests {
         assert_eq!(layout.children.len(), 2);
         assert_eq!(layout.children[0].size_bytes, 50);
         assert_eq!(layout.children[0].kind, NodeKind::Container);
+    }
+
+    #[test]
+    fn recursive_size_sums_all_files() {
+        let tmp = fixture();
+        let cancel = AtomicBool::new(false);
+        assert_eq!(recursive_size(tmp.path(), &cancel), 60);
+    }
+
+    #[test]
+    fn recursive_size_cancel_returns_early() {
+        let tmp = fixture();
+        let cancel = AtomicBool::new(true);
+        // Cancelled before entering the root: nothing summed.
+        assert_eq!(recursive_size(tmp.path(), &cancel), 0);
     }
 
     #[test]

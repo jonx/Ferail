@@ -1203,6 +1203,12 @@ impl Shell {
         if let Some(cancel) = self.tabs[tab_index].load_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
+        // The folder-size pass for the previous listing is also
+        // obsolete — stop its walk before the new enumeration starts
+        // competing for disk I/O.
+        if let Some(cancel) = self.tabs[tab_index].folder_size_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
         let task = self.process.tasks.borrow_mut().begin(
             TaskKind::Enumeration,
             format!(
@@ -1423,7 +1429,31 @@ impl Shell {
         let db = self.process.db_snapshot();
         let tasks = self.process.tasks.clone();
         let weak = cx.weak_entity();
-        crate::prefetch::start(table, fs, db, tasks, weak, cx);
+        crate::prefetch::start(
+            table.clone(),
+            fs.clone(),
+            db.clone(),
+            tasks.clone(),
+            weak,
+            cx,
+        );
+        // Folder sizes for the directory rows: cache-validated
+        // against each folder's mtime, recomputed off-thread on
+        // miss, streamed back as they resolve.
+        let size_cancel = Arc::new(AtomicBool::new(false));
+        let size_tab_id = self.tabs[idx].id;
+        let size_generation = self.tabs[idx].load_generation;
+        self.tabs[idx].folder_size_cancel = Some(size_cancel.clone());
+        crate::folder_sizes::start(
+            table,
+            fs,
+            db,
+            tasks,
+            size_tab_id,
+            size_generation,
+            size_cancel,
+            cx,
+        );
         let icon_seeds = self.icon_seeds_from_table_in_tab(idx, cx);
         self.start_icon_warm(icon_seeds, cx);
         cx.notify();
@@ -1543,10 +1573,44 @@ impl Shell {
                     crate::favorites::maybe_seed_dev_favorites(f, cx);
                 });
                 this.refresh_active_tab_heats(cx);
+                // Folder-size passes kicked before this point ran
+                // cache-blind (metadata_db was still None) and
+                // couldn't persist what they computed. One re-kick
+                // with the DB attached makes the cache durable.
+                this.restart_folder_size_passes(cx);
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Re-run the folder-size pass for every tab against the (now
+    /// attached) metadata DB. Cancels any cache-blind pass still in
+    /// flight first.
+    fn restart_folder_size_passes(&mut self, cx: &mut Context<Self>) {
+        let db = self.process.db_snapshot();
+        if db.is_none() {
+            return;
+        }
+        let fs = self.process.fs.clone();
+        let tasks = self.process.tasks.clone();
+        for idx in 0..self.tabs.len() {
+            if let Some(cancel) = self.tabs[idx].folder_size_cancel.take() {
+                cancel.store(true, Ordering::Relaxed);
+            }
+            let cancel = Arc::new(AtomicBool::new(false));
+            self.tabs[idx].folder_size_cancel = Some(cancel.clone());
+            crate::folder_sizes::start(
+                self.tabs[idx].table.clone(),
+                fs.clone(),
+                db.clone(),
+                tasks.clone(),
+                self.tabs[idx].id,
+                self.tabs[idx].load_generation,
+                cancel,
+                cx,
+            );
+        }
     }
 
     fn reload_tabs_matching_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {

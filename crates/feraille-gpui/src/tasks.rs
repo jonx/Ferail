@@ -22,6 +22,8 @@ pub enum TaskKind {
     IconPrefetch,
     MagicPrefetch,
     QuarantinePrefetch,
+    /// Recursive folder sizes for the Size column.
+    FolderSize,
     DiskUsage,
     /// Right-click file operations: Duplicate, Compress.
     FileOp,

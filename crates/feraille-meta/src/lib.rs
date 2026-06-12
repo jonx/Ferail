@@ -19,8 +19,8 @@ pub mod db;
 
 pub use cache::MetadataCache;
 pub use db::{
-    AntTrailEntry, FileMetaRecord, LayoutState, MetadataDb, MetadataError, ResetScope,
-    Result, TabState, WindowState,
+    AntTrailEntry, FileMetaRecord, FolderSizeRecord, LayoutState, MetadataDb, MetadataError,
+    ResetScope, Result, TabState, WindowState,
 };
 pub use feraille_core::favorites::{
     Favorite, FavoriteIcon, FavoriteId, FavoriteKind, FavoriteSort, FavoriteState, FavoriteTarget,

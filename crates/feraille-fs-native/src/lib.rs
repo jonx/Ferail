@@ -23,7 +23,7 @@ mod magic;
 pub mod paths;
 mod volumes;
 pub mod xattr_info;
-pub use disk_usage_scanner::DEFAULT_DU_BATCH;
+pub use disk_usage_scanner::{recursive_size, DEFAULT_DU_BATCH};
 pub use icons::fetch_icon_rgba;
 pub use magic::{
     detect_magic, detect_magic_info, sniff_bytes_info, CpuArch, MagicInfo, MagicType,
@@ -566,7 +566,7 @@ fn describe_kind(kind: EntryKind, name: &str) -> String {
     }
 }
 
-fn humanize_bytes(bytes: u64) -> String {
+pub fn humanize_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     let mut v = bytes as f64;
     let mut i = 0;

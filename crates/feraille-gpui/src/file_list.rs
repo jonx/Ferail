@@ -91,6 +91,11 @@ pub struct FileListDelegate {
     /// the menu was BUILT is the app that opens — re-fetching at
     /// dispatch could reorder candidates and launch the wrong app.
     pub open_with_warm: Option<(PathBuf, Vec<crate::platform_shell::OpenWithCandidate>)>,
+    /// The user's active column sort, recorded by `perform_sort` /
+    /// `apply_sort`. `None` = natural (name-ascending) order. Read
+    /// by the folder-size worker so late-arriving sizes can re-apply
+    /// a live Size sort instead of leaving rows in stale positions.
+    pub current_sort: Option<(SortColumn, bool)>,
 }
 
 impl FileListDelegate {
@@ -133,6 +138,7 @@ impl FileListDelegate {
             selected_set: HashSet::new(),
             lead: None,
             open_with_warm: None,
+            current_sort: None,
         }
     }
 
@@ -735,12 +741,15 @@ impl TableDelegate for FileListDelegate {
                 // (Finder convention) as a deterministic fallback,
                 // since we don't retain the load-time order.
                 sort_in_place(&mut self.entries, SortColumn::Name, true);
+                self.current_sort = None;
             }
             ColumnSort::Ascending => {
                 sort_in_place(&mut self.entries, sort_col, true);
+                self.current_sort = Some((sort_col, true));
             }
             ColumnSort::Descending => {
                 sort_in_place(&mut self.entries, sort_col, false);
+                self.current_sort = Some((sort_col, false));
             }
         }
     }
@@ -960,6 +969,7 @@ pub fn apply_sort<C: gpui::AppContext>(
     };
     table.update(cx, |state, cx| {
         sort_in_place(&mut state.delegate_mut().entries, col, ascending);
+        state.delegate_mut().current_sort = Some((col, ascending));
         state.refresh(cx);
     });
 }
