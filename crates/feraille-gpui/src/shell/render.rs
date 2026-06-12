@@ -14,6 +14,11 @@ use super::*;
 pub struct TabDragPayload {
     pub id: TabId,
     pub label: SharedString,
+    /// Strip index at drag start. Only used to pick which edge of a
+    /// hovered chip gets the insertion highlight — the strip can't
+    /// reorder mid-drag, so the render-time index stays valid for
+    /// styling. Drop handlers must still resolve by `id`.
+    pub from_idx: usize,
 }
 
 impl Render for TabDragPayload {
@@ -419,6 +424,7 @@ impl Shell {
             let tab_id = tab.id;
             let drag_label: SharedString = label.clone().into();
             let theme = cx.theme();
+            let accent = theme.primary;
             let mut chip = h_flex()
                 .id(("tab", idx))
                 .items_center()
@@ -461,9 +467,39 @@ impl Shell {
                     TabDragPayload {
                         id: tab_id,
                         label: drag_label,
+                        from_idx: idx,
                     },
                     |payload, _offset, _window, cx| cx.new(|_| payload.clone()),
-                );
+                )
+                // The chip is also a drop TARGET. The between-chip gaps
+                // are only 6 DIP wide — without this, the natural
+                // gesture (release over another tab) lands on the chip
+                // and silently does nothing. Dropping on a chip puts
+                // the dragged tab in that chip's slot; the accent edge
+                // shows which side the insertion happens on.
+                .drag_over::<TabDragPayload>(move |style, payload, _window, _cx| {
+                    if payload.from_idx == idx {
+                        style
+                    } else if payload.from_idx < idx {
+                        style.border_r_2().border_color(accent)
+                    } else {
+                        style.border_l_2().border_color(accent)
+                    }
+                })
+                .on_drop(cx.listener(
+                    move |this, payload: &TabDragPayload, _window, cx| {
+                        // Resolve BOTH ends by TabId at drop time —
+                        // same staleness rule as click/close.
+                        let (Some(from_idx), Some(chip_idx)) = (
+                            this.tabs.iter().position(|t| t.id == payload.id),
+                            this.tabs.iter().position(|t| t.id == tab_id),
+                        ) else {
+                            return;
+                        };
+                        let gap = tab::chip_drop_gap_index(from_idx, chip_idx);
+                        this.reorder_tab(payload.id, gap, cx);
+                    },
+                ));
             if multi {
                 let close = div()
                     .id(("tab-close", idx))

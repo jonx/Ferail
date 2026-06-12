@@ -233,6 +233,20 @@ pub fn reorder_insert_index(from_idx: usize, to_pos: usize, len: usize) -> Optio
     Some(if from_idx < to_pos { to_pos - 1 } else { to_pos })
 }
 
+/// Map a drop ON a tab chip (rather than into a between-chip gap) to
+/// the gap position that puts the dragged tab at the target chip's
+/// current slot: dragging rightward inserts after the target, leftward
+/// inserts before it — in both cases the dragged tab ends up exactly
+/// where the target chip was. Dropping a chip on itself maps to its
+/// own gap, which `reorder_insert_index` rejects as a no-op.
+pub fn chip_drop_gap_index(from_idx: usize, chip_idx: usize) -> usize {
+    if from_idx < chip_idx {
+        chip_idx + 1
+    } else {
+        chip_idx
+    }
+}
+
 #[cfg(test)]
 mod reorder_tests {
     use super::reorder_insert_index;
@@ -277,6 +291,32 @@ mod reorder_tests {
     fn single_tab_strip_has_no_valid_moves() {
         for gap in 0..=1 {
             assert_eq!(reorder_insert_index(0, gap, 1), None);
+        }
+    }
+
+    #[test]
+    fn chip_drop_lands_on_target_slot() {
+        use super::{chip_drop_gap_index, reorder_insert_index};
+        // [A B C D]: drag A (0) onto C (2) → gap 3 → insert at 2 →
+        // [B C A D]; A sits where C was.
+        assert_eq!(chip_drop_gap_index(0, 2), 3);
+        assert_eq!(reorder_insert_index(0, 3, 4), Some(2));
+        // Drag D (3) onto B (1) → gap 1 → insert at 1 → [A D B C].
+        assert_eq!(chip_drop_gap_index(3, 1), 1);
+        assert_eq!(reorder_insert_index(3, 1, 4), Some(1));
+        // Adjacent neighbors still reorder (unlike gap drops, a drop
+        // ON the neighbor chip is an unambiguous swap intent):
+        // drag A (0) onto B (1) → gap 2 → insert at 1 → [B A C D].
+        assert_eq!(chip_drop_gap_index(0, 1), 2);
+        assert_eq!(reorder_insert_index(0, 2, 4), Some(1));
+    }
+
+    #[test]
+    fn chip_drop_on_self_is_noop() {
+        use super::{chip_drop_gap_index, reorder_insert_index};
+        for idx in 0..4 {
+            let gap = chip_drop_gap_index(idx, idx);
+            assert_eq!(reorder_insert_index(idx, gap, 4), None);
         }
     }
 }
