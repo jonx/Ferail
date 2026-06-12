@@ -42,6 +42,14 @@ use smallvec::smallvec;
 use crate::icons::IconCache;
 use crate::shell::Shell;
 
+/// Icon edge length (DIPs) for every sidebar row icon — Locations,
+/// Favorites, Browse, and Volumes share it so the sections read as
+/// one surface. Finder sizes its sidebar icons noticeably larger
+/// than its list-view icons; 24 matches that feel against our 16px
+/// file-list icons. Disclosure carets and the section "+" button
+/// stay at 16 — they're affordances, not icons.
+pub(crate) const SIDEBAR_ICON_PX: f32 = 24.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreeRowIcon {
     Folder,
@@ -330,16 +338,25 @@ fn render_tree_row(
     let icon_el = match icon {
         TreeRowIcon::Folder => {
             let icon = icons.borrow_mut().folder_icon_for(&path);
-            img(icon).w(px(16.0)).h(px(16.0)).into_any_element()
+            img(icon)
+                .w(px(SIDEBAR_ICON_PX))
+                .h(px(SIDEBAR_ICON_PX))
+                .into_any_element()
         }
         TreeRowIcon::Volume => svg()
             .path("icons/nav/drive.svg")
-            .w(px(16.0))
-            .h(px(16.0))
+            .w(px(SIDEBAR_ICON_PX))
+            .h(px(SIDEBAR_ICON_PX))
             .text_color(icon_color)
             .into_any_element(),
     };
-    row = row.child(div().flex_shrink_0().w(px(16.0)).h(px(16.0)).child(icon_el));
+    row = row.child(
+        div()
+            .flex_shrink_0()
+            .w(px(SIDEBAR_ICON_PX))
+            .h(px(SIDEBAR_ICON_PX))
+            .child(icon_el),
+    );
 
     let label_node = node_id;
     let shell_for_label = shell.clone();

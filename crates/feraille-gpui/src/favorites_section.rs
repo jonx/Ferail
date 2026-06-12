@@ -328,30 +328,30 @@ fn render_favorite_row(
     let icon_el: AnyElement = match (&fav.custom_icon, &fav.target) {
         (Some(feraille_core::favorites::FavoriteIcon::Lucide(name)), _) => svg()
             .path(format!("icons/{name}.svg"))
-            .w(px(16.0))
-            .h(px(16.0))
+            .w(px(crate::tree::SIDEBAR_ICON_PX))
+            .h(px(crate::tree::SIDEBAR_ICON_PX))
             .text_color(theme.sidebar_foreground)
             .into_any_element(),
         (Some(feraille_core::favorites::FavoriteIcon::TintedFolder(_color)), _) => svg()
             .path("icons/nav/star.svg")
-            .w(px(16.0))
-            .h(px(16.0))
+            .w(px(crate::tree::SIDEBAR_ICON_PX))
+            .h(px(crate::tree::SIDEBAR_ICON_PX))
             .text_color(theme.primary)
             .into_any_element(),
         (None, FavoriteTarget::Path(p)) => {
             let icon = icons.borrow_mut().folder_icon_for(p);
-            img(icon).w(px(16.0)).h(px(16.0)).into_any_element()
+            img(icon).w(px(crate::tree::SIDEBAR_ICON_PX)).h(px(crate::tree::SIDEBAR_ICON_PX)).into_any_element()
         }
         (None, FavoriteTarget::SavedSearch(_)) => svg()
             .path("icons/nav/star.svg")
-            .w(px(16.0))
-            .h(px(16.0))
+            .w(px(crate::tree::SIDEBAR_ICON_PX))
+            .h(px(crate::tree::SIDEBAR_ICON_PX))
             .text_color(theme.sidebar_foreground)
             .into_any_element(),
         (None, FavoriteTarget::Tag(_)) => svg()
             .path("icons/nav/star.svg")
-            .w(px(16.0))
-            .h(px(16.0))
+            .w(px(crate::tree::SIDEBAR_ICON_PX))
+            .h(px(crate::tree::SIDEBAR_ICON_PX))
             .text_color(theme.sidebar_foreground)
             .into_any_element(),
     };
@@ -394,7 +394,13 @@ fn render_favorite_row(
         let hover_bg = theme.sidebar_accent.opacity(0.5);
         row = row.hover(move |this| this.bg(hover_bg));
     }
-    row = row.child(div().flex_shrink_0().w(px(16.0)).h(px(16.0)).child(icon_el));
+    row = row.child(
+        div()
+            .flex_shrink_0()
+            .w(px(crate::tree::SIDEBAR_ICON_PX))
+            .h(px(crate::tree::SIDEBAR_ICON_PX))
+            .child(icon_el),
+    );
     row = row.child(
         div()
             .flex_1()

@@ -190,7 +190,11 @@ impl Shell {
             let path_for_menu = path.clone();
             let path_for_modclick = path.clone();
             let item = SidebarMenuItem::new(SharedString::from(loc.label))
-                .icon(Icon::empty().path(loc.icon))
+                .icon(
+                    Icon::empty()
+                        .path(loc.icon)
+                        .with_size(px(crate::tree::SIDEBAR_ICON_PX)),
+                )
                 .active(active)
                 .on_click(move |event, window, cx| {
                     if let Some(s) = weak_for_click.upgrade() {
