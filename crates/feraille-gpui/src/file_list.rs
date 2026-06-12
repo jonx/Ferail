@@ -524,12 +524,13 @@ impl TableDelegate for FileListDelegate {
         cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
         use crate::shell::{
-            Compress, CopyPath, Duplicate, GetInfo, MakeAlias, MoveToTrash, OpenInNewTab,
-            OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1, OpenWithSlot2, OpenWithSlot3,
-            OpenWithSlot4, OpenWithSlot5, OpenWithSlot6, OpenWithSlot7, OpenWithSlot8,
-            OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook, RenameSelected,
-            RevealInFinder, ToggleFavoriteForTarget, ToggleTagBlue, ToggleTagGray, ToggleTagGreen,
-            ToggleTagOrange, ToggleTagPurple, ToggleTagRed, ToggleTagYellow,
+            ClearQuarantine, Compress, CopyPath, Duplicate, GetInfo, MakeAlias, MoveToTrash,
+            OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
+            OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
+            OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11,
+            QuickLook, RenameSelected, RevealInFinder, ToggleFavoriteForTarget, ToggleTagBlue,
+            ToggleTagGray, ToggleTagGreen, ToggleTagOrange, ToggleTagPurple, ToggleTagRed,
+            ToggleTagYellow,
         };
 
         // Prime directive: menu building is read-only — no shell or
@@ -609,6 +610,20 @@ impl TableDelegate for FileListDelegate {
             .menu("Duplicate", Box::new(Duplicate))
             .menu("Make Alias", Box::new(MakeAlias))
             .menu("Compress", Box::new(Compress));
+        if self
+            .entries
+            .get(row_ix)
+            .map(|e| e.is_quarantined)
+            .unwrap_or(false)
+        {
+            // Quarantined rows only: strip the Mark-of-the-Web + its
+            // where-from provenance. Reads the cached row flag — no
+            // xattr query at menu-open time.
+            menu = menu.separator().menu(
+                feraille_core::commands::CLEAR_QUARANTINE_LABEL,
+                Box::new(ClearQuarantine),
+            );
+        }
         if is_folder {
             // Toggle the row's path against the user's Favorites
             // (docs/features/FAVORITES.md §2.1). The right-click already

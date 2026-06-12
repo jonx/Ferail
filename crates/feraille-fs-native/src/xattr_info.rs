@@ -149,6 +149,50 @@ pub fn fetch_quarantine_info(path: &Path) -> QuarantineInfo {
     info
 }
 
+/// Remove the Mark-of-the-Web AND its provenance record from `path`.
+///
+/// macOS: deletes `com.apple.quarantine` (the Gatekeeper mark) and
+/// `com.apple.metadata:kMDItemWhereFroms` (the downloaded-from URLs).
+/// Windows: deletes the `Zone.Identifier` alternate data stream,
+/// which holds both the zone mark and the Host/Referrer URLs.
+///
+/// Idempotent: clearing a file that carries no mark succeeds. Callers
+/// run this on a worker (it's metadata I/O) and must also scrub any
+/// cached quarantine state (e.g. feraille-meta rows) so a later
+/// prefetch doesn't resurrect the badge from cache.
+#[cfg(target_os = "macos")]
+pub fn clear_quarantine(path: &Path) -> std::io::Result<()> {
+    let mut result = Ok(());
+    for attr in ["com.apple.quarantine", "com.apple.metadata:kMDItemWhereFroms"] {
+        // Only attempt removal when present — xattr::remove on a
+        // missing attr returns ENOATTR, which isn't a failure for us.
+        if let Ok(Some(_)) = xattr::get(path, attr) {
+            if let Err(e) = xattr::remove(path, attr) {
+                result = Err(e);
+            }
+        }
+    }
+    result
+}
+
+#[cfg(windows)]
+pub fn clear_quarantine(path: &Path) -> std::io::Result<()> {
+    let mut ads_path = path.as_os_str().to_os_string();
+    ads_path.push(":Zone.Identifier");
+    match std::fs::remove_file(&ads_path) {
+        Ok(()) => Ok(()),
+        // No stream == nothing to clear; idempotent success.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+pub fn clear_quarantine(_path: &Path) -> std::io::Result<()> {
+    // No quarantine concept on this platform.
+    Ok(())
+}
+
 /// Parsed view of a `Zone.Identifier` ADS body. Compiled on every
 /// platform (pure string parsing) so the logic is unit-testable from
 /// the macOS dev/CI hosts even though only the Windows arm reads it
@@ -331,6 +375,39 @@ mod tests {
         assert_eq!(zt.zone_id, None);
         // Empty input.
         assert_eq!(parse_zone_identifier(""), ZoneTransfer::default());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn clear_quarantine_removes_mark_and_provenance() {
+        use std::path::PathBuf;
+        let dir = std::env::temp_dir();
+        let file: PathBuf = dir.join(format!("feraille-quarantine-test-{}", std::process::id()));
+        std::fs::write(&file, b"payload").unwrap();
+        // Plant a realistic quarantine record + where-froms plist.
+        xattr::set(
+            &file,
+            "com.apple.quarantine",
+            b"0083;6649e000;Safari;ABCDEF12-3456-7890-ABCD-EF1234567890",
+        )
+        .unwrap();
+        let urls = vec!["https://example.com/file.zip".to_string()];
+        let mut plist_bytes = Vec::new();
+        plist::to_writer_binary(&mut plist_bytes, &urls).unwrap();
+        xattr::set(&file, "com.apple.metadata:kMDItemWhereFroms", &plist_bytes).unwrap();
+
+        let before = fetch_quarantine_info(&file);
+        assert!(before.quarantined);
+        assert_eq!(before.where_from, urls);
+
+        clear_quarantine(&file).unwrap();
+        let after = fetch_quarantine_info(&file);
+        assert!(!after.quarantined);
+        assert!(after.where_from.is_empty());
+
+        // Idempotent on an already-clean file.
+        clear_quarantine(&file).unwrap();
+        std::fs::remove_file(&file).unwrap();
     }
 
     #[test]

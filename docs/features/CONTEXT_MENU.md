@@ -15,10 +15,11 @@ into the window's chain at startup ([crates/feraille-shell-mac/src/services.rs](
 ## Surfaces Covered
 
 - File tree (sidebar): Open, Reveal in Finder, Quick Look, Copy Path,
-  Pin / Remove from Favorites.
+  Open Terminal Here (folders), Pin / Remove from Favorites.
 - List pane (per-row): full Finder-equivalent — Open, Open With submenu,
   Reveal in Finder, Get Info, Quick Look, Rename, Duplicate, Make Alias,
-  Compress, Copy Path, Share…, Tags row (7 colours), Move to Trash.
+  Compress, Copy Path, Open Terminal Here (folders), Share…, Tags row
+  (7 colours), Move to Trash.
 - List pane (background): right-click empty area shows New Folder, Reveal
   in Finder, Refresh, Show Hidden Files toggle.
 - Disk-usage treemap: Open, Reveal, Copy Path, Quick Look, Zoom into,

@@ -44,6 +44,22 @@ impl Render for TabDragPayload {
 /// as `favorites_section::render_drop_gap` rotated 90°. On drop,
 /// `Shell::reorder_tab` resolves the source `TabId` and moves the tab
 /// into this position.
+/// Truncated single-line URL for the preview pane's provenance rows,
+/// with the full URL in a hover tooltip — same treatment as the
+/// "Where" path row. Pure display; no parsing.
+fn truncated_url_value(key: &'static str, url: &str, id: feraille_core::NodeId) -> AnyElement {
+    let full = SharedString::from(url.to_string());
+    let tip = full.clone();
+    div()
+        .id((key, id.as_raw() as usize))
+        .truncate()
+        .child(full)
+        .tooltip(move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+        })
+        .into_any_element()
+}
+
 /// One mounted volume for the sidebar Volumes section:
 /// `(path, display name, Some((total, available)) capacity bytes)`.
 type VolumeRow = (PathBuf, String, Option<(u64, u64)>);
@@ -884,23 +900,86 @@ impl Shell {
                     .child(DescriptionItem::new("Where").value(path_value));
                 col = col.child(list);
 
-                // Quarantine surface — single signal via the red
-                // badge. (The DescriptionList "Quarantine" row that
-                // used to repeat `com.apple.quarantine` was dropped
-                // — the xattr name isn't actionable user info.) The
-                // rich originating-URL details from
-                // LSQuarantineDataURLKey still land in feraille-meta
-                // and can populate the badge tooltip in a follow-on
-                // polish iter.
+                // Quarantine surface — the red mark line, the
+                // provenance the prefetch worker read off the xattr /
+                // Zone.Identifier record (source URL, referrer, agent
+                // + download time), and the clear action. All cached
+                // on the entry; zero I/O at render time.
                 if entry.is_quarantined {
                     col = col.child(
-                        div()
+                        h_flex()
                             .mt_1()
-                            .text_xs()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(gpui::rgb(0xFF3B30))
-                            .child("Quarantined \u{00B7} Mark of the Web"),
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_xs()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(gpui::rgb(0xFF3B30))
+                                    .child("Quarantined \u{00B7} Mark of the Web"),
+                            )
+                            .child(
+                                Button::new("preview-clear-quarantine")
+                                    .label(feraille_core::commands::CLEAR_QUARANTINE_LABEL)
+                                    .xsmall()
+                                    .outline()
+                                    .flex_shrink_0()
+                                    .tooltip(
+                                        "Remove the mark and its \
+                                         downloaded-from record",
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.on_clear_quarantine(
+                                            &ClearQuarantine,
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                            ),
                     );
+                    if let Some(q) = &entry.quarantine {
+                        // where_from convention (both platforms): the
+                        // first URL is the download source, the second
+                        // the referring page.
+                        let mut prov = DescriptionList::vertical().small().columns(1);
+                        let mut has_rows = false;
+                        if let Some(src) = q.where_from.first() {
+                            prov = prov.child(
+                                DescriptionItem::new("Source")
+                                    .value(truncated_url_value("prov-source", src, entry.id)),
+                            );
+                            has_rows = true;
+                        }
+                        if let Some(referrer) = q.where_from.get(1) {
+                            prov = prov.child(
+                                DescriptionItem::new("Referrer").value(truncated_url_value(
+                                    "prov-referrer",
+                                    referrer,
+                                    entry.id,
+                                )),
+                            );
+                            has_rows = true;
+                        }
+                        if q.agent.is_some() || q.downloaded_iso.is_some() {
+                            let via = match (&q.agent, &q.downloaded_iso) {
+                                (Some(a), Some(t)) => format!("{a} \u{00B7} {t}"),
+                                (Some(a), None) => a.clone(),
+                                (None, Some(t)) => t.clone(),
+                                (None, None) => unreachable!(),
+                            };
+                            prov = prov.child(
+                                DescriptionItem::new("Downloaded via")
+                                    .value(SharedString::from(via)),
+                            );
+                            has_rows = true;
+                        }
+                        if has_rows {
+                            col = col.child(prov);
+                        }
+                    }
                 }
 
                 // Action row — icon-only buttons with tooltips that
@@ -1293,6 +1372,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_clear_selection))
             .on_action(cx.listener(Self::on_toggle_preview))
             .on_action(cx.listener(Self::on_get_info))
+            .on_action(cx.listener(Self::on_clear_quarantine))
             .on_action(cx.listener(Self::on_zoom_in))
             .on_action(cx.listener(Self::on_zoom_out))
             .on_action(cx.listener(Self::on_zoom_reset))

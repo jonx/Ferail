@@ -71,6 +71,12 @@ actions!(
         ClearSelection,
         TogglePreview,
         GetInfo,
+        /// Strip the Mark-of-the-Web (and its where-from provenance)
+        /// from the selected quarantined files — `com.apple.quarantine`
+        /// + `kMDItemWhereFroms` on macOS, the `Zone.Identifier` ADS on
+        /// Windows. Worker-side I/O; the rows and the metadata-DB cache
+        /// update on completion so the badge can't resurrect from cache.
+        ClearQuarantine,
         ZoomIn,
         ZoomOut,
         ZoomReset,

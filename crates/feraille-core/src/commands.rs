@@ -31,6 +31,15 @@ pub const TRASH_LABEL: &str = "Move to Trash";
 #[cfg(not(target_os = "macos"))]
 pub const TRASH_LABEL: &str = "Move to Recycle Bin";
 
+/// User-facing label for "remove the downloaded-from-the-Internet
+/// mark and its provenance record" — `com.apple.quarantine` +
+/// `kMDItemWhereFroms` on macOS, the `Zone.Identifier` ADS on
+/// Windows (where the verb of art is "Unblock").
+#[cfg(windows)]
+pub const CLEAR_QUARANTINE_LABEL: &str = "Unblock";
+#[cfg(not(windows))]
+pub const CLEAR_QUARANTINE_LABEL: &str = "Clear Quarantine";
+
 /// Stable identifier for a user-invokable action. Format
 /// `"category.action_name"`, lowercase, dot-separated. Use
 /// [`find`] to look up the metadata for an id.
@@ -635,6 +644,14 @@ const CATALOGUE: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId("file.open_terminal_here"),
         title: "Open Terminal Here",
+        category: Category::Context,
+        shortcuts: &[],
+    },
+    // Quarantined rows only: strip the Mark-of-the-Web and its
+    // provenance record (where-from URLs) from the selected files.
+    CommandSpec {
+        id: CommandId("file.clear_quarantine"),
+        title: CLEAR_QUARANTINE_LABEL,
         category: Category::Context,
         shortcuts: &[],
     },

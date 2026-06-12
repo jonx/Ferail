@@ -657,4 +657,115 @@ impl Shell {
             cx,
         );
     }
+
+    /// Strip the Mark-of-the-Web (and the where-from provenance that
+    /// rides with it) from every quarantined file in the current
+    /// action target set. The xattr/ADS removal and the metadata-DB
+    /// scrub run on a worker — the scrub matters because the prefetch
+    /// pipeline caches quarantine state per path and would otherwise
+    /// resurrect the badge from cache on the next visit. Rows update
+    /// in place on completion (matched by NodeId across all tabs).
+    pub(super) fn on_clear_quarantine(
+        &mut self,
+        _: &ClearQuarantine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let targets: Vec<(feraille_core::NodeId, PathBuf)> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .filter(|(_, entry, _)| entry.is_quarantined)
+            .map(|(_, entry, path)| (entry.id, path))
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        let db = self.process.db_snapshot();
+        cx.spawn_in(window, async move |this, cx| {
+            let (cleared, failed) = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut cleared: Vec<feraille_core::NodeId> = Vec::new();
+                    let mut failed = 0usize;
+                    for (id, path) in targets {
+                        match feraille_fs_native::clear_quarantine(&path) {
+                            Ok(()) => {
+                                if let Some(db) = db.as_ref() {
+                                    if let Ok(guard) = db.lock() {
+                                        let key = path.to_string_lossy().into_owned();
+                                        if let Ok(Some(mut rec)) = guard.get_file(&key) {
+                                            rec.quarantined = Some(false);
+                                            rec.quarantine_agent = None;
+                                            rec.quarantine_iso = None;
+                                            rec.quarantine_where_from = None;
+                                            let _ = guard.upsert_file(&rec);
+                                        }
+                                    }
+                                }
+                                cleared.push(id);
+                            }
+                            Err(e) => {
+                                crate::log_warn!(
+                                    90,
+                                    "clear_quarantine failed for {}: {e}",
+                                    path.display()
+                                );
+                                failed += 1;
+                            }
+                        }
+                    }
+                    (cleared, failed)
+                })
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.apply_quarantine_cleared(&cleared, failed, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Foreground half of `on_clear_quarantine`: flip the cached row
+    /// state for every cleared NodeId (in every tab — the same file
+    /// can be visible twice) and report the outcome.
+    fn apply_quarantine_cleared(
+        &mut self,
+        cleared: &[feraille_core::NodeId],
+        failed: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        if !cleared.is_empty() {
+            for tab in &self.tabs {
+                tab.table.update(cx, |state, cx| {
+                    let mut touched = false;
+                    for e in state.delegate_mut().entries.iter_mut() {
+                        if cleared.contains(&e.id) {
+                            e.is_quarantined = false;
+                            e.quarantine = None;
+                            touched = true;
+                        }
+                    }
+                    if touched {
+                        state.refresh(cx);
+                    }
+                });
+            }
+            cx.notify();
+            let msg = if cleared.len() == 1 {
+                "Mark of the Web cleared".to_string()
+            } else {
+                format!("Mark of the Web cleared from {} files", cleared.len())
+            };
+            window.push_notification(Notification::success(msg), cx);
+        }
+        if failed > 0 {
+            window.push_notification(
+                Notification::warning(format!(
+                    "Couldn't clear the mark on {failed} file(s) — see log"
+                )),
+                cx,
+            );
+        }
+    }
 }

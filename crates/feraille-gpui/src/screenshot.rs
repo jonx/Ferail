@@ -72,8 +72,9 @@ pub struct Args {
     pub filter: Option<String>,
     /// Open / focus the filter widget.
     pub search: bool,
-    /// Show the preview pane (always on in the GPUI shell today;
-    /// flag kept for CLI parity).
+    /// Show the preview pane (`preview_visible` defaults to off; the
+    /// pane also auto-hides under the viewport-width threshold, so
+    /// pair with `--width` ≥ 900 when capturing it).
     pub preview: bool,
     /// Column sort: `(column_name, ascending)` where column is one
     /// of name / size / kind / magic / modified | mtime.
@@ -437,6 +438,7 @@ struct ShellArgs {
     select_row: Option<usize>,
     select_name: Option<String>,
     select_rows: Vec<usize>,
+    preview: bool,
     sort: Option<(String, bool)>,
     rename: bool,
     new_folder: bool,
@@ -467,6 +469,7 @@ impl From<&Args> for ShellArgs {
             select_row: a.select_row,
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
+            preview: a.preview,
             sort: a.sort.clone(),
             rename: a.rename || a.inline_rename,
             new_folder: a.new_folder,
@@ -565,6 +568,23 @@ impl ShellArgs {
                     s.focus_filter_input(window, cx);
                 });
             });
+        }
+        if self.preview {
+            shell.update(cx, |s, cx| {
+                s.preview_visible = true;
+                cx.notify();
+            });
+        }
+        if self.select_row.is_some() || self.select_name.is_some() || !self.select_rows.is_empty()
+        {
+            // Selection flags resolve against the loaded entry list,
+            // but `navigate` streams its enumeration — give the
+            // batches (and the magic/quarantine prefetch they kick
+            // off) a beat to apply before resolving rows by index or
+            // name. The main settle timer only runs AFTER apply().
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(700))
+                .await;
         }
         if let Some(row) = self.select_row {
             shell.update(cx, |s, cx| {

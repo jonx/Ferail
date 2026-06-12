@@ -44,6 +44,13 @@ struct PrefetchRow {
     description: String,
     /// Same-or-newer snapshot of `is_quarantined`.
     is_quarantined: bool,
+    /// Display-ready provenance for quarantined rows (agent,
+    /// ISO download time, newline-joined where-from URLs) — feeds
+    /// `FileEntry::quarantine` so the preview pane can show where a
+    /// marked file came from without re-reading xattrs.
+    quarantine_agent: Option<String>,
+    quarantine_iso: Option<String>,
+    quarantine_where_from: Option<String>,
 }
 
 /// Snapshot used to seed the worker. We can't capture `&FileEntry`
@@ -235,9 +242,9 @@ fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> V
                     full_hash: cached.as_ref().and_then(|r| r.full_hash.clone()),
                     mime: cached.as_ref().and_then(|r| r.mime.clone()),
                     quarantined: Some(quarantined),
-                    quarantine_agent: agent,
-                    quarantine_iso: iso,
-                    quarantine_where_from: where_from,
+                    quarantine_agent: agent.clone(),
+                    quarantine_iso: iso.clone(),
+                    quarantine_where_from: where_from.clone(),
                     indexed_at_unix: now_unix(),
                 };
                 let _ = guard.upsert_file(&rec);
@@ -249,6 +256,9 @@ fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> V
             magic_label,
             description,
             is_quarantined: quarantined,
+            quarantine_agent: agent,
+            quarantine_iso: iso,
+            quarantine_where_from: where_from,
         });
     }
     out
@@ -268,6 +278,20 @@ fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<PrefetchRow>) {
                 e.display_description = row.description;
             }
             e.is_quarantined = row.is_quarantined;
+            // Provenance rides along so the preview pane can show
+            // where a marked file came from without touching xattrs.
+            e.quarantine = if row.is_quarantined {
+                Some(feraille_core::QuarantineDetails {
+                    agent: row.quarantine_agent,
+                    downloaded_iso: row.quarantine_iso,
+                    where_from: row
+                        .quarantine_where_from
+                        .map(|s| s.lines().map(str::to_owned).collect())
+                        .unwrap_or_default(),
+                })
+            } else {
+                None
+            };
         }
     }
 }
