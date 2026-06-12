@@ -326,7 +326,9 @@ impl Shell {
         };
         let favs = self.process.favorites.read(cx);
         for child in children {
-            if !self.show_hidden && child.label.starts_with('.') {
+            // `hidden` resolved at load time with platform semantics
+            // (FileEntry::hidden contract) — pure flag read on render.
+            if !self.show_hidden && child.hidden {
                 continue;
             }
             if let Some(skip) = skip_paths {

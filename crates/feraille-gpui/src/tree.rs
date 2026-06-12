@@ -85,6 +85,11 @@ pub struct TreeChild {
     pub node_id: feraille_core::NodeId,
     pub path: PathBuf,
     pub label: String,
+    /// Platform hidden semantics resolved at load time by
+    /// `feraille_fs_native::entry_is_hidden` (UF_HIDDEN on macOS,
+    /// FILE_ATTRIBUTE_HIDDEN on Windows, dot-prefix everywhere) — same
+    /// contract as `FileEntry::hidden`.
+    pub hidden: bool,
 }
 
 /// Pre-built tree section: a header label + a flat list of rows in

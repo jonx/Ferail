@@ -73,6 +73,14 @@ pub struct FileEntry {
     /// worker reports back; `Some` with empty fields means "we looked,
     /// nothing to show beyond the flag."
     pub quarantine: Option<QuarantineDetails>,
+    /// Platform "hidden" semantics, resolved at enumerate time by the
+    /// filesystem backend — NOT a name heuristic. macOS: dot-prefix OR
+    /// the `UF_HIDDEN` BSD flag (what Finder hides). Windows: dot-prefix
+    /// OR `FILE_ATTRIBUTE_HIDDEN` (covers `$RECYCLE.BIN`, `desktop.ini`,
+    /// etc.). Filter sites must use this flag, never re-derive from the
+    /// name, so the show-hidden toggle behaves like the native file
+    /// manager on every platform.
+    pub hidden: bool,
 }
 
 impl FileEntry {
@@ -215,6 +223,7 @@ mod format_label_tests {
             display_description: String::new(),
             is_quarantined: false,
             quarantine: None,
+            hidden: false,
         }
     }
 

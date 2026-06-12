@@ -137,7 +137,9 @@ impl FileListDelegate {
         self.entries = handle
             .initial
             .into_iter()
-            .filter(|e| show_hidden || !e.name.starts_with('.'))
+            // Platform hidden semantics resolved at enumerate time
+            // (UF_HIDDEN / FILE_ATTRIBUTE_HIDDEN), not a name check.
+            .filter(|e| show_hidden || !e.hidden)
             .filter(|e| {
                 if needle.is_empty() {
                     true

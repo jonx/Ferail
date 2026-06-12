@@ -612,15 +612,23 @@ fn active_state_decoration(pref: ThemePref) -> impl IntoElement {
 // Helpers
 // =============================================================================
 
-/// Count entries in `$HOME` whose name starts with `.`. Synchronous
+/// Count hidden entries in the home folder, using the same platform
+/// semantics as the file list (`entry_is_hidden`: dot-prefix plus
+/// UF_HIDDEN on macOS / FILE_ATTRIBUTE_HIDDEN on Windows). Synchronous
 /// because it runs exactly once per Files-page build; future revisions
 /// can move this onto a background task with live invalidation.
 fn count_home_hidden_items() -> Option<usize> {
-    let home = std::env::var_os("HOME")?;
+    let home = feraille_fs_native::home_dir();
     let n = std::fs::read_dir(home)
         .ok()?
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with('.'))
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            e.metadata()
+                .map(|m| feraille_fs_native::entry_is_hidden(&name, &m))
+                .unwrap_or_else(|_| name.starts_with('.'))
+        })
         .count();
     Some(n)
 }

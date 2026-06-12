@@ -175,6 +175,7 @@ impl NativeFs {
         };
         let display_mtime = humanize_mtime(mtime_unix);
         let display_kind = describe_kind(kind, &name);
+        let hidden = entry_is_hidden(&name, &metadata);
         let id = self.id_for_path(&child_path);
         Some(FileEntry {
             id,
@@ -189,8 +190,39 @@ impl NativeFs {
             display_description: String::new(),
             is_quarantined: false,
             quarantine: None,
+            hidden,
         })
     }
+}
+
+/// Platform "hidden file" semantics for `FileEntry::hidden`, evaluated
+/// once at enumerate time. Finder hides dot-files AND files carrying
+/// the `UF_HIDDEN` BSD flag (e.g. `~/Library`); Explorer hides files
+/// with `FILE_ATTRIBUTE_HIDDEN` (e.g. `$RECYCLE.BIN`, `desktop.ini`).
+/// Dot-prefix is honored on every platform so cross-platform repos
+/// (.git, .config) behave consistently.
+#[cfg(target_os = "macos")]
+pub fn entry_is_hidden(name: &str, metadata: &std::fs::Metadata) -> bool {
+    use std::os::macos::fs::MetadataExt;
+    // From <sys/stat.h>: UF_HIDDEN — "file is hidden in GUI".
+    const UF_HIDDEN: u32 = 0x8000;
+    name.starts_with('.') || (metadata.st_flags() & UF_HIDDEN) != 0
+}
+
+#[cfg(windows)]
+pub fn entry_is_hidden(name: &str, metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    // From winnt.h. SYSTEM-attribute files are deliberately NOT
+    // treated as hidden here — Explorer's "hide protected operating
+    // system files" is a separate, second toggle; v1 mirrors the
+    // primary hidden-files toggle only.
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    name.starts_with('.') || (metadata.file_attributes() & FILE_ATTRIBUTE_HIDDEN) != 0
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+pub fn entry_is_hidden(name: &str, _metadata: &std::fs::Metadata) -> bool {
+    name.starts_with('.')
 }
 
 pub(crate) fn map_io_error(e: &std::io::Error) -> EnumerationError {
@@ -259,6 +291,7 @@ impl FsBackend for NativeFs {
             };
             let display_mtime = humanize_mtime(mtime_unix);
             let display_kind = describe_kind(kind, &name);
+            let hidden = entry_is_hidden(&name, &metadata);
             let id = self.id_for_path(&child_path);
             entries.push(FileEntry {
                 id,
@@ -273,6 +306,7 @@ impl FsBackend for NativeFs {
                 display_description: String::new(),
                 is_quarantined: false,
                 quarantine: None,
+                hidden,
             });
         }
         // Directories first, then case-insensitive name.
@@ -631,6 +665,42 @@ mod tests {
             assert!(!e.name.contains('/'));
             assert!(!e.display_mtime.is_empty());
         }
+    }
+
+    #[test]
+    fn dotfiles_are_hidden_on_every_platform() {
+        let dir = std::env::temp_dir().join(format!("feraille-hidden-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dot = dir.join(".dotfile");
+        let plain = dir.join("plain.txt");
+        std::fs::write(&dot, b"x").unwrap();
+        std::fs::write(&plain, b"x").unwrap();
+        let dot_meta = std::fs::symlink_metadata(&dot).unwrap();
+        let plain_meta = std::fs::symlink_metadata(&plain).unwrap();
+        assert!(entry_is_hidden(".dotfile", &dot_meta));
+        assert!(!entry_is_hidden("plain.txt", &plain_meta));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// UF_HIDDEN must register as hidden even without a dot prefix —
+    /// this is what makes `~/Library` disappear like it does in
+    /// Finder. Sets the flag via chflags(1) on a temp file.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn uf_hidden_flag_is_hidden_on_macos() {
+        let dir = std::env::temp_dir().join(format!("feraille-ufhidden-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let flagged = dir.join("flagged.txt");
+        std::fs::write(&flagged, b"x").unwrap();
+        let status = std::process::Command::new("chflags")
+            .arg("hidden")
+            .arg(&flagged)
+            .status()
+            .expect("chflags available on macOS");
+        assert!(status.success(), "chflags hidden failed");
+        let meta = std::fs::symlink_metadata(&flagged).unwrap();
+        assert!(entry_is_hidden("flagged.txt", &meta));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(target_os = "macos")]

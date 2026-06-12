@@ -2397,6 +2397,10 @@ impl Shell {
                 if !is_dir {
                     continue;
                 }
+                // Same platform hidden contract as run_tree_children_load.
+                let hidden = std::fs::symlink_metadata(&p)
+                    .map(|m| feraille_fs_native::entry_is_hidden(&name, &m))
+                    .unwrap_or_else(|_| name.starts_with('.'));
                 let node_id = self.process.fs.id_for_path(&p);
                 self.process
                     .node_store
@@ -2406,6 +2410,7 @@ impl Shell {
                     node_id,
                     path: p,
                     label: name,
+                    hidden,
                 });
             }
             children.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));

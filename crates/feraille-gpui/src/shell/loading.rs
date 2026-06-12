@@ -46,7 +46,10 @@ fn filter_directory_batch(
 ) -> LoadBatch {
     let entries: Vec<FileEntry> = entries
         .into_iter()
-        .filter(|e| show_hidden || !e.name.starts_with('.'))
+        // `hidden` carries platform semantics (BSD UF_HIDDEN on macOS,
+        // FILE_ATTRIBUTE_HIDDEN on Windows) resolved at enumerate time —
+        // never re-derive from the name here.
+        .filter(|e| show_hidden || !e.hidden)
         .filter(|e| {
             if needle.is_empty() {
                 true
@@ -88,11 +91,19 @@ pub(super) fn run_tree_children_load(fs: Arc<NativeFs>, path: PathBuf) -> Vec<Tr
             if !is_dir {
                 continue;
             }
+            // Platform hidden semantics, same contract as the file
+            // list (FileEntry::hidden). This runs on a worker; the
+            // extra symlink_metadata is fine here and keeps the
+            // render-side filter a pure flag read.
+            let hidden = std::fs::symlink_metadata(&p)
+                .map(|m| feraille_fs_native::entry_is_hidden(&name, &m))
+                .unwrap_or_else(|_| name.starts_with('.'));
             let node_id = fs.id_for_path(&p);
             children.push(TreeChild {
                 node_id,
                 path: p,
                 label: name,
+                hidden,
             });
         }
         children.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
