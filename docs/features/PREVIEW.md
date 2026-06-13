@@ -5,24 +5,33 @@ vision is an async provider system.
 
 ## Status
 
-Partial.
+Partial — two providers live (image/PDF/media via Quick Look, and
+inline text/code), plus the info metadata.
 
 Current pane:
 
 - Toggle with `Cmd+P` / `Ctrl+P`.
 - Shows selected item name, kind, path, size, modified date, and magic label.
-- Reads only already-enumerated/cached data during paint.
+- **Quick Look thumbnail** for images / PDF / video / anything QL can
+  render (`preview.rs`, 512 px, async + LRU-cached). Clicking it opens
+  the viewer window.
+- **Inline text/code preview** for text files (`text_preview.rs`):
+  the first ~128 KB rendered monospaced + wrapped (capped at 500
+  lines). Text-vs-binary is decided in the worker — NUL byte or
+  invalid UTF-8 ⇒ not text ⇒ the thumbnail shows instead. Both
+  providers ride the one `preview::request` selection event; the
+  render picks text when it's text, the thumbnail otherwise.
+- Reads only already-cached provider results during paint; every read
+  is off the UI thread.
 
-## Target
+## Target (remaining)
 
-Preview providers:
-
-- Text and Markdown.
-- Images.
-- PDF / Quick Look.
-- Audio waveform or metadata.
-- Video thumbnail strip.
+- Syntax highlighting for the text preview (today it's plain mono).
+- Audio waveform or metadata; video thumbnail strip (beyond the QL
+  poster).
 - Archives and packages summary.
+- Per-provider cancellation tokens (today a stale result is dropped at
+  apply time, not cancelled mid-read).
 
 Provider rules:
 

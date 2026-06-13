@@ -87,10 +87,12 @@ feature notes in [docs/features/](docs/features/README.md).
 
 ## Preview, Metadata, And Intelligence
 
-- Add real previews: text, image, PDF, Quick Look, audio/video thumbnails,
-  all async and cancellable. (The viewer window now covers big image
-  viewing — docs/features/VIEWER.md; this bullet is the preview *pane*
-  provider system.)
+- Preview-pane provider follow-ups (image/PDF/media via Quick Look and
+  inline text/code both shipped — docs/features/PREVIEW.md): syntax
+  highlighting for the text preview, audio waveform / video thumbnail
+  strip beyond the QL poster, archive/package summaries, and
+  per-provider cancellation tokens (today stale results are dropped at
+  apply, not cancelled mid-read).
 - Viewer follow-ups (docs/features/VIEWER.md): swap the qlmanage
   shell-out for `QLThumbnailGenerator`, pinch-to-zoom gesture mapping,
   live playlist sync via the watcher (skip deleted entries), Windows

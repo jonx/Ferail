@@ -37,6 +37,7 @@ use crate::favorites::Favorites;
 use crate::fs_watcher::FsWatcher;
 use crate::icons::IconCache;
 use crate::preview::PreviewCache;
+use crate::text_preview::TextPreviewCache;
 use crate::shell::{ClosedTab, Shell, UndoOp};
 use crate::tasks::TaskRegistry;
 
@@ -112,6 +113,10 @@ pub struct ProcessState {
     /// previewing the same file should share a fetch.
     pub preview_cache: RefCell<PreviewCache>,
 
+    /// Inline text/code preview cache (docs/features/PREVIEW.md). Text
+    /// files render their content instead of a thumbnail.
+    pub text_preview_cache: RefCell<TextPreviewCache>,
+
     /// Mounted volumes. Refreshed lazily today; `RefCell` so a future
     /// Disk Arbitration listener can refresh it from any window.
     pub volumes: RefCell<Vec<VolumeInfo>>,
@@ -182,6 +187,7 @@ impl ProcessState {
             recents: RefCell::new(Vec::new()),
             recents_section_collapsed: Cell::new(false),
             preview_cache: RefCell::new(PreviewCache::new()),
+            text_preview_cache: RefCell::new(TextPreviewCache::new()),
             volumes: RefCell::new(list_volumes()),
             next_tab_id: Cell::new(0),
             metadata_loaded: Cell::new(false),

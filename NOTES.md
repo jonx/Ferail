@@ -7,6 +7,33 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-13 inline text/code preview in the preview pane (landed)
+
+The pane already showed a Quick Look thumbnail for everything; a QL
+thumbnail of a source file is a useless tiny image, so text files now
+render their actual content.
+
+- **`text_preview.rs`** mirrors `preview.rs` (per-path LRU cache,
+  Pending dedup, results re-enter via `shell.update`) but reads text
+  instead of fetching a thumbnail. Worker reads ≤128 KB, decides
+  text-vs-binary itself (NUL byte or invalid UTF-8 mid-buffer ⇒ not
+  text; a multibyte char split at the read boundary is tolerated), and
+  returns the content capped at 500 lines. No dependency on magic
+  being sniffed — detection is self-contained in the read.
+- **One selection event, two providers.** Folded the text request into
+  `preview::request`, so the existing 3 selection call sites are
+  untouched; the worker sorts text from binary and the render shows
+  inline monospaced text when it's text, the QL thumbnail otherwise.
+- **Render**: a wrapped, vertically-scrolling monospaced block (max
+  280 px) above the metadata. Wrap rather than no-wrap — the pane is
+  narrow and `overflow_y_scroll` can't reveal horizontally-clipped
+  long lines (caught in the first screenshot). Empty files show
+  "(empty file)" rather than a blank box.
+- 5 worker unit tests (utf8 / NUL-reject / invalid-utf8-reject /
+  empty / line-cap). Verified: CLAUDE.md renders its text
+  (`screenshots/text-preview.png`); a PNG still shows the QL thumbnail
+  (NotText path).
+
 # 2026-06-13 command palette: Enter-runs-top-match over the catalogue (landed)
 
 The Cmd+K shortcuts overlay was already a searchable, grouped,

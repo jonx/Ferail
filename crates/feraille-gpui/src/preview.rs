@@ -91,6 +91,11 @@ impl PreviewCache {
 /// through `cx.entity()` — that would trigger the GPUI re-entrancy
 /// guard.
 pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) {
+    // Text/code preview rides the same selection event — the worker
+    // decides text-vs-binary, so the render shows inline text for
+    // source files and the thumbnail for everything else.
+    crate::text_preview::request(shell, path.clone(), cx);
+
     if shell.process.preview_cache.borrow().get(&path).is_some() {
         return;
     }

@@ -36,6 +36,7 @@ pub mod shell;
 pub mod status_bar;
 pub mod task_panel;
 pub mod tasks;
+pub mod text_preview;
 pub mod tree;
 pub mod viewer;
 

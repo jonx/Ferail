@@ -1044,9 +1044,35 @@ impl Shell {
                 // muted placeholder, Failed shows nothing.
                 let thumb_state = self.process.preview_cache.borrow().get(&full_path);
                 let thumb_img = crate::preview::loaded_image(thumb_state.clone());
+                // Text/code files render their content inline instead
+                // of a thumbnail (docs/features/PREVIEW.md).
+                let text_state = self.process.text_preview_cache.borrow().get(&full_path);
+                let text_body = crate::text_preview::loaded_text(text_state);
 
                 let mut col = v_flex().gap_3();
-                if let Some(img) = thumb_img {
+                if let Some(text) = text_body {
+                    col = col.child(
+                        div()
+                            .id("preview-text")
+                            .w_full()
+                            .max_h(px(280.0))
+                            .overflow_y_scroll()
+                            .p_2()
+                            .rounded(cx.theme().radius)
+                            .bg(cx.theme().secondary.opacity(0.5))
+                            .font_family("monospace")
+                            .text_xs()
+                            .text_color(cx.theme().foreground)
+                            // Wrap rather than clip — the pane is narrow
+                            // and `overflow_y_scroll` can't reveal
+                            // horizontally-clipped long lines.
+                            .child(if text.is_empty() {
+                                SharedString::from("(empty file)")
+                            } else {
+                                text
+                            }),
+                    );
+                } else if let Some(img) = thumb_img {
                     // Clicking the thumbnail opens the big viewer
                     // window (docs/features/VIEWER.md) on the current
                     // folder, same as Cmd+Y.
