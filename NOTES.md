@@ -7,6 +7,41 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-13 Recents sidebar section (landed)
+
+A recently-visited-folders section between Favorites and Browse.
+
+- **No new data, no schema change.** Recents is a recency-ordered
+  *view* over the existing `folder_usage` visit log (the Ant Trail
+  already stamps `last_access_unix` on every navigate — we'd just been
+  discarding the timestamp at hydration). `ProcessState.recents` is an
+  in-memory `Vec<PathBuf>` (cap 12, most-recent-first) so the sidebar
+  render never touches SQLite: front-inserted on each navigate
+  alongside `record_ant_visit`, hydrated at startup from
+  `load_recent_folders` (ORDER BY last_access DESC).
+- **Hydration merges, doesn't replace.** The first `--navigate`
+  records a recent *before* the async DB load lands, so an
+  "adopt only if empty" guard silently dropped the hydrated list (the
+  screenshot caught it). Fixed to merge: session-live entries stay at
+  front, DB history fills in behind, deduped + capped.
+- **RecentsSection** mirrors FavoritesSection but simpler — no drag,
+  no availability state, no rename. Click navigates (Cmd-click → new
+  tab); row context menu = Reveal / Remove from Recents / Clear
+  Recents; header context menu = Clear. Hidden entirely when empty
+  (`build_recents_section → None`) so a fresh profile has no empty
+  section. Collapse state persists in app_state (`recents_collapsed`).
+- **Remove/Clear are honest about the coupling.** Recents and the
+  Ant Trail heat tint are the same `folder_usage` signal, so "Remove
+  from Recents" forgets that folder's visit row (`forget_folder_visit`
+  — also clears its heat) and "Clear Recents" wipes the log
+  (`ResetScope::AntTrail` — resets all heat). Documented as
+  intentional; a decoupled store is a TODO if it ever bites.
+- Verified end-to-end via harness: multi-`--navigate` populates the
+  section in the right order (`screenshots/recents-sidebar.png`); a
+  fresh run hydrates from the DB and merges the new visit on top.
+  Context-menu actions open on right-click (no headless synthesis) so
+  Remove/Clear need a hands-on check.
+
 # 2026-06-13 toolbar density: sort dropdown + action overflow (landed)
 
 The discoverable-controls half of the toolbar-density TODO.

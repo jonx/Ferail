@@ -18,8 +18,11 @@ feature notes in [docs/features/](docs/features/README.md).
   removal + Cmd+Option+click new-window modifier, drop-file-onto-
   favorite move/copy (waiting on the file-op workers below), and the
   full acceptance-checklist sweep with screenshots.
-- Add Recents as a first-class sidebar section, fed by Ant Trail or a
-  dedicated recent-open list, with clear/remove actions.
+- Recents follow-ups (sidebar section fed by the Ant Trail visit log,
+  with remove/clear, shipped 2026-06-13): recently-opened *files*
+  (needs a file-open signal — we only log folder visits today), and a
+  dedicated recents store if we ever want it decoupled from the heat
+  map (today Clear/Remove also clears that folder's heat, by design).
 - Persist file-table column order after drag reorder, alongside column
   widths.
 - Trash follow-ups (trash-undo via captured resulting URLs, Empty Trash

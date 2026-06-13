@@ -16,6 +16,7 @@ pub mod assets;
 pub mod disk_usage;
 pub mod favorites;
 pub mod favorites_section;
+pub mod recents_section;
 pub mod file_list;
 pub mod folder_sizes;
 pub mod fs_watcher;

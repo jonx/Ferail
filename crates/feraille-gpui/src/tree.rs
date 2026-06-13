@@ -256,6 +256,7 @@ impl SidebarItem for LabeledMenu {
 pub enum ShellSidebarItem {
     Group(LabeledMenu),
     Favorites(crate::favorites_section::FavoritesSection),
+    Recents(crate::recents_section::RecentsSection),
     Tree(TreeSection),
 }
 
@@ -265,6 +266,9 @@ impl ShellSidebarItem {
     }
     pub fn favorites(f: crate::favorites_section::FavoritesSection) -> Self {
         ShellSidebarItem::Favorites(f)
+    }
+    pub fn recents(r: crate::recents_section::RecentsSection) -> Self {
+        ShellSidebarItem::Recents(r)
     }
     pub fn tree(t: TreeSection) -> Self {
         ShellSidebarItem::Tree(t)
@@ -276,6 +280,7 @@ impl Collapsible for ShellSidebarItem {
         match self {
             ShellSidebarItem::Group(g) => g.is_collapsed(),
             ShellSidebarItem::Favorites(f) => f.is_collapsed(),
+            ShellSidebarItem::Recents(r) => r.is_collapsed(),
             ShellSidebarItem::Tree(t) => t.is_collapsed(),
         }
     }
@@ -283,6 +288,7 @@ impl Collapsible for ShellSidebarItem {
         match self {
             ShellSidebarItem::Group(g) => ShellSidebarItem::Group(g.collapsed(c)),
             ShellSidebarItem::Favorites(f) => ShellSidebarItem::Favorites(f.collapsed(c)),
+            ShellSidebarItem::Recents(r) => ShellSidebarItem::Recents(r.collapsed(c)),
             ShellSidebarItem::Tree(t) => ShellSidebarItem::Tree(t.collapsed(c)),
         }
     }
@@ -298,6 +304,7 @@ impl SidebarItem for ShellSidebarItem {
         match self {
             ShellSidebarItem::Group(g) => g.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Favorites(f) => f.render(id, window, cx).into_any_element(),
+            ShellSidebarItem::Recents(r) => r.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Tree(t) => t.render(id, window, cx).into_any_element(),
         }
     }

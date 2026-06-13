@@ -461,6 +461,27 @@ impl MetadataDb {
         Ok(())
     }
 
+    /// Forget a single folder's visit record. Backs "Remove from
+    /// Recents" — since Recents and the Ant Trail heat tint are the
+    /// same `folder_usage` signal, this also drops that folder's heat
+    /// (documented in docs/features — Recents).
+    pub fn forget_folder_visit(&self, path: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM folder_usage WHERE folder_path = ?1", params![path])?;
+        Ok(())
+    }
+
+    /// Folder paths ordered most-recently-visited first, capped at
+    /// `limit`. Drives the Recents sidebar section's startup hydration.
+    pub fn load_recent_folders(&self, limit: usize) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT folder_path FROM folder_usage \
+             ORDER BY last_access_unix DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| row.get::<_, String>(0))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
     // ---- files ----
 
     /// Look up a cached file row by path. Caller checks

@@ -167,6 +167,25 @@ impl Shell {
         ))
     }
 
+    /// Build the **Recents** section from the in-memory recents cache
+    /// (most-recent-first folders). Returns `None` when empty so the
+    /// section stays hidden until the user has navigated somewhere —
+    /// no clutter for a brand-new profile.
+    fn build_recents_section(&self, weak: WeakEntity<Self>) -> Option<ShellSidebarItem> {
+        let recents = self.process.recents.borrow();
+        if recents.is_empty() {
+            return None;
+        }
+        Some(ShellSidebarItem::recents(
+            crate::recents_section::RecentsSection::new(
+                recents.clone(),
+                self.process.recents_section_collapsed.get(),
+                weak,
+                self.process.icons.clone(),
+            ),
+        ))
+    }
+
     /// Flip the Favorites section's disclosure-triangle and persist
     /// the new state. Called from the section header click handler.
     pub fn toggle_favorites_section_collapsed(&mut self, cx: &mut Context<Self>) {
@@ -181,6 +200,71 @@ impl Shell {
             })
             .detach();
         }
+        cx.notify();
+    }
+
+    /// Flip the Recents section's disclosure triangle and persist the
+    /// (process-wide) collapse flag to app_state. Shared by the header
+    /// click and the `ToggleRecentsSection` action.
+    pub fn toggle_recents_section_collapsed(&mut self, cx: &mut Context<Self>) {
+        let collapsed = !self.process.recents_section_collapsed.get();
+        self.process.recents_section_collapsed.set(collapsed);
+        let mut s = crate::app_state::load();
+        s.recents_collapsed = Some(collapsed);
+        crate::app_state::save(&s);
+        cx.notify();
+    }
+
+    pub fn on_toggle_recents_section(
+        &mut self,
+        _: &ToggleRecentsSection,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_recents_section_collapsed(cx);
+    }
+
+    /// Remove the right-clicked folder from Recents and forget its
+    /// visit record (which also clears its Ant Trail heat — the two
+    /// share the `folder_usage` log).
+    pub fn on_remove_from_recents(
+        &mut self,
+        _: &RemoveFromRecents,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.context_target.take() else {
+            return;
+        };
+        self.process.recents.borrow_mut().retain(|p| p != &path);
+        self.process.ant_visits.borrow_mut().remove(&path);
+        if let Some(db) = self.process.db_snapshot() {
+            let path_str = path.to_string_lossy().into_owned();
+            cx.background_spawn(async move {
+                if let Ok(g) = db.lock() {
+                    let _ = g.forget_folder_visit(&path_str);
+                }
+            })
+            .detach();
+        }
+        cx.notify();
+    }
+
+    /// Clear Recents — forget the entire visit log (also resets the
+    /// Ant Trail heat tints, by design).
+    pub fn on_clear_recents(&mut self, _: &ClearRecents, _: &mut Window, cx: &mut Context<Self>) {
+        self.process.recents.borrow_mut().clear();
+        self.process.ant_visits.borrow_mut().clear();
+        self.process.ant_max.set(0);
+        if let Some(db) = self.process.db_snapshot() {
+            cx.background_spawn(async move {
+                if let Ok(g) = db.lock() {
+                    let _ = g.reset(feraille_meta::ResetScope::AntTrail);
+                }
+            })
+            .detach();
+        }
+        self.refresh_active_tab_heats(cx);
         cx.notify();
     }
 
@@ -1426,6 +1510,7 @@ impl Render for Shell {
         let weak = cx.weak_entity();
         let locations_menu = self.build_locations_menu(weak.clone(), cx);
         let favorites_section = self.build_user_favorites_section(weak.clone(), cx);
+        let recents_section = self.build_recents_section(weak.clone());
         let browse_rows = self.build_browse_rows(cx);
         let volumes_rows = self.build_volumes_rows(cx);
         let has_volumes = !self.process.volumes.borrow().is_empty();
@@ -1450,6 +1535,11 @@ impl Render for Shell {
                     if fav.custom_icon.is_none() && !icons.has_folder_icon(p) {
                         icon_warm.push(p.clone());
                     }
+                }
+            }
+            for p in self.process.recents.borrow().iter() {
+                if !icons.has_folder_icon(p) {
+                    icon_warm.push(p.clone());
                 }
             }
         }
@@ -1481,13 +1571,18 @@ impl Render for Shell {
                 "Locations",
                 locations_menu,
             )))
-            .child(favorites_section)
-            .child(ShellSidebarItem::tree(TreeSection::new(
-                "Browse",
-                browse_rows,
-                weak.clone(),
-                self.process.icons.clone(),
-            )));
+            .child(favorites_section);
+        // Recents sits below Favorites, above Browse — hidden until the
+        // user has navigated somewhere (build_recents_section → None).
+        if let Some(recents_section) = recents_section {
+            sidebar = sidebar.child(recents_section);
+        }
+        sidebar = sidebar.child(ShellSidebarItem::tree(TreeSection::new(
+            "Browse",
+            browse_rows,
+            weak.clone(),
+            self.process.icons.clone(),
+        )));
         if has_volumes {
             sidebar = sidebar.child(ShellSidebarItem::tree(TreeSection::new(
                 "Volumes",
@@ -1613,6 +1708,9 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_sort_by_size))
             .on_action(cx.listener(Self::on_sort_by_kind))
             .on_action(cx.listener(Self::on_sort_by_modified))
+            .on_action(cx.listener(Self::on_toggle_recents_section))
+            .on_action(cx.listener(Self::on_remove_from_recents))
+            .on_action(cx.listener(Self::on_clear_recents))
             .on_action(cx.listener(Self::on_cursor_up))
             .on_action(cx.listener(Self::on_cursor_down))
             .on_action(cx.listener(Self::on_cursor_first))

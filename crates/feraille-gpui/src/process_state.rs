@@ -46,6 +46,11 @@ use crate::tasks::TaskRegistry;
 /// stack is in-memory only, not persisted across launches in v1.
 const CLOSED_TABS_CAP: usize = 16;
 
+/// How many recently-visited folders the Recents sidebar section
+/// keeps. Finder's Recents shows a comparable handful; 12 fills the
+/// section without scrolling the sidebar.
+pub const RECENTS_CAP: usize = 12;
+
 pub struct ProcessState {
     /// Shared filesystem backend. Already `Arc` because background
     /// workers hold their own clones.
@@ -90,6 +95,18 @@ pub struct ProcessState {
 
     /// Cached max for heat normalisation. `Cell` since u32 is Copy.
     pub ant_max: Cell<u32>,
+
+    /// Recently-visited folders, most-recent-first, capped at
+    /// [`RECENTS_CAP`]. A live view over the same `folder_usage` visit
+    /// log the Ant Trail uses (docs/features — Recents): hydrated from
+    /// the DB at startup ordered by last-access, front-inserted on
+    /// every navigate. In-memory so the sidebar render never touches
+    /// SQLite.
+    pub recents: RefCell<Vec<PathBuf>>,
+
+    /// Recents section disclosure state. Persisted in app_state
+    /// (`recents_collapsed`), like the sidebar-collapsed flag.
+    pub recents_section_collapsed: Cell<bool>,
 
     /// Quick Look thumbnail cache. Single instance because two windows
     /// previewing the same file should share a fetch.
@@ -162,6 +179,8 @@ impl ProcessState {
             undo_stack: RefCell::new(VecDeque::new()),
             ant_visits: RefCell::new(HashMap::new()),
             ant_max: Cell::new(0),
+            recents: RefCell::new(Vec::new()),
+            recents_section_collapsed: Cell::new(false),
             preview_cache: RefCell::new(PreviewCache::new()),
             volumes: RefCell::new(list_volumes()),
             next_tab_id: Cell::new(0),
@@ -198,6 +217,15 @@ impl ProcessState {
             self.ant_max.set(v);
         }
         v
+    }
+
+    /// Promote `path` to the front of the Recents list (dedup, cap).
+    /// Called on every navigate alongside `record_ant_visit`.
+    pub fn push_recent(&self, path: PathBuf) {
+        let mut recents = self.recents.borrow_mut();
+        recents.retain(|p| p != &path);
+        recents.insert(0, path);
+        recents.truncate(RECENTS_CAP);
     }
 
     /// Push to the undo stack, evicting the oldest when over cap.

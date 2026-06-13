@@ -373,16 +373,28 @@ fn now_unix_secs() -> i64 {
 /// tint just won't show until the user's done some navigating.
 fn hydrate_ant_trail(
     db: Option<&Arc<Mutex<feraille_meta::MetadataDb>>>,
-) -> (HashMap<PathBuf, u32>, u32) {
+) -> (HashMap<PathBuf, u32>, u32, Vec<PathBuf>) {
     let Some(db) = db else {
-        return (HashMap::new(), 0);
+        return (HashMap::new(), 0, Vec::new());
     };
     let Ok(guard) = db.lock() else {
-        return (HashMap::new(), 0);
+        return (HashMap::new(), 0, Vec::new());
     };
     let Ok(entries) = guard.load_ant_trail() else {
-        return (HashMap::new(), 0);
+        return (HashMap::new(), 0, Vec::new());
     };
+    // Recents = the same visit log ordered by last access (the heat
+    // map ignores time, so derive it separately from the same rows).
+    let mut by_recency: Vec<(PathBuf, i64)> = entries
+        .iter()
+        .map(|e| (PathBuf::from(&e.folder_path), e.last_access_unix))
+        .collect();
+    by_recency.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
+    let recents: Vec<PathBuf> = by_recency
+        .into_iter()
+        .take(crate::process_state::RECENTS_CAP)
+        .map(|(p, _)| p)
+        .collect();
     let mut max: u32 = 0;
     let mut map: HashMap<PathBuf, u32> = HashMap::with_capacity(entries.len());
     for e in entries {
@@ -391,7 +403,7 @@ fn hydrate_ant_trail(
         }
         map.insert(PathBuf::from(e.folder_path), e.hits);
     }
-    (map, max)
+    (map, max, recents)
 }
 
 /// Open the persistent metadata DB at the platform default location
@@ -467,6 +479,12 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Self {
         let persisted = app_state::load();
+        // Recents disclosure state is process-wide; seed it from the
+        // persisted flag once (the first window to construct wins; a
+        // later toggle re-persists).
+        process
+            .recents_section_collapsed
+            .set(persisted.recents_collapsed.unwrap_or(false));
         let start = persisted.last_dir.clone().unwrap_or_else(home_dir);
         let start_id = process.fs.id_for_path(&start);
         // Seed the NodeStore with the start path so the very first
@@ -1706,7 +1724,7 @@ impl Shell {
                 .background_executor()
                 .spawn(async move {
                     let db = open_metadata_db();
-                    let (ant_visits, ant_max) = hydrate_ant_trail(db.as_ref());
+                    let (ant_visits, ant_max, recents) = hydrate_ant_trail(db.as_ref());
                     let favs_collapsed = db
                         .as_ref()
                         .and_then(|d| d.lock().ok().map(|g| g.favorites_section_collapsed()))
@@ -1730,14 +1748,27 @@ impl Shell {
                             fav
                         })
                         .collect();
-                    (db, ant_visits, ant_max, favs_collapsed, favorites)
+                    (db, ant_visits, ant_max, favs_collapsed, favorites, recents)
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                let (db, ant_visits, ant_max, favs_collapsed, favorites) = loaded;
+                let (db, ant_visits, ant_max, favs_collapsed, favorites, recents) = loaded;
                 *this.process.metadata_db.borrow_mut() = db.clone();
                 *this.process.ant_visits.borrow_mut() = ant_visits;
                 this.process.ant_max.set(ant_max);
+                // Merge the DB's recency-ordered list *behind* whatever
+                // this session already navigated to before the async
+                // load landed — the live entries stay most-recent,
+                // historical ones fill in behind, deduped and capped.
+                {
+                    let mut live = this.process.recents.borrow_mut();
+                    for p in recents {
+                        if !live.contains(&p) {
+                            live.push(p);
+                        }
+                    }
+                    live.truncate(crate::process_state::RECENTS_CAP);
+                }
                 this.process.favorites_section_collapsed.set(favs_collapsed);
                 this.favorites_section_collapsed = favs_collapsed;
                 // Attach the writable DB to the favorites entity and
@@ -2612,6 +2643,7 @@ impl Shell {
             return;
         };
         self.process.record_ant_visit(path.clone());
+        self.process.push_recent(path.clone());
         let heat = self.ant_heat(node_id);
         self.process.node_store.borrow_mut().set_heat(node_id, heat);
         if let Some(db) = self.process.db_snapshot() {

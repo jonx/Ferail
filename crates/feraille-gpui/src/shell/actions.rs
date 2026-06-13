@@ -209,5 +209,16 @@ actions!(
         SetFavoriteIconImage,
         SetFavoriteIconMusic,
         SetFavoriteIconArchive,
+        // Recents sidebar section (docs/features — Recents). The
+        // section is a recency view over the Ant Trail visit log.
+        /// Header click — flip the Recents section's disclosure
+        /// triangle; the collapse state persists in app_state.
+        ToggleRecentsSection,
+        /// Row context menu — drop `context_target` from Recents (and
+        /// forget its visit record, which also clears its heat tint).
+        RemoveFromRecents,
+        /// Header/row context menu — forget the whole visit log
+        /// (clears Recents and the Ant Trail heat).
+        ClearRecents,
     ]
 );
