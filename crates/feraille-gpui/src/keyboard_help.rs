@@ -43,6 +43,17 @@ fn action_for_command(id: feraille_core::commands::CommandId) -> Option<Box<dyn 
         "view.zoom_out" => Box::new(ZoomOut),
         "view.zoom_reset" => Box::new(ZoomReset),
         "view.disk_usage" => Box::new(OpenDiskUsage),
+        "view.open_viewer" => Box::new(OpenViewer),
+        "view.sort_name" => Box::new(SortByName),
+        "view.sort_size" => Box::new(SortBySize),
+        "view.sort_kind" => Box::new(SortByKind),
+        "view.sort_modified" => Box::new(SortByModified),
+        "file.copy" => Box::new(CopyFiles),
+        "file.paste" => Box::new(PasteFiles),
+        "file.move_paste" => Box::new(MovePasteFiles),
+        "file.empty_trash" => Box::new(EmptyTrash),
+        "file.reopen_closed_tab" => Box::new(ReopenClosedTab),
+        "window.close_window" => Box::new(CloseWindow),
         "app.settings" => Box::new(OpenSettings),
         "go.back" => Box::new(NavigateBack),
         "go.forward" => Box::new(NavigateForward),
@@ -61,17 +72,12 @@ fn action_for_command(id: feraille_core::commands::CommandId) -> Option<Box<dyn 
     })
 }
 
-pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    let filter = shell.shortcuts_help_filter.as_ref()?.clone();
-    let bg = cx.theme().background;
-    let border = cx.theme().border;
-    let foreground = cx.theme().foreground;
-    let muted = cx.theme().muted_foreground;
-    let accent = cx.theme().secondary;
-    let input = shell.shortcuts_help_input.clone();
-
+/// Commands matching `filter`, grouped by category in display order
+/// (categories in first-encounter order; rows in catalogue order).
+/// Shared by the render and the "top match" the palette runs on Enter
+/// so the highlight and Enter target always agree with what's shown.
+fn filtered_groups(filter: &str) -> Vec<(Category, Vec<&'static CommandSpec>)> {
     let lower = filter.to_lowercase();
-
     let mut groups: Vec<(Category, Vec<&CommandSpec>)> = Vec::new();
     for spec in all_commands() {
         let title_match = spec.title.to_lowercase().contains(&lower);
@@ -88,10 +94,40 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             groups.push((spec.category, vec![spec]));
         }
     }
+    groups
+}
 
-    let body_sections: Vec<Div> = groups
+/// The first dispatchable command in display order — what the palette
+/// runs on Enter and highlights as the default pick.
+pub fn palette_top_command(filter: &str) -> Option<feraille_core::commands::CommandId> {
+    filtered_groups(filter)
         .into_iter()
-        .map(|(cat, list)| section(cat, list, foreground, muted, accent, cx))
+        .flat_map(|(_, list)| list)
+        .find(|spec| action_for_command(spec.id).is_some())
+        .map(|spec| spec.id)
+}
+
+/// The boxed action for the palette's current top match, if any.
+pub fn palette_top_action(filter: &str) -> Option<Box<dyn gpui::Action>> {
+    palette_top_command(filter).and_then(action_for_command)
+}
+
+pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    let filter = shell.shortcuts_help_filter.as_ref()?.clone();
+    let bg = cx.theme().background;
+    let border = cx.theme().border;
+    let foreground = cx.theme().foreground;
+    let muted = cx.theme().muted_foreground;
+    let accent = cx.theme().secondary;
+    let input = shell.shortcuts_help_input.clone();
+
+    // The default pick: highlighted, and run by Enter (see the
+    // shortcuts-help input's PressEnter subscription in shell.rs).
+    let top = palette_top_command(&filter);
+
+    let body_sections: Vec<Div> = filtered_groups(&filter)
+        .into_iter()
+        .map(|(cat, list)| section(cat, list, top, foreground, muted, accent, cx))
         .collect();
 
     let header = v_flex()
@@ -157,9 +193,11 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn section(
     cat: Category,
     specs: Vec<&CommandSpec>,
+    top: Option<feraille_core::commands::CommandId>,
     foreground: gpui::Hsla,
     muted: gpui::Hsla,
     accent: gpui::Hsla,
@@ -178,7 +216,7 @@ fn section(
     };
     let rows: Vec<AnyElement> = specs
         .into_iter()
-        .map(|spec| row(spec, foreground, muted, accent, cx))
+        .map(|spec| row(spec, top == Some(spec.id), foreground, muted, accent, cx))
         .collect();
     v_flex()
         .gap_1()
@@ -194,6 +232,7 @@ fn section(
 
 fn row(
     spec: &CommandSpec,
+    is_top: bool,
     foreground: gpui::Hsla,
     _muted: gpui::Hsla,
     accent: gpui::Hsla,
@@ -217,8 +256,12 @@ fn row(
         .py_1()
         .px_2()
         .gap_2()
-        .rounded(px(4.0))
-        .child(
+        .rounded(px(4.0));
+    // The default pick (run by Enter) sits pre-highlighted.
+    if is_top {
+        row = row.bg(accent);
+    }
+    row = row.child(
             div()
                 .flex_1()
                 .text_sm()

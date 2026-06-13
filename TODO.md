@@ -113,7 +113,12 @@ feature notes in [docs/features/](docs/features/README.md).
 
 - Add the Settings "Saved" feedback pill or toast.
 - Add accent-color customization once the theme token path is ready.
-- Add command palette UI over the command catalogue.
+- Command palette follow-ups (the Cmd+K shortcuts overlay is now a
+  working palette — filter, top match highlighted, Enter runs it,
+  click any; shipped 2026-06-13): arrow-key selection between matches
+  (today Enter runs the top match or you refine the filter), and a
+  distinct "Commands" vs "Keyboard Shortcuts" title/mode if the dual
+  role gets confusing.
 - Add user-overridable key bindings.
 - Ensure every icon-only button has a tooltip with shortcut, every
   truncated string has a tooltip, and menu shortcuts render via `Kbd`.

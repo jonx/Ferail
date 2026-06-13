@@ -7,6 +7,31 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-13 command palette: Enter-runs-top-match over the catalogue (landed)
+
+The Cmd+K shortcuts overlay was already a searchable, grouped,
+click-to-dispatch list — this finishes the palette half.
+
+- **Completed the action map.** `action_for_command` gained the
+  commands this session's features added (sort ×4, Open Viewer,
+  Copy/Paste/Move-Paste, Empty Trash) plus Reopen Tab / Close Window,
+  so they're no longer inert rows.
+- **Enter runs the top match.** Extracted `filtered_groups` so the
+  render, the highlight, and the Enter target all agree on display
+  order; `palette_top_command`/`palette_top_action` return the first
+  dispatchable match. The shortcuts-help input's PressEnter
+  subscription closes the overlay and dispatches it. The top match
+  renders pre-highlighted (same accent as hover) so the Enter target
+  is visible.
+- **Harness fix that made this testable.** `--keys` was applied
+  *before* `--shortcuts-help` opened the overlay, so keystrokes hit
+  nothing — reordered so the overlay opens first, then keys drive it.
+  Verified end-to-end: filter "Show Hidden" + Enter toggles hidden
+  files and closes the palette (`screenshots/command-palette.png`).
+- **Deferred:** arrow-key selection between matches (InputState
+  consumes some keys; Enter-runs-top-match + filter refinement covers
+  the common case without fighting it) and a distinct palette title.
+
 # 2026-06-13 Recents sidebar section (landed)
 
 A recently-visited-folders section between Favorites and Browse.

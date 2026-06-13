@@ -656,6 +656,16 @@ impl ShellArgs {
                 });
             });
         }
+        // Open the shortcuts/command-palette overlay BEFORE `--keys`
+        // so a test can drive it with the keyboard (type is seeded via
+        // the filter flag; Enter runs the top match).
+        if let Some(initial_filter) = self.shortcuts_help.clone() {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    s.open_shortcuts_help(initial_filter, window, cx);
+                });
+            });
+        }
         if let Some(keys) = self.keys.clone() {
             // Let async UI (e.g. the completion menu's provider task)
             // land before dispatching, then send each keystroke
@@ -809,14 +819,6 @@ impl ShellArgs {
         if let Some(text) = self.simulate_toast.clone() {
             let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 window.push_notification(Notification::error(text).autohide(false), cx);
-            });
-        }
-        // Stage 9.b: open keyboard-shortcuts help overlay.
-        if let Some(initial_filter) = self.shortcuts_help.clone() {
-            let _ = cx.update_window((*handle).into(), |_, window, cx| {
-                shell.update(cx, |s, cx| {
-                    s.open_shortcuts_help(initial_filter, window, cx);
-                });
             });
         }
         if self.splitter.is_some() {

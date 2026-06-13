@@ -521,13 +521,30 @@ impl Shell {
             cx.new(|cx| InputState::new(window, cx).placeholder("Search\u{2026}"));
         let shortcuts_help_subscription = cx.subscribe_in(&shortcuts_help_input, window, {
             let shortcuts_help_input = shortcuts_help_input.clone();
-            move |this, _state, ev: &InputEvent, _window, cx| {
-                if matches!(ev, InputEvent::Change)
-                    && this.shortcuts_help_filter.is_some() {
+            move |this, _state, ev: &InputEvent, window, cx| {
+                let Some(filter) = this.shortcuts_help_filter.clone() else {
+                    return;
+                };
+                match ev {
+                    InputEvent::Change => {
                         let v = shortcuts_help_input.read(cx).value().to_string();
                         this.shortcuts_help_filter = Some(v);
                         cx.notify();
                     }
+                    // Enter runs the highlighted top match — turns the
+                    // shortcuts overlay into a keyboard-driven command
+                    // palette (filter, Enter). Arrow-key selection
+                    // between matches is a follow-up.
+                    InputEvent::PressEnter { .. } => {
+                        if let Some(action) =
+                            crate::keyboard_help::palette_top_action(&filter)
+                        {
+                            this.close_shortcuts_help(cx);
+                            window.dispatch_action(action, cx);
+                        }
+                    }
+                    _ => {}
+                }
             }
         });
 
