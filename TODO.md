@@ -38,8 +38,11 @@ feature notes in [docs/features/](docs/features/README.md).
   sidebar tree rows shipped 2026-06-13 — docs/features/FILE_OPS.md):
   drops on tabs, breadcrumb segments, and favorites; auto-scroll and
   auto-expand during drag; Cmd+Option alias-drop.
-- Complete toolbar density: refresh, new folder, sort, group, view mode,
-  action overflow, and discoverable tooltips/shortcuts.
+- Toolbar density follow-ups (refresh, new folder, sort dropdown, and
+  action-overflow menu shipped 2026-06-13): grid/icon view mode (a new
+  file-pane render path — feature-sized, its own iteration) and
+  grouping by kind/date (a new sort/render model). Both deferred from
+  the density pass on purpose.
 - Complete status/task feedback: selected count and size, total visible
   size, free space, active task count, cancel buttons, recent task history,
   and task registration for magic, thumbnails, enumeration, copy/move, and

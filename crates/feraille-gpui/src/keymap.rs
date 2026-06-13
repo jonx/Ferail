@@ -144,6 +144,13 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "view.edit_breadcrumb" => cx.bind_keys([KeyBinding::new(kb_str, EditBreadcrumb, ctx)]),
         "view.toggle_preview" => cx.bind_keys([KeyBinding::new(kb_str, TogglePreview, ctx)]),
         "view.open_viewer" => cx.bind_keys([KeyBinding::new(kb_str, OpenViewer, ctx)]),
+        // Sort commands have no shortcut today; the arms exist so the
+        // catalogue→palette path (and any future binding) recognizes
+        // them instead of falling through to the unknown-id warning.
+        "view.sort_name" => {}
+        "view.sort_size" => {}
+        "view.sort_kind" => {}
+        "view.sort_modified" => {}
         "view.zoom_in" => cx.bind_keys([KeyBinding::new(kb_str, ZoomIn, ctx)]),
         "view.zoom_out" => cx.bind_keys([KeyBinding::new(kb_str, ZoomOut, ctx)]),
         "view.zoom_reset" => cx.bind_keys([KeyBinding::new(kb_str, ZoomReset, ctx)]),

@@ -675,10 +675,24 @@ impl Shell {
     /// status bar now (paired with the item count, where view-mode
     /// state belongs).
     fn title_bar(&self, cx: &mut Context<Self>) -> TitleBar {
+        use crate::file_list::SortColumn;
+        use gpui_component::menu::DropdownMenu;
         use gpui_component::sidebar::SidebarToggleButton;
         let can_back = self.active_tab().history_index > 0;
         let can_forward = self.active_tab().history_index + 1 < self.active_tab().history.len();
         let collapsed = self.sidebar_collapsed;
+        // Active sort drives the sort button's glyph (asc/descending)
+        // and the checkmark in its menu. Read once here — render-time
+        // cache read, no I/O.
+        let current_sort = self.active_tab().table.read(cx).delegate().current_sort;
+        let sort_col = current_sort.map(|(c, _)| c);
+        let sort_asc = current_sort.map(|(_, a)| a).unwrap_or(true);
+        let sort_icon = if sort_asc {
+            "icons/sort-ascending.svg"
+        } else {
+            "icons/sort-descending.svg"
+        };
+        let show_hidden = self.show_hidden;
         TitleBar::new().child(
             h_flex()
                 .w_full()
@@ -767,6 +781,47 @@ impl Shell {
                 // — leaving the button visually pressed forever and
                 // never running the click handler. Matches the pattern
                 // `gpui_component::AppMenuBar` uses for its own buttons.
+                // Sort dropdown — pick the column (re-pick flips
+                // direction); the glyph shows the current direction and
+                // the active column carries a checkmark. Wrapped in a
+                // mouse-down-stopping div for the Win32 title-bar drag
+                // gotcha (the DropdownMenuPopover can't take the
+                // on_mouse_down handler itself).
+                .child(
+                    div()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .child(
+                            Button::new("toolbar-sort")
+                                .small()
+                                .ghost()
+                                .icon(gpui_component::Icon::empty().path(sort_icon))
+                                .tooltip("Sort")
+                                .dropdown_menu(move |menu, _window, _cx| {
+                                    menu.menu_with_check(
+                                        "Name",
+                                        sort_col == Some(SortColumn::Name),
+                                        Box::new(SortByName),
+                                    )
+                                    .menu_with_check(
+                                        "Size",
+                                        sort_col == Some(SortColumn::Size),
+                                        Box::new(SortBySize),
+                                    )
+                                    .menu_with_check(
+                                        "Kind",
+                                        sort_col == Some(SortColumn::Format),
+                                        Box::new(SortByKind),
+                                    )
+                                    .menu_with_check(
+                                        "Date Modified",
+                                        sort_col == Some(SortColumn::Modified),
+                                        Box::new(SortByModified),
+                                    )
+                                }),
+                        ),
+                )
                 .child(
                     Button::new("toolbar-new-folder")
                         .small()
@@ -792,6 +847,37 @@ impl Shell {
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.on_refresh(&Refresh, window, cx);
                         })),
+                )
+                // Overflow menu — the less-frequent view + action verbs
+                // that don't each warrant a toolbar button. Items
+                // dispatch existing actions, so they target the current
+                // selection / folder exactly like their keyboard and
+                // right-click counterparts.
+                .child(
+                    div()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .child(
+                            Button::new("toolbar-overflow")
+                                .small()
+                                .ghost()
+                                .icon(gpui_component::Icon::empty().path("icons/ellipsis.svg"))
+                                .tooltip("More")
+                                .dropdown_menu(move |menu, _window, _cx| {
+                                    menu.menu_with_check(
+                                        "Show Hidden Files",
+                                        show_hidden,
+                                        Box::new(ToggleHidden),
+                                    )
+                                    .separator()
+                                    .menu("Get Info", Box::new(GetInfo))
+                                    .menu("Open Viewer", Box::new(OpenViewer))
+                                    .menu("Disk Usage\u{2026}", Box::new(OpenDiskUsage))
+                                    .separator()
+                                    .menu("Empty Trash\u{2026}", Box::new(EmptyTrash))
+                                }),
+                        ),
                 ),
         )
     }
@@ -1523,6 +1609,10 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_shortcuts_help))
             .on_action(cx.listener(Self::on_open_disk_usage))
             .on_action(cx.listener(Self::on_open_viewer))
+            .on_action(cx.listener(Self::on_sort_by_name))
+            .on_action(cx.listener(Self::on_sort_by_size))
+            .on_action(cx.listener(Self::on_sort_by_kind))
+            .on_action(cx.listener(Self::on_sort_by_modified))
             .on_action(cx.listener(Self::on_cursor_up))
             .on_action(cx.listener(Self::on_cursor_down))
             .on_action(cx.listener(Self::on_cursor_first))

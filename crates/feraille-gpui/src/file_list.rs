@@ -977,6 +977,22 @@ pub fn sort_in_place(entries: &mut [feraille_core::FileEntry], col: SortColumn, 
     });
 }
 
+/// Apply a column sort to the live Table by enum. The toolbar sort
+/// menu calls this directly; [`apply_sort`] is the string-keyed
+/// wrapper for the `--sort` CLI flag.
+pub fn apply_sort_column<C: gpui::AppContext>(
+    table: &gpui::Entity<TableState<FileListDelegate>>,
+    col: SortColumn,
+    ascending: bool,
+    cx: &mut C,
+) {
+    table.update(cx, |state, cx| {
+        sort_in_place(&mut state.delegate_mut().entries, col, ascending);
+        state.delegate_mut().current_sort = Some((col, ascending));
+        state.refresh(cx);
+    });
+}
+
 /// Apply a column sort to the live Table. Used by the
 /// `--sort <col[-desc]>` CLI flag and (eventually) by clicks on
 /// the column header row.
@@ -990,11 +1006,7 @@ pub fn apply_sort<C: gpui::AppContext>(
         crate::log_warn!(90, "unknown sort column: {column_name}");
         return;
     };
-    table.update(cx, |state, cx| {
-        sort_in_place(&mut state.delegate_mut().entries, col, ascending);
-        state.delegate_mut().current_sort = Some((col, ascending));
-        state.refresh(cx);
-    });
+    apply_sort_column(table, col, ascending, cx);
 }
 
 // Compile-time sanity check that FontWeight stays in scope — used

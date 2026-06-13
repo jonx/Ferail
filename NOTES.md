@@ -7,6 +7,38 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-13 toolbar density: sort dropdown + action overflow (landed)
+
+The discoverable-controls half of the toolbar-density TODO.
+
+- **Sort dropdown** (gpui-component's `Button::dropdown_menu`, first
+  use in the app): Name / Size / Kind / Date Modified, the active
+  column checkmarked, the button glyph showing direction
+  (`sort-ascending` / `sort-descending` from the upstream icon pack —
+  the merged FeraAssets serves both packs at `icons/...`). Each item
+  dispatches a real action (`SortByName` etc.), so it's catalogue-
+  and palette-discoverable, not a one-off closure.
+- **`Shell::set_sort_column`**: re-selecting the active column flips
+  direction; first pick of a column uses a Finder-like default
+  (Name/Kind ascending, Size/Modified descending). Pure in-memory
+  re-sort via the new `apply_sort_column` enum helper —
+  `apply_sort` (the `--sort` CLI path) now delegates to it, verified
+  unchanged via `--sort modified-desc`.
+- **Overflow "⋯" menu**: Show Hidden (check), Get Info, Open Viewer,
+  Disk Usage, Empty Trash — all dispatching existing actions, so they
+  hit the current selection/folder exactly like their keyboard /
+  right-click twins.
+- Win32 title-bar drag gotcha: `DropdownMenuPopover` can't take an
+  `on_mouse_down`, so each dropdown trigger is wrapped in a
+  mouse-down-stopping `div`, same trick the sidebar toggle uses.
+- **Deferred on purpose** (narrowed the TODO, didn't claim done):
+  grid/icon view mode is a whole new file-pane render path; grouping
+  is a new sort/render model. Neither is "density" work.
+- Verified: compile/clippy-zero/190 tests/win-cross all green;
+  `screenshots/toolbar-density.png` shows the four right-aligned
+  buttons. Dropdowns open on mouse-click (no headless synthesis), so
+  the menu interactions themselves need a hands-on check.
+
 # 2026-06-13 trash: undo, Empty Trash, per-volume awareness (landed)
 
 The Trash slice of the file-ops arc.

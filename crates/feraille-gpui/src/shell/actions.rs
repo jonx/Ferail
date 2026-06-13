@@ -58,6 +58,14 @@ actions!(
         EditBreadcrumb,
         ShortcutsHelp,
         OpenDiskUsage,
+        /// Toolbar Sort menu (docs/features — toolbar density). Each
+        /// sets the file-table sort column; re-selecting the active
+        /// column flips its direction. Dispatched from the sort
+        /// dropdown and available to the command palette.
+        SortByName,
+        SortBySize,
+        SortByKind,
+        SortByModified,
         CursorUp,
         CursorDown,
         CursorFirst,

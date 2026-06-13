@@ -317,6 +317,33 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::View,
         shortcuts: &[Shortcut::primary_shift(".")],
     },
+    // Toolbar Sort menu. No shortcuts — they live in the sort
+    // dropdown + command palette. Re-selecting the active column
+    // flips direction.
+    CommandSpec {
+        id: CommandId("view.sort_name"),
+        title: "Sort by Name",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("view.sort_size"),
+        title: "Sort by Size",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("view.sort_kind"),
+        title: "Sort by Kind",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("view.sort_modified"),
+        title: "Sort by Date Modified",
+        category: Category::View,
+        shortcuts: &[],
+    },
     CommandSpec {
         id: CommandId("view.cycle_focus"),
         title: "Cycle Focus",

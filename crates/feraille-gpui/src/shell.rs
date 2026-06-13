@@ -1064,6 +1064,44 @@ impl Shell {
         }
     }
 
+    /// Toolbar Sort menu. Each `SortBy*` action picks a column;
+    /// re-selecting the active column flips its direction. First pick
+    /// of a column uses a Finder-like default (Name/Kind ascending,
+    /// Size largest-first, Modified newest-first). Pure in-memory
+    /// re-sort of the already-enumerated rows.
+    fn set_sort_column(&mut self, col: crate::file_list::SortColumn, cx: &mut Context<Self>) {
+        use crate::file_list::SortColumn;
+        let table = self.active_tab().table.clone();
+        let current = table.read(cx).delegate().current_sort;
+        let ascending = match current {
+            Some((c, a)) if c == col => !a,
+            _ => matches!(col, SortColumn::Name | SortColumn::Format),
+        };
+        crate::file_list::apply_sort_column(&table, col, ascending, cx);
+        cx.notify();
+    }
+
+    pub fn on_sort_by_name(&mut self, _: &SortByName, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_sort_column(crate::file_list::SortColumn::Name, cx);
+    }
+
+    pub fn on_sort_by_size(&mut self, _: &SortBySize, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_sort_column(crate::file_list::SortColumn::Size, cx);
+    }
+
+    pub fn on_sort_by_kind(&mut self, _: &SortByKind, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_sort_column(crate::file_list::SortColumn::Format, cx);
+    }
+
+    pub fn on_sort_by_modified(
+        &mut self,
+        _: &SortByModified,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_sort_column(crate::file_list::SortColumn::Modified, cx);
+    }
+
     /// Cmd+Y — open the viewer window (docs/features/VIEWER.md) on a
     /// snapshot of the current tab's visible files (sorted + filtered
     /// order, directories skipped), starting at the lead row. The
