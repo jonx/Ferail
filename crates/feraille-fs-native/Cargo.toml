@@ -25,6 +25,8 @@ windows = { version = "0.58", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# getuid() for the per-volume `.Trashes/<uid>` path (trash_dirs).
+libc = "0.2"
 xattr = "1"
 plist = "1"
 objc2 = "0.5"

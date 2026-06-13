@@ -18,6 +18,10 @@ actions!(
         /// `OpenTerminalAtContext`, which reads `context_target`.
         OpenTerminalHere,
         MoveToTrash,
+        /// Cmd+Shift+Delete — permanently delete the contents of every
+        /// reachable trash, after a counted confirmation dialog. The
+        /// one file operation with no undo (docs/features/FILE_OPS.md).
+        EmptyTrash,
         /// Cmd+C — selection's file URLs onto the general pasteboard
         /// (cross-app: Finder pastes what we copy). FILE_OPS.md.
         CopyFiles,

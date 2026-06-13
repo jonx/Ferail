@@ -830,22 +830,190 @@ impl Shell {
             format!("{count} items")
         };
         let cur = self.active_tab().current_dir.clone();
-        self.spawn_file_op(
-            cur,
-            move || {
-                for path in paths {
-                    feraille_fs_native::move_to_trash(&path).map_err(|e| e.to_string())?;
+        // Bespoke worker (not spawn_file_op): trashItemAtURL reports
+        // each item's resulting location inside the Trash [mac], and
+        // those (original, trashed) pairs are exactly what Cmd+Z
+        // needs to rename things back. Notification moved to
+        // completion — the old one fired before the op ran.
+        let process = self.process.clone();
+        let weak = cx.weak_entity();
+        let win = window.window_handle();
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
+                    for path in &paths {
+                        match feraille_fs_native::move_to_trash(path) {
+                            Ok(Some(trashed)) => pairs.push((path.clone(), trashed)),
+                            Ok(None) => {}
+                            Err(e) => return (pairs, Some(e.to_string())),
+                        }
+                    }
+                    (pairs, None)
+                })
+                .await;
+            let (pairs, error) = result;
+            if let Some(shell) = weak.upgrade() {
+                shell.update(cx, |this, cx| {
+                    if !pairs.is_empty() {
+                        this.push_undo(UndoOp::TrashRestore(pairs.clone()));
+                    }
+                    cx.notify();
+                });
+            }
+            Shell::broadcast_reload_for_process(&process, vec![cur], cx);
+            let _ = win.update(cx, |_, window, cx| match &error {
+                None => window.push_notification(
+                    Notification::info(format!("Moved \u{201C}{}\u{201D} to Trash", name)),
+                    cx,
+                ),
+                Some(e) => window.push_notification(
+                    Notification::error(format!("Move to Trash failed: {e}")),
+                    cx,
+                ),
+            });
+        })
+        .detach();
+    }
+
+    /// Empty every trash this user can reach (`~/.Trash` + mounted
+    /// volumes' `.Trashes/<uid>` [mac]) after an explicit, counted
+    /// confirmation. Permanently destructive — the one file operation
+    /// with no undo, which is why it confirms first.
+    pub(super) fn on_empty_trash(
+        &mut self,
+        _: &EmptyTrash,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::button::ButtonVariants as _;
+        use gpui_component::notification::Notification;
+        let process = self.process.clone();
+        let win = window.window_handle();
+        cx.spawn(async move |_this, cx| {
+            // Count first (background) so the confirmation says what
+            // it's about to destroy.
+            let preview = cx
+                .background_executor()
+                .spawn(async move {
+                    let dirs = feraille_fs_native::trash_dirs();
+                    let mut items = 0usize;
+                    let mut unreadable = false;
+                    for d in &dirs {
+                        match std::fs::read_dir(d) {
+                            Ok(rd) => items += rd.flatten().count(),
+                            // TCC can deny Trash reads (e.g. dev runs
+                            // from a terminal without Files & Folders
+                            // access) — that's "unknown", not "empty".
+                            Err(_) => unreadable = true,
+                        }
+                    }
+                    (dirs, items, unreadable)
+                })
+                .await;
+            let (dirs, items, unreadable) = preview;
+            if items == 0 && !unreadable {
+                let _ = win.update(cx, |_, window, cx| {
+                    window.push_notification(Notification::info("Trash is already empty"), cx);
+                });
+                return;
+            }
+            let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
+            let opened = win.update(cx, |_, window, cx| {
+                let tx = go_tx.clone();
+                window.open_dialog(cx, move |dialog, _window, _cx| {
+                    let tx_go = tx.clone();
+                    let tx_cancel = tx.clone();
+                    let plural = if items == 1 { "item" } else { "items" };
+                    let body = if items > 0 {
+                        format!("Permanently delete {items} {plural}? This can't be undone.")
+                    } else {
+                        // Count unknown (Trash unreadable right now).
+                        "Permanently delete everything in the Trash? This can't be undone."
+                            .to_string()
+                    };
+                    dialog
+                        .title("Empty Trash?")
+                        .child(div().text_sm().child(body))
+                        .child(
+                            h_flex().pt_2().child(
+                                Button::new("empty-trash-go")
+                                    .label("Empty Trash")
+                                    .danger()
+                                    .small()
+                                    .on_click(move |_, window, cx| {
+                                        let _ = tx_go.try_send(true);
+                                        window.close_dialog(cx);
+                                    }),
+                            ),
+                        )
+                        .on_cancel(move |_, _, _| {
+                            let _ = tx_cancel.try_send(false);
+                            true
+                        })
+                });
+            });
+            if opened.is_err() || !matches!(go_rx.recv().await, Ok(true)) {
+                return;
+            }
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut deleted = 0usize;
+                    let mut first_err: Option<String> = None;
+                    for d in &dirs {
+                        let Ok(rd) = std::fs::read_dir(d) else { continue };
+                        for dirent in rd.flatten() {
+                            let p = dirent.path();
+                            let removed = match std::fs::symlink_metadata(&p) {
+                                Ok(m) if m.is_dir() && !m.is_symlink() => {
+                                    std::fs::remove_dir_all(&p)
+                                }
+                                Ok(_) => std::fs::remove_file(&p),
+                                Err(e) => Err(e),
+                            };
+                            match removed {
+                                Ok(()) => deleted += 1,
+                                Err(e) if first_err.is_none() => {
+                                    first_err = Some(format!("{}: {e}", p.display()));
+                                }
+                                Err(_) => {}
+                            }
+                        }
+                    }
+                    (deleted, first_err, dirs)
+                })
+                .await;
+            let (deleted, first_err, dirs) = result;
+            // Trash contents changed under any tab browsing it.
+            Shell::broadcast_reload_for_process(&process, dirs, cx);
+            let _ = win.update(cx, |_, window, cx| {
+                let plural = if deleted == 1 { "item" } else { "items" };
+                match first_err {
+                    None if deleted == 0 && unreadable => window.push_notification(
+                        Notification::error(
+                            "Couldn't read the Trash (permission denied). Grant Feraille \
+                             Files & Folders access and try again.",
+                        ),
+                        cx,
+                    ),
+                    None => window.push_notification(
+                        Notification::success(format!(
+                            "Emptied Trash \u{2014} {deleted} {plural} deleted"
+                        )),
+                        cx,
+                    ),
+                    Some(e) => window.push_notification(
+                        Notification::warning(format!(
+                            "Emptied Trash with errors ({deleted} {plural} deleted): {e}"
+                        )),
+                        cx,
+                    ),
                 }
-                Ok(())
-            },
-            "move-to-trash",
-            window,
-            cx,
-        );
-        window.push_notification(
-            Notification::info(format!("Moved \u{201C}{}\u{201D} to Trash", name)),
-            cx,
-        );
+            });
+        })
+        .detach();
     }
 
     pub fn trigger_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {

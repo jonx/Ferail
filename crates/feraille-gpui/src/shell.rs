@@ -88,6 +88,11 @@ pub enum UndoOp {
     /// the copy replaced nothing — undoing a replace would delete the
     /// sole remaining version.
     RemoveCreated(Vec<PathBuf>),
+    /// Undo a move-to-trash: rename each `(original, trashed)` pair's
+    /// trashed location back to its original. Pairs come from
+    /// `trashItemAtURL`'s resulting URL [mac]; ops whose resulting
+    /// URL wasn't reported (Windows Recycle Bin) don't register.
+    TrashRestore(Vec<(PathBuf, PathBuf)>),
 }
 
 impl UndoOp {
@@ -116,6 +121,18 @@ impl UndoOp {
                 }
                 Ok(())
             }
+            UndoOp::TrashRestore(pairs) => {
+                for (original, trashed) in pairs {
+                    if original.exists() {
+                        return Err(format!(
+                            "{} exists again; not overwriting it",
+                            original.display()
+                        ));
+                    }
+                    std::fs::rename(trashed, original).map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            }
             UndoOp::AddFavorite(_) | UndoOp::RemoveFavorite(_) => {
                 Err("favorite undo handled by Shell".into())
             }
@@ -130,6 +147,7 @@ impl UndoOp {
             UndoOp::RemoveFavorite(_) => "Restored Favorite",
             UndoOp::MoveBack(_) => "Moved items back",
             UndoOp::RemoveCreated(_) => "Removed pasted items",
+            UndoOp::TrashRestore(_) => "Restored from Trash",
         }
     }
 }

@@ -1506,6 +1506,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_terminal_here))
             .on_action(cx.listener(Self::on_reveal_in_finder))
             .on_action(cx.listener(Self::on_move_to_trash))
+            .on_action(cx.listener(Self::on_empty_trash))
             .on_action(cx.listener(Self::on_focus_filter))
             .on_action(cx.listener(Self::on_clear_filter))
             .on_action(cx.listener(Self::on_new_folder))

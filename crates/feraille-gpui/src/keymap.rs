@@ -21,7 +21,8 @@ use gpui::{App, KeyBinding};
 use crate::shell::{
     self, ClearFilter, CloseTab, CloseWindow, CopyFiles, CopyPath, CursorDown, CursorDownExtend,
     CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp, CursorUpExtend,
-    EditBreadcrumb, FocusFilter, GetInfo, GoHome, MovePasteFiles, MoveToTrash, NavigateBack,
+    EditBreadcrumb, EmptyTrash, FocusFilter, GetInfo, GoHome, MovePasteFiles, MoveToTrash,
+    NavigateBack,
     NavigateForward, NavigateParent, NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab,
     OpenSelected, OpenSettings, OpenViewer, PageDown, PageDownExtend, PageUp, PageUpExtend,
     PasteFiles, PrevTab, QuickLook, Refresh, RenameSelected, ReopenClosedTab, RevealInFinder,
@@ -127,6 +128,9 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         }
         "file.new_folder" => cx.bind_keys([KeyBinding::new(kb_str, NewFolder, ctx)]),
         "file.move_to_trash" => cx.bind_keys([KeyBinding::new(kb_str, MoveToTrash, ctx)]),
+        // No catalogue shortcut (the Shortcut DSL lacks Delete);
+        // install_extras binds Finder's cmd-shift-backspace chord.
+        "file.empty_trash" => {}
         "file.copy_path" => cx.bind_keys([KeyBinding::new(kb_str, CopyPath, ctx)]),
         "file.copy" => cx.bind_keys([KeyBinding::new(kb_str, CopyFiles, ctx)]),
         "file.paste" => cx.bind_keys([KeyBinding::new(kb_str, PasteFiles, ctx)]),
@@ -263,6 +267,13 @@ pub(crate) fn install_extras(cx: &mut App) {
         // Look is a macOS-specific affordance; the binding lives
         // here alongside other shell-context extras.
         KeyBinding::new("space", QuickLook, Some(shell::SHELL_CONTEXT)),
+        // Finder's Empty Trash chord [mac]. Backspace = the Mac
+        // Delete key in gpui's DSL.
+        KeyBinding::new(
+            "cmd-shift-backspace",
+            EmptyTrash,
+            Some(shell::SHELL_CONTEXT),
+        ),
         // Favorites toggle on the currently-selected folder
         // (docs/features/FAVORITES.md). Cmd+D mirrors Finder's
         // "Add to Sidebar" muscle memory and avoids the Cmd+T

@@ -7,6 +7,40 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-13 trash: undo, Empty Trash, per-volume awareness (landed)
+
+The Trash slice of the file-ops arc.
+
+- **Trash-undo.** `move_to_trash` now returns the item's resulting
+  location inside the Trash (`trashItemAtURL`'s out-param was being
+  discarded [mac]; Windows `SHFileOperationW` reports nothing →
+  `Ok(None)`, Recycle-Bin restore stays a parity TODO). The handler
+  collects `(original, trashed)` pairs in the worker and registers
+  `UndoOp::TrashRestore` — Cmd+Z renames items back, refusing to
+  overwrite if the original path exists again. The premature "Moved
+  to Trash" toast also moved to completion (it used to fire before
+  the op ran).
+- **Empty Trash** (`file.empty_trash`, Cmd+Shift+Delete — bound as
+  `cmd-shift-backspace` in extras since the Shortcut DSL lacks a
+  Delete key): background count → counted confirmation dialog with a
+  danger button (the one op with no undo, hence the only one that
+  confirms) → background delete → notification + reload of any tab
+  browsing a trash dir.
+- **Per-volume awareness**: `trash_dirs()` = `~/.Trash` + each
+  mounted volume's `.Trashes/<uid>` (libc::getuid, target-gated dep).
+- **TCC honesty**: a terminal-spawned dev build can't read `~/.Trash`
+  (Operation not permitted). First version reported that as "Trash is
+  already empty"; now an unreadable trash keeps the confirmation
+  (count-unknown wording) and a 0-deleted outcome surfaces as a
+  permission error pointing at Files & Folders access. The real fix
+  is the `.app` bundle's stable TCC identity (already in TODO).
+- Verified via harness keystrokes: Cmd+A → Cmd+Backspace → Cmd+Z
+  round-trips files back into the folder; a trash-only run leaves the
+  folder empty (items genuinely in Trash); the confirmation dialog
+  screenshot is `screenshots/empty-trash-dialog.png` (never
+  confirmed — the user's real Trash was not emptied during testing;
+  three tiny fera-trash test files were left in it).
+
 # 2026-06-13 drag-into-app: drop targets feeding the transfer worker (landed)
 
 Same-day follow-on to the file-ops arc; dnd-spec §3.5/§3.6.

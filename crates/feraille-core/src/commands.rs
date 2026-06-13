@@ -246,6 +246,14 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::File,
         shortcuts: &[Shortcut::primary_shift("C")],
     },
+    CommandSpec {
+        id: CommandId("file.empty_trash"),
+        title: "Empty Trash",
+        category: Category::File,
+        // Finder's Cmd+Shift+Delete; the keymap installs the chord
+        // directly (the Shortcut DSL has no Delete key yet).
+        shortcuts: &[],
+    },
     // Clipboard file verbs (docs/features/FILE_OPS.md). Finder
     // semantics: Copy + Paste + Move-Paste; no Cut.
     CommandSpec {

@@ -22,9 +22,13 @@ feature notes in [docs/features/](docs/features/README.md).
   dedicated recent-open list, with clear/remove actions.
 - Persist file-table column order after drag reorder, alongside column
   widths.
-- Finish Trash as a first-class model: restore/original location, empty
-  trash, per-volume trash awareness, confirmations for destructive bulk
-  operations, and undo where possible.
+- Trash follow-ups (trash-undo via captured resulting URLs, Empty Trash
+  with counted confirmation, and per-volume `.Trashes/<uid>` coverage
+  shipped 2026-06-13): general "Put Back" for items trashed in earlier
+  sessions or by Finder (needs Finder's private put-back metadata — may
+  stay session-scoped by design), Windows Recycle Bin restore
+  (`SHFileOperationW` doesn't report the recycled location), and a
+  richer Trash browsing view (original-location column).
 - File-ops follow-ups (docs/features/FILE_OPS.md — Cmd+C/V/Option+V
   with progress, cancel, and collision dialog shipped 2026-06-13):
   per-item collision resolution, Windows pasteboard (CF_HDROP) and

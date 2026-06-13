@@ -361,11 +361,13 @@ pub fn open_with_default(path: &Path) -> std::io::Result<()> {
 /// directory for non-boot volumes.
 ///
 /// macOS: `NSFileManager.trashItemAtURL:resultingItemURL:error:`.
-/// Returns `Ok(())` on success; the resulting URL inside the Trash is
-/// discarded. On failure the file remains in place — the caller should
-/// surface the error (we no longer have a "delete-anyway" fallback).
+/// On success returns the item's new location inside the Trash
+/// (`Some(trashed_path)`) — that's what trash-undo renames back
+/// (docs/features/FILE_OPS.md). On failure the file remains in place —
+/// the caller should surface the error (we no longer have a
+/// "delete-anyway" fallback).
 #[cfg(target_os = "macos")]
-pub fn move_to_trash(path: &Path) -> std::io::Result<()> {
+pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
     use objc2_foundation::{NSFileManager, NSString, NSURL};
 
     let path_str = path.to_str().ok_or_else(|| {
@@ -376,8 +378,11 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<()> {
         let ns_path = NSString::from_str(path_str);
         let url = NSURL::fileURLWithPath(&ns_path);
         let fm = NSFileManager::defaultManager();
-        match fm.trashItemAtURL_resultingItemURL_error(&url, None) {
-            Ok(()) => Ok(()),
+        let mut resulting: Option<objc2::rc::Retained<NSURL>> = None;
+        match fm.trashItemAtURL_resultingItemURL_error(&url, Some(&mut resulting)) {
+            Ok(()) => Ok(resulting
+                .and_then(|u| u.path())
+                .map(|p| PathBuf::from(p.to_string()))),
             Err(err) => Err(std::io::Error::other(format!(
                 "trashItemAtURL({}) failed: {}",
                 path.display(),
@@ -385,6 +390,34 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<()> {
             ))),
         }
     }
+}
+
+/// Trash directories visible to this user: `~/.Trash` plus each
+/// mounted volume's `.Trashes/<uid>` when it exists. Used by Empty
+/// Trash to cover per-volume trashes, not just the boot volume's.
+/// [win-parity: `SHEmptyRecycleBinW` handles this wholesale]
+#[cfg(target_os = "macos")]
+pub fn trash_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let home_trash = paths::home_dir().join(".Trash");
+    if home_trash.is_dir() {
+        dirs.push(home_trash);
+    }
+    let uid = unsafe { libc::getuid() };
+    if let Ok(rd) = std::fs::read_dir("/Volumes") {
+        for dirent in rd.flatten() {
+            let t = dirent.path().join(".Trashes").join(uid.to_string());
+            if t.is_dir() {
+                dirs.push(t);
+            }
+        }
+    }
+    dirs
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn trash_dirs() -> Vec<PathBuf> {
+    Vec::new()
 }
 
 /// Send `path` to the Windows Recycle Bin via `SHFileOperationW`
@@ -397,7 +430,7 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<()> {
 /// | FOF_NOERRORUI | FOF_SILENT`) so the worker doesn't pop a system
 /// dialog. Errors come back through the `SHFileOperationW` return.
 #[cfg(windows)]
-pub fn move_to_trash(path: &Path) -> std::io::Result<()> {
+pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::UI::Shell::{
         SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE,
@@ -417,7 +450,9 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<()> {
 
     let rc = unsafe { SHFileOperationW(&mut op) };
     if rc == 0 && !op.fAnyOperationsAborted.as_bool() {
-        Ok(())
+        // SHFileOperationW doesn't report the recycled location, so
+        // Recycle Bin restore-undo isn't available on Windows yet.
+        Ok(None)
     } else {
         Err(std::io::Error::new(
             std::io::ErrorKind::Other,
@@ -432,7 +467,7 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
-pub fn move_to_trash(path: &Path) -> std::io::Result<()> {
+pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
     // Conservative on non-macOS/Windows — refuse rather than silently delete.
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
