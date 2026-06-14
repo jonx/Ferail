@@ -7,6 +7,30 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-14 preview fixes: no folder preview, smaller no-wrap code (landed)
+
+Follow-up tweaks from using the preview pane.
+
+- **No folder previews.** Selecting a folder was firing the QL
+  thumbnail + text-read providers (qlmanage on a directory is wasted
+  work; the text read just fails) and showing a broken/empty media
+  box. `request_preview_for_row` now skips directories (the 3
+  selection sites route through it), and the render shows folder
+  metadata only — no media box.
+- **Smaller, no-wrap code.** Code blocks render at 11px (via
+  `TextViewStyle::code_block` text_size, which overrides the theme's
+  mono size) and `whitespace_nowrap`; the block scrolls both axes so
+  long lines stay readable instead of folding. Markdown prose still
+  wraps (no-wrap only on code) and headings keep their size.
+- **Highlighting coverage reality.** gpui-component highlights a
+  language only when its `LanguageConfig` carries a non-empty query.
+  In this pinned rev that's ~22 languages (rust, go, js, ts, json,
+  toml, yaml, python, ruby, java, html, css, sql, lua, php, zig,
+  markdown, diff, elixir, scala, make, jsdoc, tsx). **C#, C, C++,
+  Bash, Swift, GraphQL, Proto, CMake ship the grammar but an empty
+  query → they render plain.** A vendored query + `LanguageRegistry::
+  singleton().register(...)` could fill the gaps if needed.
+
 # 2026-06-14 syntax highlighting + formatted markdown in the preview (landed)
 
 Upgraded the inline text preview from plain mono to

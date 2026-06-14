@@ -47,9 +47,7 @@ impl Shell {
         // Preview always follows the lead — keeps the right pane
         // and the table in lockstep regardless of which gesture
         // ran. Same cost as the old single-click behavior.
-        if let Some(p) = self.path_for_row(row_ix, cx) {
-            crate::preview::request(self, p, cx);
-        }
+        self.request_preview_for_row(row_ix, cx);
         // Pre-warm the Open With cache so a follow-up right-click
         // builds its submenu without a synchronous shell query.
         self.warm_open_with_for_row(row_ix, cx);
@@ -70,9 +68,7 @@ impl Shell {
         } else {
             self.replace_select_one(id, cx);
         }
-        if let Some(p) = self.path_for_row(row_ix, cx) {
-            crate::preview::request(self, p, cx);
-        }
+        self.request_preview_for_row(row_ix, cx);
         self.warm_open_with_for_row(row_ix, cx);
         cx.notify();
     }
@@ -572,9 +568,7 @@ impl Shell {
         }
         self.refresh_file_list_selection(cx);
         // Preview pane follows the lead.
-        if let Some(p) = self.path_for_row(clamped, cx) {
-            crate::preview::request(self, p, cx);
-        }
+        self.request_preview_for_row(clamped, cx);
         cx.notify();
     }
 

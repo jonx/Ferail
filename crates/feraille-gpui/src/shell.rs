@@ -813,6 +813,33 @@ impl Shell {
 
     /// Resolve a row to an absolute path on disk. Reuses the same
     /// id_for_path fallback that activate_row uses.
+    /// Kind of the entry at `row_ix` in the active tab (cached read).
+    pub fn entry_kind_at_row(&self, row_ix: usize, cx: &App) -> Option<EntryKind> {
+        self.active_tab()
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .get(row_ix)
+            .map(|e| e.kind)
+    }
+
+    /// Schedule the preview providers for `row_ix` — unless it's a
+    /// folder. Folders have no file preview (qlmanage on a directory
+    /// is wasted work and the text read just fails), so the request is
+    /// skipped and the pane shows folder metadata only.
+    pub(crate) fn request_preview_for_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        if matches!(
+            self.entry_kind_at_row(row_ix, cx),
+            Some(EntryKind::Directory)
+        ) {
+            return;
+        }
+        if let Some(p) = self.path_for_row(row_ix, cx) {
+            crate::preview::request(self, p, cx);
+        }
+    }
+
     pub fn path_for_row(&self, row_ix: usize, cx: &App) -> Option<PathBuf> {
         let entry = self
             .active_tab()

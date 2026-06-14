@@ -1042,12 +1042,23 @@ impl Shell {
                 // was selected; this just reads whatever the cache
                 // has — Loaded shows the bitmap, Pending shows a
                 // muted placeholder, Failed shows nothing.
-                let thumb_state = self.process.preview_cache.borrow().get(&full_path);
+                // Folders have no file preview — show metadata only
+                // (no thumbnail/text box). Files get the media block.
+                let is_dir = matches!(entry.kind, EntryKind::Directory);
+                let thumb_state = if is_dir {
+                    None
+                } else {
+                    self.process.preview_cache.borrow().get(&full_path)
+                };
                 let thumb_img = crate::preview::loaded_image(thumb_state.clone());
                 // Text/code files render their content inline instead
                 // of a thumbnail (docs/features/PREVIEW.md).
-                let text_state = self.process.text_preview_cache.borrow().get(&full_path);
-                let text_body = crate::text_preview::loaded_text(text_state);
+                let text_body = if is_dir {
+                    None
+                } else {
+                    let text_state = self.process.text_preview_cache.borrow().get(&full_path);
+                    crate::text_preview::loaded_text(text_state)
+                };
 
                 let mut col = v_flex().gap_3();
                 if let Some(text) = text_body {
@@ -1056,27 +1067,39 @@ impl Shell {
                     // (the worker already capped this to 500 lines, and
                     // TextView parses off the UI thread). A stable id
                     // means the one cached parse re-runs on file change.
+                    // Scroll both axes: vertical for long files,
+                    // horizontal so no-wrap code lines stay readable
+                    // rather than clipping (user preference).
                     let block = div()
                         .id("preview-text")
                         .w_full()
                         .max_h(px(280.0))
-                        .overflow_y_scroll()
+                        .overflow_scroll()
                         .p_2()
                         .rounded(cx.theme().radius)
-                        .bg(cx.theme().secondary.opacity(0.5));
+                        .bg(cx.theme().secondary.opacity(0.5))
+                        .text_xs();
                     let block = if text.is_empty() {
                         block
                             .font_family("monospace")
-                            .text_xs()
                             .text_color(cx.theme().muted_foreground)
                             .child(SharedString::from("(empty file)"))
                     } else {
                         let md = crate::text_preview::to_markdown_source(&entry.name, &text);
+                        // Smaller mono in code blocks, and don't wrap —
+                        // long lines scroll horizontally in the block
+                        // above instead of folding.
+                        let style = gpui_component::text::TextViewStyle::default().code_block(
+                            gpui::StyleRefinement::default()
+                                .text_size(px(11.0))
+                                .whitespace_nowrap(),
+                        );
                         block.child(
                             gpui_component::text::TextView::markdown(
                                 gpui::ElementId::Name("preview-textview".into()),
                                 SharedString::from(md),
                             )
+                            .style(style)
                             .selectable(true),
                         )
                     };
