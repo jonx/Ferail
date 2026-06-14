@@ -21,7 +21,13 @@ Current pane:
   `.mdx`) render *formatted* (headings, lists, links); every other
   text file is wrapped in a fenced code block tagged with its
   extension and rendered **syntax-highlighted** (tree-sitter, the
-  full `tree-sitter-languages` grammar set). The fence is grown
+  full `tree-sitter-languages` grammar set). gpui-component only
+  highlights a language when its `LanguageConfig` carries a query;
+  several grammars it ships (C#, C, C++, Bash, Swift, CMake) come with
+  an empty query, so `crate::syntax_extra` registers vendored queries
+  (the grammars' own `queries/highlights.scm`, under
+  `src/syntax_queries/`) against the already-compiled grammars — no
+  extra grammar deps. The fence is grown
   longer than any backtick run in the file so content containing
   ``` can't break out. Text-vs-binary is decided in the worker — NUL
   byte or invalid UTF-8 ⇒ not text ⇒ the thumbnail shows instead.

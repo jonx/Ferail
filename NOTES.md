@@ -7,6 +7,31 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-15 syntax highlighting for C#, C, C++, Bash, Swift, CMake (landed)
+
+gpui-component highlights a language only when its `LanguageConfig`
+carries a non-empty query. Several grammars it ships have an empty
+query (C#, C, C++, Bash, Swift, CMake, plus GraphQL/Proto/CMake) — the
+grammar compiles but nothing colors. User hit this with Kotlin
+(actually fine — has a query) then C# (empty query).
+
+- **`crate::syntax_extra`** reuses the `tree_sitter::Language` already
+  in the highlighter registry and registers a vendored query for each
+  gap language — so **no grammar-crate deps and no tree-sitter version
+  coupling** (the grammar is whatever gpui-component built). The
+  queries are each grammar crate's own `queries/highlights.scm`,
+  copied under `src/syntax_queries/` with attribution; capture names
+  outside the registry vocabulary degrade via its `.`-prefix fallback
+  (`type.builtin` → `type`), and a query that fails to compile falls
+  back to plain text (logged, never panics).
+- Run once in `shell::init` (both GUI and screenshot paths).
+- GraphQL/Proto skipped: no bundled highlights query in their crates.
+- Verified each of the six colors a representative file
+  (keywords/types/strings distinct). 198 tests green, clippy zero.
+- **Coverage now**: the ~22 query-shipping languages from gpui-component
+  plus these 6 vendored = ~28 highlighted. Adding more is a one-line
+  `(name, include_str!(...))` entry if a grammar+query exist.
+
 # 2026-06-14 preview fixes: no folder preview, smaller no-wrap code (landed)
 
 Follow-up tweaks from using the preview pane.

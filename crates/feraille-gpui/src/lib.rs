@@ -34,6 +34,7 @@ pub mod screenshot;
 pub mod settings;
 pub mod shell;
 pub mod status_bar;
+pub mod syntax_extra;
 pub mod task_panel;
 pub mod tasks;
 pub mod text_preview;

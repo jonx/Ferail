@@ -188,6 +188,10 @@ pub fn init(cx: &mut App) {
     crate::multi_table::init(cx);
     crate::keymap::install(cx);
     crate::keymap::install_extras(cx);
+    // Add highlight queries for grammars gpui-component ships without
+    // one (C#, C, C++, Bash, Swift, CMake) so the preview pane colors
+    // them. Process-global registry; runs once.
+    crate::syntax_extra::register_extra_languages();
 }
 
 pub struct Shell {
