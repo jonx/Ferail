@@ -1051,27 +1051,36 @@ impl Shell {
 
                 let mut col = v_flex().gap_3();
                 if let Some(text) = text_body {
-                    col = col.child(
-                        div()
-                            .id("preview-text")
-                            .w_full()
-                            .max_h(px(280.0))
-                            .overflow_y_scroll()
-                            .p_2()
-                            .rounded(cx.theme().radius)
-                            .bg(cx.theme().secondary.opacity(0.5))
+                    // Render through gpui-component's TextView:
+                    // markdown files format, source files highlight
+                    // (the worker already capped this to 500 lines, and
+                    // TextView parses off the UI thread). A stable id
+                    // means the one cached parse re-runs on file change.
+                    let block = div()
+                        .id("preview-text")
+                        .w_full()
+                        .max_h(px(280.0))
+                        .overflow_y_scroll()
+                        .p_2()
+                        .rounded(cx.theme().radius)
+                        .bg(cx.theme().secondary.opacity(0.5));
+                    let block = if text.is_empty() {
+                        block
                             .font_family("monospace")
                             .text_xs()
-                            .text_color(cx.theme().foreground)
-                            // Wrap rather than clip — the pane is narrow
-                            // and `overflow_y_scroll` can't reveal
-                            // horizontally-clipped long lines.
-                            .child(if text.is_empty() {
-                                SharedString::from("(empty file)")
-                            } else {
-                                text
-                            }),
-                    );
+                            .text_color(cx.theme().muted_foreground)
+                            .child(SharedString::from("(empty file)"))
+                    } else {
+                        let md = crate::text_preview::to_markdown_source(&entry.name, &text);
+                        block.child(
+                            gpui_component::text::TextView::markdown(
+                                gpui::ElementId::Name("preview-textview".into()),
+                                SharedString::from(md),
+                            )
+                            .selectable(true),
+                        )
+                    };
+                    col = col.child(block);
                 } else if let Some(img) = thumb_img {
                     // Clicking the thumbnail opens the big viewer
                     // window (docs/features/VIEWER.md) on the current

@@ -62,7 +62,11 @@ uuid        = { version = "1", features = ["v4"] }
 # in `gpui_macos` so the headless screenshot CLI in feraille-gpui works.
 gpui = { git = "https://github.com/zed-industries/zed", features = ["test-support"] }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "test-support"] }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "ba44512e0cfe633869714054e8ea1afd133d4a28" }
+# `tree-sitter-languages` pulls in the full tree-sitter grammar set so
+# the preview pane's TextView highlights fenced code blocks (and
+# markdown code) for every language (docs/features/PREVIEW.md). Each
+# grammar is a C-compiled crate — a real but one-time build cost.
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "ba44512e0cfe633869714054e8ea1afd133d4a28", features = ["tree-sitter-languages"] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "ba44512e0cfe633869714054e8ea1afd133d4a28" }
 
 [profile.dev]

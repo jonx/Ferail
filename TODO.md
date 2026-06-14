@@ -87,10 +87,10 @@ feature notes in [docs/features/](docs/features/README.md).
 
 ## Preview, Metadata, And Intelligence
 
-- Preview-pane provider follow-ups (image/PDF/media via Quick Look and
-  inline text/code both shipped — docs/features/PREVIEW.md): syntax
-  highlighting for the text preview, audio waveform / video thumbnail
-  strip beyond the QL poster, archive/package summaries, and
+- Preview-pane provider follow-ups (image/PDF/media via Quick Look,
+  inline text with syntax highlighting + formatted markdown all
+  shipped — docs/features/PREVIEW.md): audio waveform / video
+  thumbnail strip beyond the QL poster, archive/package summaries, and
   per-provider cancellation tokens (today stale results are dropped at
   apply, not cancelled mid-read).
 - Viewer follow-ups (docs/features/VIEWER.md): swap the qlmanage

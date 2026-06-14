@@ -16,17 +16,21 @@ Current pane:
   render (`preview.rs`, 512 px, async + LRU-cached). Clicking it opens
   the viewer window.
 - **Inline text/code preview** for text files (`text_preview.rs`):
-  the first ~128 KB rendered monospaced + wrapped (capped at 500
-  lines). Text-vs-binary is decided in the worker — NUL byte or
-  invalid UTF-8 ⇒ not text ⇒ the thumbnail shows instead. Both
-  providers ride the one `preview::request` selection event; the
-  render picks text when it's text, the thumbnail otherwise.
-- Reads only already-cached provider results during paint; every read
-  is off the UI thread.
+  the first ~128 KB (capped at 500 lines), rendered through
+  gpui-component's `TextView`. Markdown files (`.md`/`.markdown`/
+  `.mdx`) render *formatted* (headings, lists, links); every other
+  text file is wrapped in a fenced code block tagged with its
+  extension and rendered **syntax-highlighted** (tree-sitter, the
+  full `tree-sitter-languages` grammar set). The fence is grown
+  longer than any backtick run in the file so content containing
+  ``` can't break out. Text-vs-binary is decided in the worker — NUL
+  byte or invalid UTF-8 ⇒ not text ⇒ the thumbnail shows instead.
+  Both providers ride the one `preview::request` selection event.
+- Reads only already-cached provider results during paint; the file
+  read is off the UI thread and `TextView` parses off-thread too.
 
 ## Target (remaining)
 
-- Syntax highlighting for the text preview (today it's plain mono).
 - Audio waveform or metadata; video thumbnail strip (beyond the QL
   poster).
 - Archives and packages summary.

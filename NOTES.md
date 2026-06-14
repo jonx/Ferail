@@ -7,6 +7,36 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-14 syntax highlighting + formatted markdown in the preview (landed)
+
+Upgraded the inline text preview from plain mono to
+gpui-component's `TextView` (the user pointed out the library ships a
+highlighted code viewer).
+
+- **Why TextView over CodeEditor:** `text::TextView` is a stateless
+  `IntoElement` that parses *off the UI thread* (`background_spawn`)
+  and caches the result keyed by element id — so a stable id means
+  one cached parse that re-runs only when the selected file's content
+  changes (`set_text` short-circuits on equal content). The
+  `CodeEditor` (InputState) path is a full editor entity — wrong shape
+  for a read-only pane.
+- **One helper, `to_markdown_source`:** `.md`/`.markdown`/`.mdx` pass
+  through (TextView renders them *formatted* — headings, lists,
+  links); every other text file is wrapped in a fenced code block
+  tagged with its extension. The highlighter accepts extensions as
+  language aliases (`rs`/`py`/`ts`/…), so no big mapping table. The
+  fence is grown one longer than the longest backtick run in the file
+  so a file containing ``` can't break out (unit-tested).
+- **Grammars:** enabled the full `tree-sitter-languages` feature on
+  the gpui-component dep (user chose "everything ~35" over a curated
+  subset). Each grammar is a C-compiled crate — a real one-time build
+  cost, sanctioned.
+- Verified: Cargo.toml renders TOML-highlighted (section/keys/strings
+  in distinct colors), CLAUDE.md renders as formatted markdown
+  (`screenshots/preview-highlight-toml.png`, `preview-markdown.png`).
+  The worker's read/detect/cache from yesterday is unchanged; only the
+  render swapped. 198 workspace tests green, clippy zero.
+
 # 2026-06-13 inline text/code preview in the preview pane (landed)
 
 The pane already showed a Quick Look thumbnail for everything; a QL

@@ -173,6 +173,59 @@ pub fn loaded_text(state: Option<TextPreviewState>) -> Option<SharedString> {
     }
 }
 
+/// Turn a file's name + text into a markdown source string for
+/// `gpui_component::text::markdown` (docs/features/PREVIEW.md):
+///
+/// - Markdown files (`.md` / `.markdown` / `.mdx`) pass through so the
+///   TextView renders them formatted.
+/// - Everything else is wrapped in a fenced code block tagged with the
+///   file extension (the highlighter accepts extensions as language
+///   aliases — `rs`, `py`, `ts`, …), so source files render
+///   syntax-highlighted and unknown kinds fall back to plain mono.
+///
+/// The fence is made longer than any backtick run in the content so a
+/// file that itself contains ``` can't break out of the block.
+pub fn to_markdown_source(name: &str, text: &str) -> String {
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(ext.as_str(), "md" | "markdown" | "mdx") {
+        return text.to_string();
+    }
+    // A handful of well-known extensionless names map to a language;
+    // everything else fences with the bare extension (empty for none).
+    let lang = if ext.is_empty() {
+        match name.to_ascii_lowercase().as_str() {
+            "makefile" => "make",
+            "cmakelists.txt" => "cmake",
+            _ => "",
+        }
+        .to_string()
+    } else {
+        ext
+    };
+    let longest = longest_backtick_run(text);
+    let fence = "`".repeat(longest.max(2) + 1);
+    format!("{fence}{lang}\n{text}\n{fence}")
+}
+
+/// Longest consecutive run of backtick characters anywhere in `text`.
+fn longest_backtick_run(text: &str) -> usize {
+    let mut longest = 0usize;
+    let mut run = 0usize;
+    for c in text.chars() {
+        if c == '`' {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    longest
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +268,30 @@ mod tests {
         std::fs::write(&p, "").unwrap();
         assert_eq!(read_text_preview(&p).unwrap(), Some(String::new()));
         let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn markdown_passes_through() {
+        assert_eq!(to_markdown_source("readme.md", "# Hi\ntext"), "# Hi\ntext");
+        assert_eq!(to_markdown_source("a.MARKDOWN", "x"), "x");
+    }
+
+    #[test]
+    fn source_is_fenced_with_extension() {
+        let out = to_markdown_source("main.rs", "fn main() {}");
+        assert_eq!(out, "```rs\nfn main() {}\n```");
+        // Extensionless well-known name.
+        assert!(to_markdown_source("Makefile", "all:").starts_with("```make\n"));
+        // Unknown extension still fences (plain, no highlight).
+        assert!(to_markdown_source("notes.xyz", "hi").starts_with("```xyz\n"));
+    }
+
+    #[test]
+    fn fence_outgrows_inner_backticks() {
+        // Content containing a ``` run must get a 4-backtick fence.
+        let out = to_markdown_source("x.md_not", "a\n```\nb");
+        assert!(out.starts_with("````"));
+        assert!(out.ends_with("````"));
     }
 
     #[test]
