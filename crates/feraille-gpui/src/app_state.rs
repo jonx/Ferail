@@ -35,6 +35,34 @@ pub struct AppState {
     /// Recents sidebar section disclosure state. None == never set
     /// (defaults to expanded).
     pub recents_collapsed: Option<bool>,
+
+    // ---- Search (docs/features/SEARCH.md) ----
+    /// Global-search engine preference: "auto" (Spotlight when
+    /// available, else the built-in walker), "spotlight", or "walker".
+    /// `None` == auto.
+    pub search_engine: Option<String>,
+    /// Match the relative path, not just the file name.
+    pub search_match_path: Option<bool>,
+    /// Include hidden / dot files in search results.
+    pub search_include_hidden: Option<bool>,
+
+    // ---- Duplicate finder (docs/features/DUPLICATES.md) ----
+    /// How duplicate results are presented: "grouped" (grouped rows in
+    /// a results tab) or "panel" (dedicated grouped panel). `None` ==
+    /// grouped.
+    pub dupe_presentation: Option<String>,
+    /// Ignore files smaller than this many MB (0 = compare every
+    /// non-empty file). Clamped at load to [0, 4096].
+    pub dupe_min_size_mb: Option<u64>,
+    /// Skip undownloaded iCloud placeholders (don't trigger a download
+    /// to hash). Defaults true.
+    pub dupe_skip_cloud: Option<bool>,
+    /// Descend into macOS packages (`*.app`, `*.bundle`) and compare
+    /// their inner files. Defaults false (packages opaque).
+    pub dupe_include_packages: Option<bool>,
+    /// Byte-for-byte verify each full-hash group (removes any
+    /// hash-collision doubt at the cost of re-reading). Defaults false.
+    pub dupe_paranoid: Option<bool>,
 }
 
 #[cfg(target_os = "macos")]
@@ -120,6 +148,36 @@ pub fn load() -> AppState {
             "recents_collapsed" => {
                 out.recents_collapsed = parse_bool(val);
             }
+            "search_engine" => {
+                let v = val.trim().to_lowercase();
+                if matches!(v.as_str(), "auto" | "spotlight" | "walker") {
+                    out.search_engine = Some(v);
+                }
+            }
+            "search_match_path" => {
+                out.search_match_path = parse_bool(val);
+            }
+            "search_include_hidden" => {
+                out.search_include_hidden = parse_bool(val);
+            }
+            "dupe_presentation" => {
+                let v = val.trim().to_lowercase();
+                if matches!(v.as_str(), "grouped" | "panel") {
+                    out.dupe_presentation = Some(v);
+                }
+            }
+            "dupe_min_size_mb" => {
+                out.dupe_min_size_mb = val.trim().parse::<u64>().ok().map(|n| n.min(4096));
+            }
+            "dupe_skip_cloud" => {
+                out.dupe_skip_cloud = parse_bool(val);
+            }
+            "dupe_include_packages" => {
+                out.dupe_include_packages = parse_bool(val);
+            }
+            "dupe_paranoid" => {
+                out.dupe_paranoid = parse_bool(val);
+            }
             _ => {}
         }
     }
@@ -158,6 +216,30 @@ pub fn save(state: &AppState) {
     }
     if let Some(b) = state.recents_collapsed {
         s.push_str(&format!("recents_collapsed={b}\n"));
+    }
+    if let Some(e) = &state.search_engine {
+        s.push_str(&format!("search_engine={e}\n"));
+    }
+    if let Some(b) = state.search_match_path {
+        s.push_str(&format!("search_match_path={b}\n"));
+    }
+    if let Some(b) = state.search_include_hidden {
+        s.push_str(&format!("search_include_hidden={b}\n"));
+    }
+    if let Some(p) = &state.dupe_presentation {
+        s.push_str(&format!("dupe_presentation={p}\n"));
+    }
+    if let Some(n) = state.dupe_min_size_mb {
+        s.push_str(&format!("dupe_min_size_mb={n}\n"));
+    }
+    if let Some(b) = state.dupe_skip_cloud {
+        s.push_str(&format!("dupe_skip_cloud={b}\n"));
+    }
+    if let Some(b) = state.dupe_include_packages {
+        s.push_str(&format!("dupe_include_packages={b}\n"));
+    }
+    if let Some(b) = state.dupe_paranoid {
+        s.push_str(&format!("dupe_paranoid={b}\n"));
     }
     let _ = std::fs::write(dir.join(FILENAME), s);
 }

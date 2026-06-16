@@ -35,6 +35,7 @@ use crate::app_state::{self, AppState};
 pub enum SettingsCategory {
     Appearance,
     Files,
+    SearchDupes,
     Layout,
     Shortcuts,
     About,
@@ -44,6 +45,7 @@ impl SettingsCategory {
     pub const ALL: &'static [SettingsCategory] = &[
         SettingsCategory::Appearance,
         SettingsCategory::Files,
+        SettingsCategory::SearchDupes,
         SettingsCategory::Layout,
         SettingsCategory::Shortcuts,
         SettingsCategory::About,
@@ -53,6 +55,7 @@ impl SettingsCategory {
         match self {
             SettingsCategory::Appearance => "Appearance",
             SettingsCategory::Files => "Files",
+            SettingsCategory::SearchDupes => "Search & Duplicates",
             SettingsCategory::Layout => "Layout",
             SettingsCategory::Shortcuts => "Keyboard Shortcuts",
             SettingsCategory::About => "About",
@@ -63,9 +66,10 @@ impl SettingsCategory {
         match self {
             SettingsCategory::Appearance => 0,
             SettingsCategory::Files => 1,
-            SettingsCategory::Layout => 2,
-            SettingsCategory::Shortcuts => 3,
-            SettingsCategory::About => 4,
+            SettingsCategory::SearchDupes => 2,
+            SettingsCategory::Layout => 3,
+            SettingsCategory::Shortcuts => 4,
+            SettingsCategory::About => 5,
         }
     }
 }
@@ -73,6 +77,7 @@ impl SettingsCategory {
 pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {
     match arg.unwrap_or("appearance") {
         "files" => SettingsCategory::Files,
+        "search" | "duplicates" | "dupes" => SettingsCategory::SearchDupes,
         "layout" => SettingsCategory::Layout,
         "shortcuts" | "keyboard" | "keys" => SettingsCategory::Shortcuts,
         "about" => SettingsCategory::About,
@@ -155,6 +160,46 @@ fn persist_ui_scale(value: f32) {
     });
 }
 
+fn persist_search_engine(value: &str) {
+    let existing = app_state::load();
+    app_state::save(&AppState { search_engine: Some(value.to_string()), ..existing });
+}
+
+fn persist_search_match_path(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState { search_match_path: Some(value), ..existing });
+}
+
+fn persist_search_include_hidden(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState { search_include_hidden: Some(value), ..existing });
+}
+
+fn persist_dupe_presentation(value: &str) {
+    let existing = app_state::load();
+    app_state::save(&AppState { dupe_presentation: Some(value.to_string()), ..existing });
+}
+
+fn persist_dupe_min_size_mb(value: u64) {
+    let existing = app_state::load();
+    app_state::save(&AppState { dupe_min_size_mb: Some(value.min(4096)), ..existing });
+}
+
+fn persist_dupe_skip_cloud(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState { dupe_skip_cloud: Some(value), ..existing });
+}
+
+fn persist_dupe_include_packages(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState { dupe_include_packages: Some(value), ..existing });
+}
+
+fn persist_dupe_paranoid(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState { dupe_paranoid: Some(value), ..existing });
+}
+
 // =============================================================================
 // SettingsView entity — external API
 // =============================================================================
@@ -218,10 +263,163 @@ fn build_pages(home_hidden_count: Option<usize>) -> Vec<SettingPage> {
     vec![
         appearance_page(),
         files_page(home_hidden_count),
+        search_dupes_page(),
         layout_page(),
         shortcuts_page(),
         about_page(),
     ]
+}
+
+fn search_dupes_page() -> SettingPage {
+    SettingPage::new("Search & Duplicates")
+        .icon(Icon::empty().path("icons/search.svg"))
+        // ---- Search engine ----
+        .group(
+            SettingGroup::new().title("Search").item(
+                SettingItem::new(
+                    "Search engine",
+                    SettingField::dropdown(
+                        vec![
+                            ("auto".into(), "Automatic (recommended)".into()),
+                            ("spotlight".into(), "Spotlight".into()),
+                            ("walker".into(), "Built-in walker".into()),
+                        ],
+                        |_cx: &App| {
+                            SharedString::from(
+                                app_state::load().search_engine.unwrap_or_else(|| "auto".into()),
+                            )
+                        },
+                        |val: SharedString, _cx: &mut App| persist_search_engine(&val),
+                    )
+                    .default_value("auto"),
+                )
+                .description(
+                    "Automatic uses Spotlight's live index when available \u{2014} instant, \
+                     content-aware, near-zero CPU \u{2014} and falls back to the built-in \
+                     recursive walker where Spotlight is disabled or blind (some external / \
+                     network volumes). Force one if you prefer.",
+                ),
+            )
+            .item(
+                SettingItem::new(
+                    "Match full path",
+                    SettingField::switch(
+                        |_cx: &App| app_state::load().search_match_path.unwrap_or(false),
+                        |val: bool, _cx: &mut App| persist_search_match_path(val),
+                    )
+                    .default_value(false),
+                )
+                .description("Match the relative path, not just the file name."),
+            )
+            .item(
+                SettingItem::new(
+                    "Include hidden files",
+                    SettingField::switch(
+                        |_cx: &App| {
+                            let s = app_state::load();
+                            s.search_include_hidden.or(s.show_hidden).unwrap_or(false)
+                        },
+                        |val: bool, _cx: &mut App| persist_search_include_hidden(val),
+                    )
+                    .default_value(false),
+                )
+                .description("Search dot-files and otherwise-hidden items too."),
+            ),
+        )
+        // ---- Duplicate finder ----
+        .group(
+            SettingGroup::new()
+                .title("Duplicate finder")
+                .item(
+                    SettingItem::new(
+                        "Results view",
+                        SettingField::dropdown(
+                            vec![
+                                ("grouped".into(), "Grouped rows in a tab".into()),
+                                ("panel".into(), "Dedicated panel".into()),
+                            ],
+                            |_cx: &App| {
+                                SharedString::from(
+                                    app_state::load()
+                                        .dupe_presentation
+                                        .unwrap_or_else(|| "grouped".into()),
+                                )
+                            },
+                            |val: SharedString, _cx: &mut App| persist_dupe_presentation(&val),
+                        )
+                        .default_value("grouped"),
+                    )
+                    .description(
+                        "How duplicate groups are shown. Grouped rows reuse the file list \
+                         (selection, sort, preview, context menu); the dedicated panel offers \
+                         group-level actions like keep-newest.",
+                    ),
+                )
+                .item(
+                    SettingItem::new(
+                        "Ignore small files",
+                        SettingField::dropdown(
+                            vec![
+                                ("0".into(), "Compare all files".into()),
+                                ("1".into(), "Skip under 1 MB".into()),
+                                ("10".into(), "Skip under 10 MB".into()),
+                                ("100".into(), "Skip under 100 MB".into()),
+                            ],
+                            |_cx: &App| {
+                                SharedString::from(
+                                    app_state::load().dupe_min_size_mb.unwrap_or(0).to_string(),
+                                )
+                            },
+                            |val: SharedString, _cx: &mut App| {
+                                persist_dupe_min_size_mb(val.parse().unwrap_or(0));
+                            },
+                        )
+                        .default_value("0"),
+                    )
+                    .description("Skip files below this size \u{2014} the big wins are large files."),
+                )
+                .item(
+                    SettingItem::new(
+                        "Skip cloud placeholders",
+                        SettingField::switch(
+                            |_cx: &App| app_state::load().dupe_skip_cloud.unwrap_or(true),
+                            |val: bool, _cx: &mut App| persist_dupe_skip_cloud(val),
+                        )
+                        .default_value(true),
+                    )
+                    .description(
+                        "Don't download undownloaded iCloud files just to hash them.",
+                    ),
+                )
+                .item(
+                    SettingItem::new(
+                        "Compare inside app bundles",
+                        SettingField::switch(
+                            |_cx: &App| app_state::load().dupe_include_packages.unwrap_or(false),
+                            |val: bool, _cx: &mut App| persist_dupe_include_packages(val),
+                        )
+                        .default_value(false),
+                    )
+                    .description(
+                        "Descend into .app / .bundle packages and compare their inner files. \
+                         Off keeps packages opaque.",
+                    ),
+                )
+                .item(
+                    SettingItem::new(
+                        "Byte-for-byte verify",
+                        SettingField::switch(
+                            |_cx: &App| app_state::load().dupe_paranoid.unwrap_or(false),
+                            |val: bool, _cx: &mut App| persist_dupe_paranoid(val),
+                        )
+                        .default_value(false),
+                    )
+                    .description(
+                        "Confirm each match byte-for-byte after hashing. Removes any \
+                         hash-collision doubt at the cost of re-reading confirmed groups.",
+                    ),
+                ),
+        )
 }
 
 fn appearance_page() -> SettingPage {
