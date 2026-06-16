@@ -17,15 +17,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use feraille_core::commands::TagColor;
 use feraille_core::entry_info::{
     Attr, EntryInfo, InfoSection, InfoTarget, InfoValue, PermBits, PermMatrix, SizeValue,
 };
-use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    button::Button, checkbox::Checkbox, dialog::Dialog, h_flex, v_flex, ActiveTheme, Sizable,
-    WindowExt as _,
+    button::Button, checkbox::Checkbox, h_flex, v_flex, ActiveTheme, Sizable, WindowExt as _,
 };
 
 use crate::file_list::tag_color_rgba;

@@ -709,11 +709,13 @@ impl Shell {
                             return;
                         };
                         if this.tabs.len() <= 1 {
+                            this.dismiss_tab_work(&this.tabs[target_idx]);
                             this.process
                                 .push_closed_tab(this.tabs[target_idx].snapshot_for_close());
                             window.remove_window();
                             return;
                         }
+                        this.dismiss_tab_work(&this.tabs[target_idx]);
                         this.process
                             .push_closed_tab(this.tabs[target_idx].snapshot_for_close());
                         this.tabs.remove(target_idx);
@@ -1083,20 +1085,6 @@ impl Shell {
                 let full_path = selected_path
                     .clone()
                     .unwrap_or_else(|| self.resolve_preview_path(&entry, cx));
-                let path_str = full_path.to_string_lossy().into_owned();
-                let format_label_text = {
-                    let (label, _) = entry.format_label();
-                    if label.is_empty() {
-                        match entry.kind {
-                            EntryKind::Directory => "Folder".to_string(),
-                            EntryKind::File => "File".to_string(),
-                            EntryKind::Symlink => "Symlink".to_string(),
-                        }
-                    } else {
-                        label
-                    }
-                };
-                let path_display = middle_truncate_path(&path_str, 44);
 
                 // Quick Look thumbnail (Stage 8 native preview).
                 // `preview::request` was kicked off when the row
@@ -1203,10 +1191,9 @@ impl Shell {
                 }
 
                 // Filename header — truncated, with a tooltip that
-                // carries the full name. The format label that used
-                // to sit here as a subtitle has moved into the
-                // DescriptionList below as the "Format" row, so the
-                // same string isn't shown twice.
+                // carries the full name. The dense Format/Size/Modified/
+                // Where rows that used to sit below now live in the Get
+                // Info popup (Cmd+I); the preview keeps media + name.
                 let name_for_tooltip = entry.name.clone();
                 col = col.child(
                     div()
@@ -1222,39 +1209,18 @@ impl Shell {
                         }),
                 );
 
-                // DescriptionList: dense key/value rows. Path uses
-                // a middle-truncated value + tooltip with the full
-                // path. The library handles label-column sizing.
-                let path_for_tooltip = path_str.clone();
-                let path_value: AnyElement = div()
-                    .id(("preview-path", entry.id.as_raw() as usize))
-                    .truncate()
-                    .child(SharedString::from(path_display))
-                    .tooltip(move |window, cx| {
-                        Tooltip::new(SharedString::from(path_for_tooltip.clone())).build(window, cx)
-                    })
-                    .into_any_element();
-
-                // `vertical()` is a constructor — label above value
-                // per row. `columns(1)` keeps it as a single column
-                // in narrow preview panes where multi-column would
-                // squeeze values to nothing.
-                let list = DescriptionList::vertical()
-                    .small()
-                    .columns(1)
-                    .child(
-                        DescriptionItem::new("Format").value(SharedString::from(format_label_text)),
-                    )
-                    .child(
-                        DescriptionItem::new("Size")
-                            .value(SharedString::from(entry.display_size.clone())),
-                    )
-                    .child(
-                        DescriptionItem::new("Modified")
-                            .value(SharedString::from(entry.display_mtime.clone())),
-                    )
-                    .child(DescriptionItem::new("Where").value(path_value));
-                col = col.child(list);
+                // A compact entry into the full Get Info inspector — the
+                // detail rows moved there, so keep them one click away.
+                col = col.child(
+                    Button::new("preview-get-info")
+                        .label("Get Info")
+                        .xsmall()
+                        .outline()
+                        .tooltip_with_action("Get Info", &GetInfo, Some(SHELL_CONTEXT))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_get_info(&GetInfo, window, cx);
+                        })),
+                );
 
                 // Quarantine surface — the red mark line, the
                 // provenance the prefetch worker read off the xattr /

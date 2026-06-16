@@ -15,9 +15,9 @@ use feraille_gpui::{
     screenshot,
     settings::{SettingsView, category_from_arg},
     shell::{
-        CloseTab, CloseWindow, CopyPath, FocusFilter, GoHome, MoveToTrash, NavigateBack,
-        NavigateForward, NavigateParent, NewFolder, NewTab, OpenSelected, OpenSettings, Refresh,
-        RenameSelected, RevealInFinder, Shell, ToggleHidden,
+        CloseTab, CloseWindow, CopyPath, FindDuplicates, FocusFilter, GoHome, MoveToTrash,
+        NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab, OpenDiskUsage,
+        OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell, ToggleHidden,
     },
 };
 use gpui::*;
@@ -649,6 +649,8 @@ fn install_app_menus(cx: &mut App) {
             name: "View".into(),
             items: vec![
                 MenuItem::action(title("view.search", "Find"), FocusFilter),
+                MenuItem::action(title("view.find_duplicates", "Find Duplicates"), FindDuplicates),
+                MenuItem::action(title("view.disk_usage", "Disk Usage"), OpenDiskUsage),
                 MenuItem::separator(),
                 MenuItem::action(
                     title("view.toggle_hidden", "Show Hidden Files"),

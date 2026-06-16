@@ -2521,13 +2521,34 @@ impl Shell {
     /// `ProcessState::closed_tabs` for `Cmd+Shift+T`. Closing the
     /// last tab via this path pushes that final tab before the
     /// window is removed.
+    /// Stop a tab's in-flight background work before it goes away.
+    /// Trips the cooperative cancel flags (the worker holds its own
+    /// `Arc` clone, so merely dropping the tab would let it keep walking
+    /// / hashing the disk) and ends its task-registry row so the status
+    /// bar doesn't show a ghost "Searching…" / "Finding duplicates…".
+    /// Covers directory enumeration, folder-size, search, and duplicate
+    /// scans — they all ride `load_cancel` / `load_task`.
+    fn dismiss_tab_work(&self, tab: &Tab) {
+        if let Some(cancel) = &tab.load_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(cancel) = &tab.folder_size_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(id) = tab.load_task {
+            self.process.tasks.borrow_mut().end(id);
+        }
+    }
+
     fn on_close_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
         if self.tabs.len() <= 1 {
+            self.dismiss_tab_work(&self.tabs[self.active]);
             self.process
                 .push_closed_tab(self.tabs[self.active].snapshot_for_close());
             window.remove_window();
             return;
         }
+        self.dismiss_tab_work(&self.tabs[self.active]);
         let snapshot = self.tabs[self.active].snapshot_for_close();
         self.process.push_closed_tab(snapshot);
         self.tabs.remove(self.active);
@@ -2548,6 +2569,7 @@ impl Shell {
     /// individual closes).
     fn on_close_window(&mut self, _: &CloseWindow, window: &mut Window, _cx: &mut Context<Self>) {
         for tab in &self.tabs {
+            self.dismiss_tab_work(tab);
             self.process.push_closed_tab(tab.snapshot_for_close());
         }
         window.remove_window();
