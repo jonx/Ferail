@@ -14,6 +14,7 @@ pub mod about;
 pub mod app_state;
 pub mod assets;
 pub mod disk_usage;
+pub mod dupe_cache;
 pub mod favorites;
 pub mod favorites_section;
 pub mod recents_section;

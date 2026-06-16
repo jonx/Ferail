@@ -82,12 +82,19 @@ feature notes in [docs/features/](docs/features/README.md).
 - Add Finder-style roots beyond Home and Volumes where useful: iCloud,
   Network, external disks, removable media, and user custom locations.
 - Add breadcrumb completion and richer segment menus.
-- Add real search beyond today's in-directory filter (substring match on the
-  current listing only — [file_list.rs](crates/feraille-gpui/src/file_list.rs)):
-  recursive subtree search off the UI thread with cancellation, then a global /
-  indexed option that relies on the OS index where it exists (Spotlight on
-  macOS, NTFS MFT + USN on Windows, Tracker/Baloo on Linux) with the built-in
-  walker as a user-selectable fallback. Plan: [docs/features/SEARCH.md](docs/features/SEARCH.md).
+- Wire up real search beyond today's in-directory filter (substring match on
+  the current listing only — [file_list.rs](crates/feraille-gpui/src/file_list.rs)).
+  Plan: [docs/features/SEARCH.md](docs/features/SEARCH.md). **Worker layer
+  built + tested:** `NativeFs::search_subtree` (recursive Tier-1 walk, cancel,
+  dataless-skip) and `feraille_shell_mac::spotlight_search` (Tier-2 mdfind,
+  name/content, with `spotlight_available()` probe for fallback routing).
+  **Remaining (UI):** a `SearchState` mirroring `DiskUsageState` that spawns
+  the worker on the background executor, drains batches into the file list
+  under a `TaskKind::Search`/generation gate, an engine selector
+  (Spotlight-by-default, user override to the built-in walker), and the
+  search-results presentation (full relative paths, navigate-to-containing).
+  Windows NTFS MFT + USN and Linux Tracker/Baloo engines land with their
+  ports behind the same `SearchEngine` selection.
 - Persist per-tab sort/filter/scroll state where it is not already stable.
 - Add configurable visible columns and column widths/order reset.
 
@@ -111,11 +118,18 @@ feature notes in [docs/features/](docs/features/README.md).
 - Improve quarantine/provenance UI: Gatekeeper assessment, code-signature
   identity, clear-quarantine action, and better selected-row badge halo.
 - Finish Ant Trail prediction/prewarming and decay.
-- Add duplicate finder with size, partial-hash, and full-hash stages
-  ([docs/features/DUPLICATES.md](docs/features/DUPLICATES.md)). Not started:
-  the `feraille-meta` schema already carries `partial_hash` / `full_hash`
-  columns, but the hashing funnel, grouping, and duplicate-view UI are all
-  unbuilt.
+- Wire up the duplicate finder
+  ([docs/features/DUPLICATES.md](docs/features/DUPLICATES.md)). **Worker layer
+  built + tested:** `NativeFs::find_duplicates` (size → xxh3 partial → BLAKE3
+  full funnel, hard-link occupant collapse, dataless-skip, paranoid
+  byte-verify, cancellation) plus the persistent hash cache —
+  `DupeHashCache` trait + `dupe_cache::DbHashCache` over the `files` table so
+  a rescan skips full hashing. **Remaining:** a `DupesState` mirroring
+  `DiskUsageState` (`TaskKind::DuplicateScan`, drain loop, generation gate),
+  the grouped duplicate-view UI modeled on `DiskUsageTree` with safe
+  delete/move, a menu/palette command to launch a scan, and APFS clone
+  detection + `clonefile`-based zero-copy dedup remediation (hard links are
+  already flagged; clones are not yet detected).
 - Add file-name hazard surfacing for leading/trailing whitespace,
   zero-width/control characters, bidi overrides, and confusing combining
   sequences.
