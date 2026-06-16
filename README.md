@@ -1,11 +1,27 @@
 # Feraille
 
-**A fast, native macOS file manager written in Rust.**
+**A fast, native cross-platform file manager written in Rust — macOS and
+Windows, with Linux possibly to follow.**
 
 Feraille is built on [GPUI](https://www.gpui.rs/) and
-[gpui-component](https://github.com/longbridge/gpui-component). It is the macOS
+[gpui-component](https://github.com/longbridge/gpui-component). It began as a
 successor to the Windows project `Ferail`, but it is not a reskin: the UI,
-native shell integration, and responsiveness model are macOS-first.
+native shell integration, and responsiveness model are designed for each
+platform. The macOS app is the furthest along; the Windows port is in active
+development (see [docs/features/windows-port.md](docs/features/windows-port.md)),
+and Linux may come later.
+
+> ### 🤖 Built with AI — and accepting AI pull requests
+>
+> Feraille is, by design, **mostly "vibe-coded"**: the bulk of it was written
+> through AI pair-programming rather than typed by hand. That's not a caveat,
+> it's the workflow.
+>
+> **AI-generated pull requests are welcome and encouraged.** Point your agent
+> at [CLAUDE.md](CLAUDE.md) (the operating manual for AI/human contributors)
+> and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), keep the prime directive
+> below, and run `cargo check` / `cargo test` before opening the PR. Human
+> review still gates every merge.
 
 One rule shapes the whole design — **the UI must never stop:**
 
@@ -21,7 +37,8 @@ for how this is enforced across the codebase.
 
 ## Features
 
-- **Native macOS chrome** — GPUI title bar, transparent titlebar, system theme.
+- **Native window chrome** — GPUI title bar, transparent titlebar, system
+  theme (macOS today; matching Windows chrome is in progress).
 - **Virtualized file table** — sortable, resizable, reorderable columns over
   large directories without jank.
 - **Magic-first `Format` column** — content sniffing with extension fallback
@@ -68,8 +85,7 @@ cargo run --bin feraille-gpui -- --reset-db <scope>
 
 ## Project Layout
 
-The active app is `feraille-gpui`. Domain logic lives in UI-free crates; the
-old soft-rendered stack is archived under `crates/_archive/` as reference.
+The active app is `feraille-gpui`. Domain logic lives in UI-free crates.
 
 | Crate | Responsibility |
 |---|---|
@@ -97,6 +113,9 @@ The full crate-boundary rules are in
 
 ## Contributing
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. **AI-generated PRs
+are welcome** — point your agent at [CLAUDE.md](CLAUDE.md) first. In short:
+
 - New product work belongs in `crates/feraille-gpui`.
 - Domain code belongs in `feraille-core`, `feraille-fs-native`,
   `feraille-meta`, or `feraille-disk-usage` whenever it can stay UI-free.
@@ -107,4 +126,15 @@ The full crate-boundary rules are in
 
 ## License
 
-Dual-licensed under MIT or Apache-2.0, at your option.
+Dual-licensed under either of
+
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option.
+
+> **Note:** Feraille depends on `gpui` / `gpui-component` as git
+> dependencies (they are not published to crates.io), so the crates are not
+> on crates.io and there is no `cargo install`. Build from source with
+> `cargo run --bin feraille-gpui`; reproducible builds come from the
+> committed `Cargo.lock`.

@@ -4,7 +4,7 @@
 //! `gpui-component`'s virtualized `Table` renders the entries
 //! efficiently even for directories with thousands of files. Columns
 //! are Name / Size / Kind / Modified, pre-formatted on the domain
-//! side per the UI_NONBLOCKING contract carried over from the old app.
+//! side per the UI_NONBLOCKING contract.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -898,9 +898,8 @@ fn tag_color_rgba(c: feraille_core::commands::TagColor) -> gpui::Rgba {
 }
 
 /// Mark-of-the-Web quarantine badge — small red dot in the icon's
-/// top-right corner. Same convention as the old soft-renderer app.
-/// Pulled out of `render_td` so the file-icon and folder-icon paths
-/// share one stylesheet.
+/// top-right corner. Pulled out of `render_td` so the file-icon and
+/// folder-icon paths share one stylesheet.
 fn badge_overlay(this: Div) -> Div {
     this.child(
         div()
@@ -914,10 +913,7 @@ fn badge_overlay(this: Div) -> Div {
     )
 }
 
-/// Sort columns supported by `apply_sort`. Matches the column ids
-/// the old app used (`feraille_controls::ColumnId` in the old
-/// stack); kept in this module so feraille-gpui doesn't reach for
-/// the soft-renderer controls crate. Pure logic, easy to extend.
+/// Sort columns supported by `apply_sort`. Pure logic, easy to extend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SortColumn {
     Name,
@@ -943,9 +939,7 @@ impl std::str::FromStr for SortColumn {
 }
 
 /// In-place sort with folders-first grouping (Finder convention).
-/// Pure-logic port of `feraille_controls::sort_entries` — same
-/// shape, just inlined here so we don't need to link the old UI
-/// crate. Comments carried over from the original.
+/// Pure logic, easy to extend.
 pub fn sort_in_place(entries: &mut [feraille_core::FileEntry], col: SortColumn, asc: bool) {
     use std::cmp::Ordering;
     entries.sort_by(|a, b| {

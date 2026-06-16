@@ -369,7 +369,13 @@ impl ViewerWindow {
         for d in [1isize, -1] {
             let ix = (self.index as isize + d).rem_euclid(len as isize) as usize;
             if let Some(path) = self.playlist.get(ix).map(|e| e.path.clone()) {
-                self.request_path(path, cx);
+                // Full-res decode for the eventual swap, plus the cheap
+                // 512 px Quick Look thumbnail. The thumbnail lands first
+                // and stands in instantly when the slideshow advances,
+                // so the dwell on the current slide is spent rendering
+                // the next one.
+                self.request_path(path.clone(), cx);
+                crate::preview::warm(&self.process, path, cx);
             }
         }
     }

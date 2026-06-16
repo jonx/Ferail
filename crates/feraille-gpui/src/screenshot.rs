@@ -1,7 +1,6 @@
 //! Headless screenshot CLI for the GPUI shell.
 //!
-//! Mirrors the CLI surface from `feraille-app::screenshot` so the
-//! developer (and Claude) can iterate on the new UI without manual
+//! Lets the developer (and Claude) iterate on the UI without manual
 //! screen-capture. Renders one frame off-screen via
 //! `Window::render_to_image` (gated behind gpui's `test-support`
 //! feature; enabled in the workspace `Cargo.toml`), writes a PNG,
@@ -12,10 +11,8 @@
 //!     --theme dark --width 1180 --height 760 --navigate ~/Documents
 //! ```
 //!
-//! Harvest Stage 2 ports the ~20 flags that existed in the old app.
-//! Flags whose handler depends on a not-yet-ported feature accept
-//! the value at parse time but log a warning when applied — they
-//! become functional as the relevant stage lands.
+//! Roughly 20 flags drive navigation, selection, and overlays so a
+//! single off-screen frame can be captured for visual verification.
 
 use std::path::PathBuf;
 
@@ -834,7 +831,6 @@ impl ShellArgs {
     }
 }
 
-/// Mirror of `feraille-app::screenshot::canonicalize_or_passthrough`.
 /// Expands `~` to `$HOME` and canonicalises; on failure returns the
 /// input as-is so the caller still gets a path it can navigate to.
 fn canonicalize_or_passthrough(p: &std::path::Path) -> PathBuf {

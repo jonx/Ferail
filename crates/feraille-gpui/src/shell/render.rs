@@ -520,8 +520,8 @@ impl Shell {
     /// on ~/Documents, ~/Desktop, ~/Downloads in a sandboxed runner).
     fn file_pane_body(&self, cx: &mut Context<Self>) -> AnyElement {
         if let Some(err) = self.active_tab().last_error.clone() {
-            let (title, body) = error_copy(&err);
-            return v_flex()
+            let copy = error_copy(&err);
+            let mut pane = v_flex()
                 .size_full()
                 .items_center()
                 .justify_center()
@@ -532,16 +532,47 @@ impl Shell {
                         .text_lg()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(cx.theme().foreground)
-                        .child(title),
+                        .child(copy.title),
                 )
                 .child(
                     div()
                         .max_w(px(420.0))
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child(body),
-                )
-                .into_any_element();
+                        .child(copy.body),
+                );
+            // Only the link itself is clickable, rendered as a
+            // separate affordance below the prose body.
+            if let Some((label, url)) = copy.link {
+                pane = pane.child(
+                    div()
+                        .id("file-pane-error-settings-link")
+                        .text_sm()
+                        .text_color(cx.theme().primary)
+                        .cursor_pointer()
+                        .underline()
+                        .child(label)
+                        .on_click(move |_: &ClickEvent, window, cx| {
+                            use gpui_component::notification::Notification;
+                            // Put Feraille's own path on the clipboard so
+                            // the user can paste it into the Full Disk
+                            // Access "+" sheet via Go to Folder.
+                            if let Some(path) = crate::platform_shell::app_bundle_path() {
+                                cx.write_to_clipboard(ClipboardItem::new_string(path));
+                                window.push_notification(
+                                    Notification::info(
+                                        "Feraille's path is copied. In the picker, click \
+                                         \"+\", press \u{2318}\u{21e7}G, paste, and add it.",
+                                    )
+                                    .autohide(false),
+                                    cx,
+                                );
+                            }
+                            crate::platform_shell::open_url(url);
+                        }),
+                );
+            }
+            return pane.into_any_element();
         }
         DataTable::new(&self.active_tab().table)
             .bordered(false)

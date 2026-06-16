@@ -7,8 +7,7 @@
 //! docs/features/FILE_OPS.md) get a ✕ button that flips it; the
 //! worker notices at its next checkpoint. Everything else stays
 //! read-only visibility — answering "what is the app doing right
-//! now?" which the old soft-renderer app surfaced in its
-//! right-aligned status arm.
+//! now?".
 
 use std::cell::RefCell;
 use std::rc::Rc;

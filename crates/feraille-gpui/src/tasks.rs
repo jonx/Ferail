@@ -1,8 +1,7 @@
 //! Task registry — single source of truth for "what background work
 //! is in flight right now."
 //!
-//! Verbatim port from `feraille-app/src/tasks.rs` (Harvest Stage 5.a).
-//! Pure logic — no GPUI dependency. Long-running jobs in the new
+//! Pure logic — no GPUI dependency. Long-running jobs in the
 //! shell (prefetch::start, future copy/move, disk-usage scans) call
 //! `begin` / `end` on the Shell's `TaskRegistry`; the status bar
 //! reads `iter()` to keep its text + progress strip in sync. Both

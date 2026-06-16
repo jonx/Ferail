@@ -16,13 +16,10 @@ Read first:
 cargo run --bin feraille-gpui
 ```
 
-`crates/feraille-app`, `crates/feraille-controls`, and
-`crates/feraille-render` are the old soft-rendered stack. Treat them as
-reference/fallback code unless the user explicitly asks to work there.
-
-The Windows predecessor lives at `/Users/jkn/Source/Ferail`. When the user
-says a feature was better in the Windows version, inspect that repo before
-redesigning from scratch. Copy intent and lessons, not Win32-specific shape.
+The Windows predecessor is a separate `Ferail` repo (checked out as a sibling
+at `../Ferail` in the maintainer's setup). When the user says a feature was
+better in the Windows version, inspect that repo before redesigning from
+scratch. Copy intent and lessons, not Win32-specific shape.
 
 ## Prime Directive
 

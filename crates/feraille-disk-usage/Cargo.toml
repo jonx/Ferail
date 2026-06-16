@@ -3,6 +3,7 @@ name = "feraille-disk-usage"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Pure model + squarified treemap layout for the disk-usage feature. No I/O, no platform deps."
 
 [dependencies]

@@ -3,6 +3,7 @@ name = "feraille-shell-mac"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "macOS shell integration for Feraille (chrome, drag-drop, NSMenu)"
 
 [dependencies]

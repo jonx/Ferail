@@ -4,15 +4,13 @@
 [Open work (TODO)](../TODO.md)
 
 Feraille is a macOS-first file manager written in Rust. It began as a
-port and UI rewrite of the Windows project at `/Users/jkn/Source/Ferail`,
+port and UI rewrite of the Windows project Ferail,
 but the active application is now the GPUI shell:
 
 - `feraille-gpui` opens the desktop app.
 - `feraille` is the command-line entry point for non-GUI utilities.
 
-The old soft-rendered stack remains in the workspace as reference and
-fallback code during migration, but new product work belongs in
-`crates/feraille-gpui`.
+All new product work belongs in `crates/feraille-gpui`.
 
 ## Prime Directive
 
@@ -38,12 +36,9 @@ feraille-gpui        active GPUI app and CLI entry points
   |-- feraille-shell-mac     AppKit/Cocoa integrations
   |-- feraille-meta          SQLite-backed metadata and layout persistence
   |-- feraille-disk-usage    pure disk-usage model, facts, aggregation, treemap
-  |-- feraille-design        shared visual constants kept for old/new bridge work
+  |-- feraille-design        shared visual constants (color, spacing, typography)
   `-- gpui-component         UI primitives for shell, settings, tables, menus
 
-feraille-app         frozen old soft-rendered app
-feraille-controls    frozen old controls
-feraille-render      frozen old software renderer
 feraille-shell-win32 Windows reference/platform shell crate, not macOS v1 UI
 ```
 

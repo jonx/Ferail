@@ -1019,7 +1019,7 @@ impl Shell {
     /// Cmd+L: open breadcrumb edit mode. Pre-fills the input with
     /// the active tab's current directory, focuses it, and selects
     /// all text so the user can immediately type a replacement
-    /// path. Mirrors the old app's `enter_breadcrumb_edit_mode`.
+    /// path.
     pub fn on_edit_breadcrumb(
         &mut self,
         _: &EditBreadcrumb,
@@ -2844,9 +2844,9 @@ impl Shell {
     }
 
     /// Expand `path` and every ancestor in the tree. Used by the
-    /// `--expand <path>` CLI flag, which mirrors the old app's
-    /// "reveal this path with the surrounding hierarchy unfurled"
-    /// shape. Each directory's children are also enumerated into
+    /// `--expand <path>` CLI flag to reveal a path with the
+    /// surrounding hierarchy unfurled. Each directory's children
+    /// are also enumerated into
     /// `tree_children` so the first frame already has them.
     pub fn reveal_path_in_tree(&mut self, path: &Path) {
         let mut chain: Vec<PathBuf> = vec![path.to_path_buf()];

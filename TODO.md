@@ -159,6 +159,15 @@ feature notes in [docs/features/](docs/features/README.md).
 
 ## Cross-Platform Build
 
+- Windows parity with the predecessor `../Ferail` is tracked in
+  [docs/features/windows-port.md](docs/features/windows-port.md) §6b
+  (capability diff). Near-term, behavior-breaking stubs to close in
+  `feraille-shell-win32`: file-URL clipboard (`CF_HDROP` — breaks
+  Cmd+C/Cmd+V copy-paste today), volume device-change observer
+  (`WM_DEVICECHANGE`), and inline-rename text input (best as a gpui
+  modal). Larger, deferred Windows-only ports: third-party
+  shell-extension context-menu verbs (`IContextMenu`) and WSL
+  integration.
 - Decide how to share the local-zed `gpui_windows::render_to_image` patch
   across machines. Today the override only exists on the Windows dev box
   (the `[patch]` block in `Cargo.toml` pointed at `../zed/` which doesn't
@@ -179,8 +188,6 @@ feature notes in [docs/features/](docs/features/README.md).
   is, as of 2026-06-12). `multi_table/` carries a module-level
   `#![allow]` for style lints by policy — it's the pinned
   gpui-component fork; don't extend those allows elsewhere.
-- Delete old soft-renderer crates when the GPUI shell is the only shipped
-  app and no longer needs them as parity reference.
 - Remove stale references to old specs or deleted migration ledgers as code
   and docs settle.
 - Keep this file pruned: when an item ships, delete it here and let git

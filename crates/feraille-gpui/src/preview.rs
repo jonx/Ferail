@@ -1,7 +1,6 @@
 //! Native file preview via macOS Quick Look (`qlmanage`).
 //!
-//! Replaces the soft-renderer preview pane with real
-//! NSWorkspace-backed thumbnails. On selection change the Shell
+//! Renders NSWorkspace-backed thumbnails. On selection change the Shell
 //! kicks off a background worker that runs
 //! `crate::platform_shell::quick_look::fetch_thumbnail` (which shells
 //! out to `qlmanage -t`), decodes the resulting PNG into RGBA, and
@@ -113,6 +112,51 @@ pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) 
             .spawn(async move { fetch_quick_look_thumbnail(&p_for_bg, PREVIEW_PX) })
             .await;
         apply_result(weak, path, result, cx).await;
+    })
+    .detach();
+}
+
+/// Warm the preview cache for `path` from a non-`Shell` entity — the
+/// viewer's slideshow prefetch runs on the `ViewerWindow` entity but
+/// shares the process-wide cache. While a slide is on screen this
+/// renders the *next* file's cheap 512 px thumbnail; it lands well
+/// before the full-res decode, so the advance shows an instant
+/// stand-in instead of "Loading…".
+///
+/// Mirrors [`request`] but notifies the caller's entity (any view)
+/// rather than the Shell, and skips the text-preview side-channel the
+/// viewer never renders. The result is written to the shared cache
+/// regardless of whether the entity is still alive — the thumbnail
+/// stays useful to the browser's preview pane either way.
+pub fn warm<T: 'static>(
+    process: &std::rc::Rc<crate::process_state::ProcessState>,
+    path: PathBuf,
+    cx: &mut gpui::Context<T>,
+) {
+    if process.preview_cache.borrow().get(&path).is_some() {
+        return;
+    }
+    process
+        .preview_cache
+        .borrow_mut()
+        .insert(path.clone(), PreviewState::Pending);
+
+    let weak = cx.weak_entity();
+    let process = process.clone();
+    cx.spawn(async move |_this, cx| {
+        let p_for_bg = path.clone();
+        let result = cx
+            .background_executor()
+            .spawn(async move { fetch_quick_look_thumbnail(&p_for_bg, PREVIEW_PX) })
+            .await;
+        let state = match result {
+            Some((rgba, w, h)) => PreviewState::Loaded(Arc::new(build_render_image(rgba, w, h))),
+            None => PreviewState::Failed,
+        };
+        process.preview_cache.borrow_mut().insert(path, state);
+        if let Some(this) = weak.upgrade() {
+            let _ = this.update(cx, |_, cx| cx.notify());
+        }
     })
     .detach();
 }

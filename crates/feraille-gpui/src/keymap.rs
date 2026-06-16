@@ -10,10 +10,8 @@
 //!
 //! When a new command's shortcut needs to change, the edit lands in
 //! `feraille-core::commands` and propagates everywhere (this
-//! keymap, the native AppKit menu bar in Stage 3.b, the future
-//! Keyboard-Shortcuts dialog). The old app's bespoke
-//! `keystroke_to_command` matcher in `feraille-app/src/main.rs` is
-//! replaced by this single function call.
+//! keymap, the native AppKit menu bar, the future
+//! Keyboard-Shortcuts dialog).
 
 use feraille_core::commands::{CommandId, Shortcut, all_commands};
 use gpui::{App, KeyBinding};

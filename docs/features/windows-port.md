@@ -33,7 +33,7 @@ The **prime directive** from [ARCHITECTURE.md](../ARCHITECTURE.md): the UI must 
 - Source-level audit complete — no direct `objc2` / AppKit use in `feraille-gpui` or any non-shell-mac crate. All macOS coupling funnels through `feraille-shell-mac`.
 - `feraille-shell-win32` crate exists at [crates/feraille-shell-win32](../../crates/feraille-shell-win32/) and mirrors `feraille-shell-mac`'s public API surface.
 - A cfg-alias `feraille_gpui::platform_shell` resolves to the right shell crate per target (see §4). All 27 call sites in gpui go through it.
-- Six surfaces have **real Win32 implementations** in shell-win32: `show_alert` (MessageBoxW), `copy_to_clipboard` (CF_UNICODETEXT), `system_is_dark` (registry read of `AppsUseLightTheme`), `reveal_in_finder` (`explorer /select`), `open_url` (`cmd /C start`), `duplicate_path` (pure `std::fs` with Explorer's `- Copy (N)` naming).
+- A growing set of surfaces have **real Win32 implementations** in shell-win32: `show_alert` (MessageBoxW), `copy_to_clipboard` (CF_UNICODETEXT), `system_is_dark` + `start_system_theme_observer` (registry read of `AppsUseLightTheme` + a `WM_SETTINGCHANGE` message-only window), `reveal_in_finder` (`explorer /select`), `open_terminal` (`wt.exe -d`), `open_url` (`cmd /C start`), `duplicate_path` (pure `std::fs` with Explorer's `- Copy (N)` naming), `make_alias` (`IShellLinkW` + `IPersistFile` → `.lnk`), `compress_paths` (`zip` crate), `open_with_candidates` / `open_with_app` (`SHAssocEnumHandlers`), `set_app_user_model_id`, `fetch_quick_look_thumbnail` (`IShellItemImageFactory`), plus the headless `capture_window_rgba` (PrintWindow) and `preview_handler` (`IPreviewHandler`) pipelines. See §6 for the live real/stub split.
 - `feraille-shell-win32` cross-compiles cleanly to MSVC from Mac (no C deps).
 - `windows = "0.58"` is wired as a `cfg(windows)`-only dep with a tight feature set.
 
@@ -43,7 +43,7 @@ The **prime directive** from [ARCHITECTURE.md](../ARCHITECTURE.md): the UI must 
 2. **Run it.** Confirm GPUI's `gpui_windows` backend (it ships at the Zed rev we pin; `cargo tree -i psm` shows it transitively in the graph) renders our shell. Triage anything broken in `gpui-component` on Windows — longbridge tests primarily on macOS.
 3. **Fill in real Win32 implementations** for the still-stubbed surfaces (§6). Each one is small and isolated; bite-sized.
 4. **Conditionalize macOS assumptions** in `feraille-gpui` that compile on Windows but behave wrong (§5).
-5. **Add Windows-specific UX:** drive-letter enumeration in Volumes sidebar, Recycle Bin instead of `~/.Trash`, Mark-of-the-Web (NTFS `Zone.Identifier`) instead of `com.apple.quarantine` xattr, long-path (`\\?\`) handling, native chrome adjustments.
+5. **Add Windows-specific UX:** Mark-of-the-Web (NTFS `Zone.Identifier`) instead of `com.apple.quarantine` xattr, long-path (`\\?\`) handling, native chrome adjustments. (Drive-letter enumeration and Recycle Bin trash already landed in `feraille-fs-native` — see §6.)
 
 The macOS feature spec in [feraille-windows-instances-tabs-spec.md](feraille-windows-instances-tabs-spec.md) covers multi-window + tabs + tear-off intent at the product level — none of that is OS-specific; it'll all work on Windows once the platform layer's caught up.
 
@@ -67,12 +67,9 @@ crates/
 ├── feraille-shell-win32    Windows platform shell — Win32 via `windows` 0.58.
 │                           Real impls under cfg(windows); no-op stubs
 │                           under cfg(not(windows)). This is your home base.
-├── feraille-gpui           The app. Views, actions, tasks, sidebar, file
-│                           list, preview, tabs, multi-window. All Mac
-│                           coupling goes through `platform_shell::*`.
-└── _archive/               Frozen old soft-renderer stack (feraille-app,
-                            feraille-render, feraille-controls) — out of
-                            workspace, kept for porting reference only.
+└── feraille-gpui           The app. Views, actions, tasks, sidebar, file
+                            list, preview, tabs, multi-window. All Mac
+                            coupling goes through `platform_shell::*`.
 ```
 
 **Where to put new Windows code:**
@@ -153,37 +150,84 @@ These are the cases where the code compiles for Windows today (because `platform
 
 The `feraille-shell-win32` public surface mirrors shell-mac. What's already real vs. what's a stub returning `Err(...)` / `None` / no-op:
 
-### Real implementations
+### Real implementations (as of 2026-06-16)
 
 | Function | Implementation strategy |
 |---|---|
 | `show_alert(title, body)` | `MessageBoxW` with `MB_ICONINFORMATION + MB_OK`. |
 | `copy_to_clipboard(text)` | `OpenClipboard` → `EmptyClipboard` → `GlobalAlloc(GHND)` → `GlobalLock`/`Unlock` → `SetClipboardData(CF_UNICODETEXT, …)` → `CloseClipboard`. RAII guard for paired close. |
-| `system_is_dark()` | `RegGetValueW(HKCU, "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "AppsUseLightTheme")`. `0` = dark, `1` = light. Missing key → light. |
+| `system_is_dark()` | `RegGetValueW(HKCU, "…\\Themes\\Personalize", "AppsUseLightTheme")`. `0` = dark, `1` = light. Missing key → light. |
+| `start_system_theme_observer(cb)` | Message-only window via `CreateWindowExW(HWND_MESSAGE)`; WndProc filters `WM_SETTINGCHANGE` lParam `"ImmersiveColorSet"`; re-reads `system_is_dark()` and fires the callback on a worker thread. (Box still leaks — future work keeps a handle.) |
 | `reveal_in_finder(path)` | `explorer.exe /select,<path>` shellout. |
+| `open_terminal(dir)` | `wt.exe -d <dir>` shellout. |
 | `open_url(url)` | `cmd /C start "" <url>` shellout. (Future: `ShellExecuteW` so we don't spawn cmd.) |
 | `duplicate_path(src)` | `std::fs::copy` for files; recursive walk for dirs. Naming: `<stem> - Copy.<ext>`, then `<stem> - Copy (2).<ext>`…, capped at 99. |
+| `make_alias(target)` | `CoCreateInstance(ShellLink)` → `IShellLinkW::SetPath` → `IPersistFile::Save(<target>.lnk)`. |
+| `compress_paths(targets)` | Pure-Rust `zip` crate; recursive dir walk, symlinks skipped. Explorer naming (`<basename>.zip` / `Archive.zip`). |
+| `open_with_candidates(path)` | `SHAssocEnumHandlers(ASSOC_FILTER_RECOMMENDED)` → `IAssocHandler::GetName`/`GetUIName`, capped at 12. |
+| `open_with_app(target, app)` | spawns the chosen handler with the target as argument. |
+| `set_app_user_model_id()` | `SetCurrentProcessExplicitAppUserModelID` for taskbar grouping. |
+| `fetch_quick_look_thumbnail(path)` | `IShellItemImageFactory::GetImage(SIIGBF_THUMBNAILONLY | SIIGBF_RESIZETOFIT)`, reads `DIBSECTION` directly to preserve alpha. |
+| `capture_window_rgba` (capture.rs) | `PrintWindow(PW_RENDERFULLCONTENT)` → top-down BGRA DIB. Headless `--screenshot` harness. |
+| `preview_handler` (preview_handler.rs) | `AssocQueryStringW(ASSOCSTR_SHELLEXTENSION)` → `IPreviewHandler` (Office/PDF) rendered into an off-screen host HWND, then `PrintWindow`-captured. |
+
+Also real but living in **`feraille-fs-native`** (not the shell crate), so already at parity cross-platform: drive-letter enumeration (`GetLogicalDrives`/`GetDriveTypeW`/`GetVolumeInformationW`), per-file icons (`SHGetFileInfo`/`IShellItemImageFactory`), Recycle Bin trash (`SHFileOperationW` `FO_DELETE | FOF_ALLOWUNDO`), and the cross-platform `file_ops` copy/move engine.
 
 ### Stubs awaiting real implementation
 
-Ordered by approximate value × ease. Each function has a TODO at the top of its body in [crates/feraille-shell-win32/src/lib.rs](../../crates/feraille-shell-win32/src/lib.rs).
+Ordered by approximate value × ease. Each function has a TODO at the top of its body in [crates/feraille-shell-win32/src/lib.rs](../../crates/feraille-shell-win32/src/lib.rs). The first three are the ones that **break a working macOS feature** on Windows rather than merely missing a nice-to-have.
 
-| Function | Suggested approach | Notes |
+| Function | Breaks | Suggested approach |
 |---|---|---|
-| `set_app_icon_from_png_bytes(bytes)` | `LoadImageW` with `LR_DEFAULTSIZE | LR_LOADFROMFILE` after writing the PNG to temp, then `SendMessageW(hwnd, WM_SETICON, ICON_SMALL/BIG, hicon)`. Better: bake the icon into the manifest/binary and skip runtime install entirely. | Needs HWND access from gpui's window. |
-| `start_system_theme_observer(callback)` | Create a hidden message-only window via `CreateWindowExW(HWND_MESSAGE)`; in its WndProc, listen for `WM_SETTINGCHANGE` with lParam string `"ImmersiveColorSet"`; on match, re-read `system_is_dark()` and call the callback. Run the message pump on a dedicated thread or integrate with gpui's loop. | Lifetime question — the callback box leaks today; future work should keep a handle. |
-| `make_alias(target)` | COM init → `CoCreateInstance(CLSID_ShellLink, …, IID_IShellLinkW)` → `SetPath(target)` → `QueryInterface(IID_IPersistFile)` → `Save(<target>.lnk, true)`. Result is `<target>.lnk` next to `target`. | Standard Win32 pattern; `windows` crate has the bindings. |
-| `compress_paths(targets)` | Pure-Rust: `zip` crate (`zip = "2"`), build the archive next to the first target's parent. Naming matches Explorer: `<basename>.zip` for one source, `Archive.zip` for many. Run on a worker. | Adds a workspace dep. |
-| `open_with_candidates(path)` | `SHAssocEnumHandlers` on the extension → walk `IEnumAssocHandlers` → for each `IAssocHandler`, pull `GetName()` and `GetUIName()` and an `IShellItem`-derived path. Cap the list at a reasonable N (shell-mac caps at 12 slots). | Returns `Vec<OpenWithCandidate>`. |
-| `open_with_app(target, app_path)` | `ShellExecuteExW` with `lpVerb = NULL`, `lpFile = <app_path>`, `lpParameters = "\"<target>\""`. | Or `CreateProcess` if we want exit-code tracking. |
-| `prompt_for_text(title, body, default)` | No single Win32 API. Two options: (a) custom dialog via `DialogBoxParamW` + resource template, (b) build a small gpui modal in feraille-gpui itself. (b) is cross-platform and matches TODO.md's "inline-rename text field" item. | Recommend (b) — drop this function from the platform shell entirely. |
-| `read_canonical_tags`, `toggle_tag`, `clear_tags` | Drop on Windows for v1 OR back via `feraille-meta` SQLite as private tags (no Explorer integration). The Finder Tags semantic doesn't exist natively. | The catalogue's `selection.toggle_tag_*` actions can still fire; they'd write to feraille-meta only. |
-| `show_quick_look`, `fetch_quick_look_thumbnail` | No Quick Look on Windows. `IShellItemImageFactory::GetImage(…, SIIGBF_THUMBNAILONLY, …)` produces a thumbnail; for previews, an in-process gpui pane is the realistic answer (the TODO.md "real previews" item). | Acceptance criterion: spacebar on Windows either does nothing or pops the preview pane. |
-| `set_about_options`, `show_about_panel`, `install_app_menu`, `register_command_callback`, `set_tab_count`, `set_command_state` | macOS NSApp-mainMenu paradigm doesn't exist on Windows. Either drop these (a hamburger menu in the title bar covers the about/settings/etc.) or build a per-window `HMENU`. | Drop is simpler for v1. |
+| `clipboard_copy_file_urls` / `clipboard_read_file_urls` | **Cmd+C / Cmd+V file copy-paste** (gpui's `file_ops` calls these; on Windows both are no-ops, so keyboard copy-paste silently does nothing — *and* there's no Explorer interop). | `CF_HDROP`: write via a `DROPFILES` HGLOBAL, read via `DragQueryFileW`. Mirror Ferail's `drag_drop.rs` `FileDataObject` HGLOBAL construction (the `CF_HDROP`/`DROPFILES` packing is identical; you just don't need the full `IDataObject`). |
+| `start_volume_observer` | **Live Volumes sidebar + Favorites "Missing" transitions** on mount/unmount (mac uses an NSWorkspace volume watch; Windows is a no-op, so drive add/remove never refreshes). | `WM_DEVICECHANGE` (`DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE`) on the **same** message-only-window pattern `start_system_theme_observer` already uses — copy that module, swap the message filter. |
+| `prompt_for_text(title, body, default)` | **Inline rename / new-folder naming** (returns `None`, so the rename/new-folder flows have no name source on Windows). | Build a small **gpui modal** in feraille-gpui and drop this from the platform shell entirely — it's cross-platform and matches TODO.md's "inline-rename text field" item. |
+| `video_overlay_show` / `set_frame` / `remove` | Viewer video playback (shows static poster only). | Media Foundation / MFPlay child HWND floated over the viewer stage rect. Larger; viewer-feature-sized. See VIEWER.md. |
+| `read_canonical_tags`, `clear_tags` (+ `toggle_tag`) | Finder-tag color chips. | No native Windows equivalent. Drop for v1, or back via `feraille-meta` SQLite as private tags (no Explorer integration). |
+| `show_quick_look` | Spacebar Quick Look. | No Quick Look on Windows. Spacebar should pop the in-app preview pane (already wired) or no-op. |
+| `set_app_icon_from_png_bytes` | Runtime icon swap. | Icon is baked into the binary via the build manifest; runtime swap intentionally skipped. Leave as no-op. |
+| `install_app_menu`, `register_command_callback`, `set_tab_count`, `set_command_state`, `set_about_options`/`show_about_panel` chrome | NSApp main-menu paradigm. | No global menu on Windows — a title-bar hamburger covers about/settings. Drop for v1, or per-window `HMENU`. |
 
 ### Not in the win32 shell crate today (winit-window-taking surface)
 
 These shell-mac functions take `&winit::window::Window` and aren't reachable through the `platform_shell` alias (gpui doesn't pass winit handles): `begin_drag`, `show_context_menu`, `install_services_anchor`, `set_services_selection`, `show_share_picker`, `apply_native_chrome`. When gpui needs drag-out-to-Explorer, it'll grow a fresh function that takes an HWND or gpui's own window handle — don't try to recycle these signatures.
+
+---
+
+## 6b. Parity with Ferail — capability diff
+
+This is the honest reckoning of where the GPUI rewrite stands against the predecessor's Win32 crate (`../Ferail/crates/ferail-win32/`, ~3,700 lines). **Read it by intent, not by line count** — Feraille is *ahead* of Ferail in feature breadth and architecture on both platforms, but Ferail still does a handful of Windows-native things the port hasn't reimplemented yet. Three buckets:
+
+### A. Already at parity — covered by GPUI or fs-native, do **not** re-port
+
+Ferail hand-rolled these in Win32; in Feraille they're handled cross-platform and need no Windows-specific work:
+
+| Ferail module | Why it's already covered |
+|---|---|
+| `d2d.rs` (Direct2D + DirectWrite + WIC rendering) | GPUI's D3D11 backend paints everything. Renderer lessons only — never port this. |
+| `gdi.rs` (DPI query, physical↔DIP math) | GPUI owns DPI scaling and hit-testing. |
+| `popup_menu.rs` (HMENU build + timer pump) | GPUI / gpui-component renders the context menu natively. |
+| `menu_model.rs`, `menu_preload.rs` (HMENU model + preload) | The menu *model* is GPUI's; the preload *idea* may return (see C below), but the HMENU-specific machinery is obsolete. |
+| `enumerate.rs` (`FindFirstFileExW` large-fetch) | `feraille-fs-native` enumerates cross-platform via `std::fs`. A `FindFirstFileExW` fast path is an *optional* perf win for huge dirs, not a feature gap. |
+| `shell.rs` (`SHGetFileInfo` icons/type names) | Ported into `feraille-fs-native/src/icons.rs` under `cfg(windows)`. |
+| `com.rs` (COM RAII guard) | Trivial; done inline where needed. |
+
+### B. Real remaining gaps — Windows features Ferail had that Feraille lacks
+
+In rough priority order. The first three are the §6 stubs above (cross-referenced); the last two are genuinely absent from the whole workspace, not just stubbed:
+
+1. **File-URL clipboard (`CF_HDROP`)** — §6. Breaks keyboard copy-paste *today*. Highest value × ease. Source pattern: Ferail `drag_drop.rs`.
+2. **Volume device-change observer (`WM_DEVICECHANGE`)** — §6. Source pattern: Ferail had registry/enumeration; the watch is new but trivial given the existing theme-observer scaffold.
+3. **Inline-rename text input** — §6. Best solved as a gpui modal, not Win32.
+4. **Third-party shell-extension context-menu verbs** — *absent everywhere.* Ferail's `shell_pump.rs` (~1,400 lines) enumerated registry `shellex\ContextMenuHandlers`, `CoCreateInstance`'d each handler, `IShellExtInit::Initialize`'d it with an `IDataObject`, and `QueryContextMenu`'d the verbs into the menu (7-Zip, TortoiseGit, "Scan with Defender", etc.) — including the undocumented `IWaitCursorManager` trick to suppress the busy cursor. Feraille's GPUI context menu has built-in actions + `Open With`, but **no third-party shell verbs.** This is the single biggest capability gap. It's also the hardest: STA-thread-only, PIDL lifetime management, and it must feed GPUI's menu model rather than an HMENU. Treat as its own feature iteration; the `IContextMenu` enumeration logic ports closely even though the rendering doesn't.
+5. **WSL integration** — *absent everywhere.* Ferail's `wsl.rs` (~480 lines): registry distro enumeration (`…\Lxss`), `\\wsl$\` / `\\wsl.localhost\` UNC path parsing, and `wsl.exe readlink` symlink resolution. Per the [porting rule](../../CLAUDE.md) WSL was deliberately deferred ("not a macOS v1 feature unless it maps to network/remote volumes"). It's a Windows-only differentiator worth restoring **after** the core port runs — net-new value, not a regression.
+
+### C. Optional / lessons-only
+
+- **Menu preload** (`menu_preload.rs`): the *concept* — warm the expensive shell-verb enumeration on selection-change so the menu opens instantly — becomes valuable again **if and when** gap B.4 lands. Until there are third-party verbs to enumerate, there's nothing to preload. Keep the idea; the code is HMENU-bound.
+- **`FindFirstFileExW` fast enumeration**: revisit only if profiling shows `std::fs::read_dir` is a bottleneck on large Windows directories.
+
+**Bottom line:** closing B.1–B.3 (all small, all in `feraille-shell-win32`) gets the Windows build to behavioral parity for everyday file management. B.4 (shell verbs) and B.5 (WSL) are the two substantial Ferail capabilities still worth a dedicated port afterward — and they're the only places Ferail remains genuinely "more advanced" than Feraille.
 
 ---
 
@@ -267,8 +311,6 @@ macOS is the established platform — `feraille-shell-mac` is a much bigger, mor
 **Don't edit `feraille-shell-mac` source unless you're prepared for it to silently regress.** `cargo check --workspace` on Windows builds shell-mac's `cfg(not(target_os = "macos"))` no-op arms, not the real AppKit code — so a typo in a `cfg(target_os = "macos")` block won't catch fire until someone builds on Mac. Two safe ways to touch shell-mac from Windows: (a) keep edits to the no-op arms or to the API signature, (b) get a Mac dev to run `cargo check --target aarch64-apple-darwin` on the branch before you push.
 
 **The command catalogue is shared and platform-agnostic.** `crates/feraille-core/src/commands.rs` defines actions and shortcuts for both platforms. If you add a Windows-only command, that's fine — gate the handler, not the catalogue entry. If you change a shortcut, you're changing it for Mac too. The `Shortcut::primary("X")` helper maps to Cmd on Mac and Ctrl on Windows automatically, so the *binding* stays portable; just be aware that a chord like Cmd+Option+Shift maps to Ctrl+Alt+Shift on Windows and may collide with something native that Mac doesn't have.
-
-**Don't touch `crates/_archive/`.** Those are frozen as porting reference. If you need a sort algorithm or layout decision from the old soft-renderer, copy the *idea* into a new module; don't restore the crate.
 
 **Tests don't catch macOS regressions from Windows.** `cargo test --workspace` from Windows builds and runs only `cfg(not(target_os = "macos"))` paths. Test failures from Mac-only behavior will only show up on Mac CI / a Mac dev. Plan for it; don't assume green tests locally means green on Mac.
 

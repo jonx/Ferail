@@ -6,8 +6,8 @@
 //! menus (`NSMenu`), vibrancy (`NSVisualEffectView`), and Quick Look
 //! preview land in subsequent iterations.
 //!
-//! Non-macOS builds get no-op stubs so `feraille-app` can call into
-//! this crate unconditionally.
+//! Non-macOS builds get no-op stubs so callers can use this crate
+//! unconditionally.
 
 #[cfg(target_os = "macos")]
 mod app_menu;
@@ -356,6 +356,36 @@ pub fn copy_to_clipboard(text: &str) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn copy_to_clipboard(_text: &str) {}
+
+/// Filesystem path of the running application, suitable for pasting
+/// into a macOS file picker (e.g. the Full Disk Access "+" sheet).
+/// When launched from a `.app` bundle this is the bundle path; a bare
+/// binary (e.g. `cargo run`) returns the executable path. `None` if
+/// the path can't be determined. Cheap — no directory reads.
+#[cfg(target_os = "macos")]
+pub fn app_bundle_path() -> Option<String> {
+    use objc2_foundation::NSBundle;
+    unsafe {
+        let bundle = NSBundle::mainBundle();
+        let path = bundle.bundlePath();
+        let s = path.to_string();
+        // A loose binary reports the enclosing directory as its
+        // "bundle"; prefer the real executable path in that case.
+        if s.ends_with(".app") {
+            return Some(s);
+        }
+    }
+    std::env::current_exe()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn app_bundle_path() -> Option<String> {
+    std::env::current_exe()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+}
 
 /// Open Finder with `path` selected. macOS: shells out to `open -R`.
 /// Non-macOS: no-op.

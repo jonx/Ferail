@@ -4,15 +4,15 @@
 //! `platform_shell` cfg-alias in `feraille-gpui` can swap one for the
 //! other based on target OS. Each function has a `cfg(windows)` arm
 //! (today a stub; future home of real Win32 implementations ported
-//! from `/Users/jkn/Source/Ferail/crates/ferail-win32/`) and a
+//! from the Ferail predecessor's `crates/ferail-win32/`) and a
 //! `cfg(not(windows))` no-op arm so the workspace `cargo check` keeps
 //! compiling this crate on macOS / Linux dev hosts.
 //!
 //! The winit-window-taking subset of shell-mac (`begin_drag`,
 //! `show_context_menu`, `install_services_anchor`, `show_share_picker`,
 //! `apply_native_chrome`) is intentionally **omitted**: those signatures
-//! served the soft-renderer (`feraille-app`) stack and are not called
-//! from `feraille-gpui`. If a future GPUI Windows surface needs them,
+//! are not called from `feraille-gpui`. If a future GPUI Windows
+//! surface needs them,
 //! they grow back through the `windows` crate's HWND, not through
 //! winit.
 //!
@@ -280,6 +280,15 @@ pub fn copy_to_clipboard(text: &str) {
 
 #[cfg(not(windows))]
 pub fn copy_to_clipboard(_text: &str) {}
+
+/// Filesystem path of the running application, suitable for pasting
+/// into a file picker. Returns the executable path. `None` if it
+/// can't be determined.
+pub fn app_bundle_path() -> Option<String> {
+    std::env::current_exe()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+}
 
 /// Open the OS file browser with `path` selected. macOS: `open -R`.
 /// Windows: `explorer.exe /select,<path>`.

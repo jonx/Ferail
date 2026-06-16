@@ -117,7 +117,7 @@ impl NativeFs {
     ///
     /// This is the worker-thread half of the streaming-enumeration
     /// design ([docs/features/STREAMING_ENUMERATION.md]). The host
-    /// (`feraille-app`) owns thread spawning + event-loop dispatch.
+    /// application owns thread spawning + event-loop dispatch.
     pub fn enumerate_streaming(
         &self,
         path: &Path,

@@ -1,7 +1,6 @@
 //! Bottom-of-window status bar — task count + progress indicator.
 //!
-//! Harvest Stage 5.b. Replaces the soft-renderer status arm in
-//! `feraille-app/src/main.rs`. Reads from `Shell::tasks` (a shared
+//! Reads from `Shell::tasks` (a shared
 //! `Rc<RefCell<TaskRegistry>>`), so its text + progress always reflect
 //! the live set of background jobs.
 //!

@@ -140,23 +140,48 @@ pub(super) fn dir_has_subdir(path: &Path) -> bool {
     false
 }
 
-/// Map an `EnumerationError` to (title, body) copy for the in-pane
-/// error state. macOS users hitting `Documents` / `Desktop` /
-/// `Downloads` for the first time in a sandboxed launcher will see
-/// the TCC permission case; other variants get a generic message.
-pub(super) fn error_copy(err: &EnumerationError) -> (&'static str, String) {
+/// `x-apple.systempreferences:` URL that deep-links straight to the
+/// Full Disk Access pane of Privacy & Security. Unlike Files and
+/// Folders, this pane has a "+" button so the user can add Feraille
+/// manually rather than waiting for a per-folder TCC prompt.
+pub(super) const FULL_DISK_ACCESS_SETTINGS_URL: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
+
+/// An in-pane error: a title, prose body, and an optional clickable
+/// link (label + settings URL) rendered as a separate affordance
+/// below the body so only the link itself is interactive.
+pub(super) struct ErrorCopy {
+    pub title: &'static str,
+    pub body: String,
+    pub link: Option<(&'static str, &'static str)>,
+}
+
+/// Map an `EnumerationError` to error-pane copy. macOS users hitting
+/// `Documents` / `Desktop` / `Downloads` for the first time in a
+/// sandboxed launcher will see the TCC permission case; other
+/// variants get a generic message. The permission case offers a
+/// clickable link straight to the Full Disk Access pane, where
+/// Feraille can be added with the "+" button.
+pub(super) fn error_copy(err: &EnumerationError) -> ErrorCopy {
     match err {
-        EnumerationError::PermissionDenied => (
-            "Access required",
-            "Feraille needs permission to read this folder. Grant access in \
-             System Settings -> Privacy & Security -> Files and Folders."
+        EnumerationError::PermissionDenied => ErrorCopy {
+            title: "Access required",
+            body: "Feraille needs permission to read this folder. The link below \
+                   opens Full Disk Access and copies Feraille's path so you can \
+                   add it with the \"+\" button."
                 .to_string(),
-        ),
-        EnumerationError::NotFound => (
-            "Folder not found",
-            "This location may have been moved, renamed, or unmounted.".to_string(),
-        ),
-        EnumerationError::Other(msg) => ("Couldn't open this folder", msg.clone()),
+            link: Some(("Open Full Disk Access settings", FULL_DISK_ACCESS_SETTINGS_URL)),
+        },
+        EnumerationError::NotFound => ErrorCopy {
+            title: "Folder not found",
+            body: "This location may have been moved, renamed, or unmounted.".to_string(),
+            link: None,
+        },
+        EnumerationError::Other(msg) => ErrorCopy {
+            title: "Couldn't open this folder",
+            body: msg.clone(),
+            link: None,
+        },
     }
 }
 
@@ -200,7 +225,7 @@ mod middle_truncate_tests {
     #[test]
     fn long_path_keeps_basename() {
         let out = middle_truncate_path(
-            "/Users/jkn/Library/Application Support/Feraille/file.txt",
+            "/Users/x/Library/Application Support/Feraille/file.txt",
             30,
         );
         assert!(out.ends_with("/file.txt"), "basename preserved: {out}");

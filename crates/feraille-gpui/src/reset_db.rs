@@ -1,5 +1,4 @@
-//! `--reset-db <scope>` pre-event-loop CLI handler. Verbatim port
-//! from `feraille-app/src/main.rs::handle_reset_db_cli`.
+//! `--reset-db <scope>` pre-event-loop CLI handler.
 //!
 //! Runs before any window is opened so the user can do
 //! `Feraille --reset-db all` to nuke the metadata DB without us

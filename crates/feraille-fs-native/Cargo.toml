@@ -3,6 +3,7 @@ name = "feraille-fs-native"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Cross-platform std::fs implementation of feraille-core::FsBackend"
 
 [dependencies]

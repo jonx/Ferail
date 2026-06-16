@@ -50,7 +50,7 @@ After `cx.set_menus([...])`, we call `cx.get_menus()` and push the owned menus i
 
 ```sh
 feraille thumb /Applications/Safari.app --out safari.png --size 512
-feraille thumb /Users/jkn/Downloads/some.pdf
+feraille thumb ~/Downloads/some.pdf
 ```
 
 Not exercised on Mac before — worth one sanity check that it produces a real PNG. If `qlmanage` is missing or slow it'll surface here.

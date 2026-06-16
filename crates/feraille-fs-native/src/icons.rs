@@ -3,7 +3,7 @@
 //! return `None` for now (Windows shell extract lands with the Win32
 //! shell crate).
 //!
-//! Returns straight (non-premultiplied) RGBA so the soft renderer's blit
+//! Returns straight (non-premultiplied) RGBA so the compositor's blit
 //! composes correctly.
 
 use std::path::Path;

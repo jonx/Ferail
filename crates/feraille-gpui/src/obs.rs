@@ -1,18 +1,8 @@
 //! Tiny observability layer for crash investigation. Stdlib only.
 //!
-//! Verbatim port of `feraille-app/src/obs.rs` per the harvest plan
-//! (see [docs/PORTING.md](../../../../docs/PORTING.md)). The only
-//! deltas from the old crate:
-//!
-//! - `LOG_THRESHOLD` is bumped from 60 (the old iter-5.x marker) to
-//!   90 so old stale call-sites in the old binary stay muted should
-//!   shared code ever route through this module.
-//! - The startup banner says "Feraille (gpui)" so the operator
-//!   doesn't confuse old/new binary logs when both are running.
-//! - The `log_info!` / `log_warn!` / `log_error!` macros that used
-//!   to live in `feraille-app/src/main.rs` are now `#[macro_export]`
-//!   here so any module in `feraille-gpui` can reach them via
-//!   `crate::log_info!(...)`.
+//! Call-sites below `LOG_THRESHOLD` (90) stay muted. The `log_info!` /
+//! `log_warn!` / `log_error!` macros are `#[macro_export]` here so any
+//! module in `feraille-gpui` can reach them via `crate::log_info!(...)`.
 //!
 //! Crash-diagnostic output (startup banner, panic hook, worker-panic
 //! line) does **not** flow through the macros and is always printed.
@@ -243,8 +233,7 @@ where
 }
 
 // =============================================================================
-// Macros — same shape as the old `feraille-app/src/main.rs` macros, hoisted
-// into this module so any feraille-gpui code can reach them via
+// Macros — `#[macro_export]`ed so any feraille-gpui code can reach them via
 // `crate::log_info!`, `crate::log_warn!`, `crate::log_error!`.
 // =============================================================================
 

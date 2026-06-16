@@ -33,9 +33,8 @@ use gpui_component::Theme;
 //                   `ProcessState`. See `open_new_window`.
 actions!(app, [Quit, OpenAbout, NewWindow]);
 
-/// macOS Dock icon — set early via `NSApplication.setApplicationIconImage:`
-/// (the same call the old app makes). Bytes embedded so the binary is
-/// self-contained.
+/// macOS Dock icon — set early via `NSApplication.setApplicationIconImage:`.
+/// Bytes embedded so the binary is self-contained.
 const APP_ICON_PNG: &[u8] = include_bytes!("../resources/feraille.png");
 
 fn main() -> Result<()> {
@@ -365,9 +364,7 @@ fn run_gui(args: screenshot::Args) {
         feraille_gpui::shell::init(cx);
         // Replace the dock / About icon. Has to happen after gpui
         // has built its NSApplication — calling from `main()` panics
-        // ("Ivar platform not found on class NSApplication"). The
-        // old soft-renderer app did the same thing from winit's
-        // `resumed()` for the same reason.
+        // ("Ivar platform not found on class NSApplication").
         let icon_result = feraille_gpui::platform_shell::set_app_icon_from_png_bytes(APP_ICON_PNG);
         feraille_gpui::log_info!(90, "set_app_icon: {:?}", icon_result);
         // Populate the About-panel dictionary so OpenAbout brings up a

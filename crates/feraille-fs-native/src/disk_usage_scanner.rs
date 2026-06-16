@@ -6,7 +6,7 @@
 //!
 //! Mirrors the shape of [`NativeFs::enumerate_streaming`] — same cancel
 //! flag, same batching cadence, same callback model. The host
-//! (`feraille-app`) owns the thread spawn + event-loop dispatch.
+//! application owns the thread spawn + event-loop dispatch.
 
 use std::fs;
 use std::path::{Path, PathBuf};

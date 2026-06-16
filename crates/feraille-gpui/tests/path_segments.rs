@@ -21,22 +21,22 @@ fn segments_root_only() {
 #[cfg(unix)]
 #[test]
 fn segments_user_home() {
-    let segs = path_segments(Path::new("/Users/jkn"));
+    let segs = path_segments(Path::new("/Users/alice"));
     let labels: Vec<&str> = segs.iter().map(|(l, _)| l.as_str()).collect();
-    assert_eq!(labels, vec!["/", "Users", "jkn"]);
-    assert_eq!(segs.last().unwrap().1, PathBuf::from("/Users/jkn"));
+    assert_eq!(labels, vec!["/", "Users", "alice"]);
+    assert_eq!(segs.last().unwrap().1, PathBuf::from("/Users/alice"));
 }
 
 #[cfg(unix)]
 #[test]
 fn segments_deep_path() {
-    let segs = path_segments(Path::new("/Users/jkn/Source/Feraille/crates"));
+    let segs = path_segments(Path::new("/Users/alice/Source/Feraille/crates"));
     assert_eq!(segs.len(), 6);
     assert_eq!(segs[0].0, "/");
     assert_eq!(segs[5].0, "crates");
     assert_eq!(
         segs[5].1,
-        PathBuf::from("/Users/jkn/Source/Feraille/crates")
+        PathBuf::from("/Users/alice/Source/Feraille/crates")
     );
 }
 

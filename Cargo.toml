@@ -11,17 +11,14 @@ members = [
     "crates/feraille-gpui",
 ]
 
-# The old soft-renderer stack (`feraille-app`, `feraille-render`,
-# `feraille-controls`) lives under `crates/_archive/` and is **not** a
-# workspace member. It compiled and shipped through the GPUI migration
-# as reference / fallback; nothing in the active workspace depends on
-# it. Restore by moving back into `crates/` and re-adding to `members`.
-
 [workspace.package]
 version = "0.0.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 rust-version = "1.78"
+repository = "https://github.com/jonx/Feraille"
+homepage = "https://github.com/jonx/Feraille"
+authors = ["John Knipper <code@jkn.me>"]
 
 [workspace.dependencies]
 feraille-core         = { path = "crates/feraille-core" }
@@ -38,11 +35,6 @@ feraille-shell-win32  = { path = "crates/feraille-shell-win32" }
 # kept for parity / a possible re-introduction; revisit when the shell
 # surface is pruned.
 winit       = "0.30"
-# softbuffer / ab_glyph used to belong to the soft-renderer stack and are
-# unreferenced by anything in the active workspace today. Left declared
-# in case the archived crates are restored.
-softbuffer  = "0.4"
-ab_glyph    = "0.2"
 anyhow      = "1"
 
 # UUIDs for favorite identity (stable across sessions, separate from NodeId).

@@ -3,6 +3,7 @@ name = "feraille-meta"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Persistent metadata store for Feraille — SQLite-backed, schema-versioned, used as the substrate for Ant Trail heat, magic cache, quarantine cache, recent folders, window/layout state, and tabs."
 
 [dependencies]

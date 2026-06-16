@@ -4,7 +4,7 @@ Persistent SQLite-backed substrate for everything Feraille has been
 keeping in-memory: Ant Trail heat, magic cache, quarantine cache,
 window/layout/tab geometry, pinned items, file-hash funnel for the
 duplicate finder. Ported from the Ferail predecessor's
-[`crates/ferail-core/src/metadata/{db,cache}.rs`](file:///Users/jkn/Source/Ferail/crates/ferail-core/src/metadata/);
+`crates/ferail-core/src/metadata/{db,cache}.rs`;
 schema reused with macOS-flavored adjustments.
 
 ## Status
@@ -133,10 +133,10 @@ in, then walk down the checklist.
    `save_*` / `load_*` SQL.
 3. Bump `DB_VERSION` (top of `db.rs`). On next open the old file
    gets deleted and recreated — fine for derived UI state.
-4. In `feraille-app/src/main.rs`, extend `save_persistent_state`
-   to fill the new field from `App` state, and extend
-   `hydrate_layout_from_db` / `hydrate_tabs_from_db` (or write
-   a new `hydrate_*` peer) to apply it on open.
+4. In `feraille-gpui`, extend the persistence site that owns that
+   state (e.g. the `persist_*` writers in `settings.rs` /
+   `favorites.rs`, or the shell's layout persistence) to write the
+   new field, and load it back on open.
 
 ### B. Derived cache (hash, magic, quarantine, future thumbnails)
 

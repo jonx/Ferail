@@ -3,9 +3,8 @@
 //! [`default_db_path`]: Application Support on macOS, %APPDATA% on
 //! Windows, XDG data dir elsewhere) and in-memory in tests.
 //!
-//! Replaces the hand-rolled in-memory caches scattered across
-//! `feraille-app` (Ant Trail heat, magic cache, quarantine cache, Disk
-//! Usage prefs) with a single durable substrate. Ported from the Ferail
+//! A single durable substrate for derived metadata: Ant Trail heat,
+//! magic cache, quarantine cache, Disk Usage prefs. Ported from the Ferail
 //! predecessor's `ferail-core::metadata` (`docs/done/ANT_TRAIL.md`,
 //! `MAGIC_SNIFFING.md`); schema reused with macOS-flavored adjustments.
 //!

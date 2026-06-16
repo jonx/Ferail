@@ -3,7 +3,7 @@
 Walks a directory tree off the UI thread and shows the result as an
 interactive squarified treemap in a dedicated window. Ported in
 iter-6.0…6.4 from the Ferail predecessor's spec
-(`/Users/jkn/Source/Ferail/docs/done/DISK_USAGE.md`); the data model
+(`docs/done/DISK_USAGE.md` in the Ferail repo); the data model
 and layout algorithm are shared verbatim, the worker and visual
 control are macOS-native rewrites.
 
@@ -68,8 +68,7 @@ vice versa.
 |---|---|
 | `feraille-disk-usage` | Pure data model + squarified treemap. No I/O, no platform deps. Houses `DiskUsageTree`, `DiskUsageNode`, `DiskUsageLayoutNode`, `DiskUsageFact`, `compute_treemap`, `hit_test`, `build_layout_node`, `FileCategory`. |
 | `feraille-fs-native` | `NativeFs::scan_disk_usage` worker — DFS via `read_dir`, `symlink_metadata` (no follow), absorbs per-subdir permission errors, batched fact callback (`DEFAULT_DU_BATCH = 256`), throttled progress (~250 ms). |
-| `feraille-controls` | `treemap` module — stateless `paint`/`hit_test_at` for a `Vec<TreemapRect>` plus `TreemapColoring` enum. Pure paint contract; no allocations on hover/selection. |
-| `feraille-app` | `disk_usage_state.rs`, `disk_usage_window.rs` — owns the second winit Window, softbuffer surface, soft renderer, and the `paint_du` orchestration. Routes window events by `WindowId`. |
+| `feraille-gpui` | `disk_usage.rs` — the Disk Usage window: squarified treemap + top-list views, hover/selection state, and worker orchestration, all as GPUI elements. |
 
 ### Data flow
 

@@ -3,6 +3,7 @@ name = "feraille-shell-win32"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Windows shell integration: namespace, IContextMenu, drag-drop, change notifications"
 
 [dependencies]

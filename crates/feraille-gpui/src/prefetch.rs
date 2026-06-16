@@ -1,8 +1,7 @@
 //! Background prefetch — magic byte sniffing + quarantine xattr lookup.
 //!
-//! Old-app pattern (`feraille-app::App::start_magic_prefetch` +
-//! `start_quarantine_prefetch`) had two separate worker pipelines.
-//! The new app fuses them into one cx.spawn call per `load_path`:
+//! Magic detection and quarantine lookup are fused into one cx.spawn
+//! call per `load_path`:
 //! a background task iterates the active tab's entries, hydrates
 //! from the metadata DB cache where possible, falls back to
 //! `feraille_fs_native::{detect_magic, fetch_quarantine_info}` on
@@ -111,11 +110,10 @@ pub fn start(
     let seed_count = seeds.len();
     crate::log_info!(90, "prefetch: starting for {seed_count} rows");
 
-    // Stage 5.a: register a Task in the shared registry so the
-    // status bar reflects the in-flight work. We fuse magic +
-    // quarantine into one MagicPrefetch entry (the old app
-    // registered two — separate workers); the label still mentions
-    // both so the panel is honest about what's happening.
+    // Register a Task in the shared registry so the status bar
+    // reflects the in-flight work. We fuse magic + quarantine into
+    // one MagicPrefetch entry; the label still mentions both so the
+    // panel is honest about what's happening.
     let task_id = tasks.borrow_mut().begin(
         TaskKind::MagicPrefetch,
         format!("Indexing {seed_count} entries\u{2026}"),
@@ -304,9 +302,8 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-/// Minute-resolution ISO-8601 in UTC. Mirrors the old app's
-/// formatter so DB rows are interoperable across binaries during
-/// the migration.
+/// Minute-resolution ISO-8601 in UTC, matching the format the
+/// metadata DB stores.
 fn format_iso_minute(unix: i64) -> String {
     // Crude UTC formatter: avoids pulling chrono in.
     let secs = unix.max(0) as u64;

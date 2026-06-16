@@ -618,9 +618,7 @@ fn render_tree_row(
 
     // Capacity bar for volume rows. Finder draws this as a thin
     // line under the volume name, with the used portion filled in
-    // accent and the rest in muted grey. Matches the
-    // `feraille-controls::filetree` NodeCapacity shape from the
-    // old app.
+    // accent and the rest in muted grey.
     if let Some((total, available)) = capacity {
         if total > 0 {
             let theme = cx.theme();

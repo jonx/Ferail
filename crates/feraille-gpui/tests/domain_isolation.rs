@@ -1,11 +1,9 @@
-//! Phase 2 verification: domain crates compile and work end-to-end with
-//! zero GPUI involvement.
+//! Domain-isolation check: the domain crates compile and work
+//! end-to-end with zero GPUI involvement.
 //!
-//! Per the migration plan: "in your new feraille-app crate, write a
-//! single integration test that opens a directory, indexes it, and
-//! prints the file list — entirely through the domain crates, without
-//! GPUI involvement. If that test compiles and passes, Phase 2 is
-//! done."
+//! This integration test opens a directory, indexes it, and walks the
+//! file list — entirely through the domain crates, without GPUI
+//! involvement.
 //!
 //! The test is in the `feraille-gpui` crate (the *consumer* of both
 //! GPUI and the domain layer) so that if anything in the dep graph ever

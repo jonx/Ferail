@@ -1,7 +1,5 @@
 //! Persisted UI state for the GPUI shell — last directory, show-
-//! hidden, etc. Mirrors the `key=value` text-file pattern the old
-//! `feraille-app::app_prefs` uses, so the two apps can coexist on
-//! disk during the migration without colliding.
+//! hidden, etc. A simple `key=value` text file.
 //!
 //! File: `~/Library/Application Support/Feraille/gpui-state.txt`
 //! on macOS, `$XDG_CONFIG_HOME/feraille/gpui-state.txt` elsewhere.
