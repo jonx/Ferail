@@ -989,6 +989,7 @@ impl Shell {
                                     .menu("Get Info", Box::new(GetInfo))
                                     .menu("Open Viewer", Box::new(OpenViewer))
                                     .menu("Disk Usage\u{2026}", Box::new(OpenDiskUsage))
+                                    .menu("Find Duplicates\u{2026}", Box::new(FindDuplicates))
                                     .separator()
                                     .menu("Empty Trash\u{2026}", Box::new(EmptyTrash))
                                 }),
@@ -1870,6 +1871,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_edit_breadcrumb))
             .on_action(cx.listener(Self::on_shortcuts_help))
             .on_action(cx.listener(Self::on_open_disk_usage))
+            .on_action(cx.listener(Self::on_find_duplicates))
             .on_action(cx.listener(Self::on_open_viewer))
             .on_action(cx.listener(Self::on_sort_by_name))
             .on_action(cx.listener(Self::on_sort_by_size))

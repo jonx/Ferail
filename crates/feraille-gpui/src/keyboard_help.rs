@@ -48,6 +48,7 @@ fn action_for_command(id: feraille_core::commands::CommandId) -> Option<Box<dyn 
         "view.zoom_out" => Box::new(ZoomOut),
         "view.zoom_reset" => Box::new(ZoomReset),
         "view.disk_usage" => Box::new(OpenDiskUsage),
+        "view.find_duplicates" => Box::new(FindDuplicates),
         "view.open_viewer" => Box::new(OpenViewer),
         "view.sort_name" => Box::new(SortByName),
         "view.sort_size" => Box::new(SortBySize),

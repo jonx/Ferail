@@ -379,6 +379,12 @@ const CATALOGUE: &[CommandSpec] = &[
         shortcuts: &[Shortcut::primary_shift("D")],
     },
     CommandSpec {
+        id: CommandId("view.find_duplicates"),
+        title: "Find Duplicates",
+        category: Category::View,
+        shortcuts: &[Shortcut::primary_shift("U")],
+    },
+    CommandSpec {
         id: CommandId("disk_usage.refresh"),
         title: "Refresh Disk Usage",
         category: Category::View,

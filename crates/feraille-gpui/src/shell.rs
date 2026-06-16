@@ -1156,6 +1156,18 @@ impl Shell {
         }
     }
 
+    /// Find Duplicates — scan the active tab's directory for duplicate
+    /// files and show them grouped in the tab.
+    pub fn on_find_duplicates(
+        &mut self,
+        _: &FindDuplicates,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab_id = self.active_tab().id;
+        self.start_duplicate_scan(tab_id, cx);
+    }
+
     /// Toolbar Sort menu. Each `SortBy*` action picks a column;
     /// re-selecting the active column flips its direction. First pick
     /// of a column uses a Finder-like default (Name/Kind ascending,

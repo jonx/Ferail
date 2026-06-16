@@ -19,8 +19,8 @@ use gpui::{App, KeyBinding};
 use crate::shell::{
     self, ClearFilter, CloseTab, CloseWindow, CopyFiles, CopyPath, CursorDown, CursorDownExtend,
     CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp, CursorUpExtend,
-    EditBreadcrumb, EmptyTrash, FocusFilter, GetInfo, GoHome, MovePasteFiles, MoveToTrash,
-    NavigateBack,
+    EditBreadcrumb, EmptyTrash, FindDuplicates, FocusFilter, GetInfo, GoHome, MovePasteFiles,
+    MoveToTrash, NavigateBack,
     NavigateForward, NavigateParent, NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab,
     OpenSelected, OpenSettings, OpenViewer, PageDown, PageDownExtend, PageUp, PageUpExtend,
     PasteFiles, PrevTab, QuickLook, Refresh, RenameSelected, ReopenClosedTab, RevealInFinder,
@@ -179,6 +179,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
 
         // -- Disk Usage -------------------------------------------
         "view.disk_usage" => cx.bind_keys([KeyBinding::new(kb_str, OpenDiskUsage, ctx)]),
+        "view.find_duplicates" => cx.bind_keys([KeyBinding::new(kb_str, FindDuplicates, ctx)]),
 
         // -- Go ---------------------------------------------------
         "go.back" => cx.bind_keys([KeyBinding::new(kb_str, NavigateBack, ctx)]),
