@@ -48,6 +48,11 @@ mod volume_observer;
 #[cfg(target_os = "macos")]
 mod video_overlay;
 
+/// Spotlight-backed global search (Tier 2). Cross-platform module with
+/// internal cfg gates — non-macOS builds get unsupported stubs.
+pub mod spotlight;
+pub use spotlight::{spotlight_available, spotlight_search, SpotlightScope};
+
 /// Install the application menu bar (`NSApp.mainMenu`) and configure the
 /// standard About panel content. Call once at startup, on the main thread,
 /// after [`set_app_icon_from_png_bytes`]. No-op on non-macOS.
