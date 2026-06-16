@@ -120,6 +120,32 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
   `samples/` folder — the names carry control/bidi chars that git and editors
   mangle, so the reviewable generator is what's committed.
 
+## Follow-up iteration 2 (2026-06-16, from live use)
+
+- **Phantom-selection bug fixed (verified first).** After switching folders the
+  file pane painted a focus ring on a row while the preview said "No
+  selection". Verified it was the *file pane* lying: `navigate` clears
+  `tab.selection`/`anchor`/`lead`, so the model genuinely has no selection
+  (preview was right). The blue ring was gpui-component's internal
+  `TableState::selected_row`, which `refresh_file_list_selection_in_tab` only
+  ever *set* (when lead was `Some`) and never cleared. Added
+  `TableState::clear_selected_row` (no `SelectRow` emit → no suppress-counter
+  re-entrancy, no scroll) and call it when lead is `None`, so the primitive's
+  overlay always tracks the one selection model.
+- **Preview pane default widened** 280 → 380 (range 260–640) so the embedded
+  Get Info panel — permission grid + swatches + label column — fits without a
+  drag.
+- **Folder size reused, not rescanned.** Get Info now takes a `known_size`
+  (the file list's recursive folder total) and shows it with a recalculate
+  affordance (`↻`) instead of "Calculate". `SizeValue::Known` gained
+  `refreshable`. The embedded preview view upgrades a "Calculate" placeholder
+  in place when the async size lands after selection (`retarget` +
+  `EntryInfo::size_is_calculable`), so it never sticks on "Calculate" once the
+  column knows the number.
+- Verified: `screenshots/get-info-folder-size.png` (wider pane, "Size 2.3 GB ↻"
+  on a folder, full permission grid visible). Build + full suite green,
+  clippy-clean on touched files.
+
 ## With more time / deferred
 
 - **Inline rename** in the popup (the name is read-only there; the existing

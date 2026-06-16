@@ -741,6 +741,145 @@ pub fn system_is_dark() -> bool {
     false
 }
 
+/// macOS "Show Desktop" — the same wallpaper reveal the Dock performs
+/// when you click the desktop or hit the Show Desktop shortcut. There
+/// is no public API for it, so we resolve the Dock's private
+/// `CoreDockSendNotification` symbol at runtime and post the
+/// `com.apple.showdesktop.awake` toggle.
+///
+/// Two functions:
+/// - [`show_desktop_available`] — `true` only when we resolved the
+///   symbol on a new-enough macOS. UI affordances (toolbar button,
+///   menu item) gate their visibility on this.
+/// - [`show_desktop`] — performs the reveal, returning whether it
+///   dispatched. Both are panic-free: on failure they report
+///   unavailable / `false` rather than aborting, so a future OS change
+///   that pulls the symbol degrades to "the button quietly disappears."
+#[cfg(target_os = "macos")]
+mod show_desktop_impl {
+    use std::ffi::{c_char, c_int, c_void, CString};
+    use std::sync::OnceLock;
+
+    // CoreDockSendNotification(CFStringRef notification, void *unused).
+    // The Dock ignores the second argument; passing an extra ignored
+    // pointer is safe under the C ABI on both x86_64 and arm64 (unused
+    // argument registers are simply not read by the callee).
+    type SendNotification = unsafe extern "C" fn(*const c_void, *const c_void);
+
+    // libSystem (always linked on macOS) provides the dynamic loader.
+    extern "C" {
+        fn dlopen(path: *const c_char, mode: c_int) -> *mut c_void;
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    }
+    const RTLD_LAZY: c_int = 0x1;
+
+    // Frameworks that export `CoreDockSendNotification`, newest-OS first.
+    // On macOS 26 (Tahoe) the old private `CoreDock.framework` is gone
+    // from the dyld cache; the symbol is vended by the public
+    // ApplicationServices umbrella (via its HIServices sub-framework),
+    // which is always present. The legacy CoreDock path is kept as a
+    // fallback for older systems where it still resolved directly.
+    const CANDIDATE_PATHS: &[&str] = &[
+        "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices",
+        "/System/Library/PrivateFrameworks/CoreDock.framework/CoreDock",
+    ];
+
+    // Floor we trust this private path on. The Show Desktop notification
+    // long predates Big Sur, but gating here keeps us off any ancient
+    // build where the symbol's contract might differ — and satisfies the
+    // "right OS version" guard cheaply.
+    const MIN_MAJOR: isize = 11;
+
+    fn os_major() -> isize {
+        use objc2_foundation::NSProcessInfo;
+        // NSProcessInfo is thread-safe; no MainThreadMarker needed.
+        let info = NSProcessInfo::processInfo();
+        info.operatingSystemVersion().majorVersion
+    }
+
+    /// Resolved function-pointer address, or 0 when unavailable.
+    /// Computed once — the `dlopen` happens on the first call only, and
+    /// the handle is intentionally leaked for the process lifetime.
+    fn resolved_addr() -> usize {
+        static CELL: OnceLock<usize> = OnceLock::new();
+        *CELL.get_or_init(|| {
+            if os_major() < MIN_MAJOR {
+                return 0;
+            }
+            let Ok(sym) = CString::new("CoreDockSendNotification") else {
+                return 0;
+            };
+            // SAFETY: standard dlopen/dlsym against system frameworks.
+            // We never dereference `handle`; dlsym returns null when the
+            // symbol is absent, which we fold into the 0 sentinel and
+            // move on to the next candidate framework.
+            for path in CANDIDATE_PATHS {
+                let Ok(path) = CString::new(*path) else {
+                    continue;
+                };
+                unsafe {
+                    let handle = dlopen(path.as_ptr(), RTLD_LAZY);
+                    if handle.is_null() {
+                        continue;
+                    }
+                    let addr = dlsym(handle, sym.as_ptr()) as usize;
+                    if addr != 0 {
+                        return addr;
+                    }
+                }
+            }
+            0
+        })
+    }
+
+    pub(crate) fn available() -> bool {
+        resolved_addr() != 0
+    }
+
+    pub(crate) fn trigger() -> bool {
+        let addr = resolved_addr();
+        if addr == 0 {
+            return false;
+        }
+        // SAFETY: `addr` is a non-null CoreDockSendNotification pointer
+        // (validated by resolved_addr). NSString is toll-free bridged to
+        // CFStringRef, so its pointer is a valid first argument; the call
+        // posts a Dock notification and returns void without retaining
+        // the string past the call.
+        unsafe {
+            let func: SendNotification = std::mem::transmute(addr);
+            let name = objc2_foundation::NSString::from_str("com.apple.showdesktop.awake");
+            let name_ptr = (&*name as *const objc2_foundation::NSString) as *const c_void;
+            func(name_ptr, std::ptr::null());
+        }
+        true
+    }
+}
+
+/// `true` when the private Show Desktop path resolved on a supported
+/// macOS. See [`show_desktop`]. Cheap after the first call (cached).
+#[cfg(target_os = "macos")]
+pub fn show_desktop_available() -> bool {
+    show_desktop_impl::available()
+}
+
+/// Trigger the macOS Show Desktop reveal. Returns `true` if it
+/// dispatched, `false` (never panics) if the symbol was unavailable.
+#[cfg(target_os = "macos")]
+pub fn show_desktop() -> bool {
+    show_desktop_impl::trigger()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_desktop_available() -> bool {
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn show_desktop() -> bool {
+    false
+}
+
 /// Subscribe to macOS Appearance change notifications. The callback
 /// fires on the main thread with the new dark-mode state every time
 /// the user toggles System Settings → Appearance, or "Auto" mode

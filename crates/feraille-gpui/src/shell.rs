@@ -614,7 +614,14 @@ impl Shell {
         })
         .detach();
 
-        let initial_tab = Shell::build_tab(process.clone(), start.clone(), start_id, window, cx);
+        let initial_tab = Shell::build_tab(
+            process.clone(),
+            start.clone(),
+            start_id,
+            focus_handle.clone(),
+            window,
+            cx,
+        );
         // gpui-component's AppMenuBar is the Win/Linux equivalent of
         // macOS's NSApp menu. Reads from the same `cx.set_menus()`
         // global state, so the menu spec lives once in
@@ -655,7 +662,7 @@ impl Shell {
             ui_scale,
             splitter_state: cx.new(|_| gpui_component::resizable::ResizableState::default()),
             sidebar_width: persisted.sidebar_width.unwrap_or(220.0).clamp(160.0, 400.0),
-            preview_width: persisted.preview_width.unwrap_or(280.0).clamp(220.0, 520.0),
+            preview_width: persisted.preview_width.unwrap_or(380.0).clamp(260.0, 640.0),
             splitter_last_save: None,
             sidebar_collapsed: persisted.sidebar_collapsed.unwrap_or(false),
             favorites_section_collapsed: false,
@@ -698,11 +705,13 @@ impl Shell {
         process: Rc<crate::process_state::ProcessState>,
         at: PathBuf,
         node_id: NodeId,
+        shell_focus: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Tab {
         let tab_id = process.mint_tab_id();
-        let delegate = FileListDelegate::new(process.fs.clone(), process.icons.clone());
+        let delegate =
+            FileListDelegate::new(process.fs.clone(), process.icons.clone(), shell_focus);
         let table = cx.new(|cx| {
             TableState::new(delegate, window, cx)
                 .col_selectable(false)
@@ -815,7 +824,14 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Tab {
-        Self::build_tab(self.process.clone(), at, node_id, window, cx)
+        Self::build_tab(
+            self.process.clone(),
+            at,
+            node_id,
+            self.focus_handle.clone(),
+            window,
+            cx,
+        )
     }
 
     /// "Which row is this action targeting?" — context_row first
@@ -875,18 +891,21 @@ impl Shell {
         path: PathBuf,
         name: String,
         target: feraille_core::entry_info::InfoTarget,
+        known_size: Option<u64>,
         cx: &mut Context<Self>,
     ) -> gpui::Entity<crate::entry_info::EntryInfoView> {
         match &self.preview_info {
             Some(view) => {
                 let p = path.clone();
                 let n = name.clone();
-                view.update(cx, |view, cx| view.retarget(p, n, cx));
+                view.update(cx, |view, cx| view.retarget(p, n, known_size, cx));
             }
             None => {
                 let weak = cx.weak_entity();
                 let view = cx.new(|cx| {
-                    crate::entry_info::EntryInfoView::new_embedded(path, name, target, weak, cx)
+                    crate::entry_info::EntryInfoView::new_embedded(
+                        path, name, target, known_size, weak, cx,
+                    )
                 });
                 self.preview_info = Some(view);
             }
@@ -1022,6 +1041,14 @@ impl Shell {
     fn on_refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
         let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
+    }
+
+    /// Reveal the desktop via the Dock's private Show Desktop path. The
+    /// button/menu entry that dispatches this are only shown when the
+    /// symbol resolved, but we still treat a failed call as a silent
+    /// no-op so nothing can crash the UI.
+    fn on_show_desktop(&mut self, _: &ShowDesktop, _: &mut Window, _cx: &mut Context<Self>) {
+        let _ = crate::platform_shell::show_desktop();
     }
 
     fn on_toggle_hidden(&mut self, _: &ToggleHidden, _: &mut Window, cx: &mut Context<Self>) {
@@ -1306,22 +1333,35 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use feraille_core::entry_info::InfoTarget;
-        let (path, name, target) = match self.target_row(cx) {
+        let (path, name, target, known_size) = match self.target_row(cx) {
             Some(row) => {
                 let Some(path) = self.path_for_row(row, cx) else {
                     return;
                 };
-                let kind = self.entry_kind_at_row(row, cx);
+                let entry = self
+                    .active_tab()
+                    .table
+                    .read(cx)
+                    .delegate()
+                    .entries
+                    .get(row)
+                    .cloned();
+                let kind = entry.as_ref().map(|e| e.kind);
                 let target = match kind {
                     Some(EntryKind::Directory) => InfoTarget::Folder,
                     _ => InfoTarget::File,
+                };
+                // Reuse the file list's recursive folder size when it has one.
+                let known_size = match (target, entry.as_ref()) {
+                    (InfoTarget::Folder, Some(e)) if e.size > 0 => Some(e.size),
+                    _ => None,
                 };
                 let name = path
                     .file_name()
                     .and_then(|s| s.to_str())
                     .map(str::to_string)
                     .unwrap_or_default();
-                (path, name, target)
+                (path, name, target, known_size)
             }
             None => {
                 let dir = self.active_tab().current_dir.clone();
@@ -1330,10 +1370,10 @@ impl Shell {
                     .and_then(|s| s.to_str())
                     .map(str::to_string)
                     .unwrap_or_else(|| dir.display().to_string());
-                (dir, name, InfoTarget::Folder)
+                (dir, name, InfoTarget::Folder, None)
             }
         };
-        crate::entry_info::open(path, name, target, cx.weak_entity(), window, cx);
+        crate::entry_info::open(path, name, target, known_size, cx.weak_entity(), window, cx);
     }
 
     /// Cmd+= / Cmd+- / Cmd+0 — UI zoom. Bumps `ui_scale` by ±0.1

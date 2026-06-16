@@ -52,6 +52,15 @@ impl EntryInfo {
         }
     }
 
+    /// True when the (first) Size row is still awaiting an on-demand
+    /// calculation — i.e. a folder/volume whose total we don't have yet.
+    pub fn size_is_calculable(&self) -> bool {
+        self.sections
+            .iter()
+            .flat_map(|s| &s.rows)
+            .any(|r| matches!(r.value, InfoValue::Size(SizeValue::Calculable)))
+    }
+
     /// Find the first row carrying an editable toggle for `attr`, if any.
     /// Used by edit round-trips to flip the displayed state optimistically.
     pub fn toggle(&self, attr: Attr) -> Option<bool> {
@@ -237,7 +246,14 @@ impl PermMatrix {
 #[derive(Clone, Debug)]
 pub enum SizeValue {
     /// Known byte count, pre-formatted plus raw for the on-disk/“x bytes” line.
-    Known { bytes: u64, display: String },
+    /// `refreshable` is true for a folder/volume total that was reused from a
+    /// cache and can be recomputed (the UI shows a refresh affordance); false
+    /// for a file's own, always-current size.
+    Known {
+        bytes: u64,
+        display: String,
+        refreshable: bool,
+    },
     /// Folder/volume size not computed yet; the UI shows a "Calculate" button.
     Calculable,
     /// A recursive scan is in flight.

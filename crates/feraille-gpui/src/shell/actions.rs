@@ -8,6 +8,12 @@ actions!(
         NavigateForward,
         OpenSelected,
         Refresh,
+        /// Trigger the macOS "Show Desktop" reveal (the Dock's private
+        /// `CoreDockSendNotification`). The toolbar button and menu item
+        /// only appear when `platform_shell::show_desktop_available()` is
+        /// true, so on platforms / OS versions without it this action is
+        /// never reachable and its handler silently no-ops.
+        ShowDesktop,
         ToggleHidden,
         OpenSettings,
         CopyPath,

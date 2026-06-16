@@ -259,6 +259,78 @@ pub fn open_settings_window(cx: &mut App) {
 // Page builders
 // =============================================================================
 
+/// A dropdown setting laid out the way the stock `SettingItem` can't: the
+/// label and the control share one line (label left, dropdown right) while
+/// the description spans the **full width** below them — instead of being
+/// squeezed into the narrow left column the horizontal layout gives it.
+///
+/// The control is a `small`, width-capped dropdown so its text matches our
+/// density (the stock field renders at the page's default size, which is
+/// too large here) and a long option label can't spill past the panel
+/// edge and clip.
+///
+/// `get` returns the current stored value; `persist` writes the picked
+/// value. Both are plain `fn` pointers (the getters/setters capture
+/// nothing — they read/write `app_state`).
+fn dropdown_setting(
+    title: &'static str,
+    description: &'static str,
+    options: &'static [(&'static str, &'static str)],
+    get: fn() -> String,
+    persist: fn(&str),
+) -> SettingItem {
+    SettingItem::render(move |_options, _window, cx| {
+        use gpui_component::{
+            ActiveTheme as _, Sizable as _,
+            button::{Button, ButtonVariants as _},
+            menu::{DropdownMenu as _, PopupMenuItem},
+        };
+        let current = get();
+        let current_label = options
+            .iter()
+            .find(|(value, _)| *value == current.as_str())
+            .map(|(_, label)| *label)
+            .unwrap_or("");
+        let muted = cx.theme().muted_foreground;
+        let fg = cx.theme().foreground;
+
+        gpui_component::v_flex()
+            .w_full()
+            .gap_1()
+            .child(
+                gpui_component::h_flex()
+                    .w_full()
+                    .justify_between()
+                    .items_center()
+                    .gap_3()
+                    .child(div().flex_shrink_0().text_sm().text_color(fg).child(title))
+                    .child(
+                        Button::new(SharedString::from(format!("dd-{title}")))
+                            .label(current_label)
+                            .dropdown_caret(true)
+                            .outline()
+                            .small()
+                            .max_w(px(260.0))
+                            .dropdown_menu_with_anchor(
+                                gpui::Anchor::TopRight,
+                                move |menu, _window, _cx| {
+                                    options.iter().fold(menu, |menu, opt| {
+                                        let (value, label) = *opt;
+                                        let checked = value == current.as_str();
+                                        menu.item(
+                                            PopupMenuItem::new(label)
+                                                .checked(checked)
+                                                .on_click(move |_, _, _cx| persist(value)),
+                                        )
+                                    })
+                                },
+                            ),
+                    ),
+            )
+            .child(div().w_full().text_sm().text_color(muted).child(description))
+    })
+}
+
 fn build_pages(home_hidden_count: Option<usize>) -> Vec<SettingPage> {
     vec![
         appearance_page(),
@@ -276,28 +348,19 @@ fn search_dupes_page() -> SettingPage {
         // ---- Search engine ----
         .group(
             SettingGroup::new().title("Search").item(
-                SettingItem::new(
+                dropdown_setting(
                     "Search engine",
-                    SettingField::dropdown(
-                        vec![
-                            ("auto".into(), "Automatic (recommended)".into()),
-                            ("spotlight".into(), "Spotlight".into()),
-                            ("walker".into(), "Built-in walker".into()),
-                        ],
-                        |_cx: &App| {
-                            SharedString::from(
-                                app_state::load().search_engine.unwrap_or_else(|| "auto".into()),
-                            )
-                        },
-                        |val: SharedString, _cx: &mut App| persist_search_engine(&val),
-                    )
-                    .default_value("auto"),
-                )
-                .description(
                     "Automatic uses Spotlight's live index when available \u{2014} instant, \
                      content-aware, near-zero CPU \u{2014} and falls back to the built-in \
                      recursive walker where Spotlight is disabled or blind (some external / \
                      network volumes). Force one if you prefer.",
+                    &[
+                        ("auto", "Automatic (recommended)"),
+                        ("spotlight", "Spotlight"),
+                        ("walker", "Built-in walker"),
+                    ],
+                    || app_state::load().search_engine.unwrap_or_else(|| "auto".into()),
+                    persist_search_engine,
                 ),
             )
             .item(
@@ -330,54 +393,30 @@ fn search_dupes_page() -> SettingPage {
         .group(
             SettingGroup::new()
                 .title("Duplicate finder")
-                .item(
-                    SettingItem::new(
-                        "Results view",
-                        SettingField::dropdown(
-                            vec![
-                                ("grouped".into(), "Grouped rows in a tab".into()),
-                                ("panel".into(), "Dedicated panel".into()),
-                            ],
-                            |_cx: &App| {
-                                SharedString::from(
-                                    app_state::load()
-                                        .dupe_presentation
-                                        .unwrap_or_else(|| "grouped".into()),
-                                )
-                            },
-                            |val: SharedString, _cx: &mut App| persist_dupe_presentation(&val),
-                        )
-                        .default_value("grouped"),
-                    )
-                    .description(
-                        "How duplicate groups are shown. Grouped rows reuse the file list \
-                         (selection, sort, preview, context menu); the dedicated panel offers \
-                         group-level actions like keep-newest.",
-                    ),
-                )
-                .item(
-                    SettingItem::new(
-                        "Ignore small files",
-                        SettingField::dropdown(
-                            vec![
-                                ("0".into(), "Compare all files".into()),
-                                ("1".into(), "Skip under 1 MB".into()),
-                                ("10".into(), "Skip under 10 MB".into()),
-                                ("100".into(), "Skip under 100 MB".into()),
-                            ],
-                            |_cx: &App| {
-                                SharedString::from(
-                                    app_state::load().dupe_min_size_mb.unwrap_or(0).to_string(),
-                                )
-                            },
-                            |val: SharedString, _cx: &mut App| {
-                                persist_dupe_min_size_mb(val.parse().unwrap_or(0));
-                            },
-                        )
-                        .default_value("0"),
-                    )
-                    .description("Skip files below this size \u{2014} the big wins are large files."),
-                )
+                .item(dropdown_setting(
+                    "Results view",
+                    "How duplicate groups are shown. Grouped rows reuse the file list \
+                     (selection, sort, preview, context menu); the dedicated panel offers \
+                     group-level actions like keep-newest.",
+                    &[
+                        ("grouped", "Grouped rows in a tab"),
+                        ("panel", "Dedicated panel"),
+                    ],
+                    || app_state::load().dupe_presentation.unwrap_or_else(|| "grouped".into()),
+                    persist_dupe_presentation,
+                ))
+                .item(dropdown_setting(
+                    "Ignore small files",
+                    "Skip files below this size \u{2014} the big wins are large files.",
+                    &[
+                        ("0", "Compare all files"),
+                        ("1", "Skip under 1 MB"),
+                        ("10", "Skip under 10 MB"),
+                        ("100", "Skip under 100 MB"),
+                    ],
+                    || app_state::load().dupe_min_size_mb.unwrap_or(0).to_string(),
+                    |v| persist_dupe_min_size_mb(v.parse().unwrap_or(0)),
+                ))
                 .item(
                     SettingItem::new(
                         "Skip cloud placeholders",
@@ -477,31 +516,18 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
 fn layout_page() -> SettingPage {
     SettingPage::new("Layout")
         .icon(Icon::empty().path("icons/settings-2.svg"))
-        .group(SettingGroup::new().title("Interface").item(
-            SettingItem::new(
-                "UI scale",
-                SettingField::dropdown(
-                    vec![
-                        ("0.85".into(), "Small (85%)".into()),
-                        ("1.00".into(), "Default (100%)".into()),
-                        ("1.15".into(), "Medium (115%)".into()),
-                        ("1.30".into(), "Large (130%)".into()),
-                    ],
-                    |_cx: &App| {
-                        let v = app_state::load().ui_scale.unwrap_or(1.0);
-                        SharedString::from(format!("{:.2}", v))
-                    },
-                    |val: SharedString, _cx: &mut App| {
-                        let n: f32 = val.parse().unwrap_or(1.0);
-                        persist_ui_scale(n);
-                    },
-                )
-                .default_value("1.00"),
-            )
-            .description(
-                "Overall interface zoom. Restart the app or open a new window for the change to apply.",
-            ),
-        ))
+        .group(SettingGroup::new().title("Interface").item(dropdown_setting(
+            "UI scale",
+            "Overall interface zoom. Restart the app or open a new window for the change to apply.",
+            &[
+                ("0.85", "Small (85%)"),
+                ("1.00", "Default (100%)"),
+                ("1.15", "Medium (115%)"),
+                ("1.30", "Large (130%)"),
+            ],
+            || format!("{:.2}", app_state::load().ui_scale.unwrap_or(1.0)),
+            |v| persist_ui_scale(v.parse().unwrap_or(1.0)),
+        )))
 }
 
 fn shortcuts_page() -> SettingPage {

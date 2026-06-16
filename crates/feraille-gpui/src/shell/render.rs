@@ -810,6 +810,18 @@ impl Shell {
             "icons/sort-descending.svg"
         };
         let show_hidden = self.show_hidden;
+        // Show Desktop is a private-symbol feature: the button only
+        // exists when `feraille-shell-mac` resolved the Dock notification
+        // on a supported macOS. Cached after first resolve, so this is a
+        // cheap render-time read (prewarmed at startup).
+        let show_desktop_available = crate::platform_shell::show_desktop_available();
+        // SHELL_CONTEXT-bearing handle for the toolbar dropdowns, so
+        // their items resolve keyboard-shortcut hints against the
+        // shell's stable dispatch path instead of the focus-sensitive
+        // previous-frame fallback (which left the hints blank for the
+        // first frame or two after the menu opened).
+        let sort_menu_focus = self.focus_handle.clone();
+        let overflow_menu_focus = self.focus_handle.clone();
         TitleBar::new().child(
             h_flex()
                 .w_full()
@@ -916,7 +928,8 @@ impl Shell {
                                 .icon(gpui_component::Icon::empty().path(sort_icon))
                                 .tooltip("Sort")
                                 .dropdown_menu(move |menu, _window, _cx| {
-                                    menu.menu_with_check(
+                                    menu.action_context(sort_menu_focus.clone())
+                                        .menu_with_check(
                                         "Name",
                                         sort_col == Some(SortColumn::Name),
                                         Box::new(SortByName),
@@ -939,6 +952,22 @@ impl Shell {
                                 }),
                         ),
                 )
+                // Show Desktop — left of New Folder. Present only when the
+                // private Dock symbol resolved on a supported OS; otherwise
+                // it silently doesn't render (no crash, no empty slot).
+                .children(show_desktop_available.then(|| {
+                    Button::new("toolbar-show-desktop")
+                        .small()
+                        .ghost()
+                        .icon(gpui_component::Icon::empty().path("icons/nav/show-desktop.svg"))
+                        .tooltip_with_action("Show Desktop", &ShowDesktop, Some(SHELL_CONTEXT))
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_show_desktop(&ShowDesktop, window, cx);
+                        }))
+                }))
                 .child(
                     Button::new("toolbar-new-folder")
                         .small()
@@ -982,11 +1011,12 @@ impl Shell {
                                 .icon(gpui_component::Icon::empty().path("icons/ellipsis.svg"))
                                 .tooltip("More")
                                 .dropdown_menu(move |menu, _window, _cx| {
-                                    menu.menu_with_check(
-                                        "Show Hidden Files",
-                                        show_hidden,
-                                        Box::new(ToggleHidden),
-                                    )
+                                    menu.action_context(overflow_menu_focus.clone())
+                                        .menu_with_check(
+                                            "Show Hidden Files",
+                                            show_hidden,
+                                            Box::new(ToggleHidden),
+                                        )
                                     .separator()
                                     .menu("Get Info", Box::new(GetInfo))
                                     .menu("Open Viewer", Box::new(OpenViewer))
@@ -1094,8 +1124,20 @@ impl Shell {
                     EntryKind::Directory => feraille_core::entry_info::InfoTarget::Folder,
                     _ => feraille_core::entry_info::InfoTarget::File,
                 };
-                let info_view =
-                    self.sync_preview_info(full_path.clone(), entry.name.clone(), info_target, cx);
+                // Hand the folder's already-computed recursive size (from the
+                // Size column) to Get Info so it reuses it, not rescans.
+                let known_size = if matches!(entry.kind, EntryKind::Directory) && entry.size > 0 {
+                    Some(entry.size)
+                } else {
+                    None
+                };
+                let info_view = self.sync_preview_info(
+                    full_path.clone(),
+                    entry.name.clone(),
+                    info_target,
+                    known_size,
+                    cx,
+                );
 
                 // Quick Look thumbnail (Stage 8 native preview).
                 // `preview::request` was kicked off when the row
@@ -1849,6 +1891,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_navigate_forward))
             .on_action(cx.listener(Self::on_open_selected))
             .on_action(cx.listener(Self::on_refresh))
+            .on_action(cx.listener(Self::on_show_desktop))
             .on_action(cx.listener(Self::on_toggle_hidden))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_copy_path))
@@ -2098,7 +2141,7 @@ impl Render for Shell {
                     splitter.child(
                         resizable_panel()
                             .size(preview_width_px)
-                            .size_range(px(220.0)..px(520.0))
+                            .size_range(px(260.0)..px(640.0))
                             .child(pane),
                     )
                 } else {

@@ -24,7 +24,11 @@ use feraille_core::entry_info::{
 use feraille_core::name_hazards::{self, HazardKind};
 use gpui::*;
 use gpui_component::{
-    button::Button, checkbox::Checkbox, h_flex, notification::Notification, tooltip::Tooltip,
+    button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
+    h_flex,
+    notification::Notification,
+    tooltip::Tooltip,
     v_flex, ActiveTheme, Sizable, WindowExt as _,
 };
 
@@ -50,11 +54,12 @@ pub fn open(
     path: PathBuf,
     name: String,
     target: InfoTarget,
+    known_size: Option<u64>,
     shell: WeakEntity<Shell>,
     window: &mut Window,
     cx: &mut App,
 ) {
-    let view = cx.new(|cx| EntryInfoView::new(path, name, target, shell, cx));
+    let view = cx.new(|cx| EntryInfoView::new(path, name, target, known_size, shell, cx));
     window.open_dialog(cx, move |dialog, _window, _cx| {
         dialog
             .title("Get Info")
@@ -94,7 +99,10 @@ fn display_name(path: &Path, target: InfoTarget, vol_name: Option<&str>) -> Stri
 
 /// Build the full Get Info record. Runs on the background executor: every
 /// call here is a native read, none of it is allowed on the paint path.
-pub fn gather(path: &Path) -> EntryInfo {
+/// `known_size` is the caller's already-computed recursive size for a
+/// folder/volume (from the file list's Size column) — reused so we don't
+/// rescan, shown with a refresh affordance.
+pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     use feraille_fs_native as fsn;
     use feraille_shell_mac as shell;
 
@@ -134,11 +142,22 @@ pub fn gather(path: &Path) -> EntryInfo {
                 InfoValue::Size(SizeValue::Known {
                     bytes,
                     display: fsn::humanize_bytes(bytes),
+                    refreshable: false,
                 }),
             );
         }
         InfoTarget::Folder => {
-            general = general.row("Size", InfoValue::Size(SizeValue::Calculable));
+            // Reuse the file list's recursive size when it already has one;
+            // otherwise offer to compute it on demand.
+            let size = match known_size {
+                Some(b) if b > 0 => SizeValue::Known {
+                    bytes: b,
+                    display: fsn::humanize_bytes(b),
+                    refreshable: true,
+                },
+                _ => SizeValue::Calculable,
+            };
+            general = general.row("Size", InfoValue::Size(size));
         }
         InfoTarget::Volume => {}
     }
@@ -270,6 +289,9 @@ pub struct EntryInfoView {
     embedded: bool,
     /// Scroll position for the popup's body.
     scroll: ScrollHandle,
+    /// The file list's already-computed recursive size for a folder, reused
+    /// so Get Info doesn't rescan (shown with a refresh affordance).
+    known_size: Option<u64>,
 }
 
 impl EntryInfoView {
@@ -277,10 +299,11 @@ impl EntryInfoView {
         path: PathBuf,
         name: String,
         target: InfoTarget,
+        known_size: Option<u64>,
         shell: WeakEntity<Shell>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::build(path, name, target, shell, false, cx)
+        Self::build(path, name, target, known_size, shell, false, cx)
     }
 
     /// Construct for embedding in the preview pane: section rows only, no
@@ -290,16 +313,18 @@ impl EntryInfoView {
         path: PathBuf,
         name: String,
         target: InfoTarget,
+        known_size: Option<u64>,
         shell: WeakEntity<Shell>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::build(path, name, target, shell, true, cx)
+        Self::build(path, name, target, known_size, shell, true, cx)
     }
 
     fn build(
         path: PathBuf,
         name: String,
         _target: InfoTarget,
+        known_size: Option<u64>,
         shell: WeakEntity<Shell>,
         embedded: bool,
         cx: &mut Context<Self>,
@@ -313,6 +338,7 @@ impl EntryInfoView {
             shell,
             embedded,
             scroll: ScrollHandle::new(),
+            known_size,
         };
         this.refresh(cx);
         this
@@ -320,8 +346,30 @@ impl EntryInfoView {
 
     /// Re-point an embedded view at a new selection without rebuilding the
     /// entity. Cancels any in-flight size scan and re-gathers.
-    pub(crate) fn retarget(&mut self, path: PathBuf, name: String, cx: &mut Context<Self>) {
+    pub(crate) fn retarget(
+        &mut self,
+        path: PathBuf,
+        name: String,
+        known_size: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
         if self.path == path {
+            // Same entry — but a folder size may have just landed from the
+            // async worker after we first showed "Calculate". Upgrade in
+            // place rather than rescanning.
+            if self.known_size != known_size {
+                self.known_size = known_size;
+                if let (Some(b), GatherState::Ready(info)) = (known_size, &mut self.state) {
+                    if b > 0 && info.size_is_calculable() {
+                        info.set_size_value(SizeValue::Known {
+                            bytes: b,
+                            display: feraille_fs_native::humanize_bytes(b),
+                            refreshable: true,
+                        });
+                        cx.notify();
+                    }
+                }
+            }
             return;
         }
         if let Some(c) = self.size_cancel.take() {
@@ -330,6 +378,7 @@ impl EntryInfoView {
         self.path = path;
         self.name = name;
         self.kind = String::new();
+        self.known_size = known_size;
         self.state = GatherState::Loading;
         self.refresh(cx);
     }
@@ -337,10 +386,11 @@ impl EntryInfoView {
     /// (Re-)gather the record on the background executor and apply it.
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let gather_path = self.path.clone();
+        let known_size = self.known_size;
         cx.spawn(async move |this, cx| {
             let info = cx
                 .background_executor()
-                .spawn(async move { gather(&gather_path) })
+                .spawn(async move { gather(&gather_path, known_size) })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.name = info.name.clone();
@@ -390,10 +440,12 @@ impl EntryInfoView {
                 .spawn(async move { feraille_fs_native::recursive_size(&path, &cancel) })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                this.known_size = Some(bytes);
                 if let GatherState::Ready(info) = &mut this.state {
                     info.set_size_value(SizeValue::Known {
                         bytes,
                         display: feraille_fs_native::humanize_bytes(bytes),
+                        refreshable: true,
                     });
                 }
                 this.size_cancel = None;
@@ -594,8 +646,31 @@ impl EntryInfoView {
             }
             InfoValue::Permissions(m) => self.render_permissions(m, cx),
             InfoValue::Size(size) => match size {
-                SizeValue::Known { display, .. } => {
-                    div().child(display.clone()).into_any_element()
+                SizeValue::Known {
+                    display,
+                    refreshable,
+                    ..
+                } => {
+                    let row = h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(div().child(display.clone()));
+                    if *refreshable {
+                        // A cached folder/volume total — let the user recompute.
+                        row.child(
+                            Button::new("entry-info-recalc-size")
+                                .label("\u{21BB}")
+                                .xsmall()
+                                .ghost()
+                                .tooltip("Recalculate size")
+                                .on_click(
+                                    cx.listener(|this, _, _window, cx| this.calculate_size(cx)),
+                                ),
+                        )
+                        .into_any_element()
+                    } else {
+                        row.into_any_element()
+                    }
                 }
                 SizeValue::Calculating => div()
                     .text_color(cx.theme().muted_foreground)

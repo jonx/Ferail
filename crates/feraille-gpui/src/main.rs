@@ -17,7 +17,8 @@ use feraille_gpui::{
     shell::{
         CloseTab, CloseWindow, CopyPath, FindDuplicates, FocusFilter, GoHome, MoveToTrash,
         NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab, OpenDiskUsage,
-        OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell, ToggleHidden,
+        OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell, ShowDesktop,
+        ToggleHidden,
     },
 };
 use gpui::*;
@@ -590,6 +591,30 @@ fn open_shell_window_sized(cx: &mut App, size_hint: Option<(f32, f32)>) {
 /// selected) is deferred to a polish iter — the action handler
 /// no-ops silently in that case today.
 fn install_app_menus(cx: &mut App) {
+    // Show Desktop is gated on the private Dock symbol resolving on a
+    // supported macOS. Resolving here also warms the cache before the
+    // first render reads it (keeps the render-time check nonblocking).
+    let show_desktop_available = feraille_gpui::platform_shell::show_desktop_available();
+    let mut view_items = vec![
+        MenuItem::action(title("view.search", "Find"), FocusFilter),
+        MenuItem::action(title("view.find_duplicates", "Find Duplicates"), FindDuplicates),
+        MenuItem::action(title("view.disk_usage", "Disk Usage"), OpenDiskUsage),
+    ];
+    if show_desktop_available {
+        view_items.push(MenuItem::separator());
+        view_items.push(MenuItem::action(
+            title("view.show_desktop", "Show Desktop"),
+            ShowDesktop,
+        ));
+    }
+    view_items.push(MenuItem::separator());
+    view_items.push(MenuItem::action(
+        title("view.toggle_hidden", "Show Hidden Files"),
+        ToggleHidden,
+    ));
+    view_items.push(MenuItem::separator());
+    view_items.push(MenuItem::action(title("file.refresh", "Refresh"), Refresh));
+
     cx.set_menus([
         Menu {
             name: "Feraille".into(),
@@ -647,18 +672,7 @@ fn install_app_menus(cx: &mut App) {
         },
         Menu {
             name: "View".into(),
-            items: vec![
-                MenuItem::action(title("view.search", "Find"), FocusFilter),
-                MenuItem::action(title("view.find_duplicates", "Find Duplicates"), FindDuplicates),
-                MenuItem::action(title("view.disk_usage", "Disk Usage"), OpenDiskUsage),
-                MenuItem::separator(),
-                MenuItem::action(
-                    title("view.toggle_hidden", "Show Hidden Files"),
-                    ToggleHidden,
-                ),
-                MenuItem::separator(),
-                MenuItem::action(title("file.refresh", "Refresh"), Refresh),
-            ],
+            items: view_items,
             disabled: false,
         },
     ]);

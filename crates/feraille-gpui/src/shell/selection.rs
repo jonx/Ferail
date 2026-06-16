@@ -319,12 +319,23 @@ impl Shell {
             state.refresh(cx);
             lead_row
         });
-        if let Some(row) = lead_row {
-            let needs_set = table.read(cx).selected_row() != Some(row);
-            if needs_set {
-                table.update(cx, |state, cx| {
-                    state.set_selected_row(row, cx);
-                });
+        match lead_row {
+            Some(row) => {
+                let needs_set = table.read(cx).selected_row() != Some(row);
+                if needs_set {
+                    table.update(cx, |state, cx| {
+                        state.set_selected_row(row, cx);
+                    });
+                }
+            }
+            // No lead → no selection. Clear the primitive's focus overlay so
+            // it can't paint a phantom ring on whatever row inherits the
+            // stale index after a folder switch (the preview correctly shows
+            // "No selection"; the file pane must agree).
+            None => {
+                if table.read(cx).selected_row().is_some() {
+                    table.update(cx, |state, cx| state.clear_selected_row(cx));
+                }
             }
         }
     }

@@ -96,10 +96,22 @@ pub struct FileListDelegate {
     /// by the folder-size worker so late-arriving sizes can re-apply
     /// a live Size sort instead of leaving rows in stale positions.
     pub current_sort: Option<(SortColumn, bool)>,
+    /// The Shell's focus handle, carrying the `SHELL_CONTEXT` key
+    /// context. Handed to the row right-click menu as its
+    /// `action_context` so gpui-component resolves each item's
+    /// keyboard-shortcut hint against the shell's (stable, always-
+    /// painted) dispatch path instead of the focus-sensitive
+    /// previous-frame fallback — which left shortcuts blank for the
+    /// first frame or two after the menu opened.
+    pub shell_focus: gpui::FocusHandle,
 }
 
 impl FileListDelegate {
-    pub fn new(fs: Arc<NativeFs>, icons: Rc<RefCell<IconCache>>) -> Self {
+    pub fn new(
+        fs: Arc<NativeFs>,
+        icons: Rc<RefCell<IconCache>>,
+        shell_focus: gpui::FocusHandle,
+    ) -> Self {
         Self {
             entries: Vec::new(),
             // Next-level Phase 1: Magic-driven `Format` column
@@ -139,6 +151,7 @@ impl FileListDelegate {
             lead: None,
             open_with_warm: None,
             current_sort: None,
+            shell_focus,
         }
     }
 
@@ -561,6 +574,12 @@ impl TableDelegate for FileListDelegate {
             ToggleTagGray, ToggleTagGreen, ToggleTagOrange, ToggleTagPurple, ToggleTagRed,
             ToggleTagYellow,
         };
+
+        // Anchor keyboard-shortcut resolution to the shell's stable
+        // dispatch path (carries SHELL_CONTEXT, always painted) so the
+        // item hints render from the first frame instead of popping in
+        // a frame or two later. See `shell_focus`'s doc comment.
+        let menu = menu.action_context(self.shell_focus.clone());
 
         // Prime directive: menu building is read-only — no shell or
         // filesystem queries at menu-open time.

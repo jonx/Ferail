@@ -435,6 +435,20 @@ where
         cx.notify();
     }
 
+    /// Clear the selected-row focus overlay. Used when the semantic
+    /// selection model goes empty (e.g. after navigating to a new folder)
+    /// so the primitive's stale row index doesn't paint a phantom focus
+    /// ring on whatever entry now sits at that index. Deliberately does
+    /// NOT emit `SelectRow` (nothing was selected) or scroll.
+    pub fn clear_selected_row(&mut self, cx: &mut Context<Self>) {
+        if self.selected_row.is_none() {
+            return;
+        }
+        self.selected_row = None;
+        self.right_clicked_row = None;
+        cx.notify();
+    }
+
     /// Returns the row that has been right clicked.
     pub fn right_clicked_row(&self) -> Option<usize> {
         self.right_clicked_row
