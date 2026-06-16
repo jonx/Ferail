@@ -14,6 +14,10 @@ const FILENAME: &str = "gpui-state.txt";
 pub struct AppState {
     pub last_dir: Option<PathBuf>,
     pub show_hidden: Option<bool>,
+    /// Whether the file list paints real Quick Look thumbnails instead
+    /// of generic type icons. `None` == never set (defaults to `true`,
+    /// thumbnails on).
+    pub show_thumbnails: Option<bool>,
     /// "light", "dark", or "system". `None` = follow the system
     /// detection done at startup (Stage 9.a default).
     pub theme_pref: Option<String>,
@@ -115,6 +119,9 @@ pub fn load() -> AppState {
             "show_hidden" => {
                 out.show_hidden = parse_bool(val);
             }
+            "show_thumbnails" => {
+                out.show_thumbnails = parse_bool(val);
+            }
             "theme_pref" => {
                 let v = val.trim().to_lowercase();
                 if matches!(v.as_str(), "light" | "dark" | "system") {
@@ -195,6 +202,9 @@ pub fn save(state: &AppState) {
     }
     if let Some(b) = state.show_hidden {
         s.push_str(&format!("show_hidden={b}\n"));
+    }
+    if let Some(b) = state.show_thumbnails {
+        s.push_str(&format!("show_thumbnails={b}\n"));
     }
     if let Some(p) = &state.theme_pref {
         s.push_str(&format!("theme_pref={p}\n"));

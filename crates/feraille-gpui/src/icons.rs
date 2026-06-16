@@ -320,7 +320,7 @@ pub fn tint_color(tint: FileTypeTint, cx: &App) -> Hsla {
 /// Build a `RenderImage` from RGBA8888 bytes by swapping channels
 /// in place (BGRA is what gpui's renderer expects) and wrapping in
 /// a single-frame SmallVec.
-fn build_render_image(mut rgba: Vec<u8>, w: u32, h: u32) -> RenderImage {
+pub(crate) fn build_render_image(mut rgba: Vec<u8>, w: u32, h: u32) -> RenderImage {
     for px in rgba.chunks_exact_mut(4) {
         px.swap(0, 2);
     }

@@ -152,6 +152,14 @@ fn persist_show_hidden(value: bool) {
     });
 }
 
+fn persist_show_thumbnails(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        show_thumbnails: Some(value),
+        ..existing
+    });
+}
+
 fn persist_ui_scale(value: f32) {
     let existing = app_state::load();
     app_state::save(&AppState {
@@ -499,17 +507,39 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
     SettingPage::new("Files")
         .icon(Icon::empty().path("icons/folder.svg"))
         .group(
-            SettingGroup::new().title("Visibility").item(
-                SettingItem::new(
-                    "Show hidden files",
-                    SettingField::switch(
-                        |_cx: &App| app_state::load().show_hidden.unwrap_or(false),
-                        |val: bool, _cx: &mut App| persist_show_hidden(val),
+            SettingGroup::new()
+                .title("Visibility")
+                .item(
+                    SettingItem::new(
+                        "Show hidden files",
+                        SettingField::switch(
+                            |_cx: &App| app_state::load().show_hidden.unwrap_or(false),
+                            |val: bool, _cx: &mut App| persist_show_hidden(val),
+                        )
+                        .default_value(false),
                     )
-                    .default_value(false),
+                    .description(description),
                 )
-                .description(description),
-            ),
+                .item(
+                    SettingItem::new(
+                        "Show thumbnails",
+                        // Persists *and* updates the live process global,
+                        // so flipping it repaints open windows at once
+                        // (no relaunch) — same mechanism as the theme.
+                        SettingField::switch(
+                            |cx: &App| crate::thumbnails::show_thumbnails(cx),
+                            |val: bool, cx: &mut App| {
+                                persist_show_thumbnails(val);
+                                cx.set_global(crate::thumbnails::ShowThumbnails(val));
+                            },
+                        )
+                        .default_value(true),
+                    )
+                    .description(
+                        "Preview photos, videos, and PDFs as their actual content in the \
+                         file list. Off shows generic type icons.",
+                    ),
+                ),
         )
 }
 
@@ -666,7 +696,13 @@ fn theme_tile(pref: ThemePref) -> impl IntoElement {
             // when given a Window. `cx.refresh_windows()` propagates
             // the same change to any other open window (e.g. the
             // main Shell while Settings is open in a second window).
-            Theme::change(pref.resolve(), Some(window), cx);
+            let resolved = pref.resolve();
+            Theme::change(resolved, Some(window), cx);
+            // Match native chrome across all windows to the new theme.
+            crate::platform_shell::set_app_appearance(matches!(
+                resolved,
+                gpui_component::ThemeMode::Dark
+            ));
             cx.refresh_windows();
         })
         .child(theme_tile_body(pref))

@@ -41,6 +41,7 @@ pub mod syntax_extra;
 pub mod task_panel;
 pub mod tasks;
 pub mod text_preview;
+pub mod thumbnails;
 pub mod tree;
 pub mod viewer;
 

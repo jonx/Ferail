@@ -30,10 +30,23 @@ use smallvec::SmallVec;
 /// downscaled with a triangle filter during decode, off the UI thread.
 pub const MAX_EDGE_PX: u32 = 8192;
 
-/// Quick Look fallback render size for non-raster formats. 2048 keeps
-/// PDFs and video posters crisp on retina without making `qlmanage`
-/// crawl.
-pub const QL_FALLBACK_PX: u32 = 2048;
+/// Quick Look fallback render size for non-raster formats (HEIC, PDF,
+/// video posters, …).
+///
+/// Capped at 1536, not higher: `QLThumbnailGenerator` refuses to
+/// *generate* a thumbnail above ~1536 px on a cold request for large
+/// HEICs (a 2048 px request returns nil unless a smaller size was
+/// already cached), and it caps its own output around 1536–1600 px
+/// anyway — so asking for more bought no quality, only intermittent
+/// "No preview available" failures on the first view. 1536 generates
+/// reliably cold and stays crisp on retina.
+pub const QL_FALLBACK_PX: u32 = 1536;
+
+/// Smaller retry size if the primary Quick Look request returns nothing.
+/// The on-demand size ceiling that makes large cold requests fail is
+/// device- and file-dependent, so a conservative second attempt keeps a
+/// real thumbnail on screen instead of "No preview available".
+pub const QL_RETRY_PX: u32 = 768;
 
 /// Byte budget for cached full-resolution frames. ~16 typical 12 MP
 /// photos, or a couple of panoramas. Revisit after testing against a
@@ -164,10 +177,15 @@ impl ViewerCache {
 /// Returns RGBA bytes + dimensions (channel swap to BGRA happens in
 /// [`build_frame`], same split as `preview::build_render_image`).
 pub fn decode_full_res(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
-    match std::fs::read(path).ok().and_then(|bytes| decode_raster(&bytes)) {
-        Some(frame) => Some(frame),
-        None => crate::platform_shell::fetch_quick_look_thumbnail(path, QL_FALLBACK_PX),
+    if let Some(frame) = std::fs::read(path).ok().and_then(|bytes| decode_raster(&bytes)) {
+        return Some(frame);
     }
+    // Quick Look fallback for non-raster formats (HEIC, PDF, video).
+    // A cold request above QL's on-demand size ceiling can return nil,
+    // so fall back to a smaller, always-generatable size rather than
+    // leaving the viewer on "No preview available".
+    crate::platform_shell::fetch_quick_look_thumbnail(path, QL_FALLBACK_PX)
+        .or_else(|| crate::platform_shell::fetch_quick_look_thumbnail(path, QL_RETRY_PX))
 }
 
 /// Decode any raster format the `image` crate is built with, capping

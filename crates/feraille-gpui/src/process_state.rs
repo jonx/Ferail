@@ -71,6 +71,12 @@ pub struct ProcessState {
     /// preserves the existing call shape.
     pub icons: Rc<RefCell<IconCache>>,
 
+    /// Quick Look thumbnail cache (real photo/video/PDF content),
+    /// keyed by full path and shared across every tab so a file seen
+    /// in one tab is warm in another. Populated viewport-only off the
+    /// UI thread; read allocation-free at paint time.
+    pub thumbnails: Rc<RefCell<crate::thumbnails::ThumbnailCache>>,
+
     /// Background task registry (enumeration, prefetch, etc.). Already
     /// `Rc<RefCell<>>` so the prefetch worker can register / retire
     /// from the foreground executor.
@@ -178,6 +184,7 @@ impl ProcessState {
             node_store: RefCell::new(NodeStore::new()),
             metadata_db: RefCell::new(None),
             icons: Rc::new(RefCell::new(IconCache::new())),
+            thumbnails: Rc::new(RefCell::new(crate::thumbnails::ThumbnailCache::new())),
             tasks: Rc::new(RefCell::new(TaskRegistry::new())),
             watcher,
             favorites,

@@ -237,6 +237,14 @@ pub struct Shell {
     /// `on_toggle_favorite_for_target`. Fallback chain when unset:
     /// file-list selection → active tab `current_dir`.
     pub favorites_context_path: Option<PathBuf>,
+    /// True while a breadcrumb crumb's right-click context menu is open,
+    /// so the crumb's hover tooltip (the full path) is suppressed and
+    /// doesn't collide with the menu. gpui-component's `context_menu`
+    /// keeps its open/close state private with no callback
+    /// (docs/GPUI-UPSTREAM.md), so we track it ourselves: set when the
+    /// menu builder runs, cleared on the next left mouse-down at the
+    /// shell root (which is also how the menu dismisses).
+    pub breadcrumb_menu_open: bool,
     /// Whether the background-task panel popover is open. Toggled by
     /// clicking the task region in the status bar.
     pub task_panel_open: bool,
@@ -513,6 +521,11 @@ impl Shell {
             let _ = w.watch(&start);
         }
         let show_hidden = persisted.show_hidden.unwrap_or(false);
+        // Seed the live thumbnail toggle from persisted settings so the
+        // file list and Settings window agree from the first frame.
+        cx.set_global(crate::thumbnails::ShowThumbnails(
+            persisted.show_thumbnails.unwrap_or(true),
+        ));
         // FERAILLE_UI_SCALE env var (regression tool / screenshots)
         // wins over the persisted value when set. Both are clamped.
         let ui_scale = std::env::var("FERAILLE_UI_SCALE")
@@ -643,6 +656,7 @@ impl Shell {
             context_row: None,
             context_target: None,
             favorites_context_path: None,
+            breadcrumb_menu_open: false,
             task_panel_open: false,
             simulated_progress: None,
             breadcrumb_editing: false,
@@ -689,6 +703,20 @@ impl Shell {
         });
         shell._subscriptions.push(fav_subscription);
 
+        // Live thumbnail toggle (Settings window → file list). Render
+        // already reflects the global, but the viewport's thumbnails
+        // still need warming — `visible_rows_changed` only fires on
+        // scroll — so kick a warm of the active tab's current visible
+        // range whenever the toggle flips. Turning thumbnails on then
+        // fills the visible rows at once instead of waiting for a
+        // scroll.
+        let thumb_subscription =
+            cx.observe_global::<crate::thumbnails::ShowThumbnails>(|this, cx| {
+                this.warm_active_visible_thumbnails(cx);
+                cx.notify();
+            });
+        shell._subscriptions.push(thumb_subscription);
+
         shell.start_metadata_load(cx);
         shell.load_path(start, cx);
         shell
@@ -712,8 +740,12 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Tab {
         let tab_id = process.mint_tab_id();
-        let delegate =
-            FileListDelegate::new(process.fs.clone(), process.icons.clone(), shell_focus);
+        let delegate = FileListDelegate::new(
+            process.fs.clone(),
+            process.icons.clone(),
+            process.thumbnails.clone(),
+            shell_focus,
+        );
         let table = cx.new(|cx| {
             TableState::new(delegate, window, cx)
                 .col_selectable(false)
@@ -1327,6 +1359,45 @@ impl Shell {
         crate::viewer::open_viewer(playlist, start, cx);
     }
 
+    /// File-list context action — open the viewer anchored to the
+    /// right-clicked file and start the slideshow immediately
+    /// (docs/features/VIEWER.md). Same folder playlist as `OpenViewer`,
+    /// but `start` follows the context row rather than the lead.
+    pub fn on_slideshow_from_here(
+        &mut self,
+        _: &SlideshowFromHere,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let anchor = self.target_row(cx);
+        let mut playlist = Vec::new();
+        let mut start = 0usize;
+        {
+            let tab = self.active_tab();
+            let entries = &tab.table.read(cx).delegate().entries;
+            for (ix, e) in entries.iter().enumerate() {
+                if matches!(e.kind, EntryKind::Directory) {
+                    continue;
+                }
+                if anchor == Some(ix) {
+                    start = playlist.len();
+                }
+                if let Some(path) = self.path_for_row(ix, cx) {
+                    playlist.push(crate::viewer::PlaylistEntry {
+                        path,
+                        name: e.name.clone(),
+                    });
+                }
+            }
+        }
+        if playlist.is_empty() {
+            use gpui_component::notification::Notification;
+            window.push_notification(Notification::info("No files to view in this folder"), cx);
+            return;
+        }
+        crate::viewer::open_viewer_playing(playlist, start, cx);
+    }
+
     /// Cmd+P — toggle preview-pane visibility. The pane defaults to
     /// shown; toggling off gives the file list the full content width.
     fn on_toggle_preview(&mut self, _: &TogglePreview, _: &mut Window, cx: &mut Context<Self>) {
@@ -1883,6 +1954,10 @@ impl Shell {
         );
         let icon_seeds = self.icon_seeds_from_table_in_tab(idx, cx);
         self.start_icon_warm(icon_seeds, cx);
+        // Real thumbnails for the first screen — without this they'd
+        // only appear after the first scroll on a folder whose visible
+        // range matches the previous one's.
+        self.warm_loaded_viewport_in_tab(idx, cx);
         cx.notify();
     }
 
@@ -1901,6 +1976,54 @@ impl Shell {
                     .map(|path| (entry.clone(), path))
             })
             .collect()
+    }
+
+    /// Warm thumbnails for the active tab's currently-visible rows.
+    /// Driven by the live `ShowThumbnails` toggle observer so flipping
+    /// the setting on fills the viewport immediately rather than on the
+    /// next scroll. Cheap to call when thumbnails are off or already
+    /// warm — `warm_thumbnails` no-ops in both cases.
+    fn warm_active_visible_thumbnails(&mut self, cx: &mut Context<Self>) {
+        let table = self.active_tab().table.clone();
+        table.update(cx, |ts, cx| {
+            let range = ts.visible_range().rows().clone();
+            ts.delegate_mut().warm_thumbnails(range, cx);
+        });
+    }
+
+    /// Warm the just-loaded folder's first screen of thumbnails.
+    ///
+    /// The table's `visible_rows_changed` hook only fires when the
+    /// visible *row-index range* changes, and the table entity persists
+    /// across navigations — so opening a new folder that happens to show
+    /// the same range as the previous one (e.g. rows 0..30) never fires
+    /// the hook, and thumbnails wouldn't appear until the first scroll.
+    /// We warm explicitly here instead. Deferred one frame so the table
+    /// has recomputed its real viewport for the new listing; on the very
+    /// first load (no layout yet) we fall back to a generous first
+    /// screen so thumbnails still appear up front.
+    fn warm_loaded_viewport_in_tab(&self, idx: usize, cx: &mut Context<Self>) {
+        if idx != self.active || !crate::thumbnails::show_thumbnails(cx) {
+            return;
+        }
+        let Some(tab) = self.tabs.get(idx) else {
+            return;
+        };
+        let table = tab.table.clone();
+        cx.spawn(async move |_this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(16))
+                .await;
+            let _ = table.update(cx, |ts, cx| {
+                let mut range = ts.visible_range().rows().clone();
+                if range.len() <= 1 {
+                    let n = ts.delegate().entries.len().min(48);
+                    range = 0..n;
+                }
+                ts.delegate_mut().warm_thumbnails(range, cx);
+            });
+        })
+        .detach();
     }
 
     fn start_icon_warm(&self, seeds: Vec<(FileEntry, PathBuf)>, cx: &mut Context<Self>) {

@@ -8,6 +8,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -17,8 +18,8 @@ use feraille_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     App, AppContext as _, Context, Div, ExternalPaths, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window, div,
-    img, px, svg,
+    ParentElement, Pixels, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window,
+    div, img, px, svg,
 };
 use gpui_component::{
     ActiveTheme,
@@ -29,6 +30,7 @@ use smallvec::smallvec;
 
 use crate::icons::{IconCache, file_type_icon, tint_color};
 use crate::multi_table::{Column, ColumnSort, TableDelegate, TableEvent, TableState};
+use crate::thumbnails::{is_thumbnailable, show_thumbnails, ThumbnailCache, THUMB_PX};
 
 /// Delegate that vends the current directory's entries to the
 /// Table. Holds the live `Vec<FileEntry>`; the Shell rotates it on
@@ -48,6 +50,12 @@ pub struct FileListDelegate {
     /// Rc<RefCell> so render_td's `&mut self` can borrow without
     /// fighting the cache.
     pub icons: Rc<RefCell<IconCache>>,
+    /// Shared Quick Look thumbnail cache (real photo/video/PDF
+    /// content), keyed by path. Same `Rc<RefCell>` the process holds,
+    /// so every tab warms the same cache. `render_td` reads it
+    /// allocation-free; [`Self::visible_rows_changed`] fills it
+    /// viewport-only off the UI thread.
+    pub thumbnails: Rc<RefCell<ThumbnailCache>>,
     /// Ant Trail heat per row, parallel to `entries`. Populated by
     /// `Shell::load_path` after each enumerate. 0.0 = never visited
     /// (no tint); 1.0 = the most-visited folder. Renderer maps to
@@ -110,6 +118,7 @@ impl FileListDelegate {
     pub fn new(
         fs: Arc<NativeFs>,
         icons: Rc<RefCell<IconCache>>,
+        thumbnails: Rc<RefCell<ThumbnailCache>>,
         shell_focus: gpui::FocusHandle,
     ) -> Self {
         Self {
@@ -144,6 +153,7 @@ impl FileListDelegate {
             fs,
             paths: HashMap::new(),
             icons,
+            thumbnails,
             heats: Vec::new(),
             tags: Vec::new(),
             is_favorited: Vec::new(),
@@ -265,6 +275,84 @@ impl FileListDelegate {
 
     pub fn path_for_entry(&self, id: NodeId) -> Option<PathBuf> {
         self.paths.get(&id).cloned()
+    }
+
+    /// Fetch Quick Look thumbnails for the thumbnailable rows in
+    /// `visible_range` (plus a little overscan), off the UI thread,
+    /// inserting each into the shared cache and repainting as it lands.
+    /// Idempotent and cheap to re-call: rows already cached or in
+    /// flight are skipped, so the table's `visible_rows_changed` hook
+    /// and the Shell's settings-toggle observer can both drive it.
+    pub fn warm_thumbnails(
+        &mut self,
+        visible_range: Range<usize>,
+        cx: &mut Context<TableState<Self>>,
+    ) {
+        if !show_thumbnails(cx) {
+            return;
+        }
+        // A little overscan so a nudge of the wheel doesn't expose a
+        // blank slot before its fetch is even scheduled.
+        const OVERSCAN: usize = 8;
+        let start = visible_range.start.saturating_sub(OVERSCAN);
+        let end = (visible_range.end + OVERSCAN).min(self.entries.len());
+
+        // Visible thumbnailable rows that aren't cached or in flight.
+        let mut todo: Vec<PathBuf> = Vec::new();
+        {
+            let cache = self.thumbnails.borrow();
+            for row in start..end {
+                let Some(entry) = self.entries.get(row) else {
+                    continue;
+                };
+                if !is_thumbnailable(entry) {
+                    continue;
+                }
+                let Some(path) = self.path_for_entry(entry.id) else {
+                    continue;
+                };
+                if cache.needs_fetch(&path) {
+                    todo.push(path);
+                }
+            }
+        }
+        if todo.is_empty() {
+            return;
+        }
+        // Reserve the slots up front so overlapping scroll events don't
+        // queue the same path twice.
+        {
+            let mut cache = self.thumbnails.borrow_mut();
+            for path in &todo {
+                cache.mark_in_flight(path.clone());
+            }
+        }
+
+        let thumbnails = self.thumbnails.clone();
+        cx.spawn(async move |table, cx| {
+            for path in todo {
+                // Quick Look runs on a worker thread; only Send data
+                // crosses the boundary (path in, RGBA bytes out). The
+                // `RenderImage` is built back on the UI thread below.
+                let fetch_path = path.clone();
+                let rgba = cx
+                    .background_executor()
+                    .spawn(async move {
+                        crate::platform_shell::fetch_quick_look_thumbnail(&fetch_path, THUMB_PX)
+                    })
+                    .await;
+                if table
+                    .update(cx, |_table, cx| {
+                        thumbnails.borrow_mut().insert(path, rgba);
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 }
 
@@ -406,33 +494,56 @@ impl TableDelegate for FileListDelegate {
                 use feraille_core::EntryKind;
                 let path = self.path_for_entry(entry.id).unwrap_or_default();
                 let quarantined = entry.is_quarantined;
+                // When thumbnails are enabled the whole listing uses a
+                // slightly larger, uniform icon slot so real-content
+                // thumbnails read at a glance and folder icons / icon
+                // fallbacks stay vertically aligned with them.
+                let thumbs_on = show_thumbnails(cx);
+                let slot = if thumbs_on { 24.0 } else { 18.0 };
                 let icon_wrapper: gpui::AnyElement = match entry.kind {
                     EntryKind::Directory => {
                         let icon = self.icons.borrow_mut().icon_for(entry, &path);
                         div()
                             .relative()
                             .flex_shrink_0()
-                            .w(px(18.0))
-                            .h(px(18.0))
-                            .child(img(icon).w(px(18.0)).h(px(18.0)))
+                            .w(px(slot))
+                            .h(px(slot))
+                            .child(img(icon).w(px(slot)).h(px(slot)))
                             .when(quarantined, badge_overlay)
                             .into_any_element()
                     }
                     EntryKind::File | EntryKind::Symlink => {
-                        let icon = file_type_icon(entry);
-                        let tint = tint_color(icon.tint, cx);
+                        // Real Quick Look thumbnail if one is ready in
+                        // the cache; otherwise the generic type icon.
+                        // `get` is a non-mutating HashMap read — the
+                        // fetch itself happens off the render path in
+                        // `visible_rows_changed`.
+                        let thumb = if thumbs_on {
+                            self.thumbnails.borrow().get(&path)
+                        } else {
+                            None
+                        };
+                        let inner = if let Some(image) = thumb {
+                            // `img` defaults to ObjectFit::Contain, so a
+                            // non-square photo fits the square slot
+                            // without distortion.
+                            img(image).w(px(slot)).h(px(slot)).into_any_element()
+                        } else {
+                            let icon = file_type_icon(entry);
+                            let tint = tint_color(icon.tint, cx);
+                            svg()
+                                .path(icon.path)
+                                .w(px(slot))
+                                .h(px(slot))
+                                .text_color(tint)
+                                .into_any_element()
+                        };
                         div()
                             .relative()
                             .flex_shrink_0()
-                            .w(px(18.0))
-                            .h(px(18.0))
-                            .child(
-                                svg()
-                                    .path(icon.path)
-                                    .w(px(18.0))
-                                    .h(px(18.0))
-                                    .text_color(tint),
-                            )
+                            .w(px(slot))
+                            .h(px(slot))
+                            .child(inner)
                             .when(quarantined, badge_overlay)
                             .into_any_element()
                     }
@@ -558,6 +669,58 @@ impl TableDelegate for FileListDelegate {
         }
     }
 
+    /// Plain text of a cell — the same strings `render_td` paints,
+    /// minus decorations (icon, tag chips, star, mismatch badge). Powers
+    /// double-click-to-fit column sizing (and is the export hook). Must
+    /// stay in sync with `render_td`'s per-column text.
+    fn cell_text(&self, row_ix: usize, col_ix: usize, _cx: &App) -> String {
+        let Some(entry) = self.entries.get(row_ix) else {
+            return String::new();
+        };
+        let col_key = self
+            .columns
+            .get(col_ix)
+            .map(|col| col.key.as_ref())
+            .unwrap_or("");
+        match col_key {
+            "name" => entry.name.clone(),
+            "size" => entry.display_size.clone(),
+            "format" => entry.format_label().0.to_string(),
+            "modified" => entry.display_mtime.clone(),
+            "description" => entry.display_description.clone(),
+            _ => String::new(),
+        }
+    }
+
+    /// Viewport-driven thumbnail warming (prime directive: expensive
+    /// work scheduled from a semantic event, off the UI thread, dropped
+    /// if it lands late). Called by the table whenever the visible row
+    /// range changes — first layout and every scroll. We fetch Quick
+    /// Look thumbnails for the *visible* thumbnailable rows only, never
+    /// the whole (possibly thousands-deep) folder.
+    fn visible_rows_changed(
+        &mut self,
+        visible_range: Range<usize>,
+        _window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) {
+        self.warm_thumbnails(visible_range, cx);
+    }
+
+    /// Width the Name cell spends on its leading type icon + gap and
+    /// trailing star that `cell_text` can't see, so double-click-to-fit
+    /// reserves room for them instead of clipping the filename. Other
+    /// columns are pure text.
+    fn autofit_extra(&self, col_ix: usize, _cx: &App) -> Pixels {
+        let is_name = self
+            .columns
+            .get(col_ix)
+            .map(|col| col.key.as_ref() == "name")
+            .unwrap_or(false);
+        // icon (18) + icon→text gap (8) + trailing star (12) + its gap (8).
+        if is_name { px(46.0) } else { px(0.0) }
+    }
+
     fn context_menu(
         &mut self,
         row_ix: usize,
@@ -570,7 +733,8 @@ impl TableDelegate for FileListDelegate {
             OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
             OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
             OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11,
-            QuickLook, RenameSelected, RevealInFinder, ToggleFavoriteForTarget, ToggleTagBlue,
+            QuickLook, RenameSelected, RevealInFinder, SlideshowFromHere, ToggleFavoriteForTarget,
+            ToggleTagBlue,
             ToggleTagGray, ToggleTagGreen, ToggleTagOrange, ToggleTagPurple, ToggleTagRed,
             ToggleTagYellow,
         };
@@ -642,7 +806,14 @@ impl TableDelegate for FileListDelegate {
             .menu("Open in New Tab", Box::new(OpenInNewTab))
             .separator()
             .menu("Get Info", Box::new(GetInfo))
-            .menu("Quick Look", Box::new(QuickLook))
+            .menu("Quick Look", Box::new(QuickLook));
+        if !is_folder {
+            // Start the viewer slideshow anchored to this file
+            // (docs/features/VIEWER.md). Folder rows can't anchor a
+            // slideshow, so the item is file-only.
+            menu = menu.menu("Slideshow from Here", Box::new(SlideshowFromHere));
+        }
+        let mut menu = menu
             .separator()
             .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealInFinder))
             .menu("Copy Path", Box::new(CopyPath));
