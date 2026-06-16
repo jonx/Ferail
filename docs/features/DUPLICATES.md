@@ -1,17 +1,31 @@
 # Duplicate Finder
 
-Ferail's duplicate finder is a future Feraille feature. It is valuable but
-I/O-heavy, so it belongs behind the worker/task/progress architecture and the
-[prime directive](../ARCHITECTURE.md#prime-directive): the UI never blocks, the
-app stays navigable, and results stream in incrementally.
+The duplicate finder is I/O-heavy, so it lives behind the worker/task/progress
+architecture and the [prime directive](../ARCHITECTURE.md#prime-directive): the
+UI never blocks, the app stays navigable, and results stream in incrementally.
+
+This is Feraille's clearest **lead** over the default file managers: Finder,
+File Explorer, and the mainstream Linux managers ship **no** built-in duplicate
+finder — users reach for Gemini, dupeGuru, Czkawka, or rmlint. Feraille builds
+it in.
 
 ## Status
 
-Todo. The `feraille-meta` schema already carries `partial_hash` / `full_hash`
-columns on the `files` table with `idx_files_size`, `idx_files_partial_hash`,
-and `idx_files_full_hash` ([db.rs](../../crates/feraille-meta/src/db.rs)). The
-hashing funnel, grouping, persistent cache wiring, and the duplicate-view UI
-are all unbuilt.
+**Shipped.** Find Duplicates (Cmd+Shift+U, the View menu, or the command
+palette) runs the funnel below off the UI thread, cache-backed by the `files`
+table so rescans skip full hashing, and streams grouped results into the tab
+with a reclaimable-bytes summary. Hard links are detected so the reclaim figure
+doesn't lie. The funnel itself (size → xxh3 partial → BLAKE3 full, paranoid
+byte-verify, dataless-skip, cancellation) and the `DupeHashCache` are
+unit-tested.
+
+**Honest scope — finding is solid; *managing* is still basic.** Results are
+adjacent grouped rows in a normal file-list tab, so you can preview, select,
+and delete via the usual actions — but there is **no bulk-management view yet**:
+no "keep newest, trash the rest", no select-all-but-one, no per-group actions.
+That, plus **APFS clone detection** + `clonefile` zero-copy remediation (only
+hard links are detected today), are the real follow-ups. Dedicated tools like
+Gemini still beat us on the *cleanup* UX; we match them on the *detection*.
 
 ## Target pipeline (the funnel)
 

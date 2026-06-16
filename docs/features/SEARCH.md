@@ -14,9 +14,32 @@ cancellable.
 
 ## Status
 
-- Tier 0 (in-directory filter): **done**.
-- Tier 1 (recursive subtree walk): **todo** — first to build.
-- Tier 2 (global / indexed): **todo** — Spotlight on macOS first.
+- Tier 0 (in-directory filter): **shipped**.
+- Tier 1 (recursive subtree walk): **shipped** — built-in walker, cancellable.
+- Tier 2 (global / indexed): **shipped on macOS** — Spotlight via `mdfind`,
+  with Tier 1 as the automatic fallback; Windows MFT + Linux Tracker land with
+  those ports.
+
+How you trigger it: focus the filter field (Cmd+F), type, and press **Return**
+to escalate the in-directory filter into a recursive / Spotlight search of the
+current folder and below. Esc clears. The engine is selectable in Settings →
+Search & Duplicates.
+
+**Honest scope — this is the mechanism, not Finder-grade search UX.** What
+ships is a *single query box*: substring/name (walker) or Spotlight's
+natural-language name+content query, streamed into the list with the hit's
+location shown. What it deliberately does **not** have yet, and where the
+system explorers are still ahead: filter chips (kind / date / size), query
+operators, **saved smart folders**, and **live-updating** results. Those are
+the real follow-ups.
+
+A pinned, live "smart folder" tab is the highest-value next step, and it's
+cheap *if Spotlight-backed*: a live `MDQuery` (or a debounced `mdfind` re-run on
+an FSEvents tick) gets deltas from the OS index without us walking the disk —
+which is exactly how Finder keeps its smart folders fresh. Walker-backed views
+and duplicate results are expensive to keep live and should stay snapshots
+(re-run on demand). So the model is: ephemeral results tabs by default; opt-in
+pin → a Spotlight-backed live tab.
 
 ## The three tiers
 

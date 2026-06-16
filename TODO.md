@@ -86,9 +86,12 @@ feature notes in [docs/features/](docs/features/README.md).
   Enter in the filter box runs a recursive/global search of the current
   folder and below, streaming results into the tab (engine selectable in
   Settings — Spotlight when available with the built-in walker as fallback).
-  Follow-ups: a "smart folder" (pinned, live-updating Spotlight query) tab;
-  glob/regex queries; Windows NTFS MFT + USN and Linux Tracker/Baloo engines
-  with their ports (behind the same `SearchEngine` selection).
+  What ships is a single query box, so the real follow-ups are the UX the
+  system explorers already have and we don't: filter chips (kind / date /
+  size), query operators, **saved smart folders** (pinned, live-updating —
+  cheap when Spotlight-backed), and live result updates. Also: glob/regex
+  queries, and the Windows NTFS MFT + USN and Linux Tracker/Baloo engines with
+  their ports (behind the same `SearchEngine` selection).
 - Persist per-tab sort/filter/scroll state where it is not already stable.
 - Add configurable visible columns and column widths/order reset.
 
@@ -132,9 +135,6 @@ feature notes in [docs/features/](docs/features/README.md).
   the "Results view: Dedicated panel" setting currently falls back to grouped
   rows; APFS clone detection + `clonefile`-based zero-copy dedup remediation
   (only hard links are detected today).
-- Add file-name hazard surfacing for leading/trailing whitespace,
-  zero-width/control characters, bidi overrides, and confusing combining
-  sequences.
 - Add APFS clone-aware disk-usage sizing.
 
 ## Settings, Commands, And Accessibility

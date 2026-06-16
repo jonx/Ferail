@@ -68,10 +68,9 @@ for how this is enforced across the codebase.
 Feraille is a **power-user file manager** that optimizes for two things the
 default managers treat as afterthoughts: **responsiveness under load** (the
 prime directive above) and **content intelligence** (magic detection, built-in
-disk usage, predictive navigation, a duplicate finder, and search that rides
-the OS index). It reuses the good OS plumbing where it exists — Quick Look,
-Spotlight, system tags, quarantine on macOS — and builds in the power tools
-you'd otherwise install separately.
+disk usage, predictive navigation, a duplicate finder). It reuses the good OS
+plumbing where it exists — Quick Look, Spotlight, system tags, quarantine on
+macOS — and builds in the power tools you'd otherwise install separately.
 
 It is also young and single-developer, so it trades maturity for focus. The
 table below is an honest scorecard, not a victory lap — the ❌ rows are real
@@ -85,12 +84,12 @@ the furthest-along platform; the Windows port is
 | **Never-block UI on slow / network I/O** | ✅ design invariant | ❌ beachballs | ❌ hangs | ⚠️ varies |
 | **Content / magic detection** (sniff bytes, not extension) | ✅ | ❌ | ❌ | ⚠️ MIME |
 | **Built-in disk usage** (treemap) | ✅ | ❌ (3rd-party) | ❌ (3rd-party) | ⚠️ separate app |
-| **Built-in duplicate finder** | ✅ size→hash funnel, cached, hard-link aware | ❌ | ❌ | ❌ |
+| **Built-in duplicate finder** | ✅ size→hash funnel, cached, hard-link aware | ❌ (3rd-party) | ❌ (3rd-party) | ❌ (3rd-party) |
 | **Predictive prewarming** (navigation heat / hover) | ✅ Ant Trail | ❌ | ❌ | ❌ |
 | **Previews** | ✅ Quick Look + inline syntax-highlighted text/code/markdown | ✅ Quick Look | ⚠️ preview pane | ✅ Dolphin strong |
 | **Tabs + multi-window + split** | ✅ tabs + multi-window | ⚠️ tabs, no split | ⚠️ tabs (recent) | ✅ Dolphin best-in-class |
 | **Command palette** | ✅ Cmd+K | ❌ | ❌ | ❌ |
-| **Global / indexed search** | ✅ rides Spotlight, walker fallback | ✅ Spotlight | ✅ indexed | ✅ Tracker / Baloo |
+| **Global / indexed search** | ⚠️ basic — rides Spotlight, walker fallback; single query box | ✅ Spotlight (rich) | ✅ indexed | ✅ Tracker / Baloo |
 | **Cloud integration** (iCloud / OneDrive / Drive) | ⚠️ detects placeholders | ✅ deep | ✅ deep | ⚠️ |
 | **Network / SMB browse & mount** | ⚠️ mounted shares only | ✅ | ✅ | ✅ Dolphin KIO |
 | **3rd-party shell-extension verbs** | ❌ (built-ins + Open With) | ✅ Services | ✅ large ecosystem | ✅ service menus |
@@ -98,12 +97,25 @@ the furthest-along platform; the Windows port is
 
 ✅ first-class · ⚠️ partial / varies · ❌ absent
 
-**Where it leads everyone:** non-blocking responsiveness and *built-in* power
-tools (magic detection, disk-usage treemap, predictive navigation, a duplicate
-finder, Spotlight-backed search) — no default ships all of that in one app.
-**Where it's behind:** cloud/network/ecosystem depth and the maturity tax. In
-short: a tool you'd *choose* for the power features, not yet the one that ships
-free with the OS.
+**Where it genuinely leads:** non-blocking responsiveness and *built-in* power
+tools the defaults make you install separately — most distinctively the
+**duplicate finder** (no mainstream default file manager ships one; people
+reach for Gemini / dupeGuru / Czkawka), plus the disk-usage treemap, magic
+detection, and predictive navigation.
+
+**Where it's only at parity — or behind — and we shouldn't pretend otherwise:**
+*search* is the honest one. Feraille now has real recursive + Spotlight-backed
+search, but it's a **single query box**: no filter chips (kind / date / size),
+no saved smart folders, no live-updating results, no query operators. Finder,
+Explorer, and Tracker/Baloo have spent years on exactly that UX, and they're
+ahead of us on it — we've reached the *mechanism*, not the polish. The
+duplicate finder, likewise, finds and groups well but doesn't yet have a
+bulk-management view (keep-newest, select-all-but-one). And cloud / network /
+shell-extension depth plus the plain maturity tax remain real gaps.
+
+In short: choose Feraille for responsiveness and the built-in power tools —
+above all the duplicate finder — not (yet) for a search experience that beats
+the one already in your OS.
 
 ## Quick Start
 
