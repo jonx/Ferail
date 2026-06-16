@@ -1221,15 +1221,41 @@ pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static + Send>) {}
 pub fn video_overlay_show(
     _container_ns_view: *mut std::ffi::c_void,
     _path: &std::path::Path,
-    _frame: (f64, f64, f64, f64),
+    _viewport: (f64, f64, f64, f64),
+    _content: (f64, f64, f64, f64),
+    _quarter_turns: u8,
     _on_ended: Box<dyn Fn() + 'static + Send>,
 ) -> u64 {
     0
 }
 
-pub fn video_overlay_set_frame(_id: u64, _frame: (f64, f64, f64, f64)) {}
+pub fn video_overlay_set_frame(
+    _id: u64,
+    _viewport: (f64, f64, f64, f64),
+    _content: (f64, f64, f64, f64),
+    _quarter_turns: u8,
+) {
+}
 
 pub fn video_overlay_remove(_id: u64) {}
+
+pub fn video_overlay_set_paused(_id: u64, _paused: bool) {}
+
+pub fn video_overlay_restart(_id: u64) {}
+
+pub fn video_overlay_time(_id: u64) -> (f64, f64) {
+    (0.0, 0.0)
+}
+
+pub fn video_overlay_natural_size(_id: u64) -> (f64, f64) {
+    (0.0, 0.0)
+}
+
+pub fn video_overlay_seek(_id: u64, _seconds: f64) {}
+
+pub fn video_overlay_step(_id: u64, _frames: i64) {}
+
+pub fn set_window_floating(_ns_view: *mut std::ffi::c_void, _floating: bool) {}
 
 // =============================================================
 // Internal helpers

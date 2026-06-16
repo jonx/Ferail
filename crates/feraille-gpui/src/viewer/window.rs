@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::{ActiveTheme, Sizable, button::Button, h_flex, v_flex};
+use gpui_component::{ActiveTheme, Sizable, button::Button, checkbox::Checkbox, h_flex, v_flex};
 
 use std::time::Duration;
 
@@ -64,6 +64,17 @@ const CHROME_REVEAL_STRIP: f32 = 56.0;
 /// AVFoundation reliably plays. Everything else stays a Quick Look
 /// poster. [mac]; win-parity revisits the set with Media Foundation.
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov"];
+
+/// `M:SS` (or `H:MM:SS` past an hour) for the seek-bar time labels.
+fn fmt_time(secs: f64) -> String {
+    let s = secs.max(0.0) as u64;
+    let (h, m, sec) = (s / 3600, (s % 3600) / 60, s % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{sec:02}")
+    } else {
+        format!("{m}:{sec:02}")
+    }
+}
 
 fn is_video(path: &std::path::Path) -> bool {
     path.extension()
@@ -123,6 +134,30 @@ pub struct ViewerWindow {
     video_overlay: Option<(u64, PathBuf)>,
     /// Frame last pushed to the overlay, to skip no-op AppKit calls.
     video_frame: (f32, f32, f32, f32),
+    /// Rotation (clockwise quarter-turns) last applied to the overlay,
+    /// so a rotation change re-syncs even when the frame is unchanged.
+    video_rotation: u8,
+    /// Content rect (stage-relative) last pushed to the overlay, so a
+    /// zoom/pan change re-syncs. Paired with `video_frame` (the viewport).
+    video_content: (f32, f32, f32, f32),
+    /// Intrinsic video size in pixels (from the native player), or (0,0)
+    /// while unknown. Lets the video share the image fit/zoom/pan math.
+    video_dims: (f64, f64),
+    /// Whether the current video is paused (we drive play/pause from our
+    /// own gpui control since the native controls are hidden).
+    video_paused: bool,
+    /// Loop the current video instead of advancing the slideshow when it
+    /// reaches the end. Viewer-level toggle (the loop checkbox).
+    video_loop: bool,
+    /// Keep the viewer window above other windows (the stay-on-top
+    /// checkbox). Applied to the native window level.
+    stay_on_top: bool,
+    /// Current video `(position, duration)` in seconds, refreshed by a
+    /// poll while a video overlay is live. Drives the seek bar + time.
+    video_position: (f64, f64),
+    /// Seek-bar state (fraction 0..1). User drags emit `Change` → seek;
+    /// the poll writes the playhead back via `set_value` (no feedback).
+    seek_slider: Entity<gpui_component::slider::SliderState>,
     /// Video-ended events, keyed by entry path so a stale end (user
     /// already navigated away) is dropped instead of advancing.
     video_ended_tx: async_channel::Sender<PathBuf>,
@@ -153,6 +188,11 @@ impl ViewerWindow {
     ) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
+        // Re-render on window resize so the image/video refit (FitDown
+        // recomputes from the live viewport) and the native video overlay
+        // repositions to the new stage.
+        cx.observe_window_bounds(window, |_, _, cx| cx.notify())
+            .detach();
         let interval = crate::app_state::load()
             .viewer_slideshow_interval
             .unwrap_or(super::playback::DEFAULT_INTERVAL_SECS);
@@ -163,6 +203,22 @@ impl ViewerWindow {
             while let Ok(path) = video_ended_rx.recv().await {
                 let Some(this) = this.upgrade() else { break };
                 this.update(cx, |v, cx| v.on_video_ended(&path, cx));
+            }
+        })
+        .detach();
+        // Seek bar runs in fraction space (0..1); a user drag emits
+        // Change → seek to that fraction of the duration.
+        let seek_slider =
+            cx.new(|_| gpui_component::slider::SliderState::new().min(0.0).max(1.0));
+        cx.subscribe(&seek_slider, |this, _slider, event, cx| {
+            if let gpui_component::slider::SliderEvent::Change(value) = event {
+                let (_, dur) = this.video_position;
+                if dur > 0.0 {
+                    if let Some((id, _)) = &this.video_overlay {
+                        crate::platform_shell::video_overlay_seek(*id, value.start() as f64 * dur);
+                    }
+                }
+                cx.notify();
             }
         })
         .detach();
@@ -180,6 +236,14 @@ impl ViewerWindow {
             last_title: String::new(),
             video_overlay: None,
             video_frame: (0.0, 0.0, 0.0, 0.0),
+            video_rotation: 0,
+            video_content: (0.0, 0.0, 0.0, 0.0),
+            video_dims: (0.0, 0.0),
+            video_paused: false,
+            video_loop: false,
+            stay_on_top: false,
+            video_position: (0.0, 0.0),
+            seek_slider,
             video_ended_tx,
             process,
             rotations: HashMap::new(),
@@ -313,20 +377,35 @@ impl ViewerWindow {
     /// reposition on resize, tear down otherwise. Overlay creation
     /// does no blocking I/O (AVFoundation loads media asynchronously);
     /// steady-state frames compare two tuples and do nothing.
-    fn sync_video(&mut self, window: &mut Window, rect: (f32, f32, f32, f32)) {
+    fn sync_video(&mut self, window: &mut Window, viewport: (f32, f32, f32, f32), cx: &mut Context<Self>) {
         let want = self
             .current()
             .map(|e| e.path.clone())
             .filter(|p| is_video(p));
+        let rot = self.current_rotation();
+        // The zoomed/panned/fit video box (stage-relative), from the same
+        // StageState images use; fills the stage until the dims are known.
+        let content = self.video_content_rect(viewport.2, viewport.3);
         match (&want, &self.video_overlay) {
             (None, None) => {}
             (None, Some(_)) => self.teardown_video(),
             (Some(p), existing) => {
                 if let Some((id, current)) = existing {
                     if current == p {
-                        if rect != self.video_frame {
-                            crate::platform_shell::video_overlay_set_frame(*id, rect_f64(rect));
-                            self.video_frame = rect;
+                        // Reposition / re-rotate / re-zoom only on a change.
+                        if viewport != self.video_frame
+                            || content != self.video_content
+                            || rot != self.video_rotation
+                        {
+                            crate::platform_shell::video_overlay_set_frame(
+                                *id,
+                                rect_f64(viewport),
+                                rect_f64(content),
+                                rot,
+                            );
+                            self.video_frame = viewport;
+                            self.video_content = content;
+                            self.video_rotation = rot;
                         }
                         return;
                     }
@@ -340,17 +419,44 @@ impl ViewerWindow {
                 let id = crate::platform_shell::video_overlay_show(
                     ns_view,
                     p,
-                    rect_f64(rect),
+                    rect_f64(viewport),
+                    rect_f64(content),
+                    rot,
                     Box::new(move || {
                         let _ = tx.try_send(ended_path.clone());
                     }),
                 );
                 if id != 0 {
                     self.video_overlay = Some((id, p.clone()));
-                    self.video_frame = rect;
+                    self.video_frame = viewport;
+                    self.video_content = content;
+                    self.video_rotation = rot;
+                    // A freshly mounted overlay auto-plays.
+                    self.video_paused = false;
+                    self.video_position = (0.0, 0.0);
+                    self.video_dims = (0.0, 0.0);
+                    self.start_video_poll(id, cx);
                 }
             }
         }
+    }
+
+    /// The video's content rect (stage-relative), driven by the shared
+    /// `StageState` (fit / 1:1 / zoom / pan) and the intrinsic video
+    /// size. Falls back to filling the stage until the size is known.
+    fn video_content_rect(&self, stage_w: f32, stage_h: f32) -> (f32, f32, f32, f32) {
+        let (vw, vh) = self.video_dims;
+        if vw <= 0.0 || vh <= 0.0 {
+            return (0.0, 0.0, stage_w, stage_h);
+        }
+        // Rotation swaps the displayed aspect, like images.
+        let dims = if self.current_rotation() % 2 == 1 {
+            (vh as f32, vw as f32)
+        } else {
+            (vw as f32, vh as f32)
+        };
+        let r = stage::layout(dims, (stage_w, stage_h), self.stage);
+        (r.x, r.y, r.w, r.h)
     }
 
     fn teardown_video(&mut self) {
@@ -359,12 +465,72 @@ impl ViewerWindow {
         }
     }
 
+    /// Toggle play/pause of the current video (our gpui control stands in
+    /// for the hidden native transport).
+    fn toggle_video_paused(&mut self, cx: &mut Context<Self>) {
+        self.video_paused = !self.video_paused;
+        if let Some((id, _)) = &self.video_overlay {
+            crate::platform_shell::video_overlay_set_paused(*id, self.video_paused);
+        }
+        cx.notify();
+    }
+
+    /// Step the current video by `frames` frames (negative = backward).
+    /// Stepping pauses playback.
+    fn step_video(&mut self, frames: i64, cx: &mut Context<Self>) {
+        if let Some((id, _)) = &self.video_overlay {
+            crate::platform_shell::video_overlay_step(*id, frames);
+            self.video_paused = true;
+            cx.notify();
+        }
+    }
+
+    /// Poll the native player's `(position, duration)` ~4×/sec while
+    /// overlay `id` is the live one, so the seek bar + time track
+    /// playback. Self-terminates when the overlay changes or goes away.
+    fn start_video_poll(&self, id: u64, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(250))
+                    .await;
+                let Some(this) = this.upgrade() else { break };
+                let keep = this.update(cx, |this, cx| match &this.video_overlay {
+                    Some((cur, _)) if *cur == id => {
+                        this.video_position = crate::platform_shell::video_overlay_time(id);
+                        let dims = crate::platform_shell::video_overlay_natural_size(id);
+                        if dims.0 > 0.0 && dims.1 > 0.0 {
+                            this.video_dims = dims;
+                        }
+                        cx.notify();
+                        true
+                    }
+                    _ => false,
+                });
+                if !keep {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// A video played to its end. Only advances when the show is
     /// playing AND the event belongs to the entry still on screen —
     /// ends queued behind a manual navigation are dropped.
     fn on_video_ended(&mut self, path: &PathBuf, cx: &mut Context<Self>) {
         let current = self.current().map(|e| e.path.clone());
-        if self.playback.playing && current.as_ref() == Some(path) {
+        if current.as_ref() != Some(path) {
+            return;
+        }
+        // Loop takes precedence: replay the current video in place.
+        if self.video_loop {
+            if let Some((id, _)) = &self.video_overlay {
+                crate::platform_shell::video_overlay_restart(*id);
+            }
+            return;
+        }
+        if self.playback.playing {
             self.step(1, cx);
         }
     }
@@ -443,9 +609,26 @@ impl ViewerWindow {
 
     /// Keyboard/toolbar zoom anchors at the viewport center (wheel
     /// zoom, which has a real cursor, lands in iter 4).
+    /// Intrinsic dimensions of the current item for zoom/pan math: the
+    /// image frame size, or the (rotation-adjusted) video size. None
+    /// until known.
+    fn content_dims(&mut self) -> Option<(f32, f32)> {
+        if let Some(f) = self.current_frame() {
+            return Some((f.w as f32, f.h as f32));
+        }
+        let (vw, vh) = self.video_dims;
+        if vw > 0.0 && vh > 0.0 {
+            return Some(if self.current_rotation() % 2 == 1 {
+                (vh as f32, vw as f32)
+            } else {
+                (vw as f32, vh as f32)
+            });
+        }
+        None
+    }
+
     fn zoom_by(&mut self, factor: f32, cx: &mut Context<Self>) {
-        let Some(f) = self.current_frame() else { return };
-        let img = (f.w as f32, f.h as f32);
+        let Some(img) = self.content_dims() else { return };
         let view = self.last_stage_size;
         let center = (view.0 / 2.0, view.1 / 2.0);
         self.stage = stage::zoom_at(self.stage, center, img, view, factor);
@@ -469,14 +652,13 @@ impl ViewerWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(f) = self.current_frame() else { return };
         let dy = e.delta.pixel_delta(window.line_height()).y.as_f32();
         if dy == 0.0 {
             return;
         }
+        let Some(img) = self.content_dims() else { return };
         let factor = 2.0_f32.powf(dy / 240.0);
         let cursor = self.stage_local(e.position);
-        let img = (f.w as f32, f.h as f32);
         self.stage = stage::zoom_at(self.stage, cursor, img, self.last_stage_size, factor);
         // Zooming means the user is inspecting — auto-advancing under
         // them is exactly the "intrusive" behavior we're avoiding.
@@ -520,8 +702,7 @@ impl ViewerWindow {
         let now = self.stage_local(e.position);
         let delta = (now.0 - last.0, now.1 - last.1);
         self.drag_last = Some(now);
-        if let Some(f) = self.current_frame() {
-            let img = (f.w as f32, f.h as f32);
+        if let Some(img) = self.content_dims() {
             self.stage = stage::pan_by(self.stage, delta, img, self.last_stage_size);
             self.set_playing(false, cx);
             cx.notify();
@@ -621,15 +802,11 @@ impl ViewerWindow {
     }
 
     /// Rotate the current item by `delta` quarter-turns (+1 CW / -1 CCW),
-    /// view-only and per-item. Video rotation isn't wired yet (the native
-    /// overlay needs a layer transform — docs/GPUI-UPSTREAM.md #5), so it
-    /// no-ops on videos rather than rotating just the poster.
+    /// view-only and per-item. Works for images (CPU bitmap rotate) and
+    /// videos (native layer transform, applied in `sync_video`); both are
+    /// in-memory/GPU only — nothing is written to disk.
     fn rotate_by(&mut self, delta: i8, cx: &mut Context<Self>) {
-        if self
-            .current()
-            .map(|e| is_video(&e.path))
-            .unwrap_or(true)
-        {
+        if self.current().is_none() {
             return;
         }
         let next = (self.current_rotation() as i8 + delta).rem_euclid(4) as u8;
@@ -657,20 +834,21 @@ impl ViewerWindow {
     fn toolbar(&mut self, cx: &mut Context<Self>) -> Div {
         let count = self.playlist.len();
         let counter = format!("{} / {}", (self.index + 1).min(count), count);
-        let frame = self.current_frame();
-        let zoom_label = frame
-            .as_ref()
-            .map(|f| {
-                let s = stage::effective_scale(
-                    self.stage.mode,
-                    (f.w as f32, f.h as f32),
-                    self.last_stage_size,
-                );
+        let zoom_label = self
+            .content_dims()
+            .map(|img| {
+                let s = stage::effective_scale(self.stage.mode, img, self.last_stage_size);
                 format!("{:.0}%", s * 100.0)
             })
             .unwrap_or_else(|| "\u{2014}".to_string());
         let actual = self.stage.mode == ZoomMode::Actual;
         let name = self.current().map(|e| e.name.clone()).unwrap_or_default();
+        // Custom video transport + window state (native controls hidden).
+        let is_video = self.current_is_video();
+        let video_paused = self.video_paused;
+        let video_loop = self.video_loop;
+        let stay_on_top = self.stay_on_top;
+        let entity = cx.entity().clone();
 
         h_flex()
             .h(px(TOOLBAR_H))
@@ -748,10 +926,10 @@ impl ViewerWindow {
                         this.on_actual_size(&ViewerActualSize, window, cx)
                     })),
             )
-            // Rotate (images only; videos can't rotate yet). View-only,
+            // Rotate the current item (image or video). View-only,
             // per-item — R / Shift-R do the same from the keyboard.
             .when(
-                self.current().map(|e| !is_video(&e.path)).unwrap_or(false),
+                self.current().is_some(),
                 |bar| {
                     bar.child(
                         Button::new("viewer-rotate")
@@ -762,6 +940,62 @@ impl ViewerWindow {
                             })),
                     )
                 },
+            )
+            // Video transport (native controls are hidden so they work
+            // at any rotation): play/pause + a loop toggle.
+            .when(is_video, |bar| {
+                let loop_entity = entity.clone();
+                bar.child(
+                    Button::new("viewer-video-step-back")
+                        .label("\u{2212}1f")
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.step_video(-1, cx))),
+                )
+                .child(
+                    Button::new("viewer-video-play")
+                        .icon(gpui_component::Icon::empty().path(if video_paused {
+                            "icons/play.svg"
+                        } else {
+                            "icons/pause.svg"
+                        }))
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_video_paused(cx))),
+                )
+                .child(
+                    Button::new("viewer-video-step-fwd")
+                        .label("+1f")
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.step_video(1, cx))),
+                )
+                .child(
+                    Checkbox::new("viewer-video-loop")
+                        .label("Loop")
+                        .checked(video_loop)
+                        .on_click(move |checked, _window, app| {
+                            let on = *checked;
+                            loop_entity.update(app, |this, cx| {
+                                this.video_loop = on;
+                                cx.notify();
+                            });
+                        }),
+                )
+            })
+            // Keep the viewer above other windows.
+            .child(
+                Checkbox::new("viewer-stay-on-top")
+                    .label("Stay on top")
+                    .checked(stay_on_top)
+                    .on_click(move |checked, window, app| {
+                        let on = *checked;
+                        let ns_view = content_ns_view(window);
+                        entity.update(app, |this, cx| {
+                            this.stay_on_top = on;
+                            if let Some(v) = ns_view {
+                                crate::platform_shell::set_window_floating(v, on);
+                            }
+                            cx.notify();
+                        });
+                    }),
             )
             .child(
                 div()
@@ -912,6 +1146,18 @@ impl ViewerWindow {
                     Playback::interval_label(self.playback.interval_secs)
                 ))
             })
+            // Seek bar + elapsed/total for the current video.
+            .when(self.current_is_video(), |this| {
+                let (cur, dur) = self.video_position;
+                this.child(fmt_time(cur))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(80.0))
+                            .child(gpui_component::slider::Slider::new(&self.seek_slider)),
+                    )
+                    .child(fmt_time(dur))
+            })
     }
 }
 
@@ -960,7 +1206,16 @@ impl Render for ViewerWindow {
         let stage_h = (viewport.height.as_f32() - chrome_h).max(100.0);
         self.last_stage_size = (stage_w, stage_h);
         self.stage_origin_y = if fullscreen { 0.0 } else { TOOLBAR_H };
-        self.sync_video(window, (0.0, self.stage_origin_y, stage_w, stage_h));
+        self.sync_video(window, (0.0, self.stage_origin_y, stage_w, stage_h), cx);
+        // Keep the seek bar's thumb on the playhead (set_value needs a
+        // Window, so it's synced here rather than in the poll). No-op /
+        // feedback-free: set_value doesn't emit Change.
+        let (pos, dur) = self.video_position;
+        if dur > 0.0 {
+            let frac = (pos / dur).clamp(0.0, 1.0) as f32;
+            self.seek_slider
+                .update(cx, |s, cx| s.set_value(frac, window, cx));
+        }
         let stage_area = self.stage_area(stage_w, stage_h, cx);
 
         let root = v_flex()

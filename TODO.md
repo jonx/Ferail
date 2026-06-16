@@ -137,11 +137,14 @@ feature notes in [docs/features/](docs/features/README.md).
   Foundation video overlay), audio-file playback, a watchdog for
   eligible-but-unplayable videos stalling slideshow auto-advance, and
   slideshow transitions once the animation budget review lands.
-- Viewer video rotation. Per-item view-only rotation (R / Shift-R)
-  shipped for images 2026-06-16 (CPU-rotates the `RenderImage` since
-  gpui can't transform an `img` element — GPUI-UPSTREAM.md #5). Video
-  uses the native AppKit overlay and currently no-ops on rotate; it
-  needs a CALayer transform on the shell-mac `video_overlay` to match.
+- Viewer video transport polish (shipped 2026-06-17: per-item view-only
+  rotation for images and video, custom gpui controls — play/pause,
+  frame-step, loop, seek bar — stay-on-top, and zoom/pan/fit for video).
+  Follow-ups: the video↔video switch still flashes briefly before the
+  first frame (mitigated with a transparent overlay, not eliminated — a
+  readyForDisplay gate would); rotated playback controls rotate the
+  poster behind them; and a precise/scrubbing seek (tolerance-zero
+  `seekToTime:`) plus volume control.
 - Expand magic detection beyond the small high-confidence table; add
   recursive/mismatch-only CLI modes and structured output.
 - Improve quarantine/provenance UI: Gatekeeper assessment, code-signature

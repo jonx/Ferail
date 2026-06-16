@@ -1048,30 +1048,47 @@ pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static>) {}
 pub fn video_overlay_show(
     container_ns_view: *mut std::ffi::c_void,
     path: &std::path::Path,
-    frame: (f64, f64, f64, f64),
+    viewport: (f64, f64, f64, f64),
+    content: (f64, f64, f64, f64),
+    quarter_turns: u8,
     on_ended: Box<dyn Fn() + 'static>,
 ) -> u64 {
-    video_overlay::show(container_ns_view, path, frame, on_ended)
+    video_overlay::show(container_ns_view, path, viewport, content, quarter_turns, on_ended)
 }
 
 #[cfg(not(target_os = "macos"))]
 pub fn video_overlay_show(
     _container_ns_view: *mut std::ffi::c_void,
     _path: &std::path::Path,
-    _frame: (f64, f64, f64, f64),
+    _viewport: (f64, f64, f64, f64),
+    _content: (f64, f64, f64, f64),
+    _quarter_turns: u8,
     _on_ended: Box<dyn Fn() + 'static>,
 ) -> u64 {
     0
 }
 
-/// Reposition a live video overlay. Main-thread only; stale ids no-op.
+/// Reposition a live video overlay: `viewport` is the clipped stage rect,
+/// `content` the zoomed/panned video box (stage-relative), and
+/// `quarter_turns` the clockwise rotation. Main-thread only; stale ids no-op.
 #[cfg(target_os = "macos")]
-pub fn video_overlay_set_frame(id: u64, frame: (f64, f64, f64, f64)) {
-    video_overlay::set_frame(id, frame);
+pub fn video_overlay_set_frame(
+    id: u64,
+    viewport: (f64, f64, f64, f64),
+    content: (f64, f64, f64, f64),
+    quarter_turns: u8,
+) {
+    video_overlay::set_frame(id, viewport, content, quarter_turns);
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn video_overlay_set_frame(_id: u64, _frame: (f64, f64, f64, f64)) {}
+pub fn video_overlay_set_frame(
+    _id: u64,
+    _viewport: (f64, f64, f64, f64),
+    _content: (f64, f64, f64, f64),
+    _quarter_turns: u8,
+) {
+}
 
 /// Stop playback and remove a video overlay. Main-thread only; stale
 /// ids no-op.
@@ -1082,6 +1099,94 @@ pub fn video_overlay_remove(id: u64) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn video_overlay_remove(_id: u64) {}
+
+/// Pause/resume a live video overlay. Main-thread only; stale ids no-op.
+#[cfg(target_os = "macos")]
+pub fn video_overlay_set_paused(id: u64, paused: bool) {
+    video_overlay::set_paused(id, paused);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn video_overlay_set_paused(_id: u64, _paused: bool) {}
+
+/// Seek a live video overlay to the start and resume (loop). Main-thread
+/// only; stale ids no-op.
+#[cfg(target_os = "macos")]
+pub fn video_overlay_restart(id: u64) {
+    video_overlay::restart(id);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn video_overlay_restart(_id: u64) {}
+
+/// `(current, duration)` seconds of a live overlay's video; zeros when
+/// unknown or for a stale id. Main-thread only.
+#[cfg(target_os = "macos")]
+pub fn video_overlay_time(id: u64) -> (f64, f64) {
+    video_overlay::time(id)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn video_overlay_time(_id: u64) -> (f64, f64) {
+    (0.0, 0.0)
+}
+
+/// The current overlay video's intrinsic `(width, height)` in pixels;
+/// `(0, 0)` while unknown or for a stale id. Main-thread only.
+#[cfg(target_os = "macos")]
+pub fn video_overlay_natural_size(id: u64) -> (f64, f64) {
+    video_overlay::natural_size(id)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn video_overlay_natural_size(_id: u64) -> (f64, f64) {
+    (0.0, 0.0)
+}
+
+/// Seek a live overlay's video to `seconds`. Main-thread only; stale ids no-op.
+#[cfg(target_os = "macos")]
+pub fn video_overlay_seek(id: u64, seconds: f64) {
+    video_overlay::seek(id, seconds);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn video_overlay_seek(_id: u64, _seconds: f64) {}
+
+/// Step a live overlay's video by `frames` frames (negative = backward).
+/// Main-thread only; stale ids no-op.
+#[cfg(target_os = "macos")]
+pub fn video_overlay_step(id: u64, frames: i64) {
+    video_overlay::step(id, frames);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn video_overlay_step(_id: u64, _frames: i64) {}
+
+/// Toggle a window's "stay on top" (floating) level from one of its
+/// content NSViews. `floating` true raises it above normal windows;
+/// false restores the normal level. Main-thread only; no-op otherwise.
+#[cfg(target_os = "macos")]
+pub fn set_window_floating(ns_view: *mut std::ffi::c_void, floating: bool) {
+    use objc2::{msg_send, msg_send_id, rc::Retained, runtime::AnyObject};
+    use objc2_app_kit::NSWindow;
+    use objc2_foundation::MainThreadMarker;
+
+    if MainThreadMarker::new().is_none() || ns_view.is_null() {
+        return;
+    }
+    let view: &AnyObject = unsafe { &*(ns_view as *const AnyObject) };
+    let window: Option<Retained<NSWindow>> = unsafe { msg_send_id![view, window] };
+    if let Some(window) = window {
+        // NSFloatingWindowLevel = 3, NSNormalWindowLevel = 0.
+        let level: isize = if floating { 3 } else { 0 };
+        unsafe {
+            let _: () = msg_send![&*window, setLevel: level];
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_window_floating(_ns_view: *mut std::ffi::c_void, _floating: bool) {}
 
 /// Width to reserve at the leading edge of the tabstrip so the OS
 /// traffic-light buttons (close / minimize / zoom) don't overlap our

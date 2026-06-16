@@ -127,12 +127,34 @@ can't just transform the element; it has to rotate the underlying pixel buffer
 
 **Workaround:** rotate the decoded RGBA buffer with `image::imageops::rotate*`
 and cache the rotated `RenderImage` per (item, orientation); swap stage width/
-height for 90°/270°. Video rotation needs a CALayer transform on the
-shell-mac overlay.
+height for 90°/270°. Video rotates via a Core Animation `transform.rotation.z`
+on the native `AVPlayerView` (shell-mac), nested in a stage-sized clipped
+wrapper so the oversized rotated box can't draw into / eat clicks over the
+toolbar.
 
 **What upstream could do:**
 - Give `Img` the same `with_transformation` / rotation support `svg` already
   has, so 90° view-only rotation is a render-time transform, not a re-encode.
+
+### 5a. A layer transform doesn't move AppKit hit-testing
+
+Rotating the native `AVPlayerView`'s layer rotates the pixels but **not** the
+view's hit region, so its native controls render rotated yet aren't clickable.
+We hid the native controls entirely and drew our own gpui transport
+(play/pause, frame-step, loop, seek) outside the video rect. Not a gpui bug —
+an AppKit reality — but worth remembering when overlaying interactive native
+views under a gpui chrome.
+
+### 5b. objc2 encoding checks need exact struct names for CF/CM types
+
+Passing/returning `CMTime` and `CGColor` through `msg_send!` requires hand-rolled
+`Encode`/`RefEncode` impls whose struct **name** matches what the runtime
+reports, or objc2's verification aborts: `CMTime` returns are reported anonymous
+(`{?=qiIq}` — name must be `"?"`, not `"CMTime"`), while a null `CGColor` arg
+must encode as `^{CGColor=}` (a `*const c_void` → `^v` is rejected). objc2's
+check is a genuine safety net (it caught both before they became memory bugs),
+but a small `objc2-core-media` / `objc2-core-graphics` dependency, or
+ready-made `CMTime`/`CGColor` types, would remove the guesswork.
 
 ## 6. TextView preview scroll cluster — bounded-box vs `scrollable(true)`
 

@@ -194,18 +194,33 @@ another entry keeps `{mode, center}` verbatim:
   - `Esc`: exit fullscreen if fullscreen, else close window
   - `Cmd+=` / `Cmd+-` / `Cmd+0` **[mac; win-parity Ctrl]**: zoom in/out/reset
   - `Cmd+Ctrl+F` **[mac]**: fullscreen
-  - `R` / `Shift+R`: rotate the current image clockwise / counter-clockwise
+  - `R` / `Shift+R`: rotate the current item clockwise / counter-clockwise
   - Wheel: zoom toward cursor · Drag: pan when zoomed · Double-click:
     fit ↔ actual
 - **Rotation** is view-only, per-item, and ephemeral: it lives in
   `ViewerWindow::rotations` (a per-index `HashMap`), never touches the
   file, applies to one item at a time, and is dropped when the window
-  closes or retargets. gpui can't rotate an `img` element
-  (docs/GPUI-UPSTREAM.md #5), so the pixels are CPU-rotated
-  (`rotate_render_image`) and cached in one slot until the rotation or
-  item changes. **Images only** — the native video overlay would need a
-  layer transform (not yet wired), so rotate no-ops on videos and its
-  toolbar button is hidden for them.
+  closes or retargets.
+  - **Images** CPU-rotate the bitmap (`rotate_render_image`, cached in
+    one slot) since gpui can't transform an `img` (docs/GPUI-UPSTREAM.md #5).
+  - **Videos** rotate via a Core Animation layer transform on the native
+    `AVPlayerView` (`transform.rotation.z`), no re-encode. The view is
+    nested in a stage-sized **clipped wrapper** so the oversized rotated
+    box can't draw into — or swallow clicks over — the toolbar.
+- **Video transport** (the native AVPlayerView controls are hidden — a
+  layer transform doesn't move AppKit hit-testing, so rotated native
+  controls aren't clickable; GPUI-UPSTREAM.md #5). The viewer draws its
+  own gpui controls outside the video rect, which work at any rotation:
+  toolbar play/pause + frame-step (`−1f` / `+1f`, via `stepByCount:`) +
+  a **Loop** checkbox; a **seek bar** + elapsed/total in the status strip
+  (time polled ~4×/sec; drag to scrub via `seekToTime:`). `CMTime` is
+  mirrored locally for the seek/time calls.
+- **Stay on top** checkbox raises the window to the floating `NSWindow`
+  level. (Both checkboxes are gpui-component `Checkbox`es.)
+- **Zoom / pan / fit apply to video too**: the native player view is
+  positioned at the same `StageState`-driven content rect images use,
+  reading the video's intrinsic size from `presentationSize`. A window
+  resize re-fits both (the viewer observes `observe_window_bounds`).
 - Navigation wraps (last → first), so slideshows loop.
 - Window close clears the process-wide handle and drops the cache.
 
