@@ -116,6 +116,8 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             available_bytes,
             is_local,
             is_removable,
+            format: None,
+            bsd_device: None,
         });
     }
 
@@ -142,6 +144,8 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             available_bytes: None,
             is_local: true,
             is_removable: false,
+            format: None,
+            bsd_device: None,
         });
         out.push(info);
     }

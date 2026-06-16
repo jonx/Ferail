@@ -849,7 +849,7 @@ pub fn path_for(fs: &NativeFs, id: NodeId) -> Option<PathBuf> {
 /// stock macOS palette (NSColor systemRed/orange/etc. with a slight
 /// saturation bump so the 6-DIP dots stay readable on tinted row
 /// backgrounds).
-fn tag_color_rgba(c: feraille_core::commands::TagColor) -> gpui::Rgba {
+pub(crate) fn tag_color_rgba(c: feraille_core::commands::TagColor) -> gpui::Rgba {
     use feraille_core::commands::TagColor;
     match c {
         TagColor::Red => gpui::Rgba {

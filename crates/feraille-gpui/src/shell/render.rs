@@ -998,6 +998,27 @@ impl Shell {
         )
     }
 
+    /// Render-safe path resolution for a file-list row's preview.
+    ///
+    /// Reads the delegate's per-entry `paths` map (a pure in-memory
+    /// lookup populated at load for directory, search, AND duplicate
+    /// rows) so it works for results views whose files live outside
+    /// `current_dir` — without touching the guarded node store, which
+    /// would panic on the paint path. Falls back to `current_dir + name`
+    /// only when the map has no entry.
+    fn resolve_preview_path(&self, entry: &FileEntry, cx: &App) -> PathBuf {
+        self.active_tab()
+            .table
+            .read(cx)
+            .delegate()
+            .path_for_entry(entry.id)
+            .unwrap_or_else(|| {
+                let mut p = self.active_tab().current_dir.clone();
+                p.push(&entry.name);
+                p
+            })
+    }
+
     /// Build the preview pane on the right of the file list. Shows
     /// title / kind / size / modified / full path of the selected
     /// row. Falls back to a neutral empty state when nothing is
@@ -1022,16 +1043,22 @@ impl Shell {
                 .and_then(|i| entries.get(i).cloned())
         };
 
+        // Resolve the row's real path from the delegate's per-entry
+        // `paths` map — populated at load for directory listings AND for
+        // search / duplicate results. It's a pure in-memory lookup, so
+        // it's safe on the render path (unlike `path_for_row`, which
+        // resolves through the guarded node store). For results views
+        // the file lives outside `current_dir`, so the old
+        // `current_dir + name` reconstruction keyed the preview cache
+        // wrong and the thumbnail / text never appeared; the map has the
+        // true path. Fall back to `current_dir + name` only if absent.
+        //
         // Scroll position carries across renders (the body scrolls
         // when the window is shorter than the metadata stack), but a
         // different file starts back at the top.
-        let selected_path = selected.as_ref().map(|entry| {
-            let mut p = self.active_tab().current_dir.clone();
-            p.push(&entry.name);
-            p
-        });
+        let selected_path = selected.as_ref().map(|entry| self.resolve_preview_path(entry, cx));
         if self.preview_scroll_path != selected_path {
-            self.preview_scroll_path = selected_path;
+            self.preview_scroll_path = selected_path.clone();
             self.preview_scroll.set_offset(gpui::Point::default());
         }
 
@@ -1052,8 +1079,10 @@ impl Shell {
                 .child("No selection")
                 .into_any_element(),
             Some(entry) => {
-                let mut full_path = self.active_tab().current_dir.clone();
-                full_path.push(&entry.name);
+                // Same render-safe resolution as `selected_path` above.
+                let full_path = selected_path
+                    .clone()
+                    .unwrap_or_else(|| self.resolve_preview_path(&entry, cx));
                 let path_str = full_path.to_string_lossy().into_owned();
                 let format_label_text = {
                     let (label, _) = entry.format_label();

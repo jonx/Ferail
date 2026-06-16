@@ -15,6 +15,7 @@ pub mod app_state;
 pub mod assets;
 pub mod disk_usage;
 pub mod dupe_cache;
+pub mod entry_info;
 pub mod favorites;
 pub mod feature_settings;
 pub mod favorites_section;

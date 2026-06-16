@@ -301,6 +301,9 @@ impl Shell {
         });
         self.refresh_file_list_favorited_in_tab(idx, cx);
         self.refresh_file_list_selection_in_tab(idx, cx);
+        // Land any deferred selection (keyboard / screenshot seed) once
+        // its row has streamed in — same as the directory load path.
+        self.apply_pending_select_row_in_tab(idx, cx);
         cx.notify();
     }
 

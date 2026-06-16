@@ -1254,13 +1254,39 @@ impl Shell {
         cx.notify();
     }
 
-    /// Cmd+I — focus the preview pane (which serves as Get Info
-    /// today). If the pane is hidden, show it first.
-    fn on_get_info(&mut self, _: &GetInfo, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.preview_visible {
-            self.preview_visible = true;
-        }
-        cx.notify();
+    /// Cmd+I — open the Get Info popup for the target row (the right-click
+    /// row, else the lead selection). With nothing selected, gets info on
+    /// the tab's current folder, matching Finder.
+    fn on_get_info(&mut self, _: &GetInfo, window: &mut Window, cx: &mut Context<Self>) {
+        use feraille_core::entry_info::InfoTarget;
+        let (path, name, target) = match self.target_row(cx) {
+            Some(row) => {
+                let Some(path) = self.path_for_row(row, cx) else {
+                    return;
+                };
+                let kind = self.entry_kind_at_row(row, cx);
+                let target = match kind {
+                    Some(EntryKind::Directory) => InfoTarget::Folder,
+                    _ => InfoTarget::File,
+                };
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_string)
+                    .unwrap_or_default();
+                (path, name, target)
+            }
+            None => {
+                let dir = self.active_tab().current_dir.clone();
+                let name = dir
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| dir.display().to_string());
+                (dir, name, InfoTarget::Folder)
+            }
+        };
+        crate::entry_info::open(path, name, target, window, cx);
     }
 
     /// Cmd+= / Cmd+- / Cmd+0 — UI zoom. Bumps `ui_scale` by ±0.1

@@ -24,6 +24,7 @@ mod icons;
 mod magic;
 pub mod paths;
 mod search;
+pub mod stat_info;
 mod volumes;
 pub mod xattr_info;
 pub use disk_usage_scanner::{recursive_size, DEFAULT_DU_BATCH};
@@ -518,6 +519,11 @@ pub struct VolumeInfo {
     pub available_bytes: Option<u64>,
     pub is_local: bool,
     pub is_removable: bool,
+    /// Filesystem format (e.g. "apfs", "exfat"). `None` off macOS or when
+    /// `statfs` failed. Populated for the Get Info panel's volume rows.
+    pub format: Option<String>,
+    /// BSD device node (e.g. "/dev/disk3s1s1"). Same availability as `format`.
+    pub bsd_device: Option<String>,
 }
 
 /// Look up a volume's metadata for the volume root at `path` (e.g.
@@ -610,6 +616,7 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
             (None, None)
         };
 
+        let (format, bsd_device) = crate::stat_info::volume_fs_info(path);
         Some(VolumeInfo {
             path: path.to_path_buf(),
             name,
@@ -617,6 +624,8 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
             available_bytes,
             is_local,
             is_removable,
+            format,
+            bsd_device,
         })
     }
 }

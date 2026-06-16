@@ -4,6 +4,7 @@
 //! or `winit` here, stop.
 
 pub mod commands;
+pub mod entry_info;
 pub mod favorites;
 pub mod navigation;
 pub mod node_store;

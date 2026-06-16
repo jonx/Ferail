@@ -7,6 +7,60 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-16 Get Info inspector — editable popup (in progress)
+
+Path Finder-style Get Info, modeled on the screenshot the user shared.
+Working the Slow AI loop: verify → plan → approve → layer → test → note.
+
+## Plan (approved 2026-06-16)
+
+- **Neutral model in `feraille-core` (`entry_info.rs`):** an ordered list of
+  sections, each a list of typed rows. Platform-neutral contract; every OS
+  fills the subset it can read, the UI consumes one shape. Row kinds cover
+  read-only text, editable toggles (Locked/Invisible/…), tags + color label,
+  POSIX permission matrix, editable name, and a calculable folder/volume size.
+- **Native gather `#[cfg]`-gated.** macOS uses `libc` (stat/statfs/chmod/
+  chflags + getpwuid/getgrgid) and a batched `NSURL` resource-values read
+  (UTI, localized Kind, dates, package/alias/custom-icon/hidden-extension
+  flags). Windows/Linux return a subset in this pass.
+- **Popup, not a pane tab (user call).** Hosted by the gpui-component
+  `Dialog` layer — the same `window.open_dialog` primitive About + the
+  copy-collision dialog use, so ESC / overlay-click / focus-trap come free.
+  Child is a stateful `Entity<EntryInfoView>` so it can background-gather and
+  re-gather after edits. A detached per-item window stays a follow-up.
+- **Rewire the dead `GetInfo` command.** Cmd+I, the context-menu "Get Info",
+  and the toolbar button currently dead-end into `on_get_info` (just focuses
+  the preview pane). All now open the popup. `commands.rs:558` already expects
+  "Escape closes Get Info if open".
+- **Preview pane slims.** Its Format/Size/Modified/Where `DescriptionList`
+  moves into the popup; preview keeps thumbnail + text only.
+- **Editable from the start (user call), landed field-group by field-group**
+  on top of a read-only base: tags/label, rename, Locked/Invisible,
+  permissions — each with write-back + watcher refresh + undo/notification.
+
+## Verify-step findings
+
+- objc2 batched-read pattern confirmed at `fs-native/src/lib.rs:534`
+  (`resourceValuesForKeys_error` + `arrayWithObjects:count:` + per-type
+  `lookup_*` closures) — mirror it for per-file keys.
+- Tags already round-trip: `shell_mac::tags::{read_tags,write_tags,
+  toggle_tag}`. Color labels reuse the 7 canonical `TagColor` — no new
+  color-picker widget.
+- Rename already exists: `Shell::on_rename_selected`.
+- Locked/Invisible are BSD flags via `chflags` (UF_IMMUTABLE / UF_HIDDEN);
+  the `UF_HIDDEN` test at `fs-native/src/lib.rs:780` shows the pattern.
+- `libc = "0.2"` + `objc2`/`objc2-foundation` already deps of fs-native — no
+  new crates for stat/statfs/chmod/getpwuid/getgrgid or NSURL reads.
+- Volume format + BSD device come from `statfs(2)` (`f_fstypename`,
+  `f_mntfromname`) — no NSURL key exposes them.
+
+## Trade-offs
+
+- v1 targets the **lead row** (single selection). Finder-style combined
+  multi-item Get Info deferred.
+- "Last opened" has no NSURL key (it's Spotlight `kMDItemLastUsedDate`); v1
+  shows access-date as a proxy or omits it.
+
 # 2026-06-15 syntax highlighting for C#, C, C++, Bash, Swift, CMake (landed)
 
 gpui-component highlights a language only when its `LanguageConfig`

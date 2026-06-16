@@ -53,6 +53,12 @@ mod video_overlay;
 pub mod spotlight;
 pub use spotlight::{spotlight_available, spotlight_search, SpotlightScope};
 
+/// AppKit-sourced facts for the Get Info panel (UTI, localized Kind,
+/// date-added, Finder attribute bits). Cross-platform module with internal
+/// cfg gates — non-macOS builds get an empty record.
+pub mod resource_values;
+pub use resource_values::{read_shell_info, ShellInfo};
+
 /// Install the application menu bar (`NSApp.mainMenu`) and configure the
 /// standard About panel content. Call once at startup, on the main thread,
 /// after [`set_app_icon_from_png_bytes`]. No-op on non-macOS.
