@@ -583,6 +583,117 @@ impl Shell {
         cx.notify();
     }
 
+    /// Icon-grid navigation: move the lead by an arbitrary signed
+    /// `step` (±1 for Left/Right, ±columns for Up/Down), with the same
+    /// extend/collapse semantics as [`Self::move_selection`]. The linear
+    /// anchor→lead span is used for Shift-extend (matching the list).
+    pub(super) fn move_grid_selection(&mut self, step: i64, extend: bool, cx: &mut Context<Self>) {
+        let entries: Vec<NodeId> = self
+            .active_tab()
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        let len = entries.len();
+        if len == 0 {
+            self.clear_active_selection(cx);
+            return;
+        }
+        let last = len as i64 - 1;
+        let cur_idx: i64 = self
+            .active_tab()
+            .lead
+            .and_then(|id| entries.iter().position(|x| *x == id))
+            .map(|i| i as i64)
+            .unwrap_or(0);
+        let clamped = (cur_idx + step).clamp(0, last) as usize;
+        let new_lead = entries[clamped];
+        if extend {
+            let tab = self.active_tab_mut();
+            if tab.anchor.is_none() {
+                tab.anchor = tab.lead.or(Some(new_lead));
+            }
+            let anchor_id = tab.anchor.unwrap_or(new_lead);
+            let anchor_idx = entries
+                .iter()
+                .position(|x| *x == anchor_id)
+                .unwrap_or(clamped);
+            let (lo, hi) = if anchor_idx <= clamped {
+                (anchor_idx, clamped)
+            } else {
+                (clamped, anchor_idx)
+            };
+            tab.selection = entries[lo..=hi].iter().copied().collect();
+            tab.lead = Some(new_lead);
+            tab.range_live = true;
+            self.refresh_file_list_selection(cx);
+            self.request_preview_for_row(clamped, cx);
+            cx.notify();
+        } else {
+            self.replace_select_one(new_lead, cx);
+        }
+    }
+
+    /// Columns-per-row of the active tab's grid, from the cached pane
+    /// width and live icon size. At least 1.
+    fn grid_cols(&self, cx: &App) -> usize {
+        let icon_px = crate::grid::icon_size(cx);
+        let w = f32::from(self.active_tab().grid_pane_width).max(crate::grid::cell_width(icon_px));
+        crate::grid::cols_per_row(w, icon_px)
+    }
+
+    pub(super) fn on_grid_left(&mut self, _: &GridLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_grid_selection(-1, false, cx);
+    }
+    pub(super) fn on_grid_right(&mut self, _: &GridRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.move_grid_selection(1, false, cx);
+    }
+    pub(super) fn on_grid_up(&mut self, _: &GridUp, _: &mut Window, cx: &mut Context<Self>) {
+        let c = self.grid_cols(cx) as i64;
+        self.move_grid_selection(-c, false, cx);
+    }
+    pub(super) fn on_grid_down(&mut self, _: &GridDown, _: &mut Window, cx: &mut Context<Self>) {
+        let c = self.grid_cols(cx) as i64;
+        self.move_grid_selection(c, false, cx);
+    }
+    pub(super) fn on_grid_left_extend(
+        &mut self,
+        _: &GridLeftExtend,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_grid_selection(-1, true, cx);
+    }
+    pub(super) fn on_grid_right_extend(
+        &mut self,
+        _: &GridRightExtend,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_grid_selection(1, true, cx);
+    }
+    pub(super) fn on_grid_up_extend(
+        &mut self,
+        _: &GridUpExtend,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let c = self.grid_cols(cx) as i64;
+        self.move_grid_selection(-c, true, cx);
+    }
+    pub(super) fn on_grid_down_extend(
+        &mut self,
+        _: &GridDownExtend,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let c = self.grid_cols(cx) as i64;
+        self.move_grid_selection(c, true, cx);
+    }
+
     pub(super) fn on_cursor_up(&mut self, _: &CursorUp, _: &mut Window, cx: &mut Context<Self>) {
         self.move_selection(SelectionDelta::Up, false, cx);
     }

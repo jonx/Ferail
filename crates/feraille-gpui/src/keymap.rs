@@ -19,8 +19,9 @@ use gpui::{App, KeyBinding};
 use crate::shell::{
     self, ClearFilter, CloseTab, CloseWindow, CopyFiles, CopyPath, CursorDown, CursorDownExtend,
     CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp, CursorUpExtend,
-    EditBreadcrumb, EmptyTrash, FindDuplicates, FocusFilter, GetInfo, GoHome, MovePasteFiles,
-    MoveToTrash, NavigateBack,
+    EditBreadcrumb, EmptyTrash, FindDuplicates, FocusFilter, GetInfo, GoHome, GridDown,
+    GridDownExtend, GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp, GridUpExtend,
+    MovePasteFiles, MoveToTrash, NavigateBack,
     NavigateForward, NavigateParent, NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab,
     OpenSelected, OpenSettings, OpenViewer, PageDown, PageDownExtend, PageUp, PageUpExtend,
     PasteFiles, PrevTab, QuickLook, Refresh, RenameSelected, ReopenClosedTab, RevealInFinder,
@@ -54,6 +55,21 @@ pub fn install(cx: &mut App) {
         crate::shell::UndoLastAction,
         Some(shell::SHELL_CONTEXT),
     )]);
+
+    // Icon-grid 2-D navigation. Bound in the FerailleGrid context,
+    // which is more specific than SHELL_CONTEXT, so these win over the
+    // table's 1-D Cursor* arrow bindings whenever the grid is focused.
+    let grid_ctx = Some(crate::grid::GRID_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("left", GridLeft, grid_ctx),
+        KeyBinding::new("right", GridRight, grid_ctx),
+        KeyBinding::new("up", GridUp, grid_ctx),
+        KeyBinding::new("down", GridDown, grid_ctx),
+        KeyBinding::new("shift-left", GridLeftExtend, grid_ctx),
+        KeyBinding::new("shift-right", GridRightExtend, grid_ctx),
+        KeyBinding::new("shift-up", GridUpExtend, grid_ctx),
+        KeyBinding::new("shift-down", GridDownExtend, grid_ctx),
+    ]);
 
     for spec in all_commands() {
         for shortcut in spec.shortcuts {

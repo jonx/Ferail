@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, atomic::AtomicBool};
 
 use feraille_core::{EnumerationError, FileEntry, NodeId, navigation::NavigationState};
-use gpui::{Entity, Subscription};
+use gpui::{Entity, FocusHandle, Pixels, Subscription, UniformListScrollHandle, px};
 use gpui_component::input::InputState;
 
 use crate::file_list::FileListDelegate;
+use crate::grid::ViewMode;
 use crate::multi_table::TableState;
 use crate::tasks::TaskId;
 
@@ -111,6 +112,22 @@ pub struct Tab {
     /// tabs' enumerations keep streaming into their own table and
     /// the result is ready when the user switches back.
     pub table: Entity<TableState<FileListDelegate>>,
+    /// File-pane view mode for this tab (list table vs icon grid).
+    /// Per-tab interaction state (Finder-style per-folder), seeded from
+    /// the persisted default on creation.
+    pub view_mode: ViewMode,
+    /// Scroll handle for this tab's icon-grid `uniform_list`. Per-tab so
+    /// switching tabs preserves the grid scroll position.
+    pub grid_scroll: UniformListScrollHandle,
+    /// Last measured file-pane content width (logical px), cached for
+    /// the grid's columns-per-row math — `uniform_list` needs the row
+    /// count before layout, so we derive columns from the previous
+    /// frame's width. One-frame stale on resize is invisible.
+    pub grid_pane_width: Pixels,
+    /// Focus handle backing the grid's `"FerailleGrid"` key context, so
+    /// the grid receives arrow-key navigation independently of the
+    /// table's own key context.
+    pub grid_focus: FocusHandle,
     /// Monotonic generation for *this* tab's directory loads.
     /// Background enumeration results apply only if their generation
     /// still matches the tab they were spawned for.
@@ -189,6 +206,7 @@ impl Tab {
     /// Internal constructor. Use `Shell::make_tab` from view code so
     /// the new tab is correctly wired to a per-tab `TableState`
     /// subscription and filter `Input`.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_internal(
         id: TabId,
         at: PathBuf,
@@ -197,6 +215,8 @@ impl Tab {
         table_subscription: Subscription,
         filter_input: Entity<InputState>,
         filter_subscription: Subscription,
+        view_mode: ViewMode,
+        grid_focus: FocusHandle,
     ) -> Self {
         Self {
             id,
@@ -210,6 +230,10 @@ impl Tab {
             filtered_out: HashSet::new(),
             range_live: false,
             table,
+            view_mode,
+            grid_scroll: UniformListScrollHandle::new(),
+            grid_pane_width: px(0.0),
+            grid_focus,
             load_generation: 0,
             load_cancel: None,
             folder_size_cancel: None,

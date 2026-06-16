@@ -54,9 +54,12 @@ pub fn show_thumbnails(cx: &gpui::App) -> bool {
 /// its own larger cache.
 pub const THUMB_PX: u32 = 96;
 
-/// How many ready thumbnails to keep. A 1000-file photo folder scrolls
-/// past far more than fit on screen; this bounds resident image memory
-/// to roughly `CACHE_CAP × THUMB_PX² × 4 ≈ 18 MB` worst case.
+/// How many ready thumbnails to keep across all sizes (list 96 px +
+/// grid buckets). A big photo folder scrolls past far more than fit on
+/// screen; the LRU keeps the recently-seen ones. At the list size this
+/// is ~18 MB; the larger grid buckets cost more per entry, so the cap
+/// is entry-count, not bytes — the working set is bounded by what fits
+/// in a couple of viewport-heights, well under this.
 const CACHE_CAP: usize = 512;
 
 /// Whether `entry` is the kind of file worth asking Quick Look about.
@@ -81,18 +84,24 @@ pub fn is_thumbnailable(entry: &FileEntry) -> bool {
     )
 }
 
+/// Cache key: a file path at a specific physical fetch size. The list
+/// (96 px) and the icon grid (bucketed, e.g. 128/256/512 px) request
+/// different sizes for the same file; keying by `(path, size)` lets
+/// both coexist without one clobbering the other.
+type Key = (PathBuf, u32);
+
 #[derive(Default)]
 pub struct ThumbnailCache {
-    /// Path → resolved thumbnail. `Some(arc)` is a ready image;
-    /// `None` records "Quick Look produced nothing" so we fall back to
-    /// the icon and never re-request.
-    ready: HashMap<PathBuf, Option<Arc<RenderImage>>>,
-    /// Insertion order for LRU eviction (oldest at the front). Every
-    /// path in `ready` appears here exactly once.
-    order: VecDeque<PathBuf>,
-    /// Paths with a fetch currently in flight — gates re-requests while
+    /// `(path, size)` → resolved thumbnail. `Some(arc)` is a ready
+    /// image; `None` records "Quick Look produced nothing" so we fall
+    /// back to the icon and never re-request.
+    ready: HashMap<Key, Option<Arc<RenderImage>>>,
+    /// Insertion order for LRU eviction (oldest at the front). Every key
+    /// in `ready` appears here exactly once.
+    order: VecDeque<Key>,
+    /// Keys with a fetch currently in flight — gates re-requests while
     /// the background Quick Look call is pending.
-    in_flight: HashSet<PathBuf>,
+    in_flight: HashSet<Key>,
 }
 
 impl ThumbnailCache {
@@ -100,33 +109,38 @@ impl ThumbnailCache {
         Self::default()
     }
 
-    /// Render-path lookup: the ready thumbnail for `path`, if any.
-    /// Non-mutating and allocation-free beyond the `Arc` clone, so it
-    /// is safe to call from `render`.
-    pub fn get(&self, path: &Path) -> Option<Arc<RenderImage>> {
-        self.ready.get(path).cloned().flatten()
+    /// Render-path lookup: the ready thumbnail for `path` at `size_px`,
+    /// if any. Non-mutating and allocation-free beyond the `Arc` clone,
+    /// so it is safe to call from `render`.
+    pub fn get(&self, path: &Path, size_px: u32) -> Option<Arc<RenderImage>> {
+        self.ready
+            .get(&(path.to_path_buf(), size_px))
+            .cloned()
+            .flatten()
     }
 
-    /// Whether `path` still needs a background fetch — i.e. it is
-    /// neither resolved (positively or negatively) nor in flight.
-    pub fn needs_fetch(&self, path: &Path) -> bool {
-        !self.ready.contains_key(path) && !self.in_flight.contains(path)
+    /// Whether `(path, size_px)` still needs a background fetch — i.e.
+    /// it is neither resolved (positively or negatively) nor in flight.
+    pub fn needs_fetch(&self, path: &Path, size_px: u32) -> bool {
+        let key = (path.to_path_buf(), size_px);
+        !self.ready.contains_key(&key) && !self.in_flight.contains(&key)
     }
 
-    /// Mark a fetch as started so concurrent `visible_rows_changed`
-    /// passes don't double-request the same path.
-    pub fn mark_in_flight(&mut self, path: PathBuf) {
-        self.in_flight.insert(path);
+    /// Mark a fetch as started so concurrent warming passes don't
+    /// double-request the same `(path, size)`.
+    pub fn mark_in_flight(&mut self, path: PathBuf, size_px: u32) {
+        self.in_flight.insert((path, size_px));
     }
 
     /// Record the outcome of a background fetch: `Some((rgba, w, h))`
     /// becomes a ready `RenderImage`, `None` caches the miss. Clears
     /// the in-flight marker and evicts the oldest entry past capacity.
-    pub fn insert(&mut self, path: PathBuf, rgba: Option<(Vec<u8>, u32, u32)>) {
-        self.in_flight.remove(&path);
+    pub fn insert(&mut self, path: PathBuf, size_px: u32, rgba: Option<(Vec<u8>, u32, u32)>) {
+        let key = (path, size_px);
+        self.in_flight.remove(&key);
         let image = rgba.map(|(bytes, w, h)| Arc::new(build_render_image(bytes, w, h)));
-        if self.ready.insert(path.clone(), image).is_none() {
-            self.order.push_back(path);
+        if self.ready.insert(key.clone(), image).is_none() {
+            self.order.push_back(key);
         }
         while self.order.len() > CACHE_CAP {
             if let Some(old) = self.order.pop_front() {

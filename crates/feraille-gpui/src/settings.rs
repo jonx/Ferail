@@ -160,6 +160,22 @@ fn persist_show_thumbnails(value: bool) {
     });
 }
 
+pub(crate) fn persist_view_mode(value: &str) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        view_mode: Some(value.to_string()),
+        ..existing
+    });
+}
+
+pub(crate) fn persist_icon_size(value: u32) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        icon_size: Some(crate::grid::clamp_icon_size(value)),
+        ..existing
+    });
+}
+
 fn persist_ui_scale(value: f32) {
     let existing = app_state::load();
     app_state::save(&AppState {

@@ -122,6 +122,41 @@ impl IconCache {
         self.by_kind.insert(key, icon);
     }
 
+    /// Read-only lookup of a path-keyed icon cached at a specific pixel
+    /// size (the icon grid fetches folder icons large so they stay crisp
+    /// at 128–256 px, where the 32 px list icon would upscale to mush).
+    /// `None` when not yet warmed — the caller falls back to the small
+    /// icon as a placeholder. Non-mutating: safe from `render`.
+    pub fn get_folder_icon_sized(&self, path: &Path, size_px: u32) -> Option<Arc<RenderImage>> {
+        self.by_kind
+            .get(&format!("path:{}@{}", path.display(), size_px))
+            .cloned()
+    }
+
+    /// Whether a grid-sized path icon is already cached (warmed or
+    /// failed). Lets the warm loop skip the notify when nothing new was
+    /// fetched, avoiding a render→warm→notify feedback loop.
+    pub fn has_folder_icon_sized(&self, path: &Path, size_px: u32) -> bool {
+        self.by_kind
+            .contains_key(&format!("path:{}@{}", path.display(), size_px))
+    }
+
+    /// Fetch-and-cache a path-keyed icon at `size_px`, off the render
+    /// path (NSWorkspace `iconForFile:` is main-thread-only, so this
+    /// must run from a deferred/non-render main-thread context). Caches
+    /// the blank placeholder on failure so the warm loop converges.
+    pub fn warm_folder_icon_sized(&mut self, path: &Path, size_px: u32) {
+        let key = format!("path:{}@{}", path.display(), size_px);
+        if self.by_kind.contains_key(&key) || feraille_core::path_guard::is_rendering() {
+            return;
+        }
+        let icon = match fetch_icon_rgba(path, size_px) {
+            Some((rgba, w, h)) => Arc::new(build_render_image(rgba, w, h)),
+            None => self.blank_icon(),
+        };
+        self.by_kind.insert(key, icon);
+    }
+
     fn blank_icon(&mut self) -> Arc<RenderImage> {
         if let Some(b) = &self.blank {
             return b.clone();

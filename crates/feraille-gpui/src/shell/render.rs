@@ -578,11 +578,281 @@ impl Shell {
             }
             return pane.into_any_element();
         }
-        DataTable::new(&self.active_tab().table)
-            .bordered(false)
-            .stripe(true)
-            .small()
+        match self.active_tab().view_mode {
+            crate::grid::ViewMode::List => DataTable::new(&self.active_tab().table)
+                .bordered(false)
+                .stripe(true)
+                .small()
+                .into_any_element(),
+            crate::grid::ViewMode::Grid => self.grid_body(cx),
+        }
+    }
+
+    /// Icon (grid) view of the active tab's listing. A virtualized
+    /// `uniform_list` of `cols`-wide rows, reading the same delegate
+    /// `entries` + selection mirror the table does and routing every
+    /// gesture through the same `Shell` methods. See `crate::grid`.
+    fn grid_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        use feraille_core::EntryKind;
+
+        let icon_px = crate::grid::icon_size(cx);
+        let slot = icon_px as f32;
+        let bucket = crate::grid::thumb_bucket(icon_px);
+        let icon_bucket = crate::grid::folder_icon_bucket(icon_px);
+        let show_thumbs = crate::thumbnails::show_thumbnails(cx);
+        let cell_w = crate::grid::cell_width(icon_px);
+        let cell_h = crate::grid::cell_height(icon_px);
+
+        let pane_w = f32::from(self.active_tab().grid_pane_width).max(cell_w);
+        let cols = crate::grid::cols_per_row(pane_w, icon_px);
+        let entries_len = self.active_tab().table.read(cx).delegate().entries.len();
+        let row_count = entries_len.div_ceil(cols);
+
+        let theme = cx.theme();
+        let fg = theme.foreground;
+        let muted = theme.muted_foreground;
+        let accent = theme.accent;
+        let sel_bg = accent.opacity(0.10);
+
+        let weak = cx.weak_entity();
+        let scroll = self.active_tab().grid_scroll.clone();
+        let grid_focus = self.active_tab().grid_focus.clone();
+        let tab_id = self.active_tab().id;
+
+        let list = uniform_list("file-grid", row_count, move |row_range, _window, app| {
+            // Render-only guard: nothing in here touches I/O, but it
+            // keeps icon/thumbnail caches on their non-blocking path.
+            let _guard = feraille_core::path_guard::enter_render();
+            let Some(shell_ent) = weak.upgrade() else {
+                return Vec::new();
+            };
+            let shell = shell_ent.read(app);
+            let tab = shell.active_tab();
+            let table = tab.table.read(app);
+            let del = table.delegate();
+            let entries = &del.entries;
+            let n = entries.len();
+            let thumbs = shell.process.thumbnails.clone();
+            let icons = shell.process.icons.clone();
+
+            let (row_lo, row_hi) = (row_range.start, row_range.end);
+            let mut out: Vec<gpui::AnyElement> = Vec::with_capacity(row_range.len());
+            for grid_row in row_range {
+                let mut row_el = h_flex().w_full().gap_0().px_2();
+                let start = grid_row * cols;
+                for c in 0..cols {
+                    let i = start + c;
+                    if i >= n {
+                        break;
+                    }
+                    let entry = &entries[i];
+                    let id = entry.id;
+                    let path = del.path_for_entry(id).unwrap_or_default();
+                    let selected = del.selected_set.contains(&id);
+                    let is_lead = del.lead == Some(id);
+                    let quarantined = entry.is_quarantined;
+                    let name = entry.name.clone();
+
+                    // Thumbnail when ready + enabled, else type icon.
+                    let image: gpui::AnyElement = match entry.kind {
+                        EntryKind::Directory => {
+                            // Crisp grid-sized NSWorkspace icon once warmed;
+                            // the small list icon as an instant placeholder.
+                            // (Resolve the borrow before the fallback so we
+                            // don't hold `borrow()` across `borrow_mut()`.)
+                            let cached = icons.borrow().get_folder_icon_sized(&path, icon_bucket);
+                            let ic = cached
+                                .unwrap_or_else(|| icons.borrow_mut().icon_for(entry, &path));
+                            img(ic).max_w(px(slot)).max_h(px(slot)).into_any_element()
+                        }
+                        EntryKind::File | EntryKind::Symlink => {
+                            let thumb = if show_thumbs
+                                && crate::thumbnails::is_thumbnailable(entry)
+                            {
+                                thumbs.borrow().get(&path, bucket)
+                            } else {
+                                None
+                            };
+                            if let Some(t) = thumb {
+                                img(t).max_w(px(slot)).max_h(px(slot)).into_any_element()
+                            } else {
+                                let fi = crate::icons::file_type_icon(entry);
+                                let tint = crate::icons::tint_color(fi.tint, app);
+                                svg()
+                                    .path(fi.path)
+                                    .w(px(slot * 0.72))
+                                    .h(px(slot * 0.72))
+                                    .text_color(tint)
+                                    .into_any_element()
+                            }
+                        }
+                    };
+
+                    let weak_cell = weak.clone();
+                    let cell = v_flex()
+                        .id(("grid-cell", i))
+                        .w(px(cell_w))
+                        .h(px(cell_h))
+                        .items_center()
+                        .justify_start()
+                        .gap_1()
+                        .p_1()
+                        .rounded(px(6.0))
+                        .cursor_pointer()
+                        .when(selected, |d| d.bg(sel_bg))
+                        .when(is_lead, |d| d.border_1().border_color(accent))
+                        .when(!is_lead, |d| d.border_1().border_color(gpui::transparent_black()))
+                        .child(
+                            div()
+                                .relative()
+                                .flex_shrink_0()
+                                .w(px(slot))
+                                .h(px(slot))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(image)
+                                .when(quarantined, crate::file_list::badge_overlay),
+                        )
+                        .child(
+                            div()
+                                .w_full()
+                                .px_1()
+                                .text_xs()
+                                .text_color(if selected { fg } else { muted })
+                                .text_center()
+                                .truncate()
+                                .child(SharedString::from(name)),
+                        )
+                        .on_click(move |ev: &ClickEvent, window, app| {
+                            let mods = ev.modifiers();
+                            let dbl = ev.click_count() >= 2;
+                            let _ = weak_cell.update(app, |this, cx| {
+                                window.focus(&this.active_tab().grid_focus, cx);
+                                if dbl {
+                                    this.activate_row(i, cx);
+                                } else {
+                                    this.apply_row_click_gesture(i, mods, cx);
+                                }
+                            });
+                        });
+                    row_el = row_el.child(cell);
+                }
+                out.push(row_el.into_any_element());
+            }
+
+            // Warm the rows uniform_list is actually rendering. This
+            // closure re-runs on every scroll (grid_body does not), so
+            // warming here is what keeps thumbnails loading as the user
+            // scrolls. Deferred to run after this paint, on the Shell
+            // entity (so completion repaints the grid).
+            if show_thumbs {
+                let entry_start = row_lo.saturating_mul(cols).min(n);
+                let entry_end = row_hi.saturating_mul(cols).min(n);
+                if entry_end > entry_start {
+                    let weak_warm = weak.clone();
+                    app.defer(move |app| {
+                        let _ = weak_warm.update(app, |this, cx| {
+                            this.warm_grid_viewport(
+                                entry_start..entry_end,
+                                bucket,
+                                icon_bucket,
+                                cx,
+                            );
+                        });
+                    });
+                }
+            }
+            out
+        })
+        .track_scroll(&scroll)
+        .size_full();
+
+        // Measure the pane width so the next frame's `cols_per_row` is
+        // correct. uniform_list needs the row count before layout, so
+        // we derive columns from the previous frame's measured width.
+        let weak_measure = cx.weak_entity();
+        let measure = canvas(
+            move |bounds, _window, app| {
+                let w = bounds.size.width;
+                let _ = weak_measure.update(app, |this, cx| {
+                    if let Some(tab) = this.tabs.iter_mut().find(|t| t.id == tab_id) {
+                        if (f32::from(tab.grid_pane_width) - f32::from(w)).abs() > 0.5 {
+                            tab.grid_pane_width = w;
+                            cx.notify();
+                        }
+                    }
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
+
+        div()
+            .key_context(crate::grid::GRID_CONTEXT)
+            .track_focus(&grid_focus)
+            .relative()
+            .size_full()
+            .on_action(cx.listener(Self::on_grid_left))
+            .on_action(cx.listener(Self::on_grid_right))
+            .on_action(cx.listener(Self::on_grid_up))
+            .on_action(cx.listener(Self::on_grid_down))
+            .on_action(cx.listener(Self::on_grid_left_extend))
+            .on_action(cx.listener(Self::on_grid_right_extend))
+            .on_action(cx.listener(Self::on_grid_up_extend))
+            .on_action(cx.listener(Self::on_grid_down_extend))
+            .child(measure)
+            .child(list)
             .into_any_element()
+    }
+
+    /// Switch the active tab's view mode (toolbar switcher). Persists
+    /// the choice as the new default for fresh tabs, focuses the grid
+    /// and warms its first screen when switching to icons.
+    fn set_view_mode(
+        &mut self,
+        mode: crate::grid::ViewMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_tab_mut().view_mode = mode;
+        crate::settings::persist_view_mode(mode.as_str());
+        if matches!(mode, crate::grid::ViewMode::Grid) {
+            // The grid warms its own visible range on render; just give
+            // it keyboard focus and trigger the re-render.
+            let handle = self.active_tab().grid_focus.clone();
+            window.focus(&handle, cx);
+        }
+        cx.notify();
+    }
+
+    /// Step the grid icon size one stop along [`crate::grid::ICON_SIZES`]
+    /// (toolbar −/＋). Updates the live global so the grid re-lays-out
+    /// immediately, and persists the new default.
+    fn step_icon_size(&self, delta: i32, cx: &mut Context<Self>) {
+        let sizes = crate::grid::ICON_SIZES;
+        let cur = crate::grid::icon_size(cx);
+        let idx = sizes.iter().position(|&s| s == cur).unwrap_or_else(|| {
+            // Not exactly on a stop — start from the nearest.
+            let mut best = 0usize;
+            let mut best_d = i64::MAX;
+            for (i, &s) in sizes.iter().enumerate() {
+                let d = (s as i64 - cur as i64).abs();
+                if d < best_d {
+                    best_d = d;
+                    best = i;
+                }
+            }
+            best
+        });
+        let new_idx = (idx as i32 + delta).clamp(0, sizes.len() as i32 - 1) as usize;
+        let new = sizes[new_idx];
+        if new != cur {
+            cx.set_global(crate::grid::IconSize(new));
+            crate::settings::persist_icon_size(new);
+            cx.notify();
+        }
     }
 
     /// Tabstrip above the toolbar. Each tab is a clickable pill
@@ -819,6 +1089,9 @@ impl Shell {
         // on a supported macOS. Cached after first resolve, so this is a
         // cheap render-time read (prewarmed at startup).
         let show_desktop_available = crate::platform_shell::show_desktop_available();
+        // View switcher + grid size stepper state.
+        let view_mode = self.active_tab().view_mode;
+        let is_grid = matches!(view_mode, crate::grid::ViewMode::Grid);
         // SHELL_CONTEXT-bearing handle for the toolbar dropdowns, so
         // their items resolve keyboard-shortcut hints against the
         // shell's stable dispatch path instead of the focus-sensitive
@@ -998,6 +1271,63 @@ impl Shell {
                             this.on_refresh(&Refresh, window, cx);
                         })),
                 )
+                // View switcher: list ⇄ icon grid (per-tab). The active
+                // mode's button is highlighted.
+                .child(
+                    Button::new("toolbar-view-list")
+                        .small()
+                        .ghost()
+                        .selected(!is_grid)
+                        .icon(gpui_component::Icon::empty().path("icons/view-list.svg"))
+                        .tooltip("List view")
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.set_view_mode(crate::grid::ViewMode::List, window, cx);
+                        })),
+                )
+                .child(
+                    Button::new("toolbar-view-grid")
+                        .small()
+                        .ghost()
+                        .selected(is_grid)
+                        .icon(gpui_component::Icon::empty().path("icons/view-grid.svg"))
+                        .tooltip("Icon view")
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.set_view_mode(crate::grid::ViewMode::Grid, window, cx);
+                        })),
+                )
+                // Icon size stepper — only in grid mode.
+                .children(is_grid.then(|| {
+                    Button::new("toolbar-icon-smaller")
+                        .small()
+                        .ghost()
+                        .icon(gpui_component::Icon::empty().path("icons/minus.svg"))
+                        .tooltip("Smaller icons")
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.step_icon_size(-1, cx);
+                        }))
+                }))
+                .children(is_grid.then(|| {
+                    Button::new("toolbar-icon-larger")
+                        .small()
+                        .ghost()
+                        .icon(gpui_component::Icon::empty().path("icons/plus.svg"))
+                        .tooltip("Larger icons")
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.step_icon_size(1, cx);
+                        }))
+                }))
                 // Overflow menu — the less-frequent view + action verbs
                 // that don't each warrant a toolbar button. Items
                 // dispatch existing actions, so they target the current

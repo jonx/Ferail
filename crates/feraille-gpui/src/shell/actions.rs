@@ -103,6 +103,19 @@ actions!(
         CursorLastExtend,
         PageUpExtend,
         PageDownExtend,
+        // Icon-grid 2D navigation. Left/Right step the lead by one;
+        // Up/Down step by a full row (columns-per-row, computed at
+        // dispatch from the pane width). Bound only in the
+        // `FerailleGrid` key context so they override the table's
+        // 1-D Cursor* bindings when the grid is focused.
+        GridLeft,
+        GridRight,
+        GridUp,
+        GridDown,
+        GridLeftExtend,
+        GridRightExtend,
+        GridUpExtend,
+        GridDownExtend,
         /// Cmd+A — selection becomes every row currently in the
         /// (filtered) model. anchor = first visible row, lead = last
         /// visible row. Spec §2.5.

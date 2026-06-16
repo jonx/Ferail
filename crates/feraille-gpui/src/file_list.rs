@@ -288,6 +288,19 @@ impl FileListDelegate {
         visible_range: Range<usize>,
         cx: &mut Context<TableState<Self>>,
     ) {
+        self.warm_thumbnails_sized(visible_range, THUMB_PX, cx);
+    }
+
+    /// Warm thumbnails for `visible_range` at a specific physical fetch
+    /// size. The table calls this at [`THUMB_PX`]; the icon grid calls
+    /// it at its bucketed display size. Same off-thread, dedup, repaint
+    /// contract regardless of size.
+    pub fn warm_thumbnails_sized(
+        &mut self,
+        visible_range: Range<usize>,
+        size_px: u32,
+        cx: &mut Context<TableState<Self>>,
+    ) {
         if !show_thumbnails(cx) {
             return;
         }
@@ -311,7 +324,7 @@ impl FileListDelegate {
                 let Some(path) = self.path_for_entry(entry.id) else {
                     continue;
                 };
-                if cache.needs_fetch(&path) {
+                if cache.needs_fetch(&path, size_px) {
                     todo.push(path);
                 }
             }
@@ -324,7 +337,7 @@ impl FileListDelegate {
         {
             let mut cache = self.thumbnails.borrow_mut();
             for path in &todo {
-                cache.mark_in_flight(path.clone());
+                cache.mark_in_flight(path.clone(), size_px);
             }
         }
 
@@ -338,12 +351,12 @@ impl FileListDelegate {
                 let rgba = cx
                     .background_executor()
                     .spawn(async move {
-                        crate::platform_shell::fetch_quick_look_thumbnail(&fetch_path, THUMB_PX)
+                        crate::platform_shell::fetch_quick_look_thumbnail(&fetch_path, size_px)
                     })
                     .await;
                 if table
                     .update(cx, |_table, cx| {
-                        thumbnails.borrow_mut().insert(path, rgba);
+                        thumbnails.borrow_mut().insert(path, size_px, rgba);
                         cx.notify();
                     })
                     .is_err()
@@ -519,7 +532,7 @@ impl TableDelegate for FileListDelegate {
                         // fetch itself happens off the render path in
                         // `visible_rows_changed`.
                         let thumb = if thumbs_on {
-                            self.thumbnails.borrow().get(&path)
+                            self.thumbnails.borrow().get(&path, THUMB_PX)
                         } else {
                             None
                         };
@@ -1090,7 +1103,7 @@ pub(crate) fn tag_color_rgba(c: feraille_core::commands::TagColor) -> gpui::Rgba
 /// Mark-of-the-Web quarantine badge — small red dot in the icon's
 /// top-right corner. Pulled out of `render_td` so the file-icon and
 /// folder-icon paths share one stylesheet.
-fn badge_overlay(this: Div) -> Div {
+pub(crate) fn badge_overlay(this: Div) -> Div {
     this.child(
         div()
             .absolute()

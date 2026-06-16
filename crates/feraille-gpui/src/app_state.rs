@@ -18,6 +18,13 @@ pub struct AppState {
     /// of generic type icons. `None` == never set (defaults to `true`,
     /// thumbnails on).
     pub show_thumbnails: Option<bool>,
+    /// Default file-pane view mode for newly opened tabs: "list" or
+    /// "grid". `None` == never set (defaults to list). View mode is
+    /// per-tab at runtime; this is just the seed for new tabs.
+    pub view_mode: Option<String>,
+    /// Grid icon display size in logical px (longest edge). `None` ==
+    /// never set (defaults to [`crate::grid::DEFAULT_ICON_SIZE`]).
+    pub icon_size: Option<u32>,
     /// "light", "dark", or "system". `None` = follow the system
     /// detection done at startup (Stage 9.a default).
     pub theme_pref: Option<String>,
@@ -122,6 +129,12 @@ pub fn load() -> AppState {
             "show_thumbnails" => {
                 out.show_thumbnails = parse_bool(val);
             }
+            "view_mode" => {
+                out.view_mode = Some(val.trim().to_string());
+            }
+            "icon_size" => {
+                out.icon_size = val.trim().parse::<u32>().ok();
+            }
             "theme_pref" => {
                 let v = val.trim().to_lowercase();
                 if matches!(v.as_str(), "light" | "dark" | "system") {
@@ -205,6 +218,12 @@ pub fn save(state: &AppState) {
     }
     if let Some(b) = state.show_thumbnails {
         s.push_str(&format!("show_thumbnails={b}\n"));
+    }
+    if let Some(v) = &state.view_mode {
+        s.push_str(&format!("view_mode={v}\n"));
+    }
+    if let Some(n) = state.icon_size {
+        s.push_str(&format!("icon_size={n}\n"));
     }
     if let Some(p) = &state.theme_pref {
         s.push_str(&format!("theme_pref={p}\n"));

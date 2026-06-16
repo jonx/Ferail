@@ -19,7 +19,7 @@ use feraille_core::{EntryKind, EnumerationError, FileEntry, NodeId};
 use feraille_fs_native::{NativeFs, home_dir, open_with_default};
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Disableable, Root, Sizable, TitleBar, WindowExt,
+    ActiveTheme, Disableable, Root, Selectable, Sizable, TitleBar, WindowExt,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -526,6 +526,10 @@ impl Shell {
         cx.set_global(crate::thumbnails::ShowThumbnails(
             persisted.show_thumbnails.unwrap_or(true),
         ));
+        // Seed the live grid icon size from persisted settings.
+        cx.set_global(crate::grid::IconSize(crate::grid::clamp_icon_size(
+            persisted.icon_size.unwrap_or(crate::grid::DEFAULT_ICON_SIZE),
+        )));
         // FERAILLE_UI_SCALE env var (regression tool / screenshots)
         // wins over the persisted value when set. Both are clamped.
         let ui_scale = std::env::var("FERAILLE_UI_SCALE")
@@ -847,6 +851,8 @@ impl Shell {
             subscription,
             filter_input,
             filter_subscription,
+            crate::grid::ViewMode::persisted_default(),
+            cx.focus_handle(),
         )
     }
 
@@ -1978,12 +1984,121 @@ impl Shell {
             .collect()
     }
 
+    /// Warm the icon grid's visible entry range: Quick Look thumbnails
+    /// for thumbnailable files (background) and crisp NSWorkspace icons
+    /// for folders (main thread). Driven from the grid's `uniform_list`
+    /// item closure via `App::defer`, which re-runs on every scroll —
+    /// so unlike a render-time warm it keeps up as the user scrolls.
+    ///
+    /// Runs on the Shell entity's context so completion `cx.notify()`s
+    /// the Shell, repainting the grid (notifying only the table, as the
+    /// list path does, would leave the grid stale since the grid renders
+    /// from Shell, not the table).
+    fn warm_grid_viewport(
+        &mut self,
+        entry_range: std::ops::Range<usize>,
+        thumb_px: u32,
+        icon_px: u32,
+        cx: &mut Context<Self>,
+    ) {
+        if !crate::thumbnails::show_thumbnails(cx) {
+            return;
+        }
+        // Snapshot the folders and thumbnailable files in range.
+        let mut folders: Vec<PathBuf> = Vec::new();
+        let mut files: Vec<PathBuf> = Vec::new();
+        {
+            let table = self.active_tab().table.read(cx);
+            let del = table.delegate();
+            let n = del.entries.len();
+            let start = entry_range.start.min(n);
+            let end = entry_range.end.min(n);
+            for i in start..end {
+                let entry = &del.entries[i];
+                let Some(path) = del.path_for_entry(entry.id) else {
+                    continue;
+                };
+                if matches!(entry.kind, feraille_core::EntryKind::Directory) {
+                    folders.push(path);
+                } else if crate::thumbnails::is_thumbnailable(entry) {
+                    files.push(path);
+                }
+            }
+        }
+
+        // Folders: synchronous main-thread NSWorkspace fetch (fast,
+        // cached). Only notify when something was actually fetched —
+        // otherwise the repaint would re-trigger this warm in a loop.
+        {
+            let mut icons = self.process.icons.borrow_mut();
+            let mut warmed = false;
+            for path in &folders {
+                if !icons.has_folder_icon_sized(path, icon_px) {
+                    icons.warm_folder_icon_sized(path, icon_px);
+                    warmed = true;
+                }
+            }
+            drop(icons);
+            if warmed {
+                cx.notify();
+            }
+        }
+
+        // Files: Quick Look on the background executor, deduped.
+        let mut todo: Vec<PathBuf> = Vec::new();
+        {
+            let cache = self.process.thumbnails.borrow();
+            for path in &files {
+                if cache.needs_fetch(path, thumb_px) {
+                    todo.push(path.clone());
+                }
+            }
+        }
+        if todo.is_empty() {
+            return;
+        }
+        {
+            let mut cache = self.process.thumbnails.borrow_mut();
+            for path in &todo {
+                cache.mark_in_flight(path.clone(), thumb_px);
+            }
+        }
+        let thumbs = self.process.thumbnails.clone();
+        cx.spawn(async move |this, cx| {
+            for path in todo {
+                let fetch_path = path.clone();
+                let rgba = cx
+                    .background_executor()
+                    .spawn(async move {
+                        crate::platform_shell::fetch_quick_look_thumbnail(&fetch_path, thumb_px)
+                    })
+                    .await;
+                if this
+                    .update(cx, |_this, cx| {
+                        thumbs.borrow_mut().insert(path, thumb_px, rgba);
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Warm thumbnails for the active tab's currently-visible rows.
     /// Driven by the live `ShowThumbnails` toggle observer so flipping
     /// the setting on fills the viewport immediately rather than on the
     /// next scroll. Cheap to call when thumbnails are off or already
     /// warm — `warm_thumbnails` no-ops in both cases.
     fn warm_active_visible_thumbnails(&mut self, cx: &mut Context<Self>) {
+        // The grid warms its own visible range (at its bucket size) from
+        // `grid_body` on every render, so this table-range warm only
+        // applies in list mode.
+        if matches!(self.active_tab().view_mode, crate::grid::ViewMode::Grid) {
+            return;
+        }
         let table = self.active_tab().table.clone();
         table.update(cx, |ts, cx| {
             let range = ts.visible_range().rows().clone();
@@ -2004,6 +2119,11 @@ impl Shell {
     /// screen so thumbnails still appear up front.
     fn warm_loaded_viewport_in_tab(&self, idx: usize, cx: &mut Context<Self>) {
         if idx != self.active || !crate::thumbnails::show_thumbnails(cx) {
+            return;
+        }
+        // In grid mode the grid self-warms (at its bucket size) on the
+        // render that this load's `cx.notify()` triggers.
+        if matches!(self.active_tab().view_mode, crate::grid::ViewMode::Grid) {
             return;
         }
         let Some(tab) = self.tabs.get(idx) else {
