@@ -97,25 +97,25 @@ the furthest-along platform; the Windows port is
 
 ✅ first-class · ⚠️ partial / varies · ❌ absent
 
-**Where it genuinely leads:** non-blocking responsiveness and *built-in* power
-tools the defaults make you install separately — most distinctively the
-**duplicate finder** (no mainstream default file manager ships one; people
-reach for Gemini / dupeGuru / Czkawka), plus the disk-usage treemap, magic
-detection, and predictive navigation.
+**Why you'd choose it:** Feraille is a *fresh, fast, cross-platform* file
+manager — modern from the ground up rather than a decades-old default carried
+forward. It refuses to beachball (the prime directive), and it ships the power
+tools you'd otherwise install one-by-one: a **duplicate finder** (no mainstream
+default file manager has one), a disk-usage treemap, magic-byte content
+detection, predictive navigation, and a command palette — in one app, on every
+platform it targets.
 
-**Where it's only at parity — or behind — and we shouldn't pretend otherwise:**
-*search* is the honest one. Feraille now has real recursive + Spotlight-backed
-search, but it's a **single query box**: no filter chips (kind / date / size),
-no saved smart folders, no live-updating results, no query operators. Finder,
-Explorer, and Tracker/Baloo have spent years on exactly that UX, and they're
-ahead of us on it — we've reached the *mechanism*, not the polish. The
-duplicate finder, likewise, finds and groups well but doesn't yet have a
-bulk-management view (keep-newest, select-all-but-one). And cloud / network /
-shell-extension depth plus the plain maturity tax remain real gaps.
+**Honest about the young parts.** It's one developer building in the open, so
+some things are deliberately still simple. Search works and rides Spotlight,
+but today it's a single query box — saved smart folders, filter chips, and
+live-updating results are on the roadmap. The duplicate finder finds and groups
+well; a bulk-cleanup view (keep-newest, select-all-but-one) is next. Deep
+cloud / network integration and the polish of a shipping-for-decades product
+aren't there yet either.
 
-In short: choose Feraille for responsiveness and the built-in power tools —
-above all the duplicate finder — not (yet) for a search experience that beats
-the one already in your OS.
+The pitch is simple: if you want a file manager that's **new, quick, and the
+same everywhere** — and that builds in the tools power users reach for — rather
+than whatever came with your OS, that's Feraille.
 
 ## Quick Start
 
