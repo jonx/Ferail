@@ -1725,8 +1725,30 @@ impl Render for Shell {
             Some(toggle_hidden_cb),
             cx,
         );
-        let task_panel =
-            crate::task_panel::render_if_open(self.task_panel_open, &self.process.tasks, cx);
+        // Auto-dismiss the background-task popover when the pointer
+        // leaves it. `on_hover` fires only on a hover-state change and
+        // starts `false`, so opening it above the status-bar click
+        // point doesn't instant-close — it shuts when the mouse, after
+        // being over the popover, moves off. Click-outside dismissal
+        // (the shell's `on_mouse_down`) still applies for the
+        // never-hovered case.
+        let task_panel = crate::task_panel::render_if_open(
+            self.task_panel_open,
+            &self.process.tasks,
+            cx,
+        )
+        .map(|panel| {
+            // `.id(...)` makes the popover stateful so `on_hover` is
+            // available (it lives on StatefulInteractiveElement).
+            panel
+                .id("task-panel-popover")
+                .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+                    if !*hovered {
+                        this.task_panel_open = false;
+                        cx.notify();
+                    }
+                }))
+        });
 
         div()
             .key_context(SHELL_CONTEXT)

@@ -772,6 +772,7 @@ impl ShellArgs {
         }
         if self.simulate_task_panel {
             shell.update(cx, |s, cx| {
+                s.task_panel_open = true;
                 let mut reg = s.process.tasks.borrow_mut();
                 let _ = reg.begin(
                     crate::tasks::TaskKind::Enumeration,
