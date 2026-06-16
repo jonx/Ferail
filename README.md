@@ -68,14 +68,14 @@ for how this is enforced across the codebase.
 Feraille is a **power-user file manager** that optimizes for two things the
 default managers treat as afterthoughts: **responsiveness under load** (the
 prime directive above) and **content intelligence** (magic detection, built-in
-disk usage, predictive navigation, with a duplicate finder on the roadmap). It
-reuses the good OS plumbing where it exists — Quick Look, system tags,
-quarantine on macOS — and builds in the power tools you'd otherwise install
-separately.
+disk usage, predictive navigation, a duplicate finder, and search that rides
+the OS index). It reuses the good OS plumbing where it exists — Quick Look,
+Spotlight, system tags, quarantine on macOS — and builds in the power tools
+you'd otherwise install separately.
 
 It is also young and single-developer, so it trades maturity for focus. The
-table below is an honest scorecard, not a victory lap — the rows where it shows
-❌ (most importantly **global/indexed search**) are real gaps. Status reflects
+table below is an honest scorecard, not a victory lap — the ❌ rows are real
+gaps. Status reflects
 the furthest-along platform; the Windows port is
 [in progress](docs/features/windows-port.md) and there is no Linux build yet
 ([orientation only](docs/features/linux-port.md)).
@@ -85,12 +85,12 @@ the furthest-along platform; the Windows port is
 | **Never-block UI on slow / network I/O** | ✅ design invariant | ❌ beachballs | ❌ hangs | ⚠️ varies |
 | **Content / magic detection** (sniff bytes, not extension) | ✅ | ❌ | ❌ | ⚠️ MIME |
 | **Built-in disk usage** (treemap) | ✅ | ❌ (3rd-party) | ❌ (3rd-party) | ⚠️ separate app |
-| **Built-in duplicate finder** | ⚠️ planned (DB schema in place) | ❌ | ❌ | ❌ |
+| **Built-in duplicate finder** | ✅ size→hash funnel, cached, hard-link aware | ❌ | ❌ | ❌ |
 | **Predictive prewarming** (navigation heat / hover) | ✅ Ant Trail | ❌ | ❌ | ❌ |
 | **Previews** | ✅ Quick Look + inline syntax-highlighted text/code/markdown | ✅ Quick Look | ⚠️ preview pane | ✅ Dolphin strong |
 | **Tabs + multi-window + split** | ✅ tabs + multi-window | ⚠️ tabs, no split | ⚠️ tabs (recent) | ✅ Dolphin best-in-class |
 | **Command palette** | ✅ Cmd+K | ❌ | ❌ | ❌ |
-| **Global / indexed search** | ❌ not yet | ✅ Spotlight | ✅ indexed | ✅ Tracker / Baloo |
+| **Global / indexed search** | ✅ rides Spotlight, walker fallback | ✅ Spotlight | ✅ indexed | ✅ Tracker / Baloo |
 | **Cloud integration** (iCloud / OneDrive / Drive) | ⚠️ detects placeholders | ✅ deep | ✅ deep | ⚠️ |
 | **Network / SMB browse & mount** | ⚠️ mounted shares only | ✅ | ✅ | ✅ Dolphin KIO |
 | **3rd-party shell-extension verbs** | ❌ (built-ins + Open With) | ✅ Services | ✅ large ecosystem | ✅ service menus |
@@ -99,11 +99,11 @@ the furthest-along platform; the Windows port is
 ✅ first-class · ⚠️ partial / varies · ❌ absent
 
 **Where it leads everyone:** non-blocking responsiveness and *built-in* power
-tools (magic detection, disk-usage treemap, predictive navigation) — no default
-ships all of that in one app. **Where it's behind:** search, the
-not-yet-built duplicate finder, cloud/network/ecosystem depth, and the maturity
-tax. In short: a tool you'd *choose* for the power features, not yet the one
-that ships free with the OS.
+tools (magic detection, disk-usage treemap, predictive navigation, a duplicate
+finder, Spotlight-backed search) — no default ships all of that in one app.
+**Where it's behind:** cloud/network/ecosystem depth and the maturity tax. In
+short: a tool you'd *choose* for the power features, not yet the one that ships
+free with the OS.
 
 ## Quick Start
 
