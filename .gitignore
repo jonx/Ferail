@@ -5,3 +5,6 @@
 *.pdb
 .DS_Store
 /screenshots
+
+# Generated filename-hazard test fixtures (names contain control/bidi chars)
+test-data/filename-hazards/samples/

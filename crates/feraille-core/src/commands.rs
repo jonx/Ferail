@@ -246,6 +246,15 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::File,
         shortcuts: &[Shortcut::primary_shift("C")],
     },
+    // Copy the whole displayed list (folder contents, duplicate-finder
+    // groups, or search results) as newline-joined paths. No default
+    // shortcut — reached via the toolbar menu and command palette.
+    CommandSpec {
+        id: CommandId("file.copy_file_list"),
+        title: "Copy File List",
+        category: Category::File,
+        shortcuts: &[],
+    },
     CommandSpec {
         id: CommandId("file.empty_trash"),
         title: "Empty Trash",

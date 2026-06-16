@@ -17,21 +17,44 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use feraille_core::commands::TagColor;
 use feraille_core::entry_info::{
     Attr, EntryInfo, InfoSection, InfoTarget, InfoValue, PermBits, PermMatrix, SizeValue,
 };
+use feraille_core::name_hazards::{self, HazardKind};
 use gpui::*;
 use gpui_component::{
-    button::Button, checkbox::Checkbox, h_flex, v_flex, ActiveTheme, Sizable, WindowExt as _,
+    button::Button, checkbox::Checkbox, h_flex, notification::Notification, tooltip::Tooltip,
+    v_flex, ActiveTheme, Sizable, WindowExt as _,
 };
 
 use crate::file_list::tag_color_rgba;
+use crate::shell::Shell;
+
+/// The seven canonical Finder colors, in the order the swatch row shows them.
+const TAG_COLORS: [TagColor; 7] = [
+    TagColor::Red,
+    TagColor::Orange,
+    TagColor::Yellow,
+    TagColor::Green,
+    TagColor::Blue,
+    TagColor::Purple,
+    TagColor::Gray,
+];
 
 /// Open the Get Info popup for `path`. `name`/`target` are the caller's
 /// best guess (from the selected row) used for the loading header; the
-/// background gather recomputes them authoritatively.
-pub fn open(path: PathBuf, name: String, target: InfoTarget, window: &mut Window, cx: &mut App) {
-    let view = cx.new(|cx| EntryInfoView::new(path, name, target, cx));
+/// background gather recomputes them authoritatively. `shell` lets edits
+/// reload the affected directory and push notifications.
+pub fn open(
+    path: PathBuf,
+    name: String,
+    target: InfoTarget,
+    shell: WeakEntity<Shell>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let view = cx.new(|cx| EntryInfoView::new(path, name, target, shell, cx));
     window.open_dialog(cx, move |dialog, _window, _cx| {
         dialog
             .title("Get Info")
@@ -231,7 +254,8 @@ enum GatherState {
 }
 
 /// The modal's content view. Owns the target path and the gathered record;
-/// gathers on construction and re-renders when it lands.
+/// gathers on construction and re-renders when it lands. Edits write
+/// through the native crates, then re-gather so the panel shows truth.
 pub struct EntryInfoView {
     path: PathBuf,
     name: String,
@@ -239,11 +263,80 @@ pub struct EntryInfoView {
     state: GatherState,
     /// Cancel flag for an in-flight recursive "Calculate".
     size_cancel: Option<Arc<AtomicBool>>,
+    /// Reloads the affected directory and hosts notifications after edits.
+    shell: WeakEntity<Shell>,
+    /// Embedded in the preview pane (no name header, no own scroll) vs.
+    /// standalone in the popup (header + scrollable body).
+    embedded: bool,
+    /// Scroll position for the popup's body.
+    scroll: ScrollHandle,
 }
 
 impl EntryInfoView {
-    fn new(path: PathBuf, name: String, _target: InfoTarget, cx: &mut Context<Self>) -> Self {
-        let gather_path = path.clone();
+    fn new(
+        path: PathBuf,
+        name: String,
+        target: InfoTarget,
+        shell: WeakEntity<Shell>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::build(path, name, target, shell, false, cx)
+    }
+
+    /// Construct for embedding in the preview pane: section rows only, no
+    /// name header (the preview already shows the name) and no own scroll
+    /// (the preview pane scrolls).
+    pub(crate) fn new_embedded(
+        path: PathBuf,
+        name: String,
+        target: InfoTarget,
+        shell: WeakEntity<Shell>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::build(path, name, target, shell, true, cx)
+    }
+
+    fn build(
+        path: PathBuf,
+        name: String,
+        _target: InfoTarget,
+        shell: WeakEntity<Shell>,
+        embedded: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self {
+            path,
+            name,
+            kind: String::new(),
+            state: GatherState::Loading,
+            size_cancel: None,
+            shell,
+            embedded,
+            scroll: ScrollHandle::new(),
+        };
+        this.refresh(cx);
+        this
+    }
+
+    /// Re-point an embedded view at a new selection without rebuilding the
+    /// entity. Cancels any in-flight size scan and re-gathers.
+    pub(crate) fn retarget(&mut self, path: PathBuf, name: String, cx: &mut Context<Self>) {
+        if self.path == path {
+            return;
+        }
+        if let Some(c) = self.size_cancel.take() {
+            c.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.path = path;
+        self.name = name;
+        self.kind = String::new();
+        self.state = GatherState::Loading;
+        self.refresh(cx);
+    }
+
+    /// (Re-)gather the record on the background executor and apply it.
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        let gather_path = self.path.clone();
         cx.spawn(async move |this, cx| {
             let info = cx
                 .background_executor()
@@ -257,13 +350,27 @@ impl EntryInfoView {
             });
         })
         .detach();
+    }
 
-        Self {
-            path,
-            name,
-            kind: String::new(),
-            state: GatherState::Loading,
-            size_cancel: None,
+    /// Apply an edit result: surface failures as a toast, and on success
+    /// reload the file list for the affected directory and re-gather so the
+    /// panel reflects the new state. Success is silent — the refreshed rows
+    /// are the feedback.
+    fn after_write(
+        &mut self,
+        result: Result<(), String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(()) => {
+                if let (Some(parent), Some(shell)) = (self.path.parent(), self.shell.upgrade()) {
+                    let dir = parent.to_path_buf();
+                    shell.update(cx, |s, cx| s.reload_tabs_matching_paths(&[dir], cx));
+                }
+                self.refresh(cx);
+            }
+            Err(e) => window.push_notification(Notification::error(e), cx),
         }
     }
 
@@ -296,6 +403,31 @@ impl EntryInfoView {
         .detach();
         cx.notify();
     }
+
+    /// Flip a boolean attribute (Locked / Invisible / Hide extension) via
+    /// the matching native writer, then refresh.
+    fn apply_toggle(&mut self, attr: Attr, on: bool, window: &mut Window, cx: &mut Context<Self>) {
+        use feraille_fs_native::stat_info;
+        let result = match attr {
+            Attr::Locked => stat_info::set_locked(&self.path, on),
+            Attr::Invisible => stat_info::set_invisible(&self.path, on),
+            Attr::HiddenExtension => feraille_shell_mac::set_hidden_extension(&self.path, on),
+            Attr::Stationery => Err("Stationery editing is not supported yet".into()),
+        };
+        self.after_write(result, window, cx);
+    }
+
+    /// Add or remove a Finder color label, preserving other tags.
+    fn toggle_color(&mut self, color: TagColor, window: &mut Window, cx: &mut Context<Self>) {
+        let result = feraille_shell_mac::toggle_tag(&self.path, color);
+        self.after_write(result, window, cx);
+    }
+
+    /// Rewrite the permission mode after a single rwx box flipped.
+    fn apply_permissions(&mut self, mode: u32, window: &mut Window, cx: &mut Context<Self>) {
+        let result = feraille_fs_native::stat_info::set_permissions(&self.path, mode);
+        self.after_write(result, window, cx);
+    }
 }
 
 impl Drop for EntryInfoView {
@@ -309,19 +441,10 @@ impl Drop for EntryInfoView {
 }
 
 impl Render for EntryInfoView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
-        let header = v_flex()
-            .gap_0p5()
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(self.name.clone()))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(self.kind.clone()),
-            );
 
-        let body = match &self.state {
+        let sections = match &self.state {
             GatherState::Loading => v_flex().child(
                 div()
                     .text_sm()
@@ -338,7 +461,42 @@ impl Render for EntryInfoView {
             }
         };
 
-        v_flex().gap_3().child(header).child(body)
+        if self.embedded {
+            // Preview pane provides the name header and the scroll; just
+            // emit the section rows.
+            return v_flex().gap_3().child(sections).into_any_element();
+        }
+
+        // Popup: a fixed name/kind header above a body that scrolls so a
+        // tall record can't overflow the window and clip.
+        let mut header = v_flex().gap_0p5().child(
+            div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(name_hazard_element(&self.name, "popup-name")),
+        );
+        if let Some(warn) = name_hazard_warning(&self.name) {
+            header = header.child(
+                div()
+                    .text_xs()
+                    .text_color(gpui::rgb(0xC2410C))
+                    .child(format!("\u{26A0} {warn}")),
+            );
+        }
+        let header = header.child(div().text_xs().text_color(muted).child(self.kind.clone()));
+
+        let max_body = (window.viewport_size().height - px(220.0)).max(px(260.0));
+        v_flex()
+            .gap_3()
+            .child(header)
+            .child(
+                div()
+                    .id("entry-info-body")
+                    .max_h(max_body)
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .child(sections),
+            )
+            .into_any_element()
     }
 }
 
@@ -393,31 +551,40 @@ impl EntryInfoView {
             InfoValue::Text(s) | InfoValue::Name(s) => {
                 div().child(s.clone()).into_any_element()
             }
-            InfoValue::Toggle { on, .. } => {
-                // Read-only in this layer: the checkbox shows state; the
-                // edit wiring (write-back + undo) lands in the next pass.
+            InfoValue::Toggle { on, attr } => {
+                let attr = *attr;
                 Checkbox::new(ElementId::Name(format!("entry-info-tog-{ix}").into()))
                     .checked(*on)
+                    .on_click(cx.listener(move |this, checked: &bool, window, cx| {
+                        this.apply_toggle(attr, *checked, window, cx);
+                    }))
                     .into_any_element()
             }
             InfoValue::Tags { colors, custom } => {
-                let mut row = h_flex().gap_1p5().items_center();
-                if colors.is_empty() && custom.is_empty() {
-                    return div()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("None")
-                        .into_any_element();
-                }
-                for c in colors {
-                    let rgba = tag_color_rgba(*c);
+                // All seven canonical swatches; the active ones are ringed.
+                // Click toggles that label on the file.
+                let active: std::collections::HashSet<TagColor> = colors.iter().copied().collect();
+                let mut row = h_flex().gap_1p5().items_center().flex_wrap();
+                for c in TAG_COLORS {
+                    let rgba = tag_color_rgba(c);
+                    let is_on = active.contains(&c);
                     row = row.child(
                         div()
-                            .w(px(12.0))
-                            .h(px(12.0))
+                            .id(ElementId::Name(format!("entry-info-tag-{c:?}").into()))
+                            .w(px(15.0))
+                            .h(px(15.0))
                             .rounded_full()
                             .bg(rgba)
-                            .border_1()
-                            .border_color(cx.theme().border),
+                            .border_2()
+                            .border_color(if is_on {
+                                cx.theme().foreground
+                            } else {
+                                cx.theme().border
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.toggle_color(c, window, cx);
+                            })),
                     );
                 }
                 for name in custom {
@@ -425,7 +592,7 @@ impl EntryInfoView {
                 }
                 row.into_any_element()
             }
-            InfoValue::Permissions(m) => div().child(m.symbolic()).into_any_element(),
+            InfoValue::Permissions(m) => self.render_permissions(m, cx),
             InfoValue::Size(size) => match size {
                 SizeValue::Known { display, .. } => {
                     div().child(display.clone()).into_any_element()
@@ -442,4 +609,117 @@ impl EntryInfoView {
             },
         }
     }
+
+    /// Editable 3×3 read/write/execute grid (owner / group / other), plus
+    /// the octal readout. Each box rewrites the whole mode via `chmod`.
+    fn render_permissions(&self, m: &PermMatrix, cx: &mut Context<Self>) -> AnyElement {
+        let classes: [(&str, PermBits); 3] =
+            [("Owner", m.owner), ("Group", m.group), ("Other", m.other)];
+        let mut grid = v_flex().gap_0p5();
+        for (ci, (label, bits)) in classes.into_iter().enumerate() {
+            let mut row = h_flex().gap_2().items_center().child(
+                div()
+                    .w(px(44.0))
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(label),
+            );
+            // bit 2 = read, 1 = write, 0 = execute.
+            for (label, bit, on) in [
+                ("r", 2u32, bits.read),
+                ("w", 1, bits.write),
+                ("x", 0, bits.execute),
+            ] {
+                let base = m.clone();
+                row = row.child(
+                    Checkbox::new(ElementId::Name(format!("perm-{ci}-{bit}").into()))
+                        .label(label)
+                        .checked(on)
+                        .on_click(cx.listener(move |this, checked: &bool, window, cx| {
+                            let mut next = base.clone();
+                            let triple = match ci {
+                                0 => &mut next.owner,
+                                1 => &mut next.group,
+                                _ => &mut next.other,
+                            };
+                            match bit {
+                                2 => triple.read = *checked,
+                                1 => triple.write = *checked,
+                                _ => triple.execute = *checked,
+                            }
+                            this.apply_permissions(next.to_mode(), window, cx);
+                        })),
+                );
+            }
+            grid = grid.child(row);
+        }
+        grid.child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(m.symbolic()),
+        )
+        .into_any_element()
+    }
+}
+
+/// Render a filename with deceptive characters highlighted: leading/trailing
+/// or unusual whitespace, zero-width / control / bidi characters, and
+/// homoglyphs. Invisible characters are shown via a visible stand-in; each
+/// flagged span carries a tooltip naming the hazard. `id_prefix` keeps the
+/// per-span element ids unique when the name renders in more than one place.
+pub(crate) fn name_hazard_element(name: &str, id_prefix: &'static str) -> AnyElement {
+    let segments = name_hazards::analyze(name);
+    if segments.iter().all(|s| s.hazard.is_none()) {
+        return div().child(name.to_string()).into_any_element();
+    }
+    let mut row = h_flex().flex_wrap().items_center();
+    for (i, seg) in segments.into_iter().enumerate() {
+        match seg.hazard {
+            None => row = row.child(div().child(seg.text)),
+            Some(kind) => {
+                // Whitespace tricks are amber; reordering / invisible /
+                // look-alike characters are the dangerous red.
+                let amber = matches!(
+                    kind,
+                    HazardKind::LeadingSpace
+                        | HazardKind::TrailingSpace
+                        | HazardKind::UnusualWhitespace
+                );
+                let bg = if amber { rgb(0xF59E0B) } else { rgb(0xDC2626) };
+                let shown = seg.render.unwrap_or(seg.text);
+                let label: SharedString = seg
+                    .label
+                    .unwrap_or_else(|| kind.summary().to_string())
+                    .into();
+                row = row.child(
+                    div()
+                        .id(ElementId::Name(format!("{id_prefix}-haz-{i}").into()))
+                        .px_0p5()
+                        .rounded_sm()
+                        .bg(bg)
+                        .text_color(gpui::white())
+                        .child(shown)
+                        .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx)),
+                );
+            }
+        }
+    }
+    row.into_any_element()
+}
+
+/// A one-line summary of the hazard kinds present in `name`, or `None` if the
+/// name is clean. Shown under the name as a warning.
+pub(crate) fn name_hazard_warning(name: &str) -> Option<String> {
+    let mut kinds: Vec<&'static str> = name_hazards::analyze(name)
+        .iter()
+        .filter_map(|s| s.hazard.map(|k| k.summary()))
+        .collect();
+    if kinds.is_empty() {
+        return None;
+    }
+    kinds.dedup();
+    kinds.sort_unstable();
+    kinds.dedup();
+    Some(format!("Deceptive name: {}", kinds.join(", ")))
 }

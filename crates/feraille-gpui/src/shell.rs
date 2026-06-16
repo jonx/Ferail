@@ -274,6 +274,10 @@ pub struct Shell {
     /// Path the preview pane showed last frame — the selection-change
     /// edge detector for the scroll reset above.
     pub preview_scroll_path: Option<PathBuf>,
+    /// The embedded Get Info panel shown in the preview pane. A single
+    /// reused entity, retargeted as the selection changes (the same view
+    /// the Cmd+I popup uses, in `embedded` mode). `None` until first shown.
+    pub preview_info: Option<gpui::Entity<crate::entry_info::EntryInfoView>>,
     /// UI zoom factor (Stage 9.b.5). 1.0 = default; bumped by Cmd+=
     /// and Cmd+-. Applied to font sizes / icon sizes via Tokens-
     /// derived scaling at render time. Persisted in app_state.
@@ -645,6 +649,7 @@ impl Shell {
             // override this default — until then this is the boot
             // state on every launch.
             preview_visible: false,
+            preview_info: None,
             preview_scroll: ScrollHandle::new(),
             preview_scroll_path: None,
             ui_scale,
@@ -761,7 +766,8 @@ impl Shell {
         // Filter input — per-tab so cursor / focus / value persist
         // when the user switches tabs. The closure captures `tab_id`
         // so only this tab's enumeration is re-triggered.
-        let filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter \u{2026}"));
+        let filter_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter \u{2026}  \u{23CE} to search subfolders"));
         let filter_subscription = cx.subscribe_in(&filter_input, window, {
             let filter_input = filter_input.clone();
             move |this, _state, ev: &InputEvent, _window, cx| {
@@ -859,6 +865,35 @@ impl Shell {
         if let Some(p) = self.path_for_row(row_ix, cx) {
             crate::preview::request(self, p, cx);
         }
+    }
+
+    /// Create or retarget the embedded preview Get Info panel for `path`.
+    /// Reuses one entity across selections so we don't churn views; returns
+    /// a clone to drop into the preview render.
+    pub(crate) fn sync_preview_info(
+        &mut self,
+        path: PathBuf,
+        name: String,
+        target: feraille_core::entry_info::InfoTarget,
+        cx: &mut Context<Self>,
+    ) -> gpui::Entity<crate::entry_info::EntryInfoView> {
+        match &self.preview_info {
+            Some(view) => {
+                let p = path.clone();
+                let n = name.clone();
+                view.update(cx, |view, cx| view.retarget(p, n, cx));
+            }
+            None => {
+                let weak = cx.weak_entity();
+                let view = cx.new(|cx| {
+                    crate::entry_info::EntryInfoView::new_embedded(path, name, target, weak, cx)
+                });
+                self.preview_info = Some(view);
+            }
+        }
+        self.preview_info
+            .clone()
+            .expect("preview_info set above")
     }
 
     pub fn path_for_row(&self, row_ix: usize, cx: &App) -> Option<PathBuf> {
@@ -1008,27 +1043,34 @@ impl Shell {
     }
 
     fn on_clear_filter(&mut self, _: &ClearFilter, window: &mut Window, cx: &mut Context<Self>) {
-        // Spec §2.5 escape priority: clear selection first if
-        // non-empty; only fall through to clearing the filter when
-        // selection is already empty. Avoids stealing Esc from a
-        // user trying to drop a selection without losing their
-        // filter context.
+        // This fires only when the filter field owns focus (Esc in the
+        // shell pane routes to ClearSelection instead). When the field
+        // has text or the tab is showing a results view, Esc clears the
+        // field / leaves the results and reloads the directory — but
+        // keeps focus in the field so the user can immediately type a
+        // new query (their preference). Only when the field is already
+        // empty and not showing results does Esc fall through to the
+        // §2.5 selection-clear, which escapes out to the shell pane.
+        let has_text = !self.active_tab().filter_text.is_empty();
+        let in_results =
+            self.active_tab().search_mode.is_some() || self.active_tab().dupe_mode.is_some();
+        if has_text || in_results {
+            let filter_input = self.active_tab().filter_input.clone();
+            filter_input.update(cx, |state, cx| {
+                state.set_value("", window, cx);
+            });
+            self.active_tab_mut().filter_text.clear();
+            self.active_tab_mut().search_mode = None;
+            self.active_tab_mut().dupe_mode = None;
+            let path = self.active_tab().current_dir.clone();
+            self.load_path(path, cx);
+            self.focus_filter_input(window, cx);
+            return;
+        }
         if !self.active_tab().selection.is_empty() {
             self.clear_active_selection(cx);
             self.focus_handle.focus(window, cx);
-            return;
         }
-        let filter_input = self.active_tab().filter_input.clone();
-        filter_input.update(cx, |state, cx| {
-            state.set_value("", window, cx);
-        });
-        self.active_tab_mut().filter_text.clear();
-        // Esc also leaves a results view, returning to the directory.
-        self.active_tab_mut().search_mode = None;
-        self.active_tab_mut().dupe_mode = None;
-        let path = self.active_tab().current_dir.clone();
-        self.load_path(path, cx);
-        self.focus_handle.focus(window, cx);
     }
 
     /// Cmd+Shift+H — navigate the active tab to the home directory.
@@ -1257,7 +1299,12 @@ impl Shell {
     /// Cmd+I — open the Get Info popup for the target row (the right-click
     /// row, else the lead selection). With nothing selected, gets info on
     /// the tab's current folder, matching Finder.
-    fn on_get_info(&mut self, _: &GetInfo, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn on_get_info(
+        &mut self,
+        _: &GetInfo,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use feraille_core::entry_info::InfoTarget;
         let (path, name, target) = match self.target_row(cx) {
             Some(row) => {
@@ -1286,7 +1333,7 @@ impl Shell {
                 (dir, name, InfoTarget::Folder)
             }
         };
-        crate::entry_info::open(path, name, target, window, cx);
+        crate::entry_info::open(path, name, target, cx.weak_entity(), window, cx);
     }
 
     /// Cmd+= / Cmd+- / Cmd+0 — UI zoom. Bumps `ui_scale` by ±0.1
@@ -1987,7 +2034,11 @@ impl Shell {
         }
     }
 
-    fn reload_tabs_matching_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+    pub(crate) fn reload_tabs_matching_paths(
+        &mut self,
+        paths: &[PathBuf],
+        cx: &mut Context<Self>,
+    ) {
         let targets: Vec<(TabId, PathBuf)> = self
             .tabs
             .iter()
@@ -2052,7 +2103,7 @@ impl Shell {
 
     /// Append a reversible op to the undo stack, evicting the oldest
     /// entry when capacity is exceeded.
-    fn push_undo(&mut self, op: UndoOp) {
+    pub(crate) fn push_undo(&mut self, op: UndoOp) {
         self.process.push_undo(op, UNDO_STACK_CAP);
     }
 

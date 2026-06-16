@@ -993,6 +993,8 @@ impl Shell {
                                     .menu("Disk Usage\u{2026}", Box::new(OpenDiskUsage))
                                     .menu("Find Duplicates\u{2026}", Box::new(FindDuplicates))
                                     .separator()
+                                    .menu("Copy File List", Box::new(CopyFileList))
+                                    .separator()
                                     .menu("Empty Trash\u{2026}", Box::new(EmptyTrash))
                                 }),
                         ),
@@ -1085,6 +1087,15 @@ impl Shell {
                 let full_path = selected_path
                     .clone()
                     .unwrap_or_else(|| self.resolve_preview_path(&entry, cx));
+
+                // Keep the embedded Get Info panel pointed at the lead
+                // selection (reuses the popup's view in `embedded` mode).
+                let info_target = match entry.kind {
+                    EntryKind::Directory => feraille_core::entry_info::InfoTarget::Folder,
+                    _ => feraille_core::entry_info::InfoTarget::File,
+                };
+                let info_view =
+                    self.sync_preview_info(full_path.clone(), entry.name.clone(), info_target, cx);
 
                 // Quick Look thumbnail (Stage 8 native preview).
                 // `preview::request` was kicked off when the row
@@ -1190,37 +1201,34 @@ impl Shell {
                     );
                 }
 
-                // Filename header — truncated, with a tooltip that
-                // carries the full name. The dense Format/Size/Modified/
-                // Where rows that used to sit below now live in the Get
-                // Info popup (Cmd+I); the preview keeps media + name.
-                let name_for_tooltip = entry.name.clone();
-                col = col.child(
-                    div()
-                        .id(("preview-name", entry.id.as_raw() as usize))
-                        .text_lg()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().foreground)
+                // Filename header. A clean name truncates with a full-name
+                // tooltip; a name with deceptive characters (homoglyphs,
+                // bidi overrides, hidden whitespace) renders each hazard
+                // highlighted with its own explanatory tooltip instead.
+                let name_header = div()
+                    .id(("preview-name", entry.id.as_raw() as usize))
+                    .text_lg()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(cx.theme().foreground);
+                let name_header = if feraille_core::name_hazards::has_hazards(&entry.name) {
+                    name_header
+                        .child(crate::entry_info::name_hazard_element(&entry.name, "preview-name"))
+                } else {
+                    let name_for_tooltip = entry.name.clone();
+                    name_header
                         .truncate()
                         .child(SharedString::from(entry.name.clone()))
                         .tooltip(move |window, cx| {
                             Tooltip::new(SharedString::from(name_for_tooltip.clone()))
                                 .build(window, cx)
-                        }),
-                );
+                        })
+                };
+                col = col.child(name_header);
 
-                // A compact entry into the full Get Info inspector — the
-                // detail rows moved there, so keep them one click away.
-                col = col.child(
-                    Button::new("preview-get-info")
-                        .label("Get Info")
-                        .xsmall()
-                        .outline()
-                        .tooltip_with_action("Get Info", &GetInfo, Some(SHELL_CONTEXT))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.on_get_info(&GetInfo, window, cx);
-                        })),
-                );
+                // The Get Info panel, embedded — the detail rows the
+                // preview used to show, now editable and complete. Cmd+I
+                // opens the same content as a standalone popup.
+                col = col.child(info_view);
 
                 // Quarantine surface — the red mark line, the
                 // provenance the prefetch worker read off the xattr /
@@ -1844,6 +1852,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_toggle_hidden))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_copy_path))
+            .on_action(cx.listener(Self::on_copy_file_list))
             .on_action(cx.listener(Self::on_copy_files))
             .on_action(cx.listener(Self::on_paste_files))
             .on_action(cx.listener(Self::on_move_paste_files))

@@ -103,6 +103,45 @@ pub fn read_shell_info(_path: &Path) -> ShellInfo {
     ShellInfo::default()
 }
 
+/// Set Finder's "Hide extension" state on `path` via the writable
+/// `NSURLHasHiddenExtensionKey` resource value. macOS only.
+#[cfg(target_os = "macos")]
+pub fn set_hidden_extension(path: &Path, hidden: bool) -> Result<(), String> {
+    use objc2::msg_send;
+    use objc2::rc::Retained;
+    use objc2_foundation::{
+        NSError, NSNumber, NSString, NSURLHasHiddenExtensionKey, NSURL,
+    };
+
+    let Some(path_str) = path.to_str() else {
+        return Err("path is not valid UTF-8".into());
+    };
+    unsafe {
+        let ns_path = NSString::from_str(path_str);
+        let url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&ns_path, path.is_dir());
+        let value = NSNumber::numberWithBool(hidden);
+        let mut err: *mut NSError = std::ptr::null_mut();
+        let ok: bool = msg_send![
+            &url,
+            setResourceValue: &*value,
+            forKey: NSURLHasHiddenExtensionKey,
+            error: &mut err,
+        ];
+        if !ok {
+            return Err(crate::file_ops::ns_error_message(
+                err,
+                "setResourceValue(hidden extension) failed",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_hidden_extension(_path: &Path, _hidden: bool) -> Result<(), String> {
+    Err("set_hidden_extension is macOS-only".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

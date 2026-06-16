@@ -443,6 +443,37 @@ impl Shell {
         window.push_notification(Notification::success(msg), cx);
     }
 
+    /// Copy the *whole* visible list — every row in the active tab,
+    /// not just the selection — as newline-joined full paths. Serves
+    /// folder views, duplicate-finder results, and search results
+    /// uniformly: all three feed the same table delegate, so iterating
+    /// its rows and resolving each path from the cache (never the
+    /// filesystem) covers them all.
+    pub(super) fn on_copy_file_list(
+        &mut self,
+        _: &CopyFileList,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let row_count = self.active_tab().table.read(cx).delegate().entries.len();
+        let paths: Vec<PathBuf> = (0..row_count)
+            .filter_map(|row| self.path_for_row(row, cx))
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            paths
+                .iter()
+                .map(|p| p.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ));
+        let msg = format!("Copied list of {} items to clipboard", paths.len());
+        window.push_notification(Notification::success(msg), cx);
+    }
+
     pub(super) fn on_reveal_in_finder(
         &mut self,
         _: &RevealInFinder,

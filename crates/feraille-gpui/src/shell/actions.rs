@@ -11,6 +11,13 @@ actions!(
         ToggleHidden,
         OpenSettings,
         CopyPath,
+        /// Copy the *entire* list of items currently shown in the active
+        /// tab — folder contents, duplicate-finder groups, or search
+        /// results — as newline-joined full paths, regardless of
+        /// selection. The list-export complement to `CopyPath` (which
+        /// copies just the selection). All three views populate the same
+        /// table delegate, so one handler serves them all.
+        CopyFileList,
         /// Folder-only file-list context action — open a terminal at the
         /// right-clicked directory. Resolves its target the same way
         /// `CopyPath` does (`action_entries_visible_order`, consuming

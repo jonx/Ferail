@@ -139,8 +139,22 @@ Columns are Name, Size, Format, and Modified. Columns can be sorted,
 resized, and reordered. Cell rendering is keyed by column id so moved
 columns keep headers and content aligned.
 
-The preview pane is a dense metadata surface for the current selection.
-It uses shared file-entry formatting so the preview and table agree.
+The preview pane shows the current selection's media (Quick Look thumbnail
+or inline highlighted text) plus the name and a "Get Info" button. The dense
+attribute rows it used to carry now live in the Get Info popup.
+
+Get Info is a modal `Dialog` popup (`crate::entry_info`) opened by the
+`GetInfo` command (Cmd+I, context menu, toolbar, preview button). A
+background `gather()` composes a platform-neutral
+`feraille_core::entry_info::EntryInfo` from POSIX stat
+(`feraille-fs-native::stat_info`), batched NSURL resource values
+(`feraille-shell-mac::resource_values`), volume info, magic, and tags — never
+on the paint path. The record drives a dense, editable form: Locked /
+Invisible / Hide-extension toggles, color labels, a POSIX permission grid,
+and an on-demand "Calculate" recursive size. Edits write through the native
+crates (chflags / chmod / setResourceValue / tag write), reload the affected
+directory, and re-gather. The model is neutral so Windows/Linux fill the
+subset they can read.
 
 Settings are implemented with `gpui_component::setting::Settings`.
 The settings sidebar is searchable, category rows have icons, and fields

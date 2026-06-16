@@ -94,6 +94,16 @@ feature notes in [docs/features/](docs/features/README.md).
 
 ## Preview, Metadata, And Intelligence
 
+- Get Info popup follow-ups (the editable inspector shipped 2026-06-16 —
+  `crate::entry_info`, neutral `feraille_core::entry_info` model, gather via
+  `stat_info` + `resource_values`; edits cover Locked/Invisible/Hide-extension,
+  color labels, POSIX permission grid, recursive "Calculate" size): inline
+  rename inside the popup (name is read-only there today; F2/RenameSelected
+  still renames); undo coverage for attribute/permission/tag edits (rename
+  would reuse `UndoOp::Rename`); Stationery-pad and custom-icon reads
+  (Finder-info `getattrlist`, no NSURL key); combined multi-item Get Info and
+  a detachable per-item window; real Windows/Linux gather (the unix `stat_info`
+  arm already yields perms/dates; NSURL/volume-format reads are macOS-only).
 - Preview-pane provider follow-ups (image/PDF/media via Quick Look,
   inline text with syntax highlighting + formatted markdown all
   shipped — docs/features/PREVIEW.md): audio waveform / video

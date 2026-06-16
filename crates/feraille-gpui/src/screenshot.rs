@@ -829,9 +829,15 @@ impl ShellArgs {
             });
         }
 
-        // ---- Stage-deferred flags. Log + skip. -------------------
+        // Open the Get Info popup for the current target (a selected row
+        // via --select-row, else the folder). The 2500ms pre-capture wait
+        // below lets the background gather land before render_to_image.
         if self.properties {
-            crate::log_warn!(90, "--properties flag: Get Info pane lands in Stage 8");
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    s.on_get_info(&crate::shell::GetInfo, window, cx);
+                });
+            });
         }
         if self.ui_scale.is_some() {
             crate::log_warn!(90, "--ui-scale flag: UI zoom lands in Stage 9");

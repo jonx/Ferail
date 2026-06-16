@@ -57,7 +57,7 @@ pub use spotlight::{spotlight_available, spotlight_search, SpotlightScope};
 /// date-added, Finder attribute bits). Cross-platform module with internal
 /// cfg gates — non-macOS builds get an empty record.
 pub mod resource_values;
-pub use resource_values::{read_shell_info, ShellInfo};
+pub use resource_values::{read_shell_info, set_hidden_extension, ShellInfo};
 
 /// Install the application menu bar (`NSApp.mainMenu`) and configure the
 /// standard About panel content. Call once at startup, on the main thread,

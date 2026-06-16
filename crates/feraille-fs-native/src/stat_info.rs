@@ -151,6 +151,79 @@ fn group_name(gid: u32) -> String {
     gid.to_string()
 }
 
+/// Set or clear the `UF_IMMUTABLE` flag (Finder "Locked") on `path`,
+/// preserving the other BSD flags. macOS only.
+#[cfg(target_os = "macos")]
+pub fn set_locked(path: &Path, locked: bool) -> Result<(), String> {
+    const UF_IMMUTABLE: u32 = 0x0000_0002;
+    set_flag(path, UF_IMMUTABLE, locked)
+}
+
+/// Set or clear the `UF_HIDDEN` flag (Finder "Invisible") on `path`,
+/// preserving the other BSD flags. macOS only.
+#[cfg(target_os = "macos")]
+pub fn set_invisible(path: &Path, invisible: bool) -> Result<(), String> {
+    const UF_HIDDEN: u32 = 0x0000_8000;
+    set_flag(path, UF_HIDDEN, invisible)
+}
+
+/// Read the current `st_flags`, set or clear `bit`, and write back via
+/// `chflags` so unrelated flags survive.
+#[cfg(target_os = "macos")]
+fn set_flag(path: &Path, bit: u32, on: bool) -> Result<(), String> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| "path contains NUL".to_string())?;
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::lstat(c_path.as_ptr(), &mut st) } != 0 {
+        return Err(io_err("lstat"));
+    }
+    let flags = if on {
+        st.st_flags | bit
+    } else {
+        st.st_flags & !bit
+    };
+    if unsafe { libc::chflags(c_path.as_ptr(), flags) } != 0 {
+        return Err(io_err("chflags"));
+    }
+    Ok(())
+}
+
+/// Replace the permission bits of `path` with `mode` (the lower 12 bits,
+/// type bits ignored) via `chmod`. Unix only.
+#[cfg(unix)]
+pub fn set_permissions(path: &Path, mode: u32) -> Result<(), String> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| "path contains NUL".to_string())?;
+    if unsafe { libc::chmod(c_path.as_ptr(), (mode & 0o7777) as libc::mode_t) } != 0 {
+        return Err(io_err("chmod"));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_locked(_path: &Path, _locked: bool) -> Result<(), String> {
+    Err("set_locked is macOS-only".into())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_invisible(_path: &Path, _invisible: bool) -> Result<(), String> {
+    Err("set_invisible is macOS-only".into())
+}
+
+#[cfg(not(unix))]
+pub fn set_permissions(_path: &Path, _mode: u32) -> Result<(), String> {
+    Err("set_permissions is unix-only".into())
+}
+
+#[cfg(unix)]
+fn io_err(op: &str) -> String {
+    format!("{op}: {}", std::io::Error::last_os_error())
+}
+
 /// Filesystem type name (e.g. "apfs", "hfs", "exfat") and BSD device node
 /// (e.g. "/dev/disk3s1s1") for the volume containing `path`. Both `None` off
 /// macOS or on `statfs` failure.
@@ -246,6 +319,33 @@ mod tests {
         assert_eq!(info.uid, unsafe { libc::getuid() });
         // Permission bits are populated (rw- at minimum for the owner).
         assert!(info.mode & 0o400 != 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn set_permissions_round_trips() {
+        let dir = std::env::temp_dir().join(format!("feraille-chmod-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("perm.txt");
+        std::fs::write(&f, b"x").unwrap();
+        set_permissions(&f, 0o640).unwrap();
+        let info = read_stat_info(&f).unwrap();
+        assert_eq!(info.mode & 0o777, 0o640);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn lock_unlock_round_trips() {
+        let dir = std::env::temp_dir().join(format!("feraille-lock-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("lock.txt");
+        std::fs::write(&f, b"x").unwrap();
+        set_locked(&f, true).unwrap();
+        assert!(read_stat_info(&f).unwrap().is_locked);
+        set_locked(&f, false).unwrap();
+        assert!(!read_stat_info(&f).unwrap().is_locked);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

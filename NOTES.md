@@ -59,7 +59,80 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
 - v1 targets the **lead row** (single selection). Finder-style combined
   multi-item Get Info deferred.
 - "Last opened" has no NSURL key (it's Spotlight `kMDItemLastUsedDate`); v1
-  shows access-date as a proxy or omits it.
+  shows the POSIX access date as a proxy.
+
+## Outcome (landed 2026-06-16)
+
+- **Model** `feraille_core::entry_info` — neutral `EntryInfo`/sections/rows
+  + `PermMatrix`/`PermBits` (mode round-trip, octal, symbolic) + `Attr` +
+  `EntryInfoEdit`. 4 unit tests.
+- **Reads** `fsn::stat_info` (lstat: owner/group via getpw/getgr, mode, dates,
+  birthtime, UF_IMMUTABLE/UF_HIDDEN; `format_local_datetime` via localtime_r;
+  `volume_fs_info` statfs for format + BSD device) and
+  `shell_mac::resource_values` (batched NSURL: UTI, localized Kind, added
+  date, hidden-extension/package/alias). `VolumeInfo` gained `format` +
+  `bsd_device`. Tests assert against the live box (apfs, `/dev/…`,
+  `public.folder`, real stat).
+- **Writes** `set_locked`/`set_invisible` (chflags, preserving other flags),
+  `set_permissions` (chmod), `set_hidden_extension` (NSURL setResourceValue +
+  NSNumber, needed the `NSValue` feature), tags reuse `toggle_tag`. chmod +
+  lock/unlock round-trip tests pass.
+- **Popup** `entry_info.rs` (gpui): `gather()` composes all the above off the
+  background executor into the neutral record; `EntryInfoView` hosted in a
+  `Dialog` via `window.open_dialog`. Editable: Locked/Invisible/Hide-extension
+  checkboxes, 7 color-label swatches, a 3×3 rwx permission grid, and an
+  on-demand "Calculate" folder/volume size (reuses `recursive_size`). Each
+  edit writes inline (single syscall/Cocoa hop — the same pattern the
+  context-menu `toggle_tag` already uses), reloads the affected directory
+  (`reload_tabs_matching_paths`), and re-gathers so the panel shows truth.
+- **Wiring** the dead `GetInfo` command (Cmd+I / context menu / toolbar) now
+  opens the popup; the preview pane's Format/Size/Modified/Where list is gone,
+  replaced by a "Get Info" button. Harness `--properties` opens it.
+- **Verification:** workspace compiles, clippy-clean on the new files, all
+  tests green. `screenshots/get-info-file.png` legibly shows the gathered
+  record. **Headless caveat:** the `Dialog` enter-animation needs multiple
+  paints; `render_to_image` captures one, so the popup is faint in
+  screenshots (same limitation as every dialog in this app — it renders solid
+  live). Confirm interactively with Cmd+I.
+
+## Follow-up iteration (2026-06-16, from live use)
+
+- **Popup no longer clips.** Body is `max_h(viewport - 220px).overflow_y_scroll()`
+  with a `ScrollHandle`, so a tall record scrolls inside the window instead of
+  running off the bottom edge.
+- **Panel embedded in the preview pane.** The same `EntryInfoView` now runs in
+  an `embedded` mode (section rows only, no name header / no own scroll) and
+  the preview hosts one reused entity (`Shell::preview_info`), retargeted as the
+  lead selection changes via `sync_preview_info`. The "Get Info" button is
+  gone — the preview shows the live, editable panel; Cmd+I opens the same
+  content as the popup.
+- **Filename hazard surfacing.** New `feraille_core::name_hazards` splits a name
+  into segments and flags leading/trailing/unusual whitespace, zero-width,
+  control, bidi overrides, combining marks, and Cyrillic/Greek/fullwidth
+  homoglyphs (curated confusable table — covers the "раypal"/RLO "gpj.exe"
+  attacks). The Get Info + preview name render each flagged char highlighted
+  (amber = whitespace, red = reordering/invisible/look-alike) with a tooltip
+  naming it and a visible stand-in for invisibles (`⟨U+00A0⟩`, `␣`, `⇥`). 8
+  analyzer unit tests. Verified: `screenshots/get-info-preview-hazard.png`
+  (amber NBSP), `get-info-preview-homoglyph.png` (red Cyrillic in "paypal").
+- **Test fixtures.** `test-data/filename-hazards/` ships a `generate.py` +
+  README producing 15 sample names (one per trick) into a git-ignored
+  `samples/` folder — the names carry control/bidi chars that git and editors
+  mangle, so the reviewable generator is what's committed.
+
+## With more time / deferred
+
+- **Inline rename** in the popup (the name is read-only there; the existing
+  RenameSelected/F2 flow still renames). Window-threading for a notification
+  from the input's PressEnter subscription is the only blocker.
+- **Undo for attribute/permission/tag edits** (toggling again reverts; rename
+  would reuse `UndoOp::Rename`). Today only the native write + reload happen.
+- **Stationery pad** + **custom icon** reads (Finder-info getattrlist, not an
+  NSURL key) — shown only when supported; omitted now.
+- **Combined multi-item Get Info** and a detachable per-item window.
+- **Windows/Linux gather**: the unix arm of `stat_info` already yields
+  perms/dates; `resource_values`/volume-format return empty off macOS. Real
+  Win32 (NTFS attrs, `GetVolumeInformation`) lands with that port.
 
 # 2026-06-15 syntax highlighting for C#, C, C++, Bash, Swift, CMake (landed)
 

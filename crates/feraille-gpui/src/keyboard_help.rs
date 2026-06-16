@@ -31,6 +31,7 @@ fn action_for_command(id: feraille_core::commands::CommandId) -> Option<Box<dyn 
         "file.get_info" => Box::new(GetInfo),
         "file.move_to_trash" => Box::new(MoveToTrash),
         "file.copy_path" => Box::new(CopyPath),
+        "file.copy_file_list" => Box::new(CopyFileList),
         "file.reveal_in_finder" => Box::new(RevealInFinder),
         "file.refresh" => Box::new(Refresh),
         "file.open" | "selection.activate" => Box::new(OpenSelected),

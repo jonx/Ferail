@@ -6,6 +6,7 @@
 pub mod commands;
 pub mod entry_info;
 pub mod favorites;
+pub mod name_hazards;
 pub mod navigation;
 pub mod node_store;
 pub mod path_guard;
