@@ -294,11 +294,13 @@ pub struct Shell {
     pub sidebar_width: f32,
     /// Current preview pane width. Same lifecycle as `sidebar_width`.
     pub preview_width: f32,
-    /// Timestamp of the last persistence write for the splitter
-    /// widths. The on_resize callback fires per drag tick — we
-    /// debounce the file write to ~once per `SPLITTER_PERSIST_INTERVAL`
-    /// so a drag doesn't hammer the config file.
-    pub splitter_last_save: Option<std::time::Instant>,
+    /// True while a trailing splitter-width save is queued. The
+    /// on_resize callback fires per drag tick; rather than write on each
+    /// (and risk dropping the final value), the first tick arms a
+    /// deferred write that reads the latest widths when it fires —
+    /// guaranteeing the width at drag-end persists. See
+    /// `schedule_splitter_save`.
+    pub splitter_save_scheduled: bool,
     /// Sidebar collapsed to icons-only when true. Toggled by the
     /// SidebarToggleButton in the TitleBar; persisted via
     /// `app_state::sidebar_collapsed` so the choice survives
@@ -663,7 +665,7 @@ impl Shell {
             splitter_state: cx.new(|_| gpui_component::resizable::ResizableState::default()),
             sidebar_width: persisted.sidebar_width.unwrap_or(220.0).clamp(160.0, 400.0),
             preview_width: persisted.preview_width.unwrap_or(380.0).clamp(260.0, 640.0),
-            splitter_last_save: None,
+            splitter_save_scheduled: false,
             sidebar_collapsed: persisted.sidebar_collapsed.unwrap_or(false),
             favorites_section_collapsed: false,
             focused_favorite: None,
@@ -1184,21 +1186,30 @@ impl Shell {
     /// always lands because subsequent renders re-check the
     /// interval and flush. Trades a few-hundred-millisecond
     /// recoverability against not hammering the file system.
-    fn maybe_persist_splitter(&mut self) {
-        use std::time::Instant;
-        let now = Instant::now();
-        let should_save = match self.splitter_last_save {
-            Some(t) => now.duration_since(t) >= SPLITTER_PERSIST_INTERVAL,
-            None => true,
-        };
-        if !should_save {
+    /// Arm a trailing, debounced write of the current splitter widths.
+    /// The first resize tick of a drag schedules a write
+    /// `SPLITTER_PERSIST_INTERVAL` later; further ticks within that window
+    /// are no-ops (a write is already queued). When the timer fires it
+    /// reads the *latest* widths off `self`, so the value at drag-end always
+    /// persists — and a single drag costs at most a couple of file writes.
+    fn schedule_splitter_save(&mut self, cx: &mut Context<Self>) {
+        if self.splitter_save_scheduled {
             return;
         }
-        self.splitter_last_save = Some(now);
-        let mut state = app_state::load();
-        state.sidebar_width = Some(self.sidebar_width);
-        state.preview_width = Some(self.preview_width);
-        app_state::save(&state);
+        self.splitter_save_scheduled = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(SPLITTER_PERSIST_INTERVAL)
+                .await;
+            let _ = this.update(cx, |this, _cx| {
+                this.splitter_save_scheduled = false;
+                let mut state = app_state::load();
+                state.sidebar_width = Some(this.sidebar_width);
+                state.preview_width = Some(this.preview_width);
+                app_state::save(&state);
+            });
+        })
+        .detach();
     }
 
     pub fn on_open_disk_usage(
@@ -1329,7 +1340,7 @@ impl Shell {
     pub(crate) fn on_get_info(
         &mut self,
         _: &GetInfo,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         use feraille_core::entry_info::InfoTarget;
@@ -1373,7 +1384,8 @@ impl Shell {
                 (dir, name, InfoTarget::Folder, None)
             }
         };
-        crate::entry_info::open(path, name, target, known_size, cx.weak_entity(), window, cx);
+        let weak = cx.weak_entity();
+        crate::entry_info::open(path, name, target, known_size, weak, cx);
     }
 
     /// Cmd+= / Cmd+- / Cmd+0 — UI zoom. Bumps `ui_scale` by ±0.1

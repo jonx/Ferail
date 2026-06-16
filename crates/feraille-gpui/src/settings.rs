@@ -282,7 +282,7 @@ fn dropdown_setting(
     SettingItem::render(move |_options, _window, cx| {
         use gpui_component::{
             ActiveTheme as _, Sizable as _,
-            button::{Button, ButtonVariants as _},
+            button::Button,
             menu::{DropdownMenu as _, PopupMenuItem},
         };
         let current = get();

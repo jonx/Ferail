@@ -26,6 +26,7 @@ use crate::shell::{
     PasteFiles, PrevTab, QuickLook, Refresh, RenameSelected, ReopenClosedTab, RevealInFinder,
     SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
 };
+use crate::entry_info::{ENTRY_INFO_CONTEXT, EntryInfoDismiss};
 use crate::viewer::window::{
     VIEWER_CONTEXT, ViewerActualSize, ViewerDismiss, ViewerNext, ViewerPrev,
     ViewerToggleFullscreen, ViewerTogglePlay, ViewerZoomIn, ViewerZoomOut, ViewerZoomReset,
@@ -344,6 +345,7 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("right", ViewerNext, Some(VIEWER_CONTEXT)),
         KeyBinding::new("down", ViewerNext, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", ViewerDismiss, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("escape", EntryInfoDismiss, Some(ENTRY_INFO_CONTEXT)),
         KeyBinding::new("space", ViewerTogglePlay, Some(VIEWER_CONTEXT)),
         KeyBinding::new("cmd-=", ViewerZoomIn, Some(VIEWER_CONTEXT)),
         KeyBinding::new("cmd--", ViewerZoomOut, Some(VIEWER_CONTEXT)),

@@ -1169,9 +1169,14 @@ impl Shell {
                     // (the worker already capped this to 500 lines, and
                     // TextView parses off the UI thread). A stable id
                     // means the one cached parse re-runs on file change.
-                    // Scroll both axes: vertical for long files,
-                    // horizontal so no-wrap code lines stay readable
-                    // rather than clipping (user preference).
+                    //
+                    // A bounded box with its own scroll on BOTH axes:
+                    // vertical so a long file doesn't push the Get Info
+                    // details far down the pane, horizontal so no-wrap code
+                    // lines stay readable. (The nested box does trap the
+                    // vertical wheel until you move off it — see the scroll-
+                    // chaining TODO; the bounded layout is the better
+                    // trade-off for reaching the details quickly.)
                     let block = div()
                         .id("preview-text")
                         .w_full()
@@ -1188,12 +1193,12 @@ impl Shell {
                             .child(SharedString::from("(empty file)"))
                     } else {
                         let md = crate::text_preview::to_markdown_source(&entry.name, &text);
-                        // Smaller mono in code blocks, and don't wrap —
+                        // Compact mono in code blocks, and don't wrap —
                         // long lines scroll horizontally in the block
                         // above instead of folding.
                         let style = gpui_component::text::TextViewStyle::default().code_block(
                             gpui::StyleRefinement::default()
-                                .text_size(px(11.0))
+                                .text_size(px(9.0))
                                 .whitespace_nowrap(),
                         );
                         block.child(
@@ -1355,9 +1360,10 @@ impl Shell {
                 }
 
                 // Action row — icon-only buttons with tooltips that
-                // include the keyboard shortcut. Icon-only keeps the
-                // row dense enough that all four buttons fit even at
-                // the preview pane's narrow default width.
+                // include the keyboard shortcut. No Get Info button here:
+                // the preview pane already shows the full Get Info panel,
+                // so the icon would just duplicate what's on screen (Cmd+I
+                // still opens the detached Get Info window).
                 // `tooltip_with_action` pulls the chord from the
                 // keymap automatically so each hover reads "Open ⌘O".
                 let actions = h_flex()
@@ -1395,16 +1401,6 @@ impl Shell {
                             .tooltip_with_action("Copy Path", &CopyPath, Some(SHELL_CONTEXT))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.on_copy_path(&CopyPath, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("preview-get-info")
-                            .icon(gpui_component::Icon::empty().path("icons/info.svg"))
-                            .xsmall()
-                            .ghost()
-                            .tooltip_with_action("Get Info", &GetInfo, Some(SHELL_CONTEXT))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.on_get_info(&GetInfo, window, cx);
                             })),
                     );
                 col = col.child(actions);
@@ -2102,14 +2098,14 @@ impl Render for Shell {
                         // throttled writer.
                         let sizes = state.read(cx).sizes().clone();
                         if let Some(s) = weak.upgrade() {
-                            s.update(cx, |this, _cx| {
+                            s.update(cx, |this, cx| {
                                 if let Some(sw) = sizes.first() {
                                     this.sidebar_width = f32::from(*sw);
                                 }
                                 if preview_visible && sizes.len() >= 3 {
                                     this.preview_width = f32::from(sizes[2]);
                                 }
-                                this.maybe_persist_splitter();
+                                this.schedule_splitter_save(cx);
                             });
                         }
                     })

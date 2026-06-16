@@ -146,6 +146,51 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
   on a folder, full permission grid visible). Build + full suite green,
   clippy-clean on touched files.
 
+## Follow-up iteration 3 (2026-06-16, from live use)
+
+- **Preview width now persists on resize (real bug).** `maybe_persist_splitter`
+  throttled writes to once / 500 ms and was only called from `on_resize` —
+  nothing flushed after the drag stopped, so the final width (if its event
+  landed inside the throttle window) was silently dropped. The doc comment
+  claiming "renders re-check and flush" was false (render never called it).
+  Replaced with `schedule_splitter_save`: the first resize tick arms a
+  trailing debounce (`cx.spawn` + timer) that reads the *latest* widths when
+  it fires, so the width at drag-end always lands and a drag costs ~1–2 writes.
+  Default also nudged 280 → 380, but persistence is the real fix.
+- **Preview keeps the bounded text/code box (scroll-chaining deferred).**
+  First tried collapsing the inline text/code box into the one pane scroll
+  (drop `max_h`, `overflow_x_scroll` only) so a vertical wheel flows from the
+  file into the details — but then a big file buries the Get Info details far
+  down the pane, so we reverted to the bounded `max_h(280) + overflow_scroll`
+  box (both axes — vertical keeps details reachable, horizontal keeps no-wrap
+  code readable). The nested box does trap the vertical wheel until the cursor
+  leaves it; the proper fix is scroll-chaining via a custom `on_scroll_wheel`,
+  written up as a TODO (gpui's `overflow_scroll` auto-captures the wheel and
+  it's not headlessly testable). Also shrank the code-preview text 11 → 9 px.
+  Verified: `screenshots/preview-bounded-small.png`.
+
+## Follow-up iteration 4 (2026-06-16, from live use)
+
+- **Get Info is now a standalone window, not a modal.** Was a centered
+  gpui-component `Dialog` tied to the host window; converted to a real OS
+  window via `cx.open_window` (same pattern as Settings / Disk Usage), so it's
+  resizable, movable, and **multi-instance** — every Cmd+I opens another
+  window, no singleton guard, so you can compare several files side by side.
+  The window title carries the file name; the in-content header keeps the
+  hazard-highlighted name (the native title bar can't color hazards). The
+  non-embedded render now fills the window (`size_full` + flex body) instead
+  of the dialog's `max_h`. Edit-error toasts: `Root::render` doesn't auto-draw
+  the notification layer, so the window's render adds
+  `Root::render_notification_layer` (the embedded-in-preview path still routes
+  toasts to the shell window). The same `EntryInfoView` serves both the window
+  and the embedded preview via the `embedded` flag.
+- **Removed the redundant Get Info (i) icon** from the preview action row — the
+  preview already shows the full panel, so it only duplicated what's on screen
+  (Cmd+I / context menu / toolbar still open the window).
+- Not headlessly screenshottable (it's a separate window the single-window
+  capture harness doesn't grab), but it opens without crashing and reuses the
+  already-verified embedded render. Confirm resize/move/multi-open live.
+
 ## With more time / deferred
 
 - **Inline rename** in the popup (the name is read-only there; the existing

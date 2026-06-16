@@ -143,8 +143,11 @@ The preview pane shows the current selection's media (Quick Look thumbnail
 or inline highlighted text) plus the name and a "Get Info" button. The dense
 attribute rows it used to carry now live in the Get Info popup.
 
-Get Info is a modal `Dialog` popup (`crate::entry_info`) opened by the
-`GetInfo` command (Cmd+I, context menu, toolbar, preview button). A
+Get Info opens a standalone, resizable, movable window (`crate::entry_info`)
+via the `GetInfo` command (Cmd+I, context menu, toolbar) — not a modal, so
+several can be open at once for different files. The same `EntryInfoView`
+also renders inline in the preview pane (an `embedded` mode that drops the
+window chrome and defers scrolling/notifications to the shell window). A
 background `gather()` composes a platform-neutral
 `feraille_core::entry_info::EntryInfo` from POSIX stat
 (`feraille-fs-native::stat_info`), batched NSURL resource values

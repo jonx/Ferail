@@ -24,16 +24,19 @@ use feraille_core::entry_info::{
 use feraille_core::name_hazards::{self, HazardKind};
 use gpui::*;
 use gpui_component::{
-    button::{Button, ButtonVariants as _},
-    checkbox::Checkbox,
-    h_flex,
-    notification::Notification,
-    tooltip::Tooltip,
-    v_flex, ActiveTheme, Sizable, WindowExt as _,
+    button::Button, checkbox::Checkbox, h_flex, notification::Notification, tooltip::Tooltip,
+    v_flex, ActiveTheme, Root, Sizable, WindowExt as _,
 };
 
 use crate::file_list::tag_color_rgba;
 use crate::shell::Shell;
+
+/// Key-binding context for the standalone Get Info window — Esc dismisses it
+/// (bound in `keymap::install_extras`). The embedded-in-preview instance
+/// doesn't set this context, so Esc there belongs to the shell.
+pub const ENTRY_INFO_CONTEXT: &str = "GetInfo";
+
+actions!(entry_info, [EntryInfoDismiss]);
 
 /// The seven canonical Finder colors, in the order the swatch row shows them.
 const TAG_COLORS: [TagColor; 7] = [
@@ -46,28 +49,31 @@ const TAG_COLORS: [TagColor; 7] = [
     TagColor::Gray,
 ];
 
-/// Open the Get Info popup for `path`. `name`/`target` are the caller's
-/// best guess (from the selected row) used for the loading header; the
-/// background gather recomputes them authoritatively. `shell` lets edits
-/// reload the affected directory and push notifications.
+/// Open a Get Info window for `path`. A standalone, resizable, movable OS
+/// window — not tied to the main window — so several can be open at once for
+/// different files. `name`/`target` are the caller's best guess (from the
+/// selected row) for the loading header; the background gather recomputes
+/// them. `shell` lets edits reload the affected directory.
 pub fn open(
     path: PathBuf,
     name: String,
     target: InfoTarget,
     known_size: Option<u64>,
     shell: WeakEntity<Shell>,
-    window: &mut Window,
     cx: &mut App,
 ) {
-    let view = cx.new(|cx| EntryInfoView::new(path, name, target, known_size, shell, cx));
-    window.open_dialog(cx, move |dialog, _window, _cx| {
-        dialog
-            .title("Get Info")
-            .w(px(380.0))
-            .overlay_closable(true)
-            .keyboard(true)
-            .close_button(true)
-            .child(view.clone())
+    let title: SharedString = format!("Get Info \u{2014} {name}").into();
+    let opts = WindowOptions {
+        window_bounds: Some(WindowBounds::centered(size(px(420.0), px(680.0)), cx)),
+        titlebar: Some(TitlebarOptions {
+            title: Some(title),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let _ = cx.open_window(opts, |window, cx| {
+        let view = cx.new(|cx| EntryInfoView::new(path, name, target, known_size, shell, cx));
+        cx.new(|cx| Root::new(view, window, cx))
     });
 }
 
@@ -292,6 +298,12 @@ pub struct EntryInfoView {
     /// The file list's already-computed recursive size for a folder, reused
     /// so Get Info doesn't rescan (shown with a refresh affordance).
     known_size: Option<u64>,
+    /// Focus target for the standalone window so Esc (and key dispatch) has a
+    /// home. Unused in embedded mode.
+    focus_handle: FocusHandle,
+    /// One-shot guard: grab focus on the window's first paint so Esc works
+    /// immediately, before any control is clicked.
+    did_focus: bool,
 }
 
 impl EntryInfoView {
@@ -339,6 +351,8 @@ impl EntryInfoView {
             embedded,
             scroll: ScrollHandle::new(),
             known_size,
+            focus_handle: cx.focus_handle(),
+            did_focus: false,
         };
         this.refresh(cx);
         this
@@ -482,6 +496,19 @@ impl EntryInfoView {
     }
 }
 
+impl EntryInfoView {
+    /// Esc — close the standalone Get Info window.
+    fn on_dismiss(&mut self, _: &EntryInfoDismiss, window: &mut Window, _cx: &mut Context<Self>) {
+        window.remove_window();
+    }
+}
+
+impl Focusable for EntryInfoView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Drop for EntryInfoView {
     fn drop(&mut self) {
         // If a recursive size scan is still running when the popup closes,
@@ -519,10 +546,19 @@ impl Render for EntryInfoView {
             return v_flex().gap_3().child(sections).into_any_element();
         }
 
-        // Popup: a fixed name/kind header above a body that scrolls so a
-        // tall record can't overflow the window and clip.
+        // Standalone window: a fixed name/kind header above a body that
+        // fills the window and scrolls, so the record stays usable at any
+        // window size (resizable + movable + multiple instances).
+        //
+        // Grab focus on first paint so Esc (bound to EntryInfoDismiss in this
+        // window's key context) dismisses the window right away.
+        if !self.did_focus {
+            self.did_focus = true;
+            window.focus(&self.focus_handle, cx);
+        }
         let mut header = v_flex().gap_0p5().child(
             div()
+                .text_lg()
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(name_hazard_element(&self.name, "popup-name")),
         );
@@ -536,18 +572,28 @@ impl Render for EntryInfoView {
         }
         let header = header.child(div().text_xs().text_color(muted).child(self.kind.clone()));
 
-        let max_body = (window.viewport_size().height - px(220.0)).max(px(260.0));
         v_flex()
-            .gap_3()
-            .child(header)
+            .key_context(ENTRY_INFO_CONTEXT)
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::on_dismiss))
+            .size_full()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+            .child(div().flex_none().px_4().pt_4().pb_2().child(header))
             .child(
                 div()
                     .id("entry-info-body")
-                    .max_h(max_body)
+                    .flex_1()
+                    .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
+                    .px_4()
+                    .pb_4()
                     .child(sections),
             )
+            // This window's own Root holds the notification state but doesn't
+            // render the layer — do it here so edit-error toasts appear.
+            .children(Root::render_notification_layer(window, cx))
             .into_any_element()
     }
 }
@@ -661,7 +707,6 @@ impl EntryInfoView {
                             Button::new("entry-info-recalc-size")
                                 .label("\u{21BB}")
                                 .xsmall()
-                                .ghost()
                                 .tooltip("Recalculate size")
                                 .on_click(
                                     cx.listener(|this, _, _window, cx| this.calculate_size(cx)),

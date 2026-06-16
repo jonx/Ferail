@@ -113,6 +113,22 @@ feature notes in [docs/features/](docs/features/README.md).
   thumbnail strip beyond the QL poster, archive/package summaries, and
   per-provider cancellation tokens (today stale results are dropped at
   apply, not cancelled mid-read).
+- Preview scroll chaining. The preview pane has a nested scroll: the
+  inline text/code box (bounded `max_h` + `overflow_scroll`) sits inside
+  the pane's own vertical scroll (`preview_scroll`). The box is bounded on
+  purpose so a long file doesn't push the Get Info details far down the
+  pane — but that means a vertical wheel over the file content is trapped
+  in the box and only scrolls the pane once you move the cursor off it.
+  The ideal is scroll-chaining: scroll the inner box, and at its top/bottom
+  boundary forward the remaining delta to the outer pane. gpui's
+  `overflow_scroll` auto-captures the wheel, so this needs a custom
+  `on_scroll_wheel` (via `cx.listener`) that reads the inner `ScrollHandle`
+  `offset()`/`max_offset()`, decides boundary vs. not, and drives the outer
+  `preview_scroll` with `set_offset` (clamped) + `cx.notify` when at the
+  edge — being careful not to double-scroll with the built-in handler.
+  Not headlessly testable (needs real wheel/trackpad events), so it wants
+  hands-on iteration. We tried collapsing to one big scroll instead, but
+  then a big file buries the details, so we reverted to the bounded box.
 - Viewer follow-ups (docs/features/VIEWER.md): swap the qlmanage
   shell-out for `QLThumbnailGenerator`, pinch-to-zoom gesture mapping,
   live playlist sync via the watcher (skip deleted entries), Windows
