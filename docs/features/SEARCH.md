@@ -1,0 +1,161 @@
+# File Search
+
+Today Feraille only has an *in-directory filter*: a case-insensitive substring
+match over the rows already loaded for the current folder
+([file_list.rs](../../crates/feraille-gpui/src/file_list.rs), applied in the
+streaming load at [shell/loading.rs](../../crates/feraille-gpui/src/shell/loading.rs)).
+That is the right behavior for "narrow what I'm looking at" but it is not
+*search* — it never leaves the current directory and never consults an index.
+
+This note specifies real search, built in tiers, all behind the
+[prime directive](../ARCHITECTURE.md#prime-directive): the UI never blocks on
+I/O. Every tier streams incremental results off the UI thread and is
+cancellable.
+
+## Status
+
+- Tier 0 (in-directory filter): **done**.
+- Tier 1 (recursive subtree walk): **todo** — first to build.
+- Tier 2 (global / indexed): **todo** — Spotlight on macOS first.
+
+## The three tiers
+
+| Tier | What | Engine | Scope |
+|---|---|---|---|
+| 0 | Filter the current listing | in-memory | current folder, loaded rows |
+| 1 | Recursive subtree walk | own walker (`feraille-fs-native`) | a chosen folder and below |
+| 2 | Global / indexed | OS index, falling back to Tier 1 | a volume or everything |
+
+Tiers compose, not replace. The same input box drives all three; the UI is
+**engine-agnostic** because every engine streams the same `SearchFact` results
+into the same results model. Where the user starts a search and how broad it is
+selects the engine; an empty subtree result can offer to escalate to Tier 2.
+
+## Rely on the OS index where it exists
+
+The strongest single lesson from surveying the field: **do not build and
+maintain a whole-disk index if the OS already keeps one fresh.** Windows'
+"Everything" had to reverse-engineer the NTFS MFT only because the OS gave it
+nothing usable; macOS already ships Spotlight, kept live by FSEvents.
+
+- **macOS — Spotlight.** Query `MDQuery` (or `mdfind` as a first spike) for
+  name *and* content matches against an index the OS maintains for us — instant
+  whole-disk search at ~zero ongoing CPU, nothing for us to build, store, or
+  keep warm. **This is the default Tier 2 engine and the one to rely on
+  whenever it is available.** Fall back to a Tier 1 live walk only for paths
+  Spotlight excludes (some external/network volumes, `mdutil`-disabled trees).
+- **Windows — NTFS MFT + USN journal.** Read the Master File Table directly for
+  an instant whole-volume name index, and tail the USN change journal to keep
+  it live. This is how "Everything" achieves its speed. It typically requires
+  **elevation / admin rights** (raw volume handle access). The plan: ship our
+  **own recursive walker as the always-available fallback** (no privileges
+  needed), offer the MFT engine when we can elevate, and **let the user choose
+  which engine to use** rather than forcing elevation. The same MFT reader is
+  also the fast path for Windows disk usage — build it once, use it for both.
+  See [windows-port.md](windows-port.md).
+- **Linux — Tracker / Baloo, else own walk.** Query the desktop index via
+  D-Bus when present; otherwise the Tier 1 walker. See
+  [linux-port.md](linux-port.md).
+
+### Engine selection is the user's call
+
+Search engines are pluggable and the user decides the policy, per the same
+philosophy we apply to Windows elevation: an OS index is faster but may be
+incomplete, stale, scope-restricted, or (Windows) privilege-gated. Surface the
+trade-off and default sensibly (Spotlight on macOS, own-walk fallback
+everywhere), but let the user force the built-in walker if they distrust the
+index or it is disabled for the tree they care about.
+
+```
+enum SearchEngine {
+    SubtreeWalk,        // Tier 1, always available, no privileges
+    Spotlight,          // macOS Tier 2
+    NtfsMft,            // Windows Tier 2 (needs elevation)
+    DesktopIndex,       // Linux Tracker/Baloo via D-Bus
+}
+```
+
+A platform exposes the engines it supports; `SubtreeWalk` is always one of
+them. The GPUI layer picks a default and honors a user override.
+
+## Tier 1 — recursive subtree walk (build first)
+
+A pure-function walker in `feraille-fs-native`, modeled directly on
+[`scan_disk_usage`](../../crates/feraille-fs-native/src/disk_usage_scanner.rs):
+same DFS stack, same `batch_size`, same `AtomicBool` cancel checked between
+dirents and at level boundaries, same throttled `on_progress`, same
+host-owns-the-thread contract.
+
+```rust
+pub struct SearchQuery {
+    pub needle: String,       // case-insensitive substring; glob/regex later
+    pub match_path: bool,     // name only vs. full relative path
+    pub include_hidden: bool,
+}
+
+pub enum SearchFact {
+    Match { node: NodeId, path: PathBuf, name: String, is_dir: bool, size: u64 },
+    DirScanned,               // progress accounting
+}
+
+impl NativeFs {
+    pub fn search_subtree(
+        &self,
+        root: &Path,
+        query: &SearchQuery,
+        batch_size: usize,
+        cancel: &AtomicBool,
+        descend_packages: bool,
+        on_batch: impl FnMut(Vec<SearchFact>),
+        on_progress: impl FnMut(SearchStats),
+    ) -> Option<EnumerationError>;
+}
+```
+
+Mac-safe behavior (mirrors the disk-usage walker):
+
+- **Skip dataless / cloud placeholders** — test the dataless flag and
+  `is_icloud_path`; never trigger an iCloud download just to match a name.
+- **Bundles opaque by default** (`descend_packages = false`): `*.app`,
+  `*.bundle`, `*.framework` match as units, not exploded into inner files.
+- **Symlinks** walked via `symlink_metadata`, never followed — cycle-safe.
+- Per-directory permission errors are absorbed; the scan reports
+  partial-but-complete.
+
+## GPUI integration (shared by all tiers)
+
+A `SearchState` that is a near-clone of
+[`DiskUsageState`](../../crates/feraille-gpui/src/disk_usage.rs):
+
+- `scan_generation`, `cancel: Arc<AtomicBool>`, `msg_queue: Arc<Mutex<VecDeque>>`,
+  `task_id`, and a results `Vec`.
+- `start_search()` registers `TaskKind::Search` via `begin_with_cancel`
+  ([tasks.rs](../../crates/feraille-gpui/src/tasks.rs)), spawns the worker on
+  `cx.background_executor()`, and drains the queue on the same throttled FG
+  timer (`DU_DRAIN_INTERVAL_*`), applying once per tick and gating on
+  `scan_generation` so stale results are dropped.
+- Results stream into the existing table delegate. The current in-directory
+  filter input escalates to a Tier 1 search via a modifier or an
+  "search this folder and below" affordance; an empty result can offer Tier 2.
+- Add `Search` to `TaskKind`.
+
+For Tier 2, the engine (e.g. `feraille-shell-mac::spotlight`) emits the same
+`SearchFact` batches, so `SearchState` is unchanged across engines. Per the
+architecture invariants, `feraille-shell-mac` returns paths only and paints no
+UI.
+
+## Build order
+
+1. **Tier 1 walker + `SearchState` + UI.** Self-contained, exercises all the
+   shared plumbing, immediately useful.
+2. **Tier 2 Spotlight.** Spike with `mdfind` to validate UX, then decide
+   whether the `MDQuery` FFI (live/async batching) is worth it over the CLI.
+   Route by scope, fall back to Tier 1 where Spotlight is blind.
+3. **Windows MFT / Linux desktop index.** Land with their respective ports;
+   reuse the `SearchEngine` selection and the MFT reader for disk usage too.
+
+## Verification
+
+- `cargo check -p feraille-fs-native -p feraille-gpui`; `cargo test` for the
+  walker (match correctness, cancellation, stale-generation drop).
+- One screenshot of streaming results into the list.

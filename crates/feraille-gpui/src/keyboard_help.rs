@@ -7,7 +7,12 @@
 
 use feraille_core::commands::{Category, CommandSpec, Shortcut, all_commands};
 use gpui::*;
-use gpui_component::{ActiveTheme, Sizable, h_flex, input::Input, kbd::Kbd, v_flex};
+use gpui_component::{
+    ActiveTheme, Sizable, h_flex,
+    input::{Escape, Input},
+    kbd::Kbd,
+    v_flex,
+};
 
 use crate::shell::Shell;
 
@@ -150,8 +155,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .bg(rgba(0x00000080))
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(|this, _, _, cx| {
-                this.close_shortcuts_help(cx);
+            cx.listener(|this, _, window, cx| {
+                this.close_shortcuts_help(window, cx);
             }),
         );
 
@@ -187,6 +192,22 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .flex()
             .items_center()
             .justify_center()
+            // Esc dismisses the palette. The focused filter Input
+            // propagates the `Escape` action up its ancestor chain
+            // (see gpui-component InputState::escape → cx.propagate);
+            // we sit on that chain and consume it before the shell's
+            // ClearFilter handler can act.
+            .on_action(cx.listener(|this, _: &Escape, window, cx| {
+                this.close_shortcuts_help(window, cx);
+                cx.stop_propagation();
+            }))
+            // Swallow scroll while the modal is up. The overlay is a
+            // sibling subtree of the file list, painted on top; GPUI
+            // still dispatches the wheel to the list's scroll hitbox
+            // underneath unless we consume it here. The inner
+            // overflow-scroll fires first (top-most), so the command
+            // list still scrolls; this only stops the leak-through.
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
             .child(backdrop)
             .child(card)
             .into_any_element(),
@@ -234,7 +255,7 @@ fn row(
     spec: &CommandSpec,
     is_top: bool,
     foreground: gpui::Hsla,
-    _muted: gpui::Hsla,
+    muted: gpui::Hsla,
     accent: gpui::Hsla,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -261,32 +282,49 @@ fn row(
     if is_top {
         row = row.bg(accent);
     }
-    row = row.child(
+    // Inert commands (no Shell-level handler yet — tag colours,
+    // open-with slots, etc.) read in muted grey so it's obvious they
+    // can't be invoked from the palette; live ones keep full contrast.
+    let title_color = if dispatchable { foreground } else { muted };
+    let mut title = h_flex()
+        .flex_1()
+        .items_center()
+        .gap_2()
+        .child(
             div()
-                .flex_1()
                 .text_sm()
-                .text_color(foreground)
+                .text_color(title_color)
                 .child(SharedString::from(spec.title)),
         );
+    if !dispatchable {
+        // A trailing tag spells out *why* the row is dim, so it doesn't
+        // just look like a styling glitch.
+        title = title.child(
+            div()
+                .text_xs()
+                .text_color(muted)
+                .child(SharedString::from("\u{2014} unavailable here")),
+        );
+    }
+    row = row.child(title);
     if let Some(k) = kbd {
         row = row.child(div().flex_shrink_0().child(k));
     }
     if dispatchable {
         // Clickable + hover-tinted when the command maps to a known
-        // action handler. Commands missing a dispatch (e.g. tag
-        // colours / open-with slots — context-only) render but stay
-        // inert.
+        // action handler.
         row.cursor_pointer()
             .hover(move |this| this.bg(accent))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if let Some(action) = action_for_command(id) {
-                    this.close_shortcuts_help(cx);
+                    this.close_shortcuts_help(window, cx);
                     window.dispatch_action(action, cx);
                 }
             }))
             .into_any_element()
     } else {
-        row.into_any_element()
+        // Dimmed and non-interactive: no pointer cursor, no hover tint.
+        row.opacity(0.5).cursor_default().into_any_element()
     }
 }
 

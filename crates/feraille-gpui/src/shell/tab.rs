@@ -103,6 +103,16 @@ pub struct Tab {
     /// lands for this tab. Keeps the old rows visible during the
     /// gap instead of flashing empty.
     pub load_pending_first_batch: bool,
+    /// Off-screen accumulator for an *in-place reload* (Refresh, Esc
+    /// clear-filter, show-hidden toggle, watcher reload — any load
+    /// that re-reads the directory already on screen). `Some` for the
+    /// duration of such a load: batches accumulate here instead of
+    /// touching the live table, and the complete listing is swapped in
+    /// atomically on `Done`. The old rows stay put until then, so a
+    /// refresh never collapses the list to the first batch and streams
+    /// back — i.e. no flicker. `None` for fresh navigation, which keeps
+    /// the progressive streaming reveal.
+    pub(crate) load_staging: Option<super::loading::LoadBatch>,
     /// `Some(err)` when this tab's last enumerate returned an OS
     /// error (most commonly macOS TCC denial). Drives an empty-
     /// state in the file pane when the tab is active.
@@ -164,6 +174,7 @@ impl Tab {
             folder_size_cancel: None,
             load_task: None,
             load_pending_first_batch: false,
+            load_staging: None,
             last_error: None,
             pending_select_row: None,
             pending_select_rows: Vec::new(),

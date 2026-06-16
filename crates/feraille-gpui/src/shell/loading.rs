@@ -10,7 +10,7 @@ use feraille_fs_native::{DEFAULT_ENUMERATION_BATCH, NativeFs};
 
 use crate::tree::TreeChild;
 
-pub(super) struct LoadBatch {
+pub(crate) struct LoadBatch {
     pub entries: Vec<FileEntry>,
     pub paths: HashMap<NodeId, PathBuf>,
 }

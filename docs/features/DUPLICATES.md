@@ -1,40 +1,128 @@
 # Duplicate Finder
 
-Ferail's duplicate finder remains a future Feraille feature. It is valuable,
-but it is I/O-heavy and therefore belongs behind the worker/task/progress
-architecture.
+Ferail's duplicate finder is a future Feraille feature. It is valuable but
+I/O-heavy, so it belongs behind the worker/task/progress architecture and the
+[prime directive](../ARCHITECTURE.md#prime-directive): the UI never blocks, the
+app stays navigable, and results stream in incrementally.
 
 ## Status
 
-Todo.
+Todo. The `feraille-meta` schema already carries `partial_hash` / `full_hash`
+columns on the `files` table with `idx_files_size`, `idx_files_partial_hash`,
+and `idx_files_full_hash` ([db.rs](../../crates/feraille-meta/src/db.rs)). The
+hashing funnel, grouping, persistent cache wiring, and the duplicate-view UI
+are all unbuilt.
 
-## Target Pipeline
+## Target pipeline (the funnel)
 
-1. Group by size.
-2. For size collisions, compute a partial hash.
-3. For partial-hash collisions, compute full hash.
-4. Group duplicates by full hash.
-5. Present groups in a dedicated view.
+Every standalone tool worth copying — rmlint, czkawka, jdupes — converges on
+the same progressive funnel, because it minimizes I/O:
 
-## Rules
+1. **Walk + group by size.** Reuse the
+   [`scan_disk_usage`](../../crates/feraille-fs-native/src/disk_usage_scanner.rs)
+   DFS. Any file with a unique size cannot be a duplicate — drop it with **zero
+   hashing**. This eliminates the vast majority of candidates for free.
+2. **Partial hash** (first 64 KB, `xxhash-rust::xxh3`) only on size-collision
+   groups.
+3. **Full hash** (`blake3`) only on partial-hash collisions — or, with a
+   `paranoid` toggle, byte-for-byte comparison instead (rmlint-style: roughly
+   as fast as hashing on the small surviving set, and removes hash-collision
+   risk entirely).
+4. **Group by full hash** and present.
+
+The `xxh3` + `blake3` pipeline ports by intent from Ferail
+(`crates/ferail-core/src/hash/pipeline.rs`).
+
+## Not killing the CPU
+
+The decisive insight: **duplicate finding is I/O-bound, not CPU-bound.**
+BLAKE3/xxh3 run at multi-GB/s; the disk is the bottleneck. So:
+
+- **Persistent hash cache is the biggest win.** Key hashes on
+  `(path, size, mtime)` against the `files` table and the *second* scan of a
+  tree skips hashing entirely — this is czkawka's main speed lever. Mirror the
+  read-through / write-through dance the prefetch worker already does
+  ([prefetch.rs](../../crates/feraille-gpui/src/prefetch.rs)): look up before
+  hashing, write back on miss.
+- **Bounded reader concurrency, not greedy parallelism.** Throwing a thread per
+  file at one physical disk causes seek thrashing and is *slower*. Cap the
+  reader pool; on SSD a modest pool saturates bandwidth, and the cap protects
+  UI responsiveness. (rmlint's refinement — one reader thread per *physical*
+  disk — is a worthwhile later optimization once we detect device identity.)
+- **Run cool.** Schedule off the UI thread, back off during active interaction,
+  honor cancellation between every stage.
+
+## Mac correctness the CLI tools mostly ignore
+
+- **Skip dataless / cloud placeholders.** Never download an iCloud file just to
+  hash it. Detect the dataless flag (and `is_icloud_path`) and exclude unless
+  the user explicitly opts to scan them.
+- **Hard links and APFS clones are zero-extra-cost.** Two paths sharing storage
+  (same inode = hard link; `clonefile`/reflink = APFS clone) are "duplicates"
+  that occupy no extra bytes. Detect and flag them so we don't urge users to
+  "reclaim" space that isn't actually used. This also makes **`clonefile`-based
+  dedup a future zero-copy remediation** — replace a true duplicate with a
+  clone instead of deleting.
+- **Bundles as units.** Compare `*.app` / `*.bundle` / `*.framework` as whole
+  packages (`descend_packages = false`), not as thousands of inner-file dupes.
+- **File identity vs. duplicate bytes are different concepts** — surface both
+  honestly in the results.
+
+## Worker shape
+
+A pure-function worker in `feraille-fs-native` (`dupes.rs`), driven exactly
+like the disk-usage scanner — batched facts, `AtomicBool` cancel, throttled
+progress, host owns the thread:
+
+```rust
+pub enum DupeFact {
+    Candidate { node: NodeId, path: PathBuf, size: u64 },
+    GroupConfirmed {
+        full_hash: String,
+        members: Vec<NodeId>,
+        bytes_each: u64,
+        hardlinked: Vec<NodeId>,   // share an inode — no extra bytes
+        cloned: Vec<NodeId>,       // APFS clone — no extra bytes
+    },
+}
+
+impl NativeFs {
+    pub fn find_duplicates(
+        &self,
+        root: &Path,
+        opts: &DupeOpts,            // paranoid, scan_cloud, follow_packages, min_size
+        cancel: &AtomicBool,
+        on_batch: impl FnMut(Vec<DupeFact>),
+        on_progress: impl FnMut(DupeStats),
+    ) -> Option<EnumerationError>;
+}
+```
+
+## GPUI integration
+
+A `DupesState` mirroring
+[`DiskUsageState`](../../crates/feraille-gpui/src/disk_usage.rs): generation
+gate, `cancel`, `msg_queue`, drain timer, `TaskKind::DuplicateScan` via
+`begin_with_cancel`. Results render in a grouped, navigable view modeled on
+`DiskUsageTree`, with safe delete/move routed through the existing
+`feraille-shell-mac` file_ops + quarantine-aware deletion
+([FILE_OPS.md](FILE_OPS.md)). Wire the duplicate command into the menu /
+command palette.
+
+## Rules (invariant)
 
 - Hashing never runs on the UI thread.
-- Results stream incrementally.
-- Scans are cancellable.
-- Status progress is visible.
-- The app remains navigable during scans.
-
-## Mac Notes
-
-- Avoid downloading cloud placeholders unless the user explicitly scans them.
-- Be careful with packages and bundles.
-- File identity and hard links matter; duplicate bytes and duplicate file IDs
-  are different concepts.
+- Results stream incrementally; the app stays navigable during scans.
+- Scans are cancellable at every stage; stale results are dropped by generation.
+- Progress is visible in the status bar / task panel.
 
 ## Todo
 
-- Worker pipeline.
-- Metadata DB schema.
-- Duplicate view UI.
+- `feraille-core` hash module (`xxh3` partial + `blake3` full, paranoid compare).
+- `feraille-fs-native` funnel worker with size → partial → full stages.
+- Persistent hash cache wiring against the `files` table.
+- Hard-link + APFS clone detection (and, later, `clonefile` dedup remediation).
+- `DupesState` + grouped duplicate-view UI.
 - Safe delete/move actions.
-- Tests for cancellation and stale results.
+- Tests: funnel correctness, cache hit on rescan, hardlink/clone classification,
+  cancellation, stale-result drop.

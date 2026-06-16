@@ -543,7 +543,7 @@ impl Shell {
                         if let Some(action) =
                             crate::keyboard_help::palette_top_action(&filter)
                         {
-                            this.close_shortcuts_help(cx);
+                            this.close_shortcuts_help(window, cx);
                             window.dispatch_action(action, cx);
                         }
                     }
@@ -1073,8 +1073,14 @@ impl Shell {
 
     /// Dismiss the shortcuts-help overlay (called when the user
     /// clicks the backdrop or presses Esc).
-    pub fn close_shortcuts_help(&mut self, cx: &mut Context<Self>) {
+    pub fn close_shortcuts_help(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.shortcuts_help_filter = None;
+        // Return keyboard focus to the shell. The palette's filter
+        // Input held focus while open; without this the window keeps
+        // focus on the now-unmounted Input and the next Cmd+K (and
+        // every other shortcut) is dropped until the user clicks back
+        // into the app.
+        self.focus_handle.focus(window, cx);
         cx.notify();
     }
 
@@ -1399,6 +1405,20 @@ impl Shell {
             .node_store
             .borrow_mut()
             .get_or_create_path_with_id(path.clone(), node_id);
+        // In-place reload: re-reading the directory already on screen
+        // (Refresh, Esc clear-filter, show-hidden, watcher reload).
+        // Stage the new listing off-screen and swap it in atomically on
+        // `Done` so the live rows never collapse to the first batch and
+        // stream back — that collapse/refill is the visible flicker.
+        // Fresh navigation (`path` differs, or nothing on screen yet)
+        // keeps the progressive streaming reveal.
+        let reload_in_place = self.tabs[tab_index].current_dir == path
+            && !self.tabs[tab_index]
+                .table
+                .read(cx)
+                .delegate()
+                .entries
+                .is_empty();
         let tab = &mut self.tabs[tab_index];
         tab.nav.replace_current(node_id);
         tab.current_dir = path.clone();
@@ -1434,6 +1454,10 @@ impl Shell {
             self.process.tasks.borrow_mut().end(previous);
         }
         self.tabs[tab_index].load_pending_first_batch = true;
+        self.tabs[tab_index].load_staging = reload_in_place.then(|| LoadBatch {
+            entries: Vec::new(),
+            paths: HashMap::new(),
+        });
 
         // Point the watcher at the new directory. Errors (path
         // doesn't exist, watcher saturated) are non-fatal — the
@@ -1503,6 +1527,16 @@ impl Shell {
                 .node_store
                 .borrow_mut()
                 .get_or_create_path_with_id(path.clone(), *id);
+        }
+        // In-place reload: accumulate off-screen, leaving the live rows
+        // untouched. The complete listing swaps in at `Done`
+        // (`finish_directory_load_in_tab`) — no clear, no collapse, no
+        // flicker. Selection / favorited / range passes also wait for
+        // the swap so they reconcile against the final model once.
+        if let Some(staging) = self.tabs.get_mut(idx).and_then(|t| t.load_staging.as_mut()) {
+            staging.entries.extend(batch.entries);
+            staging.paths.extend(batch.paths);
+            return;
         }
         let heats: Vec<f32> = batch
             .entries
@@ -1607,11 +1641,34 @@ impl Shell {
         if let Some(id) = tab.load_task.take() {
             self.process.tasks.borrow_mut().end(id);
         }
-        let tab = &mut self.tabs[idx];
-        tab.load_cancel = None;
-        if tab.load_pending_first_batch {
-            tab.load_pending_first_batch = false;
-            let table = tab.table.clone();
+        self.tabs[idx].load_cancel = None;
+        if let Some(staged) = self.tabs[idx].load_staging.take() {
+            // In-place reload finished: swap the complete listing in
+            // atomically over the still-visible old rows. One rebuild,
+            // no intermediate empty/partial state — the refresh is
+            // flicker-free. Reconcile passes run once against the final
+            // model, mirroring the streaming path's per-batch passes.
+            self.tabs[idx].load_pending_first_batch = false;
+            let heats: Vec<f32> = staged
+                .entries
+                .iter()
+                .map(|entry| self.ant_heat(entry.id))
+                .collect();
+            let table = self.tabs[idx].table.clone();
+            table.update(cx, |state, cx| {
+                state
+                    .delegate_mut()
+                    .replace_entries(staged.entries, staged.paths, heats);
+                state.refresh(cx);
+            });
+            self.refresh_file_list_favorited_in_tab(idx, cx);
+            self.refresh_file_list_selection_in_tab(idx, cx);
+            self.restore_filtered_out_against_model_in_tab(idx, cx);
+            self.recompute_live_range_in_tab(idx, cx);
+            self.apply_pending_select_row_in_tab(idx, cx);
+        } else if self.tabs[idx].load_pending_first_batch {
+            self.tabs[idx].load_pending_first_batch = false;
+            let table = self.tabs[idx].table.clone();
             table.update(cx, |state, cx| {
                 state.delegate_mut().clear();
                 state.refresh(cx);

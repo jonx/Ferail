@@ -30,6 +30,8 @@ keep the UI off the I/O path.
   schema versioning.
 - [DUPLICATES.md](DUPLICATES.md) — duplicate finder (size → partial-hash →
   full-hash stages).
+- [SEARCH.md](SEARCH.md) — file search in tiers: in-directory filter, recursive
+  subtree walk, and OS-index-backed global search (Spotlight / MFT / Tracker).
 
 ## Navigation & interaction
 
@@ -57,6 +59,9 @@ keep the UI off the I/O path.
 
 - [windows-port.md](windows-port.md) — handoff notes and lessons from the
   Windows `Ferail` predecessor.
+- [linux-port.md](linux-port.md) — orientation for starting a Linux port:
+  freedesktop/D-Bus/XDG mapping of the shell surface, and the first change that
+  makes the app compile on Linux.
 - [mac_port.md](mac_port.md) — Mac-side verification checklist after the port.
 - [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md) — debug overlays for frame time,
   task queue, and metadata visibility.
