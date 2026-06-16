@@ -40,6 +40,12 @@ anyhow      = "1"
 # UUIDs for favorite identity (stable across sessions, separate from NodeId).
 uuid        = { version = "1", features = ["v4"] }
 
+# Duplicate-finder hash funnel (docs/features/DUPLICATES.md): xxh3 for the
+# cheap partial-hash filter, BLAKE3 for the full-content confirm. Ported by
+# intent from Ferail's hash pipeline.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+blake3      = "1"
+
 # External — new stack (feraille-gpui).
 #
 # Pinning strategy: `gpui-component` is pinned to a specific rev (it

@@ -18,6 +18,7 @@ use feraille_core::{
 };
 
 mod disk_usage_scanner;
+mod dupes;
 pub mod file_ops;
 mod icons;
 mod magic;
@@ -26,6 +27,10 @@ mod search;
 mod volumes;
 pub mod xattr_info;
 pub use disk_usage_scanner::{recursive_size, DEFAULT_DU_BATCH};
+pub use dupes::{
+    DupeFact, DupeHashCache, DupeMember, DupeOpts, DupeStats, DEFAULT_DUPE_BATCH,
+    PARTIAL_HASH_BYTES,
+};
 pub use search::{SearchHit, SearchQuery, SearchStats, DEFAULT_SEARCH_BATCH};
 pub use icons::fetch_icon_rgba;
 pub use magic::{

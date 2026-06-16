@@ -9,6 +9,8 @@ description = "Cross-platform std::fs implementation of feraille-core::FsBackend
 [dependencies]
 feraille-core.workspace = true
 feraille-disk-usage.workspace = true
+xxhash-rust.workspace = true
+blake3.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # Win32 bindings for drive enumeration + volume info. Same version as
