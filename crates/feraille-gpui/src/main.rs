@@ -410,6 +410,13 @@ fn run_gui(args: screenshot::Args) {
                 }
             });
         Theme::change(mode, None, cx);
+        // Sync native chrome (titlebars, traffic lights, menus) to the
+        // app theme so secondary windows don't show system-dark chrome
+        // under a light theme (or vice versa).
+        feraille_gpui::platform_shell::set_app_appearance(matches!(
+            mode,
+            gpui_component::ThemeMode::Dark
+        ));
 
         // Phase 10 polish: System-Appearance follow via a global
         // AtomicBool the Shell polls on each render. The native

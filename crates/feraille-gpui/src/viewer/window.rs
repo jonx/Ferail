@@ -6,6 +6,7 @@
 //! gpui actions gated on [`VIEWER_CONTEXT`] so Shell shortcuts can't
 //! fire here and vice versa.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -36,6 +37,8 @@ actions!(
         ViewerActualSize,
         ViewerToggleFullscreen,
         ViewerTogglePlay,
+        ViewerRotateCw,
+        ViewerRotateCcw,
         ViewerDismiss
     ]
 );
@@ -67,6 +70,28 @@ fn is_video(path: &std::path::Path) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| VIDEO_EXTS.contains(&e.to_ascii_lowercase().as_str()))
         .unwrap_or(false)
+}
+
+/// CPU-rotate a decoded bitmap by `quarter_turns` clockwise (1/2/3).
+/// gpui's `img` element has no rotation transform (only `svg` does —
+/// docs/GPUI-UPSTREAM.md #5), so view-only rotation re-lays-out the
+/// pixels. Channel order is irrelevant here — rotation just moves whole
+/// 4-byte pixels — so the loader's BGRA buffer round-trips correctly.
+/// Returns `None` for a no-op turn or if the bitmap can't be read.
+fn rotate_render_image(img: &RenderImage, quarter_turns: u8) -> Option<Arc<RenderImage>> {
+    let qt = quarter_turns % 4;
+    if qt == 0 {
+        return None;
+    }
+    let size = img.size(0);
+    let (w, h) = (size.width.0 as u32, size.height.0 as u32);
+    let buf = image::RgbaImage::from_raw(w, h, img.as_bytes(0)?.to_vec())?;
+    let rotated = match qt {
+        1 => image::imageops::rotate90(&buf),
+        2 => image::imageops::rotate180(&buf),
+        _ => image::imageops::rotate270(&buf),
+    };
+    Some(Arc::new(RenderImage::new(vec![image::Frame::new(rotated)])))
 }
 
 pub struct ViewerWindow {
@@ -104,12 +129,24 @@ pub struct ViewerWindow {
     /// Process singleton — the shared 512 px preview cache doubles as
     /// an instant placeholder while the full-res decode is in flight.
     process: Rc<ProcessState>,
+    /// Ephemeral, per-item view rotation in clockwise quarter-turns
+    /// (1 = 90°, 2 = 180°, 3 = 270°), keyed by playlist index. Not
+    /// saved anywhere and not global — it lives only as long as this
+    /// window and applies to one item at a time (docs/features/VIEWER.md).
+    /// Absent / 0 means upright. gpui can't rotate an `img` element
+    /// (docs/GPUI-UPSTREAM.md), so the pixels are rotated on the CPU.
+    rotations: HashMap<usize, u8>,
+    /// One-slot cache of the rotated bitmap for the current
+    /// (index, quarter-turns), so we rotate once per change instead of
+    /// every frame. Invalidated on rotate and on navigation.
+    rotated: Option<(usize, u8, Arc<RenderImage>)>,
 }
 
 impl ViewerWindow {
     pub fn new(
         playlist: Vec<PlaylistEntry>,
         start: usize,
+        autoplay: bool,
         process: Rc<ProcessState>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -145,9 +182,15 @@ impl ViewerWindow {
             video_frame: (0.0, 0.0, 0.0, 0.0),
             video_ended_tx,
             process,
+            rotations: HashMap::new(),
+            rotated: None,
         };
         this.request_current(cx);
         this.prefetch_neighbors(cx);
+        // "Slideshow from Here" opens straight into playback.
+        if autoplay {
+            this.set_playing(true, cx);
+        }
         this
     }
 
@@ -158,15 +201,25 @@ impl ViewerWindow {
         &mut self,
         playlist: Vec<PlaylistEntry>,
         start: usize,
+        autoplay: bool,
         cx: &mut Context<Self>,
     ) {
         self.index = start.min(playlist.len().saturating_sub(1));
         self.playlist = playlist;
         self.stage = StageState::default();
+        // New playlist → indices no longer mean the same items; drop the
+        // per-item rotations (they don't outlive a retarget either).
+        self.rotations.clear();
+        self.rotated = None;
         self.playback.playing = false;
         self.playback.bump();
         self.request_current(cx);
         self.prefetch_neighbors(cx);
+        // "Slideshow from Here" into an already-open viewer starts the
+        // show on the new anchor; a plain re-open leaves it paused.
+        if autoplay {
+            self.set_playing(true, cx);
+        }
         cx.notify();
     }
 
@@ -554,6 +607,42 @@ impl ViewerWindow {
         window.toggle_fullscreen();
     }
 
+    fn on_rotate_cw(&mut self, _: &ViewerRotateCw, _window: &mut Window, cx: &mut Context<Self>) {
+        self.rotate_by(1, cx);
+    }
+
+    fn on_rotate_ccw(&mut self, _: &ViewerRotateCcw, _window: &mut Window, cx: &mut Context<Self>) {
+        self.rotate_by(-1, cx);
+    }
+
+    /// Current item's view rotation in clockwise quarter-turns (0..=3).
+    fn current_rotation(&self) -> u8 {
+        self.rotations.get(&self.index).copied().unwrap_or(0)
+    }
+
+    /// Rotate the current item by `delta` quarter-turns (+1 CW / -1 CCW),
+    /// view-only and per-item. Video rotation isn't wired yet (the native
+    /// overlay needs a layer transform — docs/GPUI-UPSTREAM.md #5), so it
+    /// no-ops on videos rather than rotating just the poster.
+    fn rotate_by(&mut self, delta: i8, cx: &mut Context<Self>) {
+        if self
+            .current()
+            .map(|e| is_video(&e.path))
+            .unwrap_or(true)
+        {
+            return;
+        }
+        let next = (self.current_rotation() as i8 + delta).rem_euclid(4) as u8;
+        if next == 0 {
+            self.rotations.remove(&self.index);
+        } else {
+            self.rotations.insert(self.index, next);
+        }
+        // Drop the cached rotated bitmap; the stage rebuilds it on demand.
+        self.rotated = None;
+        cx.notify();
+    }
+
     /// Esc — leave fullscreen first; a second Esc closes the window.
     fn on_dismiss(&mut self, _: &ViewerDismiss, window: &mut Window, _cx: &mut Context<Self>) {
         if window.is_fullscreen() {
@@ -659,6 +748,21 @@ impl ViewerWindow {
                         this.on_actual_size(&ViewerActualSize, window, cx)
                     })),
             )
+            // Rotate (images only; videos can't rotate yet). View-only,
+            // per-item — R / Shift-R do the same from the keyboard.
+            .when(
+                self.current().map(|e| !is_video(&e.path)).unwrap_or(false),
+                |bar| {
+                    bar.child(
+                        Button::new("viewer-rotate")
+                            .icon(gpui_component::Icon::empty().path("icons/redo.svg"))
+                            .small()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.on_rotate_cw(&ViewerRotateCw, window, cx)
+                            })),
+                    )
+                },
+            )
             .child(
                 div()
                     .flex_1()
@@ -701,13 +805,37 @@ impl ViewerWindow {
             );
         match state {
             Some(FrameState::Loaded(f)) => {
-                let r = stage::layout(
-                    (f.w as f32, f.h as f32),
-                    (stage_w, stage_h),
-                    self.stage,
-                );
+                let rot = self.current_rotation();
+                // Swap the aspect for quarter turns so the rotated image
+                // is fit/zoomed against its post-rotation dimensions.
+                let (dw, dh) = if rot % 2 == 1 {
+                    (f.h as f32, f.w as f32)
+                } else {
+                    (f.w as f32, f.h as f32)
+                };
+                // Resolve the bitmap to draw: upright uses the base frame;
+                // a rotation uses the one-slot cache, rebuilding it when
+                // the (index, turns) pair changed.
+                let image = if rot == 0 {
+                    f.image.clone()
+                } else {
+                    let fresh = matches!(
+                        &self.rotated,
+                        Some((i, r, _)) if *i == self.index && *r == rot
+                    );
+                    if !fresh {
+                        if let Some(rotated) = rotate_render_image(&f.image, rot) {
+                            self.rotated = Some((self.index, rot, rotated));
+                        }
+                    }
+                    match &self.rotated {
+                        Some((i, r, img)) if *i == self.index && *r == rot => img.clone(),
+                        _ => f.image.clone(),
+                    }
+                };
+                let r = stage::layout((dw, dh), (stage_w, stage_h), self.stage);
                 area.child(
-                    gpui::img(f.image.clone())
+                    gpui::img(image)
                         .absolute()
                         .left(px(r.x))
                         .top(px(r.y))
@@ -846,6 +974,8 @@ impl Render for ViewerWindow {
             .on_action(cx.listener(Self::on_actual_size))
             .on_action(cx.listener(Self::on_toggle_fullscreen))
             .on_action(cx.listener(Self::on_toggle_play))
+            .on_action(cx.listener(Self::on_rotate_cw))
+            .on_action(cx.listener(Self::on_rotate_ccw))
             .on_action(cx.listener(Self::on_dismiss))
             .relative()
             .size_full()
@@ -869,5 +999,34 @@ impl Render for ViewerWindow {
             let status = self.status_strip(cx);
             root.child(toolbar).child(stage_area).child(status)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 90°/270° turn swaps width and height; the pixel buffer length
+    /// is preserved. (Verifies the CPU rotate path that stands in for
+    /// gpui's missing `img` rotation — docs/GPUI-UPSTREAM.md #5.)
+    #[test]
+    fn rotate_swaps_dimensions_for_quarter_turns() {
+        // 3×2 opaque image (RGBA), distinct rows so a real rotation is
+        // observable, not just a copy.
+        let buf = image::RgbaImage::from_fn(3, 2, |x, y| {
+            image::Rgba([x as u8 * 10, y as u8 * 10, 0, 255])
+        });
+        let base = RenderImage::new(vec![image::Frame::new(buf)]);
+
+        let cw = rotate_render_image(&base, 1).expect("90° produces an image");
+        let s = cw.size(0);
+        assert_eq!((s.width.0, s.height.0), (2, 3), "90° swaps w/h");
+
+        let half = rotate_render_image(&base, 2).expect("180° produces an image");
+        let s = half.size(0);
+        assert_eq!((s.width.0, s.height.0), (3, 2), "180° keeps w/h");
+
+        assert!(rotate_render_image(&base, 0).is_none(), "0° is a no-op");
+        assert!(rotate_render_image(&base, 4).is_none(), "full turn is a no-op");
     }
 }

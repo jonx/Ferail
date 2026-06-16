@@ -117,8 +117,9 @@ feature notes in [docs/features/](docs/features/README.md).
   inline text/code box (bounded `max_h` + `overflow_scroll`) sits inside
   the pane's own vertical scroll (`preview_scroll`). The box is bounded on
   purpose so a long file doesn't push the Get Info details far down the
-  pane — but that means a vertical wheel over the file content is trapped
-  in the box and only scrolls the pane once you move the cursor off it.
+  pane. (Post the 2026-06-16 gpui-component bump the wheel now drives the
+  inner box and the outer pane at the same time, rather than the older
+  "trapped until you move off" behavior — either way it's not the goal.)
   The ideal is scroll-chaining: scroll the inner box, and at its top/bottom
   boundary forward the remaining delta to the outer pane. gpui's
   `overflow_scroll` auto-captures the wheel, so this needs a custom
@@ -136,6 +137,11 @@ feature notes in [docs/features/](docs/features/README.md).
   Foundation video overlay), audio-file playback, a watchdog for
   eligible-but-unplayable videos stalling slideshow auto-advance, and
   slideshow transitions once the animation budget review lands.
+- Viewer video rotation. Per-item view-only rotation (R / Shift-R)
+  shipped for images 2026-06-16 (CPU-rotates the `RenderImage` since
+  gpui can't transform an `img` element — GPUI-UPSTREAM.md #5). Video
+  uses the native AppKit overlay and currently no-ops on rotate; it
+  needs a CALayer transform on the shell-mac `video_overlay` to match.
 - Expand magic detection beyond the small high-confidence table; add
   recursive/mismatch-only CLI modes and structured output.
 - Improve quarantine/provenance UI: Gatekeeper assessment, code-signature

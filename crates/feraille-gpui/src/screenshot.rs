@@ -417,7 +417,7 @@ pub fn run(args: Args) -> Result<()> {
                             });
                         }
                         let view = cx.new(|cx| {
-                            crate::viewer::ViewerWindow::new(playlist, 0, process, window, cx)
+                            crate::viewer::ViewerWindow::new(playlist, 0, false, process, window, cx)
                         });
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if let Some(page) = settings_page.as_deref() {

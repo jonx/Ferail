@@ -4,7 +4,7 @@ use gpui::{
     AppContext, Axis, Bounds, ClickEvent, Context, Div, DragMoveEvent, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, ListSizingBehavior, Modifiers, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled, Task, UniformListScrollHandle, Window, div,
+    StatefulInteractiveElement as _, Styled, Task, TextRun, UniformListScrollHandle, Window, div,
     prelude::FluentBuilder, px, uniform_list,
 };
 use gpui_component::{
@@ -709,7 +709,14 @@ where
         }
     }
 
-    fn on_col_head_click(&mut self, col_ix: usize, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_col_head_click(&mut self, col_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // Finder-style: a plain click anywhere on a sortable column
+        // header cycles its sort — you don't have to hit the small sort
+        // icon. `perform_sort` no-ops on non-sortable columns, and the
+        // icon's own click stops propagation so it doesn't double-toggle
+        // back through here.
+        self.perform_sort(col_ix, window, cx);
+
         if !self.col_selectable {
             return;
         }
@@ -1108,6 +1115,81 @@ where
         }
     }
 
+    /// How many rows to measure when auto-fitting a column to its
+    /// content (double-click the resize handle). Shaping text is
+    /// CPU-only but not free, so a giant folder measures a bounded
+    /// window of rows rather than every one — the visible content is
+    /// what the fit is really for, and the user can still drag to tune.
+    const AUTOFIT_SAMPLE_ROWS: usize = 500;
+
+    /// Finder-style "fit column to content": measure the widest cell
+    /// text in column `ix` (header + a bounded sample of rows via the
+    /// delegate's `cell_text`) and set the column width to it plus cell
+    /// padding, clamped to the column's min/max. A one-off triggered by
+    /// double-clicking the resize handle, so the measurement cost is
+    /// off the hot render path.
+    fn autofit_col(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.col_resizable {
+            return;
+        }
+        let Some(col_group) = self.col_groups.get(ix) else {
+            return;
+        };
+        if !col_group.is_resizable() {
+            return;
+        }
+        let header = col_group.column.name.clone();
+
+        // Measure against the window's current text style — an
+        // approximation of the cell font (good enough for a fit hint;
+        // exact per-cell fonts aren't exposed here).
+        let text_style = window.text_style();
+        let font = text_style.font();
+        let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let color = cx.theme().foreground;
+        let text_system = window.text_system().clone();
+        let measure = |s: &str| -> Pixels {
+            // cell_text is single-line, but guard against stray newlines.
+            let line = s.lines().next().unwrap_or("");
+            if line.is_empty() {
+                return px(0.0);
+            }
+            let run = TextRun {
+                len: line.len(),
+                font: font.clone(),
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            text_system
+                .shape_line(SharedString::from(line.to_string()), font_size, &[run], None)
+                .width
+        };
+
+        let mut widest = measure(&header);
+        let rows = self.delegate.rows_count(cx).min(Self::AUTOFIT_SAMPLE_ROWS);
+        for row_ix in 0..rows {
+            let text = self.delegate.cell_text(row_ix, ix, cx);
+            let w = measure(&text);
+            if w > widest {
+                widest = w;
+            }
+        }
+
+        // Add the cell's horizontal padding (both sides), any non-text
+        // decoration the delegate reserves for this column (leading
+        // icons, trailing badges), plus a small breathing fudge so the
+        // widest glyph isn't flush to the edge.
+        let padding = self.options.size.table_cell_padding();
+        let extra = self.delegate.autofit_extra(ix, cx);
+        let target = widest + padding.left + padding.right + extra + px(6.0);
+        self.resize_cols(ix, target, window, cx);
+
+        let new_widths = self.col_groups.iter().map(|g| g.width).collect();
+        cx.emit(TableEvent::ColumnWidthsChanged(new_widths));
+    }
+
     fn perform_sort(&mut self, col_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         if !self.sortable {
             return;
@@ -1350,6 +1432,15 @@ where
                 cx.stop_propagation();
                 cx.new(|_| drag.clone())
             })
+            // Double-click the separator to fit the column to its
+            // content, like Finder. A plain double-click never crosses
+            // the drag threshold, so it doesn't fight the resize drag.
+            .on_click(cx.listener(move |view, e: &ClickEvent, window, cx| {
+                if e.click_count() >= 2 {
+                    cx.stop_propagation();
+                    view.autofit_col(ix, window, cx);
+                }
+            }))
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(|view, _, _, cx| {
@@ -1424,9 +1515,13 @@ where
                 })
                 .hover(|this| this.bg(cx.theme().secondary).opacity(7.))
                 .active(|this| this.bg(cx.theme().secondary_active).opacity(1.))
-                .on_click(
-                    cx.listener(move |table, _, window, cx| table.perform_sort(col_ix, window, cx)),
-                )
+                .on_click(cx.listener(move |table, _, window, cx| {
+                    // The whole header cell is now clickable for sort
+                    // (see `on_col_head_click`); stop the click here so
+                    // it doesn't bubble up and toggle the sort twice.
+                    cx.stop_propagation();
+                    table.perform_sort(col_ix, window, cx)
+                }))
                 .child(
                     Icon::new(icon)
                         .size_3()
@@ -1786,6 +1881,16 @@ where
             tr.h_flex()
                 .w_full()
                 .h(row_height)
+                // Clicking a row must not start gpui-component's
+                // window-level text selection — without this opt-out the
+                // press anchors a selection that then "follows" the mouse
+                // onto a TextView (e.g. the preview pane), selecting text
+                // as if you'd clicked there. Same mechanism `Button` and
+                // `Input` use. Doesn't stop propagation, so the row's own
+                // click/selection handling is unaffected.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                    gpui_component::global_state::GlobalState::suppress_text_selection(cx);
+                })
                 .when(need_render_border, |this| {
                     this.border_b_1().border_color(cx.theme().table_row_border)
                 })
@@ -2266,7 +2371,7 @@ where
                     this.children(empty_view)
                 } else {
                     this.child(
-                        h_flex().id("table-body").flex_grow().size_full().child(
+                        h_flex().id("table-body").flex_grow(1.0).size_full().child(
                             uniform_list(
                                 "table-uniform-list",
                                 render_rows_count,
@@ -2333,7 +2438,7 @@ where
                                     },
                                 ),
                             )
-                            .flex_grow()
+                            .flex_grow(1.0)
                             .size_full()
                             .with_sizing_behavior(ListSizingBehavior::Auto)
                             .track_scroll(&self.vertical_scroll_handle)

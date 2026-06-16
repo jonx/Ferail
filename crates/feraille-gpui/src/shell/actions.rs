@@ -67,6 +67,11 @@ actions!(
         /// Cmd+Y — open the viewer window on the current folder's
         /// files (docs/features/VIEWER.md). Space stays Quick Look.
         OpenViewer,
+        /// File-list context action — open the viewer starting at the
+        /// right-clicked file and immediately begin the slideshow
+        /// (docs/features/VIEWER.md). Same playlist as `OpenViewer` but
+        /// anchored to the context row and auto-playing.
+        SlideshowFromHere,
         GoHome,
         EditBreadcrumb,
         ShortcutsHelp,
@@ -141,6 +146,10 @@ actions!(
         OpenTerminalAtContext,
         OpenContextInNewTab,
         NewFolderHere,
+        /// Sidebar volume menu: unmount and eject the right-clicked
+        /// volume (`context_target`). Only attached to removable/
+        /// ejectable volume rows.
+        EjectVolume,
         // Phase 6 follow-on: Tags + Open-With submenus. Seven tag
         // colours match Finder's canonical Red/Orange/Yellow/Green/
         // Blue/Purple/Gray set; toggle behaviour mirrors

@@ -50,22 +50,24 @@ blake3      = "1"
 #
 # Pinning strategy: `gpui-component` is pinned to a specific rev (it
 # is our higher-level coupling and we want updates to be deliberate).
-# `gpui` itself is left *URL-identical* to how gpui-component declares
-# it (no rev) — adding `rev = "..."` makes cargo treat our pin as a
-# *different source* from gpui-component's unpinned gpui, ending up
-# with two gpuis in the graph. Reproducibility comes from committing
-# `Cargo.lock`; see CHANGELOG-DEPS.md for the locked revs at any
-# point in time.
+# `gpui` MUST be pinned to the SAME zed rev that gpui-component pins —
+# they share one source so the graph holds a single gpui. (Earlier,
+# gpui-component left gpui unpinned and we matched by also leaving ours
+# unpinned; as of upstream rev c112e7b gpui-component pins gpui to an
+# explicit rev, so we must mirror that rev or cargo resolves two/three
+# gpui copies. See docs/GPUI-UPSTREAM.md.) When bumping gpui-component,
+# read its Cargo.toml `gpui = { rev = ... }` and copy that rev here.
+# Reproducibility also comes from committing `Cargo.lock`.
 # test-support: enables `Window::render_to_image` + the matching impl
 # in `gpui_macos` so the headless screenshot CLI in feraille-gpui works.
-gpui = { git = "https://github.com/zed-industries/zed", features = ["test-support"] }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "test-support"] }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["test-support"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["font-kit", "test-support"] }
 # `tree-sitter-languages` pulls in the full tree-sitter grammar set so
 # the preview pane's TextView highlights fenced code blocks (and
 # markdown code) for every language (docs/features/PREVIEW.md). Each
 # grammar is a C-compiled crate — a real but one-time build cost.
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "ba44512e0cfe633869714054e8ea1afd133d4a28", features = ["tree-sitter-languages"] }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "ba44512e0cfe633869714054e8ea1afd133d4a28" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "c112e7b482b6b9c53a8c43deaf5847b94a29ad82", features = ["tree-sitter-languages"] }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "c112e7b482b6b9c53a8c43deaf5847b94a29ad82" }
 
 [profile.dev]
 # Text rasterization is sluggish at -Copt-level=0 — keep some optimization in dev.

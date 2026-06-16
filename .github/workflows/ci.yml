@@ -8,26 +8,33 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# CI scope note: the `feraille-gpui` app crate pulls gpui (zed, via git),
+# gpui-component, and ~30 tree-sitter grammars. A full
+# `cargo check --all-targets` + `cargo test --workspace` of it produces a
+# multi-tens-of-GB build that overruns a standard GitHub runner's disk,
+# memory, and time — so CI here validates the platform-neutral logic
+# crates, which build in seconds on Linux and carry the real unit tests
+# (domain types + the disk-usage algorithm). The GPUI app is verified
+# locally on macOS (cargo check + screenshots per CLAUDE.md). To cover it
+# in CI later, point a large/self-hosted macOS runner at
+# `cargo check -p feraille-gpui`.
 jobs:
-  check-test:
-    name: check + test (macOS)
-    runs-on: macos-latest
+  logic:
+    name: check + test (platform-neutral crates)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: clippy
 
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
 
-      - name: cargo check
-        run: cargo check --workspace --all-targets
-
       - name: cargo test
-        run: cargo test --workspace
+        run: cargo test -p feraille-core -p feraille-disk-usage
 
       - name: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy -p feraille-core -p feraille-disk-usage --all-targets -- -D warnings

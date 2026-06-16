@@ -223,4 +223,12 @@ pub trait TableDelegate: Sized + 'static {
     fn cell_text(&self, row_ix: usize, col_ix: usize, cx: &App) -> String {
         String::new()
     }
+
+    /// Extra width, beyond the measured `cell_text` plus cell padding,
+    /// that double-click-to-fit (`TableState::autofit_col`) should add
+    /// for this column — for leading icons / trailing badges that aren't
+    /// part of the text. Defaults to 0 (pure-text columns).
+    fn autofit_extra(&self, _col_ix: usize, _cx: &App) -> Pixels {
+        gpui::px(0.0)
+    }
 }

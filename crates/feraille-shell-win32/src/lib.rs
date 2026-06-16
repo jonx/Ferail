@@ -322,6 +322,12 @@ pub fn open_terminal(_path: &std::path::Path) {}
 
 /// Duplicate `src` next to itself with Explorer's " - Copy" /
 /// " - Copy (2)" naming. Files use `fs::copy`; directories use a
+/// Unmount and eject the volume mounted at `path`. Not implemented on
+/// Windows yet; returns an error the host can surface as a toast.
+pub fn eject_volume(_path: &std::path::Path) -> Result<(), String> {
+    Err("eject is not implemented on Windows yet".into())
+}
+
 /// recursive copy walk (std has no recursive copy). Returns the
 /// destination path on success.
 ///
@@ -1064,6 +1070,12 @@ pub fn system_is_dark() -> bool {
 pub fn system_is_dark() -> bool {
     false
 }
+
+/// Force the app-wide native appearance to match the chosen theme.
+/// Stub on Windows: the predecessor stack doesn't drive native chrome
+/// this way yet; the mac shell owns the real implementation. Kept so
+/// `platform_shell::set_app_appearance` resolves cross-platform.
+pub fn set_app_appearance(_dark: bool) {}
 
 /// Subscribe to system theme changes.
 ///

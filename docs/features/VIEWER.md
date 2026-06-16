@@ -194,8 +194,18 @@ another entry keeps `{mode, center}` verbatim:
   - `Esc`: exit fullscreen if fullscreen, else close window
   - `Cmd+=` / `Cmd+-` / `Cmd+0` **[mac; win-parity Ctrl]**: zoom in/out/reset
   - `Cmd+Ctrl+F` **[mac]**: fullscreen
+  - `R` / `Shift+R`: rotate the current image clockwise / counter-clockwise
   - Wheel: zoom toward cursor · Drag: pan when zoomed · Double-click:
     fit ↔ actual
+- **Rotation** is view-only, per-item, and ephemeral: it lives in
+  `ViewerWindow::rotations` (a per-index `HashMap`), never touches the
+  file, applies to one item at a time, and is dropped when the window
+  closes or retargets. gpui can't rotate an `img` element
+  (docs/GPUI-UPSTREAM.md #5), so the pixels are CPU-rotated
+  (`rotate_render_image`) and cached in one slot until the rotation or
+  item changes. **Images only** — the native video overlay would need a
+  layer transform (not yet wired), so rotate no-ops on videos and its
+  toolbar button is hidden for them.
 - Navigation wraps (last → first), so slideshows loop.
 - Window close clears the process-wide handle and drops the cache.
 

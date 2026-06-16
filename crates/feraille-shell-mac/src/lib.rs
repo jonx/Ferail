@@ -440,6 +440,18 @@ pub fn duplicate_path(_src: &std::path::Path) -> Result<std::path::PathBuf, Stri
     Err("duplicate is macOS-only in this build".into())
 }
 
+/// Unmount and eject the volume mounted at `path`. Synchronous —
+/// callers run this on a worker. Non-macOS: error.
+#[cfg(target_os = "macos")]
+pub fn eject_volume(path: &std::path::Path) -> Result<(), String> {
+    file_ops::eject_volume(path)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn eject_volume(_path: &std::path::Path) -> Result<(), String> {
+    Err("eject is macOS-only in this build".into())
+}
+
 /// Make a Finder-resolvable alias file pointing at `target`.
 /// Synchronous — callers run this on a worker.
 #[cfg(target_os = "macos")]
@@ -740,6 +752,38 @@ pub fn system_is_dark() -> bool {
 pub fn system_is_dark() -> bool {
     false
 }
+
+/// Force the app-wide native appearance to match the chosen theme,
+/// independent of the system Light/Dark setting. Setting `NSApp`'s
+/// appearance cascades to every window that doesn't override its own,
+/// so native chrome — titlebars, the traffic-light area, menus — on
+/// secondary windows (Viewer, Settings) stops rendering system-dark
+/// under a light app theme (and vice versa). Main-thread only; a no-op
+/// off the main thread or on non-macOS.
+#[cfg(target_os = "macos")]
+pub fn set_app_appearance(dark: bool) {
+    use objc2_app_kit::{
+        NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
+    };
+    use objc2_foundation::MainThreadMarker;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    unsafe {
+        let app = NSApplication::sharedApplication(mtm);
+        let name = if dark {
+            NSAppearanceNameDarkAqua
+        } else {
+            NSAppearanceNameAqua
+        };
+        let appearance = NSAppearance::appearanceNamed(name);
+        app.setAppearance(appearance.as_deref());
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_app_appearance(_dark: bool) {}
 
 /// macOS "Show Desktop" — the same wallpaper reveal the Dock performs
 /// when you click the desktop or hit the Show Desktop shortcut. There

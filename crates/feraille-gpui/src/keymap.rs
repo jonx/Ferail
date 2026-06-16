@@ -28,8 +28,9 @@ use crate::shell::{
 };
 use crate::entry_info::{ENTRY_INFO_CONTEXT, EntryInfoDismiss};
 use crate::viewer::window::{
-    VIEWER_CONTEXT, ViewerActualSize, ViewerDismiss, ViewerNext, ViewerPrev,
-    ViewerToggleFullscreen, ViewerTogglePlay, ViewerZoomIn, ViewerZoomOut, ViewerZoomReset,
+    VIEWER_CONTEXT, ViewerActualSize, ViewerDismiss, ViewerNext, ViewerPrev, ViewerRotateCcw,
+    ViewerRotateCw, ViewerToggleFullscreen, ViewerTogglePlay, ViewerZoomIn, ViewerZoomOut,
+    ViewerZoomReset,
 };
 
 /// Install keybindings for every command in `feraille_core::commands`
@@ -352,5 +353,9 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("cmd-0", ViewerZoomReset, Some(VIEWER_CONTEXT)),
         KeyBinding::new("cmd-1", ViewerActualSize, Some(VIEWER_CONTEXT)),
         KeyBinding::new("cmd-ctrl-f", ViewerToggleFullscreen, Some(VIEWER_CONTEXT)),
+        // View-only per-item rotation (docs/features/VIEWER.md): R turns
+        // clockwise, Shift-R counter-clockwise.
+        KeyBinding::new("r", ViewerRotateCw, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("shift-r", ViewerRotateCcw, Some(VIEWER_CONTEXT)),
     ]);
 }

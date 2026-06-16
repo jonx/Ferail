@@ -61,10 +61,11 @@ fn truncated_url_value(key: &'static str, url: &str, id: feraille_core::NodeId) 
 }
 
 /// One mounted volume for the sidebar Volumes section:
-/// `(path, display name, Some((total, available)) capacity bytes)`.
-type VolumeRow = (PathBuf, String, Option<(u64, u64)>);
+/// `(path, display name, Some((total, available)) capacity bytes,
+/// is removable/ejectable)`.
+type VolumeRow = (PathBuf, String, Option<(u64, u64)>, bool);
 /// `VolumeRow` plus the "is favorited" star flag.
-type VolumeRowFav = (PathBuf, String, Option<(u64, u64)>, bool);
+type VolumeRowFav = (PathBuf, String, Option<(u64, u64)>, bool, bool);
 
 fn tab_drop_gap(pos: usize, cx: &mut Context<Shell>) -> impl IntoElement {
     let theme = cx.theme();
@@ -128,6 +129,7 @@ impl Shell {
             capacity: None,
             icon: TreeRowIcon::Folder,
             favorited,
+            ejectable: false,
         }];
         if is_expanded {
             self.append_tree_descendants_filtered(
@@ -367,18 +369,18 @@ impl Shell {
                     (Some(t), Some(a)) if t > 0 => Some((t, a)),
                     _ => None,
                 };
-                (v.path.clone(), v.name.clone(), cap)
+                (v.path.clone(), v.name.clone(), cap, v.is_removable)
             })
             .collect();
         let mut entries: Vec<VolumeRowFav> = volume_paths
             .into_iter()
-            .map(|(p, n, c)| {
+            .map(|(p, n, c, ejectable)| {
                 let fav = favs.contains_path(&p);
-                (p, n, c, fav)
+                (p, n, c, fav, ejectable)
             })
             .collect();
         let _ = favs;
-        for (path, name, capacity, favorited) in entries.drain(..) {
+        for (path, name, capacity, favorited, ejectable) in entries.drain(..) {
             let node_id = self.process.fs.id_for_path(&path);
             self.process
                 .node_store
@@ -397,6 +399,7 @@ impl Shell {
                 capacity,
                 icon: TreeRowIcon::Volume,
                 favorited,
+                ejectable,
             });
             if is_expanded {
                 self.append_tree_descendants(&mut rows, &path, 1, &current, &mut Vec::new(), cx);
@@ -506,6 +509,7 @@ impl Shell {
                 capacity: None,
                 icon: TreeRowIcon::Folder,
                 favorited,
+                ejectable: false,
             });
             if is_expanded {
                 trunk.push(!is_last);
@@ -1167,18 +1171,16 @@ impl Shell {
                     // Render through gpui-component's TextView:
                     // markdown files format, source files highlight
                     // (the worker already capped this to 500 lines, and
-                    // TextView parses off the UI thread). A stable id
-                    // means the one cached parse re-runs on file change.
+                    // TextView parses off the UI thread). The id is keyed
+                    // per file (see below) so selection state can't bleed
+                    // across previews.
                     //
                     // A bounded box with its own scroll on BOTH axes:
                     // vertical so a long file doesn't push the Get Info
                     // details far down the pane, horizontal so no-wrap code
-                    // lines stay readable. (The nested box does trap the
-                    // vertical wheel until you move off it — see the scroll-
-                    // chaining TODO; the bounded layout is the better
-                    // trade-off for reaching the details quickly.)
+                    // lines stay readable.
                     let block = div()
-                        .id("preview-text")
+                        .id(("preview-text", entry.id.as_raw() as usize))
                         .w_full()
                         .max_h(px(280.0))
                         .overflow_scroll()
@@ -1201,9 +1203,17 @@ impl Shell {
                                 .text_size(px(9.0))
                                 .whitespace_nowrap(),
                         );
+                        // Per-file element id (keyed on the entry id), not
+                        // a constant: a TextView keeps internal selection /
+                        // scroll state under its id, so a shared id let a
+                        // stale text selection bleed onto the next file you
+                        // previewed (it looked "already selected" on hover).
+                        // A distinct id per file gives each a clean TextView
+                        // at the cost of re-parsing on file switch (cheap —
+                        // the worker caps content to 500 lines, off-thread).
                         block.child(
                             gpui_component::text::TextView::markdown(
-                                gpui::ElementId::Name("preview-textview".into()),
+                                ("preview-textview", entry.id.as_raw() as usize),
                                 SharedString::from(md),
                             )
                             .style(style)
@@ -1214,10 +1224,14 @@ impl Shell {
                 } else if let Some(img) = thumb_img {
                     // Clicking the thumbnail opens the big viewer
                     // window (docs/features/VIEWER.md) on the current
-                    // folder, same as Cmd+Y.
+                    // folder, same as Cmd+Y. A maximize glyph in the
+                    // top-right corner is the discoverability affordance
+                    // (only shown here, where a viewer-capable preview
+                    // exists) instead of a text caption.
                     col = col.child(
                         div()
                             .id("preview-thumb-open")
+                            .relative()
                             .flex()
                             .items_center()
                             .justify_center()
@@ -1230,7 +1244,26 @@ impl Shell {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.on_open_viewer(&OpenViewer, window, cx)
                             }))
-                            .child(gpui::img(img).max_w(px(248.0)).max_h(px(184.0))),
+                            .child(gpui::img(img).max_w(px(248.0)).max_h(px(184.0)))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top_2()
+                                    .right_2()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .size(px(22.0))
+                                    .rounded(cx.theme().radius)
+                                    .bg(cx.theme().background.opacity(0.75))
+                                    .child(
+                                        svg()
+                                            .path("icons/maximize.svg")
+                                            .w(px(13.0))
+                                            .h(px(13.0))
+                                            .text_color(cx.theme().foreground),
+                                    ),
+                            ),
                     );
                 } else if matches!(thumb_state, Some(crate::preview::PreviewState::Pending)) {
                     col = col.child(
@@ -1633,11 +1666,16 @@ impl Shell {
                             .flex_shrink_0(),
                     )
                 })
-                .tooltip({
-                    let t = SharedString::from(tooltip_path);
-                    move |window, cx| {
-                        gpui_component::tooltip::Tooltip::new(t.clone()).build(window, cx)
-                    }
+                // Suppress the full-path tooltip while this crumb's
+                // context menu is open so the two don't overlap
+                // (docs/GPUI-UPSTREAM.md — no menu-open callback upstream).
+                .when(!self.breadcrumb_menu_open, |crumb| {
+                    crumb.tooltip({
+                        let t = SharedString::from(tooltip_path);
+                        move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(t.clone()).build(window, cx)
+                        }
+                    })
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.navigate(path_for_click.clone(), cx);
@@ -1650,9 +1688,13 @@ impl Shell {
                             .favorites
                             .read(cx)
                             .contains_path(&path_for_menu);
-                        s.update(cx, |shell, _| {
+                        s.update(cx, |shell, cx| {
                             shell.context_target = Some(path_for_menu.clone());
                             shell.favorites_context_path = Some(path_for_menu.clone());
+                            // Hide the crumb tooltip for as long as this
+                            // menu is up; cleared on the next root click.
+                            shell.breadcrumb_menu_open = true;
+                            cx.notify();
                         });
                         already
                     } else {
@@ -1693,6 +1735,8 @@ impl Render for Shell {
                 gpui_component::ThemeMode::Light
             };
             gpui_component::Theme::change(mode, Some(window), cx);
+            // Keep native window chrome in step with the theme flip.
+            crate::platform_shell::set_app_appearance(is_dark);
         }
         let weak = cx.weak_entity();
         let locations_menu = self.build_locations_menu(weak.clone(), cx);
@@ -1882,6 +1926,19 @@ impl Render for Shell {
         div()
             .key_context(SHELL_CONTEXT)
             .track_focus(&self.focus_handle)
+            // Any left-click dismisses an open breadcrumb context menu
+            // (picking an item or clicking away), so it's also the
+            // moment to re-enable the crumb tooltip we suppressed while
+            // the menu was open (docs/GPUI-UPSTREAM.md).
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _window, cx| {
+                    if this.breadcrumb_menu_open {
+                        this.breadcrumb_menu_open = false;
+                        cx.notify();
+                    }
+                }),
+            )
             .on_action(cx.listener(Self::on_navigate_parent))
             .on_action(cx.listener(Self::on_navigate_back))
             .on_action(cx.listener(Self::on_navigate_forward))
@@ -1916,6 +1973,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_disk_usage))
             .on_action(cx.listener(Self::on_find_duplicates))
             .on_action(cx.listener(Self::on_open_viewer))
+            .on_action(cx.listener(Self::on_slideshow_from_here))
             .on_action(cx.listener(Self::on_sort_by_name))
             .on_action(cx.listener(Self::on_sort_by_size))
             .on_action(cx.listener(Self::on_sort_by_kind))
@@ -1952,6 +2010,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_terminal_at_context))
             .on_action(cx.listener(Self::on_open_context_in_new_tab))
             .on_action(cx.listener(Self::on_new_folder_here))
+            .on_action(cx.listener(Self::on_eject_volume))
             .on_action(cx.listener(Self::on_toggle_tag_red))
             .on_action(cx.listener(Self::on_toggle_tag_orange))
             .on_action(cx.listener(Self::on_toggle_tag_yellow))

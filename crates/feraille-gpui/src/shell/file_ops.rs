@@ -562,6 +562,47 @@ impl Shell {
         crate::platform_shell::open_terminal(&path);
     }
 
+    /// Sidebar volume menu "Eject". Unmounts and ejects the right-
+    /// clicked volume (`context_target`) on a worker — `unmountAndEject`
+    /// can block while the system flushes/closes the device — then
+    /// reports success or failure as a toast. The volume observer drops
+    /// the row from the sidebar once the unmount lands.
+    pub(super) fn on_eject_volume(
+        &mut self,
+        _: &EjectVolume,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let Some(path) = self.context_target.take() else {
+            return;
+        };
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| path.display().to_string());
+        let win = window.window_handle();
+        cx.spawn(async move |_this, cx| {
+            let path_for_op = path.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::platform_shell::eject_volume(&path_for_op) })
+                .await;
+            let _ = win.update(cx, |_, window, cx| match result {
+                Ok(()) => window.push_notification(
+                    Notification::info(format!("Ejected \u{201C}{name}\u{201D}")),
+                    cx,
+                ),
+                Err(e) => window.push_notification(
+                    Notification::error(format!("Couldn’t eject \u{201C}{name}\u{201D}: {e}")),
+                    cx,
+                ),
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn on_open_context_in_new_tab(
         &mut self,
         _: &OpenContextInNewTab,

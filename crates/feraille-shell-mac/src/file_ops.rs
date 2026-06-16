@@ -156,6 +156,40 @@ pub fn make_alias(_target: &Path) -> Result<PathBuf, String> {
     Err("make_alias is macOS-only".into())
 }
 
+/// Unmount and eject the volume mounted at `path`. macOS:
+/// `-[NSWorkspace unmountAndEjectDeviceAtURL:error:]`, which handles
+/// removable media, external disks, and disk images. Synchronous —
+/// callers dispatch from a worker. Returns an error string on failure
+/// (e.g. a busy volume with open files), suitable for a toast.
+#[cfg(target_os = "macos")]
+pub fn eject_volume(path: &Path) -> Result<(), String> {
+    use objc2::msg_send;
+    use objc2::msg_send_id;
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2_foundation::{NSError, NSString, NSURL};
+
+    unsafe {
+        let path_ns = NSString::from_str(&path.to_string_lossy());
+        let url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&path_ns, true);
+
+        let cls: &AnyClass = AnyClass::get("NSWorkspace").ok_or("NSWorkspace class missing")?;
+        let workspace: Retained<AnyObject> = msg_send_id![cls, sharedWorkspace];
+
+        // -[NSWorkspace unmountAndEjectDeviceAtURL:error:]
+        let mut err: *mut NSError = std::ptr::null_mut();
+        let ok: bool = msg_send![
+            &*workspace,
+            unmountAndEjectDeviceAtURL: &*url,
+            error: &mut err,
+        ];
+        if !ok {
+            return Err(ns_error_message(err, "eject failed"));
+        }
+    }
+    Ok(())
+}
+
 /// Best-effort string from an `NSError*` (which may be null). Falls
 /// back to the static fallback when the error is missing or its
 /// `localizedDescription` selector isn't reachable.

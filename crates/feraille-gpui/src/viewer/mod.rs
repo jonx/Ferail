@@ -27,13 +27,23 @@ pub use window::{PlaylistEntry, ViewerWindow};
 /// the entity, so the stored weak handle naturally goes stale and the
 /// next open creates a fresh window).
 pub fn open_viewer(playlist: Vec<PlaylistEntry>, start: usize, cx: &mut App) {
+    open_viewer_inner(playlist, start, false, cx);
+}
+
+/// Like [`open_viewer`] but begins the slideshow immediately — used by
+/// the "Slideshow from Here" context action (docs/features/VIEWER.md).
+pub fn open_viewer_playing(playlist: Vec<PlaylistEntry>, start: usize, cx: &mut App) {
+    open_viewer_inner(playlist, start, true, cx);
+}
+
+fn open_viewer_inner(playlist: Vec<PlaylistEntry>, start: usize, autoplay: bool, cx: &mut App) {
     let process = crate::process_state::process_state(cx);
 
     let existing = process.viewer_window.borrow().clone();
     if let Some((handle, weak)) = existing {
         if let Some(view) = weak.upgrade() {
             let reused = handle.update(cx, |_root, window, cx| {
-                view.update(cx, |v, cx| v.retarget(playlist.clone(), start, cx));
+                view.update(cx, |v, cx| v.retarget(playlist.clone(), start, autoplay, cx));
                 window.activate_window();
             });
             if reused.is_ok() {
@@ -52,7 +62,8 @@ pub fn open_viewer(playlist: Vec<PlaylistEntry>, start: usize, cx: &mut App) {
     };
     let mut weak_view = None;
     let handle = cx.open_window(opts, |window, cx| {
-        let view = cx.new(|cx| ViewerWindow::new(playlist, start, process.clone(), window, cx));
+        let view =
+            cx.new(|cx| ViewerWindow::new(playlist, start, autoplay, process.clone(), window, cx));
         weak_view = Some(view.downgrade());
         cx.new(|cx| Root::new(view, window, cx))
     });

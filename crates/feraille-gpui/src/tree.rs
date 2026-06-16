@@ -104,6 +104,10 @@ pub struct TreeRowSpec {
     /// curated Favorites list. Computed from `Shell::favorites` at row
     /// build time; render paints a small accent star trailing the label.
     pub favorited: bool,
+    /// `true` for removable/external volume rows that can be unmounted.
+    /// Gates the "Eject" entry in the row's context menu. Always `false`
+    /// for folders and the boot volume.
+    pub ejectable: bool,
 }
 
 /// Cached representation of one direct child of an expanded folder.
@@ -359,6 +363,7 @@ fn render_tree_row(
         capacity,
         icon,
         favorited,
+        ejectable,
     } = spec;
     let theme = cx.theme();
     let row_key: SharedString = format!("tree-row-{}", path.display()).into();
@@ -592,8 +597,8 @@ fn render_tree_row(
     let attach_menu = move |el: gpui::Stateful<gpui::Div>| {
         el.context_menu(move |menu, _window, cx| {
             use crate::shell::{
-                CopyContextPath, NewFolderHere, OpenContextInNewTab, OpenTerminalAtContext,
-                RevealContextPath, ToggleFavoriteForTarget,
+                CopyContextPath, EjectVolume, NewFolderHere, OpenContextInNewTab,
+                OpenTerminalAtContext, RevealContextPath, ToggleFavoriteForTarget,
             };
             if let Some(shell) = shell_for_menu.upgrade() {
                 shell.update(cx, |s, _| {
@@ -604,7 +609,8 @@ fn render_tree_row(
                     s.favorites_context_path = Some(path_for_menu.clone());
                 });
             }
-            menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
+            let menu = menu
+                .menu("Open in New Tab", Box::new(OpenContextInNewTab))
                 .separator()
                 .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealContextPath))
                 .menu("Copy Path", Box::new(CopyContextPath))
@@ -612,7 +618,14 @@ fn render_tree_row(
                 .separator()
                 .menu(favorite_label, Box::new(ToggleFavoriteForTarget))
                 .separator()
-                .menu("New Folder Here", Box::new(NewFolderHere))
+                .menu("New Folder Here", Box::new(NewFolderHere));
+            // Eject only for removable/external volumes (the boot
+            // volume and folders never get it).
+            if ejectable {
+                menu.separator().menu("Eject", Box::new(EjectVolume))
+            } else {
+                menu
+            }
         })
     };
 
