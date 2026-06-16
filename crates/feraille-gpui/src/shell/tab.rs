@@ -34,6 +34,20 @@ impl HistoryEntry {
     }
 }
 
+/// State for a tab that is showing search results. The tab still has a
+/// `current_dir` (the search root, used for navigation and Back), but the
+/// file list is the result stream for `needle`.
+#[derive(Clone, Debug)]
+pub struct SearchMode {
+    /// The query the user entered.
+    pub needle: String,
+    /// Root the search was launched from (the tab's directory at launch).
+    pub root: PathBuf,
+    /// Which engine produced these results, for the breadcrumb label
+    /// ("Spotlight" / "Subtree").
+    pub engine_label: &'static str,
+}
+
 /// Process-local stable identifier for a tab. Minted from
 /// `ProcessState::mint_tab_id`. Survives reorder; survives tear-off
 /// to a different window (Phase F). Cheaper than path equality for
@@ -113,6 +127,14 @@ pub struct Tab {
     /// back — i.e. no flicker. `None` for fresh navigation, which keeps
     /// the progressive streaming reveal.
     pub(crate) load_staging: Option<super::loading::LoadBatch>,
+    /// `Some` while this tab is showing *search results* rather than a
+    /// directory listing (docs/features/SEARCH.md). The tab stays rooted
+    /// at `current_dir` for navigation, but the file list is fed by a
+    /// search worker instead of `enumerate`, the watcher reload is
+    /// suppressed, and the breadcrumb shows the query. Cleared by
+    /// `navigate` and by clearing the filter, both of which reload the
+    /// directory.
+    pub search_mode: Option<SearchMode>,
     /// `Some(err)` when this tab's last enumerate returned an OS
     /// error (most commonly macOS TCC denial). Drives an empty-
     /// state in the file pane when the tab is active.
@@ -175,6 +197,7 @@ impl Tab {
             load_task: None,
             load_pending_first_batch: false,
             load_staging: None,
+            search_mode: None,
             last_error: None,
             pending_select_row: None,
             pending_select_rows: Vec::new(),

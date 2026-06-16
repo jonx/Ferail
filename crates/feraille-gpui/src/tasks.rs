@@ -36,6 +36,10 @@ pub enum TaskKind {
     DiskUsage,
     /// Right-click file operations: Duplicate, Compress.
     FileOp,
+    /// Recursive / global file search (docs/features/SEARCH.md).
+    Search,
+    /// Duplicate-finder funnel scan (docs/features/DUPLICATES.md).
+    DuplicateScan,
 }
 
 #[derive(Clone, Copy, Debug)]

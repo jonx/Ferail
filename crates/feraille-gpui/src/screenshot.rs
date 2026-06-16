@@ -76,6 +76,10 @@ pub struct Args {
     pub filter: Option<String>,
     /// Open / focus the filter widget.
     pub search: bool,
+    /// Launch a recursive / global search of the active tab's directory
+    /// for this needle (docs/features/SEARCH.md), streaming results into
+    /// the list. Verifies the search-results tab headlessly.
+    pub search_subtree: Option<String>,
     /// Show the preview pane (`preview_visible` defaults to off; the
     /// pane also auto-hides under the viewport-width threshold, so
     /// pair with `--width` ≥ 900 when capturing it).
@@ -182,6 +186,7 @@ pub fn parse_args() -> Args {
             "--show-hidden" => args.show_hidden = true,
             "--filter" => args.filter = iter.next(),
             "--search" => args.search = true,
+            "--search-subtree" => args.search_subtree = iter.next(),
             "--preview" => args.preview = true,
             "--sort" => {
                 let raw = iter.next().unwrap_or_default();
@@ -488,6 +493,7 @@ struct ShellArgs {
     show_hidden: bool,
     filter: Option<String>,
     search: bool,
+    search_subtree: Option<String>,
     select_row: Option<usize>,
     select_name: Option<String>,
     select_rows: Vec<usize>,
@@ -521,6 +527,7 @@ impl From<&Args> for ShellArgs {
             show_hidden: a.show_hidden,
             filter: a.filter.clone(),
             search: a.search,
+            search_subtree: a.search_subtree.clone(),
             select_row: a.select_row,
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
@@ -623,6 +630,21 @@ impl ShellArgs {
             let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
                     s.focus_filter_input(window, cx);
+                });
+            });
+        }
+        if let Some(needle) = self.search_subtree.clone() {
+            // Sync the filter input (visual) then launch the recursive
+            // search, exactly as Enter-in-the-filter-box does.
+            let text_for_input = needle.clone();
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    let tab_id = s.active_tab().id;
+                    let input = s.active_tab().filter_input.clone();
+                    input.update(cx, |state, cx| {
+                        state.set_value(text_for_input.clone(), window, cx);
+                    });
+                    s.start_subtree_search(tab_id, needle.clone(), cx);
                 });
             });
         }

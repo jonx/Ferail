@@ -159,6 +159,17 @@ impl NativeFs {
         None
     }
 
+    /// Build a `FileEntry` for an arbitrary path (used by global search,
+    /// where results — e.g. Spotlight hits — arrive as bare paths from
+    /// outside the current directory). Reads `symlink_metadata` so a
+    /// symlink is reported as a link, never followed. Returns `None` for
+    /// non-UTF-8 names or unreadable metadata, matching enumerate policy.
+    pub fn file_entry_for_path(&self, path: &Path) -> Option<FileEntry> {
+        let name = path.file_name().and_then(|s| s.to_str()).map(str::to_owned)?;
+        let metadata = std::fs::symlink_metadata(path).ok()?;
+        Some(self.file_entry_from_metadata(path, name, &metadata))
+    }
+
     /// Build a `FileEntry` from a single `DirEntry`. Returns `None` for
     /// names that aren't valid UTF-8 or whose metadata can't be read —
     /// matching the existing eager `enumerate` policy of skipping them
@@ -170,6 +181,18 @@ impl NativeFs {
             .and_then(|s| s.to_str())
             .map(str::to_owned)?;
         let metadata = dirent.metadata().ok()?;
+        Some(self.file_entry_from_metadata(&child_path, name, &metadata))
+    }
+
+    /// Shared `FileEntry` construction from a resolved `(path, name,
+    /// metadata)`. Pre-formats the display strings per the
+    /// no-alloc-on-paint contract.
+    fn file_entry_from_metadata(
+        &self,
+        path: &Path,
+        name: String,
+        metadata: &std::fs::Metadata,
+    ) -> FileEntry {
         let ft = metadata.file_type();
         let kind = if ft.is_dir() {
             EntryKind::Directory
@@ -192,9 +215,9 @@ impl NativeFs {
         };
         let display_mtime = humanize_mtime(mtime_unix);
         let display_kind = describe_kind(kind, &name);
-        let hidden = entry_is_hidden(&name, &metadata);
-        let id = self.id_for_path(&child_path);
-        Some(FileEntry {
+        let hidden = entry_is_hidden(&name, metadata);
+        let id = self.id_for_path(path);
+        FileEntry {
             id,
             name,
             kind,
@@ -208,7 +231,7 @@ impl NativeFs {
             is_quarantined: false,
             quarantine: None,
             hidden,
-        })
+        }
     }
 }
 
