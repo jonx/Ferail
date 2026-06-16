@@ -48,6 +48,20 @@ pub struct SearchMode {
     pub engine_label: &'static str,
 }
 
+/// State for a tab showing duplicate-finder results. Like [`SearchMode`]
+/// the tab keeps its `current_dir` (the scan root); the file list holds
+/// duplicate group members as adjacent rows.
+#[derive(Clone, Debug)]
+pub struct DupeViewMode {
+    /// Root the scan was launched from.
+    pub root: PathBuf,
+    /// Confirmed duplicate groups seen so far.
+    pub groups: usize,
+    /// Reclaimable bytes = sum over groups of `bytes_each * (distinct
+    /// occupants - 1)` — extra on-disk copies, hard links excluded.
+    pub wasted_bytes: u64,
+}
+
 /// Process-local stable identifier for a tab. Minted from
 /// `ProcessState::mint_tab_id`. Survives reorder; survives tear-off
 /// to a different window (Phase F). Cheaper than path equality for
@@ -135,6 +149,11 @@ pub struct Tab {
     /// `navigate` and by clearing the filter, both of which reload the
     /// directory.
     pub search_mode: Option<SearchMode>,
+    /// `Some` while this tab is showing duplicate-finder results
+    /// (docs/features/DUPLICATES.md). Same results-view contract as
+    /// `search_mode`: watcher reloads suppressed, breadcrumb shows the
+    /// scan, cleared by `navigate` / clearing.
+    pub dupe_mode: Option<DupeViewMode>,
     /// `Some(err)` when this tab's last enumerate returned an OS
     /// error (most commonly macOS TCC denial). Drives an empty-
     /// state in the file pane when the tab is active.
@@ -198,6 +217,7 @@ impl Tab {
             load_pending_first_batch: false,
             load_staging: None,
             search_mode: None,
+            dupe_mode: None,
             last_error: None,
             pending_select_row: None,
             pending_select_rows: Vec::new(),

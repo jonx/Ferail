@@ -38,6 +38,7 @@ use crate::tree::{
 use gpui::prelude::FluentBuilder as _;
 
 mod actions;
+mod dupes;
 mod file_ops;
 mod loading;
 mod path;
@@ -769,12 +770,11 @@ impl Shell {
                         let value = filter_input.read(cx).value().to_string();
                         if let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) {
                             this.tabs[idx].filter_text = value.clone();
-                            // Editing the filter while showing search
-                            // results returns to the live directory,
-                            // then applies the in-directory filter.
-                            if this.tabs[idx].search_mode.is_some() {
-                                this.tabs[idx].search_mode = None;
-                            }
+                            // Editing the filter while showing a results
+                            // view returns to the live directory, then
+                            // applies the in-directory filter.
+                            this.tabs[idx].search_mode = None;
+                            this.tabs[idx].dupe_mode = None;
                             let path = this.tabs[idx].current_dir.clone();
                             this.load_path_for_tab(tab_id, path, cx);
                         }
@@ -1023,8 +1023,9 @@ impl Shell {
             state.set_value("", window, cx);
         });
         self.active_tab_mut().filter_text.clear();
-        // Esc also leaves search results, returning to the directory.
+        // Esc also leaves a results view, returning to the directory.
         self.active_tab_mut().search_mode = None;
+        self.active_tab_mut().dupe_mode = None;
         let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
         self.focus_handle.focus(window, cx);
@@ -1952,9 +1953,10 @@ impl Shell {
         let targets: Vec<(TabId, PathBuf)> = self
             .tabs
             .iter()
-            // A tab showing search results is not displaying its
-            // directory — a watcher reload would clobber the results.
-            .filter(|tab| tab.search_mode.is_none())
+            // A tab showing a results view (search / duplicates) is not
+            // displaying its directory — a watcher reload would clobber
+            // the results.
+            .filter(|tab| tab.search_mode.is_none() && tab.dupe_mode.is_none())
             .filter(|tab| paths.iter().any(|path| path == &tab.current_dir))
             .map(|tab| (tab.id, tab.current_dir.clone()))
             .collect();
@@ -2734,8 +2736,9 @@ impl Shell {
         tab.lead = None;
         tab.filtered_out.clear();
         tab.range_live = false;
-        // Leaving any search results: this commits a real directory.
+        // Leaving any results view: this commits a real directory.
         tab.search_mode = None;
+        tab.dupe_mode = None;
         tab.nav.navigate_to(node_id);
         // Any pending screenshot select belongs to the previous
         // path; drop it so a stale row index doesn't apply.

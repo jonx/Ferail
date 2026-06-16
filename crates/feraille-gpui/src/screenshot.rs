@@ -80,6 +80,9 @@ pub struct Args {
     /// for this needle (docs/features/SEARCH.md), streaming results into
     /// the list. Verifies the search-results tab headlessly.
     pub search_subtree: Option<String>,
+    /// Launch a duplicate-finder scan of the active tab's directory
+    /// (docs/features/DUPLICATES.md). Verifies the duplicates tab.
+    pub find_duplicates: bool,
     /// Show the preview pane (`preview_visible` defaults to off; the
     /// pane also auto-hides under the viewport-width threshold, so
     /// pair with `--width` ≥ 900 when capturing it).
@@ -187,6 +190,7 @@ pub fn parse_args() -> Args {
             "--filter" => args.filter = iter.next(),
             "--search" => args.search = true,
             "--search-subtree" => args.search_subtree = iter.next(),
+            "--find-duplicates" => args.find_duplicates = true,
             "--preview" => args.preview = true,
             "--sort" => {
                 let raw = iter.next().unwrap_or_default();
@@ -494,6 +498,7 @@ struct ShellArgs {
     filter: Option<String>,
     search: bool,
     search_subtree: Option<String>,
+    find_duplicates: bool,
     select_row: Option<usize>,
     select_name: Option<String>,
     select_rows: Vec<usize>,
@@ -528,6 +533,7 @@ impl From<&Args> for ShellArgs {
             filter: a.filter.clone(),
             search: a.search,
             search_subtree: a.search_subtree.clone(),
+            find_duplicates: a.find_duplicates,
             select_row: a.select_row,
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
@@ -646,6 +652,12 @@ impl ShellArgs {
                     });
                     s.start_subtree_search(tab_id, needle.clone(), cx);
                 });
+            });
+        }
+        if self.find_duplicates {
+            shell.update(cx, |s, cx| {
+                let tab_id = s.active_tab().id;
+                s.start_duplicate_scan(tab_id, cx);
             });
         }
         if self.preview {

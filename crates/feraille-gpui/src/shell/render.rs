@@ -1506,6 +1506,33 @@ impl Shell {
                         .text_color(cx.theme().muted_foreground)
                         .child("in"),
                 );
+        } else if let Some(dupe) = self.active_tab().dupe_mode.clone() {
+            let summary = format!(
+                "\u{29C9} {} duplicate group{} \u{00B7} {} reclaimable",
+                dupe.groups,
+                if dupe.groups == 1 { "" } else { "s" },
+                feraille_fs_native::humanize_bytes(dupe.wasted_bytes),
+            );
+            row = row
+                .child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .rounded(cx.theme().radius)
+                        .bg(cx.theme().accent.opacity(0.5))
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .text_xs()
+                        .text_color(cx.theme().foreground)
+                        .child(summary),
+                )
+                .child(
+                    div()
+                        .px_1()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("in"),
+                );
         }
 
         for (i, (label, path)) in segments.iter().enumerate() {
