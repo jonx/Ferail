@@ -300,7 +300,7 @@ fn allocated_size(meta: &fs::Metadata) -> u64 {
 /// (a string starts_with), no NSURL call per file. Doesn't tell us
 /// whether a given file is a downloaded copy vs a placeholder; the
 /// renderer just paints a cloud glyph either way.
-fn is_icloud_path(path: &Path) -> bool {
+pub(crate) fn is_icloud_path(path: &Path) -> bool {
     #[cfg(target_os = "macos")]
     {
         if let Some(home) = std::env::var_os("HOME") {
@@ -318,7 +318,7 @@ fn is_icloud_path(path: &Path) -> bool {
 
 /// macOS package detection by extension. Stays in sync with the
 /// classify_extension list so categorization and descent agree.
-fn is_mac_package(path: &Path) -> bool {
+pub(crate) fn is_mac_package(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
     };
