@@ -1479,6 +1479,35 @@ impl Shell {
             .border_b_1()
             .border_color(cx.theme().border);
 
+        // Search-results indicator: a pill showing the query + engine,
+        // then "in" followed by the (root) breadcrumb segments. Makes it
+        // unmistakable the list is cross-directory results, not a folder.
+        if let Some(search) = self.active_tab().search_mode.clone() {
+            row = row
+                .child(
+                    div()
+                        .px_2()
+                        .py_0p5()
+                        .rounded(cx.theme().radius)
+                        .bg(cx.theme().accent.opacity(0.5))
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .text_xs()
+                        .text_color(cx.theme().foreground)
+                        .child(format!(
+                            "\u{1F50D} {}  \u{00B7}  {}",
+                            search.needle, search.engine_label
+                        )),
+                )
+                .child(
+                    div()
+                        .px_1()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("in"),
+                );
+        }
+
         for (i, (label, path)) in segments.iter().enumerate() {
             if i > 0 {
                 row = row.child(
