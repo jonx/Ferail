@@ -2288,18 +2288,6 @@ impl Render for Shell {
         div()
             .key_context(SHELL_CONTEXT)
             .track_focus(&self.focus_handle)
-            // Esc during a drag cancels it (gpui only auto-cancels on
-            // mouse-up). Only consumes the key when a drag is actually
-            // active, so Esc's normal behaviour is otherwise untouched.
-            .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, window, cx| {
-                if e.keystroke.key == "escape" && cx.has_active_drag() {
-                    cx.stop_active_drag(window);
-                    this.spring_load = None;
-                    this.tree_spring = None;
-                    cx.stop_propagation();
-                    cx.notify();
-                }
-            }))
             // Any left-click dismisses an open breadcrumb context menu
             // (picking an item or clicking away), so it's also the
             // moment to re-enable the crumb tooltip we suppressed while

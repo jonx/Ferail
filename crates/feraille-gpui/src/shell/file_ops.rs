@@ -230,11 +230,16 @@ impl Shell {
         // Directive, structurally.
         let prog = Arc::new(engine::TransferProgress::new());
         let done = Arc::new(AtomicBool::new(false));
+        // The running-phase label, shared so the precheck can swap an
+        // Auto drag-drop's generic "Transferring" for the resolved
+        // "Moving"/"Copying" once it learns the volume relationship.
+        let live_label = Arc::new(std::sync::Mutex::new(base_label.clone()));
         {
             let weak = cx.weak_entity();
             let prog = prog.clone();
             let done = done.clone();
             let base_label = base_label.clone();
+            let live_label = live_label.clone();
             cx.spawn(async move |_this, cx| {
                 let mut ema: f64 = 0.0;
                 let mut last_bytes: u64 = 0;
@@ -286,7 +291,10 @@ impl Shell {
                     let label = if planning {
                         format!("{verb} \u{2014} preparing ({planned} items)\u{2026}")
                     } else {
-                        base_label.clone()
+                        live_label
+                            .lock()
+                            .map(|g| g.clone())
+                            .unwrap_or_else(|_| base_label.clone())
                     };
                     let Some(shell) = weak.upgrade() else { break };
                     shell.update(cx, |this, cx| {
@@ -311,6 +319,8 @@ impl Shell {
         let weak = cx.weak_entity();
         let prog_run = prog.clone();
         let done_run = done.clone();
+        let live_label_run = live_label.clone();
+        let noun_run = noun.clone();
         cx.spawn(async move |_this, cx| {
             let end_task = |cx: &mut AsyncApp| {
                 // Stop the sampler too, so a bailed-out op (plan error,
@@ -347,6 +357,57 @@ impl Shell {
                     return;
                 }
             };
+
+            // 1b. Free-space precheck + Auto-mode resolution (background:
+            // same_volume stats + statvfs aren't UI-thread work). A
+            // cross-volume transfer writes total_bytes onto the
+            // destination volume — refuse up front rather than fail
+            // mid-copy and strand a partial. Same-volume clone/rename
+            // consume ~nothing, so they skip the check. Resolving the
+            // volume relationship here also lets an Auto drag-drop
+            // relabel from generic "Transferring" to "Moving"/"Copying".
+            let (all_same_pre, space) = {
+                let sources = plan.sources.clone();
+                let dest_dir = plan.dest_dir.clone();
+                let total = plan.total_bytes;
+                cx.background_executor()
+                    .spawn(async move {
+                        let all_same = sources.iter().all(|s| engine::same_volume(s, &dest_dir));
+                        let space = if all_same {
+                            None
+                        } else {
+                            engine::available_space(&dest_dir).map(|avail| (avail, total))
+                        };
+                        (all_same, space)
+                    })
+                    .await
+            };
+            if mode == TransferMode::Auto {
+                let resolved = if all_same_pre { "Moving" } else { "Copying" };
+                if let Ok(mut g) = live_label_run.lock() {
+                    *g = format!("{resolved} {noun_run}\u{2026}");
+                }
+            }
+            if let Some((avail, total)) = space {
+                if total > avail {
+                    end_task(cx);
+                    let dest_name = dest
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| dest.display().to_string());
+                    let _ = win.update(cx, |_, window, cx| {
+                        window.push_notification(
+                            Notification::error(format!(
+                                "Not enough space on \u{201c}{dest_name}\u{201d} \u{2014} needs {}, only {} free",
+                                feraille_fs_native::humanize_bytes(total),
+                                feraille_fs_native::humanize_bytes(avail),
+                            )),
+                            cx,
+                        );
+                    });
+                    return;
+                }
+            }
 
             // 2. Per-item collision resolution. Pasting next to the
             // originals obviously means "make me a copy" — no dialog.

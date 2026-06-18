@@ -268,6 +268,32 @@ pub fn same_volume(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Free bytes available to an unprivileged caller on the filesystem
+/// holding `path` (not the volume root — any path under it answers).
+/// `None` when the query isn't available (non-mac, or `statvfs` failed),
+/// in which case the caller should skip the precheck rather than block a
+/// transfer it can't size. [win-parity: GetDiskFreeSpaceExW]
+#[cfg(target_os = "macos")]
+pub fn available_space(path: &Path) -> Option<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let c = CString::new(path.as_os_str().as_bytes()).ok()?;
+    // SAFETY: zeroed statvfs is valid; `c` is a live NUL-terminated path.
+    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
+        return None;
+    }
+    // f_bavail counts blocks available to non-root; f_frsize is the
+    // fundamental block size (fall back to f_bsize if it's 0).
+    let frsize = if s.f_frsize != 0 { s.f_frsize } else { s.f_bsize };
+    Some((s.f_bavail as u64).saturating_mul(frsize as u64))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn available_space(_path: &Path) -> Option<u64> {
+    None
+}
+
 /// Walk the sources, total the work (overall + per-source), and detect
 /// top-level collisions. Increments `prog.note_planned()` as it walks so
 /// the UI can show "Preparing — N items", then `begin_transfer` flips the
@@ -1056,6 +1082,18 @@ mod tests {
         assert_eq!(fs::read(&dst).unwrap(), b"hello");
         let got = xattr::get(&dst, "com.feraille.test").unwrap();
         assert_eq!(got.as_deref(), Some(&b"v1"[..]), "xattr lost in copy");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Free-space query answers for an ordinary directory (not just a
+    /// volume root) and reports a plausible nonzero figure — that's what
+    /// the cross-volume precheck relies on.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn available_space_reports_free_bytes() {
+        let root = scratch("freespace");
+        let avail = available_space(&root).expect("statvfs answers for a temp dir");
+        assert!(avail > 0, "expected nonzero free space, got {avail}");
         let _ = fs::remove_dir_all(&root);
     }
 

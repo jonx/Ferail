@@ -732,6 +732,20 @@ impl Shell {
             });
         shell._subscriptions.push(thumb_subscription);
 
+        // Esc cancels an in-progress drag. gpui only auto-cancels on
+        // mouse-up, and an element `on_key_down` needs the shell focused
+        // (which it may not be mid-drag), so observe keystrokes globally
+        // — this fires regardless of focus.
+        let drag_esc_subscription = cx.observe_keystrokes(move |this, e, window, cx| {
+            if e.keystroke.key == "escape" && cx.has_active_drag() {
+                cx.stop_active_drag(window);
+                this.spring_load = None;
+                this.tree_spring = None;
+                cx.notify();
+            }
+        });
+        shell._subscriptions.push(drag_esc_subscription);
+
         shell.start_metadata_load(cx);
         shell.load_path(start, cx);
         shell
