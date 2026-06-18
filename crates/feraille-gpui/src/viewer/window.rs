@@ -59,10 +59,12 @@ const STATUS_H: f32 = 28.0;
 /// slipping off the thin track).
 const SEEK_BAR_H: f32 = 18.0;
 /// Size (px) of an In/Out cue grip triangle.
-const SEEK_GRIP: f32 = 13.0;
+const SEEK_GRIP: f32 = 18.0;
 /// How close (in px) the cursor must be to a cue to grab it instead of
-/// scrubbing the playhead.
-const SEEK_GRAB_PX: f32 = 10.0;
+/// scrubbing the playhead. Kept >= half the grip (plus a margin for the
+/// triangle glyph's side-bearing) so a click anywhere on the visible
+/// triangle grabs it, rather than just outside it.
+const SEEK_GRAB_PX: f32 = 16.0;
 /// Per-step zoom factor for the toolbar buttons / Cmd+= / Cmd+-.
 const ZOOM_STEP: f32 = 1.25;
 /// Fullscreen: hovering within this many px of the window top reveals
