@@ -30,9 +30,9 @@ use crate::shell::{
 };
 use crate::entry_info::{ENTRY_INFO_CONTEXT, EntryInfoDismiss};
 use crate::viewer::window::{
-    VIEWER_CONTEXT, ViewerActualSize, ViewerDismiss, ViewerNext, ViewerPrev, ViewerRotateCcw,
-    ViewerRotateCw, ViewerToggleFullscreen, ViewerTogglePlay, ViewerZoomIn, ViewerZoomOut,
-    ViewerZoomReset,
+    VIEWER_CONTEXT, ViewerActualSize, ViewerDismiss, ViewerLeft, ViewerNext, ViewerPrev,
+    ViewerRight, ViewerRotateCcw, ViewerRotateCw, ViewerToggleAdjust, ViewerToggleFullscreen,
+    ViewerTogglePlay, ViewerZoomIn, ViewerZoomOut, ViewerZoomReset,
 };
 
 /// Install keybindings for every command in `feraille_core::commands`
@@ -359,9 +359,12 @@ pub(crate) fn install_extras(cx: &mut App) {
         // only `view.open_viewer`. [mac] Cmd-chords + Cmd+Ctrl+F;
         // win-parity remaps to Ctrl / F11 when the Windows shell
         // lands.
-        KeyBinding::new("left", ViewerPrev, Some(VIEWER_CONTEXT)),
+        // Left/Right are video-aware (frame-step a clip, navigate a
+        // still); Up/Down are always entry navigation so a video is
+        // still reachable from the keyboard. See ViewerWindow::on_left.
+        KeyBinding::new("left", ViewerLeft, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("right", ViewerRight, Some(VIEWER_CONTEXT)),
         KeyBinding::new("up", ViewerPrev, Some(VIEWER_CONTEXT)),
-        KeyBinding::new("right", ViewerNext, Some(VIEWER_CONTEXT)),
         KeyBinding::new("down", ViewerNext, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", ViewerDismiss, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", EntryInfoDismiss, Some(ENTRY_INFO_CONTEXT)),
@@ -375,5 +378,8 @@ pub(crate) fn install_extras(cx: &mut App) {
         // clockwise, Shift-R counter-clockwise.
         KeyBinding::new("r", ViewerRotateCw, Some(VIEWER_CONTEXT)),
         KeyBinding::new("shift-r", ViewerRotateCcw, Some(VIEWER_CONTEXT)),
+        // Colour adjustments popup (brightness / contrast / colour). Also
+        // reachable by right-click on the stage or the toolbar button.
+        KeyBinding::new("e", ViewerToggleAdjust, Some(VIEWER_CONTEXT)),
     ]);
 }

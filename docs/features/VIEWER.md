@@ -191,12 +191,19 @@ another entry keeps `{mode, center}` verbatim:
   hovering the top ~48 px strip shows it (pure hover state, no timers).
 - **Input map** (context `"Viewer"`, registered in `keymap.rs
   install_extras`, so Shell shortcuts can't fire here):
-  - `Left/Right` (also `Up/Down`): previous/next entry
-  - `Space`: toggle slideshow play/pause
+  - `Up/Down`: previous/next entry (always)
+  - `Left/Right`: previous/next entry on a still; **step one frame
+    back/forward** on a video (pausing it). `Up/Down` stay entry
+    navigation so a video is still reachable from the keyboard.
+  - `Space`: toggle the **video's** play/pause on a video, else toggle
+    slideshow play/pause
   - `Esc`: exit fullscreen if fullscreen, else close window
   - `Cmd+=` / `Cmd+-` / `Cmd+0` **[mac; win-parity Ctrl]**: zoom in/out/reset
   - `Cmd+Ctrl+F` **[mac]**: fullscreen
   - `R` / `Shift+R`: rotate the current item clockwise / counter-clockwise
+  - `E`: toggle the **Adjustments** popup (also a right-click on the stage,
+    or the palette toolbar button). `Esc` closes the popup first; a click
+    elsewhere on the stage dismisses it.
   - Wheel: zoom toward cursor · Drag: pan when zoomed · Double-click:
     fit ↔ actual
 - **Rotation** is view-only, per-item, and ephemeral: it lives in
@@ -227,6 +234,29 @@ another entry keeps `{mode, center}` verbatim:
   if a slideshow is running, advance to the next clip. A full-length Out
   (`1.0`) is the clip's natural end, left to the end-of-play notification
   so the poll doesn't race it; only a real trim is enforced in the poll.
+- **Adjustments popup** (`E` / right-click / palette button): a small
+  floating panel with custom-drawn sliders (same hand-rolled track widget
+  as the seek bar — label, draggable fill + thumb, bounds captured via a
+  `canvas`). Two stages, both view-only and window-level (carried across
+  navigation, never written to disk):
+  - **Colour grade** — Brightness / Contrast / Color (saturation), each a
+    bipolar `[-1, 1]` slider that detents to neutral at centre. Cheap
+    per-pixel maths (`grade_bgra`, a brightness+contrast LUT plus optional
+    saturation mix over the BGRA buffer). Applies to **stills and video**.
+  - **Enhancement** — Denoise (Gaussian), Sharpen (unsharp mask), and an
+    Upscale `1× / 2× / 4×` (Lanczos, capped at `UPSCALE_MAX_EDGE`).
+    **Stills only** — far too heavy for live video frames — so this section
+    is hidden when a video is current. Upscale feeds a higher-res bitmap
+    into the *same* layout rect, so the win shows when zoomed past 100 %.
+  - **Threading**: the still pipeline (grade → denoise → upscale → sharpen
+    → rotate, `process_still_pixels`) is convolution/resampling-heavy, so
+    it **never runs on the render path** — it's dispatched to the
+    background executor (`schedule_process`), keyed by
+    `(index, turns, grade, enhance)` into the `processed` one-slot cache,
+    with a monotonic token dropping superseded runs. While a fresh result
+    computes, the plain rotated original stands in (UI never stalls — the
+    prime directive). Video grading stays inline (`graded_video`, per frame
+    seq) since it can't be pre-baked off-thread.
 - **Stay on top** checkbox raises the window to the floating `NSWindow`
   level. (Both checkboxes are gpui-component `Checkbox`es.)
 - **Zoom / pan / fit apply to video for free**: the pulled frame is laid

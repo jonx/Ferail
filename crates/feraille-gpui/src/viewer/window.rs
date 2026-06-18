@@ -13,7 +13,9 @@ use std::sync::Arc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::{ActiveTheme, Sizable, button::Button, checkbox::Checkbox, h_flex, v_flex};
+use gpui_component::{
+    ActiveTheme, Selectable, Sizable, button::Button, checkbox::Checkbox, h_flex, v_flex,
+};
 
 use std::time::Duration;
 
@@ -31,6 +33,8 @@ actions!(
     [
         ViewerPrev,
         ViewerNext,
+        ViewerLeft,
+        ViewerRight,
         ViewerZoomIn,
         ViewerZoomOut,
         ViewerZoomReset,
@@ -39,6 +43,7 @@ actions!(
         ViewerTogglePlay,
         ViewerRotateCw,
         ViewerRotateCcw,
+        ViewerToggleAdjust,
         ViewerDismiss
     ]
 );
@@ -123,6 +128,222 @@ fn rotate_render_image(img: &RenderImage, quarter_turns: u8) -> Option<Arc<Rende
 fn build_video_frame(bgra: Vec<u8>, w: u32, h: u32) -> Option<Arc<RenderImage>> {
     let buf = image::RgbaImage::from_raw(w, h, bgra)?;
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(buf)])))
+}
+
+/// Number of draggable sliders in the adjustments popup (the three colour
+/// controls plus denoise + sharpen). Upscale is buttons, not a slider.
+const SLIDER_COUNT: usize = 5;
+/// Longest-edge cap (px) for an upscale, matching the loader's decode cap
+/// so a 4× enlargement of a large image can't blow past texture limits.
+const UPSCALE_MAX_EDGE: u32 = 8192;
+
+/// A draggable slider in the adjustments popup. The colour ones write to
+/// [`ColorAdjust`] (signed, centre-detented); denoise/sharpen write to
+/// [`EnhanceParams`] (one-sided 0..1).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SliderId {
+    Brightness,
+    Contrast,
+    /// "Color" in the UI — chroma intensity.
+    Saturation,
+    Denoise,
+    Sharpen,
+}
+
+impl SliderId {
+    /// Stable index into the per-slider track-bounds array.
+    fn idx(self) -> usize {
+        match self {
+            SliderId::Brightness => 0,
+            SliderId::Contrast => 1,
+            SliderId::Saturation => 2,
+            SliderId::Denoise => 3,
+            SliderId::Sharpen => 4,
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            SliderId::Brightness => "Brightness",
+            SliderId::Contrast => "Contrast",
+            SliderId::Saturation => "Color",
+            SliderId::Denoise => "Denoise",
+            SliderId::Sharpen => "Sharpen",
+        }
+    }
+    /// `(min, max)` of the value, and whether it detents to zero at centre.
+    /// Colour controls are bipolar; enhancement controls are one-sided.
+    fn range(self) -> (f32, f32) {
+        match self {
+            SliderId::Denoise | SliderId::Sharpen => (0.0, 1.0),
+            _ => (-1.0, 1.0),
+        }
+    }
+    fn centered(self) -> bool {
+        matches!(
+            self,
+            SliderId::Brightness | SliderId::Contrast | SliderId::Saturation
+        )
+    }
+}
+
+/// View-only colour grade applied to the displayed bitmap. Each field is
+/// a signed strength in `[-1, 1]`; all-zero is the neutral identity. Like
+/// rotation this is purely in-memory (gpui's `img` has no colour filter —
+/// docs/GPUI-UPSTREAM.md), so the pixels are transformed on the CPU and
+/// re-uploaded. Window-level: not saved anywhere, but it does carry across
+/// navigation so a grade set once applies to every item you flip through.
+#[derive(Clone, Copy, PartialEq)]
+struct ColorAdjust {
+    brightness: f32,
+    contrast: f32,
+    saturation: f32,
+}
+
+impl Default for ColorAdjust {
+    fn default() -> Self {
+        Self {
+            brightness: 0.0,
+            contrast: 0.0,
+            saturation: 0.0,
+        }
+    }
+}
+
+impl ColorAdjust {
+    fn is_neutral(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// View-only enhancement for stills: denoise (Gaussian) and sharpen
+/// (unsharp mask) as `0..1` strengths, plus an integer upscale factor
+/// (1 = off). All run off-thread via [`process_still_pixels`]; neutral by
+/// default and, like the colour grade, window-level across navigation.
+#[derive(Clone, Copy, PartialEq)]
+struct EnhanceParams {
+    denoise: f32,
+    sharpen: f32,
+    upscale: u8,
+}
+
+impl Default for EnhanceParams {
+    fn default() -> Self {
+        Self {
+            denoise: 0.0,
+            sharpen: 0.0,
+            upscale: 1,
+        }
+    }
+}
+
+impl EnhanceParams {
+    fn is_neutral(&self) -> bool {
+        self.denoise == 0.0 && self.sharpen == 0.0 && self.upscale <= 1
+    }
+}
+
+/// The full off-thread still pipeline: colour grade → denoise → upscale →
+/// sharpen → rotate, over a packed BGRA buffer. Returns the final
+/// `(width, height, BGRA bytes)`. Heavy (convolutions + resampling), so it
+/// only ever runs on the background executor — never the render path.
+///
+/// `image`'s blur / resize / unsharpen act per channel (or purely
+/// spatially), so the BGRA byte order is irrelevant and round-trips; only
+/// the colour grade and the eventual display care about channel identity.
+fn process_still_pixels(
+    bgra: &[u8],
+    w: u32,
+    h: u32,
+    rot: u8,
+    grade: ColorAdjust,
+    enh: EnhanceParams,
+) -> Option<(u32, u32, Vec<u8>)> {
+    use image::imageops;
+
+    let mut buf = bgra.to_vec();
+    if !grade.is_neutral() {
+        grade_bgra(&mut buf, grade);
+    }
+    let mut img = image::RgbaImage::from_raw(w, h, buf)?;
+
+    if enh.denoise > 0.0 {
+        // 0..1 → a gentle 0..3 px Gaussian radius.
+        img = imageops::fast_blur(&img, enh.denoise * 3.0);
+    }
+    if enh.upscale > 1 {
+        let f = enh.upscale as u32;
+        let (mut nw, mut nh) = (w.saturating_mul(f), h.saturating_mul(f));
+        let longest = nw.max(nh);
+        if longest > UPSCALE_MAX_EDGE {
+            let s = UPSCALE_MAX_EDGE as f64 / longest as f64;
+            nw = ((nw as f64 * s).round() as u32).max(1);
+            nh = ((nh as f64 * s).round() as u32).max(1);
+        }
+        img = imageops::resize(&img, nw, nh, imageops::FilterType::Lanczos3);
+    }
+    if enh.sharpen > 0.0 {
+        // Sharpen *after* any upscale so it crisps the enlarged result.
+        // Radius grows with strength; threshold 0 sharpens everything.
+        img = imageops::unsharpen(&img, 1.0 + enh.sharpen * 2.0, 0);
+    }
+    let img = match rot % 4 {
+        1 => imageops::rotate90(&img),
+        2 => imageops::rotate180(&img),
+        3 => imageops::rotate270(&img),
+        _ => img,
+    };
+    Some((img.width(), img.height(), img.into_raw()))
+}
+
+/// Apply a [`ColorAdjust`] to a bitmap, returning a fresh `RenderImage`.
+/// `None` for a neutral grade (caller reuses the source) or if the
+/// bitmap can't be read. Brightness + contrast fold into a single 256-
+/// entry LUT; saturation, which mixes channels, runs per pixel only when
+/// it's off-neutral. Channel order is BGRA in `RenderImage` storage, so
+/// the luma weights index the bytes accordingly. Alpha is untouched.
+fn apply_color_adjust(img: &RenderImage, adj: ColorAdjust) -> Option<Arc<RenderImage>> {
+    if adj.is_neutral() {
+        return None;
+    }
+    let size = img.size(0);
+    let (w, h) = (size.width.0 as u32, size.height.0 as u32);
+    let mut buf = img.as_bytes(0)?.to_vec();
+    grade_bgra(&mut buf, adj);
+    let rgba = image::RgbaImage::from_raw(w, h, buf)?;
+    Some(Arc::new(RenderImage::new(vec![image::Frame::new(rgba)])))
+}
+
+/// In-place colour grade over a packed BGRA byte buffer (the storage
+/// order of `RenderImage`). Brightness + contrast fold into one 256-entry
+/// LUT; saturation, which mixes channels, runs per pixel only when it's
+/// off-neutral. Alpha (`px[3]`) is left untouched. Pure — no gpui types —
+/// so the maths is unit-testable on a plain `Vec<u8>`.
+fn grade_bgra(buf: &mut [u8], adj: ColorAdjust) {
+    // Classic contrast factor (GIMP/ImageMagick), with the param mapped
+    // to the [-128, 128] code range, then brightness as a post-add.
+    let c = (adj.contrast * 128.0).clamp(-255.0, 255.0);
+    let cf = (259.0 * (c + 255.0)) / (255.0 * (259.0 - c));
+    let b = adj.brightness * 255.0;
+    let lut: [u8; 256] =
+        core::array::from_fn(|i| (cf * (i as f32 - 128.0) + 128.0 + b).clamp(0.0, 255.0) as u8);
+
+    let sat = 1.0 + adj.saturation;
+    let do_sat = (sat - 1.0).abs() > f32::EPSILON;
+    for px in buf.chunks_exact_mut(4) {
+        // Stored BGRA: px[0]=B, px[1]=G, px[2]=R.
+        let mut bl = lut[px[0] as usize] as f32;
+        let mut g = lut[px[1] as usize] as f32;
+        let mut r = lut[px[2] as usize] as f32;
+        if do_sat {
+            let lum = 0.299 * r + 0.587 * g + 0.114 * bl;
+            r = (lum + (r - lum) * sat).clamp(0.0, 255.0);
+            g = (lum + (g - lum) * sat).clamp(0.0, 255.0);
+            bl = (lum + (bl - lum) * sat).clamp(0.0, 255.0);
+        }
+        px[0] = bl as u8;
+        px[1] = g as u8;
+        px[2] = r as u8;
+    }
 }
 
 /// What a live drag on the custom seek bar is manipulating: the
@@ -230,6 +451,41 @@ pub struct ViewerWindow {
     /// (index, quarter-turns), so we rotate once per change instead of
     /// every frame. Invalidated on rotate and on navigation.
     rotated: Option<(usize, u8, Arc<RenderImage>)>,
+    /// Live colour grade (brightness / contrast / "color") applied to the
+    /// displayed image or video frame. Neutral by default; window-level.
+    /// gpui's `img` has no colour filter so the pixels are transformed on
+    /// the CPU (see [`grade_bgra`]) — same approach as rotation.
+    adjust: ColorAdjust,
+    /// Live enhancement (denoise / sharpen / upscale) applied to *stills*
+    /// only — too heavy for live video frames. Neutral by default.
+    enhance: EnhanceParams,
+    /// Whether the adjustments popup is open (toggled by `E`, a right-click
+    /// on the stage, or the toolbar button).
+    adjust_panel_open: bool,
+    /// Which slider the in-flight pointer drag is moving (`None` idle).
+    slider_drag: Option<SliderId>,
+    /// Track bounds for each popup slider, captured each render so a cursor
+    /// x maps to a value. Indexed by [`SliderId::idx`].
+    slider_bounds: [Bounds<Pixels>; SLIDER_COUNT],
+    /// Final processed still for the current (index, turns, grade, enhance),
+    /// produced off-thread (grade + denoise + upscale + sharpen + rotate)
+    /// since enhancement is far too heavy for the render path. While a
+    /// non-matching result is pending the plain rotated original stands in.
+    processed: Option<(usize, u8, ColorAdjust, EnhanceParams, Arc<RenderImage>)>,
+    /// Monotonic token: a background process result is only accepted if its
+    /// token still matches, so superseded runs (params changed mid-flight)
+    /// are dropped instead of flashing a stale grade.
+    process_gen: u64,
+    /// Single-flight guard: at most one process task runs at a time. A
+    /// slider drag fires many param changes; without this each would spawn
+    /// a fresh full-res (and possibly upscaled) job and they'd pile up into
+    /// an out-of-memory crash. New requests during a run are coalesced —
+    /// the in-flight task re-checks the latest params when it finishes.
+    process_inflight: bool,
+    /// One-slot cache of the colour-graded video frame for the current
+    /// (frame seq, quarter-turns, grade); the seq changes every frame, so
+    /// this de-dups re-renders of the same frame rather than across frames.
+    video_adjusted: Option<(u64, u8, ColorAdjust, Arc<RenderImage>)>,
 }
 
 impl ViewerWindow {
@@ -292,6 +548,15 @@ impl ViewerWindow {
             process,
             rotations: HashMap::new(),
             rotated: None,
+            adjust: ColorAdjust::default(),
+            enhance: EnhanceParams::default(),
+            adjust_panel_open: false,
+            slider_drag: None,
+            slider_bounds: [Bounds::default(); SLIDER_COUNT],
+            processed: None,
+            process_gen: 0,
+            process_inflight: false,
+            video_adjusted: None,
         };
         this.request_current(cx);
         this.prefetch_neighbors(cx);
@@ -323,6 +588,7 @@ impl ViewerWindow {
         self.playback.bump();
         self.request_current(cx);
         self.prefetch_neighbors(cx);
+        self.schedule_process(cx);
         // "Slideshow from Here" into an already-open viewer starts the
         // show on the new anchor; a plain re-open leaves it paused.
         if autoplay {
@@ -380,6 +646,9 @@ impl ViewerWindow {
                     None => FrameState::Failed,
                 };
                 this.cache.insert(path, state);
+                // If this is the current item and a grade/enhance is live,
+                // its full-res frame is now available to process.
+                this.schedule_process(cx);
                 cx.notify();
             });
         })
@@ -398,6 +667,9 @@ impl ViewerWindow {
         self.index = (self.index as isize + delta).rem_euclid(len as isize) as usize;
         self.request_current(cx);
         self.prefetch_neighbors(cx);
+        // Re-process for the new item (no-op if neutral, or if its frame is
+        // still decoding — the request completion re-triggers it).
+        self.schedule_process(cx);
         let epoch = self.playback.bump();
         // Video entries advance on their own end-of-playback event,
         // not the interval timer — a 4-minute clip plays through.
@@ -767,6 +1039,12 @@ impl ViewerWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A click on the stage (i.e. outside the popup, which swallows its
+        // own clicks) dismisses the adjustments popup.
+        if self.adjust_panel_open {
+            self.adjust_panel_open = false;
+            cx.notify();
+        }
         if e.click_count >= 2 {
             self.toggle_actual_at(self.stage_local(e.position), cx);
             self.drag_last = None;
@@ -841,9 +1119,37 @@ impl ViewerWindow {
         self.step(1, cx);
     }
 
+    /// Left arrow. On a video it steps one frame back (pausing); on a
+    /// still it's plain previous-entry navigation. Up/Down stay on
+    /// `on_prev`/`on_next` so a video is still navigable from the
+    /// keyboard while Left/Right scrub it frame by frame.
+    fn on_left(&mut self, _: &ViewerLeft, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.current_is_video() {
+            self.step_video(-1, cx);
+        } else {
+            self.step(-1, cx);
+        }
+    }
+
+    /// Right arrow — mirror of `on_left`: one frame forward on a video,
+    /// next-entry on a still.
+    fn on_right(&mut self, _: &ViewerRight, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.current_is_video() {
+            self.step_video(1, cx);
+        } else {
+            self.step(1, cx);
+        }
+    }
+
+    /// Space. On a video it toggles the clip's own play/pause; on a
+    /// still it toggles the slideshow.
     fn on_toggle_play(&mut self, _: &ViewerTogglePlay, _window: &mut Window, cx: &mut Context<Self>) {
-        let playing = self.playback.playing;
-        self.set_playing(!playing, cx);
+        if self.current_is_video() {
+            self.toggle_video_paused(cx);
+        } else {
+            let playing = self.playback.playing;
+            self.set_playing(!playing, cx);
+        }
     }
 
     fn on_zoom_in(&mut self, _: &ViewerZoomIn, _window: &mut Window, cx: &mut Context<Self>) {
@@ -912,15 +1218,216 @@ impl ViewerWindow {
         }
         // Drop the cached rotated bitmap; the stage rebuilds it on demand.
         self.rotated = None;
+        // Rotation changes the processed key (the pipeline bakes in the
+        // turn), so re-process if a grade/enhance is live.
+        self.schedule_process(cx);
         cx.notify();
     }
 
-    /// Esc — leave fullscreen first; a second Esc closes the window.
-    fn on_dismiss(&mut self, _: &ViewerDismiss, window: &mut Window, _cx: &mut Context<Self>) {
-        if window.is_fullscreen() {
+    /// Esc — close the adjustments popup first, then leave fullscreen,
+    /// then close the window.
+    fn on_dismiss(&mut self, _: &ViewerDismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.adjust_panel_open {
+            self.adjust_panel_open = false;
+            cx.notify();
+        } else if window.is_fullscreen() {
             window.toggle_fullscreen();
         } else {
             window.remove_window();
+        }
+    }
+
+    /// `E` / toolbar button / right-click — toggle the colour-adjust popup.
+    fn on_toggle_adjust(
+        &mut self,
+        _: &ViewerToggleAdjust,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_panel_open = !self.adjust_panel_open;
+        cx.notify();
+    }
+
+    /// Current value of a popup slider (reads `adjust` or `enhance`).
+    fn slider_value(&self, id: SliderId) -> f32 {
+        match id {
+            SliderId::Brightness => self.adjust.brightness,
+            SliderId::Contrast => self.adjust.contrast,
+            SliderId::Saturation => self.adjust.saturation,
+            SliderId::Denoise => self.enhance.denoise,
+            SliderId::Sharpen => self.enhance.sharpen,
+        }
+    }
+
+    /// Map a window-space x to a slider's value, clamped to its range, with
+    /// a small detent that snaps a bipolar control near-centre to neutral.
+    fn slider_value_at(&self, x: Pixels, id: SliderId) -> f32 {
+        let b = self.slider_bounds[id.idx()];
+        let w = b.size.width.as_f32();
+        let (lo, hi) = id.range();
+        if w <= 0.0 {
+            return lo;
+        }
+        let frac = ((x.as_f32() - b.origin.x.as_f32()) / w).clamp(0.0, 1.0);
+        let v = lo + frac * (hi - lo);
+        if id.centered() && v.abs() < 0.04 { 0.0 } else { v }
+    }
+
+    /// Commit a slider value to the matching `adjust`/`enhance` field, then
+    /// re-process. The slider thumb tracks instantly; the (heavy) bitmap
+    /// recompute is scheduled off-thread so the UI never stalls.
+    fn set_slider(&mut self, id: SliderId, v: f32, cx: &mut Context<Self>) {
+        match id {
+            SliderId::Brightness => self.adjust.brightness = v,
+            SliderId::Contrast => self.adjust.contrast = v,
+            SliderId::Saturation => self.adjust.saturation = v,
+            SliderId::Denoise => self.enhance.denoise = v,
+            SliderId::Sharpen => self.enhance.sharpen = v,
+        }
+        self.after_adjust_change(cx);
+    }
+
+    /// Set the integer upscale factor (1 = off).
+    fn set_upscale(&mut self, factor: u8, cx: &mut Context<Self>) {
+        self.enhance.upscale = factor.max(1);
+        self.after_adjust_change(cx);
+    }
+
+    /// Restore the neutral grade *and* enhancement.
+    fn reset_adjust(&mut self, cx: &mut Context<Self>) {
+        self.adjust = ColorAdjust::default();
+        self.enhance = EnhanceParams::default();
+        self.after_adjust_change(cx);
+    }
+
+    /// Shared tail for any grade/enhance change: drop the now-stale video
+    /// grade (stills go through `processed`), kick off a fresh background
+    /// process, and repaint.
+    fn after_adjust_change(&mut self, cx: &mut Context<Self>) {
+        if let Some((.., old)) = self.video_adjusted.take() {
+            self.video_frames_to_drop.push(old);
+        }
+        self.schedule_process(cx);
+        cx.notify();
+    }
+
+    /// Spawn the off-thread still pipeline for the current item if its
+    /// result isn't already cached. No-op for a neutral grade+enhance (the
+    /// plain image is shown) or when the full-res frame hasn't decoded yet
+    /// (a later [`Self::request_path`] completion re-triggers this).
+    fn schedule_process(&mut self, cx: &mut Context<Self>) {
+        if self.current_is_video() {
+            return;
+        }
+        let neutral = self.adjust.is_neutral() && self.enhance.is_neutral();
+        if neutral {
+            // Nothing to apply — release any cached result so the plain
+            // image shows immediately.
+            if let Some((.., old)) = self.processed.take() {
+                self.video_frames_to_drop.push(old);
+            }
+            return;
+        }
+        let path = match self.current() {
+            Some(e) => e.path.clone(),
+            None => return,
+        };
+        let frame = match self.cache.get(&path) {
+            Some(FrameState::Loaded(f)) => f.clone(),
+            _ => return, // still decoding; retried on load completion
+        };
+        let rot = self.current_rotation();
+        let (idx, grade, enh) = (self.index, self.adjust, self.enhance);
+        // Already have (or are about to show) the exact result?
+        if matches!(
+            &self.processed,
+            Some((i, r, g, e, _)) if *i == idx && *r == rot && *g == grade && *e == enh
+        ) {
+            return;
+        }
+        // Single-flight: don't pile up heavy jobs. The running task re-runs
+        // `schedule_process` on completion, so it converges to these params.
+        if self.process_inflight {
+            return;
+        }
+        let Some(src) = frame.image.as_bytes(0).map(|b| b.to_vec()) else {
+            return;
+        };
+        let (w, h) = (frame.w, frame.h);
+        self.process_gen += 1;
+        let token = self.process_gen;
+        self.process_inflight = true;
+        let weak = cx.weak_entity();
+        cx.spawn(async move |_this, cx| {
+            let out = cx
+                .background_executor()
+                .spawn(async move { process_still_pixels(&src, w, h, rot, grade, enh) })
+                .await;
+            let Some(this) = weak.upgrade() else { return };
+            this.update(cx, |this, cx| {
+                this.process_inflight = false;
+                // `out` is None only on a genuine pipeline failure (bad
+                // dims). Bail without rescheduling — re-running the same
+                // failing job would be a tight crash loop.
+                let Some((rw, rh, buf)) = out else { return };
+                if this.process_gen == token {
+                    if let Some(img) = build_video_frame(buf, rw, rh) {
+                        if let Some((.., old)) =
+                            this.processed.replace((idx, rot, grade, enh, img))
+                        {
+                            this.video_frames_to_drop.push(old);
+                        }
+                        cx.notify();
+                    }
+                }
+                // Catch up to the live params if they changed mid-flight
+                // (a no-op once the cached result matches them).
+                this.schedule_process(cx);
+            });
+        })
+        .detach();
+    }
+
+    /// The processed (grade+enhance+rotate) still for the current item, if
+    /// its cached result matches the live params. `None` while neutral or
+    /// while a fresh result is still computing (caller shows the original).
+    fn processed_still(&self, rot: u8) -> Option<Arc<RenderImage>> {
+        match &self.processed {
+            Some((i, r, g, e, img))
+                if *i == self.index
+                    && *r == rot
+                    && *g == self.adjust
+                    && *e == self.enhance =>
+            {
+                Some(img.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Apply the current grade to a resolved video frame, reusing the
+    /// one-slot cache keyed by (frame seq, turns, grade).
+    fn graded_video(&mut self, base: Arc<RenderImage>, rot: u8) -> Arc<RenderImage> {
+        if self.adjust.is_neutral() {
+            return base;
+        }
+        let seq = self.video_frame_seq;
+        let fresh = matches!(
+            &self.video_adjusted,
+            Some((s, r, a, _)) if *s == seq && *r == rot && *a == self.adjust
+        );
+        if !fresh {
+            if let Some(graded) = apply_color_adjust(&base, self.adjust) {
+                if let Some((.., old)) =
+                    self.video_adjusted.replace((seq, rot, self.adjust, graded))
+                {
+                    self.video_frames_to_drop.push(old);
+                }
+            }
+        }
+        match &self.video_adjusted {
+            Some((s, r, a, img)) if *s == seq && *r == rot && *a == self.adjust => img.clone(),
+            _ => base,
         }
     }
 
@@ -1034,6 +1541,16 @@ impl ViewerWindow {
                                 this.on_rotate_cw(&ViewerRotateCw, window, cx)
                             })),
                     )
+                    // Colour adjustments popup — also `E` / right-click.
+                    .child(
+                        Button::new("viewer-adjust")
+                            .icon(gpui_component::Icon::empty().path("icons/palette.svg"))
+                            .small()
+                            .selected(self.adjust_panel_open)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.on_toggle_adjust(&ViewerToggleAdjust, window, cx)
+                            })),
+                    )
                 },
             )
             // Video transport (native controls are hidden so they work
@@ -1142,6 +1659,7 @@ impl ViewerWindow {
                 _ => base,
             }
         };
+        let image = self.graded_video(image, rot);
         // The frame (rotated or not) already carries its displayed dims,
         // so layout uses them directly — no manual aspect swap.
         let sz = image.size(0);
@@ -1168,6 +1686,15 @@ impl ViewerWindow {
             .bg(cx.theme().secondary.opacity(0.35))
             .on_scroll_wheel(cx.listener(Self::on_stage_scroll))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_stage_mouse_down))
+            // Right-click anywhere on the stage opens (toggles) the
+            // colour-adjustments popup — same as `E`.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, _, _, cx| {
+                    this.adjust_panel_open = !this.adjust_panel_open;
+                    cx.notify();
+                }),
+            )
             .on_mouse_move(cx.listener(Self::on_stage_mouse_move))
             .on_mouse_up(
                 MouseButton::Left,
@@ -1195,10 +1722,14 @@ impl ViewerWindow {
                 } else {
                     (f.w as f32, f.h as f32)
                 };
-                // Resolve the bitmap to draw: upright uses the base frame;
-                // a rotation uses the one-slot cache, rebuilding it when
-                // the (index, turns) pair changed.
-                let image = if rot == 0 {
+                // Prefer the off-thread processed bitmap (grade + denoise +
+                // upscale + sharpen + rotate) when its cached result matches
+                // the live params. Otherwise fall back to the plain frame —
+                // upright, or the one-slot CPU-rotated cache — so something
+                // always shows while a fresh process is still computing.
+                let image = if let Some(p) = self.processed_still(rot) {
+                    p
+                } else if rot == 0 {
                     f.image.clone()
                 } else {
                     let fresh = matches!(
@@ -1264,6 +1795,230 @@ impl ViewerWindow {
                 }
             }
         }
+    }
+
+    /// A drag in progress on a slider tracks at the panel level so it
+    /// keeps following the cursor across the whole popup, not just the
+    /// thin track it began on.
+    fn on_adjust_move(&mut self, e: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.slider_drag else { return };
+        if e.pressed_button != Some(MouseButton::Left) {
+            return;
+        }
+        let v = self.slider_value_at(e.position.x, id);
+        self.set_slider(id, v, cx);
+    }
+
+    /// The adjustments popup: colour grade (Brightness / Contrast / Color)
+    /// always, plus the still-only enhancement controls (Denoise, Sharpen,
+    /// Upscale) and Reset, floating at the top-right of the stage. Pointer
+    /// drags are handled at the panel level (see [`Self::on_adjust_move`])
+    /// and `stop_propagation` keeps clicks off the stage beneath.
+    fn adjust_panel(&mut self, cx: &mut Context<Self>) -> Div {
+        let bg = cx.theme().background;
+        let border = cx.theme().border;
+        let foreground = cx.theme().foreground;
+        let top = self.stage_origin_y + 12.0;
+        // Enhancement (denoise/sharpen/upscale) is stills-only — far too
+        // heavy to run on live video frames.
+        let is_video = self.current_is_video();
+
+        let header = h_flex()
+            .justify_between()
+            .items_center()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(foreground)
+                    .child("Adjustments"),
+            )
+            .child(
+                Button::new("viewer-adjust-reset")
+                    .label("Reset")
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| this.reset_adjust(cx))),
+            );
+
+        div()
+            .absolute()
+            .top(px(top))
+            .right(px(12.0))
+            .w(px(248.0))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .bg(bg)
+            .rounded(px(10.0))
+            .border_1()
+            .border_color(border)
+            .shadow_lg()
+            // Keep clicks (left scrub, right re-toggle) off the stage.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+            .on_mouse_move(cx.listener(Self::on_adjust_move))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.slider_drag = None;
+                    cx.notify();
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.slider_drag = None),
+            )
+            .child(header)
+            .child(self.slider_row(SliderId::Brightness, cx))
+            .child(self.slider_row(SliderId::Contrast, cx))
+            .child(self.slider_row(SliderId::Saturation, cx))
+            .when(!is_video, |d| {
+                d.child(div().h_px().my_1().bg(border))
+                    .child(self.slider_row(SliderId::Denoise, cx))
+                    .child(self.slider_row(SliderId::Sharpen, cx))
+                    .child(self.upscale_row(cx))
+            })
+    }
+
+    /// One slider row: a label, a draggable track with a fill (centre-
+    /// anchored for the bipolar colour controls, left-anchored for the
+    /// one-sided enhancement ones) and a thumb, plus a value readout. The
+    /// track bounds are captured via `canvas` so a cursor x maps back to a
+    /// value.
+    fn slider_row(&self, id: SliderId, cx: &mut Context<Self>) -> impl IntoElement {
+        const ROW_H: f32 = 16.0;
+        let value = self.slider_value(id);
+        let (lo_v, hi_v) = id.range();
+        let frac = ((value - lo_v) / (hi_v - lo_v)).clamp(0.0, 1.0);
+        // Fill span: from neutral (centre for bipolar, left edge otherwise).
+        let (fill_lo, fill_hi) = if id.centered() {
+            (frac.min(0.5), frac.max(0.5))
+        } else {
+            (0.0, frac)
+        };
+        let readout = if id.centered() {
+            format!("{:+}", (value * 100.0).round() as i32)
+        } else {
+            format!("{}", (value * 100.0).round() as i32)
+        };
+        let track = cx.theme().slider_bar.opacity(0.3);
+        let fill = cx.theme().primary;
+        let thumb = cx.theme().foreground;
+        let muted = cx.theme().muted_foreground;
+        let entity = cx.entity();
+        let idx = id.idx();
+
+        let bar = div()
+            .relative()
+            .flex_1()
+            .h(px(ROW_H))
+            // Capture the painted track bounds for cursor→value mapping.
+            .child(
+                canvas(
+                    move |bounds, _, cx| {
+                        entity.update(cx, |this, _| this.slider_bounds[idx] = bounds)
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(ROW_H / 2.0 - 1.5))
+                    .left_0()
+                    .right_0()
+                    .h(px(3.0))
+                    .rounded_full()
+                    .bg(track),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(ROW_H / 2.0 - 1.5))
+                    .left(relative(fill_lo))
+                    .right(relative(1.0 - fill_hi))
+                    .h(px(3.0))
+                    .rounded_full()
+                    .bg(fill),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(ROW_H / 2.0 - 6.0))
+                    .left(relative(frac))
+                    .ml(px(-6.0))
+                    .w(px(12.0))
+                    .h(px(12.0))
+                    .rounded_full()
+                    .bg(thumb)
+                    .border_1()
+                    .border_color(fill),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, e: &MouseDownEvent, _w, cx| {
+                    this.slider_drag = Some(id);
+                    let v = this.slider_value_at(e.position.x, id);
+                    this.set_slider(id, v, cx);
+                }),
+            );
+
+        h_flex()
+            .gap_2()
+            .items_center()
+            .child(
+                div()
+                    .w(px(64.0))
+                    .text_xs()
+                    .text_color(muted)
+                    .child(id.label()),
+            )
+            .child(bar)
+            .child(
+                div()
+                    .w(px(30.0))
+                    .flex()
+                    .justify_end()
+                    .child(div().text_xs().text_color(muted).child(readout)),
+            )
+    }
+
+    /// The Upscale row: 1× / 2× / 4× Lanczos resample buttons (1× = off).
+    fn upscale_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let cur = self.enhance.upscale;
+        h_flex()
+            .gap_2()
+            .items_center()
+            .child(div().w(px(64.0)).text_xs().text_color(muted).child("Upscale"))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new("viewer-upscale-1")
+                            .label("1\u{00d7}")
+                            .small()
+                            .selected(cur <= 1)
+                            .on_click(cx.listener(|this, _, _, cx| this.set_upscale(1, cx))),
+                    )
+                    .child(
+                        Button::new("viewer-upscale-2")
+                            .label("2\u{00d7}")
+                            .small()
+                            .selected(cur == 2)
+                            .on_click(cx.listener(|this, _, _, cx| this.set_upscale(2, cx))),
+                    )
+                    .child(
+                        Button::new("viewer-upscale-4")
+                            .label("4\u{00d7}")
+                            .small()
+                            .selected(cur == 4)
+                            .on_click(cx.listener(|this, _, _, cx| this.set_upscale(4, cx))),
+                    ),
+            )
     }
 
     fn status_strip(&mut self, cx: &mut Context<Self>) -> Div {
@@ -1541,6 +2296,8 @@ impl Render for ViewerWindow {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_prev))
             .on_action(cx.listener(Self::on_next))
+            .on_action(cx.listener(Self::on_left))
+            .on_action(cx.listener(Self::on_right))
             .on_action(cx.listener(Self::on_zoom_in))
             .on_action(cx.listener(Self::on_zoom_out))
             .on_action(cx.listener(Self::on_zoom_reset))
@@ -1549,10 +2306,17 @@ impl Render for ViewerWindow {
             .on_action(cx.listener(Self::on_toggle_play))
             .on_action(cx.listener(Self::on_rotate_cw))
             .on_action(cx.listener(Self::on_rotate_ccw))
+            .on_action(cx.listener(Self::on_toggle_adjust))
             .on_action(cx.listener(Self::on_dismiss))
             .relative()
             .size_full()
             .bg(cx.theme().background);
+
+        let panel = if self.adjust_panel_open {
+            Some(self.adjust_panel(cx))
+        } else {
+            None
+        };
 
         if fullscreen {
             // Image edge to edge; toolbar only as a hover overlay at
@@ -1566,18 +2330,32 @@ impl Render for ViewerWindow {
                     .bg(cx.theme().background.opacity(0.92))
                     .child(self.toolbar(cx))
             });
-            root.child(stage_area).when_some(chrome, Div::child)
+            root.child(stage_area)
+                .when_some(chrome, Div::child)
+                .when_some(panel, Div::child)
         } else {
             let toolbar = self.toolbar(cx);
             let status = self.status_strip(cx);
-            root.child(toolbar).child(stage_area).child(status)
+            root.child(toolbar)
+                .child(stage_area)
+                .child(status)
+                .when_some(panel, Div::child)
         }
     }
 }
 
+/// Pixel-maths tests for the rotate / colour / enhancement pipeline.
+/// Deliberately uses *narrow* imports (not `use super::*`): the parent
+/// glob pulls in `gpui::*`, which re-exports `gpui_macros::test`, and that
+/// heavy proc-macro blows the crate recursion limit. Importing only the
+/// symbols under test keeps `#[test]` the lightweight std attribute.
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod grade_tests {
+    use super::{
+        ColorAdjust, EnhanceParams, apply_color_adjust, grade_bgra, process_still_pixels,
+        rotate_render_image,
+    };
+    use gpui::RenderImage;
 
     /// A 90°/270° turn swaps width and height; the pixel buffer length
     /// is preserved. (Verifies the CPU rotate path that stands in for
@@ -1601,5 +2379,71 @@ mod tests {
 
         assert!(rotate_render_image(&base, 0).is_none(), "0° is a no-op");
         assert!(rotate_render_image(&base, 4).is_none(), "full turn is a no-op");
+    }
+
+    #[test]
+    fn grade_brightness_raises_channels_alpha_untouched() {
+        // One BGRA pixel of mid grey with a distinctive alpha.
+        let mut buf = vec![100u8, 100, 100, 200];
+        grade_bgra(
+            &mut buf,
+            ColorAdjust {
+                brightness: 0.2,
+                ..ColorAdjust::default()
+            },
+        );
+        assert!(buf[0] > 100 && buf[1] > 100 && buf[2] > 100, "brightened");
+        assert_eq!(buf[3], 200, "alpha preserved");
+    }
+
+    #[test]
+    fn grade_full_desaturation_equalizes_rgb() {
+        // A saturated red: B=0, G=0, R=255 in BGRA storage.
+        let mut buf = vec![0u8, 0, 255, 255];
+        grade_bgra(
+            &mut buf,
+            ColorAdjust {
+                saturation: -1.0,
+                ..ColorAdjust::default()
+            },
+        );
+        // Fully desaturated → all three colour channels collapse to luma.
+        assert_eq!(buf[0], buf[1], "B == G when desaturated");
+        assert_eq!(buf[1], buf[2], "G == R when desaturated");
+    }
+
+    #[test]
+    fn neutral_grade_skips_new_bitmap() {
+        // The neutral identity must not allocate a graded bitmap.
+        let buf = image::RgbaImage::from_pixel(2, 2, image::Rgba([40, 80, 120, 255]));
+        let base = RenderImage::new(vec![image::Frame::new(buf)]);
+        assert!(apply_color_adjust(&base, ColorAdjust::default()).is_none());
+    }
+
+    #[test]
+    fn enhance_upscale_doubles_dimensions() {
+        // 4×3 → 2× upscale → 8×6, byte count tracks the new dims.
+        let bgra = vec![128u8; 4 * 3 * 4];
+        let enh = EnhanceParams {
+            upscale: 2,
+            ..EnhanceParams::default()
+        };
+        let (w, h, out) =
+            process_still_pixels(&bgra, 4, 3, 0, ColorAdjust::default(), enh).expect("processed");
+        assert_eq!((w, h), (8, 6), "2× upscale doubles each dimension");
+        assert_eq!(out.len(), (8 * 6 * 4) as usize, "buffer matches new dims");
+    }
+
+    #[test]
+    fn enhance_upscale_then_rotate_swaps_dimensions() {
+        // 4×3 upscaled 2× → 8×6, then a quarter turn → 6×8.
+        let bgra = vec![128u8; 4 * 3 * 4];
+        let enh = EnhanceParams {
+            upscale: 2,
+            ..EnhanceParams::default()
+        };
+        let (w, h, _) =
+            process_still_pixels(&bgra, 4, 3, 1, ColorAdjust::default(), enh).expect("processed");
+        assert_eq!((w, h), (6, 8), "90° turn swaps the upscaled dims");
     }
 }
