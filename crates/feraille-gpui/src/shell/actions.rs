@@ -38,8 +38,11 @@ actions!(
         /// Cmd+C — selection's file URLs onto the general pasteboard
         /// (cross-app: Finder pastes what we copy). FILE_OPS.md.
         CopyFiles,
-        /// Cmd+V — paste (copy) the pasteboard's file URLs into the
-        /// current folder, with progress + collision handling.
+        /// Cmd+X — like Copy, but marks the items so the next plain
+        /// Paste moves them (and clears the mark). FILE_OPS.md.
+        CutFiles,
+        /// Cmd+V — paste the pasteboard's file URLs into the current
+        /// folder; a move if those items were Cut, else a copy.
         PasteFiles,
         /// Cmd+Option+V — Finder's "Move Items Here".
         MovePasteFiles,

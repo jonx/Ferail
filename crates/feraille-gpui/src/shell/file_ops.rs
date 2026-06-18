@@ -31,6 +31,8 @@ impl Shell {
         }
         let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
         crate::platform_shell::clipboard_copy_file_urls(&refs);
+        // A fresh Copy cancels any pending Cut.
+        self.process.cut_marker.borrow_mut().clear();
         let msg = match paths.as_slice() {
             [single] => format!(
                 "Copied \u{201c}{}\u{201d}",
@@ -39,16 +41,69 @@ impl Shell {
             many => format!("Copied {} items", many.len()),
         };
         window.push_notification(Notification::success(msg), cx);
+        cx.notify();
     }
 
-    /// Cmd+V — paste (copy) the pasteboard's files into this folder.
+    /// Cmd+X — copy the selection's URLs to the pasteboard and mark them
+    /// so the next plain Paste *moves* them. The rows render dimmed
+    /// while marked.
+    pub(super) fn on_cut_files(
+        &mut self,
+        _: &CutFiles,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
+        crate::platform_shell::clipboard_copy_file_urls(&refs);
+        let msg = match paths.as_slice() {
+            [single] => format!(
+                "Cut \u{201c}{}\u{201d}",
+                single.file_name().unwrap_or_default().to_string_lossy()
+            ),
+            many => format!("Cut {} items", many.len()),
+        };
+        *self.process.cut_marker.borrow_mut() = paths;
+        window.push_notification(Notification::info(msg), cx);
+        cx.notify();
+    }
+
+    /// Cmd+V — paste the pasteboard's files into this folder. A *move*
+    /// when those exact items were Cut (clearing the mark), else a copy.
     pub(super) fn on_paste_files(
         &mut self,
         _: &PasteFiles,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.paste_from_clipboard(TransferMode::Copy, window, cx);
+        use gpui_component::notification::Notification;
+        let sources = crate::platform_shell::clipboard_read_file_urls();
+        if sources.is_empty() {
+            window.push_notification(Notification::info("No files on the clipboard"), cx);
+            return;
+        }
+        // Pasting the exact set that was Cut → move + clear the mark.
+        let cut = self.process.cut_marker.borrow().clone();
+        let is_cut_set = !cut.is_empty()
+            && cut.len() == sources.len()
+            && cut.iter().all(|p| sources.contains(p));
+        let mode = if is_cut_set {
+            self.process.cut_marker.borrow_mut().clear();
+            cx.notify();
+            TransferMode::Move
+        } else {
+            TransferMode::Copy
+        };
+        let dest = self.active_tab().current_dir.clone();
+        self.spawn_transfer_op(sources, dest, mode, window, cx);
     }
 
     /// Cmd+Option+V — Finder's "Move Items Here".
@@ -96,6 +151,26 @@ impl Shell {
             return;
         }
         let mods = window.modifiers();
+        // Cmd+Option (Finder's alias-drag modifier): drop makes a Finder
+        // alias for each source in `dest` instead of copying/moving.
+        // Checked before the alt→Copy branch since alt is also set here.
+        if mods.alt && mods.platform {
+            let dest_for_op = dest.clone();
+            let sources = paths.clone();
+            self.spawn_file_op(
+                dest,
+                move || {
+                    for src in &sources {
+                        crate::platform_shell::make_alias_in(src, &dest_for_op).map(|_| ())?;
+                    }
+                    Ok(())
+                },
+                "alias-drop",
+                window,
+                cx,
+            );
+            return;
+        }
         let mode = if mods.alt {
             TransferMode::Copy
         } else if mods.platform {
@@ -140,36 +215,92 @@ impl Shell {
             ),
             many => format!("{} items", many.len()),
         };
+        let base_label = format!("{verb} {noun}\u{2026}");
         let task_id = self.process.tasks.borrow_mut().begin_with_cancel(
             crate::tasks::TaskKind::FileOp,
-            format!("{verb} {noun}\u{2026}"),
+            base_label.clone(),
             cancel.clone(),
         );
 
-        // Engine progress ticks land on this channel from the worker
-        // thread; the drain task coalesces them into ~10 Hz registry
-        // updates so the UI never repaints per chunk.
-        let (progress_tx, progress_rx) = async_channel::unbounded::<(u64, u64)>();
+        // Shared progress sink: the worker bumps lock-free atomic
+        // counters on its hot path (no channel, no per-file allocation);
+        // this sampler reads them on its own ~10 Hz clock and derives the
+        // rate/ETA UI-side. The copy can never be slowed or stalled by
+        // drawing its own progress, no matter how many files — the Prime
+        // Directive, structurally.
+        let prog = Arc::new(engine::TransferProgress::new());
+        let done = Arc::new(AtomicBool::new(false));
         {
             let weak = cx.weak_entity();
+            let prog = prog.clone();
+            let done = done.clone();
+            let base_label = base_label.clone();
             cx.spawn(async move |_this, cx| {
-                while let Ok(mut tick) = progress_rx.recv().await {
-                    while let Ok(t) = progress_rx.try_recv() {
-                        tick = t;
-                    }
-                    let frac = if tick.1 == 0 {
-                        1.0
-                    } else {
-                        tick.0 as f32 / tick.1 as f32
-                    };
-                    let Some(shell) = weak.upgrade() else { break };
-                    shell.update(cx, |this, cx| {
-                        this.process.tasks.borrow_mut().update(task_id, frac);
-                        cx.notify();
-                    });
+                let mut ema: f64 = 0.0;
+                let mut last_bytes: u64 = 0;
+                let mut last_t: Option<std::time::Instant> = None;
+                loop {
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(100))
                         .await;
+                    if done.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let planning = prog.is_planning();
+                    let bytes_done = prog.bytes_done();
+                    let bytes_total = prog.bytes_total();
+                    let now = std::time::Instant::now();
+                    // EMA throughput, but suppress the clone jump: a tick
+                    // that moved >10% of the whole op in one sample is an
+                    // instant clone, not a sustained rate — folding it in
+                    // would flash a nonsense "8 GB/s".
+                    if let Some(lt) = last_t {
+                        let dt = now.duration_since(lt).as_secs_f64();
+                        if dt > 0.0 {
+                            let delta = bytes_done.saturating_sub(last_bytes);
+                            let jump =
+                                bytes_total > 0 && (delta as f64) > 0.10 * bytes_total as f64;
+                            if !jump {
+                                let inst = delta as f64 / dt;
+                                ema = if ema == 0.0 { inst } else { 0.6 * ema + 0.4 * inst };
+                            }
+                        }
+                    }
+                    last_bytes = bytes_done;
+                    last_t = Some(now);
+                    let eta = if ema > 1.0 && bytes_total > bytes_done {
+                        Some(((bytes_total - bytes_done) as f64 / ema) as u64)
+                    } else {
+                        None
+                    };
+                    let stats = crate::tasks::TransferStats {
+                        bytes_done,
+                        bytes_total,
+                        items_done: prog.items_done(),
+                        items_total: prog.items_total(),
+                        bytes_per_sec: ema,
+                        eta_secs: eta,
+                        current: prog.current().to_string(),
+                    };
+                    let planned = prog.planned();
+                    let label = if planning {
+                        format!("{verb} \u{2014} preparing ({planned} items)\u{2026}")
+                    } else {
+                        base_label.clone()
+                    };
+                    let Some(shell) = weak.upgrade() else { break };
+                    shell.update(cx, |this, cx| {
+                        let mut reg = this.process.tasks.borrow_mut();
+                        reg.set_label(task_id, label);
+                        if !planning {
+                            if bytes_total > 0 {
+                                reg.update(task_id, bytes_done as f32 / bytes_total as f32);
+                            }
+                            reg.update_transfer(task_id, stats);
+                        }
+                        drop(reg);
+                        cx.notify();
+                    });
                 }
             })
             .detach();
@@ -178,8 +309,13 @@ impl Shell {
         let win = window.window_handle();
         let process = self.process.clone();
         let weak = cx.weak_entity();
+        let prog_run = prog.clone();
+        let done_run = done.clone();
         cx.spawn(async move |_this, cx| {
             let end_task = |cx: &mut AsyncApp| {
+                // Stop the sampler too, so a bailed-out op (plan error,
+                // dialog cancel) doesn't leave it spinning.
+                done_run.store(true, std::sync::atomic::Ordering::Relaxed);
                 if let Some(shell) = weak.upgrade() {
                     shell.update(cx, |this, cx| {
                         this.process.tasks.borrow_mut().end(task_id);
@@ -188,11 +324,14 @@ impl Shell {
                 }
             };
 
-            // 1. Plan (walk + conflict scan) off the UI thread.
+            // 1. Plan (walk + conflict scan) off the UI thread. The walk
+            // ticks `prog`'s planning counter so the status bar can show
+            // "Preparing — N items" instead of looking hung on a big tree.
             let plan = {
                 let (s, d, c) = (sources.clone(), dest.clone(), cancel.clone());
+                let p = prog_run.clone();
                 cx.background_executor()
-                    .spawn(async move { engine::plan_transfer(&s, &d, &c) })
+                    .spawn(async move { engine::plan_transfer(&s, &d, &p, &c) })
                     .await
             };
             let plan = match plan {
@@ -209,84 +348,128 @@ impl Shell {
                 }
             };
 
-            // 2. Collision policy. Pasting next to the originals
-            // obviously means "make me a copy" — no dialog.
+            // 2. Per-item collision resolution. Pasting next to the
+            // originals obviously means "make me a copy" — no dialog.
+            // Otherwise prompt once per conflicting top-level item, with
+            // an "apply to the rest" shortcut that fills the remainder
+            // with that choice. The map is keyed by source path; the
+            // engine consults it per item (only on an actual collision).
             let same_dir = sources.iter().all(|s| s.parent() == Some(dest.as_path()));
-            let policy = if plan.conflicts.is_empty() || same_dir {
-                CollisionPolicy::KeepBoth
+            let conflicting: Vec<PathBuf> = if same_dir {
+                Vec::new()
             } else {
-                let (choice_tx, choice_rx) =
-                    async_channel::bounded::<Option<CollisionPolicy>>(1);
-                let conflict_count = plan.conflicts.len();
-                let dest_label = dest
+                sources
+                    .iter()
+                    .filter(|s| {
+                        s.file_name()
+                            .map(|n| {
+                                plan.conflicts.iter().any(|c| c == &plan.dest_dir.join(n))
+                            })
+                            .unwrap_or(false)
+                    })
+                    .cloned()
+                    .collect()
+            };
+            let dest_label = dest
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| dest.display().to_string());
+            let mut policies: std::collections::HashMap<PathBuf, CollisionPolicy> =
+                std::collections::HashMap::new();
+            let mut apply_rest: Option<CollisionPolicy> = None;
+            let total = conflicting.len();
+            for (i, src) in conflicting.iter().enumerate() {
+                if let Some(p) = apply_rest {
+                    policies.insert(src.clone(), p);
+                    continue;
+                }
+                let remaining = total - i;
+                let name = src
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| dest.display().to_string());
+                    .unwrap_or_else(|| src.display().to_string());
+                let dest_label = dest_label.clone();
+                let (choice_tx, choice_rx) =
+                    async_channel::bounded::<Option<(CollisionPolicy, bool)>>(1);
+                // Shared "apply to rest" toggle, read when a policy
+                // button is clicked. `window.refresh()` re-runs the
+                // dialog's (re-rendered) build closure to show the check.
+                let apply_all = std::rc::Rc::new(std::cell::Cell::new(false));
                 let opened = win.update(cx, |_, window, cx| {
                     let tx = choice_tx.clone();
+                    let flag = apply_all.clone();
+                    let name = name.clone();
                     window.open_dialog(cx, move |dialog, _window, _cx| {
-                        let tx_ok = tx.clone();
-                        let tx_cancel = tx.clone();
+                        let tx_keep = tx.clone();
                         let tx_replace = tx.clone();
                         let tx_skip = tx.clone();
-                        let body = if conflict_count == 1 {
-                            format!(
-                                "An item with the same name already exists in \u{201c}{dest_label}\u{201d}."
-                            )
-                        } else {
-                            format!(
-                                "{conflict_count} items with the same names already exist in \u{201c}{dest_label}\u{201d}."
-                            )
-                        };
-                        // All three policies as explicit buttons (the
-                        // plain Dialog's ok/cancel footer doesn't
-                        // render alongside custom children in the
-                        // pinned gpui-component rev); ✕ / Esc cancel
-                        // the whole operation via the dropped-sender
-                        // path below.
-                        dialog
-                            .title("Items already exist")
-                            .child(div().text_sm().child(body))
+                        let tx_cancel = tx.clone();
+                        let (f_keep, f_replace, f_skip, f_box) =
+                            (flag.clone(), flag.clone(), flag.clone(), flag.clone());
+                        let buttons = h_flex()
+                            .gap_2()
+                            .pt_2()
                             .child(
-                                h_flex()
-                                    .gap_2()
-                                    .pt_2()
-                                    .child(
-                                        Button::new("collision-keep-both")
-                                            .label("Keep Both")
-                                            .primary()
-                                            .small()
-                                            .on_click(move |_, window, cx| {
-                                                let _ = tx_ok
-                                                    .try_send(Some(CollisionPolicy::KeepBoth));
-                                                window.close_dialog(cx);
-                                            }),
-                                    )
-                                    .child(
-                                        Button::new("collision-replace")
-                                            .label("Replace")
-                                            .small()
-                                            .on_click(move |_, window, cx| {
-                                                let _ = tx_replace
-                                                    .try_send(Some(CollisionPolicy::Replace));
-                                                window.close_dialog(cx);
-                                            }),
-                                    )
-                                    .child(
-                                        Button::new("collision-skip")
-                                            .label("Skip Existing")
-                                            .small()
-                                            .on_click(move |_, window, cx| {
-                                                let _ = tx_skip
-                                                    .try_send(Some(CollisionPolicy::Skip));
-                                                window.close_dialog(cx);
-                                            }),
-                                    ),
+                                Button::new("collision-keep-both")
+                                    .label("Keep Both")
+                                    .primary()
+                                    .small()
+                                    .on_click(move |_, window, cx| {
+                                        let _ = tx_keep.try_send(Some((
+                                            CollisionPolicy::KeepBoth,
+                                            f_keep.get(),
+                                        )));
+                                        window.close_dialog(cx);
+                                    }),
                             )
-                            .on_cancel(move |_, _, _| {
-                                let _ = tx_cancel.try_send(None);
-                                true
-                            })
+                            .child(
+                                Button::new("collision-replace")
+                                    .label("Replace")
+                                    .small()
+                                    .on_click(move |_, window, cx| {
+                                        let _ = tx_replace.try_send(Some((
+                                            CollisionPolicy::Replace,
+                                            f_replace.get(),
+                                        )));
+                                        window.close_dialog(cx);
+                                    }),
+                            )
+                            .child(
+                                Button::new("collision-skip")
+                                    .label("Skip")
+                                    .small()
+                                    .on_click(move |_, window, cx| {
+                                        let _ = tx_skip.try_send(Some((
+                                            CollisionPolicy::Skip,
+                                            f_skip.get(),
+                                        )));
+                                        window.close_dialog(cx);
+                                    }),
+                            );
+                        let mut d = dialog
+                            .title("An item already exists")
+                            .child(div().text_sm().child(format!(
+                                "\u{201c}{name}\u{201d} already exists in \u{201c}{dest_label}\u{201d}."
+                            )));
+                        if remaining > 1 {
+                            d = d.child(
+                                gpui_component::checkbox::Checkbox::new("collision-apply-rest")
+                                    .label(format!(
+                                        "Apply to the remaining {} item{}",
+                                        remaining - 1,
+                                        if remaining - 1 == 1 { "" } else { "s" }
+                                    ))
+                                    .checked(f_box.get())
+                                    .on_click(move |checked, window, _cx| {
+                                        f_box.set(*checked);
+                                        window.refresh();
+                                    }),
+                            );
+                        }
+                        d.child(buttons).on_cancel(move |_, _, _| {
+                            let _ = tx_cancel.try_send(None);
+                            true
+                        })
                     });
                 });
                 if opened.is_err() {
@@ -296,29 +479,37 @@ impl Shell {
                 // A dismissed dialog drops the senders → recv errors →
                 // treated as cancel. Nothing can wedge the task open.
                 match choice_rx.recv().await {
-                    Ok(Some(p)) => p,
+                    Ok(Some((p, all))) => {
+                        policies.insert(src.clone(), p);
+                        if all {
+                            apply_rest = Some(p);
+                        }
+                    }
                     _ => {
                         end_task(cx);
                         return;
                     }
                 }
-            };
+            }
 
             // 3. Run the engine on the background executor. The
             // same-volume answer rides along for move-undo
             // eligibility (stat — not allowed on the UI thread).
             let result = {
                 let c = cancel.clone();
+                let p = prog_run.clone();
                 cx.background_executor()
                     .spawn(async move {
                         let all_same_volume = plan
                             .sources
                             .iter()
                             .all(|s| engine::same_volume(s, &plan.dest_dir));
-                        let mut progress =
-                            |d: u64, t: u64| {
-                                let _ = progress_tx.try_send((d, t));
-                            };
+                        // Per-source collision policy resolved by the
+                        // dialog loop above; non-conflicting items never
+                        // consult it (their dest doesn't exist).
+                        let policy_for = |s: &std::path::Path| {
+                            policies.get(s).copied().unwrap_or(CollisionPolicy::KeepBoth)
+                        };
                         // dnd-spec §3.6: Auto resolves here, in the
                         // worker, where stat is allowed.
                         let effective = match mode {
@@ -327,15 +518,16 @@ impl Shell {
                             m => m,
                         };
                         let outcome = match effective {
-                            TransferMode::Move => {
-                                engine::run_move(&plan, policy, &mut progress, &c)
-                            }
-                            _ => engine::run_copy(&plan, policy, &mut progress, &c),
+                            TransferMode::Move => engine::run_move(&plan, &policy_for, &p, &c),
+                            _ => engine::run_copy(&plan, &policy_for, &p, &c),
                         };
                         outcome.map(|o| (o, all_same_volume, effective))
                     })
                     .await
             };
+            // Engine finished — stop the sampler; the final state is set
+            // by the completion block below.
+            done_run.store(true, std::sync::atomic::Ordering::Relaxed);
 
             // 4. Finish: end task, register undo, reload, notify.
             if let Some(shell) = weak.upgrade() {

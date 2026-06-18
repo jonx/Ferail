@@ -958,7 +958,24 @@ impl Shell {
                         let gap = tab::chip_drop_gap_index(from_idx, chip_idx);
                         this.reorder_tab(payload.id, gap, cx);
                     },
-                ));
+                ))
+                // Files dropped on a tab chip transfer into THAT tab's
+                // folder (resolved by TabId at drop), so you can move or
+                // copy into a background tab without switching to it.
+                .drag_over::<ExternalPaths>(move |style, _payload, _window, _cx| {
+                    style.bg(accent.opacity(0.18))
+                })
+                .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                    let Some(dest) = this
+                        .tabs
+                        .iter()
+                        .find(|t| t.id == tab_id)
+                        .map(|t| t.current_dir.clone())
+                    else {
+                        return;
+                    };
+                    this.handle_external_drop(paths.paths().to_vec(), dest, window, cx);
+                }));
             if multi {
                 let close = div()
                     .id(("tab-close", idx))
@@ -1963,6 +1980,8 @@ impl Shell {
             let weak_for_crumb = cx.weak_entity();
             let path_for_menu = path.clone();
             let path_for_click = path.clone();
+            let path_for_drop = path.clone();
+            let crumb_accent = cx.theme().primary;
             // §5 favorited indicator: trailing star on any breadcrumb
             // segment whose path is in the Favorites index. The last
             // segment is the current-folder header per §5.1, so the
@@ -2009,6 +2028,19 @@ impl Shell {
                 })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.navigate(path_for_click.clone(), cx);
+                }))
+                // Files dropped on a breadcrumb segment transfer into
+                // that ancestor folder (the last segment = current dir).
+                .drag_over::<ExternalPaths>(move |style, _payload, _window, _cx| {
+                    style.bg(crumb_accent.opacity(0.18))
+                })
+                .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                    this.handle_external_drop(
+                        paths.paths().to_vec(),
+                        path_for_drop.clone(),
+                        window,
+                        cx,
+                    );
                 }))
                 .context_menu(move |menu, _window, cx| {
                     let favorited_now = if let Some(s) = weak_for_crumb.upgrade() {
@@ -2256,6 +2288,18 @@ impl Render for Shell {
         div()
             .key_context(SHELL_CONTEXT)
             .track_focus(&self.focus_handle)
+            // Esc during a drag cancels it (gpui only auto-cancels on
+            // mouse-up). Only consumes the key when a drag is actually
+            // active, so Esc's normal behaviour is otherwise untouched.
+            .on_key_down(cx.listener(|this, e: &gpui::KeyDownEvent, window, cx| {
+                if e.keystroke.key == "escape" && cx.has_active_drag() {
+                    cx.stop_active_drag(window);
+                    this.spring_load = None;
+                    this.tree_spring = None;
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             // Any left-click dismisses an open breadcrumb context menu
             // (picking an item or clicking away), so it's also the
             // moment to re-enable the crumb tooltip we suppressed while
@@ -2280,6 +2324,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_copy_path))
             .on_action(cx.listener(Self::on_copy_file_list))
             .on_action(cx.listener(Self::on_copy_files))
+            .on_action(cx.listener(Self::on_cut_files))
             .on_action(cx.listener(Self::on_paste_files))
             .on_action(cx.listener(Self::on_move_paste_files))
             .on_action(cx.listener(Self::on_open_terminal_here))

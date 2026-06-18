@@ -263,13 +263,20 @@ const CATALOGUE: &[CommandSpec] = &[
         // directly (the Shortcut DSL has no Delete key yet).
         shortcuts: &[],
     },
-    // Clipboard file verbs (docs/features/FILE_OPS.md). Finder
-    // semantics: Copy + Paste + Move-Paste; no Cut.
+    // Clipboard file verbs (docs/features/FILE_OPS.md). Copy + Paste +
+    // Move-Paste, plus Cut (Cmd+X): a cut marks its items so the next
+    // plain Paste moves them (and clears the mark).
     CommandSpec {
         id: CommandId("file.copy"),
         title: "Copy",
         category: Category::File,
         shortcuts: &[Shortcut::primary("C")],
+    },
+    CommandSpec {
+        id: CommandId("file.cut"),
+        title: "Cut",
+        category: Category::File,
+        shortcuts: &[Shortcut::primary("X")],
     },
     CommandSpec {
         id: CommandId("file.paste"),

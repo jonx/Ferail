@@ -477,6 +477,16 @@ pub fn make_alias(_target: &std::path::Path) -> Result<std::path::PathBuf, Strin
     Err("make_alias: not implemented on this OS".into())
 }
 
+/// Make a shortcut to `target` inside `dest_dir` (Cmd+Option alias-drop
+/// equivalent). [win-parity] the real `.lnk`-in-dest path is deferred
+/// with the rest of the Windows pasteboard work; stubbed for now.
+pub fn make_alias_in(
+    _target: &std::path::Path,
+    _dest_dir: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    Err("make_alias_in: not implemented on Windows yet".into())
+}
+
 /// Compress `targets` into a `.zip` written next to the first
 /// target's parent. Naming matches Explorer's "Send to → Compressed
 /// (zipped) folder": `<basename>.zip` for a single source,

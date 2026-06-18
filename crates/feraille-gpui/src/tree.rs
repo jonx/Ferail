@@ -374,6 +374,11 @@ fn render_tree_row(
     let indent = px(8.0 + 14.0 * depth as f32);
 
     let drag_path = path.clone();
+    let drag_label: SharedString = drag_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| drag_path.display().to_string())
+        .into();
     let mut row = h_flex()
         .id(ElementId::Name(row_key))
         .relative()
@@ -393,7 +398,14 @@ fn render_tree_row(
         })
         .on_drag(
             gpui::ExternalPaths(smallvec![drag_path]),
-            |paths, _offset, _window, cx| cx.new(|_| paths.clone()),
+            move |_paths, offset, _window, cx| {
+                cx.new(|_| crate::file_list::DragBadge {
+                    label: drag_label.clone(),
+                    icon: None,
+                    count: 1,
+                    offset,
+                })
+            },
         );
     if is_active {
         row = row.bg(theme.sidebar_accent);
@@ -420,6 +432,20 @@ fn render_tree_row(
                 this.handle_external_drop(dropped, dest, window, cx);
             });
         });
+    // Spring-load: dwelling a drag over a collapsed expandable folder
+    // opens it so the user can drill the tree without releasing.
+    if is_expandable && !is_expanded {
+        let hover_shell = shell.clone();
+        let hover_path = path.clone();
+        row = row.on_drag_move(move |e: &gpui::DragMoveEvent<ExternalPaths>, _window, cx| {
+            if !e.bounds.contains(&e.event.position) {
+                return;
+            }
+            let Some(shell) = hover_shell.upgrade() else { return };
+            let path = hover_path.clone();
+            shell.update(cx, |this, cx| this.tree_drag_hover(&path, cx));
+        });
+    }
 
     // Ancestry connector lines, absolutely positioned inside the
     // row's left indent so they span the full row height (through

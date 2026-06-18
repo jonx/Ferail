@@ -35,10 +35,70 @@ duplicates). Covers internal row drags and external Finder drags
 through the same `ExternalPaths` payload. OS drag gestures can't be
 driven headlessly — interactive verification pending.
 
-Open follow-ups in [TODO.md](../../TODO.md): drops on tabs /
-breadcrumb segments / favorites, auto-scroll + auto-expand during
-drag, Cmd+Option alias-drop, per-item collision resolution, Windows
-pasteboard (CF_HDROP) + volume identity, cut semantics decision.
+**Fast-copy ladder + rich progress (2026-06-18):**
+
+- **Speed ladder** in the engine, fastest legal mechanism per top-level
+  item: (1) same-volume copy → `clonefile(2)` APFS copy-on-write —
+  instant, zero bytes, whole tree in one syscall; (2) cross-volume copy →
+  `copyfile(3)` with a status callback — kernel-optimized, preserves
+  holes (sparse), xattrs/ACLs/flags, reports intra-file progress and
+  honors cancel via `COPYFILE_QUIT`; (3) non-mac fallback → the chunked
+  read/write loop. Same-volume move stays `rename(2)`. The old hand-rolled
+  8 MiB loop dropped xattrs (tags/quarantine/where-from) and inflated
+  sparse files — both fixed by `copyfile`. **[mac]** for tiers 1–2.
+- **Atomic-snapshot progress** replaces the per-chunk channel: the worker
+  bumps lock-free `TransferProgress` counters (no channel, no per-file
+  alloc; the current-item name is published throttled to ~10 Hz), and the
+  UI samples them on its own clock and derives rate/ETA. The copy can't
+  be slowed or stalled by drawing its progress — Prime Directive, made
+  structural. `plan_transfer`/`run_copy`/`run_move` take `&TransferProgress`
+  instead of a `FnMut` callback.
+- **Rich task display**: `TaskKind` is now split ambient vs. foreground —
+  foreground (file ops, search, scans) wins the status-bar primary slot
+  so a copy never hides under a later prefetch; the task panel shows
+  counts · bytes · rate · ETA + the file in flight. Tasks are surfaced
+  only after `SURFACE_DELAY` (150 ms) so instant clones never flicker.
+  A planning phase ("Preparing — N items") covers the pre-transfer walk.
+
+**Follow-ups shipped (2026-06-18):**
+
+- **Drops on tabs + breadcrumb segments** — a tab chip accepts a file
+  drop into *that tab's* folder (resolved by `TabId` at drop); each
+  breadcrumb segment accepts a drop into that ancestor folder. Both
+  reuse `handle_external_drop` (shell/render.rs).
+- **Cmd+Option alias-drop** — holding the alias modifier on any drop
+  target writes a Finder alias per source into the dest instead of
+  copy/move (`make_alias_in`; `handle_external_drop`).
+- **Per-item collision resolution** — the batch dialog became a per-item
+  loop: one prompt per conflicting top-level item (Keep Both / Replace /
+  Skip) with an "apply to the remaining N" checkbox that fills the rest.
+  The engine's `run_copy`/`run_move` now take `Fn(&Path) -> CollisionPolicy`.
+- **Cut (Cmd+X)** — copies URLs to the pasteboard and marks them
+  (`ProcessState::cut_marker`, an `Rc<RefCell<Vec<PathBuf>>>` shared with
+  each file-list delegate); the next plain Paste of exactly that set is a
+  Move (then clears the mark), and marked rows render dimmed (0.45).
+
+**Dragging *from* the list (2026-06-18):** rows already drag out to
+Finder via `ExternalPaths` (NSFilePromise); added a Finder-like cursor
+ghost (`DragBadge`: the item's icon or warmed Quick Look thumbnail +
+name, or "N items" with a stacked-card hint) that tracks the pointer.
+gpui paints the drag view at `mouse − cursor_offset` and `cursor_offset`
+is the grab point within the *dragged element* — for a full-width row
+that pins the ghost to the row's left edge, so the badge re-anchors
+itself under the cursor with left/top padding equal to that offset. And
+**spring-load**: dwelling a drag (~600 ms) over a folder row
+drills into it (`TableEvent::DragHover` → `Shell::spring_load`), and over
+a collapsed sidebar tree row expands it (`Shell::tree_drag_hover`), so
+you can reach a nested destination without releasing. Implemented via
+`on_drag_move::<ExternalPaths>` (Capture-phase, hands us element bounds +
+cursor position).
+
+Still open in [TODO.md](../../TODO.md): auto-scroll near the list edges
+while dragging (needs `UniformListScrollHandle` offset access); drops on
+favorite *rows* (gaps accept folder-adds today); Windows pasteboard
+(CF_HDROP) + volume identity + the `.lnk` alias-in-dest path. Note: all
+drag gestures are OS-driven, so they can't be exercised by the
+screenshot harness — verify interactively.
 
 ## Platform tags
 
@@ -65,7 +125,7 @@ equivalent for later. Untagged = platform-neutral.
 
 Pure, synchronous, worker-thread functions; the GPUI side owns
 scheduling. Mirrors the `recursive_size` contract: cooperative
-`&AtomicBool` cancel, progress via callback.
+`&AtomicBool` cancel, progress via the shared `TransferProgress` sink.
 
 ```rust
 pub struct OpPlan {
@@ -74,6 +134,8 @@ pub struct OpPlan {
     pub total_bytes: u64,          // file bytes (dirs walk free)
     pub total_items: u64,          // files + dirs, for item-granular progress
     pub conflicts: Vec<PathBuf>,   // top-level dest paths that already exist
+    pub source_bytes: Vec<u64>,    // per-source byte subtotal (clone/rename credit a whole item at once)
+    pub source_items: Vec<u64>,    // per-source item subtotal
 }
 
 pub enum CollisionPolicy { Replace, KeepBoth, Skip }
@@ -85,16 +147,26 @@ pub struct OpOutcome {
     pub cancelled: bool,
 }
 
+/// Lock-light progress sink shared worker↔UI. Worker bumps atomics
+/// (no alloc, no channel); current-item name published throttled.
+pub struct TransferProgress { /* atomics + Mutex<name> */ }
+impl TransferProgress {
+    pub fn new() -> Self;
+    pub fn is_planning(&self) -> bool;          // pre-transfer walk phase
+    pub fn planned(&self) -> u64;               // items counted so far while planning
+    pub fn bytes_done(&self) -> u64;            // + bytes_total/items_done/items_total
+    pub fn current(&self) -> Arc<str>;          // file in flight
+    // hot path: add_bytes / add_items / note_current / note_planned / begin_transfer
+}
+
 pub fn plan_transfer(sources: &[PathBuf], dest_dir: &Path,
-                     cancel: &AtomicBool) -> Result<OpPlan, String>;
+                     prog: &TransferProgress, cancel: &AtomicBool) -> Result<OpPlan, String>;
 
-pub fn run_copy(plan: &OpPlan, policy: CollisionPolicy,
-                progress: &mut dyn FnMut(u64 /*done*/, u64 /*total bytes*/),
-                cancel: &AtomicBool) -> Result<OpOutcome, String>;
+pub fn run_copy(plan: &OpPlan, policy_for: &dyn Fn(&Path) -> CollisionPolicy,
+                prog: &TransferProgress, cancel: &AtomicBool) -> Result<OpOutcome, String>;
 
-pub fn run_move(plan: &OpPlan, policy: CollisionPolicy,
-                progress: &mut dyn FnMut(u64, u64),
-                cancel: &AtomicBool) -> Result<OpOutcome, String>;
+pub fn run_move(plan: &OpPlan, policy_for: &dyn Fn(&Path) -> CollisionPolicy,
+                prog: &TransferProgress, cancel: &AtomicBool) -> Result<OpOutcome, String>;
 
 pub fn same_volume(a: &Path, b: &Path) -> bool;  // unix: MetadataExt::dev()
                                                  // [win-parity: GetVolumePathNameW]
@@ -102,13 +174,16 @@ pub fn same_volume(a: &Path, b: &Path) -> bool;  // unix: MetadataExt::dev()
 
 Rules:
 
-- **Copy** streams files in 8 MiB chunks (`io::copy` over a bounded
-  buffer) so progress ticks and cancel lands mid-file. A cancelled
+- **Copy** picks the fastest legal mechanism per top-level item:
+  same-volume → `clonefile` (instant CoW, whole tree, credits
+  `source_bytes[i]` in one jump); cross-volume → `copyfile` per file
+  (sparse + xattrs/ACLs/flags preserved, intra-file progress + cancel via
+  the status callback); non-mac → 8 MiB chunked loop. A cancelled
   in-flight file is deleted; completed items stay (outcome reports
-  `cancelled: true`). Symlinks are recreated as symlinks, never
-  followed (same stance as the disk-usage walker). Permissions copy
-  best-effort (`fs::set_permissions` after each file; failures are
-  logged into the error, not fatal).
+  `cancelled: true`). Symlinks are recreated as symlinks, never followed
+  (same stance as the disk-usage walker). `clonefile` is atomic — a
+  refusal (cross-volume, non-APFS) leaves no partial and falls back to
+  the copy path. **[mac]** for clone + copyfile.
 - **Move** takes the `fs::rename` fast path per top-level item when
   `same_volume(src, dest_dir)` — instant, no progress needed. Cross-
   volume falls back to copy-then-delete per item; the delete only runs
@@ -132,9 +207,12 @@ Rules:
    `Arc<AtomicBool>`; the registry entry now carries the flag (iter B)
    so the task panel can render a ✕ that flips it.
 2. Background: `plan_transfer` → (conflicts? hand back to the UI for
-   the collision dialog, then resume) → `run_copy`/`run_move` with a
-   throttled progress callback (~10 Hz) that re-enters via
-   `entity.update` → `tasks.update(id, frac)`.
+   the collision dialog, then resume) → `run_copy`/`run_move`, all
+   sharing one `Arc<TransferProgress>`. A separate ~10 Hz sampler task
+   reads that sink, derives EMA rate + ETA (suppressing the clone jump),
+   and writes `tasks.update`/`update_transfer`; a `done` flag stops it on
+   every exit path. No per-chunk channel, no per-file allocation — the
+   worker never waits on the UI.
 3. On completion: `tasks.end`, `broadcast_reload_for_process` for the
    destination (and sources' parents on move), `push_notification`
    (success with item count / error with the engine's message — fixing

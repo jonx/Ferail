@@ -116,20 +116,26 @@ pub fn render(
         _ => None,
     };
 
-    // Middle: task summary.
+    // Middle: task summary. Only surfaced tasks count — sub-perceptual
+    // work (instant clones) begins and ends inside SURFACE_DELAY and
+    // never flickers a label into view.
+    let surfaced = registry.iter().filter(|t| t.is_surfaced()).count();
     let task_label = if let Some(_p) = simulated_progress {
         Some(SharedString::from("Simulating progress\u{2026}"))
-    } else if registry.is_empty() {
+    } else if surfaced == 0 {
         None
-    } else if registry.len() == 1 {
-        registry
-            .primary()
-            .map(|t| SharedString::from(t.label.clone()))
+    } else if let Some(t) = registry.primary().filter(|t| t.is_surfaced()) {
+        // The primary (foreground-preferring) task owns the line. With
+        // exactly one surfaced task, or whenever the primary is a
+        // foreground op, show its label + live rate/ETA. Otherwise just
+        // count the ambient background work.
+        if surfaced == 1 || t.kind.is_foreground() {
+            Some(SharedString::from(label_with_rate(t)))
+        } else {
+            Some(SharedString::from(format!("{surfaced} tasks running")))
+        }
     } else {
-        Some(SharedString::from(format!(
-            "{} tasks running",
-            registry.len()
-        )))
+        Some(SharedString::from(format!("{surfaced} tasks running")))
     };
 
     // Right side: progress strip. Determinate fraction = the
@@ -214,7 +220,33 @@ pub fn render(
 }
 
 fn task_label_none(registry: &TaskRegistry, simulated_progress: Option<f32>) -> bool {
-    registry.is_empty() && simulated_progress.is_none()
+    !registry.iter().any(|t| t.is_surfaced()) && simulated_progress.is_none()
+}
+
+/// Compact label for the spotlight task: its own label, plus a live
+/// "· 320 MB/s · ~12s" tail when it's a transfer with a known rate. The
+/// full breakdown (counts, current file) lives in the task panel.
+fn label_with_rate(task: &crate::tasks::ActiveTask) -> String {
+    let mut s = task.label.clone();
+    if let Some(t) = &task.transfer {
+        if t.bytes_per_sec >= 1.0 {
+            s.push_str(&format!(" \u{00B7} {}/s", humanize_bytes(t.bytes_per_sec as u64)));
+        }
+        if let Some(eta) = t.eta_secs {
+            s.push_str(&format!(" \u{00B7} ~{}", humanize_secs(eta)));
+        }
+    }
+    s
+}
+
+fn humanize_secs(s: u64) -> String {
+    if s < 60 {
+        format!("{s}s")
+    } else if s < 3600 {
+        format!("{}m {}s", s / 60, s % 60)
+    } else {
+        format!("{}h {}m", s / 3600, (s % 3600) / 60)
+    }
 }
 
 fn compute_progress(registry: &TaskRegistry, simulated_progress: Option<f32>) -> (bool, bool, f32) {
@@ -224,17 +256,20 @@ fn compute_progress(registry: &TaskRegistry, simulated_progress: Option<f32>) ->
         }
         return (true, false, p.clamp(0.0, 1.0));
     }
-    if registry.is_empty() {
+    // Only surfaced tasks drive the strip — an instant clone that lives
+    // <150ms never paints a bar.
+    if !registry.iter().any(|t| t.is_surfaced()) {
         return (false, false, 0.0);
     }
     let any_indeterminate = registry
         .iter()
+        .filter(|t| t.is_surfaced())
         .any(|t| matches!(t.progress, TaskProgress::Indeterminate));
     if any_indeterminate {
         return (true, true, 0.0);
     }
     // All determinate — show the primary task's fraction.
-    let fraction = match registry.primary().map(|t| t.progress) {
+    let fraction = match registry.primary().filter(|t| t.is_surfaced()).map(|t| t.progress) {
         Some(TaskProgress::Determinate(p)) => p,
         _ => 0.0,
     };

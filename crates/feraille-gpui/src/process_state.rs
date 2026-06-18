@@ -157,10 +157,9 @@ pub struct ProcessState {
     /// because the closed-tab stack lives on the singleton.
     pub closed_tabs: RefCell<VecDeque<ClosedTab>>,
 
-    /// The single reusable viewer window (docs/features/VIEWER.md).
-    /// Invoking Open Viewer while one is live retargets it instead of
-    /// stacking windows. The weak entity goes stale when the window
-    /// closes; the next open simply overwrites the slot.
+    /// The most-recently-opened viewer window (docs/features/VIEWER.md).
+    /// Each Open Viewer now stacks a new window; this just holds the
+    /// latest handle so it isn't dropped mid-open.
     #[allow(clippy::type_complexity)]
     pub viewer_window: RefCell<
         Option<(
@@ -168,6 +167,14 @@ pub struct ProcessState {
             WeakEntity<crate::viewer::ViewerWindow>,
         )>,
     >,
+
+    /// Paths marked by Cut (Cmd+X): the next plain Paste of exactly
+    /// these items performs a Move instead of a Copy, then clears the
+    /// mark. A fresh Copy/Cut overwrites it. Process-wide so a cut in
+    /// one tab/window pastes-as-move in another, and shared (the same
+    /// `Rc`) with each file-list delegate so cut rows render dimmed.
+    /// (docs/features/FILE_OPS.md)
+    pub cut_marker: Rc<RefCell<Vec<std::path::PathBuf>>>,
 }
 
 impl ProcessState {
@@ -202,6 +209,7 @@ impl ProcessState {
             shells: RefCell::new(Vec::new()),
             closed_tabs: RefCell::new(VecDeque::new()),
             viewer_window: RefCell::new(None),
+            cut_marker: Rc::new(RefCell::new(Vec::new())),
         })
     }
 

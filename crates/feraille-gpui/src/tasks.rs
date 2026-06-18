@@ -42,10 +42,45 @@ pub enum TaskKind {
     DuplicateScan,
 }
 
+impl TaskKind {
+    /// Foreground tasks are user-initiated and actively waited on (file
+    /// transfers, search, scans) — they win the status-bar's primary
+    /// slot and carry rich progress. Ambient tasks (prefetch, folder
+    /// sizes, enumeration) are passive housekeeping the user never
+    /// explicitly asked for and never needs to cancel; they yield the
+    /// spotlight. (docs/features/FILE_OPS.md)
+    pub fn is_foreground(&self) -> bool {
+        matches!(
+            self,
+            TaskKind::FileOp | TaskKind::Search | TaskKind::DiskUsage | TaskKind::DuplicateScan
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum TaskProgress {
     Indeterminate,
     Determinate(f32),
+}
+
+/// Rich progress for a transfer (copy/move), sampled from the engine's
+/// shared `TransferProgress` and decorated UI-side with a derived rate
+/// and ETA. Plain numbers + one string so the registry stays
+/// GPUI-free; rate/ETA are computed by the sampler, never the worker.
+/// (docs/features/FILE_OPS.md)
+#[derive(Clone, Debug, Default)]
+pub struct TransferStats {
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+    pub items_done: u64,
+    pub items_total: u64,
+    /// Smoothed throughput (bytes/sec). 0 while still ramping.
+    pub bytes_per_sec: f64,
+    /// Seconds remaining, or `None` when not yet estimable (or when an
+    /// instant clone jumped the bar, making a rate meaningless).
+    pub eta_secs: Option<u64>,
+    /// File currently in flight (throttled by the engine).
+    pub current: String,
 }
 
 #[derive(Clone, Debug)]
@@ -62,6 +97,23 @@ pub struct ActiveTask {
     /// whose cancellation runs through other plumbing (tab cancel
     /// flags etc.).
     pub cancel: Option<Arc<AtomicBool>>,
+    /// Rich transfer progress, set by `update_transfer` for copy/move
+    /// tasks. `None` for every other kind — the status bar / task panel
+    /// fall back to the plain `progress` bar.
+    pub transfer: Option<TransferStats>,
+}
+
+/// How long a task must live before any surface (status bar, task panel)
+/// shows it. Instant clones and other sub-perceptual work begin and end
+/// inside this window and never flicker into view; only the success
+/// toast marks them. (docs/features/FILE_OPS.md)
+pub const SURFACE_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
+
+impl ActiveTask {
+    /// Whether this task has lived long enough to be worth drawing.
+    pub fn is_surfaced(&self) -> bool {
+        self.started_at.elapsed() >= SURFACE_DELAY
+    }
 }
 
 pub struct TaskRegistry {
@@ -94,6 +146,7 @@ impl TaskRegistry {
             progress: TaskProgress::Indeterminate,
             cancellable,
             cancel: None,
+            transfer: None,
         });
         id
     }
@@ -121,6 +174,23 @@ impl TaskRegistry {
         }
     }
 
+    /// Attach rich transfer stats to `id` (copy/move tasks). No-op for
+    /// stale ids.
+    pub fn update_transfer(&mut self, id: TaskId, stats: TransferStats) {
+        if let Some(t) = self.tasks.iter_mut().find(|t| t.id == id) {
+            t.transfer = Some(stats);
+        }
+    }
+
+    /// Relabel `id` — used to swap a transfer's label between its
+    /// "Preparing…" planning phase and its running phase. No-op for
+    /// stale ids.
+    pub fn set_label(&mut self, id: TaskId, label: impl Into<String>) {
+        if let Some(t) = self.tasks.iter_mut().find(|t| t.id == id) {
+            t.label = label.into();
+        }
+    }
+
     /// Remove `id`. Stale ids are silently ignored.
     pub fn end(&mut self, id: TaskId) {
         self.tasks.retain(|t| t.id != id);
@@ -138,10 +208,17 @@ impl TaskRegistry {
         self.tasks.iter()
     }
 
-    /// Most-recently-started task, if any. Drives the status-bar
-    /// "Doing X…" text when exactly one task is in flight.
+    /// The task that owns the spotlight: the most-recently-started
+    /// *foreground* task (file ops, search, scans — user-initiated and
+    /// actively awaited), falling back to the most recent task of any
+    /// kind. So a copy in progress never gets buried under an ambient
+    /// prefetch that happened to start later. (docs/features/FILE_OPS.md)
     pub fn primary(&self) -> Option<&ActiveTask> {
-        self.tasks.last()
+        self.tasks
+            .iter()
+            .rev()
+            .find(|t| t.kind.is_foreground())
+            .or_else(|| self.tasks.last())
     }
 
     pub fn find(&self, id: TaskId) -> Option<&ActiveTask> {
@@ -218,6 +295,40 @@ mod tests {
         r.end(id1);
         let id2 = r.begin(TaskKind::Enumeration, "x", false);
         assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn primary_prefers_foreground_over_newer_ambient() {
+        let mut r = TaskRegistry::new();
+        // A foreground copy starts first, then an ambient prefetch fires
+        // later (e.g. a folder load). The copy must keep the spotlight.
+        let copy = r.begin(TaskKind::FileOp, "Copying…", true);
+        let _prefetch = r.begin(TaskKind::IconPrefetch, "Loading icons…", false);
+        assert_eq!(r.primary().map(|t| t.id), Some(copy));
+    }
+
+    #[test]
+    fn update_transfer_attaches_stats() {
+        let mut r = TaskRegistry::new();
+        let id = r.begin(TaskKind::FileOp, "Copying…", true);
+        r.update_transfer(
+            id,
+            TransferStats {
+                bytes_done: 5,
+                bytes_total: 10,
+                ..Default::default()
+            },
+        );
+        let t = r.find(id).unwrap();
+        assert_eq!(t.transfer.as_ref().map(|s| s.bytes_done), Some(5));
+    }
+
+    #[test]
+    fn foreground_classification() {
+        assert!(TaskKind::FileOp.is_foreground());
+        assert!(TaskKind::Search.is_foreground());
+        assert!(!TaskKind::IconPrefetch.is_foreground());
+        assert!(!TaskKind::Enumeration.is_foreground());
     }
 
     #[test]

@@ -37,12 +37,16 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
     let theme_radius = theme.radius;
     let registry = tasks.borrow();
 
-    let header_text = if registry.is_empty() {
+    // Only show tasks that have lived past SURFACE_DELAY — instant
+    // clones never flicker a row in. (docs/features/FILE_OPS.md)
+    let surfaced: Vec<&crate::tasks::ActiveTask> =
+        registry.iter().filter(|t| t.is_surfaced()).collect();
+    let header_text = if surfaced.is_empty() {
         "Background tasks".to_string()
-    } else if registry.len() == 1 {
+    } else if surfaced.len() == 1 {
         "1 background task".to_string()
     } else {
-        format!("{} background tasks", registry.len())
+        format!("{} background tasks", surfaced.len())
     };
     let header = h_flex()
         .w_full()
@@ -61,7 +65,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                 .child(SharedString::from(header_text)),
         );
 
-    let body: AnyElement = if registry.is_empty() {
+    let body: AnyElement = if surfaced.is_empty() {
         div()
             .px_3()
             .py_3()
@@ -70,7 +74,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
             .child(SharedString::from("No active tasks."))
             .into_any_element()
     } else {
-        let rows = registry
+        let rows = surfaced
             .iter()
             .map(|t| {
                 let label = SharedString::from(t.label.clone());
@@ -79,6 +83,14 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                     TaskProgress::Determinate(p) => format!("{:.0}%", p * 100.0),
                 };
                 let elapsed = humanize_secs(t.started_at.elapsed().as_secs());
+                // Rich transfer detail: counts · bytes · rate · ETA, plus
+                // the file in flight. Only present for copy/move tasks.
+                let detail: Option<String> = t.transfer.as_ref().map(transfer_detail);
+                let current: Option<String> = t
+                    .transfer
+                    .as_ref()
+                    .filter(|s| !s.current.is_empty())
+                    .map(|s| s.current.clone());
                 // Cancel button for tasks that carry a cooperative
                 // flag (docs/features/FILE_OPS.md). Flipping the flag
                 // is the whole gesture — the worker notices at its
@@ -133,6 +145,26 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                                     .child(SharedString::from(elapsed)),
                             ),
                     )
+                    .when_some(detail, |this, d| {
+                        this.child(
+                            div()
+                                .w_full()
+                                .text_xs()
+                                .text_color(theme_muted)
+                                .child(SharedString::from(d)),
+                        )
+                    })
+                    .when_some(current, |this, name| {
+                        this.child(
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .truncate()
+                                .text_xs()
+                                .text_color(theme_muted.opacity(0.8))
+                                .child(SharedString::from(name)),
+                        )
+                    })
             })
             .collect::<Vec<_>>();
         div()
@@ -191,4 +223,43 @@ fn humanize_secs(s: u64) -> String {
     } else {
         format!("{}h {}m", s / 3600, (s % 3600) / 60)
     }
+}
+
+fn humanize_bytes(b: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut s = b as f64;
+    let mut u = 0;
+    while s >= 1024.0 && u + 1 < UNITS.len() {
+        s /= 1024.0;
+        u += 1;
+    }
+    if u == 0 {
+        format!("{} {}", b, UNITS[u])
+    } else {
+        format!("{:.1} {}", s, UNITS[u])
+    }
+}
+
+/// One-line breakdown for a transfer row: "1,204 of 3,418 · 4.2/19 GB ·
+/// 320 MB/s · ~12s". Pieces that aren't meaningful yet (no rate while
+/// ramping, no ETA right after an instant clone) are omitted.
+fn transfer_detail(s: &crate::tasks::TransferStats) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if s.items_total > 0 {
+        parts.push(format!("{} of {} items", s.items_done, s.items_total));
+    }
+    if s.bytes_total > 0 {
+        parts.push(format!(
+            "{} of {}",
+            humanize_bytes(s.bytes_done),
+            humanize_bytes(s.bytes_total)
+        ));
+    }
+    if s.bytes_per_sec >= 1.0 {
+        parts.push(format!("{}/s", humanize_bytes(s.bytes_per_sec as u64)));
+    }
+    if let Some(eta) = s.eta_secs {
+        parts.push(format!("~{}", humanize_secs(eta)));
+    }
+    parts.join(" \u{00B7} ")
 }

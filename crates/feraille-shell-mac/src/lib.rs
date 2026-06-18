@@ -464,6 +464,24 @@ pub fn make_alias(_target: &std::path::Path) -> Result<std::path::PathBuf, Strin
     Err("make_alias is macOS-only".into())
 }
 
+/// Make a Finder-resolvable alias to `target` inside `dest_dir` (used by
+/// Cmd+Option alias-drop). Synchronous — callers run this on a worker.
+#[cfg(target_os = "macos")]
+pub fn make_alias_in(
+    target: &std::path::Path,
+    dest_dir: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    file_ops::make_alias_in(target, dest_dir)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn make_alias_in(
+    _target: &std::path::Path,
+    _dest_dir: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    Err("make_alias is macOS-only".into())
+}
+
 /// Compress `targets` into a `.zip` next to the first target's
 /// parent (Finder behaviour: `Foo.zip` for one source, `Archive.zip`
 /// for several). Synchronous — callers run this on a worker.

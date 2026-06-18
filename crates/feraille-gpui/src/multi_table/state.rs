@@ -64,6 +64,13 @@ pub enum TableEvent {
         row_ix: usize,
         paths: Vec<std::path::PathBuf>,
     },
+    /// A drag is currently hovering over this folder row (fork
+    /// addition). Emitted continuously while an `ExternalPaths` drag is
+    /// over the row so the host can spring-load (drill into the folder
+    /// after a short dwell). docs/features/FILE_OPS.md.
+    DragHover {
+        row_ix: usize,
+    },
     /// Single click or move to selected row.
     SelectRow(usize),
     /// Double click on the row.

@@ -18,8 +18,8 @@ use feraille_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     App, AppContext as _, Context, Div, ExternalPaths, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, Pixels, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window,
-    div, img, px, svg,
+    ParentElement, Pixels, Point, Render, RenderImage, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled, Window, div, img, px, svg,
 };
 use gpui_component::{
     ActiveTheme,
@@ -31,6 +31,81 @@ use smallvec::smallvec;
 use crate::icons::{IconCache, file_type_icon, tint_color};
 use crate::multi_table::{Column, ColumnSort, TableDelegate, TableEvent, TableState};
 use crate::thumbnails::{is_thumbnailable, show_thumbnails, ThumbnailCache, THUMB_PX};
+
+/// The floating ghost shown under the cursor while dragging rows out of
+/// the list (or to an in-app drop target) — gpui's `on_drag` needs an
+/// `Entity<impl Render>` for the drag image. Shows the dragged item's
+/// icon/thumbnail + name (or "N items" for a multi-row drag, with a
+/// stacked-card hint behind it).
+///
+/// gpui paints the drag view at `mouse − cursor_offset`, and
+/// `cursor_offset` is the grab point within the *dragged element* — for
+/// a full-width row that lands the ghost at the row's left edge. So we
+/// re-anchor the chip back under the cursor by absolutely positioning it
+/// at `offset` (= the `cursor_offset` gpui hands the constructor), plus
+/// a small down-right nudge so it trails the pointer like Finder.
+pub struct DragBadge {
+    pub label: SharedString,
+    pub icon: Option<Arc<RenderImage>>,
+    pub count: usize,
+    pub offset: Point<Pixels>,
+}
+
+impl Render for DragBadge {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        const ICON: f32 = 22.0;
+        let stacked = self.count > 1;
+        let chip = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .pl_1p5()
+            .pr_2()
+            .py_1()
+            .rounded(cx.theme().radius)
+            .bg(cx.theme().background)
+            .border_1()
+            .border_color(cx.theme().border)
+            .shadow_lg()
+            .text_sm()
+            .text_color(cx.theme().foreground)
+            .when_some(self.icon.clone(), |this, image| {
+                this.child(
+                    // A faint offset card behind the icon hints "more
+                    // than one" for a multi-item drag.
+                    div()
+                        .relative()
+                        .w(px(ICON))
+                        .h(px(ICON))
+                        .flex_shrink_0()
+                        .when(stacked, |this| {
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .top(px(-2.0))
+                                    .left(px(2.0))
+                                    .w(px(ICON))
+                                    .h(px(ICON))
+                                    .rounded(px(4.0))
+                                    .bg(cx.theme().muted)
+                                    .border_1()
+                                    .border_color(cx.theme().border),
+                            )
+                        })
+                        .child(img(image).w(px(ICON)).h(px(ICON))),
+                )
+            })
+            .child(self.label.clone());
+        // gpui paints this root at `mouse − cursor_offset`. Push the chip
+        // back under the cursor (plus a Finder-like down-right nudge) with
+        // padding, which also sizes the root to contain the chip so it's
+        // never clipped.
+        div()
+            .pl(self.offset.x + px(12.0))
+            .pt(self.offset.y + px(8.0))
+            .child(chip)
+    }
+}
 
 /// Delegate that vends the current directory's entries to the
 /// Table. Holds the live `Vec<FileEntry>`; the Shell rotates it on
@@ -56,6 +131,10 @@ pub struct FileListDelegate {
     /// allocation-free; [`Self::visible_rows_changed`] fills it
     /// viewport-only off the UI thread.
     pub thumbnails: Rc<RefCell<ThumbnailCache>>,
+    /// Cut-marked paths (Cmd+X), shared `Rc` with `ProcessState` so the
+    /// set is always current; `render_tr` dims any row whose path is in
+    /// it. (docs/features/FILE_OPS.md)
+    pub cut_marker: Rc<RefCell<Vec<PathBuf>>>,
     /// Ant Trail heat per row, parallel to `entries`. Populated by
     /// `Shell::load_path` after each enumerate. 0.0 = never visited
     /// (no tint); 1.0 = the most-visited folder. Renderer maps to
@@ -119,6 +198,7 @@ impl FileListDelegate {
         fs: Arc<NativeFs>,
         icons: Rc<RefCell<IconCache>>,
         thumbnails: Rc<RefCell<ThumbnailCache>>,
+        cut_marker: Rc<RefCell<Vec<PathBuf>>>,
         shell_focus: gpui::FocusHandle,
     ) -> Self {
         Self {
@@ -154,6 +234,7 @@ impl FileListDelegate {
             paths: HashMap::new(),
             icons,
             thumbnails,
+            cut_marker,
             heats: Vec::new(),
             tags: Vec::new(),
             is_favorited: Vec::new(),
@@ -407,6 +488,15 @@ impl TableDelegate for FileListDelegate {
             .unwrap_or(false);
         let is_lead = entry_id == self.lead && entry_id.is_some();
         let mut row = div().id(("file-row", row_ix));
+        // Cut (Cmd+X) rows render dimmed until the move pastes (or the
+        // mark is cleared by a fresh Copy/Cut), mirroring Explorer.
+        let is_cut = entry_id
+            .and_then(|id| self.paths.get(&id))
+            .map(|p| self.cut_marker.borrow().iter().any(|c| c == p))
+            .unwrap_or(false);
+        if is_cut {
+            row = row.opacity(0.45);
+        }
         // Folder rows are drop targets for OS file drags (dnd-spec
         // §3.5): accent ring on hover, drop surfaces as a TableEvent
         // for the shell to run the transfer into this folder. Stop
@@ -420,6 +510,15 @@ impl TableDelegate for FileListDelegate {
                         .border_color(cx.theme().accent)
                         .bg(cx.theme().accent.opacity(0.10))
                 })
+                // Spring-load: while a drag hovers this folder row, tell
+                // the shell (which times the dwell and drills in).
+                .on_drag_move(cx.listener(
+                    move |_state, e: &gpui::DragMoveEvent<ExternalPaths>, _window, cx| {
+                        if e.bounds.contains(&e.event.position) {
+                            cx.emit(TableEvent::DragHover { row_ix });
+                        }
+                    },
+                ))
                 .on_drop(cx.listener(
                     move |_state, paths: &ExternalPaths, _window, cx| {
                         cx.stop_propagation();
@@ -457,7 +556,7 @@ impl TableDelegate for FileListDelegate {
         // selection; pressing an unselected row drags just that row.
         if let Some(entry) = self.entries.get(row_ix) {
             let row_is_selected = self.selected_set.contains(&entry.id);
-            let mut drag_paths = smallvec![];
+            let mut drag_paths: smallvec::SmallVec<[PathBuf; 2]> = smallvec![];
             if row_is_selected {
                 for selected in &self.entries {
                     if self.selected_set.contains(&selected.id) {
@@ -470,9 +569,42 @@ impl TableDelegate for FileListDelegate {
                 drag_paths.push(path);
             }
             if !drag_paths.is_empty() {
-                return row.on_drag(ExternalPaths(drag_paths), |paths, _, _, cx| {
-                    cx.new(|_| paths.clone())
-                });
+                let count = drag_paths.len();
+                // Cursor chip: the single name, or "N items" for a
+                // multi-row drag.
+                let label: SharedString = if count == 1 {
+                    drag_paths[0]
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                        .into()
+                } else {
+                    format!("{count} items").into()
+                };
+                // Ghost icon = the pressed row's: a warmed Quick Look
+                // thumbnail if one's cached (Finder-like), else the
+                // workspace type icon. Both are already cache-warm for a
+                // visible row, so this stays off the filesystem.
+                let ghost_icon: Option<Arc<RenderImage>> =
+                    self.path_for_entry(entry.id).map(|p| {
+                        if show_thumbnails(cx) {
+                            if let Some(t) = self.thumbnails.borrow().get(&p, THUMB_PX) {
+                                return t;
+                            }
+                        }
+                        self.icons.borrow_mut().icon_for(entry, &p)
+                    });
+                return row.on_drag(
+                    ExternalPaths(drag_paths),
+                    move |_paths, offset, _window, cx| {
+                        cx.new(|_| DragBadge {
+                            label: label.clone(),
+                            icon: ghost_icon.clone(),
+                            count,
+                            offset,
+                        })
+                    },
+                );
             }
         }
         row

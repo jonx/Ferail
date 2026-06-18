@@ -92,22 +92,30 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 /// resolves it as an alias on double-click.
 #[cfg(target_os = "macos")]
 pub fn make_alias(target: &Path) -> Result<PathBuf, String> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| format!("no parent directory for {}", target.display()))?;
+    make_alias_in(target, parent)
+}
+
+/// Like [`make_alias`] but writes the alias into `dest_dir` instead of
+/// next to `target` — used by Cmd+Option alias-drop, where the alias
+/// belongs in the folder it was dropped on.
+#[cfg(target_os = "macos")]
+pub fn make_alias_in(target: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
     use objc2::msg_send;
     use objc2::msg_send_id;
     use objc2::rc::Retained;
     use objc2::runtime::AnyClass;
     use objc2_foundation::{NSData, NSError, NSString, NSURL};
 
-    let parent = target
-        .parent()
-        .ok_or_else(|| format!("no parent directory for {}", target.display()))?;
     let stem = target
         .file_stem()
         .map(OsStr::to_owned)
         .ok_or_else(|| format!("no file name in {}", target.display()))?;
 
     // Alias files get no extension; Finder treats them by type metadata.
-    let dst = pick_suffixed_name(parent, &stem, None, "alias")
+    let dst = pick_suffixed_name(dest_dir, &stem, None, "alias")
         .ok_or_else(|| "exhausted alias index range".to_string())?;
 
     // NSURLBookmarkCreationSuitableForBookmarkFile = 1 << 10 (Apple SDK).
@@ -153,6 +161,11 @@ pub fn make_alias(target: &Path) -> Result<PathBuf, String> {
 
 #[cfg(not(target_os = "macos"))]
 pub fn make_alias(_target: &Path) -> Result<PathBuf, String> {
+    Err("make_alias is macOS-only".into())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn make_alias_in(_target: &Path, _dest_dir: &Path) -> Result<PathBuf, String> {
     Err("make_alias is macOS-only".into())
 }
 

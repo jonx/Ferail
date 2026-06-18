@@ -32,15 +32,18 @@ feature notes in [docs/features/](docs/features/README.md).
   stay session-scoped by design), Windows Recycle Bin restore
   (`SHFileOperationW` doesn't report the recycled location), and a
   richer Trash browsing view (original-location column).
-- File-ops follow-ups (docs/features/FILE_OPS.md — Cmd+C/V/Option+V
-  with progress, cancel, and collision dialog shipped 2026-06-13):
-  per-item collision resolution, Windows pasteboard (CF_HDROP) and
-  volume-identity parity, cross-volume move undo, and a decision on
-  cut semantics.
-- Drag-into-app follow-ups (file list folder rows, pane background, and
-  sidebar tree rows shipped 2026-06-13 — docs/features/FILE_OPS.md):
-  drops on tabs, breadcrumb segments, and favorites; auto-scroll and
-  auto-expand during drag; Cmd+Option alias-drop.
+- File-ops follow-ups (docs/features/FILE_OPS.md — Cmd+C/V/Option+V with
+  progress/cancel/collision shipped 2026-06-13; per-item collision
+  resolution, Cut/Cmd+X with move-on-paste + dimmed rows shipped
+  2026-06-18): Windows pasteboard (CF_HDROP) and volume-identity parity,
+  and cross-volume move undo.
+- Drag follow-ups (file list folder rows, pane background, sidebar tree
+  rows shipped 2026-06-13; drops on tabs + breadcrumb segments,
+  Cmd+Option alias-drop, drag cursor chip + spring-load for file/tree
+  rows shipped 2026-06-18 — docs/features/FILE_OPS.md): auto-scroll near
+  the list edges while dragging (needs `UniformListScrollHandle` offset
+  access); drops on favorite *rows* (gaps accept folder-adds today). All
+  drag gestures need interactive testing — not headlessly drivable.
 - Toolbar density follow-ups (refresh, new folder, sort dropdown, and
   action-overflow menu shipped 2026-06-13): grid/icon view mode (a new
   file-pane render path — feature-sized, its own iteration) and

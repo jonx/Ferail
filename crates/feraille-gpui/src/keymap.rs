@@ -18,6 +18,7 @@ use gpui::{App, KeyBinding};
 
 use crate::shell::{
     self, ClearFilter, CloseTab, CloseWindow, CopyFiles, CopyPath, CursorDown, CursorDownExtend,
+    CutFiles,
     CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp, CursorUpExtend,
     EditBreadcrumb, EmptyTrash, FindDuplicates, FocusFilter, GetInfo, GoHome, GridDown,
     GridDownExtend, GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp, GridUpExtend,
@@ -149,6 +150,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "file.empty_trash" => {}
         "file.copy_path" => cx.bind_keys([KeyBinding::new(kb_str, CopyPath, ctx)]),
         "file.copy" => cx.bind_keys([KeyBinding::new(kb_str, CopyFiles, ctx)]),
+        "file.cut" => cx.bind_keys([KeyBinding::new(kb_str, CutFiles, ctx)]),
         "file.paste" => cx.bind_keys([KeyBinding::new(kb_str, PasteFiles, ctx)]),
         "file.move_paste" => cx.bind_keys([KeyBinding::new(kb_str, MovePasteFiles, ctx)]),
         "file.reveal_in_finder" => cx.bind_keys([KeyBinding::new(kb_str, RevealInFinder, ctx)]),

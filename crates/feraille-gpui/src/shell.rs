@@ -245,6 +245,15 @@ pub struct Shell {
     /// menu builder runs, cleared on the next left mouse-down at the
     /// shell root (which is also how the menu dismisses).
     pub breadcrumb_menu_open: bool,
+    /// Spring-load dwell tracker: `(row_ix, first-hover time)` for a
+    /// folder row a drag is currently hovering. After a short dwell the
+    /// shell drills into that folder so the user can drop deeper without
+    /// releasing (docs/features/FILE_OPS.md). Cleared on drill / drop.
+    pub spring_load: Option<(usize, std::time::Instant)>,
+    /// Spring-load dwell tracker for sidebar *tree* rows, keyed by path:
+    /// hovering a collapsed folder with a drag expands it after a dwell
+    /// so the user can drill the tree mid-drag.
+    pub tree_spring: Option<(PathBuf, std::time::Instant)>,
     /// Whether the background-task panel popover is open. Toggled by
     /// clicking the task region in the status bar.
     pub task_panel_open: bool,
@@ -659,6 +668,8 @@ impl Shell {
             show_hidden,
             context_row: None,
             context_target: None,
+            spring_load: None,
+            tree_spring: None,
             favorites_context_path: None,
             breadcrumb_menu_open: false,
             task_panel_open: false,
@@ -748,6 +759,7 @@ impl Shell {
             process.fs.clone(),
             process.icons.clone(),
             process.thumbnails.clone(),
+            process.cut_marker.clone(),
             shell_focus,
         );
         let table = cx.new(|cx| {
@@ -778,8 +790,31 @@ impl Shell {
                         // that folder (dnd-spec §3.5). Non-folder rows
                         // never emit this; the pane background target
                         // covers them with current-dir semantics.
+                        this.spring_load = None;
                         if let Some(dest) = this.path_for_row(*row_ix, cx) {
                             this.handle_external_drop(paths.clone(), dest, window, cx);
+                        }
+                    }
+                    TableEvent::DragHover { row_ix } => {
+                        // Spring-load: after a short dwell over a folder
+                        // row, drill into it so the user can drop deeper
+                        // without releasing the drag.
+                        const SPRING_DWELL: std::time::Duration =
+                            std::time::Duration::from_millis(600);
+                        let now = std::time::Instant::now();
+                        match this.spring_load {
+                            Some((r, since)) if r == *row_ix => {
+                                if now.duration_since(since) >= SPRING_DWELL {
+                                    this.spring_load = None;
+                                    // Only folder rows emit DragHover, so
+                                    // the row's path is a directory by
+                                    // construction — no stat here.
+                                    if let Some(dest) = this.path_for_row(*row_ix, cx) {
+                                        this.navigate(dest, cx);
+                                    }
+                                }
+                            }
+                            _ => this.spring_load = Some((*row_ix, now)),
                         }
                     }
                     TableEvent::LeadMoved { row_ix, modifiers } => {
@@ -3239,6 +3274,26 @@ impl Shell {
             }
         }
         cx.notify();
+    }
+
+    /// Spring-load a sidebar tree row: while a drag dwells over a
+    /// collapsed folder, expand it (open-only, never collapse) so the
+    /// user can drill the tree without releasing. Called from the tree
+    /// row's `on_drag_move` (docs/features/FILE_OPS.md).
+    pub fn tree_drag_hover(&mut self, path: &Path, cx: &mut Context<Self>) {
+        const DWELL: std::time::Duration = std::time::Duration::from_millis(600);
+        let now = std::time::Instant::now();
+        match &self.tree_spring {
+            Some((p, since)) if p == path => {
+                if now.duration_since(*since) >= DWELL {
+                    self.tree_spring = None;
+                    if !self.expanded.contains(path) {
+                        self.toggle_tree_expand(path, cx);
+                    }
+                }
+            }
+            _ => self.tree_spring = Some((path.to_path_buf(), now)),
+        }
     }
 
     pub fn toggle_tree_expand_node(&mut self, node_id: NodeId, cx: &mut Context<Self>) {
