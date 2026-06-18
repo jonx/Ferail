@@ -400,8 +400,8 @@ fn render_tree_row(
             gpui::ExternalPaths(smallvec![drag_path]),
             move |_paths, offset, _window, cx| {
                 cx.new(|_| crate::file_list::DragBadge {
-                    label: drag_label.clone(),
-                    icon: None,
+                    names: smallvec![drag_label.clone()],
+                    icons: smallvec![],
                     count: 1,
                     offset,
                 })

@@ -26,7 +26,7 @@ use gpui_component::{
     menu::{PopupMenu, PopupMenuItem},
     tooltip::Tooltip,
 };
-use smallvec::smallvec;
+use smallvec::{smallvec, SmallVec};
 
 use crate::icons::{IconCache, file_type_icon, tint_color};
 use crate::multi_table::{Column, ColumnSort, TableDelegate, TableEvent, TableState};
@@ -34,9 +34,12 @@ use crate::thumbnails::{is_thumbnailable, show_thumbnails, ThumbnailCache, THUMB
 
 /// The floating ghost shown under the cursor while dragging rows out of
 /// the list (or to an in-app drop target) — gpui's `on_drag` needs an
-/// `Entity<impl Render>` for the drag image. Shows the dragged item's
-/// icon/thumbnail + name (or "N items" for a multi-row drag, with a
-/// stacked-card hint behind it).
+/// `Entity<impl Render>` for the drag image. A single-row drag shows the
+/// item's icon/thumbnail + name as a labelled chip; a multi-row drag
+/// renders the *actual* item images as a loose Finder-style stack
+/// (capped at [`GHOST_STACK_CAP`]) with a red count badge — no "N items"
+/// string. The images come straight from the already-warm thumbnail/icon
+/// caches, so building the ghost never touches the filesystem.
 ///
 /// gpui paints the drag view at `mouse − cursor_offset`, and
 /// `cursor_offset` is the grab point within the *dragged element* — for
@@ -45,65 +48,145 @@ use crate::thumbnails::{is_thumbnailable, show_thumbnails, ThumbnailCache, THUMB
 /// at `offset` (= the `cursor_offset` gpui hands the constructor), plus
 /// a small down-right nudge so it trails the pointer like Finder.
 pub struct DragBadge {
-    pub label: SharedString,
-    pub icon: Option<Arc<RenderImage>>,
+    /// Item file names, lead-first, capped at [`GHOST_STACK_CAP`]. The
+    /// single-item ghost labels its chip with `names[0]`; the multi-item
+    /// ghost lists the first [`GHOST_NAME_CAP`] beside the stack with a
+    /// "+N more" overflow line.
+    pub names: SmallVec<[SharedString; GHOST_STACK_CAP]>,
+    /// Actual item images (Quick Look thumbnail when warm, else the
+    /// workspace type icon), lead-first, capped at [`GHOST_STACK_CAP`].
+    pub icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>,
     pub count: usize,
     pub offset: Point<Pixels>,
 }
 
+/// Max real images to render in a multi-item drag stack. Finder shows a
+/// small fan regardless of selection size; more than this just adds
+/// cache lookups and visual mush.
+pub const GHOST_STACK_CAP: usize = 4;
+
+/// Max file names listed beside a multi-item drag stack before the rest
+/// collapse into a "+N more" line.
+pub const GHOST_NAME_CAP: usize = 3;
+
 impl Render for DragBadge {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const ICON: f32 = 22.0;
-        let stacked = self.count > 1;
-        let chip = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .pl_1p5()
-            .pr_2()
-            .py_1()
-            .rounded(cx.theme().radius)
-            .bg(cx.theme().background)
-            .border_1()
-            .border_color(cx.theme().border)
-            .shadow_lg()
-            .text_sm()
-            .text_color(cx.theme().foreground)
-            .when_some(self.icon.clone(), |this, image| {
-                this.child(
-                    // A faint offset card behind the icon hints "more
-                    // than one" for a multi-item drag.
+        let theme = cx.theme();
+        let content = if self.count <= 1 {
+            // Single item: labelled chip with the file's icon/thumbnail.
+            const ICON: f32 = 22.0;
+            let chip = div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .pl_1p5()
+                .pr_2()
+                .py_1()
+                .rounded(theme.radius)
+                .bg(theme.background)
+                .border_1()
+                .border_color(theme.border)
+                .shadow_lg()
+                .text_sm()
+                .text_color(theme.foreground)
+                .when_some(self.icons.first().cloned(), |this, image| {
+                    this.child(img(image).w(px(ICON)).h(px(ICON)).flex_shrink_0())
+                })
+                .child(
                     div()
-                        .relative()
+                        .max_w(px(260.0))
+                        .truncate()
+                        .child(self.names.first().cloned().unwrap_or_default()),
+                );
+            div().child(chip)
+        } else {
+            // Multiple items: a loose stack of the real item images (drawn
+            // back-to-front so the lead lands on top) with a red count
+            // badge, beside a short list of the names — the Finder stack,
+            // plus the "which files" the user asked for.
+            const ICON: f32 = 40.0;
+            const SPREAD: f32 = 7.0;
+            let n = self.icons.len().min(GHOST_STACK_CAP).max(1);
+            let span = ICON + (n as f32 - 1.0) * SPREAD;
+            let mut stack = div().relative().flex_shrink_0().w(px(span)).h(px(span));
+            for (i, image) in self.icons.iter().take(GHOST_STACK_CAP).enumerate().rev() {
+                let off = px(i as f32 * SPREAD);
+                stack = stack.child(
+                    img(image.clone())
+                        .absolute()
+                        .left(off)
+                        .top(off)
                         .w(px(ICON))
                         .h(px(ICON))
-                        .flex_shrink_0()
-                        .when(stacked, |this| {
-                            this.child(
-                                div()
-                                    .absolute()
-                                    .top(px(-2.0))
-                                    .left(px(2.0))
-                                    .w(px(ICON))
-                                    .h(px(ICON))
-                                    .rounded(px(4.0))
-                                    .bg(cx.theme().muted)
-                                    .border_1()
-                                    .border_color(cx.theme().border),
-                            )
-                        })
-                        .child(img(image).w(px(ICON)).h(px(ICON))),
-                )
-            })
-            .child(self.label.clone());
-        // gpui paints this root at `mouse − cursor_offset`. Push the chip
-        // back under the cursor (plus a Finder-like down-right nudge) with
-        // padding, which also sizes the root to contain the chip so it's
-        // never clipped.
+                        .rounded(px(6.0))
+                        .border_2()
+                        .border_color(theme.background)
+                        .shadow_md(),
+                );
+            }
+            let stack = stack.child(
+                div()
+                    .absolute()
+                    .top(px(-6.0))
+                    .right(px(-6.0))
+                    .min_w(px(20.0))
+                    .h(px(20.0))
+                    .px_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(gpui::rgb(0xff3b30))
+                    .border_2()
+                    .border_color(theme.background)
+                    .text_color(gpui::white())
+                    .text_xs()
+                    .font_weight(FontWeight::BOLD)
+                    .child(format!("{}", self.count)),
+            );
+            // Name list: the first GHOST_NAME_CAP, then a "+N more" line.
+            let shown = self.names.len().min(GHOST_NAME_CAP);
+            let mut names = div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .text_sm()
+                .text_color(theme.foreground);
+            for name in self.names.iter().take(GHOST_NAME_CAP) {
+                names = names.child(div().max_w(px(220.0)).truncate().child(name.clone()));
+            }
+            if self.count > shown {
+                names = names.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(format!("+{} more", self.count - shown)),
+                );
+            }
+            let chip = div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .pl_2()
+                .pr_3()
+                .py_2()
+                .rounded(theme.radius)
+                .bg(theme.background)
+                .border_1()
+                .border_color(theme.border)
+                .shadow_lg()
+                .child(stack)
+                .child(names);
+            div().child(chip)
+        };
+        // gpui paints this root at `mouse − cursor_offset`. Push the
+        // content back under the cursor (plus a Finder-like down-right
+        // nudge) with padding, which also sizes the root to contain it so
+        // it's never clipped.
         div()
             .pl(self.offset.x + px(12.0))
             .pt(self.offset.y + px(8.0))
-            .child(chip)
+            .child(content)
     }
 }
 
@@ -557,49 +640,70 @@ impl TableDelegate for FileListDelegate {
         if let Some(entry) = self.entries.get(row_ix) {
             let row_is_selected = self.selected_set.contains(&entry.id);
             let mut drag_paths: smallvec::SmallVec<[PathBuf; 2]> = smallvec![];
+            // Real item images for the drag ghost, lead-first, capped at
+            // GHOST_STACK_CAP. Per the UI_NONBLOCKING contract these come
+            // only from already-warm caches: a Quick Look thumbnail when
+            // cached (Finder-like), else the workspace type icon — both
+            // warm for any visible/selected row, so this stays off the
+            // filesystem.
+            let want_thumb = show_thumbnails(cx);
+            let mut ghost_icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]> = smallvec![];
+            let push_ghost = |entry: &FileEntry,
+                                  path: &PathBuf,
+                                  icons: &Rc<RefCell<IconCache>>,
+                                  thumbs: &Rc<RefCell<ThumbnailCache>>,
+                                  out: &mut SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>| {
+                if out.len() >= GHOST_STACK_CAP {
+                    return;
+                }
+                if want_thumb {
+                    if let Some(t) = thumbs.borrow().get(path, THUMB_PX) {
+                        out.push(t);
+                        return;
+                    }
+                }
+                out.push(icons.borrow_mut().icon_for(entry, path));
+            };
             if row_is_selected {
                 for selected in &self.entries {
                     if self.selected_set.contains(&selected.id) {
                         if let Some(path) = self.path_for_entry(selected.id) {
+                            push_ghost(
+                                selected,
+                                &path,
+                                &self.icons,
+                                &self.thumbnails,
+                                &mut ghost_icons,
+                            );
                             drag_paths.push(path);
                         }
                     }
                 }
             } else if let Some(path) = self.path_for_entry(entry.id) {
+                push_ghost(entry, &path, &self.icons, &self.thumbnails, &mut ghost_icons);
                 drag_paths.push(path);
             }
             if !drag_paths.is_empty() {
                 let count = drag_paths.len();
-                // Cursor chip: the single name, or "N items" for a
-                // multi-row drag.
-                let label: SharedString = if count == 1 {
-                    drag_paths[0]
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                        .into()
-                } else {
-                    format!("{count} items").into()
-                };
-                // Ghost icon = the pressed row's: a warmed Quick Look
-                // thumbnail if one's cached (Finder-like), else the
-                // workspace type icon. Both are already cache-warm for a
-                // visible row, so this stays off the filesystem.
-                let ghost_icon: Option<Arc<RenderImage>> =
-                    self.path_for_entry(entry.id).map(|p| {
-                        if show_thumbnails(cx) {
-                            if let Some(t) = self.thumbnails.borrow().get(&p, THUMB_PX) {
-                                return t;
-                            }
-                        }
-                        self.icons.borrow_mut().icon_for(entry, &p)
-                    });
+                // Names shown on the ghost, lead-first and capped — the
+                // single chip uses the first; the multi list shows up to
+                // GHOST_NAME_CAP with a "+N more" overflow.
+                let names: SmallVec<[SharedString; GHOST_STACK_CAP]> = drag_paths
+                    .iter()
+                    .take(GHOST_STACK_CAP)
+                    .map(|p| {
+                        p.file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default()
+                            .into()
+                    })
+                    .collect();
                 return row.on_drag(
                     ExternalPaths(drag_paths),
                     move |_paths, offset, _window, cx| {
                         cx.new(|_| DragBadge {
-                            label: label.clone(),
-                            icon: ghost_icon.clone(),
+                            names: names.clone(),
+                            icons: ghost_icons.clone(),
                             count,
                             offset,
                         })

@@ -133,6 +133,12 @@ pub struct Args {
     /// shell. A directory renders its first file with the full
     /// playlist; a single file renders a one-entry playlist.
     pub viewer: Option<PathBuf>,
+    /// Render the drag ghost ([`crate::file_list::DragBadge`]) for a
+    /// drag of N items, in isolation, against a neutral backdrop —
+    /// the only way to capture the cursor ghost headlessly (it never
+    /// exists outside a live drag). Uses placeholder coloured tiles
+    /// for the item images.
+    pub drag_ghost: Option<usize>,
 }
 
 pub fn parse_args() -> Args {
@@ -233,6 +239,7 @@ pub fn parse_args() -> Args {
                 args.settings = Some(iter.next().unwrap_or_default());
             }
             "--viewer" => args.viewer = iter.next().map(PathBuf::from),
+            "--drag-ghost" => args.drag_ghost = iter.next().and_then(|s| s.parse().ok()),
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -288,6 +295,8 @@ OPTIONS
                            appearance / files / layout / about.
   --viewer <path>          Render the viewer window for <path> (file or
                            folder) instead of the shell.
+  --drag-ghost <N>         Render the drag cursor ghost for an N-item drag
+                           (placeholder tiles) against a neutral backdrop.
   -h, --help               Print this help.
 
 EXAMPLES
@@ -312,6 +321,7 @@ pub fn run(args: Args) -> Result<()> {
     let settings_page = args.settings.clone();
     let disk_usage_root = args.disk_usage.clone();
     let viewer_target = args.viewer.clone();
+    let drag_ghost = args.drag_ghost;
 
     let shell_args = ShellArgs::from(&args);
 
@@ -419,6 +429,33 @@ pub fn run(args: Args) -> Result<()> {
                         let view = cx.new(|cx| {
                             crate::viewer::ViewerWindow::new(playlist, 0, false, process, window, cx)
                         });
+                        cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                    } else if let Some(n) = drag_ghost {
+                        // Isolated drag-ghost preview: build a DragBadge
+                        // for an N-item drag with placeholder tiles and
+                        // render it against a neutral backdrop.
+                        let count = n.max(1);
+                        let palette =
+                            [0x4f8cff_u32, 0xff8c42, 0x36c275, 0xc061ff, 0xffd23f, 0xff5d5d];
+                        let icons = (0..count.min(crate::file_list::GHOST_STACK_CAP))
+                            .map(|i| placeholder_icon(palette[i % palette.len()]))
+                            .collect();
+                        let sample = [
+                            "Annual Report.pdf",
+                            "Q3 Budget.xlsx",
+                            "Team Photo.jpg",
+                            "Roadmap.key",
+                        ];
+                        let names = (0..count.min(crate::file_list::GHOST_STACK_CAP))
+                            .map(|i| sample[i % sample.len()].into())
+                            .collect();
+                        let badge = cx.new(|_| crate::file_list::DragBadge {
+                            names,
+                            icons,
+                            count,
+                            offset: gpui::Point::default(),
+                        });
+                        let view = cx.new(|_| DragGhostPreview { badge });
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if let Some(page) = settings_page.as_deref() {
                         let cat =
@@ -885,4 +922,36 @@ fn canonicalize_or_passthrough(p: &std::path::Path) -> PathBuf {
         p.to_path_buf()
     };
     std::fs::canonicalize(&expanded).unwrap_or(expanded)
+}
+
+/// Root view for `--drag-ghost`: centres a [`crate::file_list::DragBadge`]
+/// over a neutral backdrop so the cursor ghost can be captured headlessly.
+struct DragGhostPreview {
+    badge: Entity<crate::file_list::DragBadge>,
+}
+
+impl Render for DragGhostPreview {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgb(0x2b2b30))
+            .child(self.badge.clone())
+    }
+}
+
+/// A solid RGB tile as a stand-in file image for the drag-ghost preview.
+fn placeholder_icon(color: u32) -> std::sync::Arc<RenderImage> {
+    const W: u32 = 64;
+    const H: u32 = 64;
+    let r = ((color >> 16) & 0xff) as u8;
+    let g = ((color >> 8) & 0xff) as u8;
+    let b = (color & 0xff) as u8;
+    let mut rgba = Vec::with_capacity((W * H * 4) as usize);
+    for _ in 0..(W * H) {
+        rgba.extend_from_slice(&[r, g, b, 255]);
+    }
+    std::sync::Arc::new(crate::icons::build_render_image(rgba, W, H))
 }
