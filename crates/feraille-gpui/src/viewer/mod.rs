@@ -14,18 +14,23 @@ pub mod playback;
 pub mod stage;
 pub mod window;
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use gpui::{
-    App, AppContext as _, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px, size,
+    App, AppContext as _, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px,
+    size,
 };
 use gpui_component::Root;
 
 pub use window::{PlaylistEntry, ViewerWindow};
 
-/// Open the viewer on `playlist`, starting at `start`. One reusable
-/// window per process: if a viewer is already live, retarget and
-/// activate it instead of stacking another (closing the window drops
-/// the entity, so the stored weak handle naturally goes stale and the
-/// next open creates a fresh window).
+/// Cascade counter so each new viewer window is offset from the last
+/// instead of stacking exactly on top of it.
+static VIEWER_CASCADE: AtomicU32 = AtomicU32::new(0);
+
+/// Open the viewer on `playlist`, starting at `start`. Each call opens a
+/// *new* window (cascaded from the previous one), so several files can be
+/// viewed side by side; closing a window just drops its entity.
 pub fn open_viewer(playlist: Vec<PlaylistEntry>, start: usize, cx: &mut App) {
     open_viewer_inner(playlist, start, false, cx);
 }
@@ -39,21 +44,15 @@ pub fn open_viewer_playing(playlist: Vec<PlaylistEntry>, start: usize, cx: &mut 
 fn open_viewer_inner(playlist: Vec<PlaylistEntry>, start: usize, autoplay: bool, cx: &mut App) {
     let process = crate::process_state::process_state(cx);
 
-    let existing = process.viewer_window.borrow().clone();
-    if let Some((handle, weak)) = existing {
-        if let Some(view) = weak.upgrade() {
-            let reused = handle.update(cx, |_root, window, cx| {
-                view.update(cx, |v, cx| v.retarget(playlist.clone(), start, autoplay, cx));
-                window.activate_window();
-            });
-            if reused.is_ok() {
-                return;
-            }
-        }
-    }
+    // Centre on the active display, then cascade by a fixed step (wrapping
+    // after a handful) so a fresh window doesn't land exactly atop the last.
+    let step = (VIEWER_CASCADE.fetch_add(1, Ordering::Relaxed) % 6) as f32 * 28.0;
+    let mut bounds = Bounds::centered(None, size(px(1100.0), px(760.0)), cx);
+    bounds.origin.x = bounds.origin.x + px(step);
+    bounds.origin.y = bounds.origin.y + px(step);
 
     let opts = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(1100.0), px(760.0)), cx)),
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
             title: Some(SharedString::from("Viewer")),
             ..Default::default()

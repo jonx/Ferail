@@ -134,17 +134,20 @@ feature notes in [docs/features/](docs/features/README.md).
   shell-out for `QLThumbnailGenerator`, pinch-to-zoom gesture mapping,
   live playlist sync via the watcher (skip deleted entries), Windows
   parity (Ctrl/F11 chords, `IShellItemImageFactory` fallback, Media
-  Foundation video overlay), audio-file playback, a watchdog for
-  eligible-but-unplayable videos stalling slideshow auto-advance, and
-  slideshow transitions once the animation budget review lands.
-- Viewer video transport polish (shipped 2026-06-17: per-item view-only
-  rotation for images and video, custom gpui controls — play/pause,
-  frame-step, loop, seek bar — stay-on-top, and zoom/pan/fit for video).
-  Follow-ups: the video↔video switch still flashes briefly before the
-  first frame (mitigated with a transparent overlay, not eliminated — a
-  readyForDisplay gate would); rotated playback controls rotate the
-  poster behind them; and a precise/scrubbing seek (tolerance-zero
-  `seekToTime:`) plus volume control.
+  Foundation video frame source feeding the shared `RenderImage` path),
+  audio-file playback, a watchdog for eligible-but-unplayable videos
+  stalling slideshow auto-advance, and slideshow transitions once the
+  animation budget review lands.
+- Viewer video as a gpui frame surface (shipped 2026-06-18): replaced the
+  native `AVPlayerView` overlay with a windowless `AVPlayer` +
+  `AVPlayerItemVideoOutput` frame pull, so video draws through the same
+  `stage::layout`/`img` path as stills — zoom/pan/fit/rotation and the
+  gpui transport all "just work," and the video↔video black flash is gone
+  (the poster shows until the first frame decodes). Earlier transport
+  polish (2026-06-17): play/pause, frame-step, loop, seek bar,
+  stay-on-top. Follow-ups: the per-frame copy runs on the main thread —
+  a `CVDisplayLink` background pull if 4K60 shows cost; precise/scrubbing
+  seek (tolerance-zero `seekToTime:`); volume control.
 - Expand magic detection beyond the small high-confidence table; add
   recursive/mismatch-only CLI modes and structured output.
 - Improve quarantine/provenance UI: Gatekeeper assessment, code-signature

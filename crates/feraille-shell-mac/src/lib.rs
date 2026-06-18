@@ -1038,56 +1038,35 @@ pub fn start_volume_observer(callback: Box<dyn Fn() + 'static>) {
 #[cfg(not(target_os = "macos"))]
 pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static>) {}
 
-/// Mount a native AVPlayerView video overlay inside the given content
-/// NSView at `frame` (gpui top-left logical coordinates) and start
-/// playback. Returns an overlay handle, 0 on failure. Main-thread
+/// Open a windowless native video player for `path` and start playback,
+/// returning a handle (0 on failure). Frames are pulled out as BGRA
+/// pixel buffers via [`video_overlay_copy_frame`] and drawn by the gpui
+/// host as an image — there is no native overlay NSView. Main-thread
 /// only. `on_ended` fires on the main thread when the video plays to
-/// the end; it must defer (e.g. through a channel), not call overlay
+/// the end; it must defer (e.g. through a channel), not call player
 /// APIs synchronously. See docs/features/VIEWER.md.
 #[cfg(target_os = "macos")]
-pub fn video_overlay_show(
-    container_ns_view: *mut std::ffi::c_void,
-    path: &std::path::Path,
-    viewport: (f64, f64, f64, f64),
-    content: (f64, f64, f64, f64),
-    quarter_turns: u8,
-    on_ended: Box<dyn Fn() + 'static>,
-) -> u64 {
-    video_overlay::show(container_ns_view, path, viewport, content, quarter_turns, on_ended)
+pub fn video_overlay_show(path: &std::path::Path, on_ended: Box<dyn Fn() + 'static>) -> u64 {
+    video_overlay::show(path, on_ended)
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn video_overlay_show(
-    _container_ns_view: *mut std::ffi::c_void,
-    _path: &std::path::Path,
-    _viewport: (f64, f64, f64, f64),
-    _content: (f64, f64, f64, f64),
-    _quarter_turns: u8,
-    _on_ended: Box<dyn Fn() + 'static>,
-) -> u64 {
+pub fn video_overlay_show(_path: &std::path::Path, _on_ended: Box<dyn Fn() + 'static>) -> u64 {
     0
 }
 
-/// Reposition a live video overlay: `viewport` is the clipped stage rect,
-/// `content` the zoomed/panned video box (stage-relative), and
-/// `quarter_turns` the clockwise rotation. Main-thread only; stale ids no-op.
+/// Pull the latest decoded frame as tightly-packed BGRA bytes plus its
+/// `(width, height)` in pixels, or `None` when no new frame is ready
+/// since the last pull (the caller keeps the previous frame / poster).
+/// Main-thread only; stale ids give `None`.
 #[cfg(target_os = "macos")]
-pub fn video_overlay_set_frame(
-    id: u64,
-    viewport: (f64, f64, f64, f64),
-    content: (f64, f64, f64, f64),
-    quarter_turns: u8,
-) {
-    video_overlay::set_frame(id, viewport, content, quarter_turns);
+pub fn video_overlay_copy_frame(id: u64) -> Option<(u32, u32, Vec<u8>)> {
+    video_overlay::copy_frame(id)
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn video_overlay_set_frame(
-    _id: u64,
-    _viewport: (f64, f64, f64, f64),
-    _content: (f64, f64, f64, f64),
-    _quarter_turns: u8,
-) {
+pub fn video_overlay_copy_frame(_id: u64) -> Option<(u32, u32, Vec<u8>)> {
+    None
 }
 
 /// Stop playback and remove a video overlay. Main-thread only; stale

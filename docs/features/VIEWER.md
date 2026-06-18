@@ -173,9 +173,11 @@ another entry keeps `{mode, center}` verbatim:
 - Opened via the Disk Usage pattern: `viewer::open_viewer(playlist, start,
   cx)` from a Shell action handler; 1100×760 centered, themed background
   (`cx.theme().background` darkened canvas behind the image).
-- **Single reusable window**: a process-wide `Option<WindowHandle>` —
-  invoking Open Viewer while one exists retargets its playlist and
-  activates it instead of stacking windows.
+- **One window per open**: each Open Viewer call opens a new window,
+  cascaded from the last (a `VIEWER_CASCADE` counter offsets the centred
+  bounds), so multiple files can be viewed side by side. Each window owns
+  its own playlist + view state and shares only the process `ProcessState`
+  (preview cache, etc.). Closing a window just drops its entity.
 - Title: `"<filename> — 3 of 128"`; same counter repeated in the toolbar.
 - Toolbar (gpui-component `Button`/`ButtonGroup`, icons consistent with
   `icons.rs`): prev / next, play–pause, interval dropdown (2 s / 3 s / 5 s /
@@ -201,26 +203,36 @@ another entry keeps `{mode, center}` verbatim:
   `ViewerWindow::rotations` (a per-index `HashMap`), never touches the
   file, applies to one item at a time, and is dropped when the window
   closes or retargets.
-  - **Images** CPU-rotate the bitmap (`rotate_render_image`, cached in
-    one slot) since gpui can't transform an `img` (docs/GPUI-UPSTREAM.md #5).
-  - **Videos** rotate via a Core Animation layer transform on the native
-    `AVPlayerView` (`transform.rotation.z`), no re-encode. The view is
-    nested in a stage-sized **clipped wrapper** so the oversized rotated
-    box can't draw into — or swallow clicks over — the toolbar.
-- **Video transport** (the native AVPlayerView controls are hidden — a
-  layer transform doesn't move AppKit hit-testing, so rotated native
-  controls aren't clickable; GPUI-UPSTREAM.md #5). The viewer draws its
-  own gpui controls outside the video rect, which work at any rotation:
-  toolbar play/pause + frame-step (`−1f` / `+1f`, via `stepByCount:`) +
-  a **Loop** checkbox; a **seek bar** + elapsed/total in the status strip
-  (time polled ~4×/sec; drag to scrub via `seekToTime:`). `CMTime` is
+  - **Images and videos both** CPU-rotate the bitmap (`rotate_render_image`,
+    cached in one slot) since gpui can't transform an `img`
+    (docs/GPUI-UPSTREAM.md #5). A video frame is just an `img`, so it
+    rotates the same way — keyed by frame sequence so each pulled frame
+    rotates once, and it rotates live even while paused.
+- **Video transport**: since the video is a gpui `img` (no native
+  overlay floating on top), the toolbar/seek-bar hit-test normally at any
+  rotation. Toolbar play/pause + frame-step (`−1f` / `+1f`, via
+  `stepByCount:`) + a **Loop** checkbox; a custom **seek bar** + elapsed/
+  total in the status strip (drag to scrub via `seekToTime:`). `CMTime` is
   mirrored locally for the seek/time calls.
+- **In / Out cue points**: the seek bar carries two draggable grips that
+  bound playback to `[In, Out]`, with the active region shaded between
+  them. Stored as fractions (`cue_in`/`cue_out`) and **reset to 0 / 1
+  whenever a clip becomes current** (not remembered). The bar is a small
+  custom widget (not the gpui-component slider) so playhead + both cues
+  live on one track: it captures its painted bounds via a `canvas`, and a
+  press picks the nearer cue grip if within `SEEK_GRAB_PX`, else scrubs
+  the playhead — proximity hit-testing, so a grip never steals a scrub
+  click. Reaching the **Out** cue: with **Loop** on, jump back to **In**
+  and keep playing (the region repeats); with Loop off, pause at Out — or,
+  if a slideshow is running, advance to the next clip. A full-length Out
+  (`1.0`) is the clip's natural end, left to the end-of-play notification
+  so the poll doesn't race it; only a real trim is enforced in the poll.
 - **Stay on top** checkbox raises the window to the floating `NSWindow`
   level. (Both checkboxes are gpui-component `Checkbox`es.)
-- **Zoom / pan / fit apply to video too**: the native player view is
-  positioned at the same `StageState`-driven content rect images use,
-  reading the video's intrinsic size from `presentationSize`. A window
-  resize re-fits both (the viewer observes `observe_window_bounds`).
+- **Zoom / pan / fit apply to video for free**: the pulled frame is laid
+  out through the exact same `stage::layout` call as a still, against the
+  frame's own (post-rotation) pixel size. A window resize re-fits both
+  (the viewer observes `observe_window_bounds`).
 - Navigation wraps (last → first), so slideshows loop.
 - Window close clears the process-wide handle and drops the cache.
 
@@ -285,45 +297,60 @@ with a NOTES.md entry; UI iterations add a screenshot under `screenshots/`.
 6. **Shell integration & docs** — preview-pane click/⤢ button, empty-folder
    notification, TODO.md/README index/NOTES.md refresh, screenshot sweep.
 
-## Video playback in the slideshow (v1 landed 2026-06-12)
+## Video playback in the slideshow (v1 2026-06-12; frame-pull 2026-06-18)
 
 Videos play inside the viewer instead of sitting as static posters.
 
-**Approach — native `AVPlayerView` overlay [mac].** gpui has no video
-element, so the viewer overlays an `AVPlayerView` (AVKit) as an
-NSView subview of the gpui window's content view (obtained via
-`raw_window_handle::HasWindowHandle` → `AppKitWindowHandle.ns_view`),
-positioned over the stage rect with native aspect-fit gravity and the
-default inline controls (hover to scrub/pause/mute). The alternative —
-pumping frames through `AVPlayerItemVideoOutput` into `RenderImage`s —
-keeps rendering inside gpui (zoom/pan would work) but costs a per-frame
-BGRA copy and a pile of CoreVideo interop; deferred until something
-needs it. *[win-parity: Media Foundation / MFPlay overlay]*
+**Approach — windowless `AVPlayer` + frame pull [mac].** gpui has no
+video element, but it does have an `img` element backed by `RenderImage`.
+So instead of floating a native `AVPlayerView` NSView over the gpui
+window (the original v1 design), the viewer drives a *windowless*
+`AVPlayer` and pulls decoded frames out of an `AVPlayerItemVideoOutput`
+as 32-BGRA pixel buffers (`feraille-shell-mac/src/video_overlay.rs`).
+Each frame becomes a `RenderImage` the viewer draws through the **exact
+same `stage::layout` + `img` path as still images** — so the video rect
+is a real gpui element: it composites in-tree, zoom/pan/fit/rotation are
+the shared still path, the gpui transport hit-tests correctly, and the
+headless screenshot harness captures it. AVFoundation still owns
+decode (hardware), audio, timing, seek, and step — only the *display*
+mechanism changed. *[win-parity: Media Foundation source reader feeding
+the same frame path.]*
+
+This retired the whole overlay-compositing tax: the clipped wrapper, the
+Core Animation rotation transform, the hidden native controls, and the
+transparent-layer black-flash hack are all gone (see GPUI-UPSTREAM.md #5,
+#5a — now resolved by this design).
 
 Rules:
 
 - **Eligible extensions**: `mp4`, `m4v`, `mov` — formats AVFoundation
   reliably plays. Everything else stays a Quick Look poster.
 - **Auto-play on becoming current** (viewing a video = playing it),
-  with sound; native inline controls handle pause/scrub/mute.
+  with sound, driven by the gpui transport.
+- **Frame pull**: a ~60 Hz foreground task (`start_video_poll`) calls
+  `video_overlay_copy_frame` on the main thread (the player registry is
+  main-thread-only), builds a `RenderImage`, and supersedes the previous
+  frame. `copy_frame` returns `None` between the video's own frames, so
+  it's a cheap no-op poll most ticks — and `None` until the first frame
+  decodes, which is what keeps the Quick Look poster up during a switch
+  (no black flash). Superseded frames are evicted from gpui's sprite
+  atlas via `Window::drop_image` at the top of the next render, so a new
+  `RenderImage` per frame doesn't grow VRAM.
 - **Slideshow**: a video entry does NOT arm the interval timer — the
   video's own end advances the show
   (`AVPlayerItemDidPlayToEndTimeNotification` → channel → step). The
   ended event carries the entry path and is dropped if the user
   already navigated away. Pausing the slideshow stops auto-advance
   but never interrupts the video itself.
-- **Lifecycle**: overlay attach/retarget/frame-sync happens in the
-  same render-time change-detected sync as the window title (creation
-  is cheap — AVFoundation loads media asynchronously; no blocking
-  I/O on the UI thread). Window close / entry change tears the
-  overlay down; `ViewerWindow::Drop` is the backstop.
-- **Known v1 limitations** (accepted, on the follow-up list): zoom/pan
-  and sticky zoom don't apply to the native overlay; the fullscreen
-  hover-toolbar renders *under* the overlay within the video rect; a
-  corrupt eligible file that never reaches its end-notification stalls
-  slideshow auto-advance on that entry (arrows/Esc always work);
-  screenshots can't capture the overlay (it bypasses gpui's
-  framebuffer).
+- **Lifecycle**: open/teardown happens in the render-time
+  change-detected `sync_video` (creation is cheap — AVFoundation loads
+  media asynchronously; no blocking I/O on the UI thread). Window close /
+  entry change tears the player down and queues the on-screen frame for
+  eviction; `ViewerWindow::Drop` is the backstop.
+- **Follow-ups** (accepted): the frame copy runs on the main thread —
+  fine for typical content, but 4K60 may warrant a `CVDisplayLink`
+  background pull (GPUI-UPSTREAM.md); rotating a 4K frame per tick is a
+  CPU rotate (only while rotated).
 
 ## Windows parity worklist (deferred, tagged above)
 

@@ -1213,28 +1213,20 @@ pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
 /// uses a channel either way).
 pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static + Send>) {}
 
-/// Video overlay — Windows parity stubs. The mac implementation
-/// floats an AVPlayerView over the viewer's stage rect
-/// (docs/features/VIEWER.md); the Windows equivalent is a Media
-/// Foundation / MFPlay child HWND. Until that lands, the viewer
-/// shows the static poster (handle 0 = "no overlay").
+/// Video — Windows parity stubs. The mac implementation drives a
+/// windowless AVPlayer and hands the viewer BGRA frames it draws as an
+/// image (docs/features/VIEWER.md); the Windows equivalent is a Media
+/// Foundation source reader feeding the same frame path. Until that
+/// lands, the viewer shows the static poster (handle 0 = "no video").
 pub fn video_overlay_show(
-    _container_ns_view: *mut std::ffi::c_void,
     _path: &std::path::Path,
-    _viewport: (f64, f64, f64, f64),
-    _content: (f64, f64, f64, f64),
-    _quarter_turns: u8,
     _on_ended: Box<dyn Fn() + 'static + Send>,
 ) -> u64 {
     0
 }
 
-pub fn video_overlay_set_frame(
-    _id: u64,
-    _viewport: (f64, f64, f64, f64),
-    _content: (f64, f64, f64, f64),
-    _quarter_turns: u8,
-) {
+pub fn video_overlay_copy_frame(_id: u64) -> Option<(u32, u32, Vec<u8>)> {
+    None
 }
 
 pub fn video_overlay_remove(_id: u64) {}

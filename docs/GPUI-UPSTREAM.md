@@ -122,39 +122,45 @@ gpui's `svg` element has `.with_transformation(Transformation::rotate(..))`,
 but `img` (`Img`) exposes no rotation/transform — there's no element-level
 transform on the image path at all. So a "rotate this photo 90°" view feature
 can't just transform the element; it has to rotate the underlying pixel buffer
-(`RenderImage`) on the CPU and hand gpui a new image. Native video overlays
-(AppKit layer) need their own layer transform, separate again.
+(`RenderImage`) on the CPU and hand gpui a new image.
 
 **Workaround:** rotate the decoded RGBA buffer with `image::imageops::rotate*`
 and cache the rotated `RenderImage` per (item, orientation); swap stage width/
-height for 90°/270°. Video rotates via a Core Animation `transform.rotation.z`
-on the native `AVPlayerView` (shell-mac), nested in a stage-sized clipped
-wrapper so the oversized rotated box can't draw into / eat clicks over the
-toolbar.
+height for 90°/270°. Since the video viewer now pulls frames into
+`RenderImage`s too (see below / VIEWER.md), video rotates by the *same* CPU
+path as stills — no separate layer-transform code.
 
 **What upstream could do:**
 - Give `Img` the same `with_transformation` / rotation support `svg` already
   has, so 90° view-only rotation is a render-time transform, not a re-encode.
 
-### 5a. A layer transform doesn't move AppKit hit-testing
+### 5a. A layer transform doesn't move AppKit hit-testing — RESOLVED
 
-Rotating the native `AVPlayerView`'s layer rotates the pixels but **not** the
-view's hit region, so its native controls render rotated yet aren't clickable.
-We hid the native controls entirely and drew our own gpui transport
-(play/pause, frame-step, loop, seek) outside the video rect. Not a gpui bug —
-an AppKit reality — but worth remembering when overlaying interactive native
-views under a gpui chrome.
+*Resolved 2026-06-18 by switching video off the native overlay.* The original
+video design floated an `AVPlayerView` over the gpui window and rotated its
+layer; that rotated the pixels but **not** the view's hit region, so native
+controls rendered rotated yet weren't clickable (we hid them and drew a gpui
+transport). Rather than keep fighting AppKit hit-testing under gpui chrome, the
+viewer now drives a windowless `AVPlayer` and pulls frames into `RenderImage`s,
+so the video is an ordinary gpui `img`: no overlay, no foreign hit region, and
+the transport/seek-bar hit-test normally at any rotation. The lesson stands for
+anyone tempted to overlay an interactive native view under gpui chrome —
+prefer pulling its content into a gpui element if a frame source exists.
 
 ### 5b. objc2 encoding checks need exact struct names for CF/CM types
 
-Passing/returning `CMTime` and `CGColor` through `msg_send!` requires hand-rolled
-`Encode`/`RefEncode` impls whose struct **name** matches what the runtime
-reports, or objc2's verification aborts: `CMTime` returns are reported anonymous
-(`{?=qiIq}` — name must be `"?"`, not `"CMTime"`), while a null `CGColor` arg
-must encode as `^{CGColor=}` (a `*const c_void` → `^v` is rejected). objc2's
-check is a genuine safety net (it caught both before they became memory bugs),
-but a small `objc2-core-media` / `objc2-core-graphics` dependency, or
-ready-made `CMTime`/`CGColor` types, would remove the guesswork.
+Passing/returning `CMTime` and CoreVideo pixel buffers through `msg_send!`
+requires hand-rolled `Encode`/`RefEncode` impls whose struct **name** matches
+what the runtime reports, or objc2's verification aborts: `CMTime` is reported
+anonymous (`{?=qiIq}` — name must be `"?"`, not `"CMTime"`); `CMTime` is also a
+pointer arg (`itemTimeForDisplay:` out-param), needing a `RefEncode` whose
+pointee encoding matches; and `copyPixelBufferForItemTime:` *returns*
+`^{__CVBuffer=}`, so a bare `*mut c_void` (`^v`) is rejected — the return must
+type as `*mut CVBuffer` where `CVBuffer`'s `RefEncode` names the struct
+`"__CVBuffer"`. objc2's check is a genuine safety net (it caught each before it
+became a memory bug), but a small `objc2-core-media` / `objc2-core-video`
+dependency, or ready-made `CMTime` / `CVPixelBuffer` types, would remove the
+guesswork.
 
 ## 6. TextView preview scroll cluster — bounded-box vs `scrollable(true)`
 
