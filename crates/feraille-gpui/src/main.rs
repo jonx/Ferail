@@ -15,7 +15,8 @@ use feraille_gpui::{
     screenshot,
     settings::{SettingsView, category_from_arg},
     shell::{
-        CloseTab, CloseWindow, CopyPath, FindDuplicates, FocusFilter, GoHome, MoveToTrash,
+        CloseTab, CloseWindow, CopyPath, EmptyTrash, FindDuplicates, FocusFilter, GoHome,
+        MoveToTrash,
         NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab, OpenDiskUsage,
         OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell, ShowDesktop,
         ToggleHidden,
@@ -655,6 +656,9 @@ fn install_app_menus(cx: &mut App) {
                     title("file.move_to_trash", feraille_core::commands::TRASH_LABEL),
                     MoveToTrash,
                 ),
+                // Ellipsis: opens a confirmation dialog (macOS HIG), matching
+                // the pane context menu's wording.
+                MenuItem::action("Empty Trash\u{2026}", EmptyTrash),
             ],
             disabled: false,
         },
