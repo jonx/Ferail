@@ -472,6 +472,13 @@ pub struct ViewerWindow {
     /// frame lands, clearing this. Avoids the black flash + the old
     /// "filters only show while playing" bug.
     video_repause: bool,
+    /// A deferred seek for a seamless re-open: `Some(seconds)` until the
+    /// re-opened stream produces its first frame (proof the input is live —
+    /// a seek issued before then is silently dropped by libvlc). The poll
+    /// then seeks, optionally re-pauses, and *discards* that pre-seek frame
+    /// so the previous frame stays on screen until the correctly-positioned,
+    /// freshly-filtered one lands — no flash, no jump to the clip start.
+    video_pending_seek: Option<f64>,
     /// The latest decoded video frame (unrotated), uploaded as a
     /// `RenderImage` and drawn like any image. `None` until the first
     /// frame lands — the Quick Look poster stands in until then.
@@ -617,6 +624,7 @@ impl ViewerWindow {
             video_adjust_native: false,
             video_enhance_applied: VideoEnhance::default(),
             video_repause: false,
+            video_pending_seek: None,
             video_frame_image: None,
             video_frame_seq: 0,
             video_rotated: None,
@@ -856,14 +864,16 @@ impl ViewerWindow {
             let epoch = self.video_epoch;
             match restore {
                 Some(pos) => {
-                    // Seamless re-open in place (a filter change). Seek back,
-                    // then *play* even if the user had it paused, so the new
-                    // filter chain decodes a frame right away — the poll
-                    // re-pauses once that first frame lands (`video_repause`).
-                    // The previous frame stays on screen until then, so the
-                    // swap shows no black flash.
-                    stream.seek(pos);
+                    // Seamless re-open in place (a filter change). Play even
+                    // if the user had it paused, but DON'T seek yet: a seek
+                    // before the input is live is silently dropped (verified),
+                    // which is what made the old code flash the clip start and
+                    // play briefly. Defer the seek to the poll, which fires it
+                    // on the first frame (input now live) and discards that
+                    // pre-seek frame so the previous one stays on screen until
+                    // the correctly-positioned, freshly-filtered frame lands.
                     stream.set_paused(false);
+                    self.video_pending_seek = Some(pos);
                     self.video_repause = self.video_paused;
                     self.video_position.0 = pos;
                 }
@@ -921,6 +931,7 @@ impl ViewerWindow {
         }
         self.video_dims = (0.0, 0.0);
         self.video_repause = false;
+        self.video_pending_seek = None;
     }
 
     /// Toggle play/pause of the current video (our gpui control stands in
@@ -1013,25 +1024,40 @@ impl ViewerWindow {
             let stream = &mut self.video_overlay.as_mut().unwrap().0;
             (stream.time(), stream.natural_size(), stream.copy_frame())
         };
-        self.video_position = pos;
         if dims.0 > 0.0 && dims.1 > 0.0 {
             self.video_dims = dims;
         }
-        if let Some((w, h, bytes)) = frame {
-            if let Some(img) = build_video_frame(bytes, w, h) {
-                if let Some(old) = self.video_frame_image.replace(img) {
-                    self.video_frames_to_drop.push(old);
+        if let Some(pending) = self.video_pending_seek {
+            // Seamless re-open in progress. The reported time is the pre-seek
+            // ~0, so keep the bar at the position we're seeking to.
+            self.video_position.0 = pending;
+            self.video_position.1 = pos.1;
+            if frame.is_some() {
+                // First frame from the new instance = input is now live, so
+                // the seek will take. Fire it (+ re-pause if the user had it
+                // paused) and DROP this pre-seek frame — the previous frame
+                // stays on screen until the correctly-positioned, freshly-
+                // filtered one lands, so there's no flash or jump to start.
+                if let Some((stream, _)) = &mut self.video_overlay {
+                    stream.seek(pending);
+                    if self.video_repause {
+                        stream.set_paused(true);
+                    }
                 }
-                self.video_frame_seq = self.video_frame_seq.wrapping_add(1);
-                // First frame of a seamless filter re-open has landed: now
-                // restore the paused state the user actually wanted, so the
-                // new filters are visible on the still frame.
+                self.video_pending_seek = None;
                 if self.video_repause {
                     self.video_repause = false;
                     self.video_paused = true;
-                    if let Some((stream, _)) = &mut self.video_overlay {
-                        stream.set_paused(true);
+                }
+            }
+        } else {
+            self.video_position = pos;
+            if let Some((w, h, bytes)) = frame {
+                if let Some(img) = build_video_frame(bytes, w, h) {
+                    if let Some(old) = self.video_frame_image.replace(img) {
+                        self.video_frames_to_drop.push(old);
                     }
+                    self.video_frame_seq = self.video_frame_seq.wrapping_add(1);
                 }
             }
         }

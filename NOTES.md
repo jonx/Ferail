@@ -149,6 +149,37 @@ full path against a generated `testsrc` clip and **passed**:
   green. Interactive check (play a 3GP/MKV, drag Denoise/Sharpen → release
   re-applies) is on the user.
 
+## Phase 2d outcome (2026-06-20) — sharpen behaviour + truly-seamless paused refresh (landed)
+Follow-up to 2c from live use ("sharpen looks like noise"; "the brief play on a
+filter change is a bad experience — VLC doesn't need it").
+
+**Sharpen "adds noise" — diagnosed, not a bug.** Throwaway probe (`spikes/`,
+gitignored) dumped one frame of a *static* clip at sigma 0/0.05/0.3/0.6/2.0 and
+diffed them: mean|Δ| 0.7→3.3→5.1→7.3 — sharpen IS applied and scales with sigma.
+VLC's `sharpen` is a Laplacian high-pass with **no edge threshold**, so on flat,
+grainy footage (skin) it has no real edges to enhance and only amplifies grain.
+Fixes: (a) **chain order** was backwards — was `sharpen:hqdn3d…`, now
+**denoise → deband → sharpen → grain**, so the source is cleaned before
+sharpening; (b) `sigma` mapped to `strength*0.5` (gentle end). Sharpen on grainy
+flat content still amplifies grain (inherent) — pair it with denoise.
+
+**Live filter change: confirmed impossible via public libvlc.** Read `lib/video.c`
+on master: only deinterlace/adjust/logo/marquee have live setters (they reach
+the vout via private `GetVouts()` + `var_SetChecked`). Arbitrary `video-filter`
+is set with `var_SetString(vout,"video-filter",…)` on the **internal vout**,
+which libvlc doesn't export. So a filter change MUST re-open — no way around it
+without dlsym'ing libvlccore internals (rejected: unstable ABI).
+
+**Truly-seamless paused refresh.** Probe found the old approach's flaw:
+`play()` then an immediate `set_pause`/`set_time` is **silently dropped** (input
+thread hasn't started) → it played from 0. The fix (verified in the probe: then
+exactly +1 frame at the seeked position, no forward motion): on re-open, play
+but DON'T seek yet; defer via `video_pending_seek`. The poll fires the seek (+
+re-pause) on the new stream's *first* frame (input now live) and **discards that
+pre-seek frame**, keeping the previous frame on screen until the correctly-
+positioned, freshly-filtered frame lands. No flash, no jump to start, no visible
+playback even when paused. (`video_repause` retained for the re-pause step.)
+
 ## Phase 2c outcome (2026-06-20) — filter polish + full VLC effect set (landed)
 All three tasks below shipped.
 1. **Sharpen artifacts** fixed — `enhance_args` now maps `sigma = sharpen*0.6`

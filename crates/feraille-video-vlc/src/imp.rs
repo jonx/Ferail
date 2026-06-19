@@ -260,13 +260,11 @@ extern "C" fn on_end(_event: *const c_void, user_data: *mut c_void) {
 fn enhance_args(e: VideoEnhance) -> Vec<String> {
     let mut filters: Vec<&str> = Vec::new();
     let mut args: Vec<String> = Vec::new();
-    if e.sharpen > 0.0 {
-        filters.push("sharpen");
-        // sigma 0..2 is the full libvlc range, but anything past ~0.5
-        // ramps into ringing/halo artifacts on real footage, so map the
-        // slider into the gentle end (0..~0.6).
-        args.push(format!("--sharpen-sigma={:.3}", e.sharpen * 0.6));
-    }
+    // Chain ORDER matters — VLC applies `--video-filter` left to right. The
+    // sane pipeline is denoise → deband → sharpen → grain: clean the source
+    // first so sharpen enhances real edges instead of amplifying grain, then
+    // (optionally) re-grain. Sharpening before denoising (the old order) just
+    // crisped the noise, which read as "sharpen adds noise".
     if e.denoise > 0.0 {
         filters.push("hqdn3d");
         // Real libvlc option names are `-spat`/`-temp`, not `-spatial`.
@@ -278,6 +276,14 @@ fn enhance_args(e: VideoEnhance) -> Vec<String> {
         // radius 4..16 px, strength 0.0..2.0 (1.2 is plenty for banding).
         args.push(format!("--gradfun-radius={}", (4.0 + e.banding * 12.0) as u32));
         args.push(format!("--gradfun-strength={:.2}", e.banding * 1.2));
+    }
+    if e.sharpen > 0.0 {
+        filters.push("sharpen");
+        // VLC's `sharpen` is a Laplacian high-pass (sigma 0..2, default 0.05).
+        // It has no edge threshold, so it amplifies whatever high-frequency
+        // content exists — including grain. Map the slider into the gentle
+        // end (0..0.5) and rely on denoise-first to keep it edge-focused.
+        args.push(format!("--sharpen-sigma={:.3}", e.sharpen * 0.5));
     }
     if e.grain > 0.0 {
         filters.push("grain");

@@ -252,15 +252,24 @@ another entry keeps `{mode, center}` verbatim:
     pipeline below; Upscale feeds a higher-res bitmap into the *same* layout
     rect, so the win shows when zoomed past 100 %. For a **VLC video**,
     Denoise/Sharpen are shown too — plus **Debanding** (`gradfun`) and
-    **Film grain** (`grain`) — and apply via libvlc's filter chain
-    (`sharpen` softened to `sigma = strength*0.6` to avoid ringing; `hqdn3d`
-    for denoise). Filters are baked into the decode at open, so changing a
-    slider re-opens the stream on release (`commit_video_enhance`). The
-    re-open is **seamless**: the on-screen frame is kept (no black flash) and
-    the new instance plays to its first frame before restoring the paused
-    state (`video_repause`), so a paused clip shows the freshly-filtered frame
-    too. Upscale is still-only. The built-in (AVFoundation) player has no
-    filter chain, so the section is hidden for it.
+    **Film grain** (`grain`) — and apply via libvlc's filter chain in the
+    order **denoise → deband → sharpen → grain** (clean the source before
+    sharpening so `sharpen`, a Laplacian high-pass with no edge threshold,
+    enhances real detail instead of amplifying grain; `sigma` mapped to the
+    gentle `strength*0.5`). There is **no public libvlc API to change a video
+    filter at runtime** (only deinterlace/adjust/logo/marquee have live
+    setters; arbitrary `video-filter` needs the internal `vout` via
+    `var_SetString`, which isn't exported), so a slider change re-opens the
+    stream on release (`commit_video_enhance`). The re-open is **seamless**:
+    the on-screen frame is kept (no black flash), and because a `seek` issued
+    before the new input is live is silently dropped, the seek is *deferred*
+    (`video_pending_seek`) — the poll fires it on the new stream's first
+    frame, optionally re-pauses (`video_repause`), and **discards that
+    pre-seek frame** so the previous frame holds until the correctly-
+    positioned, freshly-filtered one lands. No flash, no jump to the clip
+    start, no visible playback even when paused. Upscale is still-only. The
+    built-in (AVFoundation) player has no filter chain, so the section is
+    hidden for it.
   - **Threading**: the still pipeline (grade → denoise → upscale → sharpen
     → rotate, `process_still_pixels`) is convolution/resampling-heavy, so
     it **never runs on the render path** — it's dispatched to the
