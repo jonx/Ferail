@@ -28,6 +28,10 @@ pub struct VideoAdjust {
     pub brightness: f32,
     pub contrast: f32,
     pub saturation: f32,
+    /// Hue rotation, `[-1, 1]` → ±180°.
+    pub hue: f32,
+    /// Gamma, `[-1, 1]` → a perceptual exponent around 1.0 (0 = neutral).
+    pub gamma: f32,
 }
 
 impl VideoAdjust {
@@ -37,13 +41,16 @@ impl VideoAdjust {
 }
 
 /// Enhancement filters a backend can bake into the decode at open time:
-/// `denoise` and `sharpen`, each `0..1` (0 = off). Unlike [`VideoAdjust`]
-/// (which is live), these sit in the decoder's filter chain — a backend
-/// that can't change them live re-opens the stream to apply a new value.
+/// `denoise`, `sharpen`, `banding` (gradient debanding) and `grain` (film
+/// grain), each `0..1` (0 = off). Unlike [`VideoAdjust`] (which is live),
+/// these sit in the decoder's filter chain — a backend that can't change
+/// them live re-opens the stream to apply a new value.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct VideoEnhance {
     pub denoise: f32,
     pub sharpen: f32,
+    pub banding: f32,
+    pub grain: f32,
 }
 
 impl VideoEnhance {

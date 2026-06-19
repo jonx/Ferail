@@ -24,7 +24,9 @@ use feraille_core::video::{VideoAdjust, VideoBackend, VideoEnhance, VideoStream}
 const ADJUST_ENABLE: c_uint = 0;
 const ADJUST_CONTRAST: c_uint = 1;
 const ADJUST_BRIGHTNESS: c_uint = 2;
+const ADJUST_HUE: c_uint = 3;
 const ADJUST_SATURATION: c_uint = 4;
+const ADJUST_GAMMA: c_uint = 5;
 // libvlc_event_e: MediaPlayer events start at 0x100; EndReached is +9.
 const EVENT_END_REACHED: c_int = 0x100 + 9;
 
@@ -251,21 +253,36 @@ extern "C" fn on_end(_event: *const c_void, user_data: *mut c_void) {
     }
 }
 
-/// libvlc_new arguments for the denoise (`hqdn3d`) + sharpen filters, from
-/// the `0..1` slider values. Empty when neutral. These MUST be instance
-/// args — media options are ignored for the vmem output.
+/// libvlc_new arguments for the video filter chain (denoise `hqdn3d`,
+/// sharpen, debanding `gradfun`, film grain `grain`), from the `0..1`
+/// slider values. Empty when neutral. These MUST be instance args — media
+/// options are ignored for the vmem output.
 fn enhance_args(e: VideoEnhance) -> Vec<String> {
     let mut filters: Vec<&str> = Vec::new();
     let mut args: Vec<String> = Vec::new();
     if e.sharpen > 0.0 {
         filters.push("sharpen");
-        args.push(format!("--sharpen-sigma={:.3}", e.sharpen * 2.0)); // 0..2
+        // sigma 0..2 is the full libvlc range, but anything past ~0.5
+        // ramps into ringing/halo artifacts on real footage, so map the
+        // slider into the gentle end (0..~0.6).
+        args.push(format!("--sharpen-sigma={:.3}", e.sharpen * 0.6));
     }
     if e.denoise > 0.0 {
         filters.push("hqdn3d");
         // Real libvlc option names are `-spat`/`-temp`, not `-spatial`.
         args.push(format!("--hqdn3d-luma-spat={:.1}", e.denoise * 8.0));
         args.push(format!("--hqdn3d-chroma-spat={:.1}", e.denoise * 6.0));
+    }
+    if e.banding > 0.0 {
+        filters.push("gradfun");
+        // radius 4..16 px, strength 0.0..2.0 (1.2 is plenty for banding).
+        args.push(format!("--gradfun-radius={}", (4.0 + e.banding * 12.0) as u32));
+        args.push(format!("--gradfun-strength={:.2}", e.banding * 1.2));
+    }
+    if e.grain > 0.0 {
+        filters.push("grain");
+        // variance 0..10; subtle by default so it dithers, not snows.
+        args.push(format!("--grain-variance={:.2}", e.grain * 2.0));
     }
     if !filters.is_empty() {
         args.push(format!("--video-filter={}", filters.join(":")));
@@ -453,6 +470,10 @@ impl VideoStream for VlcStream {
         (self.lib.set_adjust_float)(self.mp, ADJUST_BRIGHTNESS, 1.0 + a.brightness);
         (self.lib.set_adjust_float)(self.mp, ADJUST_CONTRAST, 1.0 + a.contrast);
         (self.lib.set_adjust_float)(self.mp, ADJUST_SATURATION, 1.0 + a.saturation);
+        // Hue is degrees (-180..180); gamma is a 0.01..10 multiplier around
+        // 1.0 — map [-1, 1] exponentially so ±1 ≈ 0.5×/2× and 0 = neutral.
+        (self.lib.set_adjust_float)(self.mp, ADJUST_HUE, a.hue * 180.0);
+        (self.lib.set_adjust_float)(self.mp, ADJUST_GAMMA, 2.0_f32.powf(a.gamma));
         true
     }
 }
@@ -498,6 +519,8 @@ mod tests {
                 VideoEnhance {
                     denoise: 0.5,
                     sharpen: 0.5,
+                    banding: 0.5,
+                    grain: 0.3,
                 },
             )
             .expect("open clip");

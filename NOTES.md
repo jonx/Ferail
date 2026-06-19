@@ -149,9 +149,53 @@ full path against a generated `testsrc` clip and **passed**:
   green. Interactive check (play a 3GP/MKV, drag Denoise/Sharpen → release
   re-applies) is on the user.
 
+## Phase 2c outcome (2026-06-20) — filter polish + full VLC effect set (landed)
+All three tasks below shipped.
+1. **Sharpen artifacts** fixed — `enhance_args` now maps `sigma = sharpen*0.6`
+   (was `*2.0`); the gentle end of libvlc's 0..2 range, past which real footage
+   rings/halos.
+2. **Seamless re-open** — `commit_video_enhance` now drops only the old stream
+   (keeps `video_frame_image`, `video_rotated`, `video_dims` so nothing
+   flashes). `open_video_stream`'s restore branch opens the new instance
+   *playing* and sets `video_repause = video_paused`; `video_poll_tick`
+   re-pauses on the first new frame. So a paused video shows the freshly
+   filtered frame and there's no black flash. `teardown_video` clears
+   `video_repause`.
+3. **Full VLC Basic set** — `VideoAdjust` gained `hue`/`gamma` (live, mapped
+   hue→±180°, gamma→`2^v`); `VideoEnhance` gained `banding` (gradfun:
+   `--gradfun-radius` 4..16 + `--gradfun-strength` 0..1.2) and `grain`
+   (`--grain-variance` 0..2). `SliderId` → 9 (Hue/Gamma/Banding/Grain),
+   `ColorAdjust` carries hue/gamma, `EnhanceParams` carries banding/grain
+   (both ignored by the still CPU pipeline). The adjust popup shows the four
+   new rows **VLC-video-only** (gated on `vlc_video`).
+
+Design note (user asked: should the plugin ship its own popup?): **No — one
+shared popup, capability-gated.** The seam (`feraille-core`/`feraille-video-vlc`)
+is deliberately gpui-free (architecture invariant) and plugin code must stay
+off the paint path (prime directive); a plugin-owned popup would break both and
+fork one gesture (E / right-click) into two UIs. The plugin contributes
+capabilities + the native impl; the viewer owns the UI and renders exactly the
+controls the active backend supports (today gated via `video_adjust_native`).
+
+Verification: `feraille-video-vlc` integration test passes against real libvlc
+with all four filters + the adjust path active; `--features vlc` and default
+both build; gpui tests pass. No headless screenshot of the new popup rows: they
+appear only during a live VLC decode (`video_adjust_native` true), which the
+static screenshot harness doesn't drive (it builds a ViewerWindow but never
+opens a playing VLC stream or the adjust panel).
+
+GPU compositing path explored (gpui has a `surface(CVPixelBuffer)` element —
+real zero-copy path) but **deferred** by user ("leave for later"). Decode is
+already GPU (VideoToolbox); the CPU cost is the YUV→BGRA conversion + per-frame
+upload that vmem forces.
+
 ## With more time / deferred
+- GPU compositing via `gpui::surface(CVPixelBuffer)` — zero-copy (native
+  AVFoundation gives real CVPixelBuffers; VLC could wrap YUV so Metal does
+  the conversion). Trades away CPU rotation + native colour-grade. User said
+  leave for later.
 - Silence the residual libav `swscaler` line (would need a YUV pull path or
-  a libav log hook we don't currently reach).
+  a libav log hook we don't currently reach). User said don't bother.
 - Re-opening to change a video filter is a touch heavy; a live filter-param
   path would be smoother if libvlc ever exposes one.
 - Bundle libvlc for a redistributable build (Phase 3).

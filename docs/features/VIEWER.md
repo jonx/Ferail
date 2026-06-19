@@ -243,15 +243,24 @@ another entry keeps `{mode, center}` verbatim:
     bipolar `[-1, 1]` slider that detents to neutral at centre. Cheap
     per-pixel maths (`grade_bgra`, a brightness+contrast LUT plus optional
     saturation mix over the BGRA buffer). Applies to **stills and video**.
+    For a **VLC video** two more bipolar sliders appear — **Hue** and
+    **Gamma** — applied live by libvlc's colour adjust (`ADJUST_HUE` mapped
+    to ±180°, `ADJUST_GAMMA` mapped `2^v` around neutral). They're hidden
+    for stills and the built-in player, which have no equivalent CPU stage.
   - **Enhancement** — Denoise + Sharpen, plus an Upscale `1× / 2× / 4×`
     (Lanczos, capped at `UPSCALE_MAX_EDGE`). For **stills** these run the CPU
     pipeline below; Upscale feeds a higher-res bitmap into the *same* layout
     rect, so the win shows when zoomed past 100 %. For a **VLC video**,
-    Denoise/Sharpen are shown too and apply via libvlc's `hqdn3d` / `sharpen`
-    filters — baked into the decode at open, so changing a slider re-opens
-    the stream on release (`commit_video_enhance`, keeping the playhead).
-    Upscale is still-only. The built-in (AVFoundation) player has no filter
-    chain, so the section is hidden for it.
+    Denoise/Sharpen are shown too — plus **Debanding** (`gradfun`) and
+    **Film grain** (`grain`) — and apply via libvlc's filter chain
+    (`sharpen` softened to `sigma = strength*0.6` to avoid ringing; `hqdn3d`
+    for denoise). Filters are baked into the decode at open, so changing a
+    slider re-opens the stream on release (`commit_video_enhance`). The
+    re-open is **seamless**: the on-screen frame is kept (no black flash) and
+    the new instance plays to its first frame before restoring the paused
+    state (`video_repause`), so a paused clip shows the freshly-filtered frame
+    too. Upscale is still-only. The built-in (AVFoundation) player has no
+    filter chain, so the section is hidden for it.
   - **Threading**: the still pipeline (grade → denoise → upscale → sharpen
     → rotate, `process_still_pixels`) is convolution/resampling-heavy, so
     it **never runs on the render path** — it's dispatched to the

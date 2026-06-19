@@ -136,9 +136,11 @@ fn build_video_frame(bgra: Vec<u8>, w: u32, h: u32) -> Option<Arc<RenderImage>> 
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(buf)])))
 }
 
-/// Number of draggable sliders in the adjustments popup (the three colour
-/// controls plus denoise + sharpen). Upscale is buttons, not a slider.
-const SLIDER_COUNT: usize = 5;
+/// Number of draggable sliders in the adjustments popup. The colour group
+/// (brightness/contrast/color, plus hue/gamma for VLC video) and the
+/// enhancement group (denoise/sharpen, plus debanding/grain for VLC video).
+/// Upscale is buttons, not a slider.
+const SLIDER_COUNT: usize = 9;
 /// Longest-edge cap (px) for an upscale, matching the loader's decode cap
 /// so a 4× enlargement of a large image can't blow past texture limits.
 const UPSCALE_MAX_EDGE: u32 = 8192;
@@ -152,8 +154,16 @@ enum SliderId {
     Contrast,
     /// "Color" in the UI — chroma intensity.
     Saturation,
+    /// Hue rotation — VLC video only.
+    Hue,
+    /// Gamma — VLC video only.
+    Gamma,
     Denoise,
     Sharpen,
+    /// Gradient debanding (`gradfun`) — VLC video only.
+    Banding,
+    /// Film grain (`grain`) — VLC video only.
+    Grain,
 }
 
 impl SliderId {
@@ -163,8 +173,12 @@ impl SliderId {
             SliderId::Brightness => 0,
             SliderId::Contrast => 1,
             SliderId::Saturation => 2,
-            SliderId::Denoise => 3,
-            SliderId::Sharpen => 4,
+            SliderId::Hue => 3,
+            SliderId::Gamma => 4,
+            SliderId::Denoise => 5,
+            SliderId::Sharpen => 6,
+            SliderId::Banding => 7,
+            SliderId::Grain => 8,
         }
     }
     fn label(self) -> &'static str {
@@ -172,22 +186,32 @@ impl SliderId {
             SliderId::Brightness => "Brightness",
             SliderId::Contrast => "Contrast",
             SliderId::Saturation => "Color",
+            SliderId::Hue => "Hue",
+            SliderId::Gamma => "Gamma",
             SliderId::Denoise => "Denoise",
             SliderId::Sharpen => "Sharpen",
+            SliderId::Banding => "Debanding",
+            SliderId::Grain => "Film grain",
         }
     }
     /// `(min, max)` of the value, and whether it detents to zero at centre.
     /// Colour controls are bipolar; enhancement controls are one-sided.
     fn range(self) -> (f32, f32) {
         match self {
-            SliderId::Denoise | SliderId::Sharpen => (0.0, 1.0),
+            SliderId::Denoise | SliderId::Sharpen | SliderId::Banding | SliderId::Grain => {
+                (0.0, 1.0)
+            }
             _ => (-1.0, 1.0),
         }
     }
     fn centered(self) -> bool {
         matches!(
             self,
-            SliderId::Brightness | SliderId::Contrast | SliderId::Saturation
+            SliderId::Brightness
+                | SliderId::Contrast
+                | SliderId::Saturation
+                | SliderId::Hue
+                | SliderId::Gamma
         )
     }
 }
@@ -203,6 +227,11 @@ struct ColorAdjust {
     brightness: f32,
     contrast: f32,
     saturation: f32,
+    /// Hue / gamma are VLC-video-only (the still CPU grade ignores them);
+    /// they ride here so the shared colour sliders can write them. Both
+    /// `[-1, 1]`, 0 = neutral.
+    hue: f32,
+    gamma: f32,
 }
 
 impl Default for ColorAdjust {
@@ -211,6 +240,8 @@ impl Default for ColorAdjust {
             brightness: 0.0,
             contrast: 0.0,
             saturation: 0.0,
+            hue: 0.0,
+            gamma: 0.0,
         }
     }
 }
@@ -230,6 +261,10 @@ struct EnhanceParams {
     denoise: f32,
     sharpen: f32,
     upscale: u8,
+    /// Debanding (`gradfun`) and film grain (`grain`) are VLC-video-only
+    /// filters; the still CPU pipeline ignores them. Both `0..1`, 0 = off.
+    banding: f32,
+    grain: f32,
 }
 
 impl Default for EnhanceParams {
@@ -238,6 +273,8 @@ impl Default for EnhanceParams {
             denoise: 0.0,
             sharpen: 0.0,
             upscale: 1,
+            banding: 0.0,
+            grain: 0.0,
         }
     }
 }
@@ -429,6 +466,12 @@ pub struct ViewerWindow {
     /// Compared against the live popup values to decide when a re-open is
     /// needed (libvlc bakes these in at open; they can't change live).
     video_enhance_applied: VideoEnhance,
+    /// Set during a seamless filter re-open: the new stream is opened
+    /// *playing* (even if the user had it paused) so the new filter chain
+    /// decodes a frame immediately; the poll re-pauses once that first
+    /// frame lands, clearing this. Avoids the black flash + the old
+    /// "filters only show while playing" bug.
+    video_repause: bool,
     /// The latest decoded video frame (unrotated), uploaded as a
     /// `RenderImage` and drawn like any image. `None` until the first
     /// frame lands — the Quick Look poster stands in until then.
@@ -573,6 +616,7 @@ impl ViewerWindow {
             vlc_pref: resolve_vlc_pref(),
             video_adjust_native: false,
             video_enhance_applied: VideoEnhance::default(),
+            video_repause: false,
             video_frame_image: None,
             video_frame_seq: 0,
             video_rotated: None,
@@ -778,12 +822,15 @@ impl ViewerWindow {
         }
     }
 
-    /// The current enhancement filters (denoise / sharpen) a VLC stream
-    /// would be opened with. Upscale is still-only, so it's excluded.
+    /// The current enhancement filters (denoise / sharpen / debanding /
+    /// film grain) a VLC stream would be opened with. Upscale is still-only,
+    /// so it's excluded.
     fn video_enhance(&self) -> VideoEnhance {
         VideoEnhance {
             denoise: self.enhance.denoise,
             sharpen: self.enhance.sharpen,
+            banding: self.enhance.banding,
+            grain: self.enhance.grain,
         }
     }
 
@@ -809,9 +856,15 @@ impl ViewerWindow {
             let epoch = self.video_epoch;
             match restore {
                 Some(pos) => {
-                    // Re-open in place: resume where we were, as we were.
+                    // Seamless re-open in place (a filter change). Seek back,
+                    // then *play* even if the user had it paused, so the new
+                    // filter chain decodes a frame right away — the poll
+                    // re-pauses once that first frame lands (`video_repause`).
+                    // The previous frame stays on screen until then, so the
+                    // swap shows no black flash.
                     stream.seek(pos);
-                    stream.set_paused(self.video_paused);
+                    stream.set_paused(false);
+                    self.video_repause = self.video_paused;
                     self.video_position.0 = pos;
                 }
                 None => {
@@ -845,7 +898,11 @@ impl ViewerWindow {
         };
         let path = path.clone();
         let pos = self.video_position.0;
-        self.teardown_video();
+        // Seamless swap: drop ONLY the old stream (its `Drop` releases the
+        // libvlc instance). Keep the on-screen frame, the rotated cache and
+        // the known dims so nothing flashes — `open_video_stream` plays the
+        // new instance to its first frame, which then supersedes the old one.
+        drop(self.video_overlay.take());
         self.open_video_stream(path, Some(pos), cx);
         cx.notify();
     }
@@ -863,6 +920,7 @@ impl ViewerWindow {
             self.video_frames_to_drop.push(img);
         }
         self.video_dims = (0.0, 0.0);
+        self.video_repause = false;
     }
 
     /// Toggle play/pause of the current video (our gpui control stands in
@@ -903,6 +961,8 @@ impl ViewerWindow {
             brightness: self.adjust.brightness,
             contrast: self.adjust.contrast,
             saturation: self.adjust.saturation,
+            hue: self.adjust.hue,
+            gamma: self.adjust.gamma,
         };
         self.video_adjust_native = match &mut self.video_overlay {
             Some((stream, _)) => stream.set_adjust(a),
@@ -963,6 +1023,16 @@ impl ViewerWindow {
                     self.video_frames_to_drop.push(old);
                 }
                 self.video_frame_seq = self.video_frame_seq.wrapping_add(1);
+                // First frame of a seamless filter re-open has landed: now
+                // restore the paused state the user actually wanted, so the
+                // new filters are visible on the still frame.
+                if self.video_repause {
+                    self.video_repause = false;
+                    self.video_paused = true;
+                    if let Some((stream, _)) = &mut self.video_overlay {
+                        stream.set_paused(true);
+                    }
+                }
             }
         }
         // Enforce the Out cue. A full-length Out (1.0) is the clip's
@@ -1397,8 +1467,12 @@ impl ViewerWindow {
             SliderId::Brightness => self.adjust.brightness,
             SliderId::Contrast => self.adjust.contrast,
             SliderId::Saturation => self.adjust.saturation,
+            SliderId::Hue => self.adjust.hue,
+            SliderId::Gamma => self.adjust.gamma,
             SliderId::Denoise => self.enhance.denoise,
             SliderId::Sharpen => self.enhance.sharpen,
+            SliderId::Banding => self.enhance.banding,
+            SliderId::Grain => self.enhance.grain,
         }
     }
 
@@ -1424,8 +1498,12 @@ impl ViewerWindow {
             SliderId::Brightness => self.adjust.brightness = v,
             SliderId::Contrast => self.adjust.contrast = v,
             SliderId::Saturation => self.adjust.saturation = v,
+            SliderId::Hue => self.adjust.hue = v,
+            SliderId::Gamma => self.adjust.gamma = v,
             SliderId::Denoise => self.enhance.denoise = v,
             SliderId::Sharpen => self.enhance.sharpen = v,
+            SliderId::Banding => self.enhance.banding = v,
+            SliderId::Grain => self.enhance.grain = v,
         }
         self.after_adjust_change(cx);
     }
@@ -2037,11 +2115,24 @@ impl ViewerWindow {
             .child(self.slider_row(SliderId::Brightness, cx))
             .child(self.slider_row(SliderId::Contrast, cx))
             .child(self.slider_row(SliderId::Saturation, cx))
+            // Hue + gamma are live libvlc colour-adjust controls — only the
+            // VLC backend applies them, so they're hidden for stills and the
+            // built-in player.
+            .when(vlc_video, |d| {
+                d.child(self.slider_row(SliderId::Hue, cx))
+                    .child(self.slider_row(SliderId::Gamma, cx))
+            })
             .when(show_enhance, |d| {
                 let d = d
                     .child(div().h_px().my_1().bg(border))
                     .child(self.slider_row(SliderId::Denoise, cx))
                     .child(self.slider_row(SliderId::Sharpen, cx));
+                // Debanding + film grain are VLC-only filters (gradfun /
+                // grain), baked into the decode like denoise/sharpen.
+                let d = d.when(vlc_video, |d| {
+                    d.child(self.slider_row(SliderId::Banding, cx))
+                        .child(self.slider_row(SliderId::Grain, cx))
+                });
                 // Upscale is a still-only pre-scale; not meaningful for the
                 // video player (it plays at native size, fit to the stage).
                 if is_video {
