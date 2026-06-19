@@ -7,6 +7,104 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-19 plugin seam + VLC video backend (planning)
+
+User wants a plugin system where plugins can override internal features —
+first target the video player, with **VLC** as the replacement to get
+any-format support and the adjustment features (colour + denoise + sharpen)
+for free, **including on video**.
+
+## Verify-step findings
+- The viewer's whole coupling to "a video player" is 9 free fns on the
+  cfg-selected `platform_shell` crate (`video_overlay_*`): show / copy_frame
+  / set_paused / seek / step / time / natural_size / restart / remove. All
+  frame-pull: decode → BGRA bytes → gpui `img`. `feraille-shell-mac` =
+  headless AVPlayer + `AVPlayerItemVideoOutput`; win32 = stubs.
+- libvlc fits the same pull model: `libvlc_video_set_format(mp,"RV32",w,h,
+  pitch)` + `libvlc_video_set_callbacks(lock,unlock,display,opaque)` decode
+  into a buffer we own; `RV32` == BGRA. No NSView overlay; video stays a gpui
+  element. Verified against VideoLAN `modules/video_output/vmem.c`.
+- Colour adjust is free + live: `libvlc_video_set_adjust_int(Enable,1)` +
+  `set_adjust_float(Contrast|Brightness|Hue|Saturation|Gamma)` (enum
+  Enable=0..Gamma=5; Contrast/Brightness 0–2, Saturation 0–3, 1=neutral).
+- Denoise/sharpen ride VLC's video-filter chain (`sharpen` + `sharpen-sigma`;
+  `hqdn3d` for denoise), enabled via media options (`:video-filter=…`) or the
+  instance filter list. Live param changes are less ergonomic than the adjust
+  API — **the spike must confirm whether sigma can change mid-playback** or
+  whether it needs a re-open. Either way enhancement reaches video, which the
+  CPU pipeline can't do.
+- `/Applications/VLC.app` ships `libvlc.5.dylib` + `libvlccore` + plugins
+  dir, so dev integration works now. libvlc is LGPL → dynamic-link only.
+- Bonus: libvlc is cross-platform, so a VLC backend is also the realistic
+  path to real video on the win32 shell (today a stub).
+
+## Decisions (locked with user 2026-06-19)
+- **Static provider seam, not dynamic dylibs.** Traits + a registry,
+  providers compiled in, chosen at runtime (VLC behind a cargo feature).
+  Dynamic loading rejected: stable ABI + versioning + crash isolation, and a
+  crashing plugin breaks "the UI must never stop." Trait shaped so dynamic
+  loading could be added later.
+- **Spike the binding first.** Throwaway probe of the installed libvlc
+  (dlopen, vmem callbacks, BGRA layout, `set_adjust` changes pixels, and a
+  sharpen/denoise filter — including whether its params change live) decides
+  raw-FFI vs `vlc-rs` before committing.
+- **Seam first, then VLC.** Phase 1: `VideoBackend`/`VideoStream` trait in
+  `feraille-core`; move the existing AVFoundation player behind it with no
+  behaviour change. Phase 2: `feraille-video-vlc` provider + a settings
+  toggle; route the popup colour grade to VLC `set_adjust` and the popup
+  denoise/sharpen to VLC filters, so the **whole** adjustments popup applies
+  to video, not just stills.
+- **Use installed VLC.app for now.** Load libvlc at runtime; VLC feature off
+  by default. Bundling into the `.app` (rpath/plugin-path) deferred to Phase 3.
+- **No environment variables — config lives in a Settings "Plugins" section**
+  (user directive 2026-06-19). So the VLC backend gets its plugin dir via a
+  `libvlc_new("--plugin-path=…")` arg (NOT `setenv VLC_PLUGIN_PATH`), and the
+  VLC.app / libvlc / plugins paths + backend selection are user-set in
+  Settings → Plugins. The spike's `setenv` is a spike-only shortcut.
+
+## Spike outcome (2026-06-19) — binding resolved to raw FFI
+Throwaway probe `spikes/vlc-probe/` (dependency-free; dlopen/dlsym) ran the
+full path against a generated `testsrc` clip and **passed**:
+- `libvlc_new` ok; **18 frames pulled** through vmem; length read back 3000 ms.
+- vmem hands back correct BGRA (`screenshots/vlc-spike-before.png` is the exact
+  test pattern).
+- `set_adjust(Brightness=1.8)` live: mean luma 127.5 → 218.0
+  (`screenshots/vlc-spike-after.png` visibly brighter). **Colour adjust on
+  video works live, no re-open.**
+- **Gotchas captured for Phase 2:** must `setenv("VLC_PLUGIN_PATH", …)` before
+  `libvlc_new`; must pre-load `libvlccore.dylib` by full path (libvlc
+  references it via `@rpath`, which our process lacks) — or set an `@rpath` at
+  link time. Symbols are libvlc 3.x shapes (`media_new_path(inst,path)`,
+  `media_player_new_from_media(media)`, `media_player_stop` void).
+- **Decision:** thin **hand-written FFI** is confirmed sufficient — no
+  `vlc-rs` dependency. Denoise/sharpen *filter* live-param change is still
+  unverified (out of this minimal probe); Phase 2 will either set sigma live
+  or re-open the stream as a fallback.
+
+## Phase 1 outcome (2026-06-19) — provider seam landed, no behaviour change
+- `feraille_core::video` — `VideoBackend` (`open(path, on_ended) →
+  Box<dyn VideoStream>`) + `VideoStream` (copy_frame / set_paused / seek /
+  step / time / natural_size). Platform-neutral, std-only. `set_adjust` is
+  deliberately **not** here yet — it lands in Phase 2 with VLC so Phase 1
+  carries no unused type.
+- `viewer/backend_native.rs` — `NativeBackend`/`NativeStream` forward to the
+  existing `platform_shell::video_overlay_*`; `Drop` does the remove. A
+  `video_backend()` selector returns Native today (Phase 2 reads settings).
+- `viewer/window.rs` — the viewer holds `Box<dyn VideoStream>` + a
+  `video_epoch` (the boxed handle isn't `Copy`, so the frame-pull loop keys
+  on the epoch instead of the old `u64` id). All 11 call sites route through
+  the stream; teardown is a `drop`.
+- Verified: workspace compiles warning-free, 49 core + 67 gpui tests green,
+  and the headless harness decoded + drew a real frame through the seam
+  (`screenshots/viewer-video-seam.png`). Native video unchanged.
+
+## With more time / deferred
+- Bundle libvlc for a redistributable build (Phase 3).
+- Dynamic third-party plugins, once the static seam has proven out.
+- Same provider-seam shape fits thumbnailers / preview / metadata providers.
+
+---
+
 # 2026-06-16 Get Info inspector — editable popup (in progress)
 
 Path Finder-style Get Info, modeled on the screenshot the user shared.

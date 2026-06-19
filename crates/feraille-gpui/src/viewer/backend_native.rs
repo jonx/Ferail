@@ -1,0 +1,66 @@
+//! The built-in video provider: the platform-native player behind the
+//! [`VideoBackend`] seam.
+//!
+//! This is a thin adapter — it forwards every call to the existing
+//! `platform_shell::video_overlay_*` functions (AVFoundation on macOS, a
+//! stub on win32), keyed by the opaque `u64` handle they hand back. The
+//! whole point is that the viewer no longer names these functions
+//! directly; an alternative provider (e.g. VLC) can take their place.
+
+use std::path::Path;
+
+use feraille_core::video::{VideoBackend, VideoStream};
+
+/// Select the active video provider. Phase 1: always the native player.
+/// Phase 2 reads the "Plugins" settings section and returns the VLC
+/// backend when it's selected and available.
+pub fn video_backend() -> Box<dyn VideoBackend> {
+    Box::new(NativeBackend)
+}
+
+/// Provider that wraps the platform-native windowless player.
+pub struct NativeBackend;
+
+impl VideoBackend for NativeBackend {
+    fn open(
+        &self,
+        path: &Path,
+        on_ended: Box<dyn Fn() + 'static>,
+    ) -> Option<Box<dyn VideoStream>> {
+        let id = crate::platform_shell::video_overlay_show(path, on_ended);
+        // The native layer returns 0 when it can't open the media.
+        (id != 0).then(|| Box::new(NativeStream { id }) as Box<dyn VideoStream>)
+    }
+}
+
+/// One live native player, identified by its registry handle.
+struct NativeStream {
+    id: u64,
+}
+
+impl VideoStream for NativeStream {
+    fn copy_frame(&mut self) -> Option<(u32, u32, Vec<u8>)> {
+        crate::platform_shell::video_overlay_copy_frame(self.id)
+    }
+    fn set_paused(&mut self, paused: bool) {
+        crate::platform_shell::video_overlay_set_paused(self.id, paused);
+    }
+    fn seek(&mut self, seconds: f64) {
+        crate::platform_shell::video_overlay_seek(self.id, seconds);
+    }
+    fn step(&mut self, frames: i64) {
+        crate::platform_shell::video_overlay_step(self.id, frames);
+    }
+    fn time(&self) -> (f64, f64) {
+        crate::platform_shell::video_overlay_time(self.id)
+    }
+    fn natural_size(&self) -> (f64, f64) {
+        crate::platform_shell::video_overlay_natural_size(self.id)
+    }
+}
+
+impl Drop for NativeStream {
+    fn drop(&mut self) {
+        crate::platform_shell::video_overlay_remove(self.id);
+    }
+}

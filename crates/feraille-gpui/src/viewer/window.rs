@@ -19,6 +19,9 @@ use gpui_component::{
 
 use std::time::Duration;
 
+use feraille_core::video::VideoStream;
+
+use super::backend_native::video_backend;
 use super::loader::{self, FrameState, ViewerFrame};
 use super::playback::Playback;
 use super::stage::{self, StageState, ZoomMode};
@@ -386,11 +389,16 @@ pub struct ViewerWindow {
     /// Title last pushed to the platform window, so render-time title
     /// sync only crosses into AppKit when the text actually changed.
     last_title: String,
-    /// Live windowless video player: (platform handle, the entry path it
-    /// plays). `None` when the current entry isn't a video. Frames are
-    /// pulled out and drawn through the same stage path as stills, so the
-    /// video is a real gpui element (docs/features/VIEWER.md). [mac]
-    video_overlay: Option<(u64, PathBuf)>,
+    /// Live windowless video player: (the open stream, the entry path it
+    /// plays). `None` when the current entry isn't a video. The concrete
+    /// player is chosen behind the [`VideoBackend`] seam (native or VLC);
+    /// frames are pulled out and drawn through the same stage path as
+    /// stills, so the video is a real gpui element (docs/features/VIEWER.md).
+    video_overlay: Option<(Box<dyn VideoStream>, PathBuf)>,
+    /// Bumped on every `open`; the frame-pull loop captures it and exits
+    /// once it no longer matches (a newer clip opened, or playback ended).
+    /// Replaces the old player-handle-as-key now that the handle is boxed.
+    video_epoch: u64,
     /// The latest decoded video frame (unrotated), uploaded as a
     /// `RenderImage` and drawn like any image. `None` until the first
     /// frame lands — the Quick Look poster stands in until then.
@@ -531,6 +539,7 @@ impl ViewerWindow {
             chrome_hover: false,
             last_title: String::new(),
             video_overlay: None,
+            video_epoch: 0,
             video_frame_image: None,
             video_frame_seq: 0,
             video_rotated: None,
@@ -711,14 +720,16 @@ impl ViewerWindow {
                 self.teardown_video();
                 let tx = self.video_ended_tx.clone();
                 let ended_path = p.clone();
-                let id = crate::platform_shell::video_overlay_show(
+                let stream = video_backend().open(
                     p,
                     Box::new(move || {
                         let _ = tx.try_send(ended_path.clone());
                     }),
                 );
-                if id != 0 {
-                    self.video_overlay = Some((id, p.clone()));
+                if let Some(stream) = stream {
+                    self.video_epoch = self.video_epoch.wrapping_add(1);
+                    let epoch = self.video_epoch;
+                    self.video_overlay = Some((stream, p.clone()));
                     // A freshly opened player auto-plays.
                     self.video_paused = false;
                     self.video_position = (0.0, 0.0);
@@ -727,16 +738,16 @@ impl ViewerWindow {
                     self.cue_in = 0.0;
                     self.cue_out = 1.0;
                     self.seek_drag = None;
-                    self.start_video_poll(id, cx);
+                    self.start_video_poll(epoch, cx);
                 }
             }
         }
     }
 
     fn teardown_video(&mut self) {
-        if let Some((id, _)) = self.video_overlay.take() {
-            crate::platform_shell::video_overlay_remove(id);
-        }
+        // Dropping the stream tears the underlying player down (the
+        // backend's `Drop` does the native remove / libvlc release).
+        drop(self.video_overlay.take());
         // Retire the on-screen frame + its rotated cache so their atlas
         // textures are evicted on the next render.
         if let Some(img) = self.video_frame_image.take() {
@@ -752,17 +763,17 @@ impl ViewerWindow {
     /// for the hidden native transport).
     fn toggle_video_paused(&mut self, cx: &mut Context<Self>) {
         self.video_paused = !self.video_paused;
-        if let Some((id, _)) = &self.video_overlay {
+        let paused = self.video_paused;
+        let (cur, dur) = self.video_position;
+        let (cue_in, cue_out) = (self.cue_in, self.cue_out);
+        if let Some((stream, _)) = &mut self.video_overlay {
             // Resuming from a playhead parked at/after the Out cue would
             // immediately re-trigger the Out pause; restart from In so
             // play means "play the region".
-            if !self.video_paused {
-                let (cur, dur) = self.video_position;
-                if dur > 0.0 && cur >= self.cue_out as f64 * dur - 0.05 {
-                    crate::platform_shell::video_overlay_seek(*id, self.cue_in as f64 * dur);
-                }
+            if !paused && dur > 0.0 && cur >= cue_out as f64 * dur - 0.05 {
+                stream.seek(cue_in as f64 * dur);
             }
-            crate::platform_shell::video_overlay_set_paused(*id, self.video_paused);
+            stream.set_paused(paused);
         }
         cx.notify();
     }
@@ -770,8 +781,8 @@ impl ViewerWindow {
     /// Step the current video by `frames` frames (negative = backward).
     /// Stepping pauses playback.
     fn step_video(&mut self, frames: i64, cx: &mut Context<Self>) {
-        if let Some((id, _)) = &self.video_overlay {
-            crate::platform_shell::video_overlay_step(*id, frames);
+        if let Some((stream, _)) = &mut self.video_overlay {
+            stream.step(frames);
             self.video_paused = true;
             cx.notify();
         }
@@ -788,7 +799,7 @@ impl ViewerWindow {
     /// A bounded in-memory frame copy is not a prime-directive blocker
     /// (no I/O / Finder / SQLite); if 4K60 shows main-thread cost, the
     /// follow-up is a CVDisplayLink background pull (docs/GPUI-UPSTREAM.md).
-    fn start_video_poll(&self, id: u64, cx: &mut Context<Self>) {
+    fn start_video_poll(&self, epoch: u64, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
                 // ~60 Hz. Frames arrive only as fast as the video's own
@@ -798,7 +809,7 @@ impl ViewerWindow {
                     .timer(Duration::from_millis(16))
                     .await;
                 let Some(this) = this.upgrade() else { break };
-                let keep = this.update(cx, |this, cx| this.video_poll_tick(id, cx));
+                let keep = this.update(cx, |this, cx| this.video_poll_tick(epoch, cx));
                 if !keep {
                     break;
                 }
@@ -810,16 +821,21 @@ impl ViewerWindow {
     /// One ~60 Hz poll step for player `id`: refresh position, pull the
     /// newest frame, and enforce the Out cue. Returns whether to keep
     /// polling (false once `id` is no longer the live player).
-    fn video_poll_tick(&mut self, id: u64, cx: &mut Context<Self>) -> bool {
-        if !matches!(&self.video_overlay, Some((cur, _)) if *cur == id) {
+    fn video_poll_tick(&mut self, epoch: u64, cx: &mut Context<Self>) -> bool {
+        // Stop once a newer clip opened (or playback was torn down).
+        if self.video_epoch != epoch || self.video_overlay.is_none() {
             return false;
         }
-        self.video_position = crate::platform_shell::video_overlay_time(id);
-        let dims = crate::platform_shell::video_overlay_natural_size(id);
+        // Pull position / size / newest frame in one scoped stream borrow.
+        let (pos, dims, frame) = {
+            let stream = &mut self.video_overlay.as_mut().unwrap().0;
+            (stream.time(), stream.natural_size(), stream.copy_frame())
+        };
+        self.video_position = pos;
         if dims.0 > 0.0 && dims.1 > 0.0 {
             self.video_dims = dims;
         }
-        if let Some((w, h, bytes)) = crate::platform_shell::video_overlay_copy_frame(id) {
+        if let Some((w, h, bytes)) = frame {
             if let Some(img) = build_video_frame(bytes, w, h) {
                 if let Some(old) = self.video_frame_image.replace(img) {
                     self.video_frames_to_drop.push(old);
@@ -828,7 +844,7 @@ impl ViewerWindow {
             }
         }
         // Enforce the Out cue. A full-length Out (1.0) is the clip's
-        // natural end — left to the AVPlayerItemDidPlayToEnd notification
+        // natural end — left to the end-of-play notification
         // (`on_video_ended`) so we don't race it; only a real trim
         // (`cue_out < 1.0`) is enforced here.
         let (cur, dur) = self.video_position;
@@ -836,8 +852,10 @@ impl ViewerWindow {
             if self.video_loop {
                 // Region repeats: jump back to the In cue and keep playing.
                 let in_s = self.cue_in as f64 * dur;
-                crate::platform_shell::video_overlay_seek(id, in_s);
-                crate::platform_shell::video_overlay_set_paused(id, false);
+                if let Some((stream, _)) = &mut self.video_overlay {
+                    stream.seek(in_s);
+                    stream.set_paused(false);
+                }
                 self.video_paused = false;
             } else if self.playback.playing {
                 // Slideshow: an Out cue acts as the clip's end → advance.
@@ -845,7 +863,9 @@ impl ViewerWindow {
                 return false;
             } else {
                 // Not looping, not a slideshow: pause at the Out cue.
-                crate::platform_shell::video_overlay_set_paused(id, true);
+                if let Some((stream, _)) = &mut self.video_overlay {
+                    stream.set_paused(true);
+                }
                 self.video_paused = true;
             }
         }
@@ -863,10 +883,11 @@ impl ViewerWindow {
         }
         // Loop takes precedence: replay from the In cue (0 by default).
         if self.video_loop {
-            if let Some((id, _)) = &self.video_overlay {
-                let (_, dur) = self.video_position;
-                crate::platform_shell::video_overlay_seek(*id, self.cue_in as f64 * dur);
-                crate::platform_shell::video_overlay_set_paused(*id, false);
+            let (_, dur) = self.video_position;
+            let in_s = self.cue_in as f64 * dur;
+            if let Some((stream, _)) = &mut self.video_overlay {
+                stream.seek(in_s);
+                stream.set_paused(false);
             }
             return;
         }
@@ -2223,8 +2244,8 @@ impl ViewerWindow {
             SeekTarget::Playhead => {
                 let (_, dur) = self.video_position;
                 if dur > 0.0 {
-                    if let Some((id, _)) = &self.video_overlay {
-                        crate::platform_shell::video_overlay_seek(*id, frac as f64 * dur);
+                    if let Some((stream, _)) = &mut self.video_overlay {
+                        stream.seek(frac as f64 * dur);
                     }
                     // Immediate visual feedback before the next poll lands.
                     self.video_position.0 = frac as f64 * dur;

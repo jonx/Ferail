@@ -9,6 +9,7 @@
 //! stage state; every decode and Quick Look shell-out runs on the
 //! background executor and re-enters through `entity.update`.
 
+pub mod backend_native;
 pub mod loader;
 pub mod playback;
 pub mod stage;
