@@ -122,10 +122,33 @@ full path against a generated `testsrc` clip and **passed**:
   viewer playback (select VLC, play any-format clip) is on the user — it needs
   a `--features vlc` build and writes to the live settings file.
 
+## Phase 2b outcome (2026-06-19) — video enhance filters, all formats, quiet logs
+- **All VLC formats.** Video eligibility is now backend-aware: built-in set
+  (mp4/m4v/mov) always, plus a broad `VLC_VIDEO_EXTS` (mkv/avi/webm/flv/wmv/
+  mpg/3gp/3g2/ts/vob/ogv/divx/rm/… ) when VLC is selected. Fixes a 3GP (and
+  mkv/avi/…) opening as a Quick Look poster instead of playing.
+- **Denoise/sharpen on video.** `VideoBackend::open` gained a `VideoEnhance`
+  (denoise/sharpen, 0..1); the VLC backend bakes them into the decode chain
+  as media options (`:video-filter=sharpen:hqdn3d` + scaled params). libvlc
+  can't swap the chain live, so the viewer **re-opens the stream on slider
+  release** (`commit_video_enhance`, preserving playhead + paused) rather
+  than per drag-move. The popup now shows Denoise + Sharpen for a VLC video
+  (Upscale stays stills-only). Colour grade remains live via `set_adjust`.
+- **Quiet libvlc.** `libvlc_new("--quiet", "--no-osd", "--no-video-title-
+  show")` silences the decoder/transform/ci_filters/main-filter chatter the
+  user saw. One residual `[swscaler] … yuv420p to bgra` line per open comes
+  straight from libav (not VLC's logger, so `--quiet` can't catch it) — the
+  cost of converting decoded YUV to our BGRA pull buffer; harmless.
+- Verified: default + `--features vlc` compile warning-free; 49 core + 67
+  gpui + VLC integration test (now opens *with* a sharpen+denoise chain)
+  green. Interactive check (play a 3GP/MKV, drag Denoise/Sharpen → release
+  re-applies) is on the user.
+
 ## With more time / deferred
-- **Phase 2b — denoise/sharpen on video via VLC filters** (`sharpen` +
-  `hqdn3d`). Live sigma change likely needs a stream re-open on commit
-  (debounced), so it's its own chunk; colour grade lands now.
+- Silence the residual libav `swscaler` line (would need a YUV pull path or
+  a libav log hook we don't currently reach).
+- Re-opening to change a video filter is a touch heavy; a live filter-param
+  path would be smoother if libvlc ever exposes one.
 - Bundle libvlc for a redistributable build (Phase 3).
 - Dynamic third-party plugins, once the static seam has proven out.
 - Same provider-seam shape fits thumbnailers / preview / metadata providers.

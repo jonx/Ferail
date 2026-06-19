@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use feraille_core::video::{VideoBackend, VideoStream};
+use feraille_core::video::{VideoBackend, VideoEnhance, VideoStream};
 
 /// Select the active video provider. `vlc_app` is `Some(path)` when the
 /// user picked VLC in Settings → Plugins (resolved once by the viewer, so
@@ -37,7 +37,10 @@ impl VideoBackend for NativeBackend {
         &self,
         path: &Path,
         on_ended: Box<dyn Fn() + Send + 'static>,
+        _enhance: VideoEnhance,
     ) -> Option<Box<dyn VideoStream>> {
+        // AVFoundation has no denoise/sharpen filter chain — `_enhance` is
+        // ignored (those controls are hidden for the native player).
         // The native layer's callback is plain `Fn`; a `Send` one coerces.
         let id = crate::platform_shell::video_overlay_show(path, on_ended);
         // The native layer returns 0 when it can't open the media.

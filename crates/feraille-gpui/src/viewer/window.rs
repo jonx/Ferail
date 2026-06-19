@@ -19,7 +19,7 @@ use gpui_component::{
 
 use std::time::Duration;
 
-use feraille_core::video::{VideoAdjust, VideoStream};
+use feraille_core::video::{VideoAdjust, VideoEnhance, VideoStream};
 
 use super::backend_native::video_backend;
 use super::loader::{self, FrameState, ViewerFrame};
@@ -79,10 +79,20 @@ const ZOOM_STEP: f32 = 1.25;
 /// the hidden toolbar.
 const CHROME_REVEAL_STRIP: f32 = 56.0;
 
-/// Extensions routed to the native video overlay — the formats
-/// AVFoundation reliably plays. Everything else stays a Quick Look
-/// poster. [mac]; win-parity revisits the set with Media Foundation.
+/// Extensions the built-in (AVFoundation) player reliably plays. Routed to
+/// the video path for *any* backend. Everything else stays a Quick Look
+/// poster unless the VLC backend (broad set below) is active. [mac]
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov"];
+
+/// Containers VLC plays that the built-in player can't — only treated as
+/// video when the VLC backend is selected (otherwise they'd open as a
+/// Quick Look poster image, e.g. a 3GP showing as a still). Not exhaustive
+/// — libvlc handles more — but covers the common cases.
+const VLC_VIDEO_EXTS: &[&str] = &[
+    "mkv", "webm", "avi", "flv", "wmv", "asf", "mpg", "mpeg", "mpe", "m2v", "mpv", "3gp", "3g2",
+    "ts", "mts", "m2ts", "vob", "ogv", "ogm", "divx", "rm", "rmvb", "f4v", "mxf", "dv", "qt",
+    "amv", "nsv", "y4m", "h264", "hevc", "av1",
+];
 
 /// `M:SS` (or `H:MM:SS` past an hour) for the seek-bar time labels.
 fn fmt_time(secs: f64) -> String {
@@ -93,13 +103,6 @@ fn fmt_time(secs: f64) -> String {
     } else {
         format!("{m}:{sec:02}")
     }
-}
-
-fn is_video(path: &std::path::Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| VIDEO_EXTS.contains(&e.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
 }
 
 /// CPU-rotate a decoded bitmap by `quarter_turns` clockwise (1/2/3).
@@ -420,7 +423,12 @@ pub struct ViewerWindow {
     /// Whether the active video backend applied the colour grade itself
     /// (VLC does, natively on the GPU/decoder). When true the viewer skips
     /// its per-frame CPU grade for video — the frames already carry it.
+    /// Doubles as "the current video stream is VLC" (only VLC grades).
     video_adjust_native: bool,
+    /// The denoise/sharpen filters the current VLC stream was opened with.
+    /// Compared against the live popup values to decide when a re-open is
+    /// needed (libvlc bakes these in at open; they can't change live).
+    video_enhance_applied: VideoEnhance,
     /// The latest decoded video frame (unrotated), uploaded as a
     /// `RenderImage` and drawn like any image. `None` until the first
     /// frame lands — the Quick Look poster stands in until then.
@@ -564,6 +572,7 @@ impl ViewerWindow {
             video_epoch: 0,
             vlc_pref: resolve_vlc_pref(),
             video_adjust_native: false,
+            video_enhance_applied: VideoEnhance::default(),
             video_frame_image: None,
             video_frame_seq: 0,
             video_rotated: None,
@@ -714,11 +723,28 @@ impl ViewerWindow {
 
     // -- video overlay [mac] ---------------------------------------
 
-    /// True when the *current* entry plays through the native overlay
-    /// (slideshow advance is then driven by the video's end, not the
-    /// interval timer).
+    /// Whether `path` should open as video for the *active* backend: the
+    /// built-in formats always, plus the broad VLC container set when the
+    /// VLC backend is selected (so a 3GP/MKV/AVI plays instead of showing a
+    /// Quick Look poster).
+    fn is_video_path(&self, path: &std::path::Path) -> bool {
+        let Some(ext) = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+        else {
+            return false;
+        };
+        VIDEO_EXTS.contains(&ext.as_str())
+            || (self.vlc_pref.is_some() && VLC_VIDEO_EXTS.contains(&ext.as_str()))
+    }
+
+    /// True when the *current* entry plays as video (slideshow advance is
+    /// then driven by the video's end, not the interval timer).
     fn current_is_video(&self) -> bool {
-        self.current().map(|e| is_video(&e.path)).unwrap_or(false)
+        self.current()
+            .map(|e| self.is_video_path(&e.path))
+            .unwrap_or(false)
     }
 
     /// Render-time overlay sync, change-detected like `sync_title`:
@@ -735,40 +761,93 @@ impl ViewerWindow {
         let want = self
             .current()
             .map(|e| e.path.clone())
-            .filter(|p| is_video(p));
+            .filter(|p| self.is_video_path(p));
         match (&want, &self.video_overlay) {
             (None, None) => {}
             (None, Some(_)) => self.teardown_video(),
             (Some(p), Some((_, current))) if current == p => {}
             (Some(p), _) => {
                 self.teardown_video();
-                let tx = self.video_ended_tx.clone();
-                let ended_path = p.clone();
-                let stream = video_backend(self.vlc_pref.as_deref()).open(
-                    p,
-                    Box::new(move || {
-                        let _ = tx.try_send(ended_path.clone());
-                    }),
-                );
-                if let Some(stream) = stream {
-                    self.video_epoch = self.video_epoch.wrapping_add(1);
-                    let epoch = self.video_epoch;
-                    self.video_overlay = Some((stream, p.clone()));
-                    // A freshly opened player auto-plays.
-                    self.video_paused = false;
-                    self.video_position = (0.0, 0.0);
-                    self.video_dims = (0.0, 0.0);
-                    // Cues are not remembered: reset to the whole clip.
-                    self.cue_in = 0.0;
-                    self.cue_out = 1.0;
-                    self.seek_drag = None;
-                    // Push any live grade into the backend (VLC applies it
-                    // natively; native player reports unsupported).
-                    self.apply_video_adjust();
-                    self.start_video_poll(epoch, cx);
-                }
+                // Cues are not remembered: reset to the whole clip.
+                self.cue_in = 0.0;
+                self.cue_out = 1.0;
+                self.seek_drag = None;
+                self.video_position = (0.0, 0.0);
+                self.open_video_stream(p.clone(), None, cx);
             }
         }
+    }
+
+    /// The current enhancement filters (denoise / sharpen) a VLC stream
+    /// would be opened with. Upscale is still-only, so it's excluded.
+    fn video_enhance(&self) -> VideoEnhance {
+        VideoEnhance {
+            denoise: self.enhance.denoise,
+            sharpen: self.enhance.sharpen,
+        }
+    }
+
+    /// Open a video stream for `path` via the active backend and start the
+    /// frame-pull loop. `restore` is `Some(position_secs)` when re-opening
+    /// in place (e.g. after an enhancement-filter change) — the clip seeks
+    /// back there and keeps its paused state; `None` is a fresh open that
+    /// auto-plays. The VLC backend bakes the denoise/sharpen filters in at
+    /// open (they can't be changed live).
+    fn open_video_stream(&mut self, path: PathBuf, restore: Option<f64>, cx: &mut Context<Self>) {
+        let tx = self.video_ended_tx.clone();
+        let ended_path = path.clone();
+        let enhance = self.video_enhance();
+        let stream = video_backend(self.vlc_pref.as_deref()).open(
+            &path,
+            Box::new(move || {
+                let _ = tx.try_send(ended_path.clone());
+            }),
+            enhance,
+        );
+        if let Some(mut stream) = stream {
+            self.video_epoch = self.video_epoch.wrapping_add(1);
+            let epoch = self.video_epoch;
+            match restore {
+                Some(pos) => {
+                    // Re-open in place: resume where we were, as we were.
+                    stream.seek(pos);
+                    stream.set_paused(self.video_paused);
+                    self.video_position.0 = pos;
+                }
+                None => {
+                    // Fresh open auto-plays.
+                    self.video_paused = false;
+                    self.video_dims = (0.0, 0.0);
+                }
+            }
+            self.video_overlay = Some((stream, path));
+            self.video_enhance_applied = enhance;
+            // Push any live grade into the backend (VLC applies it natively;
+            // native player reports unsupported).
+            self.apply_video_adjust();
+            self.start_video_poll(epoch, cx);
+        }
+    }
+
+    /// Re-open the current VLC video so a changed denoise/sharpen filter
+    /// takes effect (libvlc can't swap the filter chain live), preserving
+    /// the playhead and paused state. No-op unless a VLC video is current
+    /// and its filters actually changed.
+    fn commit_video_enhance(&mut self, cx: &mut Context<Self>) {
+        if !self.video_adjust_native || !self.current_is_video() {
+            return; // not a VLC video
+        }
+        if self.video_enhance() == self.video_enhance_applied {
+            return;
+        }
+        let Some((_, path)) = &self.video_overlay else {
+            return;
+        };
+        let path = path.clone();
+        let pos = self.video_position.0;
+        self.teardown_video();
+        self.open_video_stream(path, Some(pos), cx);
+        cx.notify();
     }
 
     fn teardown_video(&mut self) {
@@ -1894,9 +1973,12 @@ impl ViewerWindow {
         let border = cx.theme().border;
         let foreground = cx.theme().foreground;
         let top = self.stage_origin_y + 12.0;
-        // Enhancement (denoise/sharpen/upscale) is stills-only — far too
-        // heavy to run on live video frames.
         let is_video = self.current_is_video();
+        // Denoise/sharpen apply to stills (CPU) and to VLC video (libvlc
+        // filters); upscale stays stills-only. `video_adjust_native` marks
+        // a VLC stream — the native player has no filter chain.
+        let vlc_video = is_video && self.video_adjust_native;
+        let show_enhance = !is_video || vlc_video;
 
         let header = h_flex()
             .justify_between()
@@ -1937,22 +2019,36 @@ impl ViewerWindow {
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
                     this.slider_drag = None;
+                    // Denoise/sharpen for a VLC video are baked in at open,
+                    // so a changed value re-opens the stream on release
+                    // (kept off the live drag — re-opening per move thrashes).
+                    this.commit_video_enhance(cx);
                     cx.notify();
                 }),
             )
             .on_mouse_up_out(
                 MouseButton::Left,
-                cx.listener(|this, _, _, _| this.slider_drag = None),
+                cx.listener(|this, _, _, cx| {
+                    this.slider_drag = None;
+                    this.commit_video_enhance(cx);
+                }),
             )
             .child(header)
             .child(self.slider_row(SliderId::Brightness, cx))
             .child(self.slider_row(SliderId::Contrast, cx))
             .child(self.slider_row(SliderId::Saturation, cx))
-            .when(!is_video, |d| {
-                d.child(div().h_px().my_1().bg(border))
+            .when(show_enhance, |d| {
+                let d = d
+                    .child(div().h_px().my_1().bg(border))
                     .child(self.slider_row(SliderId::Denoise, cx))
-                    .child(self.slider_row(SliderId::Sharpen, cx))
-                    .child(self.upscale_row(cx))
+                    .child(self.slider_row(SliderId::Sharpen, cx));
+                // Upscale is a still-only pre-scale; not meaningful for the
+                // video player (it plays at native size, fit to the stage).
+                if is_video {
+                    d
+                } else {
+                    d.child(self.upscale_row(cx))
+                }
             })
     }
 

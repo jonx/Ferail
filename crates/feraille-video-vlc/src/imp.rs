@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use feraille_core::video::{VideoAdjust, VideoBackend, VideoStream};
+use feraille_core::video::{VideoAdjust, VideoBackend, VideoEnhance, VideoStream};
 
 // ---- libvlc constants ------------------------------------------------------
 
@@ -51,6 +51,7 @@ struct LibVlc {
     _lib: *mut c_void,
     new: extern "C" fn(c_int, *const *const c_char) -> *mut c_void,
     media_new_path: extern "C" fn(*mut c_void, *const c_char) -> *mut c_void,
+    media_add_option: extern "C" fn(*mut c_void, *const c_char),
     media_release: extern "C" fn(*mut c_void),
     mp_new_from_media: extern "C" fn(*mut c_void) -> *mut c_void,
     mp_release: extern "C" fn(*mut c_void),
@@ -101,6 +102,7 @@ impl LibVlc {
             _lib: lib,
             new: sym!(lib, "libvlc_new"),
             media_new_path: sym!(lib, "libvlc_media_new_path"),
+            media_add_option: sym!(lib, "libvlc_media_add_option"),
             media_release: sym!(lib, "libvlc_media_release"),
             mp_new_from_media: sym!(lib, "libvlc_media_player_new_from_media"),
             mp_release: sym!(lib, "libvlc_media_player_release"),
@@ -230,6 +232,28 @@ extern "C" fn on_end(_event: *const c_void, user_data: *mut c_void) {
     }
 }
 
+/// Media options that add VLC's denoise (`hqdn3d`) and sharpen filters to
+/// the decode chain, scaled from the `0..1` slider values. Empty when
+/// neutral. Order doesn't matter — libvlc collects them per media.
+fn enhance_options(e: VideoEnhance) -> Vec<String> {
+    let mut filters: Vec<&str> = Vec::new();
+    let mut opts: Vec<String> = Vec::new();
+    if e.sharpen > 0.0 {
+        filters.push("sharpen");
+        opts.push(format!(":sharpen-sigma={:.3}", e.sharpen * 2.0)); // 0..2
+    }
+    if e.denoise > 0.0 {
+        filters.push("hqdn3d");
+        // Scale the spatial denoise strength; temporal stays at default.
+        opts.push(format!(":hqdn3d-luma-spatial={:.1}", e.denoise * 8.0));
+        opts.push(format!(":hqdn3d-chroma-spatial={:.1}", e.denoise * 6.0));
+    }
+    if !filters.is_empty() {
+        opts.push(format!(":video-filter={}", filters.join(":")));
+    }
+    opts
+}
+
 // ---- process-wide libvlc instance (created once, reused) -------------------
 
 struct Instance {
@@ -253,7 +277,17 @@ impl Instance {
             unsafe { setenv(k.as_ptr(), c.as_ptr(), 1) };
         }
         let libvlc = unsafe { LibVlc::load(&core, &lib)? };
-        let inst = (libvlc.new)(0, ptr::null());
+        // `--quiet` suppresses libvlc's console logging (the decoder /
+        // filter / swscaler chatter); `--no-osd` / `--no-video-title-show`
+        // keep overlays off our pulled frames. Args are consumed during
+        // `libvlc_new`, so the CStrings only need to outlive the call.
+        let args = [
+            CString::new("--quiet").unwrap(),
+            CString::new("--no-osd").unwrap(),
+            CString::new("--no-video-title-show").unwrap(),
+        ];
+        let argv: Vec<*const c_char> = args.iter().map(|c| c.as_ptr()).collect();
+        let inst = (libvlc.new)(argv.len() as c_int, argv.as_ptr());
         if inst.is_null() {
             return Err("libvlc_new failed".into());
         }
@@ -296,12 +330,21 @@ impl VideoBackend for VlcBackend {
         &self,
         path: &Path,
         on_ended: Box<dyn Fn() + Send + 'static>,
+        enhance: VideoEnhance,
     ) -> Option<Box<dyn VideoStream>> {
         let lib = self.inst.lib.clone();
         let cpath = CString::new(path.to_string_lossy().as_bytes().to_vec()).ok()?;
         let media = (lib.media_new_path)(self.inst.inst, cpath.as_ptr());
         if media.is_null() {
             return None;
+        }
+        // Bake the denoise/sharpen filters into this media's decode chain.
+        // (libvlc can't swap the chain live, so the viewer re-opens to
+        // change them.) The colour grade is separate and stays live.
+        for opt in enhance_options(enhance) {
+            if let Ok(c) = CString::new(opt) {
+                (lib.media_add_option)(media, c.as_ptr());
+            }
         }
         let mp = (lib.mp_new_from_media)(media);
         (lib.media_release)(media); // the player retains it
@@ -444,7 +487,17 @@ mod tests {
             eprintln!("skip: libvlc could not be loaded");
             return;
         };
-        let mut stream = backend.open(clip, Box::new(|| {})).expect("open clip");
+        // Open with a sharpen + denoise filter chain to exercise that path.
+        let mut stream = backend
+            .open(
+                clip,
+                Box::new(|| {}),
+                VideoEnhance {
+                    denoise: 0.5,
+                    sharpen: 0.5,
+                },
+            )
+            .expect("open clip");
 
         let start = Instant::now();
         let mut frame = None;

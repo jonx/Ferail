@@ -243,11 +243,15 @@ another entry keeps `{mode, center}` verbatim:
     bipolar `[-1, 1]` slider that detents to neutral at centre. Cheap
     per-pixel maths (`grade_bgra`, a brightness+contrast LUT plus optional
     saturation mix over the BGRA buffer). Applies to **stills and video**.
-  - **Enhancement** — Denoise (Gaussian), Sharpen (unsharp mask), and an
-    Upscale `1× / 2× / 4×` (Lanczos, capped at `UPSCALE_MAX_EDGE`).
-    **Stills only** — far too heavy for live video frames — so this section
-    is hidden when a video is current. Upscale feeds a higher-res bitmap
-    into the *same* layout rect, so the win shows when zoomed past 100 %.
+  - **Enhancement** — Denoise + Sharpen, plus an Upscale `1× / 2× / 4×`
+    (Lanczos, capped at `UPSCALE_MAX_EDGE`). For **stills** these run the CPU
+    pipeline below; Upscale feeds a higher-res bitmap into the *same* layout
+    rect, so the win shows when zoomed past 100 %. For a **VLC video**,
+    Denoise/Sharpen are shown too and apply via libvlc's `hqdn3d` / `sharpen`
+    filters — baked into the decode at open, so changing a slider re-opens
+    the stream on release (`commit_video_enhance`, keeping the playhead).
+    Upscale is still-only. The built-in (AVFoundation) player has no filter
+    chain, so the section is hidden for it.
   - **Threading**: the still pipeline (grade → denoise → upscale → sharpen
     → rotate, `process_still_pixels`) is convolution/resampling-heavy, so
     it **never runs on the render path** — it's dispatched to the
@@ -257,6 +261,13 @@ another entry keeps `{mode, center}` verbatim:
     computes, the plain rotated original stands in (UI never stalls — the
     prime directive). Video grading stays inline (`graded_video`, per frame
     seq) since it can't be pre-baked off-thread.
+- **Video provider is pluggable** (`feraille_core::video::VideoBackend`,
+  see NOTES.md 2026-06-19): the built-in AVFoundation player or, in a
+  `--features vlc` build with VLC selected in Settings → Plugins, a libvlc
+  backend that plays virtually any container (the eligible-extension set is
+  backend-aware — `VLC_VIDEO_EXTS` only counts when VLC is active) and grades
+  video natively. Both decode into a BGRA pull buffer drawn as a gpui `img`;
+  the viewer never names a concrete player.
 - **Stay on top** checkbox raises the window to the floating `NSWindow`
   level. (Both checkboxes are gpui-component `Checkbox`es.)
 - **Zoom / pan / fit apply to video for free**: the pulled frame is laid

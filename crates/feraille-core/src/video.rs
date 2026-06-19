@@ -36,6 +36,22 @@ impl VideoAdjust {
     }
 }
 
+/// Enhancement filters a backend can bake into the decode at open time:
+/// `denoise` and `sharpen`, each `0..1` (0 = off). Unlike [`VideoAdjust`]
+/// (which is live), these sit in the decoder's filter chain — a backend
+/// that can't change them live re-opens the stream to apply a new value.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct VideoEnhance {
+    pub denoise: f32,
+    pub sharpen: f32,
+}
+
+impl VideoEnhance {
+    pub fn is_neutral(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Opens video streams. The "plugin" that a provider implements to become
 /// the viewer's video player.
 pub trait VideoBackend {
@@ -44,12 +60,16 @@ pub trait VideoBackend {
     /// a decoder thread), so it must be `Send`; the viewer forwards it
     /// through a channel and must not re-enter the backend synchronously.
     ///
+    /// `enhance` is the denoise/sharpen filter state to bake in at open
+    /// (a backend without such filters ignores it).
+    ///
     /// Returns `None` if this backend can't handle the path/format, so the
     /// caller can fall back to another provider.
     fn open(
         &self,
         path: &Path,
         on_ended: Box<dyn Fn() + Send + 'static>,
+        enhance: VideoEnhance,
     ) -> Option<Box<dyn VideoStream>>;
 }
 
