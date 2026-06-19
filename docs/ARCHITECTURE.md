@@ -216,6 +216,23 @@ cargo run --bin feraille-gpui -- --reset-db <scope>
 The command catalogue lives in `feraille-core` so menus, shortcuts,
 settings, and future command-palette work share one identity layer.
 
+## macOS Privacy (TCC) And Bundling
+
+A directory read that hits macOS privacy protection comes back as
+`EnumerationError::PermissionDenied` and the file pane shows an "Access
+required" state that deep-links to Full Disk Access (`shell/loading.rs`,
+`shell/render.rs`).
+
+To get the *automatic* per-folder consent prompt instead (the
+"…would like to access files in your Documents folder" dialog), Feraille
+must run as a code-signed `.app` bundle whose `Info.plist` declares the
+matching `NS*UsageDescription` strings. The prompt only fires for
+promptable categories (Desktop/Documents/Downloads/removable/network);
+arbitrary folders still need Full Disk Access, which can't be prompted.
+`scripts/bundle-mac.sh` assembles and signs the bundle from
+`packaging/macos/Info.plist`. Running the loose `cargo run` binary cannot
+prompt — it has no bundle identity or usage strings.
+
 ## Observability And Failures
 
 The app installs a panic hook and compact crash report path through

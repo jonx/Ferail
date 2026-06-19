@@ -123,6 +123,11 @@ than whatever came with your OS, that's Feraille.
 # Run the app
 cargo run --bin feraille-gpui
 
+# Build a signed .app bundle so macOS shows the normal access prompts
+# (Documents/Desktop/Downloads/removable/network) instead of failing.
+# The loose binary above can't prompt — see the script header for why.
+scripts/bundle-mac.sh && open target/Feraille.app
+
 # CLI utilities
 cargo run --bin feraille -- magic <path>...                    # identify file types
 cargo run --bin feraille -- du [--top N] [--packages] <path>   # disk usage
@@ -137,6 +142,52 @@ cargo run --bin feraille-gpui -- \
 # Reset local metadata
 cargo run --bin feraille-gpui -- --reset-db <scope>
 ```
+
+## macOS Permissions (Access Prompts)
+
+macOS gates the protected folders (Desktop, Documents, Downloads,
+removable volumes, network volumes, cloud providers) behind its privacy
+system (TCC). The familiar *"Feraille would like to access files in your
+Documents folder"* prompt only appears when **all** of these hold:
+
+1. the path is in one of those promptable categories (arbitrary folders
+   are never promptable — they need Full Disk Access);
+2. Feraille runs as a code-signed `.app` bundle with a stable identity;
+3. that bundle's `Info.plist` declares the matching `NS*UsageDescription`
+   string ([packaging/macos/Info.plist](packaging/macos/Info.plist)).
+
+The loose `cargo run` binary meets none of these — it inherits the
+terminal's privacy identity and has no usage strings — so a denied read
+just shows the in-app "Access required" screen that deep-links to Full
+Disk Access. To get the real prompts, build and run the bundle:
+
+```sh
+scripts/bundle-mac.sh && open target/Feraille.app
+```
+
+Caveats:
+
+- **Stale grants from terminal runs.** Earlier `cargo run` sessions
+  attribute grants/denials to *Terminal*, not Feraille. If the bundle
+  doesn't prompt, clear the stale state:
+
+  ```sh
+  tccutil reset SystemPolicyRemovableVolumes me.jkn.feraille
+  tccutil reset SystemPolicyDocumentsFolder  me.jkn.feraille
+  ```
+
+- **Ad-hoc signing doesn't persist.** The default ad-hoc signature
+  changes every build, so macOS treats each build as a new app and
+  re-prompts. For grants that stick across rebuilds, sign with a real
+  identity:
+
+  ```sh
+  CODESIGN_IDENTITY="Developer ID Application: …" scripts/bundle-mac.sh
+  ```
+
+- **After a denial, macOS never re-prompts.** Once you click "Don't
+  Allow", the only recourse is the in-app "Open Full Disk Access
+  settings" link (also the path for arbitrary, non-promptable folders).
 
 ## Project Layout
 

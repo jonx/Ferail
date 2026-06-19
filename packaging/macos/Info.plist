@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Info.plist for the Feraille .app bundle (built by scripts/bundle-mac.sh).
+
+  The NS*UsageDescription strings below are what make macOS show the
+  automatic "Feraille would like to access files in your … folder" TCC
+  consent prompt instead of just returning EPERM. The prompt only fires
+  when ALL of these hold: the app is a code-signed .app bundle (this
+  file lives inside one), the accessed path is in a promptable category
+  (Desktop/Documents/Downloads/removable/network), AND the matching
+  usage string is present here. Arbitrary folders outside those
+  categories are never promptable — they need Full Disk Access, which the
+  in-app "Access required" screen deep-links to.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Feraille</string>
+	<key>CFBundleDisplayName</key>
+	<string>Feraille</string>
+	<key>CFBundleIdentifier</key>
+	<string>me.jkn.feraille</string>
+	<key>CFBundleExecutable</key>
+	<string>feraille-gpui</string>
+	<key>CFBundleIconFile</key>
+	<string>feraille</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.0.1</string>
+	<key>CFBundleVersion</key>
+	<string>0.0.1</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+
+	<!-- TCC consent-prompt strings. The text is shown verbatim in the
+	     system dialog, so keep it specific and reassuring. -->
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Feraille needs access to your Desktop to browse and manage the files there.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Feraille needs access to your Documents to browse and manage the files there.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Feraille needs access to your Downloads to browse and manage the files there.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Feraille needs access to removable volumes to browse and manage the files on them.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Feraille needs access to network volumes to browse and manage the files on them.</string>
+	<key>NSFileProviderDomainUsageDescription</key>
+	<string>Feraille needs access to cloud storage providers to browse and manage their files.</string>
+</dict>
+</plist>
