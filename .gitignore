@@ -11,3 +11,10 @@ test-data/filename-hazards/samples/
 
 # Throwaway verify-step probes (Slow AI spikes) — never committed
 /spikes
+
+# Secrets and per-machine config — never commit
+.env
+.env.*
+*.pem
+*.key
+.cargo/config.toml

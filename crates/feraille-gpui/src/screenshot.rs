@@ -133,6 +133,8 @@ pub struct Args {
     /// shell. A directory renders its first file with the full
     /// playlist; a single file renders a one-entry playlist.
     pub viewer: Option<PathBuf>,
+    /// Open the viewer's colour/enhance adjustments panel for the capture.
+    pub viewer_adjust: bool,
     /// Render the drag ghost ([`crate::file_list::DragBadge`]) for a
     /// drag of N items, in isolation, against a neutral backdrop —
     /// the only way to capture the cursor ghost headlessly (it never
@@ -239,6 +241,7 @@ pub fn parse_args() -> Args {
                 args.settings = Some(iter.next().unwrap_or_default());
             }
             "--viewer" => args.viewer = iter.next().map(PathBuf::from),
+            "--viewer-adjust" => args.viewer_adjust = true,
             "--drag-ghost" => args.drag_ghost = iter.next().and_then(|s| s.parse().ok()),
             "--help" | "-h" => {
                 print_help();
@@ -295,6 +298,7 @@ OPTIONS
                            appearance / files / layout / about.
   --viewer <path>          Render the viewer window for <path> (file or
                            folder) instead of the shell.
+  --viewer-adjust          Open the viewer's colour/enhance panel for capture.
   --drag-ghost <N>         Render the drag cursor ghost for an N-item drag
                            (placeholder tiles) against a neutral backdrop.
   -h, --help               Print this help.
@@ -302,7 +306,7 @@ OPTIONS
 EXAMPLES
   feraille-gpui --screenshot home.png --navigate ~/Documents
   feraille-gpui --screenshot multi.png --new-tab ~/Documents --new-tab ~/Downloads --tab 1
-  feraille-gpui --screenshot filter.png --navigate ~/Source/Feraille --filter toml --search
+  feraille-gpui --screenshot filter.png --navigate . --filter toml --search
   feraille-gpui --screenshot dark.png --theme dark --navigate ~/Documents
 "
     );
@@ -321,6 +325,7 @@ pub fn run(args: Args) -> Result<()> {
     let settings_page = args.settings.clone();
     let disk_usage_root = args.disk_usage.clone();
     let viewer_target = args.viewer.clone();
+    let viewer_adjust = args.viewer_adjust;
     let drag_ghost = args.drag_ghost;
 
     let shell_args = ShellArgs::from(&args);
@@ -429,6 +434,9 @@ pub fn run(args: Args) -> Result<()> {
                         let view = cx.new(|cx| {
                             crate::viewer::ViewerWindow::new(playlist, 0, false, process, window, cx)
                         });
+                        if viewer_adjust {
+                            view.update(cx, |w, _| w.open_adjust_panel());
+                        }
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if let Some(n) = drag_ghost {
                         // Isolated drag-ghost preview: build a DragBadge

@@ -225,19 +225,11 @@ feature notes in [docs/features/](docs/features/README.md).
   modal). Larger, deferred Windows-only ports: third-party
   shell-extension context-menu verbs (`IContextMenu`) and WSL
   integration.
-- Decide how to share the local-zed `gpui_windows::render_to_image` patch
-  across machines. Today the override only exists on the Windows dev box
-  (the `[patch]` block in `Cargo.toml` pointed at `../zed/` which doesn't
-  exist on Mac — removed in `af39f0a`). The Windows screenshot harness
-  needs the patch; Mac doesn't. Two viable shapes, pick one:
-  - **A. Per-machine `.cargo/config.toml`** with the local-path `[patch]`,
-    gitignored. Each dev maintains their own; Mac falls through to upstream.
-    Lowest friction, no committed record of the patch shape.
-  - **B. Publish the local zed branch as a GitHub fork** and rewrite the
-    `[patch]` block to point at `git = "<fork-url>", rev = "..."`. Works
-    identically on both platforms; requires pushing each iteration before
-    Feraille sees it. Better long-term once the gpui_windows change is
-    stable enough to upstream-PR.
+- The Windows screenshot harness needs a `gpui_windows::render_to_image`
+  patch that isn't upstream yet. Publish the gpui fork carrying it and point
+  the `[patch]` block at `git = "<fork-url>", rev = "..."` so both platforms
+  build identically, instead of depending on a local-path override. Best done
+  once the `gpui_windows` change is stable enough to send as an upstream PR.
 
 ## Cleanup
 

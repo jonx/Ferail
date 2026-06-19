@@ -33,13 +33,16 @@ shape.
 
 ### Visual verification
 
-Screenshot at [screenshots/magic-description.png](../../screenshots/magic-description.png)
-shows real values populated on `target/debug`:
+Screenshot at [magic-description.png](../images/magic-description.png)
+shows real values populated by content sniffing on a folder of mixed files:
 
-- `feraille-gpui.exe` → `Windows PE \u{00b7} 64-bit \u{00b7} x86-64`
-- `feraille-gpui.d` → `Plain text`
-- `feraille_gpui.pdb` → `Binary data`
-- Folders → empty (correct).
+- `screenshot.png` → `PNG image`
+- `photo.jpg` → `JPEG image`
+- `project-bundle.zip` → `ZIP archive`
+- `cargo-lock.gz` → `Gzip archive`
+- `run.sh` → `Shell script`
+- `report.txt` → `PNG image` with the mismatch triangle (a PNG wearing a
+  `.txt` extension — magic wins, the ⚠ flags the disagreement).
 
 The headless `--screenshot` path now works on Windows via a
 PrintWindow capture in `feraille-shell-win32` (gpui_windows doesn't

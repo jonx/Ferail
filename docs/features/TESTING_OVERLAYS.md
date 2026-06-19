@@ -9,8 +9,8 @@ Use the binary's screenshot mode:
 
 ```sh
 cargo run -- \
-  --screenshot /tmp/feraille.png \
-  --navigate ~/Source/Feraille \
+  --screenshot screenshots/feraille.png \
+  --navigate . \
   --width 1400 --height 900
 ```
 

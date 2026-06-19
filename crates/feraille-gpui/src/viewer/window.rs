@@ -1487,6 +1487,13 @@ impl ViewerWindow {
         cx.notify();
     }
 
+    /// Force the adjustments popup open. Used by the headless screenshot
+    /// harness (`--viewer-adjust`) so the colour/enhance panel can be
+    /// captured without a live keystroke.
+    pub fn open_adjust_panel(&mut self) {
+        self.adjust_panel_open = true;
+    }
+
     /// Current value of a popup slider (reads `adjust` or `enhance`).
     fn slider_value(&self, id: SliderId) -> f32 {
         match id {

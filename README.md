@@ -42,6 +42,8 @@ for how this is enforced across the codebase.
   theme (macOS today; matching Windows chrome is in progress).
 - **Virtualized file table** — sortable, resizable, reorderable columns over
   large directories without jank.
+- **List & icon views** — switch any tab between the dense table and a
+  Finder-style icon grid.
 - **Magic-first `Format` column** — content sniffing with extension fallback
   and mismatch / quarantine cues.
   ([spec](docs/features/MAGIC_DESCRIPTION.md))
@@ -52,6 +54,9 @@ for how this is enforced across the codebase.
   ([spec](docs/features/feraille-windows-instances-tabs-spec.md))
 - **Preview pane** — dense, async metadata surface for the current selection.
   ([spec](docs/features/PREVIEW.md))
+- **Media viewer** — built-in image and video viewer with live colour,
+  sharpen, denoise, and upscale adjustments; VLC-backed for any-format video.
+  ([spec](docs/features/VIEWER.md))
 - **Disk Usage window** — async scanning with squarified treemap and top-list
   views. ([spec](docs/features/DISK_USAGE.md))
 - **Persistent metadata** — SQLite-backed store for derived metadata, layout,
@@ -62,6 +67,8 @@ for how this is enforced across the codebase.
 | Preview pane | Disk Usage | Settings |
 |---|---|---|
 | ![Preview pane](docs/images/readme-preview.png) | ![Disk Usage](docs/images/readme-disk-usage.png) | ![Settings](docs/images/readme-settings.png) |
+| **Icon view** | **Media viewer** | **Magic & mismatch** |
+| ![Icon view](docs/images/readme-icons.png) | ![Media viewer](docs/images/readme-viewer.png) | ![Magic detection](docs/images/magic-description.png) |
 
 ## How Feraille Compares
 
@@ -135,7 +142,7 @@ cargo run --bin feraille -- du [--top N] [--packages] <path>   # disk usage
 # Headless screenshot (used for visual verification)
 cargo run --bin feraille-gpui -- \
   --screenshot screenshots/feraille.png \
-  --navigate ~/Source/Feraille \
+  --navigate . \
   --width 1400 --height 900 \
   --select-name Cargo.toml --preview
 

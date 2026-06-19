@@ -16,10 +16,10 @@ Read first:
 cargo run --bin feraille-gpui
 ```
 
-The Windows predecessor is a separate `Ferail` repo (checked out as a sibling
-at `../Ferail` in the maintainer's setup). When the user says a feature was
-better in the Windows version, inspect that repo before redesigning from
-scratch. Copy intent and lessons, not Win32-specific shape.
+Feraille has a Windows predecessor, `Ferail` — a separate, older codebase. If
+you have a local checkout of it, inspect that before redesigning a feature the
+user says worked better in the Windows version. Copy intent and lessons, not
+Win32-specific shape.
 
 ## Prime Directive
 
