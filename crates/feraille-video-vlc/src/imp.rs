@@ -1,5 +1,12 @@
-//! macOS libvlc binding. Hand-written FFI (the surface is ~18 stable
+//! macOS libvlc binding. Hand-written FFI (the surface is ~20 stable
 //! functions; the spike confirmed raw FFI is enough — no `vlc-rs` dep).
+//!
+//! Video filters (denoise/sharpen) only take effect as **instance**
+//! arguments to `libvlc_new` — media options (`:video-filter=…`) are
+//! silently ignored with the vmem output (verified with `invert`). So a
+//! stream owns its own libvlc instance built with its filter args, and a
+//! filter change re-opens (a new instance). The colour grade is separate:
+//! `libvlc_video_set_adjust_*` changes it live, no re-open.
 
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_uint, c_void, CString};
@@ -44,14 +51,13 @@ type EventCb = extern "C" fn(*const c_void, *mut c_void);
 
 // ---- resolved libvlc entry points -----------------------------------------
 
-#[allow(non_snake_case)]
 struct LibVlc {
     // Kept so dyld doesn't unload the images while we hold function pointers.
     _core: *mut c_void,
     _lib: *mut c_void,
     new: extern "C" fn(c_int, *const *const c_char) -> *mut c_void,
+    release: extern "C" fn(*mut c_void),
     media_new_path: extern "C" fn(*mut c_void, *const c_char) -> *mut c_void,
-    media_add_option: extern "C" fn(*mut c_void, *const c_char),
     media_release: extern "C" fn(*mut c_void),
     mp_new_from_media: extern "C" fn(*mut c_void) -> *mut c_void,
     mp_release: extern "C" fn(*mut c_void),
@@ -72,8 +78,6 @@ struct LibVlc {
 }
 
 /// `dlsym` a symbol and transmute it to the bound function-pointer type.
-/// `$name` is a string literal; we append the NUL ourselves to avoid an
-/// allocation per lookup.
 macro_rules! sym {
     ($h:expr, $name:literal) => {{
         let p = dlsym($h, concat!($name, "\0").as_ptr() as *const c_char);
@@ -85,15 +89,30 @@ macro_rules! sym {
 }
 
 impl LibVlc {
-    unsafe fn load(core_path: &Path, lib_path: &Path) -> Result<LibVlc, String> {
+    /// Load libvlc from a VLC.app bundle and resolve our symbols. Also sets
+    /// `VLC_PLUGIN_PATH` (libvlc's only plugin-discovery mechanism — the
+    /// path comes from settings, never a user-set env var).
+    unsafe fn load(vlc_app: &Path) -> Result<LibVlc, String> {
+        let macos = vlc_app.join("Contents/MacOS");
+        let core_path = macos.join("lib/libvlccore.dylib");
+        let lib_path = macos.join("lib/libvlc.dylib");
+        let plugins = macos.join("plugins");
+        if !lib_path.exists() {
+            return Err(format!("no libvlc at {}", lib_path.display()));
+        }
+        if let Ok(c) = CString::new(plugins.to_string_lossy().as_bytes().to_vec()) {
+            let k = CString::new("VLC_PLUGIN_PATH").unwrap();
+            setenv(k.as_ptr(), c.as_ptr(), 1);
+        }
+
         let cstr = |p: &Path| CString::new(p.to_string_lossy().as_bytes().to_vec()).unwrap();
         // libvlc.dylib references @rpath/libvlccore.dylib; pre-load core by
         // full path so dyld satisfies that from the already-loaded image.
-        let core = dlopen(cstr(core_path).as_ptr(), RTLD_NOW | RTLD_GLOBAL);
+        let core = dlopen(cstr(&core_path).as_ptr(), RTLD_NOW | RTLD_GLOBAL);
         if core.is_null() {
             return Err(format!("dlopen {} failed", core_path.display()));
         }
-        let lib = dlopen(cstr(lib_path).as_ptr(), RTLD_NOW | RTLD_GLOBAL);
+        let lib = dlopen(cstr(&lib_path).as_ptr(), RTLD_NOW | RTLD_GLOBAL);
         if lib.is_null() {
             return Err(format!("dlopen {} failed", lib_path.display()));
         }
@@ -101,8 +120,8 @@ impl LibVlc {
             _core: core,
             _lib: lib,
             new: sym!(lib, "libvlc_new"),
+            release: sym!(lib, "libvlc_release"),
             media_new_path: sym!(lib, "libvlc_media_new_path"),
-            media_add_option: sym!(lib, "libvlc_media_add_option"),
             media_release: sym!(lib, "libvlc_media_release"),
             mp_new_from_media: sym!(lib, "libvlc_media_player_new_from_media"),
             mp_release: sym!(lib, "libvlc_media_player_release"),
@@ -232,97 +251,59 @@ extern "C" fn on_end(_event: *const c_void, user_data: *mut c_void) {
     }
 }
 
-/// Media options that add VLC's denoise (`hqdn3d`) and sharpen filters to
-/// the decode chain, scaled from the `0..1` slider values. Empty when
-/// neutral. Order doesn't matter — libvlc collects them per media.
-fn enhance_options(e: VideoEnhance) -> Vec<String> {
+/// libvlc_new arguments for the denoise (`hqdn3d`) + sharpen filters, from
+/// the `0..1` slider values. Empty when neutral. These MUST be instance
+/// args — media options are ignored for the vmem output.
+fn enhance_args(e: VideoEnhance) -> Vec<String> {
     let mut filters: Vec<&str> = Vec::new();
-    let mut opts: Vec<String> = Vec::new();
+    let mut args: Vec<String> = Vec::new();
     if e.sharpen > 0.0 {
         filters.push("sharpen");
-        opts.push(format!(":sharpen-sigma={:.3}", e.sharpen * 2.0)); // 0..2
+        args.push(format!("--sharpen-sigma={:.3}", e.sharpen * 2.0)); // 0..2
     }
     if e.denoise > 0.0 {
         filters.push("hqdn3d");
-        // Scale the spatial denoise strength; temporal stays at default.
-        opts.push(format!(":hqdn3d-luma-spatial={:.1}", e.denoise * 8.0));
-        opts.push(format!(":hqdn3d-chroma-spatial={:.1}", e.denoise * 6.0));
+        // Real libvlc option names are `-spat`/`-temp`, not `-spatial`.
+        args.push(format!("--hqdn3d-luma-spat={:.1}", e.denoise * 8.0));
+        args.push(format!("--hqdn3d-chroma-spat={:.1}", e.denoise * 6.0));
     }
     if !filters.is_empty() {
-        opts.push(format!(":video-filter={}", filters.join(":")));
+        args.push(format!("--video-filter={}", filters.join(":")));
     }
-    opts
+    args
 }
 
-// ---- process-wide libvlc instance (created once, reused) -------------------
-
-struct Instance {
-    lib: Rc<LibVlc>,
-    inst: *mut c_void,
-}
-
-impl Instance {
-    fn create(vlc_app: &Path) -> Result<Instance, String> {
-        let macos = vlc_app.join("Contents/MacOS");
-        let core = macos.join("lib/libvlccore.dylib");
-        let lib = macos.join("lib/libvlc.dylib");
-        let plugins = macos.join("plugins");
-        if !lib.exists() {
-            return Err(format!("no libvlc at {}", lib.display()));
-        }
-        // libvlc's only plugin-discovery mechanism is this env var (the
-        // user set the *path* in Settings; we hand it to libvlc here).
-        if let Ok(c) = CString::new(plugins.to_string_lossy().as_bytes().to_vec()) {
-            let k = CString::new("VLC_PLUGIN_PATH").unwrap();
-            unsafe { setenv(k.as_ptr(), c.as_ptr(), 1) };
-        }
-        let libvlc = unsafe { LibVlc::load(&core, &lib)? };
-        // `--quiet` suppresses libvlc's console logging (the decoder /
-        // filter / swscaler chatter); `--no-osd` / `--no-video-title-show`
-        // keep overlays off our pulled frames. Args are consumed during
-        // `libvlc_new`, so the CStrings only need to outlive the call.
-        let args = [
-            CString::new("--quiet").unwrap(),
-            CString::new("--no-osd").unwrap(),
-            CString::new("--no-video-title-show").unwrap(),
-        ];
-        let argv: Vec<*const c_char> = args.iter().map(|c| c.as_ptr()).collect();
-        let inst = (libvlc.new)(argv.len() as c_int, argv.as_ptr());
-        if inst.is_null() {
-            return Err("libvlc_new failed".into());
-        }
-        Ok(Instance {
-            lib: Rc::new(libvlc),
-            inst,
-        })
-    }
-}
+// ---- libvlc loader (the dylib is loaded once; instances are per-stream) ----
 
 thread_local! {
-    // (path the instance was built for, the instance). First path wins for
-    // the session; changing the VLC.app path in Settings needs a restart.
-    static INSTANCE: RefCell<Option<(PathBuf, Rc<Instance>)>> = const { RefCell::new(None) };
+    // (VLC.app path, resolved libvlc). First path wins for the session;
+    // changing the VLC.app path in Settings needs a restart.
+    static LIB: RefCell<Option<(PathBuf, Rc<LibVlc>)>> = const { RefCell::new(None) };
 }
 
-pub fn backend(vlc_app: &Path) -> Option<Box<dyn VideoBackend>> {
-    INSTANCE.with(|cell| {
+fn load_lib(vlc_app: &Path) -> Option<Rc<LibVlc>> {
+    LIB.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
-            match Instance::create(vlc_app) {
-                Ok(i) => *slot = Some((vlc_app.to_path_buf(), Rc::new(i))),
+            match unsafe { LibVlc::load(vlc_app) } {
+                Ok(l) => *slot = Some((vlc_app.to_path_buf(), Rc::new(l))),
                 Err(e) => {
                     eprintln!("[feraille] VLC backend unavailable: {e}");
                     return None;
                 }
             }
         }
-        let inst = slot.as_ref().unwrap().1.clone();
-        Some(Box::new(VlcBackend { inst }) as Box<dyn VideoBackend>)
+        Some(slot.as_ref().unwrap().1.clone())
     })
 }
 
+pub fn backend(vlc_app: &Path) -> Option<Box<dyn VideoBackend>> {
+    let lib = load_lib(vlc_app)?;
+    Some(Box::new(VlcBackend { lib }))
+}
+
 struct VlcBackend {
-    inst: Rc<Instance>,
+    lib: Rc<LibVlc>,
 }
 
 impl VideoBackend for VlcBackend {
@@ -332,23 +313,44 @@ impl VideoBackend for VlcBackend {
         on_ended: Box<dyn Fn() + Send + 'static>,
         enhance: VideoEnhance,
     ) -> Option<Box<dyn VideoStream>> {
-        let lib = self.inst.lib.clone();
-        let cpath = CString::new(path.to_string_lossy().as_bytes().to_vec()).ok()?;
-        let media = (lib.media_new_path)(self.inst.inst, cpath.as_ptr());
-        if media.is_null() {
+        let lib = self.lib.clone();
+
+        // Per-stream instance: filters are instance args, so a stream with a
+        // different filter chain needs its own instance. `--quiet` etc. cut
+        // libvlc's console chatter. Args are consumed during `libvlc_new`,
+        // so the CStrings only need to outlive the call.
+        let mut argv_s = vec![
+            "--quiet".to_string(),
+            "--no-osd".to_string(),
+            "--no-video-title-show".to_string(),
+        ];
+        argv_s.extend(enhance_args(enhance));
+        let cargs: Vec<CString> = argv_s
+            .iter()
+            .filter_map(|s| CString::new(s.as_str()).ok())
+            .collect();
+        let argv: Vec<*const c_char> = cargs.iter().map(|c| c.as_ptr()).collect();
+        let inst = (lib.new)(argv.len() as c_int, argv.as_ptr());
+        if inst.is_null() {
             return None;
         }
-        // Bake the denoise/sharpen filters into this media's decode chain.
-        // (libvlc can't swap the chain live, so the viewer re-opens to
-        // change them.) The colour grade is separate and stays live.
-        for opt in enhance_options(enhance) {
-            if let Ok(c) = CString::new(opt) {
-                (lib.media_add_option)(media, c.as_ptr());
+
+        let cpath = match CString::new(path.to_string_lossy().as_bytes().to_vec()) {
+            Ok(c) => c,
+            Err(_) => {
+                (lib.release)(inst);
+                return None;
             }
+        };
+        let media = (lib.media_new_path)(inst, cpath.as_ptr());
+        if media.is_null() {
+            (lib.release)(inst);
+            return None;
         }
         let mp = (lib.mp_new_from_media)(media);
         (lib.media_release)(media); // the player retains it
         if mp.is_null() {
+            (lib.release)(inst);
             return None;
         }
         let ctx = Box::into_raw(Box::new(Ctx {
@@ -369,11 +371,13 @@ impl VideoBackend for VlcBackend {
         if (lib.mp_play)(mp) != 0 {
             (lib.event_detach)(em, EVENT_END_REACHED, on_end, ctx as *mut c_void);
             (lib.mp_release)(mp);
+            (lib.release)(inst);
             unsafe { drop(Box::from_raw(ctx)) };
             return None;
         }
         Some(Box::new(VlcStream {
             lib,
+            inst,
             mp,
             em,
             ctx,
@@ -384,6 +388,7 @@ impl VideoBackend for VlcBackend {
 
 struct VlcStream {
     lib: Rc<LibVlc>,
+    inst: *mut c_void,
     mp: *mut c_void,
     em: *mut c_void,
     ctx: *mut Ctx,
@@ -415,13 +420,11 @@ impl VideoStream for VlcStream {
 
     fn step(&mut self, frames: i64) {
         if frames > 0 {
-            // libvlc only steps forward.
             for _ in 0..frames {
                 (self.lib.next_frame)(self.mp);
             }
         } else if frames < 0 {
-            // Approximate a back-step by nudging the clock (~30 fps) and
-            // pausing — libvlc has no reverse frame step.
+            // libvlc has no reverse step — nudge the clock (~30 fps) + pause.
             let t = (self.lib.get_time)(self.mp);
             let back = 33 * frames.unsigned_abs() as i64;
             (self.lib.set_time)(self.mp, (t - back).max(0));
@@ -460,6 +463,7 @@ impl Drop for VlcStream {
         (self.lib.event_detach)(self.em, EVENT_END_REACHED, on_end, self.ctx as *mut c_void);
         (self.lib.mp_stop)(self.mp);
         (self.lib.mp_release)(self.mp);
+        (self.lib.release)(self.inst);
         unsafe { drop(Box::from_raw(self.ctx)) };
     }
 }
@@ -469,10 +473,9 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    /// End-to-end against the *real* crate code (format callbacks, vmem,
-    /// event attach, set_adjust, Drop) — drives libvlc to decode a frame.
-    /// Skips when VLC.app or the probe clip aren't present, so a machine
-    /// without VLC still passes. Generate the clip with:
+    /// End-to-end against the *real* crate code (per-stream instance with a
+    /// filter chain, format callbacks, vmem, event attach, set_adjust, Drop).
+    /// Skips when VLC.app or the probe clip aren't present. Generate it with:
     ///   ffmpeg -f lavfi -i testsrc=duration=3:size=320x240:rate=10 \
     ///          -pix_fmt yuv420p /tmp/vlc_probe.mp4
     #[test]
@@ -512,13 +515,11 @@ mod tests {
         assert!(w > 0 && h > 0, "native size resolved");
         assert_eq!(bytes.len(), (w * h * 4) as usize, "BGRA buffer matches dims");
 
-        // Live colour grade is supported by the VLC backend.
         assert!(stream.set_adjust(VideoAdjust {
             brightness: 0.4,
             ..Default::default()
         }));
         let (_, dur) = stream.time();
         assert!(dur > 0.0, "duration reads back");
-        // Drop tears the player down without crashing.
     }
 }

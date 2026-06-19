@@ -128,12 +128,17 @@ full path against a generated `testsrc` clip and **passed**:
   mpg/3gp/3g2/ts/vob/ogv/divx/rm/… ) when VLC is selected. Fixes a 3GP (and
   mkv/avi/…) opening as a Quick Look poster instead of playing.
 - **Denoise/sharpen on video.** `VideoBackend::open` gained a `VideoEnhance`
-  (denoise/sharpen, 0..1); the VLC backend bakes them into the decode chain
-  as media options (`:video-filter=sharpen:hqdn3d` + scaled params). libvlc
-  can't swap the chain live, so the viewer **re-opens the stream on slider
-  release** (`commit_video_enhance`, preserving playhead + paused) rather
-  than per drag-move. The popup now shows Denoise + Sharpen for a VLC video
-  (Upscale stays stills-only). Colour grade remains live via `set_adjust`.
+  (denoise/sharpen, 0..1). **Important:** video filters only take effect as
+  `libvlc_new` *instance* args (`--video-filter=sharpen:hqdn3d` +
+  `--sharpen-sigma` / `--hqdn3d-luma-spat` / `--hqdn3d-chroma-spat`) — media
+  options (`:video-filter=…`) are silently ignored with vmem output (verified
+  with `invert`), and a *wrong* option name makes `libvlc_new` fail outright.
+  So each VLC stream owns its own libvlc instance built with its filter args;
+  the dylib is loaded once, instances are per-stream. libvlc can't swap the
+  chain live, so the viewer **re-opens the stream on slider release**
+  (`commit_video_enhance`, preserving playhead + paused). The popup shows
+  Denoise + Sharpen for a VLC video (Upscale stays stills-only). Colour grade
+  is separate and stays live via `libvlc_video_set_adjust_*`.
 - **Quiet libvlc.** `libvlc_new("--quiet", "--no-osd", "--no-video-title-
   show")` silences the decoder/transform/ci_filters/main-filter chatter the
   user saw. One residual `[swscaler] … yuv420p to bgra` line per open comes
