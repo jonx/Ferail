@@ -612,7 +612,13 @@ impl Shell {
         let fg = theme.foreground;
         let muted = theme.muted_foreground;
         let accent = theme.accent;
-        let sel_bg = accent.opacity(0.10);
+        // Icons mode lives on a plain background with no row striping, so
+        // the old 10% wash was nearly invisible — bump the fill and give
+        // every selected cell an accent border (not just the lead) so
+        // multi-selection reads clearly. Lead keeps the full-strength
+        // border; other selected cells get a softer one.
+        let sel_bg = accent.opacity(0.24);
+        let sel_border = accent.opacity(0.6);
 
         let weak = cx.weak_entity();
         let scroll = self.active_tab().grid_scroll.clone();
@@ -699,9 +705,16 @@ impl Shell {
                         .p_1()
                         .rounded(px(6.0))
                         .cursor_pointer()
+                        // Keep border width constant (border_1 everywhere) so
+                        // selection never nudges cell layout by a pixel.
                         .when(selected, |d| d.bg(sel_bg))
                         .when(is_lead, |d| d.border_1().border_color(accent))
-                        .when(!is_lead, |d| d.border_1().border_color(gpui::transparent_black()))
+                        .when(selected && !is_lead, |d| {
+                            d.border_1().border_color(sel_border)
+                        })
+                        .when(!selected && !is_lead, |d| {
+                            d.border_1().border_color(gpui::transparent_black())
+                        })
                         .child(
                             div()
                                 .relative()
