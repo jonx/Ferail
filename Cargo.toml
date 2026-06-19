@@ -8,6 +8,7 @@ members = [
     "crates/feraille-meta",
     "crates/feraille-shell-mac",
     "crates/feraille-shell-win32",
+    "crates/feraille-video-vlc",
     "crates/feraille-gpui",
 ]
 
@@ -28,6 +29,7 @@ feraille-fs-native    = { path = "crates/feraille-fs-native" }
 feraille-meta         = { path = "crates/feraille-meta" }
 feraille-shell-mac    = { path = "crates/feraille-shell-mac" }
 feraille-shell-win32  = { path = "crates/feraille-shell-win32" }
+feraille-video-vlc    = { path = "crates/feraille-video-vlc" }
 
 # Still needed by feraille-shell-mac for the winit-window-taking subset
 # (begin_drag, show_context_menu, install_services_anchor, etc.) — those

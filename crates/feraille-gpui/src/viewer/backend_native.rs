@@ -11,10 +11,21 @@ use std::path::Path;
 
 use feraille_core::video::{VideoBackend, VideoStream};
 
-/// Select the active video provider. Phase 1: always the native player.
-/// Phase 2 reads the "Plugins" settings section and returns the VLC
-/// backend when it's selected and available.
-pub fn video_backend() -> Box<dyn VideoBackend> {
+/// Select the active video provider. `vlc_app` is `Some(path)` when the
+/// user picked VLC in Settings → Plugins (resolved once by the viewer, so
+/// no settings I/O happens on a hot path). In a build with the `vlc`
+/// feature this returns the VLC backend when libvlc loads at that path;
+/// otherwise (or on any failure) it falls back to the native player.
+pub fn video_backend(vlc_app: Option<&Path>) -> Box<dyn VideoBackend> {
+    #[cfg(feature = "vlc")]
+    if let Some(path) = vlc_app {
+        if let Some(b) = feraille_video_vlc::backend(path) {
+            return b;
+        }
+        // Selected but unavailable → fall through to the native player.
+    }
+    #[cfg(not(feature = "vlc"))]
+    let _ = vlc_app;
     Box::new(NativeBackend)
 }
 
@@ -25,8 +36,9 @@ impl VideoBackend for NativeBackend {
     fn open(
         &self,
         path: &Path,
-        on_ended: Box<dyn Fn() + 'static>,
+        on_ended: Box<dyn Fn() + Send + 'static>,
     ) -> Option<Box<dyn VideoStream>> {
+        // The native layer's callback is plain `Fn`; a `Send` one coerces.
         let id = crate::platform_shell::video_overlay_show(path, on_ended);
         // The native layer returns 0 when it can't open the media.
         (id != 0).then(|| Box::new(NativeStream { id }) as Box<dyn VideoStream>)

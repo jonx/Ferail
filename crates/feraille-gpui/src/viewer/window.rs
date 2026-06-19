@@ -19,7 +19,7 @@ use gpui_component::{
 
 use std::time::Duration;
 
-use feraille_core::video::VideoStream;
+use feraille_core::video::{VideoAdjust, VideoStream};
 
 use super::backend_native::video_backend;
 use super::loader::{self, FrameState, ViewerFrame};
@@ -358,6 +358,20 @@ enum SeekTarget {
     CueOut,
 }
 
+/// Read the persisted video-provider choice once at viewer construction —
+/// settings I/O must never touch the render path. `Some(path)` selects the
+/// VLC provider (effective only in a `vlc`-feature build); `None` keeps the
+/// built-in player.
+fn resolve_vlc_pref() -> Option<PathBuf> {
+    let st = crate::app_state::load();
+    (st.video_backend.as_deref() == Some("vlc")).then(|| {
+        PathBuf::from(
+            st.vlc_app_path
+                .unwrap_or_else(|| "/Applications/VLC.app".to_string()),
+        )
+    })
+}
+
 pub struct ViewerWindow {
     playlist: Vec<PlaylistEntry>,
     index: usize,
@@ -399,6 +413,14 @@ pub struct ViewerWindow {
     /// once it no longer matches (a newer clip opened, or playback ended).
     /// Replaces the old player-handle-as-key now that the handle is boxed.
     video_epoch: u64,
+    /// `Some(VLC.app path)` when the user selected the VLC provider in
+    /// Settings → Plugins. Resolved once at construction (no settings I/O
+    /// on the render path); `None` keeps the native player.
+    vlc_pref: Option<PathBuf>,
+    /// Whether the active video backend applied the colour grade itself
+    /// (VLC does, natively on the GPU/decoder). When true the viewer skips
+    /// its per-frame CPU grade for video — the frames already carry it.
+    video_adjust_native: bool,
     /// The latest decoded video frame (unrotated), uploaded as a
     /// `RenderImage` and drawn like any image. `None` until the first
     /// frame lands — the Quick Look poster stands in until then.
@@ -540,6 +562,8 @@ impl ViewerWindow {
             last_title: String::new(),
             video_overlay: None,
             video_epoch: 0,
+            vlc_pref: resolve_vlc_pref(),
+            video_adjust_native: false,
             video_frame_image: None,
             video_frame_seq: 0,
             video_rotated: None,
@@ -720,7 +744,7 @@ impl ViewerWindow {
                 self.teardown_video();
                 let tx = self.video_ended_tx.clone();
                 let ended_path = p.clone();
-                let stream = video_backend().open(
+                let stream = video_backend(self.vlc_pref.as_deref()).open(
                     p,
                     Box::new(move || {
                         let _ = tx.try_send(ended_path.clone());
@@ -738,6 +762,9 @@ impl ViewerWindow {
                     self.cue_in = 0.0;
                     self.cue_out = 1.0;
                     self.seek_drag = None;
+                    // Push any live grade into the backend (VLC applies it
+                    // natively; native player reports unsupported).
+                    self.apply_video_adjust();
                     self.start_video_poll(epoch, cx);
                 }
             }
@@ -786,6 +813,22 @@ impl ViewerWindow {
             self.video_paused = true;
             cx.notify();
         }
+    }
+
+    /// Hand the current colour grade to the video backend. A backend that
+    /// applies it natively (VLC) returns true, and the viewer then skips
+    /// its per-frame CPU grade for video; the native player returns false,
+    /// leaving the CPU path in charge. No-op when no video is open.
+    fn apply_video_adjust(&mut self) {
+        let a = VideoAdjust {
+            brightness: self.adjust.brightness,
+            contrast: self.adjust.contrast,
+            saturation: self.adjust.saturation,
+        };
+        self.video_adjust_native = match &mut self.video_overlay {
+            Some((stream, _)) => stream.set_adjust(a),
+            None => false,
+        };
     }
 
     /// Drive the live video at ~display rate while player `id` is the
@@ -1328,6 +1371,11 @@ impl ViewerWindow {
         if let Some((.., old)) = self.video_adjusted.take() {
             self.video_frames_to_drop.push(old);
         }
+        // A live video gets the colour grade pushed to its backend (VLC
+        // applies it natively; native player keeps the CPU path).
+        if self.current_is_video() {
+            self.apply_video_adjust();
+        }
         self.schedule_process(cx);
         cx.notify();
     }
@@ -1680,7 +1728,13 @@ impl ViewerWindow {
                 _ => base,
             }
         };
-        let image = self.graded_video(image, rot);
+        // Skip the per-frame CPU grade when the backend already graded the
+        // pixels (VLC). Otherwise apply it on the CPU (native player).
+        let image = if self.video_adjust_native {
+            image
+        } else {
+            self.graded_video(image, rot)
+        };
         // The frame (rotated or not) already carries its displayed dims,
         // so layout uses them directly — no manual aspect swap.
         let sz = image.size(0);

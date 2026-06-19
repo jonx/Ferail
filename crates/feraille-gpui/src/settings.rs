@@ -37,6 +37,7 @@ pub enum SettingsCategory {
     Files,
     SearchDupes,
     Layout,
+    Plugins,
     Shortcuts,
     About,
 }
@@ -47,6 +48,7 @@ impl SettingsCategory {
         SettingsCategory::Files,
         SettingsCategory::SearchDupes,
         SettingsCategory::Layout,
+        SettingsCategory::Plugins,
         SettingsCategory::Shortcuts,
         SettingsCategory::About,
     ];
@@ -56,6 +58,7 @@ impl SettingsCategory {
             SettingsCategory::Appearance => "Appearance",
             SettingsCategory::Files => "Files",
             SettingsCategory::SearchDupes => "Search & Duplicates",
+            SettingsCategory::Plugins => "Plugins",
             SettingsCategory::Layout => "Layout",
             SettingsCategory::Shortcuts => "Keyboard Shortcuts",
             SettingsCategory::About => "About",
@@ -68,8 +71,9 @@ impl SettingsCategory {
             SettingsCategory::Files => 1,
             SettingsCategory::SearchDupes => 2,
             SettingsCategory::Layout => 3,
-            SettingsCategory::Shortcuts => 4,
-            SettingsCategory::About => 5,
+            SettingsCategory::Plugins => 4,
+            SettingsCategory::Shortcuts => 5,
+            SettingsCategory::About => 6,
         }
     }
 }
@@ -79,6 +83,7 @@ pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {
         "files" => SettingsCategory::Files,
         "search" | "duplicates" | "dupes" => SettingsCategory::SearchDupes,
         "layout" => SettingsCategory::Layout,
+        "plugins" | "plugin" => SettingsCategory::Plugins,
         "shortcuts" | "keyboard" | "keys" => SettingsCategory::Shortcuts,
         "about" => SettingsCategory::About,
         _ => SettingsCategory::Appearance,
@@ -361,6 +366,7 @@ fn build_pages(home_hidden_count: Option<usize>) -> Vec<SettingPage> {
         files_page(home_hidden_count),
         search_dupes_page(),
         layout_page(),
+        plugins_page(),
         shortcuts_page(),
         about_page(),
     ]
@@ -574,6 +580,62 @@ fn layout_page() -> SettingPage {
             || format!("{:.2}", app_state::load().ui_scale.unwrap_or(1.0)),
             |v| persist_ui_scale(v.parse().unwrap_or(1.0)),
         )))
+}
+
+fn persist_video_backend(value: &str) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        video_backend: Some(value.to_string()),
+        ..existing
+    });
+}
+
+fn persist_vlc_app_path(value: &str) {
+    let existing = app_state::load();
+    let v = value.trim();
+    app_state::save(&AppState {
+        vlc_app_path: (!v.is_empty()).then(|| v.to_string()),
+        ..existing
+    });
+}
+
+fn plugins_page() -> SettingPage {
+    SettingPage::new("Plugins")
+        .icon(Icon::empty().path("icons/settings.svg"))
+        .group(
+            SettingGroup::new()
+                .title("Video player")
+                .item(dropdown_setting(
+                    "Player",
+                    "The built-in player uses the system frameworks (AVFoundation on macOS). \
+                     VLC plays virtually any container/codec and applies colour adjustments to \
+                     video itself. VLC needs a build with the `vlc` feature and VLC.app \
+                     installed; a change takes effect on the next viewer window.",
+                    &[("builtin", "Built-in"), ("vlc", "VLC")],
+                    || {
+                        app_state::load()
+                            .video_backend
+                            .unwrap_or_else(|| "builtin".into())
+                    },
+                    persist_video_backend,
+                ))
+                .item(
+                    SettingItem::new(
+                        "VLC.app path",
+                        SettingField::input(
+                            |_cx: &App| {
+                                SharedString::from(
+                                    app_state::load()
+                                        .vlc_app_path
+                                        .unwrap_or_else(|| "/Applications/VLC.app".into()),
+                                )
+                            },
+                            |val: SharedString, _cx: &mut App| persist_vlc_app_path(val.as_ref()),
+                        ),
+                    )
+                    .description("The VLC.app bundle libvlc is loaded from."),
+                ),
+        )
 }
 
 fn shortcuts_page() -> SettingPage {

@@ -10,6 +10,11 @@ edition = "2024"
 rust-version = "1.85"
 publish = false
 
+[features]
+# Compile in the VLC video provider (libvlc, loaded at runtime from the
+# VLC.app set in Settings). Off by default so a stock build needs nothing.
+vlc = ["dep:feraille-video-vlc"]
+
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
@@ -66,6 +71,9 @@ feraille-disk-usage.workspace = true
 # sites use `platform_shell::*` and don't care which is active.
 [target.'cfg(target_os = "macos")'.dependencies]
 feraille-shell-mac.workspace = true
+# Optional VLC video provider (enabled by the `vlc` feature). macOS-only
+# for now — the libvlc loader is mac-specific.
+feraille-video-vlc = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 feraille-shell-win32.workspace = true

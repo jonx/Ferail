@@ -98,7 +98,34 @@ full path against a generated `testsrc` clip and **passed**:
   and the headless harness decoded + drew a real frame through the seam
   (`screenshots/viewer-video-seam.png`). Native video unchanged.
 
+## Phase 2 outcome (2026-06-19) — VLC provider + Plugins settings landed
+- New crate `feraille-video-vlc` — hand-written libvlc FFI (no `vlc-rs`).
+  `dlopen`s libvlccore then libvlc from the VLC.app; **format callbacks**
+  decode at native resolution into a vmem `RV32`/BGRA buffer; end-of-clip via
+  `libvlc_event_attach(EndReached)`; **live `set_adjust`** maps the bipolar
+  grade to libvlc's 1.0-neutral ranges. `VLC_PLUGIN_PATH` is set internally
+  from the settings path (the only mechanism libvlc accepts). One process-
+  wide instance, cached in a thread_local (changing the path needs restart).
+- `feraille_core::video` — added `VideoAdjust` + `VideoStream::set_adjust`
+  (default `false`); `on_ended` is now `Send` (libvlc fires it off-thread).
+- `feraille-gpui` — `vlc` cargo feature (off by default; macOS-only optional
+  dep). AppState gained `video_backend` + `vlc_app_path`. Settings → **Plugins**
+  page: a Player dropdown (Built-in / VLC) + an editable VLC.app path. The
+  viewer resolves the choice once at open (`resolve_vlc_pref`, no settings I/O
+  on the render path), `video_backend(vlc_pref)` selects with native fallback,
+  and the popup colour grade routes to `stream.set_adjust` for video — the
+  per-frame CPU grade is skipped when the backend grades natively (VLC).
+- Verified: default build and `--features vlc` both compile warning-free;
+  49 core + 67 gpui tests green; a **real libvlc integration test**
+  (`feraille-video-vlc`, decodes /tmp/vlc_probe.mp4, 2.3 s) passes; Plugins
+  settings render (`screenshots/settings-plugins.png`). Interactive VLC-in-
+  viewer playback (select VLC, play any-format clip) is on the user — it needs
+  a `--features vlc` build and writes to the live settings file.
+
 ## With more time / deferred
+- **Phase 2b — denoise/sharpen on video via VLC filters** (`sharpen` +
+  `hqdn3d`). Live sigma change likely needs a stream re-open on commit
+  (debounced), so it's its own chunk; colour grade lands now.
 - Bundle libvlc for a redistributable build (Phase 3).
 - Dynamic third-party plugins, once the static seam has proven out.
 - Same provider-seam shape fits thumbnailers / preview / metadata providers.

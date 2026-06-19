@@ -74,6 +74,14 @@ pub struct AppState {
     /// Byte-for-byte verify each full-hash group (removes any
     /// hash-collision doubt at the cost of re-reading). Defaults false.
     pub dupe_paranoid: Option<bool>,
+
+    // ---- Plugins (docs/features/VIEWER.md) ----
+    /// Video player provider: "builtin" (AVFoundation) or "vlc". `None` ==
+    /// builtin. VLC only takes effect in a build with the `vlc` feature.
+    pub video_backend: Option<String>,
+    /// Path to the VLC.app bundle the VLC provider loads libvlc from.
+    /// `None` == the default `/Applications/VLC.app`.
+    pub vlc_app_path: Option<String>,
 }
 
 #[cfg(target_os = "macos")]
@@ -198,6 +206,17 @@ pub fn load() -> AppState {
             "dupe_paranoid" => {
                 out.dupe_paranoid = parse_bool(val);
             }
+            "video_backend" => {
+                let v = val.trim().to_lowercase();
+                if matches!(v.as_str(), "builtin" | "vlc") {
+                    out.video_backend = Some(v);
+                }
+            }
+            "vlc_app_path" => {
+                if !val.trim().is_empty() {
+                    out.vlc_app_path = Some(val.trim().to_string());
+                }
+            }
             _ => {}
         }
     }
@@ -269,6 +288,12 @@ pub fn save(state: &AppState) {
     }
     if let Some(b) = state.dupe_paranoid {
         s.push_str(&format!("dupe_paranoid={b}\n"));
+    }
+    if let Some(v) = &state.video_backend {
+        s.push_str(&format!("video_backend={v}\n"));
+    }
+    if let Some(p) = &state.vlc_app_path {
+        s.push_str(&format!("vlc_app_path={p}\n"));
     }
     let _ = std::fs::write(dir.join(FILENAME), s);
 }

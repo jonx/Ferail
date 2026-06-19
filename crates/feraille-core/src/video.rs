@@ -18,19 +18,38 @@
 
 use std::path::Path;
 
+/// A view-only colour grade a backend can apply to the decoded video
+/// itself. Each field is a signed strength in `[-1, 1]`; all-zero is the
+/// neutral identity. Mirrors the viewer's still-image grade so the same
+/// adjustments popup drives both — a backend that supports this gets
+/// colour grading *on video* without the per-frame CPU pass.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct VideoAdjust {
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+}
+
+impl VideoAdjust {
+    pub fn is_neutral(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Opens video streams. The "plugin" that a provider implements to become
 /// the viewer's video player.
 pub trait VideoBackend {
-    /// Open `path` for playback. `on_ended` fires (on the main thread) when
-    /// the clip reaches its natural end — the viewer forwards it through a
-    /// channel; the callback must not re-enter the backend synchronously.
+    /// Open `path` for playback. `on_ended` fires when the clip reaches its
+    /// natural end. It may fire on a non-main thread (libvlc raises it from
+    /// a decoder thread), so it must be `Send`; the viewer forwards it
+    /// through a channel and must not re-enter the backend synchronously.
     ///
     /// Returns `None` if this backend can't handle the path/format, so the
     /// caller can fall back to another provider.
     fn open(
         &self,
         path: &Path,
-        on_ended: Box<dyn Fn() + 'static>,
+        on_ended: Box<dyn Fn() + Send + 'static>,
     ) -> Option<Box<dyn VideoStream>>;
 }
 
@@ -59,4 +78,12 @@ pub trait VideoStream {
 
     /// Intrinsic `(width, height)` in pixels; `(0, 0)` until known.
     fn natural_size(&self) -> (f64, f64);
+
+    /// Apply a colour grade to the video natively. Returns `true` if the
+    /// backend handled it (the viewer then skips its CPU grade for video),
+    /// or `false` if unsupported (the default) — the viewer keeps grading
+    /// frames on the CPU. `VideoAdjust::default()` clears the grade.
+    fn set_adjust(&mut self, _adjust: VideoAdjust) -> bool {
+        false
+    }
 }
