@@ -1204,23 +1204,266 @@ pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static + Send>)
 #[cfg(not(windows))]
 pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static + Send>) {}
 
-/// File-URL clipboard — Windows parity stubs. The real
-/// implementations use `CF_HDROP` (write via `DROPFILES`, read via
-/// `DragQueryFileW`), giving Explorer interop the same way the mac
-/// impl gives Finder interop. docs/features/FILE_OPS.md.
+/// Place `paths` on the clipboard as `CF_HDROP`, the format Explorer
+/// (and our own paste path) reads for a file copy/cut. Layout is a
+/// `DROPFILES` header immediately followed by a UTF-16 path list where
+/// each path is null-terminated and the whole list ends with a second
+/// null — packed into one moveable `HGLOBAL` and handed to
+/// `SetClipboardData(CF_HDROP, ...)`. `GHND` zero-inits the block, so
+/// only `pFiles` (offset to the list) and `fWide` (UTF-16 marker) need
+/// setting. Best-effort and silent on failure, matching the mac
+/// `NSPasteboard` contract. Empty input is a no-op. docs/features/FILE_OPS.md.
+#[cfg(windows)]
+pub fn clipboard_copy_file_urls(paths: &[&std::path::Path]) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GHND, GlobalAlloc, GlobalLock, GlobalUnlock};
+    use windows::Win32::System::Ole::CF_HDROP;
+    use windows::Win32::UI::Shell::DROPFILES;
+
+    if paths.is_empty() {
+        return;
+    }
+
+    /// Pair every early return with `CloseClipboard` (mirrors
+    /// `copy_to_clipboard`).
+    struct CloseGuard;
+    impl Drop for CloseGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseClipboard();
+            }
+        }
+    }
+
+    // Wide path list: each path null-terminated, then a final null to
+    // close the double-null-terminated CF_HDROP list.
+    let mut list: Vec<u16> = Vec::new();
+    for p in paths {
+        list.extend(p.as_os_str().encode_wide());
+        list.push(0);
+    }
+    list.push(0);
+
+    let header = std::mem::size_of::<DROPFILES>();
+    let bytes = header + list.len() * std::mem::size_of::<u16>();
+
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return;
+        }
+        let _guard = CloseGuard;
+        let _ = EmptyClipboard();
+        let Ok(handle) = GlobalAlloc(GHND, bytes) else {
+            return;
+        };
+        let base = GlobalLock(handle) as *mut u8;
+        if base.is_null() {
+            return;
+        }
+        // DROPFILES sits at the front; the path list follows it. GHND
+        // already zeroed pt/fNC, so leave those.
+        let df = base as *mut DROPFILES;
+        (*df).pFiles = header as u32;
+        (*df).fWide = true.into();
+        std::ptr::copy_nonoverlapping(list.as_ptr(), base.add(header) as *mut u16, list.len());
+        let _ = GlobalUnlock(handle);
+        // Same ownership contract as copy_to_clipboard: on success the
+        // system owns the HGLOBAL; on failure we must free it.
+        if SetClipboardData(CF_HDROP.0 as u32, HANDLE(handle.0)).is_err() {
+            let _ = windows::Win32::Foundation::GlobalFree(handle);
+        }
+    }
+}
+
+#[cfg(not(windows))]
 pub fn clipboard_copy_file_urls(_paths: &[&std::path::Path]) {}
 
+/// Read a `CF_HDROP` file list off the clipboard (e.g. files a user
+/// copied in Explorer, or via our own [`clipboard_copy_file_urls`]).
+/// Walks the drop with `DragQueryFileW`: index `0xFFFFFFFF` gives the
+/// count, then each index gives its path length and content. Returns
+/// an empty vec when the clipboard holds no file drop. The handle is
+/// owned by the clipboard, so it is neither freed nor `DragFinish`ed
+/// (that is only for `WM_DROPFILES`).
+#[cfg(windows)]
+pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows::Win32::System::Ole::CF_HDROP;
+    use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
+
+    struct CloseGuard;
+    impl Drop for CloseGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseClipboard();
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return out;
+        }
+        let _guard = CloseGuard;
+        let Ok(handle) = GetClipboardData(CF_HDROP.0 as u32) else {
+            return out;
+        };
+        if handle.0.is_null() {
+            return out;
+        }
+        let hdrop = HDROP(handle.0);
+        let count = DragQueryFileW(hdrop, 0xFFFF_FFFF, None);
+        for i in 0..count {
+            // None buffer → required length in chars, excluding null.
+            let len = DragQueryFileW(hdrop, i, None);
+            if len == 0 {
+                continue;
+            }
+            let mut buf = vec![0u16; len as usize + 1];
+            let copied = DragQueryFileW(hdrop, i, Some(buf.as_mut_slice()));
+            if copied == 0 {
+                continue;
+            }
+            buf.truncate(copied as usize);
+            out.push(std::path::PathBuf::from(std::ffi::OsString::from_wide(&buf)));
+        }
+    }
+    out
+}
+
+#[cfg(not(windows))]
 pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
     Vec::new()
 }
 
-/// Volume mount/unmount observer — Windows parity stub. The real
-/// implementation listens for `WM_DEVICECHANGE`
-/// (`DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE`) on the same
-/// message-only-window pattern as [`start_system_theme_observer`],
-/// which means the callback will fire on the observer's worker
-/// thread — hence `Send`, and callers must marshal (the gpui host
-/// uses a channel either way).
+/// Subscribe to volume (drive-letter) mount/unmount.
+///
+/// Spawns a worker thread that owns a hidden window and forwards a
+/// `WM_DEVICECHANGE` for `DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE`
+/// of device type `DBT_DEVTYP_VOLUME` to the callback. The gpui host
+/// uses this to refresh the Volumes sidebar and re-evaluate Favorites
+/// "Missing" state on mount/unmount.
+///
+/// # Why a top-level window, not the message-only one
+///
+/// [`start_system_theme_observer`] uses an `HWND_MESSAGE` window, but
+/// that pattern does **not** work here: message-only windows are
+/// excluded from broadcast messages, and drive-letter volume changes
+/// arrive **only** as `WM_DEVICECHANGE` broadcasts to top-level
+/// windows (the high-level `DBT_DEVTYP_VOLUME` type can't be obtained
+/// via `RegisterDeviceNotification`, which only yields
+/// `DBT_DEVTYP_DEVICEINTERFACE`). So this creates an ordinary hidden
+/// top-level window (null parent, no `WS_VISIBLE`) which receives the
+/// broadcasts without ever appearing on screen.
+///
+/// # Thread contract
+///
+/// Same as [`start_system_theme_observer`]: **the callback fires on
+/// the observer's worker thread** (hence `Send`), not the UI thread.
+/// It must not touch gpui entities — marshal to the main thread (the
+/// gpui host posts through a channel). The thread, window, and
+/// callback live for the process lifetime.
+#[cfg(windows)]
+pub fn start_volume_observer(callback: Box<dyn Fn() + 'static + Send>) {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetWindowLongPtrW,
+        RegisterClassExW, SetWindowLongPtrW, TranslateMessage, GWLP_USERDATA, HMENU, MSG,
+        WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSEXW,
+    };
+
+    // Raw values (winuser.h / dbt.h) — not all are typed constants in
+    // windows-0.58, and we read the header field by offset to avoid
+    // pulling the DEV_BROADCAST_HDR binding.
+    const WM_DEVICECHANGE: u32 = 0x0219;
+    const DBT_DEVICEARRIVAL: usize = 0x8000;
+    const DBT_DEVICEREMOVECOMPLETE: usize = 0x8004;
+    const DBT_DEVTYP_VOLUME: u32 = 0x0000_0002;
+
+    // Thunk: on a volume arrive/remove broadcast, read the boxed
+    // callback out of GWLP_USERDATA and fire it.
+    unsafe extern "system" fn wnd_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if msg == WM_DEVICECHANGE
+            && (wparam.0 == DBT_DEVICEARRIVAL || wparam.0 == DBT_DEVICEREMOVECOMPLETE)
+            && lparam.0 != 0
+        {
+            // lParam → DEV_BROADCAST_HDR; dbch_devicetype is the second
+            // u32. Filter to volumes so raw device-interface arrivals
+            // (USB enumeration, etc.) don't spam the callback.
+            let devicetype = *((lparam.0 as *const u32).add(1));
+            if devicetype == DBT_DEVTYP_VOLUME {
+                let user_data = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+                if user_data != 0 {
+                    let cb_ptr = user_data as *const Box<dyn Fn() + 'static + Send>;
+                    (*cb_ptr)();
+                }
+            }
+        }
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    std::thread::Builder::new()
+        .name("feraille-volume-observer".into())
+        .spawn(move || unsafe {
+            let class_name: Vec<u16> = "FerailleVolumeObserver\0".encode_utf16().collect();
+            let wc = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(wnd_proc),
+                hInstance: HINSTANCE::default(),
+                lpszClassName: PCWSTR::from_raw(class_name.as_ptr()),
+                ..Default::default()
+            };
+            // Idempotent register — ignore "class already exists".
+            let _ = RegisterClassExW(&wc);
+
+            // Null parent + WINDOW_STYLE(0) (WS_OVERLAPPED, no
+            // WS_VISIBLE) → a hidden top-level window that still
+            // receives WM_DEVICECHANGE broadcasts.
+            let hwnd = match CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                PCWSTR::from_raw(class_name.as_ptr()),
+                PCWSTR::null(),
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                HWND::default(),
+                HMENU::default(),
+                HINSTANCE::default(),
+                None,
+            ) {
+                Ok(h) => h,
+                Err(_) => return,
+            };
+
+            // Leak the callback into a stable heap pointer; tied to the
+            // window lifetime (process-long).
+            let cb_box: *mut Box<dyn Fn() + 'static + Send> = Box::into_raw(Box::new(callback));
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, cb_box as isize);
+
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        })
+        .ok();
+}
+
+#[cfg(not(windows))]
 pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static + Send>) {}
 
 /// Video — Windows parity stubs. The mac implementation drives a

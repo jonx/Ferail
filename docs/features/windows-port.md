@@ -150,7 +150,7 @@ These are the cases where the code compiles for Windows today (because `platform
 
 The `feraille-shell-win32` public surface mirrors shell-mac. What's already real vs. what's a stub returning `Err(...)` / `None` / no-op:
 
-### Real implementations (as of 2026-06-16)
+### Real implementations (as of 2026-06-20)
 
 | Function | Implementation strategy |
 |---|---|
@@ -168,6 +168,8 @@ The `feraille-shell-win32` public surface mirrors shell-mac. What's already real
 | `open_with_app(target, app)` | spawns the chosen handler with the target as argument. |
 | `set_app_user_model_id()` | `SetCurrentProcessExplicitAppUserModelID` for taskbar grouping. |
 | `fetch_quick_look_thumbnail(path)` | `IShellItemImageFactory::GetImage(SIIGBF_THUMBNAILONLY | SIIGBF_RESIZETOFIT)`, reads `DIBSECTION` directly to preserve alpha. |
+| `clipboard_copy_file_urls` / `clipboard_read_file_urls` | `CF_HDROP`: write packs a `DROPFILES` header + double-null-terminated UTF-16 path list into one `GHND` HGLOBAL → `SetClipboardData(CF_HDROP, …)`; read walks the drop with `DragQueryFileW` (`0xFFFFFFFF` for count, then per-index length+content). The clipboard owns the read handle — no `DragFinish`/free. Gives Cmd+C/Cmd+V parity + Explorer interop. |
+| `start_volume_observer` | `WM_DEVICECHANGE` (`DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE`, filtered to `DBT_DEVTYP_VOLUME` by reading the `DEV_BROADCAST_HDR` device-type field by offset) on a worker thread. **Uses a hidden _top-level_ window, not the theme observer's `HWND_MESSAGE` one** — message-only windows are excluded from broadcasts, and drive-letter volume changes arrive only as broadcasts to top-level windows (`DBT_DEVTYP_VOLUME` isn't obtainable via `RegisterDeviceNotification`). Callback fires on the worker thread (`Send`); host marshals. |
 | `capture_window_rgba` (capture.rs) | `PrintWindow(PW_RENDERFULLCONTENT)` → top-down BGRA DIB. Headless `--screenshot` harness. |
 | `preview_handler` (preview_handler.rs) | `AssocQueryStringW(ASSOCSTR_SHELLEXTENSION)` → `IPreviewHandler` (Office/PDF) rendered into an off-screen host HWND, then `PrintWindow`-captured. |
 
@@ -175,12 +177,10 @@ Also real but living in **`feraille-fs-native`** (not the shell crate), so alrea
 
 ### Stubs awaiting real implementation
 
-Ordered by approximate value × ease. Each function has a TODO at the top of its body in [crates/feraille-shell-win32/src/lib.rs](../../crates/feraille-shell-win32/src/lib.rs). The first three are the ones that **break a working macOS feature** on Windows rather than merely missing a nice-to-have.
+Ordered by approximate value × ease. Each function has a TODO at the top of its body in [crates/feraille-shell-win32/src/lib.rs](../../crates/feraille-shell-win32/src/lib.rs). `clipboard_copy_file_urls` / `clipboard_read_file_urls` (`CF_HDROP`) and `start_volume_observer` (`WM_DEVICECHANGE`) — the first two behavior-breaking stubs — **shipped 2026-06-20** and moved to the real-implementations table above. The one remaining feature-breaking stub is `prompt_for_text`.
 
 | Function | Breaks | Suggested approach |
 |---|---|---|
-| `clipboard_copy_file_urls` / `clipboard_read_file_urls` | **Cmd+C / Cmd+V file copy-paste** (gpui's `file_ops` calls these; on Windows both are no-ops, so keyboard copy-paste silently does nothing — *and* there's no Explorer interop). | `CF_HDROP`: write via a `DROPFILES` HGLOBAL, read via `DragQueryFileW`. Mirror Ferail's `drag_drop.rs` `FileDataObject` HGLOBAL construction (the `CF_HDROP`/`DROPFILES` packing is identical; you just don't need the full `IDataObject`). |
-| `start_volume_observer` | **Live Volumes sidebar + Favorites "Missing" transitions** on mount/unmount (mac uses an NSWorkspace volume watch; Windows is a no-op, so drive add/remove never refreshes). | `WM_DEVICECHANGE` (`DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE`) on the **same** message-only-window pattern `start_system_theme_observer` already uses — copy that module, swap the message filter. |
 | `prompt_for_text(title, body, default)` | **Inline rename / new-folder naming** (returns `None`, so the rename/new-folder flows have no name source on Windows). | Build a small **gpui modal** in feraille-gpui and drop this from the platform shell entirely — it's cross-platform and matches TODO.md's "inline-rename text field" item. |
 | `video_overlay_show` / `set_frame` / `remove` | Viewer video playback (shows static poster only). | Media Foundation / MFPlay child HWND floated over the viewer stage rect. Larger; viewer-feature-sized. See VIEWER.md. |
 | `read_canonical_tags`, `clear_tags` (+ `toggle_tag`) | Finder-tag color chips. | No native Windows equivalent. Drop for v1, or back via `feraille-meta` SQLite as private tags (no Explorer integration). |
@@ -216,9 +216,9 @@ Ferail hand-rolled these in Win32; in Feraille they're handled cross-platform an
 
 In rough priority order. The first three are the §6 stubs above (cross-referenced); the last two are genuinely absent from the whole workspace, not just stubbed:
 
-1. **File-URL clipboard (`CF_HDROP`)** — §6. Breaks keyboard copy-paste *today*. Highest value × ease. Source pattern: Ferail `drag_drop.rs`.
-2. **Volume device-change observer (`WM_DEVICECHANGE`)** — §6. Source pattern: Ferail had registry/enumeration; the watch is new but trivial given the existing theme-observer scaffold.
-3. **Inline-rename text input** — §6. Best solved as a gpui modal, not Win32.
+1. ~~**File-URL clipboard (`CF_HDROP`)**~~ — **shipped 2026-06-20** (§6 real table). Keyboard copy-paste + Explorer interop now work.
+2. ~~**Volume device-change observer (`WM_DEVICECHANGE`)**~~ — **shipped 2026-06-20** (§6 real table). Note the watch needed a hidden top-level window, *not* the theme observer's message-only one — message-only windows don't get broadcasts.
+3. **Inline-rename text input** — §6. Best solved as a gpui modal, not Win32. The one remaining behavior-breaking gap.
 4. **Third-party shell-extension context-menu verbs** — *absent everywhere.* Ferail's `shell_pump.rs` (~1,400 lines) enumerated registry `shellex\ContextMenuHandlers`, `CoCreateInstance`'d each handler, `IShellExtInit::Initialize`'d it with an `IDataObject`, and `QueryContextMenu`'d the verbs into the menu (7-Zip, TortoiseGit, "Scan with Defender", etc.) — including the undocumented `IWaitCursorManager` trick to suppress the busy cursor. Feraille's GPUI context menu has built-in actions + `Open With`, but **no third-party shell verbs.** This is the single biggest capability gap. It's also the hardest: STA-thread-only, PIDL lifetime management, and it must feed GPUI's menu model rather than an HMENU. Treat as its own feature iteration; the `IContextMenu` enumeration logic ports closely even though the rendering doesn't.
 5. **WSL integration** — *absent everywhere.* Ferail's `wsl.rs` (~480 lines): registry distro enumeration (`…\Lxss`), `\\wsl$\` / `\\wsl.localhost\` UNC path parsing, and `wsl.exe readlink` symlink resolution. Per the [porting rule](../../CLAUDE.md) WSL was deliberately deferred ("not a macOS v1 feature unless it maps to network/remote volumes"). It's a Windows-only differentiator worth restoring **after** the core port runs — net-new value, not a regression.
 
@@ -227,7 +227,7 @@ In rough priority order. The first three are the §6 stubs above (cross-referenc
 - **Menu preload** (`menu_preload.rs`): the *concept* — warm the expensive shell-verb enumeration on selection-change so the menu opens instantly — becomes valuable again **if and when** gap B.4 lands. Until there are third-party verbs to enumerate, there's nothing to preload. Keep the idea; the code is HMENU-bound.
 - **`FindFirstFileExW` fast enumeration**: revisit only if profiling shows `std::fs::read_dir` is a bottleneck on large Windows directories.
 
-**Bottom line:** closing B.1–B.3 (all small, all in `feraille-shell-win32`) gets the Windows build to behavioral parity for everyday file management. B.4 (shell verbs) and B.5 (WSL) are the two substantial Ferail capabilities still worth a dedicated port afterward — and they're the only places Ferail remains genuinely "more advanced" than Feraille.
+**Bottom line:** B.1 + B.2 shipped 2026-06-20 in `feraille-shell-win32`; only B.3 (inline-rename, a cross-platform gpui modal) remains before the Windows build hits behavioral parity for everyday file management. B.4 (shell verbs) and B.5 (WSL) are the two substantial Ferail capabilities still worth a dedicated port afterward — and they're the only places Ferail remains genuinely "more advanced" than Feraille.
 
 ---
 
