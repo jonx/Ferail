@@ -1957,6 +1957,7 @@ name = "feraille-shell-linux"
 version = "0.0.1"
 dependencies = [
  "feraille-core",
+ "zip",
 ]
 
 [[package]]
