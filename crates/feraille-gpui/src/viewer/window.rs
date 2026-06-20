@@ -953,6 +953,26 @@ impl ViewerWindow {
         cx.notify();
     }
 
+    /// Quiesce playback when the machine or its displays go to sleep
+    /// (docs/features/POWER.md): pause a playing video and stop the
+    /// slideshow timer. We deliberately do **not** auto-resume on wake —
+    /// a clip springing back to life as the screen relights is jarring;
+    /// the user hits space. No-op if nothing is playing.
+    pub fn suspend_for_power(&mut self, cx: &mut Context<Self>) {
+        if !self.video_paused {
+            if let Some((stream, _)) = &mut self.video_overlay {
+                stream.set_paused(true);
+                self.video_paused = true;
+            }
+        }
+        // Halt the slideshow advance timer too, so it doesn't fire the
+        // instant we wake and jump the user past a slide.
+        if self.playback.playing {
+            self.set_playing(false, cx);
+        }
+        cx.notify();
+    }
+
     /// Step the current video by `frames` frames (negative = backward).
     /// Stepping pauses playback.
     fn step_video(&mut self, frames: i64, cx: &mut Context<Self>) {

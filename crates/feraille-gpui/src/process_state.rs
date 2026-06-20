@@ -157,12 +157,14 @@ pub struct ProcessState {
     /// because the closed-tab stack lives on the singleton.
     pub closed_tabs: RefCell<VecDeque<ClosedTab>>,
 
-    /// The most-recently-opened viewer window (docs/features/VIEWER.md).
-    /// Each Open Viewer now stacks a new window; this just holds the
-    /// latest handle so it isn't dropped mid-open.
+    /// All live viewer windows (docs/features/VIEWER.md). Each Open
+    /// Viewer stacks a new window; we keep every one's handle (so it
+    /// isn't dropped mid-open) and weak view for process-wide fan-out —
+    /// e.g. pause-every-viewer on sleep (docs/features/POWER.md). Dead
+    /// entries are pruned opportunistically, same as `shells`.
     #[allow(clippy::type_complexity)]
-    pub viewer_window: RefCell<
-        Option<(
+    pub viewers: RefCell<
+        Vec<(
             WindowHandle<gpui_component::Root>,
             WeakEntity<crate::viewer::ViewerWindow>,
         )>,
@@ -208,7 +210,7 @@ impl ProcessState {
             favorites_section_collapsed: Cell::new(false),
             shells: RefCell::new(Vec::new()),
             closed_tabs: RefCell::new(VecDeque::new()),
-            viewer_window: RefCell::new(None),
+            viewers: RefCell::new(Vec::new()),
             cut_marker: Rc::new(RefCell::new(Vec::new())),
         })
     }
@@ -271,6 +273,27 @@ impl ProcessState {
         let mut shells = self.shells.borrow_mut();
         shells.retain(|weak| weak.upgrade().is_some());
         shells.clone()
+    }
+
+    /// Register a newly-opened viewer window for process-wide fan-out.
+    /// Retains its window handle (so it isn't dropped mid-open) and
+    /// prunes any viewers that have since closed.
+    pub fn register_viewer(
+        &self,
+        handle: WindowHandle<gpui_component::Root>,
+        viewer: WeakEntity<crate::viewer::ViewerWindow>,
+    ) {
+        let mut viewers = self.viewers.borrow_mut();
+        viewers.retain(|(_, weak)| weak.upgrade().is_some());
+        viewers.push((handle, viewer));
+    }
+
+    /// Snapshot live viewer windows without holding the registry borrow
+    /// across `Entity::update` calls.
+    pub fn live_viewers(&self) -> Vec<WeakEntity<crate::viewer::ViewerWindow>> {
+        let mut viewers = self.viewers.borrow_mut();
+        viewers.retain(|(_, weak)| weak.upgrade().is_some());
+        viewers.iter().map(|(_, weak)| weak.clone()).collect()
     }
 
     /// Push the snapshot of a tab the user just closed onto the
@@ -358,6 +381,65 @@ pub fn start_volume_watch(cx: &mut App) {
                     }
                 }
             });
+        }
+    })
+    .detach();
+}
+
+/// Start the live power watch (docs/features/POWER.md). Platform
+/// sleep/wake notifications ([mac] NSWorkspace; [win] WM_POWERBROADCAST)
+/// feed a coalescing channel; the foreground drain reacts on the main
+/// thread:
+///
+/// - **On sleep** (system or display): pause the active viewer's video
+///   and slideshow, so nothing keeps decoding behind a dark screen.
+/// - **On system wake**: re-list volumes (a drive may have been
+///   unplugged while asleep), re-probe Favorites mount states, and
+///   reload every directory tab (contents may have drifted past the
+///   watcher).
+///
+/// Call once at startup, after the ProcessState global is set. The
+/// observer callback may fire on a worker thread (win32 contract), so
+/// the bridge is a thread-safe channel send; all real work happens in
+/// the foreground drain.
+pub fn start_power_watch(cx: &mut App) {
+    use feraille_core::power::PowerEvent;
+    let (tx, rx) = async_channel::unbounded::<PowerEvent>();
+    crate::platform_shell::start_power_observer(Box::new(move |event| {
+        let _ = tx.try_send(event);
+    }));
+    cx.spawn(async move |cx| {
+        while let Ok(event) = rx.recv().await {
+            if event.is_sleep() {
+                cx.update(|cx| {
+                    let process = process_state(cx);
+                    // Pause every open viewer (live_viewers snapshots and
+                    // prunes, so we don't hold the registry borrow across
+                    // the updates).
+                    for weak in process.live_viewers() {
+                        if let Some(viewer) = weak.upgrade() {
+                            viewer.update(cx, |vw, cx| vw.suspend_for_power(cx));
+                        }
+                    }
+                });
+            } else if event.is_system_wake() {
+                let vols = cx
+                    .background_executor()
+                    .spawn(async { list_volumes() })
+                    .await;
+                cx.update(|cx| {
+                    let process = process_state(cx);
+                    *process.volumes.borrow_mut() = vols;
+                    process
+                        .favorites
+                        .update(cx, |favs, cx| favs.refresh_mount_states(cx));
+                    for weak in process.live_shells() {
+                        if let Some(shell) = weak.upgrade() {
+                            shell.update(cx, |this, cx| this.reload_dir_tabs(cx));
+                        }
+                    }
+                });
+            }
         }
     })
     .detach();

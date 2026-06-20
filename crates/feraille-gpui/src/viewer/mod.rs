@@ -69,7 +69,7 @@ fn open_viewer_inner(playlist: Vec<PlaylistEntry>, start: usize, autoplay: bool,
     });
     match (handle, weak_view) {
         (Ok(handle), Some(weak)) => {
-            *process.viewer_window.borrow_mut() = Some((handle, weak));
+            process.register_viewer(handle, weak);
         }
         (Err(e), _) => crate::log_warn!(90, "viewer: open_window failed: {e:?}"),
         _ => {}

@@ -1460,6 +1460,196 @@ pub fn start_volume_observer(callback: Box<dyn Fn() + 'static + Send>) {
 #[cfg(not(windows))]
 pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static + Send>) {}
 
+/// Begin observing system sleep / resume. Twin of
+/// [`start_system_theme_observer`] / [`start_volume_observer`].
+///
+/// Spawns a worker thread owning a hidden top-level window and forwards
+/// `WM_POWERBROADCAST` transitions to the callback as a [`PowerEvent`]:
+///
+/// | `wParam`                  | PowerEvent  |
+/// |---------------------------|-------------|
+/// | `PBT_APMSUSPEND`          | `WillSleep` |
+/// | `PBT_APMRESUMESUSPEND`    | `DidWake`   |
+/// | `PBT_APMRESUMEAUTOMATIC`  | `DidWake`   |
+///
+/// # Why a top-level window, not the message-only one
+///
+/// Like the volume observer (and unlike `start_system_theme_observer`),
+/// power broadcasts only reach *top-level* windows, never the
+/// `HWND_MESSAGE`-parented message-only kind. So this creates an
+/// ordinary hidden top-level window (null parent, no `WS_VISIBLE`).
+///
+/// # Display sleep
+///
+/// Monitor on/off (`ScreensDidSleep` / `ScreensDidWake`) is **not**
+/// covered here. On Windows that arrives as `PBT_POWERSETTINGCHANGE`
+/// for the `GUID_CONSOLE_DISPLAY_STATE` power setting, which must first
+/// be armed with `RegisterPowerSettingNotification(hwnd,
+/// &GUID_CONSOLE_DISPLAY_STATE, DEVICE_NOTIFY_WINDOW_HANDLE)`; the
+/// broadcast then carries a `POWERBROADCAST_SETTING` whose `Data[0]` is
+/// 0=off / 1=on / 2=dimmed. Left as a follow-up — the macOS port
+/// supplies screen events today, and system suspend/resume is the
+/// higher-value signal.
+///
+/// # Thread contract
+///
+/// Same as [`start_volume_observer`]: **the callback fires on the
+/// observer's worker thread** (hence `Send`), not the UI thread. It
+/// must not touch gpui entities — the host marshals to the main thread
+/// through a channel.
+#[cfg(windows)]
+pub fn start_power_observer(
+    callback: Box<dyn Fn(feraille_core::power::PowerEvent) + 'static + Send>,
+) {
+    use feraille_core::power::PowerEvent;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetWindowLongPtrW,
+        RegisterClassExW, SetWindowLongPtrW, TranslateMessage, GWLP_USERDATA, HMENU, MSG,
+        WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSEXW,
+    };
+
+    // Raw values (winuser.h) — windows-0.58 doesn't expose all as
+    // typed constants, and the volume observer next door reads raw too.
+    const WM_POWERBROADCAST: u32 = 0x0218;
+    const PBT_APMSUSPEND: usize = 0x0004;
+    const PBT_APMRESUMESUSPEND: usize = 0x0007;
+    const PBT_APMRESUMEAUTOMATIC: usize = 0x0012;
+
+    type PowerCb = Box<dyn Fn(PowerEvent) + 'static + Send>;
+
+    unsafe extern "system" fn wnd_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if msg == WM_POWERBROADCAST {
+            let event = match wparam.0 {
+                PBT_APMSUSPEND => Some(PowerEvent::WillSleep),
+                PBT_APMRESUMESUSPEND | PBT_APMRESUMEAUTOMATIC => Some(PowerEvent::DidWake),
+                _ => None,
+            };
+            if let Some(event) = event {
+                let user_data = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+                if user_data != 0 {
+                    let cb_ptr = user_data as *const PowerCb;
+                    (*cb_ptr)(event);
+                }
+            }
+        }
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    std::thread::Builder::new()
+        .name("feraille-power-observer".into())
+        .spawn(move || unsafe {
+            let class_name: Vec<u16> = "FeraillePowerObserver\0".encode_utf16().collect();
+            let wc = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(wnd_proc),
+                hInstance: HINSTANCE::default(),
+                lpszClassName: PCWSTR::from_raw(class_name.as_ptr()),
+                ..Default::default()
+            };
+            let _ = RegisterClassExW(&wc);
+
+            // Hidden top-level window (see doc: power broadcasts skip
+            // message-only windows).
+            let hwnd = match CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                PCWSTR::from_raw(class_name.as_ptr()),
+                PCWSTR::null(),
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                HWND::default(),
+                HMENU::default(),
+                HINSTANCE::default(),
+                None,
+            ) {
+                Ok(h) => h,
+                Err(_) => return,
+            };
+
+            let cb_box: *mut PowerCb = Box::into_raw(Box::new(callback));
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, cb_box as isize);
+
+            let mut msg = MSG::default();
+            while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        })
+        .ok();
+}
+
+#[cfg(not(windows))]
+pub fn start_power_observer(
+    _callback: Box<dyn Fn(feraille_core::power::PowerEvent) + 'static + Send>,
+) {
+}
+
+/// RAII guard that keeps the system awake while held, twin of
+/// shell-mac's `SleepBlocker`. Dropping it re-allows idle sleep.
+///
+/// Implemented with `SetThreadExecutionState(ES_SYSTEM_REQUIRED |
+/// ES_CONTINUOUS)`, cleared with a plain `ES_CONTINUOUS` on drop. That
+/// flag is **per-thread and sticky** — it stays in effect (no activity
+/// required) until reset on the *same* thread. The host holds the guard
+/// inside one foreground task for the whole transfer, so set and clear
+/// land on the same thread, which is the constraint this API needs.
+///
+/// If a future caller needs to assert from a thread-pool worker that
+/// may not be the one that releases, switch to the Power Request API
+/// (`PowerCreateRequest` / `PowerSetRequest(PowerRequestSystemRequired)`
+/// / `PowerClearRequest` + `CloseHandle`), which is process-wide and
+/// thread-independent.
+#[cfg(windows)]
+pub struct SleepBlocker {
+    _private: (),
+}
+
+#[cfg(windows)]
+impl Drop for SleepBlocker {
+    fn drop(&mut self) {
+        use windows::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS};
+        // Clearing the sticky bit: ES_CONTINUOUS alone, no
+        // ES_SYSTEM_REQUIRED, drops back to default power behaviour.
+        unsafe {
+            SetThreadExecutionState(ES_CONTINUOUS);
+        }
+    }
+}
+
+/// Hold off idle system sleep until the returned guard drops. `reason`
+/// is accepted for parity with the macOS assertion (which surfaces it
+/// in `pmset -g assertions`); `SetThreadExecutionState` carries no
+/// reason string, so it's unused here.
+#[cfg(windows)]
+pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
+    use windows::Win32::System::Power::{
+        SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED,
+    };
+    // Returns the previous state (0 only on failure). Either way the
+    // request is now in effect; hand back a guard that clears it.
+    unsafe {
+        SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);
+    }
+    Some(SleepBlocker { _private: () })
+}
+
+#[cfg(not(windows))]
+pub struct SleepBlocker;
+
+#[cfg(not(windows))]
+pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
+    None
+}
+
 /// Video — Windows parity stubs. The mac implementation drives a
 /// windowless AVPlayer and hands the viewer BGRA frames it draws as an
 /// image (docs/features/VIEWER.md); the Windows equivalent is a Media

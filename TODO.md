@@ -247,9 +247,7 @@ feature notes in [docs/features/](docs/features/README.md).
   `RegisterPowerSettingNotification` for `GUID_CONSOLE_DISPLAY_STATE`), and —
   if a transfer ever asserts from a thread-pool worker rather than the
   foreground task — switching the guard from per-thread
-  `SetThreadExecutionState` to the process-wide Power Request API. Also: only
-  the most-recent viewer is paused (`ProcessState::viewer_window` tracks one);
-  pause all viewers once the process tracks a viewer list.
+  `SetThreadExecutionState` to the process-wide Power Request API.
 - The Windows screenshot harness needs a `gpui_windows::render_to_image`
   patch that isn't upstream yet. Publish the gpui fork carrying it and point
   the `[patch]` block at `git = "<fork-url>", rev = "..."` so both platforms

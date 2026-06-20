@@ -20,6 +20,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 windows = { version = "0.58", features = [
     # show_alert → MessageBoxW
     "Win32_UI_WindowsAndMessaging",
+    # prevent_idle_sleep → SetThreadExecutionState
+    "Win32_System_Power",
     # system_is_dark → registry read
     "Win32_System_Registry",
     "Win32_Foundation",

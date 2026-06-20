@@ -483,6 +483,11 @@ fn run_gui(args: screenshot::Args) {
         // sidebar + the Favorites mount states.
         feraille_gpui::process_state::start_volume_watch(cx);
 
+        // Live sleep/wake watch: pause video + slideshow when the
+        // machine or its displays sleep; re-list volumes and reload
+        // directory tabs on wake (docs/features/POWER.md).
+        feraille_gpui::process_state::start_power_watch(cx);
+
         // Cmd+N → new window. The handler runs at App level so the
         // binding works regardless of which window holds focus, and
         // works with zero windows (after the last window closes the

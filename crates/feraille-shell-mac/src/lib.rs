@@ -46,6 +46,12 @@ mod theme_observer;
 mod volume_observer;
 
 #[cfg(target_os = "macos")]
+mod power_observer;
+
+#[cfg(target_os = "macos")]
+mod power_assert;
+
+#[cfg(target_os = "macos")]
 mod video_overlay;
 
 /// Spotlight-backed global search (Tier 2). Cross-platform module with
@@ -1021,6 +1027,39 @@ pub fn start_volume_observer(callback: Box<dyn Fn() + 'static>) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn start_volume_observer(_callback: Box<dyn Fn() + 'static>) {}
+
+/// Begin observing system sleep/wake and display sleep/wake via
+/// NSWorkspace's notification center. The callback runs on the main
+/// thread with a [`PowerEvent`] for each transition; hosts pause
+/// playback on sleep and refresh volume/directory state on wake.
+/// Main-thread-only, idempotent (see [`start_system_theme_observer`]
+/// for the contract).
+///
+/// Thread contract: the macOS callback fires on the MAIN thread, but
+/// the shell-win32 twin fires on a WORKER thread — cross-platform
+/// callers must write to the weaker (win32) contract (thread-safe
+/// state / channel send only, no gpui entities).
+#[cfg(target_os = "macos")]
+pub fn start_power_observer(callback: Box<dyn Fn(feraille_core::power::PowerEvent) + 'static>) {
+    power_observer::start(callback);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn start_power_observer(_callback: Box<dyn Fn(feraille_core::power::PowerEvent) + 'static>) {}
+
+#[cfg(target_os = "macos")]
+pub use power_assert::{prevent_idle_sleep, SleepBlocker};
+
+/// Inert stand-in so cross-platform callers can hold a `SleepBlocker`
+/// unconditionally on non-macOS workspace builds.
+#[cfg(not(target_os = "macos"))]
+pub struct SleepBlocker;
+
+/// No-op on non-macOS workspace builds — returns an inert guard.
+#[cfg(not(target_os = "macos"))]
+pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
+    None
+}
 
 /// Open a windowless native video player for `path` and start playback,
 /// returning a handle (0 on failure). Frames are pulled out as BGRA
