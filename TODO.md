@@ -184,7 +184,12 @@ fallback). Remaining is the UX the system explorers have and we don't:
 ## Settings, Commands & Accessibility
 
 - Settings "Saved" feedback pill or toast (changes persist silently today).
-- Accent-color customization once the theme token path is ready.
+- **Themes & color customization** ([docs/features/THEMES.md](docs/features/THEMES.md)).
+  Phase 0 shipped: a selection-accent override + Appearance color picker
+  (`selection_colors`), shared by the list and grid. Remaining (scoped in the
+  note): bundled themes + a theme picker (Phase 1), a drop-in user themes folder
+  with hot-reload via `ThemeRegistry::watch_dir` (Phase 2), and a generalized
+  accent-override layer (Phase 3).
 - Command palette: arrow-key selection between matches (today Enter runs the top
   match), and a distinct "Commands" vs "Keyboard Shortcuts" mode if the dual
   role confuses.
