@@ -6,7 +6,8 @@ the click.
 
 ## Status
 
-Todo.
+Future. No pointer predictor is implemented yet; the missing work is tracked in
+[TODO.md](../../TODO.md).
 
 ## What It May Do
 
@@ -30,7 +31,7 @@ Todo.
 - Likely preview target.
 - Likely scroll direction.
 
-## Todo
+## Remaining Work
 
 - Pure predictor module.
 - Debug overlay.

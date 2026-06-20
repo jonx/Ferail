@@ -3,6 +3,11 @@
 Feraille has a screenshot CLI today and should grow a small set of debug
 overlays that make performance and async behavior visible.
 
+## Status
+
+Future overlay work. The screenshot CLI exists; the visual debug overlays below
+are not implemented yet and are tracked in [TODO.md](../../TODO.md).
+
 ## Current Tool
 
 Use the binary's headless screenshot mode — the full dev loop, flag families,

@@ -1,61 +1,101 @@
 # Preview
 
-Feraille currently has a preview information pane. The full Ferail preview
-vision is an async provider system.
+Feraille's preview pane is an async, cache-backed inspector for the current
+selection. It combines Finder-style Get Info details with lightweight content
+preview, and it never reads file content from paint.
 
 ## Status
 
-Partial — two providers live (image/PDF/media via Quick Look, and
-inline text/code), plus the info metadata.
+Shipped with follow-ups.
 
-Current pane:
+Live providers:
+
+- Selection metadata / Get Info.
+- Quick Look thumbnails for images, PDFs, videos, and other renderable file
+  types.
+- Inline text, Markdown, and syntax-highlighted source preview.
+- Quarantine/provenance details with clear-quarantine action.
+
+Remaining providers are tracked in [TODO.md](../../TODO.md): audio waveforms,
+video strips beyond the Quick Look poster, archive/package summaries, and true
+per-provider cancellation tokens.
+
+## User Surface
 
 - Toggle with `Cmd+P` / `Ctrl+P`.
-- Shows selected item name, kind, path, size, modified date, and magic label.
-- **Quick Look thumbnail** for images / PDF / video / anything QL can
-  render (`preview.rs`, 512 px, async + LRU-cached). Clicking it opens
-  the viewer window.
-- **Inline text/code preview** for text files (`text_preview.rs`):
-  the first ~128 KB (capped at 500 lines), rendered through
-  gpui-component's `TextView`. Markdown files (`.md`/`.markdown`/
-  `.mdx`) render *formatted* (headings, lists, links); every other
-  text file is wrapped in a fenced code block tagged with its
-  extension and rendered **syntax-highlighted** (tree-sitter, the
-  full `tree-sitter-languages` grammar set). gpui-component only
-  highlights a language when its `LanguageConfig` carries a query;
-  several grammars it ships (C#, C, C++, Bash, Swift, CMake) come with
-  an empty query, so `crate::syntax_extra` registers vendored queries
-  (the grammars' own `queries/highlights.scm`, under
-  `src/syntax_queries/`) against the already-compiled grammars — no
-  extra grammar deps. The fence is grown
-  longer than any backtick run in the file so content containing
-  ``` can't break out. Text-vs-binary is decided in the worker — NUL
-  byte or invalid UTF-8 ⇒ not text ⇒ the thumbnail shows instead.
-  Both providers ride the one `preview::request` selection event.
-- The inline preview lives in a bounded box (`max_h(280)`,
-  `overflow_scroll`) so a long file doesn't bury the Get Info details
-  below it. Its wheel **scroll-chains**: the box scrolls first, and only
-  the residual past its top/bottom forwards to the pane's outer scroll
-  (`Shell::on_preview_text_scroll`, off `preview_text_scroll`). Lines
-  don't wrap — instead the content gets a definite width wider than the
-  pane so the box can scroll horizontally to reach it: code blocks
-  (`whitespace_nowrap`) are sized to their widest line (estimated from the
-  column count — `PREVIEW_CODE_*`), and rendered markdown (whose prose
-  gpui-component force-wraps) is given a fixed reading column
-  (`PREVIEW_MD_MIN_W`). `w_full` keeps a short file filling the pane
-  instead of sitting in an over-wide box.
-- Reads only already-cached provider results during paint; the file
-  read is off the UI thread and `TextView` parses off-thread too.
+- Shows selected item name, kind, path, size, modified date, magic label,
+  description, and quarantine/provenance when available.
+- Clickable Quick Look thumbnail opens the viewer window.
+- Inline text/code preview appears before the detailed metadata for text-like
+  files.
+- The preview pane has its own scroll state and can be resized without stealing
+  width from the sidebar.
 
-## Target (remaining)
+## Provider Flow
 
-- Audio waveform or metadata; video thumbnail strip (beyond the QL
-  poster).
-- Archives and packages summary.
-- Per-provider cancellation tokens (today a stale result is dropped at
-  apply time, not cancelled mid-read).
+Selection change schedules preview work through the shared preview request path.
+Providers run off the UI thread and publish compact cached results back to the
+shell.
 
-Provider rules:
+Paint reads only:
+
+- the selected `FileEntry`,
+- `PreviewCache`,
+- `TextPreviewCache`,
+- cached quarantine and magic metadata.
+
+Stale provider results are dropped at apply time by checking the active
+selection/request. Some providers still run to completion after they become
+stale; cooperative cancellation is the remaining architecture gap.
+
+## Quick Look Thumbnail Provider
+
+`preview.rs` requests a 512 px thumbnail on a worker and stores it in an LRU
+cache. It is used for:
+
+- images,
+- PDFs,
+- videos,
+- other file types Quick Look can render.
+
+The thumbnail is intentionally a preview-pane poster, not the full viewer. The
+viewer has its own loader and playback path.
+
+## Text And Code Provider
+
+`text_preview.rs` reads the first ~128 KB, capped at 500 lines. The worker
+rejects binary content before the render layer sees it:
+
+- NUL byte means binary.
+- invalid UTF-8 means binary.
+
+Markdown files (`.md`, `.markdown`, `.mdx`) render as formatted Markdown through
+gpui-component's `TextView`.
+
+Other text files are wrapped in a fenced code block tagged with the extension
+and rendered with syntax highlighting. The fence grows longer than any backtick
+run in the file so source content cannot break out of the fence.
+
+Feraille also registers extra highlight queries for gpui-component grammars that
+ship without highlight query text, including C, C++, C#, Bash, Swift, and CMake.
+
+## Scrolling And Layout
+
+Inline preview content lives in a bounded scroll box so long files do not bury
+the rest of the inspector.
+
+Scroll chaining works in two stages:
+
+1. The inner text preview consumes wheel input while it can scroll.
+2. Residual wheel delta at the top/bottom forwards to the outer preview pane.
+
+Code preview does not wrap lines. It gets a definite width based on the widest
+line estimate (`PREVIEW_CODE_*`) so horizontal scrolling remains available.
+
+Rendered Markdown uses a fixed reading column (`PREVIEW_MD_MIN_W`) because
+gpui-component wraps Markdown prose.
+
+## Provider Rules
 
 - Selection change schedules preview work.
 - Previous request is cancelled or ignored.
@@ -70,11 +110,12 @@ Provider rules:
 - Some files may be cloud placeholders. Preview should not accidentally download
   large content without a user-visible state.
 
-## Todo
+## Remaining Work
 
-- Preview request id/generation.
-- Text preview provider.
-- Image preview provider.
-- Quick Look investigation.
-- Preview cache.
-- Status progress and cancellation UI.
+Tracked in [TODO.md](../../TODO.md):
+
+- Audio waveform / metadata provider.
+- Video thumbnail strip beyond the Quick Look poster.
+- Archive/package summary provider.
+- Per-provider cancellation tokens.
+- More explicit cloud-placeholder state before reads that may fault content in.

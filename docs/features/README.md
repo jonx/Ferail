@@ -8,6 +8,39 @@ it is, not the current crate structure.
 ← Back to the [project README](../../README.md) ·
 [Architecture](../ARCHITECTURE.md) · [TODO](../../TODO.md)
 
+## Implementation Status
+
+Audited against the Rust sources on 2026-06-20. "Shipped with follow-ups" means
+the primary user-facing feature exists and the remaining work is tracked in
+[TODO.md](../../TODO.md).
+
+| Feature note | Status | Public-ready summary |
+| --- | --- | --- |
+| [ANT_TRAIL.md](ANT_TRAIL.md) | Shipped with follow-ups | Folder visit counts, sidebar heat, recents hydration, and DB persistence ship; prediction and decay remain open. |
+| [CONTEXT_MENU.md](CONTEXT_MENU.md) | Shipped with follow-ups | Mac-native context menus, Open With, Services, Share, tags, Quick Look, Duplicate, Compress, and Trash ship; compact tag row and async Open With prewarm remain open. |
+| [DISK_USAGE.md](DISK_USAGE.md) | Shipped with follow-ups | Disk Usage window, scanner, treemap/top list, package handling, category filters, and CLI basics ship; APFS clone-aware sizing and richer views remain open. |
+| [DUPLICATES.md](DUPLICATES.md) | Shipped with follow-ups | Size/partial/full-hash duplicate finder, clone/hard-link awareness, card panel, virtualization, and cleanup actions ship; faster enumeration and more benchmarks remain open. |
+| [FAVORITES.md](FAVORITES.md) | Shipped with follow-ups | Favorites persistence, sidebar, drag/drop, locate, rename, remove, keyboard actions, and cross-platform modal flow ship; tag favorites and file-watch missing transitions remain open. |
+| [FILE_OPS.md](FILE_OPS.md) | Shipped with follow-ups | Copy, cut, paste, move, trash, collision policy, progress, cancellation, undo, and platform integration ship; mutation toast/undo gaps remain open. |
+| [LAZY_METADATA.md](LAZY_METADATA.md) | Shipped with follow-ups | Shared NodeStore, path guard, cached row metadata, background prefetch, metadata DB, and process-owned caches ship; rename/move identity completion remains open. |
+| [MAGIC_DESCRIPTION.md](MAGIC_DESCRIPTION.md) | Shipped | Format/Description columns, mismatch cues, quarantine badges, and structured descriptions ship. |
+| [MAGIC_SNIFFING.md](MAGIC_SNIFFING.md) | Shipped with follow-ups | Structured magic detector, DB cache, async prefetch, and quarantine fusion ship; long-tail formats, cloud skip rules, and debug views remain open. |
+| [METADATA_DB.md](METADATA_DB.md) | Shipped | SQLite metadata DB, schema versioning, favorites, file metadata, folder usage, and cache reset scopes ship. |
+| [MOUSE_PREDICTOR.md](MOUSE_PREDICTOR.md) | Future | Design note only; no pointer prediction/prewarm scheduler is implemented yet. |
+| [POWER.md](POWER.md) | Shipped with follow-ups | macOS sleep/wake handling, transfer idle-sleep prevention, and Windows/Linux shell surfaces exist; Windows display events and Power Request API are still deferred. |
+| [PREVIEW.md](PREVIEW.md) | Shipped with follow-ups | Info pane, Quick Look thumbnails, inline text/Markdown/code preview, caches, scroll chaining, and viewer handoff ship; audio/archive providers and true cancellation remain open. |
+| [SCREENSHOTS.md](SCREENSHOTS.md) | Shipped with follow-ups | Headless screenshot CLI and simulated UI states ship; deterministic fixture coverage and a few deferred flags remain open. |
+| [SEARCH.md](SEARCH.md) | Shipped with follow-ups | In-folder filter, recursive walker, Spotlight/global search, streaming results, cancellation, and task integration ship; filters/operators and Linux/Windows indexers remain open. |
+| [STATUS_PROGRESS.md](STATUS_PROGRESS.md) | Shipped with follow-ups | Task registry, status strip, task popover, cancellation flags, recent history, and screenshot simulation ship; completion notifications and accessibility announcements remain open. |
+| [STREAMING_ENUMERATION.md](STREAMING_ENUMERATION.md) | Shipped with follow-ups | Directory enumeration is worker-driven, batched, cancellable, and notification-based; slow-path/stale-result tests and partial-error UI remain open. |
+| [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md) | Future | Debug-overlay design remains unimplemented beyond screenshot simulation hooks. |
+| [VIEWER.md](VIEWER.md) | Shipped with follow-ups | Viewer window, playlist navigation, images, Quick Look fallback, VLC-backed video, slideshow, zoom, and controls ship; richer playback/playlist polish remains open. |
+| [feraille-selection-dnd-spec.md](feraille-selection-dnd-spec.md) | Partial | Selection, row drag, external file drops, and many acceptance points ship; edge auto-scroll and favorite-row drops remain open. |
+| [feraille-windows-instances-tabs-spec.md](feraille-windows-instances-tabs-spec.md) | Partial | Process/window state split, tabs, closed-tab undo, and shared caches are in place; full multi-window/tear-off completion remains open. |
+| [linux-port.md](linux-port.md) | Partial port | The Linux shell crate compiles behind stubs; real clipboard/trash/open-with/volume/power/preview integrations remain open. |
+| [mac_port.md](mac_port.md) | Shipped with follow-ups | macOS is the primary implementation path; remaining items are mostly packaging, polish, and verification. |
+| [windows-port.md](windows-port.md) | Partial port | Windows shell surface has major compatibility work; shell-extension verbs, WSL integration, and some power/screenshot infrastructure remain open. |
+
 ## Responsiveness & data flow
 
 Everything here serves the [prime directive](../ARCHITECTURE.md#prime-directive):

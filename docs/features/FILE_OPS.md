@@ -96,9 +96,9 @@ cursor position).
 Still open in [TODO.md](../../TODO.md): auto-scroll near the list edges
 while dragging (needs `UniformListScrollHandle` offset access); drops on
 favorite *rows* (gaps accept folder-adds today); Windows pasteboard
-(CF_HDROP) + volume identity + the `.lnk` alias-in-dest path. Note: all
-drag gestures are OS-driven, so they can't be exercised by the
-screenshot harness — verify interactively.
+volume-identity parity and the `.lnk` alias-in-dest path. Note: all drag
+gestures are OS-driven, so they can't be exercised by the screenshot harness —
+verify interactively.
 
 ## Platform tags
 
@@ -110,11 +110,11 @@ equivalent for later. Untagged = platform-neutral.
 | What | Where |
 |---|---|
 | `spawn_file_op(reload_path, op, label, cx)` — background op + reload broadcast, no progress/cancel/notify | `crates/feraille-gpui/src/shell.rs:1733` |
-| `TaskRegistry::begin(kind, label, cancellable)` / `update(id, f32)` / `end(id)`; `cancellable` flag exists but nothing reads it | `crates/feraille-gpui/src/tasks.rs` |
-| Task panel renders label + progress strip, "cancel buttons land when task kinds pick up per-task cancel hooks" | `crates/feraille-gpui/src/task_panel.rs` |
+| `TaskRegistry::begin_with_cancel(kind, label, flag)` / `update_transfer` / `end` / `end_failed`; foreground tasks keep status-bar priority | `crates/feraille-gpui/src/tasks.rs` |
+| Task panel renders active + recent tasks, transfer details, and cancel buttons backed by cooperative flags | `crates/feraille-gpui/src/task_panel.rs` |
 | gpui modal dialogs (`window.open_dialog` + Input) used by Rename / NewFolder | `crates/feraille-gpui/src/shell/file_ops.rs:446-559` |
 | Finder-style collision naming `pick_suffixed_name(parent, stem, ext, "copy")` | `crates/feraille-shell-mac/src/file_ops.rs:38` **[mac]** |
-| NSPasteboard URL *writing* (Services path); no reading helper exists | `crates/feraille-shell-mac/src/services.rs:115` **[mac]** |
+| NSPasteboard URL read/write helpers for file copy, cut, and paste | `crates/feraille-shell-mac/src/lib.rs` **[mac]** |
 | Undo stack `UndoOp::{Rename, DeleteFolder, …}` + `apply_fs()` | `crates/feraille-gpui/src/shell.rs:72` |
 | Reload fan-out `broadcast_reload_for_process(process, paths, cx)` | `crates/feraille-gpui/src/shell.rs:1715` |
 | Cancel-aware walker precedent `recursive_size(root, cancel)` | `crates/feraille-fs-native/src/disk_usage_scanner.rs:246` |
@@ -282,9 +282,9 @@ render — same boundary as Quick Look.
 3. **Clipboard** — shell-mac pasteboard read/write helpers + win32
    stubs; `file.copy` / `file.paste` / `file.move_paste` catalogue
    commands + actions + handlers; collision dialog; undo ops.
-4. **Later** (tracked in TODO, not this arc): drag-into-app drop
-   targets feeding the same `spawn_transfer_op`; drop-onto-favorite;
-   per-item collision resolution; Windows pasteboard parity.
+4. **Later** (tracked in TODO, not this arc): remaining drag edge
+   auto-scroll, favorite-row drops, Windows pasteboard volume-identity
+   parity, and Windows alias-in-destination parity.
 
 ## Verification
 

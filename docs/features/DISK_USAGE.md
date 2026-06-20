@@ -9,8 +9,11 @@ control are macOS-native rewrites.
 
 ## Status
 
-Done (iter-6.4). APFS-clone-aware sizing, age-heatmap coloring, and
-allocated-vs-apparent toggle are deferred — see "Open items" below.
+Shipped with follow-ups. The Disk Usage window, scanner, treemap, Top-N panel,
+package handling, category filtering, allocated/apparent size modes, age
+heatmap, follow-navigation, geometry persistence, screenshot path, and CLI all
+ship. APFS-clone-aware sizing and richer iCloud download-state handling remain
+open — see "Still open" below.
 
 ## Surface
 
@@ -102,11 +105,12 @@ on_batch, on_progress) -> Option<EnumerationError>`:
   that returns an error.
 - macOS package directories (`.app`, `.bundle`, `.framework`,
   `.plugin`, `.kext`, `.xcodeproj`) are emitted as `NodeKind::File`
-  leaves when `descend_packages` is `false`. Iter-6.4 reports their
-  immediate `metadata.len()` only — proper bundle totals via a
-  child-only sum are deferred.
-- Apparent size (`metadata.len()`) for now; allocated size and
-  APFS-clone-aware deduplication are deferred (see Open items).
+  leaves when `descend_packages` is `false`; the scanner walks inside
+  them to compute a Finder-style rolled-up total without exposing inner
+  children in the treemap.
+- Apparent size (`metadata.len()`) and allocated size
+  (`MetadataExt::blocks() * 512`) are both stored. APFS-clone-aware
+  deduplication remains deferred (see Still open).
 
 ## Verification
 

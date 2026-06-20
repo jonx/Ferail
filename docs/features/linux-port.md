@@ -60,13 +60,50 @@ freedesktop specifications.
 
 ## 2. State of the Linux port
 
-**The compile scaffold has landed; no real Linux behavior yet.**
-`feraille-shell-linux` now exists as an all-stub crate, the
+**The compile scaffold has landed, plus a first batch of real shell impls.**
+`feraille-shell-linux` exists, the
 `#[cfg(target_os = "linux")] pub use feraille_shell_linux as platform_shell`
 arm is wired, and the crate is in the workspace — so the *surface* the Linux
-build needs is in place (and `cargo check -p feraille-shell-linux` is green on
-any host). Every shell function is still a no-op. Beyond that, the architecture
-means a surprising amount already works or compiles:
+build needs is in place. The deterministic, verifiable functions are now
+implemented for real (real arm under `cfg(target_os = "linux")`, no-op twin
+under `cfg(not)`):
+
+- **Pure `std` / process-based:** `duplicate_path`, `make_alias`,
+  `make_alias_in`, `open_url`, `reveal_in_finder` (D-Bus `FileManager1` →
+  `xdg-open` fallback), `open_terminal` (emulator detection chain),
+  `system_is_dark` (gsettings v1), `open_with_app` (`gio launch` / exec).
+- **`compress_paths`** — `.zip` via the `zip` crate, lifted verbatim from the
+  (platform-neutral) win32 impl. Because it's not target-gated, its tests
+  **run on any host** (`cargo test -p feraille-shell-linux` passes on macOS).
+- **`prevent_idle_sleep`** — RAII `SleepBlocker` owning a `systemd-inhibit
+  --what=idle` child; dropping it releases the lock.
+
+**Deliberately still stubbed — these need a running Linux desktop to get right,
+not just to compile** (so they're the first things to do *on* a Linux box, not
+blind from a Mac):
+
+- **Clipboard file-URLs** — correct paste interop needs multiple MIME targets
+  (`text/uri-list` *and* GNOME's `x-special/gnome-copied-files`), which a
+  single `wl-copy`/`xclip` shell-out can't offer; wants a native multi-type
+  clipboard client. Wrong target = silent no-op on paste.
+- **`fetch_quick_look_thumbnail`** — the freedesktop cache is keyed by
+  **MD5 of the `file://` URI**; a hand-rolled hash that's subtly wrong just
+  always-misses. Verify against real cache filenames on a Linux box.
+- **Theme / volume / power observers** — async D-Bus signal subscriptions
+  (`ashpd`/`zbus`) bridged into the sync callback API; signal match rules and
+  the runtime-thread bridge need live testing.
+- **`eject_volume`, trash, `open_with_candidates`, video** — udisks2 /
+  freedesktop-trash / MIME-association parsing / GStreamer respectively.
+
+> **Verify Linux code from any host.** `cargo check` doesn't link, so the real
+> arms type-check (and the Linux-gated unit tests compile) on a Mac/Windows box:
+> `cargo check --target x86_64-unknown-linux-gnu -p feraille-shell-linux --tests`
+> (after `rustup target add x86_64-unknown-linux-gnu`). This catches API/typing
+> mistakes long before you reach a Linux machine — but it does **not** run the
+> code or exercise D-Bus/`xdg-open`; that still needs a real Linux session (§7).
+
+Beyond the shell crate, the architecture means a surprising amount already works
+or compiles:
 
 **Already free / cross-platform** (no Linux-specific code needed):
 

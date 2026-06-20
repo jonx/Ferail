@@ -28,9 +28,11 @@ unit-tested.
   group-level cleanup: **keep-newest** (per group or "keep newest
   everywhere"), **select-all-but-one** with a per-row "keep this" radio,
   and **trash the marked set** through the standard quarantine-aware trash
-  flow. Selection rides the tab's existing selection set, so the panel and
-  the table address the same nodes. After a cleanup the retained model is
-  pruned and the reclaim summary recomputed.
+  flow. The card list is virtualized with the shared GPUI virtual-list helper
+  and owns a scrollbar, so large result sets do not instantiate every card at
+  once. Selection rides the tab's existing selection set, so the panel and the
+  table address the same nodes. After a cleanup the retained model is pruned
+  and the reclaim summary recomputed.
 
 **APFS clone awareness (macOS).** Both hard links *and* `clonefile` clones
 are detected and excluded from the reclaimable figure (clones share storage
@@ -198,10 +200,12 @@ batch from a superseded scan is dropped.
 
 The dedicated card view lives in `shell/dupe_panel.rs`; `file_pane_body`
 swaps it in when `presentation == Panel`, independent of list/grid view
-mode. Cleanup actions route through the same quarantine-aware trash flow as
-`on_move_to_trash` ([FILE_OPS.md](FILE_OPS.md)); the panel owns the post-trash
-prune because a results tab's watcher reload is suppressed. `clone_dedup`
-(macOS) backs "Dedup → clones".
+mode. The panel uses `multi_table::v_virtual_list` and `VirtualListScrollHandle`
+to render only the visible card range, with stable per-group row heights and a
+panel-owned scroll offset. Cleanup actions route through the same
+quarantine-aware trash flow as `on_move_to_trash` ([FILE_OPS.md](FILE_OPS.md));
+the panel owns the post-trash prune because a results tab's watcher reload is
+suppressed. `clone_dedup` (macOS) backs "Dedup → clones".
 
 ## Rules (invariant)
 
@@ -215,7 +219,7 @@ prune because a results tab's watcher reload is suppressed. `clone_dedup`
 - Funnel worker (size → xxh3 partial → blake3 full, paranoid byte-verify,
   dataless-skip, cancellation) + `DbHashCache` rescan fast path.
 - Hard-link **and** APFS clone detection; both excluded from reclaim.
-- Grouped-rows view **and** the dedicated panel with group actions
+- Grouped-rows view **and** the virtualized dedicated panel with group actions
   (keep-newest, all-but-one, trash-marked) + macOS `clone_dedup` remediation.
 - Tests: funnel correctness, cache hit on rescan, hardlink/clone
   classification + reclaim exclusion, keep-newest / all-but-one selection,

@@ -87,6 +87,9 @@ relative to the daily value. Ordered by bang-for-buck.
   (group headers with members beneath). Deferred from the density pass.
 - Persist per-tab sort/filter/scroll state where it is not already stable.
 - Add configurable visible columns and a widths/order reset.
+- Context-menu follow-ups: compact Finder-style tag swatch row, async Open With
+  prewarm if cold-cache stutter appears, and per-target enable/disable rules for
+  read-only volumes, missing files, and permission-denied targets.
 
 ## File Ops, Trash & Drag
 
@@ -128,7 +131,8 @@ fallback). Remaining is the UX the system explorers have and we don't:
   and scroll-chaining all ship): audio **waveform / video thumbnail strip**
   beyond the QL poster, **archive/package summaries**, and per-provider
   cancellation tokens (today stale results are dropped at apply, not cancelled
-  mid-read).
+  mid-read). Add an explicit cloud-placeholder state before reads that may
+  fault remote content in.
 - Viewer follow-ups ([docs/features/VIEWER.md](docs/features/VIEWER.md)): swap
   the `qlmanage` shell-out for `QLThumbnailGenerator`; pinch-to-zoom; live
   playlist sync via the watcher (skip deleted entries); audio-file playback; a
@@ -149,10 +153,15 @@ fallback). Remaining is the UX the system explorers have and we don't:
   display (where-from is cached but only shown in the preview pane).
 - **Ant Trail**: heat map (visit-count tint) ships; add prediction/prewarming
   and time-decay (heat is cumulative, no recency weighting today).
+- **Mouse predictor** ([docs/features/MOUSE_PREDICTOR.md](docs/features/MOUSE_PREDICTOR.md)):
+  pure pointer prediction module, Ant Trail blend, task-scheduler integration,
+  debug overlay, and pointer-path performance tests.
 - **APFS clone-aware disk-usage sizing**: the duplicate finder detects clones +
   hard links and excludes them from reclaimable bytes, but the **disk-usage
   scanner still counts every hard-link name and clone at full size** — add
   `(dev, inode)` de-dup and clone-aware sizing there.
+- Disk Usage follow-ups from the feature doc: richer iCloud download-state
+  handling once the existing path-prefix cloud glyph is not enough.
 
 ## Responsiveness & Data Architecture
 
@@ -167,6 +176,12 @@ fallback). Remaining is the UX the system explorers have and we don't:
   keep resolution behind the filesystem / native-shell boundaries.
 - Add slow-path tests or fixtures for slow folders, network volumes, cloud
   placeholders, permission failures, and stale worker results.
+- Streaming-enumeration tests: delayed batches, cancellation, stale generation
+  delivery, and partial-error delivery; surface partial enumeration errors in
+  the task/notification UI instead of logging only.
+- Duplicate/Disk Usage fast-walk follow-up: platform bulk enumeration
+  (`getattrlistbulk`, NTFS MFT/USN, Linux `statx`/`io_uring`) after device and
+  filesystem identity are modeled.
 
 ## Settings, Commands & Accessibility
 
@@ -205,6 +220,9 @@ fallback). Remaining is the UX the system explorers have and we don't:
   review.
 - Rebuild deterministic screenshot fixtures for the shell, settings pages, disk
   usage, task popover/panel, errors, empty folders, and narrow layouts.
+- Screenshot CLI deferred flags: either implement deterministic `--splitter`,
+  `--scroll`, `--ui-scale`, and `--mac-chrome` behavior or remove/warn clearly
+  where the current harness cannot honor them.
 - Add debug overlays for frame time, task queue, cached/missing metadata,
   layout bounds, hit regions, and injected slow I/O.
 
@@ -214,6 +232,10 @@ fallback). Remaining is the UX the system explorers have and we don't:
   context-menu verbs (`IContextMenu`) and WSL integration. The near-term
   behavior-breaking stubs (CF_HDROP clipboard, `WM_DEVICECHANGE` volume
   observer, text-naming modal) all shipped.
+- Linux port follow-ups ([docs/features/linux-port.md](docs/features/linux-port.md)):
+  replace shell stubs with real XDG portal / freedesktop implementations for
+  clipboard, trash, reveal/open-with, volume watching, thumbnails/previews, and
+  power/session events.
 - Windows power follow-ups ([docs/features/POWER.md](docs/features/POWER.md)):
   display on/off events (`PBT_POWERSETTINGCHANGE` +
   `RegisterPowerSettingNotification` for `GUID_CONSOLE_DISPLAY_STATE`), and
