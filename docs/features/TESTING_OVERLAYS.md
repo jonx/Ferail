@@ -5,30 +5,15 @@ overlays that make performance and async behavior visible.
 
 ## Current Tool
 
-Use the binary's screenshot mode:
+Use the binary's headless screenshot mode — the full dev loop, flag families,
+and worked examples live in [SCREENSHOTS.md](SCREENSHOTS.md):
 
 ```sh
-cargo run -- \
+cargo run --bin feraille-gpui -- \
   --screenshot screenshots/feraille.png \
   --navigate . \
   --width 1400 --height 900
 ```
-
-Useful flags include:
-
-- `--theme dark`
-- `--expand <path>`
-- `--select-name <name>`
-- `--splitter <x>`
-- `--scroll <y>`
-- `--sort <column[-desc]>`
-- `--filter <text>`
-- `--search`
-- `--preview`
-- `--properties`
-- `--rename`
-- `--new-folder`
-- `--mac-chrome`
 
 ## Overlay Goals
 

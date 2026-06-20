@@ -32,6 +32,18 @@ Current pane:
   ``` can't break out. Text-vs-binary is decided in the worker — NUL
   byte or invalid UTF-8 ⇒ not text ⇒ the thumbnail shows instead.
   Both providers ride the one `preview::request` selection event.
+- The inline preview lives in a bounded box (`max_h(280)`,
+  `overflow_scroll`) so a long file doesn't bury the Get Info details
+  below it. Its wheel **scroll-chains**: the box scrolls first, and only
+  the residual past its top/bottom forwards to the pane's outer scroll
+  (`Shell::on_preview_text_scroll`, off `preview_text_scroll`). Lines
+  don't wrap — instead the content gets a definite width wider than the
+  pane so the box can scroll horizontally to reach it: code blocks
+  (`whitespace_nowrap`) are sized to their widest line (estimated from the
+  column count — `PREVIEW_CODE_*`), and rendered markdown (whose prose
+  gpui-component force-wraps) is given a fixed reading column
+  (`PREVIEW_MD_MIN_W`). `w_full` keeps a short file filling the pane
+  instead of sitting in an over-wide box.
 - Reads only already-cached provider results during paint; the file
   read is off the UI thread and `TextView` parses off-thread too.
 

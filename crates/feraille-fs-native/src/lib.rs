@@ -13,9 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use feraille_core::{
-    EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId,
-};
+use feraille_core::{EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId};
 
 mod disk_usage_scanner;
 mod dupes;
@@ -29,16 +27,15 @@ mod volumes;
 pub mod xattr_info;
 pub use disk_usage_scanner::{recursive_size, DEFAULT_DU_BATCH};
 pub use dupes::{
-    DupeFact, DupeHashCache, DupeMember, DupeOpts, DupeStats, DEFAULT_DUPE_BATCH,
+    clone_dedup, DupeFact, DupeHashCache, DupeMember, DupeOpts, DupeStats, DEFAULT_DUPE_BATCH,
     PARTIAL_HASH_BYTES,
 };
-pub use search::{SearchHit, SearchQuery, SearchStats, DEFAULT_SEARCH_BATCH};
 pub use icons::fetch_icon_rgba;
 pub use magic::{
-    detect_magic, detect_magic_info, sniff_bytes_info, CpuArch, MagicInfo, MagicType,
-    PeSubsystem,
+    detect_magic, detect_magic_info, sniff_bytes_info, CpuArch, MagicInfo, MagicType, PeSubsystem,
 };
 pub use paths::home_dir;
+pub use search::{SearchHit, SearchQuery, SearchStats, DEFAULT_SEARCH_BATCH};
 pub use volumes::list_volumes;
 #[cfg(not(target_os = "macos"))]
 pub use volumes::volume_info_for_path;
@@ -68,7 +65,11 @@ impl NativeFs {
         paths.insert(root, home.clone());
         by_path.insert(home, root);
         Self {
-            inner: Mutex::new(Inner { next_id: ROOT_NODE_RAW + 1, paths, by_path }),
+            inner: Mutex::new(Inner {
+                next_id: ROOT_NODE_RAW + 1,
+                paths,
+                by_path,
+            }),
         }
     }
 
@@ -166,7 +167,10 @@ impl NativeFs {
     /// symlink is reported as a link, never followed. Returns `None` for
     /// non-UTF-8 names or unreadable metadata, matching enumerate policy.
     pub fn file_entry_for_path(&self, path: &Path) -> Option<FileEntry> {
-        let name = path.file_name().and_then(|s| s.to_str()).map(str::to_owned)?;
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(str::to_owned)?;
         let metadata = std::fs::symlink_metadata(path).ok()?;
         Some(self.file_entry_from_metadata(path, name, &metadata))
     }
@@ -359,10 +363,12 @@ impl FsBackend for NativeFs {
             (_, EntryKind::Directory) => std::cmp::Ordering::Greater,
             _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         });
-        EnumerationHandle { initial: entries, error: None }
+        EnumerationHandle {
+            initial: entries,
+            error: None,
+        }
     }
 }
-
 
 /// Hand `path` to the OS for default-app open. macOS: `open(1)`. Windows:
 /// `cmd /C start`. Linux: `xdg-open`. Returns `Err` only if the launcher
@@ -370,7 +376,10 @@ impl FsBackend for NativeFs {
 /// anything useful with it.
 #[cfg(target_os = "macos")]
 pub fn open_with_default(path: &Path) -> std::io::Result<()> {
-    std::process::Command::new("open").arg(path).spawn().map(|_| ())
+    std::process::Command::new("open")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
 }
 
 #[cfg(target_os = "windows")]
@@ -383,7 +392,10 @@ pub fn open_with_default(path: &Path) -> std::io::Result<()> {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn open_with_default(path: &Path) -> std::io::Result<()> {
-    std::process::Command::new("xdg-open").arg(path).spawn().map(|_| ())
+    std::process::Command::new("xdg-open")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
 }
 
 /// Move `path` into the user's Trash, with the OS's full Trash
@@ -502,7 +514,10 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
     // Conservative on non-macOS/Windows — refuse rather than silently delete.
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        format!("move_to_trash not implemented on this OS for {}", path.display()),
+        format!(
+            "move_to_trash not implemented on this OS for {}",
+            path.display()
+        ),
     ))
 }
 
@@ -589,7 +604,11 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
         let lookup_u64 = |key: &NSURLResourceKey| -> Option<u64> {
             let obj: &AnyObject = dict.get(key)?;
             let v: std::os::raw::c_longlong = msg_send![obj, longLongValue];
-            if v < 0 { None } else { Some(v as u64) }
+            if v < 0 {
+                None
+            } else {
+                Some(v as u64)
+            }
         };
         let lookup_bool = |key: &NSURLResourceKey| -> Option<bool> {
             let obj: &AnyObject = dict.get(key)?;
@@ -755,9 +774,18 @@ mod tests {
     fn id_for_path_folds_mechanical_spellings() {
         let fs = NativeFs::new();
         let canonical = fs.id_for_path(Path::new("/tmp/feraille-id-test"));
-        assert_eq!(fs.id_for_path(Path::new("/tmp/feraille-id-test/")), canonical);
-        assert_eq!(fs.id_for_path(Path::new("/tmp/./feraille-id-test")), canonical);
-        assert_eq!(fs.id_for_path(Path::new("/tmp//feraille-id-test")), canonical);
+        assert_eq!(
+            fs.id_for_path(Path::new("/tmp/feraille-id-test/")),
+            canonical
+        );
+        assert_eq!(
+            fs.id_for_path(Path::new("/tmp/./feraille-id-test")),
+            canonical
+        );
+        assert_eq!(
+            fs.id_for_path(Path::new("/tmp//feraille-id-test")),
+            canonical
+        );
         // Stored path is the normalized spelling.
         assert_eq!(
             fs.path_for(canonical),
@@ -765,7 +793,10 @@ mod tests {
         );
         // Case variants stay distinct (per-volume property; see
         // feraille_core::node_store::normalize_path_key).
-        assert_ne!(fs.id_for_path(Path::new("/tmp/FERAILLE-ID-TEST")), canonical);
+        assert_ne!(
+            fs.id_for_path(Path::new("/tmp/FERAILLE-ID-TEST")),
+            canonical
+        );
     }
 
     #[test]
@@ -789,7 +820,8 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn uf_hidden_flag_is_hidden_on_macos() {
-        let dir = std::env::temp_dir().join(format!("feraille-ufhidden-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("feraille-ufhidden-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let flagged = dir.join("flagged.txt");
         std::fs::write(&flagged, b"x").unwrap();
@@ -811,8 +843,8 @@ mod tests {
         // Don't assert the name string (users can rename the volume in
         // Disk Utility) — just shape: local, removable=false, both
         // capacity numbers populated and total >= available.
-        let info = volume_info_for_path(Path::new("/"))
-            .expect("boot volume info available on macOS");
+        let info =
+            volume_info_for_path(Path::new("/")).expect("boot volume info available on macOS");
         assert!(info.is_local, "/ should be local");
         assert!(!info.is_removable, "/ should not be removable");
         assert!(!info.name.is_empty(), "boot volume has a name");

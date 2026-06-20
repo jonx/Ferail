@@ -53,8 +53,10 @@ impl DupePresentation {
     }
     fn from_str(s: &str) -> Self {
         match s {
-            "panel" => DupePresentation::Panel,
-            _ => DupePresentation::Grouped,
+            "grouped" => DupePresentation::Grouped,
+            // Panel is the default — the dedicated card view with
+            // group-level cleanup is the one we want people to land in.
+            _ => DupePresentation::Panel,
         }
     }
 }
@@ -78,10 +80,7 @@ impl SearchConfig {
             match_path: s.search_match_path.unwrap_or(false),
             // Falls back to the global show-hidden preference so search
             // matches the listing the user already sees.
-            include_hidden: s
-                .search_include_hidden
-                .or(s.show_hidden)
-                .unwrap_or(false),
+            include_hidden: s.search_include_hidden.or(s.show_hidden).unwrap_or(false),
         }
     }
 
@@ -116,7 +115,7 @@ impl DupeConfig {
                 .dupe_presentation
                 .as_deref()
                 .map(DupePresentation::from_str)
-                .unwrap_or(DupePresentation::Grouped),
+                .unwrap_or(DupePresentation::Panel),
             min_size_mb: s.dupe_min_size_mb.unwrap_or(0),
             skip_cloud: s.dupe_skip_cloud.unwrap_or(true),
             include_packages: s.dupe_include_packages.unwrap_or(false),
@@ -153,7 +152,7 @@ mod tests {
         assert!(!search.match_path);
 
         let dupe = DupeConfig::from_state(&s);
-        assert_eq!(dupe.presentation, DupePresentation::Grouped);
+        assert_eq!(dupe.presentation, DupePresentation::Panel);
         assert!(dupe.skip_cloud);
         let opts = dupe.opts();
         assert!(!opts.scan_cloud, "skip_cloud=true → scan_cloud=false");

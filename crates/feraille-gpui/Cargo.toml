@@ -78,6 +78,9 @@ feraille-video-vlc = { workspace = true, optional = true }
 [target.'cfg(windows)'.dependencies]
 feraille-shell-win32.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+feraille-shell-linux.workspace = true
+
 # Windows-only build script that embeds resources/feraille.ico and a
 # VERSIONINFO block into the .exe. On non-Windows the build script
 # is a no-op and this dep isn't pulled in.

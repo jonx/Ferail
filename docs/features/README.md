@@ -63,5 +63,7 @@ keep the UI off the I/O path.
   freedesktop/D-Bus/XDG mapping of the shell surface, and the first change that
   makes the app compile on Linux.
 - [mac_port.md](mac_port.md) — Mac-side verification checklist after the port.
+- [SCREENSHOTS.md](SCREENSHOTS.md) — the headless screenshot CLI and the
+  visual dev loop: render any UI state to a PNG off-screen for verification.
 - [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md) — debug overlays for frame time,
   task queue, and metadata visibility.

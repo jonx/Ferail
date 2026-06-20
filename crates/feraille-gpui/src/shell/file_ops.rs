@@ -306,7 +306,11 @@ impl Shell {
                                 bytes_total > 0 && (delta as f64) > 0.10 * bytes_total as f64;
                             if !jump {
                                 let inst = delta as f64 / dt;
-                                ema = if ema == 0.0 { inst } else { 0.6 * ema + 0.4 * inst };
+                                ema = if ema == 0.0 {
+                                    inst
+                                } else {
+                                    0.6 * ema + 0.4 * inst
+                                };
                             }
                         }
                     }
@@ -953,6 +957,10 @@ impl Shell {
         for (_, _, path) in self.action_entries_visible_order(cx) {
             let _ = crate::platform_shell::toggle_tag(&path, color);
         }
+        // Re-read the listing's tags so the dot chips repaint the
+        // toggle — the write above only touched disk, not the delegate's
+        // parallel `tags` vec.
+        self.refresh_file_list_tags_in_tab(self.active, cx);
     }
 
     pub(super) fn on_toggle_tag_red(
@@ -1360,7 +1368,9 @@ impl Shell {
                     let mut deleted = 0usize;
                     let mut first_err: Option<String> = None;
                     for d in &dirs {
-                        let Ok(rd) = std::fs::read_dir(d) else { continue };
+                        let Ok(rd) = std::fs::read_dir(d) else {
+                            continue;
+                        };
                         for dirent in rd.flatten() {
                             let p = dirent.path();
                             let removed = match std::fs::symlink_metadata(&p) {
@@ -1497,10 +1507,8 @@ impl Shell {
             let original = original.clone();
             let on_commit = on_commit.clone();
             let title = title.clone();
-            dialog
-                .title(title)
-                .child(Input::new(&input).small())
-                .on_ok(move |_, window, cx: &mut App| {
+            dialog.title(title).child(Input::new(&input).small()).on_ok(
+                move |_, window, cx: &mut App| {
                     let new_name = input.read(cx).value().trim().to_string();
                     if new_name.is_empty() || new_name == original {
                         return true;
@@ -1510,7 +1518,8 @@ impl Shell {
                         on_commit(this, new_name, window, cx);
                     });
                     true
-                })
+                },
+            )
         });
         // Focus the field and select its contents on the next frame,
         // once the dialog (and its input) are mounted in the tree —
@@ -1604,7 +1613,12 @@ impl Shell {
         let _ = window;
     }
 
-    pub(super) fn on_duplicate(&mut self, _: &Duplicate, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_duplicate(
+        &mut self,
+        _: &Duplicate,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
@@ -1628,7 +1642,12 @@ impl Shell {
         );
     }
 
-    pub(super) fn on_make_alias(&mut self, _: &MakeAlias, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_make_alias(
+        &mut self,
+        _: &MakeAlias,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
@@ -1652,7 +1671,12 @@ impl Shell {
         );
     }
 
-    pub(super) fn on_compress(&mut self, _: &Compress, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_compress(
+        &mut self,
+        _: &Compress,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()

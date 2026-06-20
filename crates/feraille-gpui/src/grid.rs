@@ -65,6 +65,14 @@ pub const ICON_SIZES: &[u32] = &[64, 96, 128, 192, 256];
 /// Default grid icon size when the user hasn't chosen one.
 pub const DEFAULT_ICON_SIZE: u32 = 128;
 
+/// Smallest icon size at which the crowding-prone per-cell adornments
+/// (Finder tag dots + favorite star) are painted. At the 64px stop a
+/// 12px star and a row of dots swamp the thumbnail, so we drop them
+/// there and let the quarantine badge / heat tint (which read clearly
+/// at any size) carry on alone — Finder hides the same chrome on its
+/// smallest icons.
+pub const ADORN_MIN_ICON: u32 = 96;
+
 /// Extra width/height a cell spends beyond the thumbnail slot on its
 /// label, padding, and selection inset.
 pub const CELL_LABEL_H: f32 = 34.0;

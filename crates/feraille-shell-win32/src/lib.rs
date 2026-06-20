@@ -113,11 +113,13 @@ pub fn set_about_options(app_name: &str, tagline: &str, version: &str, copyright
 pub fn show_about_panel() {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        MessageBoxW, MB_ICONINFORMATION, MB_OK,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OK};
 
-    let info = ABOUT_INFO.lock().ok().and_then(|s| s.clone()).unwrap_or_default();
+    let info = ABOUT_INFO
+        .lock()
+        .ok()
+        .and_then(|s| s.clone())
+        .unwrap_or_default();
     let title = if info.app_name.is_empty() {
         "About".to_string()
     } else {
@@ -174,9 +176,7 @@ pub fn set_command_state(_id: feraille_core::commands::CommandId, _on: bool) {}
 /// shell-mac contract.
 #[cfg(windows)]
 pub fn show_alert(title: &str, body: &str) {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        MB_ICONINFORMATION, MB_OK, MessageBoxW,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OK};
     let title_w = to_wide(title);
     let body_w = to_wide(body);
     unsafe {
@@ -194,6 +194,17 @@ pub fn show_alert(title: &str, body: &str) {
 
 #[cfg(not(windows))]
 pub fn show_alert(_title: &str, _body: &str) {}
+
+/// Present a native folder picker and return the chosen directory, or
+/// `None` if cancelled. Mirrors `feraille_shell_mac::pick_folder` so
+/// the Favorites "Locate…" repoint flow (`docs/features/FAVORITES.md`
+/// §8.2) is cross-platform. Windows wants `IFileOpenDialog` with the
+/// `FOS_PICKFOLDERS` option; until that lands this returns `None`
+/// (the caller treats `None` as "cancelled" and leaves the favorite
+/// untouched).
+pub fn pick_folder() -> Option<std::path::PathBuf> {
+    None
+}
 
 /// Open `url` in the default handler. macOS uses NSWorkspace; Linux
 /// `xdg-open`. Windows: `ShellExecuteW`. Today: shell out to
@@ -223,7 +234,7 @@ pub fn copy_to_clipboard(text: &str) {
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
-    use windows::Win32::System::Memory::{GHND, GlobalAlloc, GlobalLock, GlobalUnlock};
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND};
     use windows::Win32::System::Ole::CF_UNICODETEXT;
 
     /// RAII guard so every early-return path still pairs the
@@ -436,7 +447,11 @@ pub fn make_alias(target: &std::path::Path) -> Result<std::path::PathBuf, String
         return Err("make_alias: exhausted shortcut name slots".into());
     }
 
-    let target_wide: Vec<u16> = target.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let target_wide: Vec<u16> = target
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     let shortcut_wide: Vec<u16> = shortcut
         .as_os_str()
         .encode_wide()
@@ -448,8 +463,8 @@ pub fn make_alias(target: &std::path::Path) -> Result<std::path::PathBuf, String
         let we_initialized = co_hr.is_ok();
 
         let result: Result<(), String> = (|| {
-            let link: IShellLinkW =
-                CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).map_err(|e| e.to_string())?;
+            let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)
+                .map_err(|e| e.to_string())?;
             link.SetPath(PCWSTR::from_raw(target_wide.as_ptr()))
                 .map_err(|e| e.to_string())?;
             let persist: IPersistFile = link.cast().map_err(|e| e.to_string())?;
@@ -527,8 +542,7 @@ pub fn compress_paths(targets: &[&std::path::Path]) -> Result<std::path::PathBuf
 
     let file = std::fs::File::create(&out_path).map_err(|e| format!("create zip: {e}"))?;
     let mut writer = zip::ZipWriter::new(file);
-    let opts =
-        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     for src in targets {
         let arc_base = src
@@ -560,12 +574,14 @@ fn walk_into_zip(
     opts: zip::write::SimpleFileOptions,
 ) -> Result<(), String> {
     use std::io::Write;
-    let mut stack: Vec<(std::path::PathBuf, String)> = vec![(src_dir.to_path_buf(), arc_prefix.to_string())];
+    let mut stack: Vec<(std::path::PathBuf, String)> =
+        vec![(src_dir.to_path_buf(), arc_prefix.to_string())];
     while let Some((dir, arc)) = stack.pop() {
         writer
             .add_directory(format!("{arc}/"), opts)
             .map_err(|e| format!("zip add_directory: {e}"))?;
-        let entries = std::fs::read_dir(&dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
+        let entries =
+            std::fs::read_dir(&dir).map_err(|e| format!("read_dir {}: {e}", dir.display()))?;
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry
@@ -587,7 +603,8 @@ fn walk_into_zip(
                 writer
                     .start_file(&arc_path, opts)
                     .map_err(|e| format!("zip start_file: {e}"))?;
-                let bytes = std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+                let bytes =
+                    std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
                 writer
                     .write_all(&bytes)
                     .map_err(|e| format!("zip write: {e}"))?;
@@ -632,9 +649,7 @@ pub fn fetch_quick_look_thumbnail(
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::SIZE;
     use windows::Win32::Graphics::Gdi::{DeleteObject, GetObjectW, DIBSECTION, HBITMAP};
-    use windows::Win32::System::Com::{
-        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
-    };
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
     use windows::Win32::UI::Shell::{
         IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_RESIZETOFIT,
         SIIGBF_THUMBNAILONLY,
@@ -792,11 +807,7 @@ pub fn fetch_quick_look_thumbnail(
                 };
                 let src_ptr = src.add(src_row * stride);
                 let dst_off = y * row_bytes;
-                std::ptr::copy_nonoverlapping(
-                    src_ptr,
-                    pixels.as_mut_ptr().add(dst_off),
-                    row_bytes,
-                );
+                std::ptr::copy_nonoverlapping(src_ptr, pixels.as_mut_ptr().add(dst_off), row_bytes);
             }
             let _ = DeleteObject(hbitmap);
 
@@ -876,9 +887,7 @@ pub fn clear_tags(_path: &std::path::Path) -> Result<(), String> {
 #[cfg(windows)]
 pub fn open_with_candidates(path: &std::path::Path) -> Vec<OpenWithCandidate> {
     use windows::core::PCWSTR;
-    use windows::Win32::System::Com::{
-        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
-    };
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
     use windows::Win32::UI::Shell::{SHAssocEnumHandlers, ASSOC_FILTER_RECOMMENDED};
 
     let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
@@ -895,10 +904,9 @@ pub fn open_with_candidates(path: &std::path::Path) -> Vec<OpenWithCandidate> {
         let co_hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let we_initialized = co_hr.is_ok();
 
-        if let Ok(enumerator) = SHAssocEnumHandlers(
-            PCWSTR::from_raw(wide.as_ptr()),
-            ASSOC_FILTER_RECOMMENDED,
-        ) {
+        if let Ok(enumerator) =
+            SHAssocEnumHandlers(PCWSTR::from_raw(wide.as_ptr()), ASSOC_FILTER_RECOMMENDED)
+        {
             loop {
                 let mut handler = [None; 1];
                 let mut fetched: u32 = 0;
@@ -969,10 +977,7 @@ pub fn open_with_candidates(_path: &std::path::Path) -> Vec<OpenWithCandidate> {
 /// .exe with the file as its argument, no UAC elevation, no PATH
 /// resolution magic.
 #[cfg(windows)]
-pub fn open_with_app(
-    target: &std::path::Path,
-    app_path: &std::path::Path,
-) -> Result<(), String> {
+pub fn open_with_app(target: &std::path::Path, app_path: &std::path::Path) -> Result<(), String> {
     std::process::Command::new(app_path)
         .arg(target)
         .spawn()
@@ -981,10 +986,7 @@ pub fn open_with_app(
 }
 
 #[cfg(not(windows))]
-pub fn open_with_app(
-    _target: &std::path::Path,
-    _app_path: &std::path::Path,
-) -> Result<(), String> {
+pub fn open_with_app(_target: &std::path::Path, _app_path: &std::path::Path) -> Result<(), String> {
     Err("open_with_app: not implemented on this OS".into())
 }
 
@@ -1022,8 +1024,8 @@ pub fn set_app_icon_from_png_bytes(_png_bytes: &[u8]) -> SetIconResult {
 /// on the first window the process surfaces). One-shot, idempotent.
 #[cfg(windows)]
 pub fn set_app_user_model_id(id: &str) {
-    use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
     use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
     let wide: Vec<u16> = id.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         let _ = SetCurrentProcessExplicitAppUserModelID(PCWSTR::from_raw(wide.as_ptr()));
@@ -1041,10 +1043,8 @@ pub fn set_app_user_model_id(_id: &str) {}
 /// light (`false`). Matches the convention in Windows 10 1809+.
 #[cfg(windows)]
 pub fn system_is_dark() -> bool {
-    use windows::Win32::System::Registry::{
-        HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW,
-    };
     use windows::core::PCWSTR;
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 
     let subkey: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\0"
         .encode_utf16()
@@ -1214,7 +1214,7 @@ pub fn clipboard_copy_file_urls(paths: &[&std::path::Path]) {
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
     };
-    use windows::Win32::System::Memory::{GHND, GlobalAlloc, GlobalLock, GlobalUnlock};
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND};
     use windows::Win32::System::Ole::CF_HDROP;
     use windows::Win32::UI::Shell::DROPFILES;
 
@@ -1325,7 +1325,9 @@ pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
                 continue;
             }
             buf.truncate(copied as usize);
-            out.push(std::path::PathBuf::from(std::ffi::OsString::from_wide(&buf)));
+            out.push(std::path::PathBuf::from(std::ffi::OsString::from_wide(
+                &buf,
+            )));
         }
     }
     out

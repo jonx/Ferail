@@ -1,0 +1,16 @@
+[package]
+name = "feraille-shell-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Linux platform shell: freedesktop / D-Bus / XDG integration (stubbed)"
+
+[dependencies]
+feraille-core.workspace = true
+
+# NOTE: no Linux-specific deps yet. Every function below is a compile-on-
+# any-host stub (see docs/features/linux-port.md §6 for the real mechanism
+# each one maps to — ashpd/zbus/trash/arboard/gio, etc.). When the first
+# real impl lands, add it under `[target.'cfg(target_os = "linux")'.dependencies]`
+# so the crate keeps compiling on macOS/Windows as a workspace member.

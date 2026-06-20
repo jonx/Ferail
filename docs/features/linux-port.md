@@ -11,17 +11,19 @@ so skim it too.
 This doc covers:
 
 1. What Feraille is, in one minute.
-2. The current state of the Linux port (essentially: not started — but a lot
-   already comes for free).
+2. The current state of the Linux port (scaffold landed — a lot already comes
+   for free).
 3. Workspace map — where every kind of work lives.
 4. The `platform_shell` indirection — and the **one change that makes the app
    compile on Linux at all**.
 5. macOS assumptions in `feraille-gpui` that need cfg-gating for Linux.
 6. The Linux shell surface — each function mapped to the freedesktop / D-Bus /
    XDG mechanism you'll likely reach for.
-7. Day-one steps on a Linux machine.
-8. Working on Linux without breaking Mac/Windows.
-9. References.
+7. What "Linux" even means here, and where you can do the work (native Linux,
+   WSL2 on Windows, or a Mac).
+8. Day-one steps on a Linux machine.
+9. Working on Linux without breaking Mac/Windows.
+10. References.
 
 ---
 
@@ -58,8 +60,13 @@ freedesktop specifications.
 
 ## 2. State of the Linux port
 
-**Nothing Linux-specific has been written yet.** But the architecture means a
-surprising amount already works or compiles:
+**The compile scaffold has landed; no real Linux behavior yet.**
+`feraille-shell-linux` now exists as an all-stub crate, the
+`#[cfg(target_os = "linux")] pub use feraille_shell_linux as platform_shell`
+arm is wired, and the crate is in the workspace — so the *surface* the Linux
+build needs is in place (and `cargo check -p feraille-shell-linux` is green on
+any host). Every shell function is still a no-op. Beyond that, the architecture
+means a surprising amount already works or compiles:
 
 **Already free / cross-platform** (no Linux-specific code needed):
 
@@ -81,9 +88,13 @@ surprising amount already works or compiles:
 
 **Not yet done — your work ahead** (rough priority order):
 
-1. **Make it compile.** `feraille-gpui` has no Linux `platform_shell` arm and
-   there is no `feraille-shell-linux` crate. Until both exist the app does not
-   build on Linux at all. This is §4 and it's step one.
+1. **Make it compile.** *Scaffold done* — the `platform_shell` Linux arm and a
+   stub `feraille-shell-linux` exist (§4). Two unguarded direct
+   `feraille_shell_mac::` call sites still bypass the alias and **will fail the
+   Linux build** until routed through `platform_shell` or cfg-gated:
+   `entry_info.rs` `set_hidden_extension` (≈L480) and `toggle_tag` (≈L488).
+   (`search.rs`'s `spotlight_available` is already `cfg(target_os = "macos")`-
+   guarded — fine.)
 2. **Make it run.** Confirm GPUI's Linux backend renders the shell under your
    session (Wayland or X11). You need working Vulkan drivers — this is the most
    common first-run failure on Linux.
@@ -138,46 +149,39 @@ crates/
 
 ## 4. The `platform_shell` indirection — and the one change that unblocks Linux
 
-gpui never calls `feraille_shell_mac::` or `feraille_shell_win32::` directly. It
-calls `crate::platform_shell::X`. The alias is in
+gpui never calls `feraille_shell_mac::` or `feraille_shell_win32::` directly (or
+*shouldn't* — see the two stragglers in §2 and §5). It calls
+`crate::platform_shell::X`. The alias is in
 [crates/feraille-gpui/src/lib.rs](../../crates/feraille-gpui/src/lib.rs) and
-**today has only two arms**:
+**now has all three arms** (the Linux one landed with the stub scaffold):
 
 ```rust
 #[cfg(target_os = "macos")]
 pub use feraille_shell_mac as platform_shell;
 #[cfg(windows)]
 pub use feraille_shell_win32 as platform_shell;
-// ⟵ no Linux arm → `platform_shell` is undefined on Linux → gpui won't compile.
+#[cfg(target_os = "linux")]
+pub use feraille_shell_linux as platform_shell;
 ```
 
-**Step 1 of the whole port is fixing this.** Two ways:
+This was step one of the port and **it's done**. For the record, the wiring is:
 
-- **Recommended: create `feraille-shell-linux`.** Copy `feraille-shell-win32`
-  as the scaffold (it's the smaller, newer crate and its structure — real arm
-  under a target cfg, no-op arm otherwise — is exactly what you want). Strip the
-  Win32 bodies, keep the function signatures and the no-op fallbacks, then add:
+- [`crates/feraille-shell-linux`](../../crates/feraille-shell-linux) — the new
+  crate. Every function gpui reaches through the alias is present as a no-op /
+  empty stub, with the canonical macOS signature. `lib.rs`'s module doc is the
+  authoritative surface inventory; §6 below maps each entry to its real Linux
+  mechanism.
+- [`crates/feraille-gpui/Cargo.toml`](../../crates/feraille-gpui/Cargo.toml) —
+  `[target.'cfg(target_os = "linux")'.dependencies] feraille-shell-linux` so the
+  dep is pulled only on Linux (mirroring the mac/win32 target stanzas).
+- Root [`Cargo.toml`](../../Cargo.toml) — added to `members` and
+  `[workspace.dependencies]`.
 
-  ```rust
-  // crates/feraille-gpui/src/lib.rs
-  #[cfg(target_os = "linux")]
-  pub use feraille_shell_linux as platform_shell;
-  ```
-
-  ```toml
-  # crates/feraille-gpui/Cargo.toml
-  [target.'cfg(target_os = "linux")'.dependencies]
-  feraille-shell-linux.workspace = true
-  ```
-
-  Add the crate to the workspace `members` and `[workspace.dependencies]` in the
-  root [Cargo.toml](../../Cargo.toml), mirroring the other two shell crates.
-
-- **Quick hack to see pixels first:** temporarily alias the Linux arm to
-  `feraille_shell_win32` — its `cfg(not(windows))` arms are all no-ops, so it
-  links and stubs every surface. Useful to confirm GPUI renders before you've
-  written any shell code. Replace with the real crate immediately after; don't
-  commit the hack.
+The crate is **plain stubs, not yet cfg-split**: because no body does real work,
+a single set of bodies compiles on every host. When you write the first real
+impl, put it behind `#[cfg(target_os = "linux")]` and keep a
+`#[cfg(not(target_os = "linux"))]` no-op twin so the crate still compiles on
+Mac/Windows as a workspace member (the pattern win32/mac already use).
 
 **The shell-crate pattern** (mirror it in shell-linux): every function has a
 real arm under `cfg(target_os = "linux")` and a no-op arm under
@@ -272,7 +276,76 @@ macOS signatures.
 
 ---
 
-## 7. Day-one steps on a Linux machine
+## 7. What "Linux" means here, and where to do the work
+
+Two questions that come up before you've even cloned the repo: *which Linux do I
+target?* and *do I even need a Linux machine to start?*
+
+### "Linux" is not a distribution choice
+
+Unlike macOS (one Finder, one NSWorkspace) or Windows (one Win32 shell), there
+is **no single "Linux shell"** to port to — but the flip side is you **don't
+pick a distribution** at the source level either. The binary targets the Linux
+kernel ABI + glibc (or musl), and everything in §6 targets **freedesktop.org
+standards**, not a distro:
+
+- The *display server* — **Wayland vs X11** — is abstracted by GPUI (it supports
+  both). You don't choose; you support both.
+- The *desktop environment* — **GNOME vs KDE vs others** — is what actually
+  varies, and you abstract it via **D-Bus portals** (`org.freedesktop.portal.*`)
+  and freedesktop specs (Trash, MIME-apps, thumbnails, icon theme). That's the
+  whole point of §6: write to the spec, not to GNOME or KDE specifically.
+- A *distribution* (Ubuntu, Fedora, Arch, …) only matters as a **dev/test/CI
+  target** — which box you run and screenshot on, which `-dev` packages and
+  Vulkan drivers you install (§8). It is not a source-level fork. Pick **Ubuntu
+  LTS or Fedora** as the primary test target because they're what the Vulkan
+  drivers and `gpui` deps are best exercised against; nothing in the code
+  branches on it.
+
+So: target *freedesktop*, test on *a couple of mainstream distros*, support
+*both display servers*. There is no `cfg(distro = …)`.
+
+### You don't need to be on Linux to start
+
+A large fraction of the port is host-agnostic Rust that compiles on any
+machine. Three realistic dev hosts, in rough order of how much of the loop they
+cover:
+
+| Host | Build / `cargo check` / `cargo test` | Write shell-linux + fs-native arms | Run the GPU UI + screenshot |
+|---|---|---|---|
+| **Native Linux** (or a Linux VM) | ✅ | ✅ | ✅ (needs working Vulkan — §8) |
+| **WSL2 on Windows** | ✅ genuine Linux kernel | ✅ | ⚠️ via WSLg; hardware Vulkan (Dozen) is experimental — falls back to **lavapipe** software Vulkan, which is fine for `--screenshot` but not smooth interactive use |
+| **macOS** (this repo's home) | ⚠️ only the *workspace-member* check below; cannot cross-compile `feraille-gpui` to Linux (Apple→Linux cross with the gpui native/Vulkan deps is impractical) | ✅ | ❌ — no Linux runtime; use a VM/remote box |
+
+**What "the workspace-member check" means on a Mac:** `feraille-shell-linux` and
+the `cfg(target_os = "linux")` arms in `feraille-fs-native` are plain Rust with
+no Linux-only deps, so they compile *as workspace members* on macOS
+(`cargo check -p feraille-shell-linux` is green today). That lets you write and
+type-check the entire stub surface and much of the real shell logic from the
+Mac. What you **cannot** do from the Mac is build `feraille-gpui` *for*
+`target_os = "linux"` (its GPUI/Vulkan/Wayland deps don't cross-compile from
+Darwin) or run anything — so the moment you need to see pixels or exercise a
+real portal call, move to a Linux host.
+
+**Recommended split if you're starting from a Windows or Mac box:**
+
+1. Do the mechanical, type-checkable work anywhere: flesh out
+   `feraille-shell-linux`, add `fs-native` Linux arms, keep
+   `cargo check -p feraille-shell-linux` green.
+2. Stand up **one** real Linux environment for the run/screenshot loop — a
+   **WSL2** instance (easiest if you're on Windows; `vulkaninfo` to see whether
+   Dozen gives you a GPU, else set lavapipe for screenshots) or a **Linux VM /
+   cloud box** (best for smooth interactive testing). Push early so CI on the
+   other platforms stays honest (§9).
+
+> Naming caveat: CLAUDE.md's porting rule "WSL features are not macOS v1
+> features" is about WSL as a *feature to support in the old Ferail* (browsing
+> `\\wsl$` paths), **not** about using WSL2 as a build host for this port. The
+> two are unrelated; don't conflate them.
+
+---
+
+## 8. Day-one steps on a Linux machine
 
 Assumes a recent distro with a working graphical session. GPUI needs a
 **Vulkan** driver — this is the single most common first-run blocker.
@@ -342,7 +415,7 @@ cargo test --workspace
 
 ---
 
-## 8. Working on Linux without breaking Mac/Windows
+## 9. Working on Linux without breaking Mac/Windows
 
 There are now **three** platforms. macOS is the established one and Windows is
 mid-port; your job from Linux is to add the Linux side **without regressing the
@@ -390,7 +463,7 @@ design), and gpui code where you've added matching arms for the other targets.
 
 ---
 
-## 9. References
+## 10. References
 
 **Within the repo:**
 

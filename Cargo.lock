@@ -1926,6 +1926,7 @@ dependencies = [
  "feraille-disk-usage",
  "feraille-fs-native",
  "feraille-meta",
+ "feraille-shell-linux",
  "feraille-shell-mac",
  "feraille-shell-win32",
  "feraille-video-vlc",
@@ -1949,6 +1950,13 @@ dependencies = [
  "feraille-core",
  "rusqlite",
  "uuid",
+]
+
+[[package]]
+name = "feraille-shell-linux"
+version = "0.0.1"
+dependencies = [
+ "feraille-core",
 ]
 
 [[package]]

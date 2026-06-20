@@ -170,7 +170,10 @@ pub(super) fn error_copy(err: &EnumerationError) -> ErrorCopy {
                    opens Full Disk Access and copies Feraille's path so you can \
                    add it with the \"+\" button."
                 .to_string(),
-            link: Some(("Open Full Disk Access settings", FULL_DISK_ACCESS_SETTINGS_URL)),
+            link: Some((
+                "Open Full Disk Access settings",
+                FULL_DISK_ACCESS_SETTINGS_URL,
+            )),
         },
         EnumerationError::NotFound => ErrorCopy {
             title: "Folder not found",
@@ -224,10 +227,8 @@ mod middle_truncate_tests {
 
     #[test]
     fn long_path_keeps_basename() {
-        let out = middle_truncate_path(
-            "/Users/x/Library/Application Support/Feraille/file.txt",
-            30,
-        );
+        let out =
+            middle_truncate_path("/Users/x/Library/Application Support/Feraille/file.txt", 30);
         assert!(out.ends_with("/file.txt"), "basename preserved: {out}");
         assert!(out.contains('\u{2026}'), "ellipsis inserted: {out}");
     }

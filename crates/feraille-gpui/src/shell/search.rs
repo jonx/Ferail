@@ -11,18 +11,18 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use feraille_core::{EnumerationError, FileEntry};
-use feraille_fs_native::{NativeFs, DEFAULT_SEARCH_BATCH};
+use feraille_fs_native::{DEFAULT_SEARCH_BATCH, NativeFs};
 use gpui::Context;
 use std::path::Path;
 
+use super::Shell;
 use super::loading::LoadBatch;
 use super::tab::{SearchMode, TabId};
-use super::Shell;
 use crate::feature_settings::{SearchConfig, SearchEnginePref};
 use crate::tasks::TaskKind;
 
@@ -38,12 +38,10 @@ pub(super) enum SearchMsg {
 /// back to the full parent path when the hit isn't under `root` (e.g. a
 /// Spotlight path spelled differently than the canonical root).
 fn with_location(mut entry: FileEntry, path: &Path, root: &Path) -> FileEntry {
-    let location = path.parent().map(|parent| {
-        match parent.strip_prefix(root) {
-            Ok(rel) if rel.as_os_str().is_empty() => "·".to_string(),
-            Ok(rel) => rel.to_string_lossy().into_owned(),
-            Err(_) => parent.to_string_lossy().into_owned(),
-        }
+    let location = path.parent().map(|parent| match parent.strip_prefix(root) {
+        Ok(rel) if rel.as_os_str().is_empty() => "·".to_string(),
+        Ok(rel) => rel.to_string_lossy().into_owned(),
+        Err(_) => parent.to_string_lossy().into_owned(),
     });
     if let Some(location) = location {
         entry.display_description = location;
@@ -131,7 +129,7 @@ fn run_spotlight(
     cancel: &AtomicBool,
     tx: &async_channel::Sender<SearchMsg>,
 ) -> Option<EnumerationError> {
-    use feraille_shell_mac::{spotlight_search, SpotlightScope};
+    use feraille_shell_mac::{SpotlightScope, spotlight_search};
     let res = spotlight_search(
         SpotlightScope::Subtree(root.clone()),
         needle,
@@ -199,7 +197,11 @@ impl Shell {
         let root = self.tabs[idx].current_dir.clone();
         let config = SearchConfig::load();
         let use_spotlight = resolve_spotlight(config.engine);
-        let engine_label = if use_spotlight { "Spotlight" } else { "Subtree" };
+        let engine_label = if use_spotlight {
+            "Spotlight"
+        } else {
+            "Subtree"
+        };
 
         // Treat the search like a fresh load on this tab: bump the
         // generation, cancel any in-flight directory/search worker, and
@@ -227,11 +229,11 @@ impl Shell {
         let cancel = Arc::new(AtomicBool::new(false));
         self.tabs[idx].load_cancel = Some(cancel.clone());
         let label = format!("Searching \u{201c}{}\u{201d}", needle);
-        let task = self
-            .process
-            .tasks
-            .borrow_mut()
-            .begin_with_cancel(TaskKind::Search, label, cancel.clone());
+        let task = self.process.tasks.borrow_mut().begin_with_cancel(
+            TaskKind::Search,
+            label,
+            cancel.clone(),
+        );
         if let Some(previous) = self.tabs[idx].load_task.replace(task) {
             self.process.tasks.borrow_mut().end(previous);
         }

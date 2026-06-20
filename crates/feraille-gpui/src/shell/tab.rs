@@ -8,7 +8,7 @@ use gpui_component::input::InputState;
 
 use crate::file_list::FileListDelegate;
 use crate::grid::ViewMode;
-use crate::multi_table::TableState;
+use crate::multi_table::{TableState, VirtualListScrollHandle};
 use crate::tasks::TaskId;
 
 /// One entry in a tab's back/forward history. Spec §2.6 history
@@ -59,8 +59,113 @@ pub struct DupeViewMode {
     /// Confirmed duplicate groups seen so far.
     pub groups: usize,
     /// Reclaimable bytes = sum over groups of `bytes_each * (distinct
-    /// occupants - 1)` — extra on-disk copies, hard links excluded.
+    /// occupants - 1)` — extra on-disk copies, hard links and clones
+    /// excluded.
     pub wasted_bytes: u64,
+    /// Presentation resolved once at scan launch (from `DupeConfig`) and
+    /// cached here so the per-frame render never reads settings off disk.
+    /// Grouped → adjacent table rows; Panel → the dedicated card view.
+    pub presentation: crate::feature_settings::DupePresentation,
+}
+
+/// One member of a retained duplicate group (the backing model the
+/// dedicated panel renders and the group actions operate on). Mirrors
+/// the worker's `DupeMember`, minus the bits only the funnel needs.
+#[derive(Clone, Debug)]
+pub struct DupeGroupMember {
+    pub node: NodeId,
+    pub path: PathBuf,
+    /// Last-modified time (Unix seconds) — drives "keep newest".
+    pub mtime_unix: i64,
+    /// Shares an inode with an earlier member (hard link): reclaims
+    /// nothing.
+    pub is_hardlink: bool,
+    /// Shares physical storage with an earlier member via an APFS clone:
+    /// reclaims nothing.
+    pub is_clone: bool,
+}
+
+impl DupeGroupMember {
+    /// True when removing this member frees no space (hard link or clone
+    /// of an earlier member).
+    pub fn shares_storage(&self) -> bool {
+        self.is_hardlink || self.is_clone
+    }
+}
+
+/// A retained duplicate group: the panel's backing model. The grouped-
+/// rows presentation never builds these (it streams straight into the
+/// table); only [`DupePresentation::Panel`] populates and renders them.
+/// Kept on [`Tab`] (not in `DupeViewMode`, which is `.clone()`d every
+/// frame for the breadcrumb) so the per-frame breadcrumb path never
+/// copies the whole group list.
+#[derive(Clone, Debug)]
+pub struct DupeGroupView {
+    /// 1-based group number, matching the row tags.
+    pub group_no: usize,
+    /// BLAKE3 hex of the content (empty in paranoid mode).
+    pub full_hash: String,
+    /// Logical bytes of each copy.
+    pub bytes_each: u64,
+    pub members: Vec<DupeGroupMember>,
+    /// Card expand/collapse state in the panel.
+    pub expanded: bool,
+    /// User-picked keeper (per-row "keep this" radio). When `None` the
+    /// group-level actions fall back to a sensible default (newest for
+    /// keep-newest, first for select-all-but-one).
+    pub keeper: Option<NodeId>,
+}
+
+impl DupeGroupView {
+    /// Distinct on-disk occupants: members that own their storage.
+    pub fn distinct_occupants(&self) -> usize {
+        self.members.iter().filter(|m| !m.shares_storage()).count()
+    }
+
+    /// Reclaimable bytes if the group is reduced to a single copy:
+    /// `bytes_each * (distinct_occupants - 1)`. Hard links and clones
+    /// reclaim nothing and are already excluded from the occupant count.
+    pub fn reclaimable_bytes(&self) -> u64 {
+        let distinct = self.distinct_occupants() as u64;
+        self.bytes_each.saturating_mul(distinct.saturating_sub(1))
+    }
+
+    /// The newest member by mtime (ties broken by original order). The
+    /// keeper "keep newest" selects.
+    pub fn newest(&self) -> Option<NodeId> {
+        self.members
+            .iter()
+            .enumerate()
+            .max_by_key(|(i, m)| (m.mtime_unix, std::cmp::Reverse(*i)))
+            .map(|(_, m)| m.node)
+    }
+
+    /// Nodes to trash if `keeper` is the survivor: every other member.
+    pub fn victims_for_keeper(&self, keeper: NodeId) -> Vec<NodeId> {
+        self.members
+            .iter()
+            .filter(|m| m.node != keeper)
+            .map(|m| m.node)
+            .collect()
+    }
+
+    /// Victims for "keep newest": everything but the newest member.
+    pub fn victims_keep_newest(&self) -> Vec<NodeId> {
+        match self.newest() {
+            Some(keeper) => self.victims_for_keeper(keeper),
+            None => Vec::new(),
+        }
+    }
+
+    /// Victims for "select all but one": everything but the user-picked
+    /// keeper, or the first member when none is picked.
+    pub fn victims_all_but_one(&self) -> Vec<NodeId> {
+        let keeper = self.keeper.or_else(|| self.members.first().map(|m| m.node));
+        match keeper {
+            Some(keeper) => self.victims_for_keeper(keeper),
+            None => Vec::new(),
+        }
+    }
 }
 
 /// Process-local stable identifier for a tab. Minted from
@@ -171,6 +276,16 @@ pub struct Tab {
     /// `search_mode`: watcher reloads suppressed, breadcrumb shows the
     /// scan, cleared by `navigate` / clearing.
     pub dupe_mode: Option<DupeViewMode>,
+    /// Retained duplicate groups backing the dedicated panel
+    /// ([`DupePresentation::Panel`]). Empty in grouped-rows mode and
+    /// whenever `dupe_mode` is `None`. Populated alongside the table rows
+    /// in `apply_dupe_batch_in_tab`; the panel render borrows it without
+    /// copying.
+    pub dupe_groups: Vec<DupeGroupView>,
+    /// Scroll handle for the dedicated duplicate-card panel. Per-tab so
+    /// switching tabs preserves the result-list position, and so the
+    /// visible scrollbar can drive the virtual list.
+    pub dupe_panel_scroll: VirtualListScrollHandle,
     /// `Some(err)` when this tab's last enumerate returned an OS
     /// error (most commonly macOS TCC denial). Drives an empty-
     /// state in the file pane when the tab is active.
@@ -242,6 +357,8 @@ impl Tab {
             load_staging: None,
             search_mode: None,
             dupe_mode: None,
+            dupe_groups: Vec::new(),
+            dupe_panel_scroll: VirtualListScrollHandle::new(),
             last_error: None,
             pending_select_row: None,
             pending_select_rows: Vec::new(),
@@ -315,7 +432,11 @@ pub fn reorder_insert_index(from_idx: usize, to_pos: usize, len: usize) -> Optio
     // After removal, indices > from_idx shift down by one: a gap to
     // the RIGHT of the dragged tab maps to `to_pos - 1` in the
     // post-remove list; a gap to the left is unchanged.
-    Some(if from_idx < to_pos { to_pos - 1 } else { to_pos })
+    Some(if from_idx < to_pos {
+        to_pos - 1
+    } else {
+        to_pos
+    })
 }
 
 /// Map a drop ON a tab chip (rather than into a between-chip gap) to
@@ -329,6 +450,94 @@ pub fn chip_drop_gap_index(from_idx: usize, chip_idx: usize) -> usize {
         chip_idx + 1
     } else {
         chip_idx
+    }
+}
+
+#[cfg(test)]
+mod dupe_group_tests {
+    use super::{DupeGroupMember, DupeGroupView};
+    use feraille_core::NodeId;
+    use std::path::PathBuf;
+
+    fn member(id: u64, mtime: i64) -> DupeGroupMember {
+        DupeGroupMember {
+            node: NodeId::from(id),
+            path: PathBuf::from(format!("/f/{id}")),
+            mtime_unix: mtime,
+            is_hardlink: false,
+            is_clone: false,
+        }
+    }
+
+    fn group(members: Vec<DupeGroupMember>) -> DupeGroupView {
+        DupeGroupView {
+            group_no: 1,
+            full_hash: "deadbeef".into(),
+            bytes_each: 1000,
+            members,
+            expanded: true,
+            keeper: None,
+        }
+    }
+
+    #[test]
+    fn keep_newest_keeps_max_mtime_and_trashes_the_rest() {
+        let g = group(vec![member(1, 100), member(2, 300), member(3, 200)]);
+        assert_eq!(g.newest(), Some(NodeId::from(2)));
+        let victims = g.victims_keep_newest();
+        assert_eq!(victims, vec![NodeId::from(1), NodeId::from(3)]);
+    }
+
+    #[test]
+    fn keep_newest_breaks_mtime_ties_by_first_seen() {
+        // Two members share the newest mtime — keep the earlier-listed
+        // one so the choice is stable across runs.
+        let g = group(vec![member(1, 300), member(2, 300), member(3, 100)]);
+        assert_eq!(g.newest(), Some(NodeId::from(1)));
+    }
+
+    #[test]
+    fn all_but_one_defaults_to_first_then_honours_picked_keeper() {
+        let mut g = group(vec![member(1, 100), member(2, 300), member(3, 200)]);
+        // No keeper picked → first member survives.
+        assert_eq!(
+            g.victims_all_but_one(),
+            vec![NodeId::from(2), NodeId::from(3)]
+        );
+        // Pick member 3 as keeper → 1 and 2 are victims.
+        g.keeper = Some(NodeId::from(3));
+        assert_eq!(
+            g.victims_all_but_one(),
+            vec![NodeId::from(1), NodeId::from(2)]
+        );
+    }
+
+    #[test]
+    fn reclaimable_excludes_hard_links_and_clones() {
+        // 4 names, but #2 is a hard link and #4 is a clone of an
+        // earlier member → 2 distinct occupants → one copy's worth
+        // reclaimable.
+        let mut members = vec![
+            member(1, 100),
+            member(2, 100),
+            member(3, 100),
+            member(4, 100),
+        ];
+        members[1].is_hardlink = true;
+        members[3].is_clone = true;
+        let g = group(members);
+        assert_eq!(g.distinct_occupants(), 2);
+        assert_eq!(g.reclaimable_bytes(), 1000);
+    }
+
+    #[test]
+    fn single_occupant_group_reclaims_nothing() {
+        // Two names, both the same inode (hard link) → nothing to free.
+        let mut members = vec![member(1, 100), member(2, 100)];
+        members[1].is_hardlink = true;
+        let g = group(members);
+        assert_eq!(g.distinct_occupants(), 1);
+        assert_eq!(g.reclaimable_bytes(), 0);
     }
 }
 

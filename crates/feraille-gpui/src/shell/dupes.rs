@@ -10,29 +10,56 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use feraille_core::{EnumerationError, FileEntry};
-use feraille_fs_native::{DupeFact, DupeHashCache, DupeOpts, NativeFs, DEFAULT_DUPE_BATCH};
+use feraille_fs_native::{DEFAULT_DUPE_BATCH, DupeFact, DupeHashCache, DupeOpts, NativeFs};
 use gpui::Context;
 
-use super::tab::{DupeViewMode, TabId};
 use super::Shell;
+use super::tab::{DupeGroupMember, DupeGroupView, DupeViewMode, TabId};
 use crate::dupe_cache::DbHashCache;
 use crate::feature_settings::DupeConfig;
 use crate::tasks::TaskKind;
 
+/// A batch of confirmed groups, **fully built on the worker thread**:
+/// table rows, their paths, and the retained panel model, so the UI
+/// thread only appends — never stats a file (prime directive).
+#[derive(Default)]
+pub(super) struct DupeBatch {
+    /// Ready-to-append table rows.
+    pub entries: Vec<FileEntry>,
+    /// `NodeId → path` for the rows in `entries`.
+    pub paths: HashMap<feraille_core::NodeId, PathBuf>,
+    /// Retained group views for the panel (members keyed by row NodeId).
+    pub groups: Vec<DupeGroupView>,
+    /// Reclaimable bytes contributed by `groups` (incremental; the UI
+    /// just adds it to the running total, no O(n) re-sum per batch).
+    pub reclaimable: u64,
+}
+
+impl DupeBatch {
+    fn append(&mut self, other: DupeBatch) {
+        self.entries.extend(other.entries);
+        self.paths.extend(other.paths);
+        self.groups.extend(other.groups);
+        self.reclaimable = self.reclaimable.saturating_add(other.reclaimable);
+    }
+}
+
 pub(super) enum DupeMsg {
-    Batch(Vec<DupeFact>),
+    Batch(DupeBatch),
     Done(Option<EnumerationError>),
 }
 
-/// Worker body. Runs on the background executor; streams confirmed groups
-/// back over `tx`. `cache` (the DB-backed hash cache) is moved in so the
-/// rescan fast path works.
+/// Worker body. Runs on the background executor; builds each confirmed
+/// group's rows + panel model **here, off the UI thread**, and streams
+/// them back over `tx`. `cache` (the DB-backed hash cache) is moved in so
+/// the rescan fast path works. Group numbers are assigned by a running
+/// counter so the UI never has to.
 pub(super) fn run_dupe_load(
     fs: Arc<NativeFs>,
     opts: DupeOpts,
@@ -41,16 +68,58 @@ pub(super) fn run_dupe_load(
     cancel: Arc<AtomicBool>,
     tx: async_channel::Sender<DupeMsg>,
 ) {
-    let cache_ref: Option<&dyn DupeHashCache> =
-        cache.as_ref().map(|c| c as &dyn DupeHashCache);
+    let cache_ref: Option<&dyn DupeHashCache> = cache.as_ref().map(|c| c as &dyn DupeHashCache);
+    let mut group_no = 0usize;
     let error = fs.find_duplicates(
         &root,
         &opts,
         cache_ref,
         DEFAULT_DUPE_BATCH,
         &cancel,
-        |batch| {
-            if tx.send_blocking(DupeMsg::Batch(batch)).is_err() {
+        |facts| {
+            let mut batch = DupeBatch::default();
+            for fact in facts {
+                let DupeFact::Group {
+                    full_hash,
+                    bytes_each,
+                    members,
+                    ..
+                } = fact;
+                group_no += 1;
+                let mut gv_members = Vec::with_capacity(members.len());
+                for m in members {
+                    // file_entry_for_path is the only I/O here, and we're
+                    // on the worker thread — exactly where it belongs.
+                    let Some((entry, path)) =
+                        member_row(&fs, &m.path, &root, group_no, m.is_hardlink, m.is_clone)
+                    else {
+                        continue;
+                    };
+                    gv_members.push(DupeGroupMember {
+                        node: entry.id,
+                        path: path.clone(),
+                        mtime_unix: m.mtime_unix,
+                        is_hardlink: m.is_hardlink,
+                        is_clone: m.is_clone,
+                    });
+                    batch.paths.insert(entry.id, path);
+                    batch.entries.push(entry);
+                }
+                if gv_members.len() < 2 {
+                    continue; // a member vanished mid-scan; no longer a group
+                }
+                let view = DupeGroupView {
+                    group_no,
+                    full_hash,
+                    bytes_each,
+                    members: gv_members,
+                    expanded: true,
+                    keeper: None,
+                };
+                batch.reclaimable = batch.reclaimable.saturating_add(view.reclaimable_bytes());
+                batch.groups.push(view);
+            }
+            if !batch.entries.is_empty() && tx.send_blocking(DupeMsg::Batch(batch)).is_err() {
                 cancel.store(true, Ordering::Relaxed);
             }
         },
@@ -61,13 +130,15 @@ pub(super) fn run_dupe_load(
 
 /// Build a row for one duplicate group member. The Description column
 /// carries a group tag, the member's location relative to the scan root,
-/// and a hard-link note so a name that reclaims no space is obvious.
-fn member_row(
+/// and a storage-sharing note (hard link / clone) so a name that
+/// reclaims no space is obvious.
+pub(super) fn member_row(
     fs: &NativeFs,
     path: &Path,
     root: &Path,
     group_no: usize,
     is_hardlink: bool,
+    is_clone: bool,
 ) -> Option<(FileEntry, PathBuf)> {
     let mut entry = fs.file_entry_for_path(path)?;
     let location = path
@@ -78,12 +149,22 @@ fn member_row(
             Err(_) => parent.to_string_lossy().into_owned(),
         })
         .unwrap_or_default();
-    entry.display_description = if is_hardlink {
-        format!("#{group_no} \u{00B7} {location} \u{00B7} hard link")
-    } else {
-        format!("#{group_no} \u{00B7} {location}")
-    };
+    let note = storage_note(is_hardlink, is_clone);
+    entry.display_description = format!("#{group_no} \u{00B7} {location}{note}");
     Some((entry, path.to_path_buf()))
+}
+
+/// Trailing " · hard link" / " · clone — no extra space" note for a
+/// member that reclaims nothing, or empty for a storage-owning copy.
+/// Shared by the row description and the panel's member line.
+pub(super) fn storage_note(is_hardlink: bool, is_clone: bool) -> &'static str {
+    if is_hardlink {
+        " \u{00B7} hard link"
+    } else if is_clone {
+        " \u{00B7} clone \u{2014} no extra space"
+    } else {
+        ""
+    }
 }
 
 impl Shell {
@@ -94,7 +175,9 @@ impl Shell {
             return;
         };
         let root = self.tabs[idx].current_dir.clone();
-        let opts = DupeConfig::load().opts();
+        let config = DupeConfig::load();
+        let presentation = config.presentation;
+        let opts = config.opts();
 
         self.tabs[idx].load_generation = self.tabs[idx].load_generation.wrapping_add(1);
         let generation = self.tabs[idx].load_generation;
@@ -110,7 +193,10 @@ impl Shell {
             root: root.clone(),
             groups: 0,
             wasted_bytes: 0,
+            presentation,
         });
+        self.tabs[idx].dupe_groups.clear();
+        self.tabs[idx].dupe_panel_scroll = crate::multi_table::VirtualListScrollHandle::new();
         let table = self.tabs[idx].table.clone();
         table.update(cx, |state, cx| {
             state.delegate_mut().clear();
@@ -120,11 +206,11 @@ impl Shell {
         let cancel = Arc::new(AtomicBool::new(false));
         self.tabs[idx].load_cancel = Some(cancel.clone());
         let label = format!("Finding duplicates in {}", short_root(&root));
-        let task = self
-            .process
-            .tasks
-            .borrow_mut()
-            .begin_with_cancel(TaskKind::DuplicateScan, label, cancel.clone());
+        let task = self.process.tasks.borrow_mut().begin_with_cancel(
+            TaskKind::DuplicateScan,
+            label,
+            cancel.clone(),
+        );
         if let Some(previous) = self.tabs[idx].load_task.replace(task) {
             self.process.tasks.borrow_mut().end(previous);
         }
@@ -147,7 +233,22 @@ impl Shell {
 
         cx.spawn(async move |this, cx| {
             while let Ok(msg) = rx.recv().await {
-                let done = matches!(msg, DupeMsg::Done(_));
+                let mut batch: Option<DupeBatch> = None;
+                let mut done_error: Option<Option<EnumerationError>> = None;
+
+                absorb_dupe_msg(msg, &mut batch, &mut done_error);
+                while done_error.is_none() {
+                    match rx.try_recv() {
+                        Ok(msg) => absorb_dupe_msg(msg, &mut batch, &mut done_error),
+                        Err(async_channel::TryRecvError::Empty) => break,
+                        Err(async_channel::TryRecvError::Closed) => {
+                            done_error = Some(None);
+                            break;
+                        }
+                    }
+                }
+
+                let done = done_error.is_some();
                 let stale = this
                     .update(cx, |this, cx| {
                         let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) else {
@@ -156,7 +257,12 @@ impl Shell {
                         if this.tabs[idx].load_generation != generation {
                             return true;
                         }
-                        this.apply_dupe_msg_in_tab(idx, msg, cx);
+                        if let Some(batch) = batch {
+                            this.apply_dupe_batch_in_tab(idx, batch, cx);
+                        }
+                        if let Some(error) = done_error {
+                            this.apply_dupe_msg_in_tab(idx, DupeMsg::Done(error), cx);
+                        }
                         false
                     })
                     .unwrap_or(true);
@@ -170,82 +276,62 @@ impl Shell {
 
     fn apply_dupe_msg_in_tab(&mut self, idx: usize, msg: DupeMsg, cx: &mut Context<Self>) {
         match msg {
-            DupeMsg::Batch(facts) => self.apply_dupe_batch_in_tab(idx, facts, cx),
+            DupeMsg::Batch(batch) => self.apply_dupe_batch_in_tab(idx, batch, cx),
             DupeMsg::Done(_error) => {
                 if let Some(tab) = self.tabs.get_mut(idx) {
                     if let Some(id) = tab.load_task.take() {
                         self.process.tasks.borrow_mut().end(id);
                     }
                     tab.load_cancel = None;
+                    cx.notify();
                 }
             }
         }
     }
 
-    fn apply_dupe_batch_in_tab(
-        &mut self,
-        idx: usize,
-        facts: Vec<DupeFact>,
-        cx: &mut Context<Self>,
-    ) {
-        let root = match self.tabs.get(idx).and_then(|t| t.dupe_mode.as_ref()) {
-            Some(dm) => dm.root.clone(),
-            None => return,
-        };
-        let fs = self.process.fs.clone();
-        let mut entries: Vec<FileEntry> = Vec::new();
-        let mut paths: HashMap<feraille_core::NodeId, PathBuf> = HashMap::new();
-        for fact in facts {
-            let DupeFact::Group { bytes_each, members, distinct_occupants, .. } = fact;
-            // Bump group counters first so the per-row tag uses the
-            // group's 1-based number.
-            let group_no = {
-                let Some(dm) = self.tabs.get_mut(idx).and_then(|t| t.dupe_mode.as_mut()) else {
-                    return;
-                };
-                dm.groups += 1;
-                dm.wasted_bytes = dm
-                    .wasted_bytes
-                    .saturating_add(bytes_each.saturating_mul(distinct_occupants.saturating_sub(1) as u64));
-                dm.groups
-            };
-            // Tag a member as a hard link when its (dev,inode) already
-            // appeared in this group — those reclaim no space.
-            let mut seen_ids: Vec<(u64, u64)> = Vec::new();
-            for member in members {
-                let is_hardlink = match member.file_id {
-                    Some(id) => {
-                        let dup = seen_ids.contains(&id);
-                        if !dup {
-                            seen_ids.push(id);
-                        }
-                        dup
-                    }
-                    None => false,
-                };
-                if let Some((entry, path)) = member_row(&fs, &member.path, &root, group_no, is_hardlink)
-                {
-                    paths.insert(entry.id, path);
-                    entries.push(entry);
-                }
-            }
-        }
-        if entries.is_empty() {
+    /// Apply one worker-built batch. Pure data shuffling — the rows and
+    /// the panel model were already built off the UI thread, so this only
+    /// registers node ids, bumps the running totals, and appends.
+    fn apply_dupe_batch_in_tab(&mut self, idx: usize, batch: DupeBatch, cx: &mut Context<Self>) {
+        if batch.entries.is_empty() {
             return;
         }
-        for (id, path) in &paths {
+        let panel_mode = self
+            .tabs
+            .get(idx)
+            .and_then(|t| t.dupe_mode.as_ref())
+            .is_some_and(|dm| dm.presentation == crate::feature_settings::DupePresentation::Panel);
+        for (id, path) in &batch.paths {
             self.process
                 .node_store
                 .borrow_mut()
                 .get_or_create_path_with_id(path.clone(), *id);
         }
-        let heats: Vec<f32> = entries.iter().map(|e| self.ant_heat(e.id)).collect();
+        {
+            let Some(dm) = self.tabs.get_mut(idx).and_then(|t| t.dupe_mode.as_mut()) else {
+                return;
+            };
+            dm.groups += batch.groups.len();
+            dm.wasted_bytes = dm.wasted_bytes.saturating_add(batch.reclaimable);
+        }
         let Some(tab) = self.tabs.get_mut(idx) else {
+            return;
+        };
+        tab.dupe_groups.extend(batch.groups);
+        if panel_mode {
+            cx.notify();
+            return;
+        }
+
+        let heats: Vec<f32> = batch.entries.iter().map(|e| self.ant_heat(e.id)).collect();
+        let Some(tab) = self.tabs.get(idx) else {
             return;
         };
         let table = tab.table.clone();
         table.update(cx, |state, cx| {
-            state.delegate_mut().append_entries(entries, paths, heats);
+            state
+                .delegate_mut()
+                .append_entries(batch.entries, batch.paths, heats);
             state.refresh(cx);
         });
         self.refresh_file_list_favorited_in_tab(idx, cx);
@@ -254,6 +340,20 @@ impl Shell {
         // its row has streamed in — same as the directory load path.
         self.apply_pending_select_row_in_tab(idx, cx);
         cx.notify();
+    }
+}
+
+fn absorb_dupe_msg(
+    msg: DupeMsg,
+    batch: &mut Option<DupeBatch>,
+    done_error: &mut Option<Option<EnumerationError>>,
+) {
+    match msg {
+        DupeMsg::Batch(next) => match batch {
+            Some(acc) => acc.append(next),
+            None => *batch = Some(next),
+        },
+        DupeMsg::Done(error) => *done_error = Some(error),
     }
 }
 

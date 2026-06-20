@@ -47,17 +47,25 @@ pub mod tree;
 pub mod viewer;
 
 /// Platform shell abstraction. Resolves to `feraille_shell_mac` on
-/// macOS and `feraille_shell_win32` on Windows; both crates expose the
-/// same `pub fn` / type surface. Call sites in this crate go through
-/// `platform_shell::*` so a single cfg switch picks the active impl.
+/// macOS, `feraille_shell_win32` on Windows, and `feraille_shell_linux`
+/// on Linux; all three crates expose the same `pub fn` / type surface.
+/// Call sites in this crate go through `platform_shell::*` so a single
+/// cfg switch picks the active impl.
 ///
-/// New shell surfaces should land in **both** shell crates (mac with
-/// a real impl, win32 with at least a stub) so the alias keeps
-/// compiling on either target. The shell crates' own internal
-/// `cfg(not(target_os = "macos"))` / `cfg(not(windows))` arms exist
-/// purely so each crate compiles on the *other* host as a workspace
-/// member — they're not reached through this alias.
+/// New shell surfaces should land in **all three** shell crates (mac
+/// with a real impl, win32 and linux with at least a stub) so the alias
+/// keeps compiling on every target. The shell crates' own internal
+/// `cfg(not(target_os = "macos"))` / `cfg(not(windows))` /
+/// `cfg(not(target_os = "linux"))` arms exist purely so each crate
+/// compiles on the *other* hosts as a workspace member — they're not
+/// reached through this alias.
+///
+/// `feraille-shell-linux` is currently an all-stub scaffold; see
+/// `docs/features/linux-port.md` for the surface contract and the
+/// freedesktop/D-Bus/XDG mechanism each function maps to.
 #[cfg(target_os = "macos")]
 pub use feraille_shell_mac as platform_shell;
 #[cfg(windows)]
 pub use feraille_shell_win32 as platform_shell;
+#[cfg(target_os = "linux")]
+pub use feraille_shell_linux as platform_shell;

@@ -19,13 +19,26 @@ doesn't lie. The funnel itself (size → xxh3 partial → BLAKE3 full, paranoid
 byte-verify, dataless-skip, cancellation) and the `DupeHashCache` are
 unit-tested.
 
-**Honest scope — finding is solid; *managing* is still basic.** Results are
-adjacent grouped rows in a normal file-list tab, so you can preview, select,
-and delete via the usual actions — but there is **no bulk-management view yet**:
-no "keep newest, trash the rest", no select-all-but-one, no per-group actions.
-That, plus **APFS clone detection** + `clonefile` zero-copy remediation (only
-hard links are detected today), are the real follow-ups. Dedicated tools like
-Gemini still beat us on the *cleanup* UX; we match them on the *detection*.
+**Managing is shipped too.** Two presentations, chosen in Settings
+(`DupePresentation`):
+
+- **Grouped** — confirmed groups as adjacent rows in a normal file-list
+  tab; preview, select, and delete via the usual actions.
+- **Panel** (default) — a dedicated card view (one collapsible card per group) with
+  group-level cleanup: **keep-newest** (per group or "keep newest
+  everywhere"), **select-all-but-one** with a per-row "keep this" radio,
+  and **trash the marked set** through the standard quarantine-aware trash
+  flow. Selection rides the tab's existing selection set, so the panel and
+  the table address the same nodes. After a cleanup the retained model is
+  pruned and the reclaim summary recomputed.
+
+**APFS clone awareness (macOS).** Both hard links *and* `clonefile` clones
+are detected and excluded from the reclaimable figure (clones share storage
+via distinct inodes, so `(dev, inode)` alone misses them — we compare the
+physical block mapping with `fcntl(F_LOG2PHYS_EXT)`). The panel also offers
+**"Dedup → clones"**: replace a group's redundant copies with clones of the
+keeper, reclaiming the bytes without deleting any file (behind a confirm,
+macOS/APFS only).
 
 ## Target pipeline (the funnel)
 
@@ -66,6 +79,47 @@ BLAKE3/xxh3 run at multi-GB/s; the disk is the bottleneck. So:
 - **Run cool.** Schedule off the UI thread, back off during active interaction,
   honor cancellation between every stage.
 
+## Fast enumeration (future, per-platform speed note)
+
+Stage 1 (walk + bucket by size) is the part that scales with *file
+count*, not file *size* — on a cold cache over a large tree the
+`read_dir` + `symlink_metadata`-per-entry walk dominates wall-clock long
+before any hashing starts. Each platform exposes a bulk path that
+collapses the per-entry `stat` syscalls, and the biggest wins read the
+filesystem's own index directly:
+
+- **Windows — read the MFT / USN journal directly.** On NTFS every
+  file's name, size, timestamps, and `(volume, file-reference-number)`
+  identity live in the **Master File Table**. Reading it in bulk via
+  `DeviceIoControl(FSCTL_ENUM_USN_DATA)` against the volume handle (or
+  `FSCTL_GET_NTFS_FILE_RECORD` for raw records) enumerates *millions* of
+  files in seconds with **no per-file `stat`** — this is exactly how
+  Everything/`voidtools` and WizTree are instant where Explorer crawls.
+  Needs an elevated/volume handle and an NTFS volume; fall back to the
+  normal walk on FAT/exFAT/network shares. The USN record's
+  `FileReferenceNumber` is the Windows analogue of `(dev, inode)` for
+  hard-link collapsing. Hard links specifically need
+  `FindFirstFileNameW`/`OpenFileById` to resolve all names of a record.
+- **Linux — batch the directory read, defer the stat.** `getdents64`
+  already returns names in bulk; the size/identity stat is the cost.
+  `statx` with `AT_STATX_DONT_SYNC` avoids forcing network round-trips,
+  and `io_uring` can pipeline thousands of `statx` calls without a
+  syscall per file. Reading ext4 inode tables / the journal directly
+  (the MFT analogue) is possible but filesystem-specific and needs raw
+  device access — not worth it versus batched `statx` for v1.
+- **macOS — `getattrlistbulk`.** One syscall returns name + size +
+  `(dev, inode)` + flags for a whole directory batch, eliminating the
+  `symlink_metadata`-per-entry cost the current walker pays. This is the
+  Mac-safe bulk primitive (Spotlight's `mdfind` is the index analogue
+  but excludes unindexed volumes and can't see sizes reliably).
+
+All three keep the funnel identical downstream — they only make the
+candidate-gathering walk cheaper. The same speedup applies verbatim to
+[disk usage](../../crates/feraille-fs-native/src/disk_usage_scanner.rs),
+which shares the DFS. Sequenced as a deliberate follow-up: correctness
+and the cache come first, raw-index enumeration is a power-user speed
+lever once device/filesystem identity detection exists.
+
 ## Mac correctness the CLI tools mostly ignore
 
 - **Skip dataless / cloud placeholders.** Never download an iCloud file just to
@@ -89,14 +143,21 @@ like the disk-usage scanner — batched facts, `AtomicBool` cancel, throttled
 progress, host owns the thread:
 
 ```rust
+pub struct DupeMember {
+    pub node: NodeId,
+    pub path: PathBuf,
+    pub mtime_unix: i64,           // drives "keep newest"
+    pub file_id: Option<(u64, u64)>,
+    pub is_hardlink: bool,         // shares an inode — no extra bytes
+    pub is_clone: bool,            // APFS clone — distinct inode, shared blocks
+}
+
 pub enum DupeFact {
-    Candidate { node: NodeId, path: PathBuf, size: u64 },
-    GroupConfirmed {
-        full_hash: String,
-        members: Vec<NodeId>,
+    Group {
+        full_hash: String,         // empty in paranoid mode
         bytes_each: u64,
-        hardlinked: Vec<NodeId>,   // share an inode — no extra bytes
-        cloned: Vec<NodeId>,       // APFS clone — no extra bytes
+        members: Vec<DupeMember>,
+        distinct_occupants: usize, // members that own storage; reclaim = bytes_each * (this - 1)
     },
 }
 
@@ -105,23 +166,42 @@ impl NativeFs {
         &self,
         root: &Path,
         opts: &DupeOpts,            // paranoid, scan_cloud, follow_packages, min_size
+        cache: Option<&dyn DupeHashCache>,
+        batch_size: usize,
         cancel: &AtomicBool,
         on_batch: impl FnMut(Vec<DupeFact>),
         on_progress: impl FnMut(DupeStats),
     ) -> Option<EnumerationError>;
 }
+
+// Zero-copy remediation (macOS/APFS): unlink the victim, clonefile the keeper
+// into its path. Reclaims the bytes without losing the file.
+pub fn clone_dedup(keeper: &Path, victim: &Path) -> Result<(), String>;
 ```
+
+Per-member `is_hardlink` / `is_clone` flags (rather than separate id
+lists) are the single source of truth: the GPUI layer reads them straight
+onto the row note and the retained `DupeGroupView`, and `distinct_occupants`
+is just the count of members where neither flag is set.
 
 ## GPUI integration
 
-A `DupesState` mirroring
-[`DiskUsageState`](../../crates/feraille-gpui/src/disk_usage.rs): generation
-gate, `cancel`, `msg_queue`, drain timer, `TaskKind::DuplicateScan` via
-`begin_with_cancel`. Results render in a grouped, navigable view modeled on
-`DiskUsageTree`, with safe delete/move routed through the existing
-`feraille-shell-mac` file_ops + quarantine-aware deletion
-([FILE_OPS.md](FILE_OPS.md)). Wire the duplicate command into the menu /
-command palette.
+A scan is a per-tab results view, like search ([SEARCH.md](SEARCH.md)). The
+tab carries a `DupeViewMode` (`shell/tab.rs`: scan root, running group /
+reclaim counts, and the resolved `presentation` cached at launch so render
+never reads settings). `shell/dupes.rs` runs `find_duplicates` off the UI
+thread via `begin_with_cancel(TaskKind::DuplicateScan, …)`, cache-backed by
+`DbHashCache`, and streams confirmed groups into the tab's table — and, for
+the panel, into a retained `Vec<DupeGroupView>` (`Tab::dupe_groups`) that the
+selection helpers and group actions operate on. Generation-gated so a stale
+batch from a superseded scan is dropped.
+
+The dedicated card view lives in `shell/dupe_panel.rs`; `file_pane_body`
+swaps it in when `presentation == Panel`, independent of list/grid view
+mode. Cleanup actions route through the same quarantine-aware trash flow as
+`on_move_to_trash` ([FILE_OPS.md](FILE_OPS.md)); the panel owns the post-trash
+prune because a results tab's watcher reload is suppressed. `clone_dedup`
+(macOS) backs "Dedup → clones".
 
 ## Rules (invariant)
 
@@ -130,13 +210,20 @@ command palette.
 - Scans are cancellable at every stage; stale results are dropped by generation.
 - Progress is visible in the status bar / task panel.
 
-## Todo
+## Shipped
 
-- `feraille-core` hash module (`xxh3` partial + `blake3` full, paranoid compare).
-- `feraille-fs-native` funnel worker with size → partial → full stages.
-- Persistent hash cache wiring against the `files` table.
-- Hard-link + APFS clone detection (and, later, `clonefile` dedup remediation).
-- `DupesState` + grouped duplicate-view UI.
-- Safe delete/move actions.
-- Tests: funnel correctness, cache hit on rescan, hardlink/clone classification,
+- Funnel worker (size → xxh3 partial → blake3 full, paranoid byte-verify,
+  dataless-skip, cancellation) + `DbHashCache` rescan fast path.
+- Hard-link **and** APFS clone detection; both excluded from reclaim.
+- Grouped-rows view **and** the dedicated panel with group actions
+  (keep-newest, all-but-one, trash-marked) + macOS `clone_dedup` remediation.
+- Tests: funnel correctness, cache hit on rescan, hardlink/clone
+  classification + reclaim exclusion, keep-newest / all-but-one selection,
   cancellation, stale-result drop.
+
+## Follow-ups
+
+- Whole-bundle (`*.app`) comparison as a unit, not inner-file dupes.
+- APFS-volume gating for "Dedup → clones" (today it's macOS-gated and falls
+  back to a toast on non-APFS); per-physical-disk reader pool.
+- Raw-index fast enumeration (see "Fast enumeration" above).

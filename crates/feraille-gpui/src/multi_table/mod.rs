@@ -55,6 +55,7 @@ pub use data_table::*;
 pub use delegate::*;
 pub use state::*;
 pub use table::*;
+pub(crate) use virtual_list::{VirtualListScrollHandle, v_virtual_list};
 
 pub(crate) fn init(cx: &mut App) {
     data_table::init(cx);

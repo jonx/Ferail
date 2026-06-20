@@ -87,6 +87,10 @@ pub struct Args {
     /// Launch a duplicate-finder scan of the active tab's directory
     /// (docs/features/DUPLICATES.md). Verifies the duplicates tab.
     pub find_duplicates: bool,
+    /// Force the duplicate scan into the dedicated panel presentation
+    /// (`DupePresentation::Panel`) regardless of the saved setting, so the
+    /// card view can be captured headlessly. Implies `--find-duplicates`.
+    pub dupe_panel: bool,
     /// Show the preview pane (`preview_visible` defaults to off; the
     /// pane also auto-hides under the viewport-width threshold, so
     /// pair with `--width` ≥ 900 when capturing it).
@@ -183,9 +187,7 @@ pub fn parse_args() -> Args {
                     args.expand.push(PathBuf::from(p));
                 }
             }
-            "--view" => {
-                args.view = iter.next().map(|s| crate::grid::ViewMode::from_str(&s))
-            }
+            "--view" => args.view = iter.next().map(|s| crate::grid::ViewMode::from_str(&s)),
             "--select-row" => args.select_row = iter.next().and_then(|s| s.parse().ok()),
             "--select-name" => args.select_name = iter.next(),
             "--breadcrumb" => args.breadcrumb = iter.next(),
@@ -206,6 +208,10 @@ pub fn parse_args() -> Args {
             "--search" => args.search = true,
             "--search-subtree" => args.search_subtree = iter.next(),
             "--find-duplicates" => args.find_duplicates = true,
+            "--dupe-panel" => {
+                args.find_duplicates = true;
+                args.dupe_panel = true;
+            }
             "--preview" => args.preview = true,
             "--sort" => {
                 let raw = iter.next().unwrap_or_default();
@@ -439,7 +445,9 @@ pub fn run(args: Args) -> Result<()> {
                             });
                         }
                         let view = cx.new(|cx| {
-                            crate::viewer::ViewerWindow::new(playlist, 0, false, process, window, cx)
+                            crate::viewer::ViewerWindow::new(
+                                playlist, 0, false, process, window, cx,
+                            )
                         });
                         if viewer_adjust {
                             view.update(cx, |w, _| w.open_adjust_panel());
@@ -450,8 +458,14 @@ pub fn run(args: Args) -> Result<()> {
                         // for an N-item drag with placeholder tiles and
                         // render it against a neutral backdrop.
                         let count = n.max(1);
-                        let palette =
-                            [0x4f8cff_u32, 0xff8c42, 0x36c275, 0xc061ff, 0xffd23f, 0xff5d5d];
+                        let palette = [
+                            0x4f8cff_u32,
+                            0xff8c42,
+                            0x36c275,
+                            0xc061ff,
+                            0xffd23f,
+                            0xff5d5d,
+                        ];
                         let icons = (0..count.min(crate::file_list::GHOST_STACK_CAP))
                             .map(|i| placeholder_icon(palette[i % palette.len()]))
                             .collect();
@@ -526,10 +540,7 @@ pub fn run(args: Args) -> Result<()> {
 // implementations in place we can finally keep the screenshot window
 // hidden on every target.
 
-fn capture_window(
-    handle: &AnyWindowHandle,
-    cx: &mut AsyncApp,
-) -> Result<image::RgbaImage> {
+fn capture_window(handle: &AnyWindowHandle, cx: &mut AsyncApp) -> Result<image::RgbaImage> {
     cx.update_window(*handle, |_, window, _| window.render_to_image())
         .map_err(|e| anyhow::anyhow!("update_window failed: {e}"))?
         .map_err(|e| anyhow::anyhow!("render_to_image failed: {e}"))
@@ -551,6 +562,7 @@ struct ShellArgs {
     search: bool,
     search_subtree: Option<String>,
     find_duplicates: bool,
+    dupe_panel: bool,
     select_row: Option<usize>,
     select_name: Option<String>,
     select_rows: Vec<usize>,
@@ -587,6 +599,7 @@ impl From<&Args> for ShellArgs {
             search: a.search,
             search_subtree: a.search_subtree.clone(),
             find_duplicates: a.find_duplicates,
+            dupe_panel: a.dupe_panel,
             select_row: a.select_row,
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
@@ -716,9 +729,15 @@ impl ShellArgs {
             });
         }
         if self.find_duplicates {
+            let force_panel = self.dupe_panel;
             shell.update(cx, |s, cx| {
                 let tab_id = s.active_tab().id;
                 s.start_duplicate_scan(tab_id, cx);
+                if force_panel {
+                    if let Some(dm) = s.active_tab_mut().dupe_mode.as_mut() {
+                        dm.presentation = crate::feature_settings::DupePresentation::Panel;
+                    }
+                }
             });
         }
         if self.preview {
@@ -777,18 +796,19 @@ impl ShellArgs {
                         .await;
                     continue;
                 }
-                let _ = cx.update_window((*handle).into(), |_, window, cx| {
-                    match gpui::Keystroke::parse(k) {
-                        Ok(ks) => {
-                            window.dispatch_keystroke(ks, cx);
-                        }
-                        Err(e) => crate::log_warn!(90, "--keys: bad keystroke {k:?}: {e}"),
-                    }
-                });
+                let _ =
+                    cx.update_window(
+                        (*handle).into(),
+                        |_, window, cx| match gpui::Keystroke::parse(k) {
+                            Ok(ks) => {
+                                window.dispatch_keystroke(ks, cx);
+                            }
+                            Err(e) => crate::log_warn!(90, "--keys: bad keystroke {k:?}: {e}"),
+                        },
+                    );
             }
         }
-        if self.select_row.is_some() || self.select_name.is_some() || !self.select_rows.is_empty()
-        {
+        if self.select_row.is_some() || self.select_name.is_some() || !self.select_rows.is_empty() {
             // Selection flags resolve against the loaded entry list,
             // but `navigate` streams its enumeration — give the
             // batches (and the magic/quarantine prefetch they kick
@@ -888,8 +908,11 @@ impl ShellArgs {
                     flag,
                 );
                 reg.end(cancelled);
-                let failed =
-                    reg.begin(crate::tasks::TaskKind::FileOp, "Compress to archive.zip", false);
+                let failed = reg.begin(
+                    crate::tasks::TaskKind::FileOp,
+                    "Compress to archive.zip",
+                    false,
+                );
                 reg.end_failed(failed, "No space left on device");
                 drop(reg);
                 cx.notify();

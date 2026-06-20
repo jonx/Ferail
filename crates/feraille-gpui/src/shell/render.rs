@@ -1,5 +1,28 @@
 use super::*;
 
+/// Minimum width for rendered-markdown preview content, so its prose
+/// reads as a column instead of folding to slivers in the narrow preview
+/// pane. The box scrolls horizontally to reach overflow when the pane is
+/// narrower than this; a wider pane lets the content grow past it.
+const PREVIEW_MD_MIN_W: f32 = 520.0;
+
+/// Code/source preview: a `whitespace_nowrap` code block clips long lines
+/// but won't grow its container past the pane on its own, so the box has
+/// nothing to scroll toward. We give the content a definite width sized to
+/// the widest line — these tune that estimate. Width per column at the 9px
+/// mono used in the code block; slightly over the real ~5.4px advance so
+/// the last glyphs aren't clipped (a little slop on the right is fine,
+/// lost characters are not).
+const PREVIEW_CODE_CHAR_W: f32 = 5.8;
+/// A horizontal tab counts as this many columns when measuring the widest
+/// line (source is commonly tab-indented; 1 char would under-size it).
+const PREVIEW_CODE_TAB_COLS: usize = 4;
+/// Box + code-block horizontal padding added to the measured line width.
+const PREVIEW_CODE_PAD: f32 = 48.0;
+/// Upper bound on the sized width so a minified single-line file doesn't
+/// build a multi-thousand-pixel element (it clips past this — rare).
+const PREVIEW_CODE_MAX_W: f32 = 4000.0;
+
 /// Payload carried by a tab-strip drag (Phase D, spec §3.3
 /// "Reorder tab"). The same Render-as-its-own-preview shape
 /// `FavoriteDragPayload` uses — a chip following the cursor with the
@@ -78,11 +101,11 @@ fn tab_drop_gap(pos: usize, cx: &mut Context<Shell>) -> impl IntoElement {
         .drag_over::<TabDragPayload>(move |style, _payload, _window, _cx| {
             style.border_l_2().border_color(accent)
         })
-        .on_drop(cx.listener(
-            move |this, payload: &TabDragPayload, _window, cx| {
+        .on_drop(
+            cx.listener(move |this, payload: &TabDragPayload, _window, cx| {
                 this.reorder_tab(payload.id, pos, cx);
-            },
-        ))
+            }),
+        )
 }
 
 impl Shell {
@@ -166,6 +189,10 @@ impl Shell {
             self.favorites_section_collapsed,
             weak,
             self.process.icons.clone(),
+            self.focused_favorite,
+            self.favorites_focus.clone(),
+            self.fav_appear.clone(),
+            self.fav_pulse.clone(),
         ))
     }
 
@@ -324,7 +351,10 @@ impl Shell {
                     }
                     menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
                         .separator()
-                        .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealContextPath))
+                        .menu(
+                            feraille_core::commands::REVEAL_LABEL,
+                            Box::new(RevealContextPath),
+                        )
                         .menu("Copy Path", Box::new(CopyContextPath))
                 });
             // §5: a Locations entry that's also a user Favorite gets the
@@ -578,6 +608,14 @@ impl Shell {
             }
             return pane.into_any_element();
         }
+        // Dedicated duplicate panel takes over the pane when the scan was
+        // launched in Panel presentation — independent of list/grid view
+        // mode, like the grouped-rows view takes over the tab today.
+        if let Some(dm) = self.active_tab().dupe_mode.as_ref() {
+            if dm.presentation == crate::feature_settings::DupePresentation::Panel {
+                return self.dupe_panel_body(cx);
+            }
+        }
         match self.active_tab().view_mode {
             crate::grid::ViewMode::List => DataTable::new(&self.active_tab().table)
                 .bordered(false)
@@ -628,6 +666,10 @@ impl Shell {
         let pill_fg = gpui::white();
         let sel_bg = blue.opacity(0.14);
         let sel_border = blue.opacity(0.55);
+        // Favorite-star tint (mirrors the list row's `theme.primary`)
+        // and the gate for the crowding-prone adornments at small sizes.
+        let star_color = theme.primary;
+        let adorn_visible = icon_px >= crate::grid::ADORN_MIN_ICON;
 
         let weak = cx.weak_entity();
         let scroll = self.active_tab().grid_scroll.clone();
@@ -667,6 +709,36 @@ impl Shell {
                     let is_lead = del.lead == Some(id);
                     let quarantined = entry.is_quarantined;
                     let name = entry.name.clone();
+                    let tooltip_name: SharedString = name.clone().into();
+
+                    // Per-cell adornments, read from the same parallel
+                    // delegate vecs the list row consumes (see
+                    // `file_list::render_td`). All render-only lookups.
+                    let cell_is_dir = matches!(entry.kind, EntryKind::Directory);
+                    // Ant Trail heat tint — directories only, warm orange
+                    // scaled by visit heat (matches file_list.rs heat tint).
+                    let heat = del.heats.get(i).copied().unwrap_or(0.0);
+                    // Cut (Cmd+X) cells dim until the move pastes.
+                    let is_cut = del.cut_marker.borrow().iter().any(|c| c == &path);
+                    // §5 favorite star — folder cells whose path is in the
+                    // favorites index. Star is crowding-prone, so gated.
+                    let show_star = adorn_visible
+                        && cell_is_dir
+                        && del.is_favorited.get(i).copied().unwrap_or(false);
+                    // Finder colour tags → coloured dots, capped at 7.
+                    let cell_tags: SmallVec<[gpui::Rgba; 7]> = if adorn_visible {
+                        del.tags
+                            .get(i)
+                            .map(|ts| {
+                                ts.iter()
+                                    .take(7)
+                                    .map(|c| crate::file_list::tag_color_rgba(*c))
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    } else {
+                        SmallVec::new()
+                    };
 
                     // Thumbnail when ready + enabled, else type icon.
                     let image: gpui::AnyElement = match entry.kind {
@@ -676,13 +748,12 @@ impl Shell {
                             // (Resolve the borrow before the fallback so we
                             // don't hold `borrow()` across `borrow_mut()`.)
                             let cached = icons.borrow().get_folder_icon_sized(&path, icon_bucket);
-                            let ic = cached
-                                .unwrap_or_else(|| icons.borrow_mut().icon_for(entry, &path));
+                            let ic =
+                                cached.unwrap_or_else(|| icons.borrow_mut().icon_for(entry, &path));
                             img(ic).max_w(px(slot)).max_h(px(slot)).into_any_element()
                         }
                         EntryKind::File | EntryKind::Symlink => {
-                            let thumb = if show_thumbs
-                                && crate::thumbnails::is_thumbnailable(entry)
+                            let thumb = if show_thumbs && crate::thumbnails::is_thumbnailable(entry)
                             {
                                 thumbs.borrow().get(&path, bucket)
                             } else {
@@ -770,6 +841,20 @@ impl Shell {
                         .p_1()
                         .rounded(px(6.0))
                         .cursor_pointer()
+                        // Cut cells dim until the move pastes (mirrors the
+                        // dimmed list row).
+                        .when(is_cut, |d| d.opacity(0.45))
+                        // Ant Trail heat tint behind unselected directory
+                        // cells (selection bg wins when both apply). Stable
+                        // warm hue across themes — same recipe as the row.
+                        .when(!selected && cell_is_dir && heat > 0.0, |d| {
+                            d.bg(gpui::Rgba {
+                                r: 1.0,
+                                g: 0.55,
+                                b: 0.26,
+                                a: (heat * 0.30).clamp(0.0, 1.0),
+                            })
+                        })
                         // Keep border width constant (border_1 everywhere) so
                         // selection never nudges cell layout by a pixel.
                         .when(selected, |d| d.bg(sel_bg))
@@ -790,7 +875,42 @@ impl Shell {
                                 .items_center()
                                 .justify_center()
                                 .child(image)
-                                .when(quarantined, crate::file_list::badge_overlay),
+                                .when(quarantined, crate::file_list::badge_overlay)
+                                // Favorite star, top-left corner of the slot
+                                // (quarantine badge owns top-right). Overlaid
+                                // rather than inline so it never reflows the
+                                // cell; gated to larger icons by `show_star`.
+                                .when(show_star, |d| {
+                                    d.child(
+                                        svg()
+                                            .absolute()
+                                            .top(px(-1.0))
+                                            .left(px(-1.0))
+                                            .w(px(13.0))
+                                            .h(px(13.0))
+                                            .path("icons/nav/star.svg")
+                                            .text_color(star_color),
+                                    )
+                                })
+                                // Finder tag dots, centered along the slot's
+                                // bottom edge — also overlaid for layout
+                                // stability. Empty (and skipped) below the
+                                // adornment size threshold.
+                                .when(!cell_tags.is_empty(), |d| {
+                                    let mut dots = h_flex()
+                                        .absolute()
+                                        .bottom(px(2.0))
+                                        .left_0()
+                                        .right_0()
+                                        .justify_center()
+                                        .gap_1();
+                                    for color in cell_tags.iter() {
+                                        dots = dots.child(
+                                            div().w(px(6.0)).h(px(6.0)).rounded_full().bg(*color),
+                                        );
+                                    }
+                                    d.child(dots)
+                                }),
                         )
                         .child(
                             div()
@@ -805,6 +925,12 @@ impl Shell {
                                 .when(!selected, |d| d.text_color(muted))
                                 .child(SharedString::from(name)),
                         )
+                        // The label is `.truncate()`d, so surface the full
+                        // name on hover (mirrors the list row's tooltip).
+                        .tooltip(move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(tooltip_name.clone())
+                                .build(window, cx)
+                        })
                         .on_click(move |ev: &ClickEvent, window, app| {
                             let mods = ev.modifiers();
                             let dbl = ev.click_count() >= 2;
@@ -1092,8 +1218,8 @@ impl Shell {
                         style.border_l_2().border_color(accent)
                     }
                 })
-                .on_drop(cx.listener(
-                    move |this, payload: &TabDragPayload, _window, cx| {
+                .on_drop(
+                    cx.listener(move |this, payload: &TabDragPayload, _window, cx| {
                         // Resolve BOTH ends by TabId at drop time —
                         // same staleness rule as click/close.
                         let (Some(from_idx), Some(chip_idx)) = (
@@ -1104,8 +1230,8 @@ impl Shell {
                         };
                         let gap = tab::chip_drop_gap_index(from_idx, chip_idx);
                         this.reorder_tab(payload.id, gap, cx);
-                    },
-                ))
+                    }),
+                )
                 // Files dropped on a tab chip transfer into THAT tab's
                 // folder (resolved by TabId at drop), so you can move or
                 // copy into a background tab without switching to it.
@@ -1141,9 +1267,7 @@ impl Shell {
                         // is by TabId, not the captured `idx`, because
                         // a drag-reorder may have shifted positions
                         // since this listener was constructed.
-                        let Some(target_idx) =
-                            this.tabs.iter().position(|t| t.id == tab_id)
-                        else {
+                        let Some(target_idx) = this.tabs.iter().position(|t| t.id == tab_id) else {
                             return;
                         };
                         if this.tabs.len() <= 1 {
@@ -1278,17 +1402,15 @@ impl Shell {
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
-                        .child(
-                            SidebarToggleButton::new()
-                                .collapsed(collapsed)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.sidebar_collapsed = !this.sidebar_collapsed;
-                                    let mut s = app_state::load();
-                                    s.sidebar_collapsed = Some(this.sidebar_collapsed);
-                                    app_state::save(&s);
-                                    cx.notify();
-                                })),
-                        ),
+                        .child(SidebarToggleButton::new().collapsed(collapsed).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.sidebar_collapsed = !this.sidebar_collapsed;
+                                let mut s = app_state::load();
+                                s.sidebar_collapsed = Some(this.sidebar_collapsed);
+                                app_state::save(&s);
+                                cx.notify();
+                            }),
+                        )),
                 )
                 .child(
                     div()
@@ -1371,25 +1493,25 @@ impl Shell {
                                 .dropdown_menu(move |menu, _window, _cx| {
                                     menu.action_context(sort_menu_focus.clone())
                                         .menu_with_check(
-                                        "Name",
-                                        sort_col == Some(SortColumn::Name),
-                                        Box::new(SortByName),
-                                    )
-                                    .menu_with_check(
-                                        "Size",
-                                        sort_col == Some(SortColumn::Size),
-                                        Box::new(SortBySize),
-                                    )
-                                    .menu_with_check(
-                                        "Kind",
-                                        sort_col == Some(SortColumn::Format),
-                                        Box::new(SortByKind),
-                                    )
-                                    .menu_with_check(
-                                        "Date Modified",
-                                        sort_col == Some(SortColumn::Modified),
-                                        Box::new(SortByModified),
-                                    )
+                                            "Name",
+                                            sort_col == Some(SortColumn::Name),
+                                            Box::new(SortByName),
+                                        )
+                                        .menu_with_check(
+                                            "Size",
+                                            sort_col == Some(SortColumn::Size),
+                                            Box::new(SortBySize),
+                                        )
+                                        .menu_with_check(
+                                            "Kind",
+                                            sort_col == Some(SortColumn::Format),
+                                            Box::new(SortByKind),
+                                        )
+                                        .menu_with_check(
+                                            "Date Modified",
+                                            sort_col == Some(SortColumn::Modified),
+                                            Box::new(SortByModified),
+                                        )
                                 }),
                         ),
                 )
@@ -1515,15 +1637,15 @@ impl Shell {
                                             show_hidden,
                                             Box::new(ToggleHidden),
                                         )
-                                    .separator()
-                                    .menu("Get Info", Box::new(GetInfo))
-                                    .menu("Open Viewer", Box::new(OpenViewer))
-                                    .menu("Disk Usage\u{2026}", Box::new(OpenDiskUsage))
-                                    .menu("Find Duplicates\u{2026}", Box::new(FindDuplicates))
-                                    .separator()
-                                    .menu("Copy File List", Box::new(CopyFileList))
-                                    .separator()
-                                    .menu("Empty Trash\u{2026}", Box::new(EmptyTrash))
+                                        .separator()
+                                        .menu("Get Info", Box::new(GetInfo))
+                                        .menu("Open Viewer", Box::new(OpenViewer))
+                                        .menu("Disk Usage\u{2026}", Box::new(OpenDiskUsage))
+                                        .menu("Find Duplicates\u{2026}", Box::new(FindDuplicates))
+                                        .separator()
+                                        .menu("Copy File List", Box::new(CopyFileList))
+                                        .separator()
+                                        .menu("Empty Trash\u{2026}", Box::new(EmptyTrash))
                                 }),
                         ),
                 ),
@@ -1549,6 +1671,48 @@ impl Shell {
                 p.push(&entry.name);
                 p
             })
+    }
+
+    /// Wheel scroll-chaining for the inline text/code box in the preview
+    /// pane. The box is a nested scroll inside `preview_scroll`, bounded to
+    /// `max_h(280)` on purpose so a long file doesn't bury the Get Info
+    /// details below it. Without chaining the wheel drives both scrolls at
+    /// once; we want the box to consume the delta and only spill the
+    /// remainder into the outer pane.
+    ///
+    /// `overflow_scroll`'s built-in handler runs just before this one (in the
+    /// same bubble pass) and has already added the full wheel delta to
+    /// `preview_text_scroll`, unclamped — so `offset()` now sits *past* the
+    /// top (positive) or bottom (below `-max_offset`) by exactly the part the
+    /// box couldn't use. We forward that residual to `preview_scroll` and
+    /// `stop_propagation` so the outer pane's own handler — which would
+    /// otherwise apply the *whole* delta and double-scroll — never fires.
+    ///
+    /// A short file (box not scrollable, `max_offset == 0`) spills the entire
+    /// delta straight through, so its box never traps the wheel.
+    fn on_preview_text_scroll(
+        &mut self,
+        _: &ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let off = self.preview_text_scroll.offset().y;
+        let max = self.preview_text_scroll.max_offset().y;
+        let residual = if off > px(0.0) {
+            off // overshot the top
+        } else if off < -max {
+            off + max // overshot the bottom
+        } else {
+            px(0.0) // the box absorbed the whole delta
+        };
+        if residual != px(0.0) {
+            let cur = self.preview_scroll.offset();
+            let max_out = self.preview_scroll.max_offset().y;
+            let y = (cur.y + residual).clamp(-max_out, px(0.0));
+            self.preview_scroll.set_offset(point(cur.x, y));
+            cx.notify();
+        }
+        cx.stop_propagation();
     }
 
     /// Build the preview pane on the right of the file list. Shows
@@ -1588,10 +1752,13 @@ impl Shell {
         // Scroll position carries across renders (the body scrolls
         // when the window is shorter than the metadata stack), but a
         // different file starts back at the top.
-        let selected_path = selected.as_ref().map(|entry| self.resolve_preview_path(entry, cx));
+        let selected_path = selected
+            .as_ref()
+            .map(|entry| self.resolve_preview_path(entry, cx));
         if self.preview_scroll_path != selected_path {
             self.preview_scroll_path = selected_path.clone();
             self.preview_scroll.set_offset(gpui::Point::default());
+            self.preview_text_scroll.set_offset(gpui::Point::default());
         }
 
         let header = div()
@@ -1673,11 +1840,21 @@ impl Shell {
                     // vertical so a long file doesn't push the Get Info
                     // details far down the pane, horizontal so no-wrap code
                     // lines stay readable.
+                    //
+                    // Wheel scroll-chaining: `overflow_scroll`'s own handler
+                    // applies the delta to `preview_text_scroll` first; the
+                    // `on_scroll_wheel` below then forwards only what spilled
+                    // past the box's top/bottom to the outer `preview_scroll`,
+                    // so a long file scrolls the box, then reveals Get Info —
+                    // not both at once. `track_scroll` is what makes the box's
+                    // offset readable for that math.
                     let block = div()
                         .id(("preview-text", entry.id.as_raw() as usize))
                         .w_full()
                         .max_h(px(280.0))
                         .overflow_scroll()
+                        .track_scroll(&self.preview_text_scroll)
+                        .on_scroll_wheel(cx.listener(Self::on_preview_text_scroll))
                         .p_2()
                         .rounded(cx.theme().radius)
                         .bg(cx.theme().secondary.opacity(0.5))
@@ -1705,14 +1882,60 @@ impl Shell {
                         // A distinct id per file gives each a clean TextView
                         // at the cost of re-parsing on file switch (cheap —
                         // the worker caps content to 500 lines, off-thread).
-                        block.child(
-                            gpui_component::text::TextView::markdown(
-                                ("preview-textview", entry.id.as_raw() as usize),
-                                SharedString::from(md),
-                            )
-                            .style(style)
-                            .selectable(true),
+                        let view = gpui_component::text::TextView::markdown(
+                            ("preview-textview", entry.id.as_raw() as usize),
+                            SharedString::from(md),
                         )
+                        .style(style)
+                        .selectable(true);
+                        // Neither preview kind scrolls horizontally on its own
+                        // in the narrow pane, so we give the content a definite
+                        // width wider than the box and let the box's
+                        // `overflow_scroll` reach the rest. `w_full` keeps a
+                        // short file filling the pane rather than sitting in an
+                        // over-wide box.
+                        //
+                        //  - Rendered markdown (`.md`) wraps its prose to the
+                        //    container width (gpui-component forces
+                        //    `whitespace_normal` on paragraphs), folding every
+                        //    sentence into a sliver. A fixed reading column
+                        //    (PREVIEW_MD_MIN_W) reads well and scrolls when the
+                        //    pane is narrower.
+                        //  - Code blocks are `whitespace_nowrap`; they clip
+                        //    long lines but don't grow their container, so the
+                        //    box has nothing to scroll toward. Size to the
+                        //    widest line (estimated from its column count) so
+                        //    the box can scroll the full line into view.
+                        let is_markdown = matches!(
+                            std::path::Path::new(&entry.name)
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .map(|e| e.to_ascii_lowercase())
+                                .as_deref(),
+                            Some("md" | "markdown" | "mdx")
+                        );
+                        let min_w = if is_markdown {
+                            PREVIEW_MD_MIN_W
+                        } else {
+                            let cols = text
+                                .lines()
+                                .map(|line| {
+                                    line.chars()
+                                        .map(|c| {
+                                            if c == '\t' {
+                                                PREVIEW_CODE_TAB_COLS
+                                            } else {
+                                                1
+                                            }
+                                        })
+                                        .sum::<usize>()
+                                })
+                                .max()
+                                .unwrap_or(0);
+                            (cols as f32 * PREVIEW_CODE_CHAR_W + PREVIEW_CODE_PAD)
+                                .min(PREVIEW_CODE_MAX_W)
+                        };
+                        block.child(div().w_full().min_w(px(min_w)).child(view))
                     };
                     col = col.child(block);
                 } else if let Some(img) = thumb_img {
@@ -1785,8 +2008,10 @@ impl Shell {
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(cx.theme().foreground);
                 let name_header = if feraille_core::name_hazards::has_hazards(&entry.name) {
-                    name_header
-                        .child(crate::entry_info::name_hazard_element(&entry.name, "preview-name"))
+                    name_header.child(crate::entry_info::name_hazard_element(
+                        &entry.name,
+                        "preview-name",
+                    ))
                 } else {
                     let name_for_tooltip = entry.name.clone();
                     name_header
@@ -1836,11 +2061,7 @@ impl Shell {
                                          downloaded-from record",
                                     )
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.on_clear_quarantine(
-                                            &ClearQuarantine,
-                                            window,
-                                            cx,
-                                        );
+                                        this.on_clear_quarantine(&ClearQuarantine, window, cx);
                                     })),
                             ),
                     );
@@ -1852,19 +2073,19 @@ impl Shell {
                         let mut has_rows = false;
                         if let Some(src) = q.where_from.first() {
                             prov = prov.child(
-                                DescriptionItem::new("Source")
-                                    .value(truncated_url_value("prov-source", src, entry.id)),
+                                DescriptionItem::new("Source").value(truncated_url_value(
+                                    "prov-source",
+                                    src,
+                                    entry.id,
+                                )),
                             );
                             has_rows = true;
                         }
                         if let Some(referrer) = q.where_from.get(1) {
-                            prov = prov.child(
-                                DescriptionItem::new("Referrer").value(truncated_url_value(
-                                    "prov-referrer",
-                                    referrer,
-                                    entry.id,
-                                )),
-                            );
+                            prov =
+                                prov.child(DescriptionItem::new("Referrer").value(
+                                    truncated_url_value("prov-referrer", referrer, entry.id),
+                                ));
                             has_rows = true;
                         }
                         if q.agent.is_some() || q.downloaded_iso.is_some() {
@@ -2216,7 +2437,10 @@ impl Shell {
                     };
                     menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
                         .separator()
-                        .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealContextPath))
+                        .menu(
+                            feraille_core::commands::REVEAL_LABEL,
+                            Box::new(RevealContextPath),
+                        )
                         .menu("Copy Path", Box::new(CopyContextPath))
                         .separator()
                         .menu(favorite_label, Box::new(ToggleFavoriteForTarget))
@@ -2414,23 +2638,21 @@ impl Render for Shell {
         // being over the popover, moves off. Click-outside dismissal
         // (the shell's `on_mouse_down`) still applies for the
         // never-hovered case.
-        let task_panel = crate::task_panel::render_if_open(
-            self.task_panel_open,
-            &self.process.tasks,
-            cx,
-        )
-        .map(|panel| {
-            // `.id(...)` makes the popover stateful so `on_hover` is
-            // available (it lives on StatefulInteractiveElement).
-            panel
-                .id("task-panel-popover")
-                .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
-                    if !*hovered {
-                        this.task_panel_open = false;
-                        cx.notify();
-                    }
-                }))
-        });
+        let task_panel =
+            crate::task_panel::render_if_open(self.task_panel_open, &self.process.tasks, cx).map(
+                |panel| {
+                    // `.id(...)` makes the popover stateful so `on_hover` is
+                    // available (it lives on StatefulInteractiveElement).
+                    panel.id("task-panel-popover").on_hover(cx.listener(
+                        |this, hovered: &bool, _window, cx| {
+                            if !*hovered {
+                                this.task_panel_open = false;
+                                cx.notify();
+                            }
+                        },
+                    ))
+                },
+            );
 
         div()
             .key_context(SHELL_CONTEXT)
@@ -2551,6 +2773,11 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_move_favorite_up))
             .on_action(cx.listener(Self::on_move_favorite_down))
             .on_action(cx.listener(Self::on_rename_favorite))
+            .on_action(cx.listener(Self::on_locate_favorite))
+            .on_action(cx.listener(Self::on_focus_favorite_up))
+            .on_action(cx.listener(Self::on_focus_favorite_down))
+            .on_action(cx.listener(Self::on_activate_favorite))
+            .on_action(cx.listener(Self::on_delete_favorite))
             .on_action(cx.listener(Self::on_reset_favorite_name))
             .on_action(cx.listener(Self::on_reset_favorite_icon))
             .on_action(cx.listener(Self::on_set_favorite_icon_star))
@@ -2651,28 +2878,62 @@ impl Render for Shell {
                 // implicitly because we squeeze the range to a fixed
                 // size in that mode.
                 let sidebar_width_px = if self.sidebar_collapsed {
-                    px(48.0)
+                    px(SIDEBAR_COLLAPSED_WIDTH)
                 } else {
                     px(self.sidebar_width)
                 };
                 let preview_width_px = px(self.preview_width);
                 let weak = cx.weak_entity();
+                let sidebar_collapsed = self.sidebar_collapsed;
+                let sidebar_width_before = if sidebar_collapsed {
+                    SIDEBAR_COLLAPSED_WIDTH
+                } else {
+                    self.sidebar_width
+                        .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
+                };
+                let preview_width_before = self
+                    .preview_width
+                    .clamp(PREVIEW_MIN_WIDTH, PREVIEW_MAX_WIDTH);
                 let splitter = h_resizable("shell-splitter")
                     .with_state(&self.splitter_state)
-                    .on_resize(move |state, _window, cx| {
-                        // Callback fires per drag tick. Read sizes
-                        // out of the ResizableState, write them back
-                        // into Shell so the next render re-applies
-                        // them, and push to disk through the
-                        // throttled writer.
-                        let sizes = state.read(cx).sizes().clone();
+                    .on_resize(move |state, window, cx| {
+                        // Callback fires when a splitter drag ends. Read
+                        // sizes out of the ResizableState, write them back
+                        // into Shell so the next render re-applies them,
+                        // and push to disk through the throttled writer.
+                        let mut sizes = state.read(cx).sizes().clone();
+                        let preview_changed = preview_visible
+                            && sizes.len() >= 3
+                            && (f32::from(sizes[2]) - preview_width_before).abs() > 0.5;
+                        if preview_changed && !sidebar_collapsed && !sizes.is_empty() {
+                            let sw = f32::from(sizes[0]);
+                            if (sw - sidebar_width_before).abs() > 0.5 {
+                                // Dragging the preview handle left can push the center pane
+                                // into its minimum and make the resizable group borrow width
+                                // from the sidebar. Restore the sidebar in the splitter state
+                                // so the preview drag can't corrupt the left navigation width.
+                                state.update(cx, |state, cx| {
+                                    state.resize_panel(0, px(sidebar_width_before), window, cx)
+                                });
+                                sizes = state.read(cx).sizes().clone();
+                            }
+                        }
                         if let Some(s) = weak.upgrade() {
                             s.update(cx, |this, cx| {
                                 if let Some(sw) = sizes.first() {
-                                    this.sidebar_width = f32::from(*sw);
+                                    let sw = f32::from(*sw);
+                                    if sidebar_collapsed {
+                                        this.sidebar_width = sidebar_width_before;
+                                    } else if !preview_changed {
+                                        this.sidebar_width =
+                                            sw.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+                                    } else {
+                                        this.sidebar_width = sidebar_width_before;
+                                    }
                                 }
                                 if preview_visible && sizes.len() >= 3 {
-                                    this.preview_width = f32::from(sizes[2]);
+                                    this.preview_width = f32::from(sizes[2])
+                                        .clamp(PREVIEW_MIN_WIDTH, PREVIEW_MAX_WIDTH);
                                 }
                                 this.schedule_splitter_save(cx);
                             });
@@ -2686,27 +2947,31 @@ impl Render for Shell {
                             // reopen it accidentally; the TitleBar
                             // toggle is the one way back to expanded.
                             .when(self.sidebar_collapsed, |this| {
-                                this.size_range(px(48.0)..px(48.0))
+                                this.size_range(
+                                    px(SIDEBAR_COLLAPSED_WIDTH)..px(SIDEBAR_COLLAPSED_WIDTH),
+                                )
                             })
                             .when(!self.sidebar_collapsed, |this| {
-                                this.size_range(px(160.0)..px(400.0))
+                                this.size_range(px(SIDEBAR_MIN_WIDTH)..px(SIDEBAR_MAX_WIDTH))
                             })
                             .child(sidebar),
                     )
                     .child(
-                        resizable_panel().child(
-                            v_flex()
-                                .size_full()
-                                .child(tabstrip)
-                                .child(breadcrumb)
-                                .child(file_body_wrapped),
-                        ),
+                        resizable_panel()
+                            .size_range(px(FILE_PANE_MIN_WIDTH)..Pixels::MAX)
+                            .child(
+                                v_flex()
+                                    .size_full()
+                                    .child(tabstrip)
+                                    .child(breadcrumb)
+                                    .child(file_body_wrapped),
+                            ),
                     );
                 let splitter = if let Some(pane) = preview_pane {
                     splitter.child(
                         resizable_panel()
                             .size(preview_width_px)
-                            .size_range(px(260.0)..px(640.0))
+                            .size_range(px(PREVIEW_MIN_WIDTH)..px(PREVIEW_MAX_WIDTH))
                             .child(pane),
                     )
                 } else {

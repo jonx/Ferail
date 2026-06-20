@@ -15,6 +15,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use feraille_core::favorites::FavoriteState;
 use feraille_core::{EntryKind, EnumerationError, FileEntry, NodeId};
 use feraille_fs_native::{NativeFs, home_dir, open_with_default};
 use gpui::*;
@@ -38,6 +39,7 @@ use crate::tree::{
 use gpui::prelude::FluentBuilder as _;
 
 mod actions;
+mod dupe_panel;
 mod dupes;
 mod file_ops;
 mod loading;
@@ -288,6 +290,13 @@ pub struct Shell {
     /// `Shell::preview` resets it on selection change so a new file
     /// starts at the top.
     pub preview_scroll: ScrollHandle,
+    /// Scroll position of the inline text/code box nested inside the
+    /// preview body. Tracked separately so its `offset()` / `max_offset()`
+    /// are readable for wheel scroll-chaining: the box scrolls first, and
+    /// only the residual past its top/bottom is forwarded to
+    /// `preview_scroll` (see `Shell::preview`). Reset to top on selection
+    /// change alongside `preview_scroll`.
+    pub preview_text_scroll: ScrollHandle,
     /// Path the preview pane showed last frame — the selection-change
     /// edge detector for the scroll reset above.
     pub preview_scroll_path: Option<PathBuf>,
@@ -329,10 +338,27 @@ pub struct Shell {
     /// survives restarts. Hydrated in `start_metadata_load`.
     pub favorites_section_collapsed: bool,
     /// Most-recently-focused favorite id. Set by clicks on a favorite
-    /// row; consumed by the keyboard-reorder actions (§4.4) so
-    /// `Cmd+Option+Up/Down` operates on the row the user just selected.
-    /// `None` when no favorite has been clicked this session.
+    /// row and by the arrow-key focus actions (§11.4); consumed by the
+    /// keyboard-reorder (§4.4) and delete / activate actions so they
+    /// operate on the row the user last touched. Drives the focus ring.
+    /// `None` when no favorite has been focused this session.
     pub focused_favorite: Option<feraille_core::favorites::FavoriteId>,
+    /// Focus handle for the Favorites section. When focused (a favorite
+    /// row was clicked / arrowed into), the section's `FAVORITES_CONTEXT`
+    /// key context routes Up/Down/Enter/Delete to the favorites focus
+    /// actions instead of the file list (§11.4).
+    pub favorites_focus: FocusHandle,
+    /// Favorite ids that were *just added* (via the `Added` event) and
+    /// should play the §2.2 fade-in on their next render. Populated by
+    /// the favorites subscription, never by hydrate, so the list doesn't
+    /// animate every row on launch. `with_animation` only plays once per
+    /// element-id lifetime, so leaving an id here is harmless; it's
+    /// pruned on remove.
+    pub fav_appear: HashSet<feraille_core::favorites::FavoriteId>,
+    /// Per-favorite dedup-pulse generation (§2.2). Bumped on every
+    /// `DedupPulse` event; the render keys the pulse animation on the
+    /// counter so a repeat dedup-add re-triggers the flash.
+    pub fav_pulse: HashMap<feraille_core::favorites::FavoriteId, u32>,
     /// Windows/Linux app menu bar (`gpui-component::AppMenuBar`).
     /// `Some(_)` only on non-macOS — those platforms have no global
     /// menu bar, so we render the menu strip in-window beneath the
@@ -466,6 +492,28 @@ fn open_metadata_db() -> Option<Arc<Mutex<feraille_meta::MetadataDb>>> {
     }
 }
 
+/// Open a fresh Shell window already navigated to `path`. Backs the
+/// Cmd+Option-click "open favorite in a new window" gesture (§11.3) —
+/// reuses the singleton [`crate::process_state::ProcessState`] so the
+/// new window shares favorites, caches, and the watcher with every
+/// other window. The window-options shape mirrors `main.rs`'s
+/// `open_shell_window_sized`.
+pub fn open_window_at(cx: &mut App, path: PathBuf) {
+    let opts = WindowOptions {
+        window_bounds: Some(WindowBounds::centered(size(px(1180.0), px(760.0)), cx)),
+        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
+        ..Default::default()
+    };
+    let _ = cx.open_window(opts, |window, cx| {
+        let process = crate::process_state::process_state(cx);
+        let view = cx.new(|cx| Shell::new(process, window, cx));
+        view.update(cx, |shell, cx| {
+            shell.load_path(path.clone(), cx);
+        });
+        cx.new(|cx| gpui_component::Root::new(view, window, cx))
+    });
+}
+
 /// One of the macOS-standard sidebar destinations shown in the
 const ICON_WARM_CHUNK: usize = 16;
 const ICON_WARM_INTERVAL: Duration = Duration::from_millis(16);
@@ -481,6 +529,12 @@ const SPLITTER_PERSIST_INTERVAL: Duration = Duration::from_millis(500);
 /// roughly: sidebar 220 + file list ~500 + preview 280 = 1000, so
 /// dropping under ~900 makes the file list painfully narrow.
 const PREVIEW_AUTOHIDE_THRESHOLD: f32 = 900.0;
+const SIDEBAR_COLLAPSED_WIDTH: f32 = 48.0;
+const SIDEBAR_MIN_WIDTH: f32 = 160.0;
+const SIDEBAR_MAX_WIDTH: f32 = 400.0;
+const FILE_PANE_MIN_WIDTH: f32 = 360.0;
+const PREVIEW_MIN_WIDTH: f32 = 260.0;
+const PREVIEW_MAX_WIDTH: f32 = 640.0;
 
 impl Shell {
     /// Construct the singleton `ProcessState` for this process.
@@ -537,7 +591,9 @@ impl Shell {
         ));
         // Seed the live grid icon size from persisted settings.
         cx.set_global(crate::grid::IconSize(crate::grid::clamp_icon_size(
-            persisted.icon_size.unwrap_or(crate::grid::DEFAULT_ICON_SIZE),
+            persisted
+                .icon_size
+                .unwrap_or(crate::grid::DEFAULT_ICON_SIZE),
         )));
         // FERAILLE_UI_SCALE env var (regression tool / screenshots)
         // wins over the persisted value when set. Both are clamped.
@@ -574,9 +630,7 @@ impl Shell {
                     // palette (filter, Enter). Arrow-key selection
                     // between matches is a follow-up.
                     InputEvent::PressEnter { .. } => {
-                        if let Some(action) =
-                            crate::keyboard_help::palette_top_action(&filter)
-                        {
+                        if let Some(action) = crate::keyboard_help::palette_top_action(&filter) {
                             this.close_shortcuts_help(window, cx);
                             window.dispatch_action(action, cx);
                         }
@@ -609,11 +663,10 @@ impl Shell {
                     // a worker before navigation registers identity.
                     this.navigate_external(path, cx);
                 }
-                InputEvent::Blur
-                    if this.breadcrumb_editing => {
-                        this.breadcrumb_editing = false;
-                        cx.notify();
-                    }
+                InputEvent::Blur if this.breadcrumb_editing => {
+                    this.breadcrumb_editing = false;
+                    cx.notify();
+                }
                 _ => {}
             }
         });
@@ -689,15 +742,25 @@ impl Shell {
             preview_visible: false,
             preview_info: None,
             preview_scroll: ScrollHandle::new(),
+            preview_text_scroll: ScrollHandle::new(),
             preview_scroll_path: None,
             ui_scale,
             splitter_state: cx.new(|_| gpui_component::resizable::ResizableState::default()),
-            sidebar_width: persisted.sidebar_width.unwrap_or(220.0).clamp(160.0, 400.0),
-            preview_width: persisted.preview_width.unwrap_or(380.0).clamp(260.0, 640.0),
+            sidebar_width: persisted
+                .sidebar_width
+                .unwrap_or(220.0)
+                .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH),
+            preview_width: persisted
+                .preview_width
+                .unwrap_or(380.0)
+                .clamp(PREVIEW_MIN_WIDTH, PREVIEW_MAX_WIDTH),
             splitter_save_scheduled: false,
             sidebar_collapsed: persisted.sidebar_collapsed.unwrap_or(false),
             favorites_section_collapsed: false,
             focused_favorite: None,
+            favorites_focus: cx.focus_handle(),
+            fav_appear: HashSet::new(),
+            fav_pulse: HashMap::new(),
             menu_bar,
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
@@ -717,6 +780,59 @@ impl Shell {
             cx.notify();
         });
         shell._subscriptions.push(fav_subscription);
+        // §2.2 add/dedup animation signals. The observe above repaints;
+        // this captures *which* favorite changed so the section can play
+        // the fade-in (Added) or the dedup pulse (DedupPulse). Hydrate
+        // emits `Reordered`, not `Added`, so launch never animates.
+        let fav_anim_subscription = cx.subscribe(
+            &shell.process.favorites,
+            |this, _favs, event: &crate::favorites::FavoritesEvent, cx| {
+                use crate::favorites::FavoritesEvent;
+                // Each one-shot signal is cleared after its animation
+                // window so the row drops back to a plain element (the
+                // animation already held its end-state; this just stops
+                // it lingering wrapped in an animation div).
+                match event {
+                    FavoritesEvent::Added { id, .. } => {
+                        let id = *id;
+                        this.fav_appear.insert(id);
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(260))
+                                .await;
+                            let _ = this.update(cx, |this, cx| {
+                                if this.fav_appear.remove(&id) {
+                                    cx.notify();
+                                }
+                            });
+                        })
+                        .detach();
+                    }
+                    FavoritesEvent::DedupPulse(id) => {
+                        let id = *id;
+                        *this.fav_pulse.entry(id).or_insert(0) += 1;
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(560))
+                                .await;
+                            let _ = this.update(cx, |this, cx| {
+                                if this.fav_pulse.remove(&id).is_some() {
+                                    cx.notify();
+                                }
+                            });
+                        })
+                        .detach();
+                    }
+                    FavoritesEvent::Removed(fav) => {
+                        this.fav_appear.remove(&fav.id);
+                        this.fav_pulse.remove(&fav.id);
+                    }
+                    _ => {}
+                }
+                cx.notify();
+            },
+        );
+        shell._subscriptions.push(fav_anim_subscription);
 
         // Live thumbnail toggle (Settings window → file list). Render
         // already reflects the global, but the viewport's thumbnails
@@ -846,8 +962,10 @@ impl Shell {
         // Filter input — per-tab so cursor / focus / value persist
         // when the user switches tabs. The closure captures `tab_id`
         // so only this tab's enumeration is re-triggered.
-        let filter_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Filter \u{2026}  \u{23CE} to search subfolders"));
+        let filter_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Filter \u{2026}  \u{23CE} to search subfolders")
+        });
         let filter_subscription = cx.subscribe_in(&filter_input, window, {
             let filter_input = filter_input.clone();
             move |this, _state, ev: &InputEvent, _window, cx| {
@@ -983,9 +1101,7 @@ impl Shell {
                 self.preview_info = Some(view);
             }
         }
-        self.preview_info
-            .clone()
-            .expect("preview_info set above")
+        self.preview_info.clone().expect("preview_info set above")
     }
 
     pub fn path_for_row(&self, row_ix: usize, cx: &App) -> Option<PathBuf> {
@@ -1363,12 +1479,7 @@ impl Shell {
     /// snapshot is in-memory only: entries are already enumerated and
     /// paths resolve through the NodeStore, so no filesystem I/O
     /// happens on this path.
-    pub fn on_open_viewer(
-        &mut self,
-        _: &OpenViewer,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn on_open_viewer(&mut self, _: &OpenViewer, window: &mut Window, cx: &mut Context<Self>) {
         let mut playlist = Vec::new();
         let mut start = 0usize;
         {
@@ -1781,14 +1892,24 @@ impl Shell {
         cx.notify();
     }
 
-    fn apply_directory_load_msg_in_tab(&mut self, idx: usize, msg: LoadMsg, cx: &mut Context<Self>) {
+    fn apply_directory_load_msg_in_tab(
+        &mut self,
+        idx: usize,
+        msg: LoadMsg,
+        cx: &mut Context<Self>,
+    ) {
         match msg {
             LoadMsg::Batch(batch) => self.apply_directory_batch_in_tab(idx, batch, cx),
             LoadMsg::Done(error) => self.finish_directory_load_in_tab(idx, error, cx),
         }
     }
 
-    fn apply_directory_batch_in_tab(&mut self, idx: usize, batch: LoadBatch, cx: &mut Context<Self>) {
+    fn apply_directory_batch_in_tab(
+        &mut self,
+        idx: usize,
+        batch: LoadBatch,
+        cx: &mut Context<Self>,
+    ) {
         for (id, path) in &batch.paths {
             self.process
                 .node_store
@@ -1896,6 +2017,85 @@ impl Shell {
         });
     }
 
+    /// Populate the file list's per-row Finder colour tags (the §5 dot
+    /// chips the list row and grid cell paint from `delegate.tags`).
+    ///
+    /// Tags live in xattrs, so reading them is filesystem I/O — barred
+    /// from the UI thread by the Prime Directive. Unlike the in-memory
+    /// favorited refresh, this snapshots each row's `(NodeId, path)`,
+    /// reads `read_canonical_tags` on the background executor, then
+    /// applies the result back **by NodeId**: if the listing was
+    /// replaced by a fresh navigation while the read was in flight, the
+    /// stale ids simply don't match and are dropped. Fired once per
+    /// completed load from `finish_directory_load_in_tab`. (The old
+    /// synchronous `FileListDelegate::load()` read these inline; that
+    /// path is dead now that loads stream through `append_entries`,
+    /// which stubs the tag slots empty.)
+    fn refresh_file_list_tags_in_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(idx) else {
+            return;
+        };
+        let tab_id = tab.id;
+        let table = tab.table.clone();
+        // Cap the read so a pathological directory (a 100k-entry
+        // Downloads) can't queue an unbounded pile of xattr reads off
+        // one navigation. Beyond the cap rows render tagless, matching
+        // the original `load()` policy (its cap was 200; off-thread we
+        // can afford a more generous bound).
+        const TAG_READ_CAP: usize = 1000;
+        let targets: Vec<(NodeId, PathBuf)> = {
+            let state = table.read(cx);
+            let del = state.delegate();
+            del.entries
+                .iter()
+                .take(TAG_READ_CAP)
+                .filter_map(|e| del.path_for_entry(e.id).map(|p| (e.id, p)))
+                .collect()
+        };
+        if targets.is_empty() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let tagged: Vec<(NodeId, Vec<feraille_core::commands::TagColor>)> = cx
+                .background_executor()
+                .spawn(async move {
+                    targets
+                        .into_iter()
+                        .map(|(id, p)| (id, crate::platform_shell::read_canonical_tags(&p)))
+                        .collect()
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(tab) = this.tabs.iter().find(|t| t.id == tab_id) else {
+                    return;
+                };
+                let table = tab.table.clone();
+                table.update(cx, |state, cx| {
+                    let mut by_id: std::collections::HashMap<
+                        NodeId,
+                        Vec<feraille_core::commands::TagColor>,
+                    > = tagged.into_iter().collect();
+                    let del = state.delegate_mut();
+                    // Defensive resize — the model may have grown or
+                    // shrunk between the snapshot and this apply.
+                    let ids: Vec<NodeId> = del.entries.iter().map(|e| e.id).collect();
+                    del.tags.resize(ids.len(), Vec::new());
+                    let mut changed = false;
+                    for (i, id) in ids.iter().enumerate() {
+                        if let Some(t) = by_id.remove(id) {
+                            del.tags[i] = t;
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        state.refresh(cx);
+                    }
+                });
+            });
+        })
+        .detach();
+    }
+
     fn finish_directory_load_in_tab(
         &mut self,
         idx: usize,
@@ -1949,6 +2149,11 @@ impl Shell {
                 crate::log_warn!(90, "directory load ended with partial rows: {err:?}");
             }
             self.tabs[idx].last_error = None;
+            // Finder colour tags for the now-complete listing. xattr
+            // reads are filesystem I/O, so this runs off-thread and
+            // reports back — unlike the cheap per-batch favorited
+            // refresh, it fires once here at `Done`.
+            self.refresh_file_list_tags_in_tab(idx, cx);
         }
 
         // Spec §2.6 `Done`: drop NodeIds no longer in the final
@@ -2378,11 +2583,7 @@ impl Shell {
         }
     }
 
-    pub(crate) fn reload_tabs_matching_paths(
-        &mut self,
-        paths: &[PathBuf],
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn reload_tabs_matching_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
         let targets: Vec<(TabId, PathBuf)> = self
             .tabs
             .iter()
@@ -2622,9 +2823,7 @@ impl Shell {
                 self.push_undo(UndoOp::AddFavorite(id));
             }
             window.push_notification(
-                Notification::success(format!(
-                    "Added \u{201C}{label}\u{201D} to Favorites"
-                )),
+                Notification::success(format!("Added \u{201C}{label}\u{201D} to Favorites")),
                 cx,
             );
         }
@@ -2803,6 +3002,260 @@ impl Shell {
         self.process
             .favorites
             .update(cx, |f, cx| f.set_icon(id, None, cx));
+    }
+
+    /// Context-menu "Locate…" (§8.3): repoint the favorite under
+    /// `favorites_context_path` at a user-chosen folder, keeping its
+    /// id / display_name / sort_index. Also reachable from the broken-
+    /// state dialog ([`Self::show_missing_favorite_dialog`]).
+    pub fn on_locate_favorite(
+        &mut self,
+        _: &LocateFavorite,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.pop_favorite_id_for_action(cx) else {
+            return;
+        };
+        self.locate_favorite(id, cx);
+    }
+
+    /// Present the native folder picker and, on a choice, repoint
+    /// favorite `id` at the chosen folder. The picker is a synchronous
+    /// native modal (like the rename prompt); the chosen path is
+    /// canonicalized on a worker before the repoint so favorites keep
+    /// their canonical-path identity (Prime Directive: no stat on the
+    /// dispatch thread).
+    pub(crate) fn locate_favorite(
+        &mut self,
+        id: feraille_core::favorites::FavoriteId,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            // `pick_folder` is a blocking native modal (`NSOpenPanel::
+            // runModal`) that spins a *nested* run loop. It MUST run with
+            // no GPUI `App` borrow held: the nested loop keeps servicing
+            // the foreground executor, so any pending task (folder sizes,
+            // thumbnail warms, watchers) fires mid-modal and calls
+            // `AsyncApp::update` → `App::borrow_mut`. Calling the picker
+            // from inside the action handler (App already borrowed by the
+            // `Context`) makes that reentrant borrow panic with "RefCell
+            // already borrowed". The spawned task body runs between
+            // updates, so the borrow is free here.
+            let Some(chosen) = crate::platform_shell::pick_folder() else {
+                return;
+            };
+            let canonical = cx
+                .background_executor()
+                .spawn(async move { path::canonicalize_for_identity(chosen) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.process.favorites.update(cx, |f, cx| {
+                    f.repoint(
+                        id,
+                        feraille_core::favorites::FavoriteTarget::Path(canonical),
+                        cx,
+                    );
+                });
+            });
+        })
+        .detach();
+    }
+
+    /// §8.2 broken-target dialog. Shown when an `Unmounted` / `Missing`
+    /// favorite is clicked: offers **Locate…** (repoint), **Remove from
+    /// Favorites** (with undo), and **Keep** (dismiss, leave it broken).
+    /// Replaces the old single-button NSAlert.
+    pub(crate) fn show_missing_favorite_dialog(
+        &mut self,
+        id: feraille_core::favorites::FavoriteId,
+        path: PathBuf,
+        state: FavoriteState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::dialog::DialogFooter;
+        use gpui_component::notification::Notification;
+        let shell = cx.entity();
+        let (title, body) = match state {
+            FavoriteState::Unmounted => (
+                "Volume not mounted".to_string(),
+                format!(
+                    "\u{201C}{}\u{201D} isn\u{2019}t currently mounted. Locate it on a mounted volume, or remove the shortcut.",
+                    path.display()
+                ),
+            ),
+            _ => (
+                "Favorite can\u{2019}t be found".to_string(),
+                format!(
+                    "\u{201C}{}\u{201D} may have been moved or deleted. Locate it to repoint this shortcut, or remove it from Favorites.",
+                    path.display()
+                ),
+            ),
+        };
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let shell_locate = shell.clone();
+            let shell_remove = shell.clone();
+            let title = title.clone();
+            let body = body.clone();
+            dialog
+                .title(title)
+                .child(div().text_sm().child(body))
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            Button::new("fav-missing-keep")
+                                .label("Keep")
+                                .small()
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("fav-missing-remove")
+                                .label("Remove from Favorites")
+                                .danger()
+                                .small()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let removed = shell_remove
+                                        .read(cx)
+                                        .process
+                                        .favorites
+                                        .read(cx)
+                                        .entry_by_id(id)
+                                        .cloned();
+                                    let label = removed
+                                        .as_ref()
+                                        .map(|f| f.effective_label())
+                                        .unwrap_or_else(|| "favorite".to_string());
+                                    shell_remove.update(cx, |s, cx| {
+                                        s.process.favorites.update(cx, |f, cx| {
+                                            f.remove(id, cx);
+                                        });
+                                        if let Some(fav) = removed {
+                                            s.push_undo(UndoOp::RemoveFavorite(fav));
+                                        }
+                                    });
+                                    window.push_notification(
+                                        Notification::info(format!(
+                                            "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo"
+                                        )),
+                                        cx,
+                                    );
+                                }),
+                        )
+                        .child(
+                            Button::new("fav-missing-locate")
+                                .label("Locate\u{2026}")
+                                .primary()
+                                .small()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    shell_locate.update(cx, |s, cx| {
+                                        s.locate_favorite(id, cx);
+                                    });
+                                }),
+                        ),
+                )
+        });
+    }
+
+    // ----- Favorites: keyboard focus + delete (§11.4) --------------
+
+    /// Move keyboard focus to the previous (`by < 0`) or next favorite
+    /// row, wrapping at the ends. With nothing focused yet, lands on the
+    /// first (next) or last (previous) entry so a single arrow press
+    /// from the section header enters the list.
+    fn move_favorite_focus(&mut self, by: isize, cx: &mut Context<Self>) {
+        let entries = self.process.favorites.read(cx).entries().to_vec();
+        if entries.is_empty() {
+            return;
+        }
+        let next = match self
+            .focused_favorite
+            .and_then(|id| entries.iter().position(|f| f.id == id))
+        {
+            Some(pos) => {
+                let len = entries.len() as isize;
+                ((pos as isize + by).rem_euclid(len)) as usize
+            }
+            None if by < 0 => entries.len() - 1,
+            None => 0,
+        };
+        self.focused_favorite = Some(entries[next].id);
+        cx.notify();
+    }
+
+    pub fn on_focus_favorite_up(
+        &mut self,
+        _: &FocusFavoriteUp,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_favorite_focus(-1, cx);
+    }
+
+    pub fn on_focus_favorite_down(
+        &mut self,
+        _: &FocusFavoriteDown,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_favorite_focus(1, cx);
+    }
+
+    /// Enter on the focused favorite — navigate the active tab to it
+    /// when it's `Available`, else surface the broken-target dialog.
+    pub fn on_activate_favorite(
+        &mut self,
+        _: &ActivateFavorite,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.focused_favorite else {
+            return;
+        };
+        let Some(fav) = self.process.favorites.read(cx).entry_by_id(id).cloned() else {
+            return;
+        };
+        let feraille_core::favorites::FavoriteTarget::Path(path) = fav.target else {
+            return;
+        };
+        match self.process.favorites.read(cx).state_for(id) {
+            FavoriteState::Available => self.navigate(path, cx),
+            other => self.show_missing_favorite_dialog(id, path, other, window, cx),
+        }
+    }
+
+    /// Delete / Backspace on the focused favorite — remove it with undo,
+    /// the keyboard twin of the context-menu / source-folder removes.
+    pub fn on_delete_favorite(
+        &mut self,
+        _: &DeleteFavorite,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let Some(id) = self.focused_favorite else {
+            return;
+        };
+        let removed = self.process.favorites.read(cx).entry_by_id(id).cloned();
+        let Some(fav) = removed else {
+            // Stale focus (entry already gone) — clear it.
+            self.focused_favorite = None;
+            return;
+        };
+        let label = fav.effective_label();
+        self.process.favorites.update(cx, |f, cx| {
+            f.remove(id, cx);
+        });
+        self.push_undo(UndoOp::RemoveFavorite(fav));
+        self.focused_favorite = None;
+        window.push_notification(
+            Notification::info(format!(
+                "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo"
+            )),
+            cx,
+        );
     }
 
     fn set_favorite_lucide(&mut self, name: &'static str, cx: &mut Context<Self>) {
