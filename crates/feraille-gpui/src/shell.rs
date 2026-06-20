@@ -773,6 +773,7 @@ impl Shell {
             process.fs.clone(),
             process.icons.clone(),
             process.thumbnails.clone(),
+            process.tasks.clone(),
             process.cut_marker.clone(),
             shell_focus,
         );
@@ -2095,7 +2096,13 @@ impl Shell {
                 cache.mark_in_flight(path.clone(), thumb_px);
             }
         }
+        let task_id = self.process.tasks.borrow_mut().begin(
+            TaskKind::ThumbnailPrefetch,
+            format!("Loading {} thumbnails\u{2026}", todo.len()),
+            false,
+        );
         let thumbs = self.process.thumbnails.clone();
+        let tasks = self.process.tasks.clone();
         cx.spawn(async move |this, cx| {
             for path in todo {
                 let fetch_path = path.clone();
@@ -2114,6 +2121,16 @@ impl Shell {
                 {
                     break;
                 }
+            }
+            // Always retire the task; drop it directly if the Shell is gone.
+            if this
+                .update(cx, |_this, cx| {
+                    tasks.borrow_mut().end(task_id);
+                    cx.notify();
+                })
+                .is_err()
+            {
+                tasks.borrow_mut().end(task_id);
             }
         })
         .detach();
@@ -2374,6 +2391,24 @@ impl Shell {
             // the results.
             .filter(|tab| tab.search_mode.is_none() && tab.dupe_mode.is_none())
             .filter(|tab| paths.iter().any(|path| path == &tab.current_dir))
+            .map(|tab| (tab.id, tab.current_dir.clone()))
+            .collect();
+        for (tab_id, path) in targets {
+            self.load_path_for_tab(tab_id, path, cx);
+        }
+    }
+
+    /// Reload every directory-displaying tab in this window. Used on
+    /// wake-from-sleep (docs/features/POWER.md): contents may have
+    /// changed while the watcher was asleep, and the cheapest correct
+    /// answer is a re-list. Skips results views (search / duplicates)
+    /// for the same reason `reload_tabs_matching_paths` does — a reload
+    /// would clobber the results.
+    pub(crate) fn reload_dir_tabs(&mut self, cx: &mut Context<Self>) {
+        let targets: Vec<(TabId, PathBuf)> = self
+            .tabs
+            .iter()
+            .filter(|tab| tab.search_mode.is_none() && tab.dupe_mode.is_none())
             .map(|tab| (tab.id, tab.current_dir.clone()))
             .collect();
         for (tab_id, path) in targets {

@@ -10,9 +10,10 @@
 //! Bridging to GPUI happens in the Shell (which owns the registry
 //! as a `Rc<RefCell<TaskRegistry>>`) and the status-bar render.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TaskId(u64);
@@ -29,6 +30,10 @@ impl TaskId {
 pub enum TaskKind {
     Enumeration,
     IconPrefetch,
+    /// Real Quick Look thumbnails for the list/grid viewport. Ambient,
+    /// like [`TaskKind::IconPrefetch`] — a distinct kind because it is a
+    /// different worker (QLThumbnailGenerator, not NSWorkspace icons).
+    ThumbnailPrefetch,
     MagicPrefetch,
     QuarantinePrefetch,
     /// Recursive folder sizes for the Size column.
@@ -83,6 +88,29 @@ pub struct TransferStats {
     pub current: String,
 }
 
+/// How a task ended, recorded in the recent-task history. Cancellation
+/// is inferred from the cooperative cancel flag; failure is signalled
+/// explicitly by the worker via [`TaskRegistry::end_failed`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Completed,
+    Cancelled,
+    Failed(String),
+}
+
+/// A finished task, kept in a small bounded ring so the task panel can
+/// show "Recent" work after the live row is gone. Only foreground,
+/// user-initiated tasks are recorded — ambient prefetch/enumeration
+/// would just be churn the user never asked for. (docs/features/FILE_OPS.md)
+#[derive(Clone, Debug)]
+pub struct CompletedTask {
+    pub kind: TaskKind,
+    pub label: String,
+    pub outcome: Outcome,
+    /// Wall-clock time the task was live.
+    pub elapsed: Duration,
+}
+
 #[derive(Clone, Debug)]
 pub struct ActiveTask {
     pub id: TaskId,
@@ -116,8 +144,15 @@ impl ActiveTask {
     }
 }
 
+/// How many finished tasks to remember in the "Recent" ring. A couple
+/// dozen is plenty for "what did I just do?" without growing unbounded.
+const COMPLETED_CAP: usize = 20;
+
 pub struct TaskRegistry {
     tasks: Vec<ActiveTask>,
+    /// Recently-finished foreground tasks, most-recent first. Bounded to
+    /// [`COMPLETED_CAP`]; the oldest is dropped past the cap.
+    completed: VecDeque<CompletedTask>,
     next_id: u64,
 }
 
@@ -131,6 +166,7 @@ impl TaskRegistry {
     pub fn new() -> Self {
         Self {
             tasks: Vec::new(),
+            completed: VecDeque::new(),
             next_id: 1,
         }
     }
@@ -191,9 +227,63 @@ impl TaskRegistry {
         }
     }
 
-    /// Remove `id`. Stale ids are silently ignored.
+    /// Remove `id`, recording it in the recent-task history. The outcome
+    /// is inferred: a task whose cooperative cancel flag was tripped is
+    /// `Cancelled`, otherwise `Completed`. Workers that know they failed
+    /// call [`Self::end_failed`] instead. Stale ids are silently ignored.
     pub fn end(&mut self, id: TaskId) {
-        self.tasks.retain(|t| t.id != id);
+        if let Some(pos) = self.tasks.iter().position(|t| t.id == id) {
+            let task = self.tasks.remove(pos);
+            let cancelled = task
+                .cancel
+                .as_ref()
+                .is_some_and(|f| f.load(Ordering::Relaxed));
+            let outcome = if cancelled {
+                Outcome::Cancelled
+            } else {
+                Outcome::Completed
+            };
+            self.record_completed(&task, outcome);
+        }
+    }
+
+    /// Remove `id`, recording it in history as `Failed(message)`. Stale
+    /// ids are silently ignored.
+    pub fn end_failed(&mut self, id: TaskId, message: impl Into<String>) {
+        if let Some(pos) = self.tasks.iter().position(|t| t.id == id) {
+            let task = self.tasks.remove(pos);
+            self.record_completed(&task, Outcome::Failed(message.into()));
+        }
+    }
+
+    /// Push a finished task onto the recent-history ring, dropping the
+    /// oldest past the cap. Ambient tasks (prefetch, enumeration, folder
+    /// sizes) are skipped — history is only the user-initiated work the
+    /// person actually did.
+    fn record_completed(&mut self, task: &ActiveTask, outcome: Outcome) {
+        if !task.kind.is_foreground() {
+            return;
+        }
+        self.completed.push_front(CompletedTask {
+            kind: task.kind,
+            label: task.label.clone(),
+            outcome,
+            elapsed: task.started_at.elapsed(),
+        });
+        while self.completed.len() > COMPLETED_CAP {
+            self.completed.pop_back();
+        }
+    }
+
+    /// Recently-finished foreground tasks, most-recent first.
+    pub fn completed(&self) -> std::collections::vec_deque::Iter<'_, CompletedTask> {
+        self.completed.iter()
+    }
+
+    /// Whether any recent-task history exists (drives the panel's
+    /// "Recent" section, which is omitted when empty).
+    pub fn has_history(&self) -> bool {
+        !self.completed.is_empty()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -329,6 +419,60 @@ mod tests {
         assert!(TaskKind::Search.is_foreground());
         assert!(!TaskKind::IconPrefetch.is_foreground());
         assert!(!TaskKind::Enumeration.is_foreground());
+    }
+
+    #[test]
+    fn end_records_foreground_task_as_completed() {
+        let mut r = TaskRegistry::new();
+        let id = r.begin(TaskKind::FileOp, "Copying\u{2026}", true);
+        assert!(!r.has_history());
+        r.end(id);
+        let hist: Vec<_> = r.completed().collect();
+        assert_eq!(hist.len(), 1);
+        assert_eq!(hist[0].outcome, Outcome::Completed);
+        assert_eq!(hist[0].kind, TaskKind::FileOp);
+    }
+
+    #[test]
+    fn end_does_not_record_ambient_tasks() {
+        let mut r = TaskRegistry::new();
+        let id = r.begin(TaskKind::ThumbnailPrefetch, "Loading thumbnails\u{2026}", false);
+        r.end(id);
+        assert!(!r.has_history());
+        assert_eq!(r.completed().count(), 0);
+    }
+
+    #[test]
+    fn end_infers_cancelled_from_flag() {
+        let mut r = TaskRegistry::new();
+        let flag = Arc::new(AtomicBool::new(false));
+        let id = r.begin_with_cancel(TaskKind::Search, "Searching\u{2026}", flag.clone());
+        flag.store(true, Ordering::Relaxed);
+        r.end(id);
+        let hist: Vec<_> = r.completed().collect();
+        assert_eq!(hist[0].outcome, Outcome::Cancelled);
+    }
+
+    #[test]
+    fn end_failed_records_failure() {
+        let mut r = TaskRegistry::new();
+        let id = r.begin(TaskKind::FileOp, "Copying\u{2026}", true);
+        r.end_failed(id, "disk full");
+        let hist: Vec<_> = r.completed().collect();
+        assert_eq!(hist[0].outcome, Outcome::Failed("disk full".into()));
+    }
+
+    #[test]
+    fn completed_ring_is_bounded_and_newest_first() {
+        let mut r = TaskRegistry::new();
+        for i in 0..(COMPLETED_CAP + 5) {
+            let id = r.begin(TaskKind::FileOp, format!("op {i}"), false);
+            r.end(id);
+        }
+        assert_eq!(r.completed().count(), COMPLETED_CAP);
+        // Newest first: the last op begun sits at the front.
+        let newest = r.completed().next().unwrap();
+        assert_eq!(newest.label, format!("op {}", COMPLETED_CAP + 4));
     }
 
     #[test]

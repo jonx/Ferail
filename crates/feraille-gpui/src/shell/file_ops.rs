@@ -592,6 +592,16 @@ impl Shell {
                 }
             }
 
+            // Hold off idle system sleep for the duration of the
+            // byte-moving engine run, so the machine doesn't doze
+            // mid-transfer and strand a half-written file
+            // (docs/features/POWER.md). Reacting to WillSleep would be
+            // too late — the engine can't checkpoint-and-resume — so we
+            // prevent the sleep instead. None (assertion declined) just
+            // means no guard; released right after the engine returns.
+            let sleep_blocker =
+                crate::platform_shell::prevent_idle_sleep(&format!("Feraille {verb}"));
+
             // 3. Run the engine on the background executor. The
             // same-volume answer rides along for move-undo
             // eligibility (stat — not allowed on the UI thread).
@@ -626,8 +636,10 @@ impl Shell {
                     .await
             };
             // Engine finished — stop the sampler; the final state is set
-            // by the completion block below.
+            // by the completion block below. Drop the sleep guard now
+            // that the byte-moving is done (the tail below is cheap UI).
             done_run.store(true, std::sync::atomic::Ordering::Relaxed);
+            drop(sleep_blocker);
 
             // 4. Finish: end task, register undo, reload, notify.
             if let Some(shell) = weak.upgrade() {
@@ -1200,6 +1212,15 @@ impl Shell {
         // needs to rename things back. Notification moved to
         // completion — the old one fired before the op ran.
         let process = self.process.clone();
+        // Register the trash as a foreground task so slow / large deletes
+        // (and Empty Trash on a network volume) get a visible, counted
+        // row in the status bar + panel. Single-item trashes finish
+        // inside SURFACE_DELAY and never flicker. (docs/features/FILE_OPS.md)
+        let task_id = self.process.tasks.borrow_mut().begin(
+            crate::tasks::TaskKind::FileOp,
+            format!("Moving {name} to Trash"),
+            false,
+        );
         let weak = cx.weak_entity();
         let win = window.window_handle();
         cx.spawn(async move |_this, cx| {
@@ -1218,6 +1239,10 @@ impl Shell {
                 })
                 .await;
             let (pairs, error) = result;
+            match &error {
+                Some(e) => process.tasks.borrow_mut().end_failed(task_id, e.clone()),
+                None => process.tasks.borrow_mut().end(task_id),
+            }
             if let Some(shell) = weak.upgrade() {
                 shell.update(cx, |this, cx| {
                     if !pairs.is_empty() {
@@ -1321,6 +1346,14 @@ impl Shell {
             if opened.is_err() || !matches!(go_rx.recv().await, Ok(true)) {
                 return;
             }
+            // Now that the user has confirmed, surface the destruction as
+            // a foreground task — emptying a full Trash (or one on a slow
+            // volume) can take real time. (docs/features/FILE_OPS.md)
+            let task_id = process.tasks.borrow_mut().begin(
+                crate::tasks::TaskKind::FileOp,
+                "Emptying Trash",
+                false,
+            );
             let result = cx
                 .background_executor()
                 .spawn(async move {
@@ -1350,6 +1383,10 @@ impl Shell {
                 })
                 .await;
             let (deleted, first_err, dirs) = result;
+            match &first_err {
+                Some(e) => process.tasks.borrow_mut().end_failed(task_id, e.clone()),
+                None => process.tasks.borrow_mut().end(task_id),
+            }
             // Trash contents changed under any tab browsing it.
             Shell::broadcast_reload_for_process(&process, dirs, cx);
             let _ = win.update(cx, |_, window, cx| {

@@ -16,7 +16,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{ActiveTheme, Sizable as _, h_flex, v_flex};
 
-use crate::tasks::{TaskProgress, TaskRegistry};
+use crate::tasks::{Outcome, TaskProgress, TaskRegistry};
 
 /// Render the task-panel popover. Caller decides visibility — this
 /// returns `None` when the popover should be hidden so the caller can
@@ -35,6 +35,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
     let theme_primary = theme.primary;
     let theme_bg = theme.background;
     let theme_radius = theme.radius;
+    let theme_danger = theme.danger;
     let registry = tasks.borrow();
 
     // Only show tasks that have lived past SURFACE_DELAY — instant
@@ -175,6 +176,81 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
             .into_any_element()
     };
 
+    // "Recent" — a dimmed list of the just-finished foreground tasks
+    // (copies, moves, searches, scans, trashes). Omitted entirely when
+    // there is no history so the panel doesn't grow an empty heading.
+    let recent: Option<Div> = if registry.has_history() {
+        let rows = registry
+            .completed()
+            .map(|c| {
+                let (glyph, glyph_color) = match &c.outcome {
+                    Outcome::Completed => ("\u{2713}", theme_muted),
+                    Outcome::Cancelled => ("\u{2298}", theme_muted),
+                    Outcome::Failed(_) => ("\u{26A0}", theme_danger),
+                };
+                // A failed task appends its reason after the label so the
+                // user sees *why* without another surface.
+                let label = match &c.outcome {
+                    Outcome::Failed(msg) => format!("{} \u{2014} {msg}", c.label),
+                    _ => c.label.clone(),
+                };
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .py_1p5()
+                    .px_3()
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(glyph_color)
+                            .child(SharedString::from(glyph)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(theme_muted)
+                            .child(SharedString::from(label)),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(theme_muted.opacity(0.7))
+                            .child(SharedString::from(humanize_secs(c.elapsed.as_secs()))),
+                    )
+            })
+            .collect::<Vec<_>>();
+        Some(
+            v_flex()
+                .w_full()
+                .border_t_1()
+                .border_color(theme_border)
+                .child(
+                    div()
+                        .px_3()
+                        .py_1p5()
+                        .text_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme_muted)
+                        .child(SharedString::from("Recent")),
+                )
+                .child(
+                    div()
+                        .id("task-panel-recent")
+                        .max_h(px(160.0))
+                        .overflow_y_scroll()
+                        .child(v_flex().w_full().children(rows)),
+                ),
+        )
+    } else {
+        None
+    };
+
     let popover = v_flex()
         .absolute()
         // Sit just above the status bar. py_1 + text_xs there → ~22 DIPs;
@@ -191,7 +267,8 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
         // shell uses on_mouse_down to dismiss when the click misses.
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(header)
-        .child(body);
+        .child(body)
+        .when_some(recent, |this, r| this.child(r));
 
     Some(popover)
 }

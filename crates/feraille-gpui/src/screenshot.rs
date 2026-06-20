@@ -876,6 +876,21 @@ impl ShellArgs {
                     "Computing disk usage for ~/Source\u{2026}",
                     true,
                 );
+                // Seed the "Recent" history with a few representative
+                // finished tasks (one of each outcome) so the panel's
+                // history section renders in the screenshot.
+                let done = reg.begin(crate::tasks::TaskKind::FileOp, "Copied 1,204 items", false);
+                reg.end(done);
+                let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+                let cancelled = reg.begin_with_cancel(
+                    crate::tasks::TaskKind::Search,
+                    "Searched \u{201C}invoice\u{201D}",
+                    flag,
+                );
+                reg.end(cancelled);
+                let failed =
+                    reg.begin(crate::tasks::TaskKind::FileOp, "Compress to archive.zip", false);
+                reg.end_failed(failed, "No space left on device");
                 drop(reg);
                 cx.notify();
             });

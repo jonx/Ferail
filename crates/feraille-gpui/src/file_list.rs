@@ -30,6 +30,7 @@ use smallvec::{smallvec, SmallVec};
 
 use crate::icons::{IconCache, file_type_icon, tint_color};
 use crate::multi_table::{Column, ColumnSort, TableDelegate, TableEvent, TableState};
+use crate::tasks::{TaskKind, TaskRegistry};
 use crate::thumbnails::{is_thumbnailable, show_thumbnails, ThumbnailCache, THUMB_PX};
 
 /// The floating ghost shown under the cursor while dragging rows out of
@@ -214,6 +215,10 @@ pub struct FileListDelegate {
     /// allocation-free; [`Self::visible_rows_changed`] fills it
     /// viewport-only off the UI thread.
     pub thumbnails: Rc<RefCell<ThumbnailCache>>,
+    /// Shared task registry (same `Rc` the process + status bar hold).
+    /// Thumbnail warm passes register an ambient `ThumbnailPrefetch`
+    /// task here so a slow batch is visible in the status bar / panel.
+    pub tasks: Rc<RefCell<TaskRegistry>>,
     /// Cut-marked paths (Cmd+X), shared `Rc` with `ProcessState` so the
     /// set is always current; `render_tr` dims any row whose path is in
     /// it. (docs/features/FILE_OPS.md)
@@ -281,6 +286,7 @@ impl FileListDelegate {
         fs: Arc<NativeFs>,
         icons: Rc<RefCell<IconCache>>,
         thumbnails: Rc<RefCell<ThumbnailCache>>,
+        tasks: Rc<RefCell<TaskRegistry>>,
         cut_marker: Rc<RefCell<Vec<PathBuf>>>,
         shell_focus: gpui::FocusHandle,
     ) -> Self {
@@ -317,6 +323,7 @@ impl FileListDelegate {
             paths: HashMap::new(),
             icons,
             thumbnails,
+            tasks,
             cut_marker,
             heats: Vec::new(),
             tags: Vec::new(),
@@ -505,7 +512,16 @@ impl FileListDelegate {
             }
         }
 
+        // Ambient task so a slow batch shows in the status bar / panel.
+        // Sub-perceptual batches finish inside SURFACE_DELAY and never
+        // flicker a row in. (docs/features/FILE_OPS.md)
+        let task_id = self.tasks.borrow_mut().begin(
+            TaskKind::ThumbnailPrefetch,
+            format!("Loading {} thumbnails\u{2026}", todo.len()),
+            false,
+        );
         let thumbnails = self.thumbnails.clone();
+        let tasks = self.tasks.clone();
         cx.spawn(async move |table, cx| {
             for path in todo {
                 // Quick Look runs on a worker thread; only Send data
@@ -527,6 +543,18 @@ impl FileListDelegate {
                 {
                     break;
                 }
+            }
+            // Always retire the task. Borrow the shared registry directly
+            // so a gone table entity still drops the row; notify through
+            // the entity when it is still alive.
+            if table
+                .update(cx, |_table, cx| {
+                    tasks.borrow_mut().end(task_id);
+                    cx.notify();
+                })
+                .is_err()
+            {
+                tasks.borrow_mut().end(task_id);
             }
         })
         .detach();

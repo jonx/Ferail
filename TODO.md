@@ -57,10 +57,12 @@ feature notes in [docs/features/](docs/features/README.md).
   per-cell adornments the list row paints that the grid cell still does
   not — tag dots, favorite star, Ant Trail heat tint, cut-item dimming,
   and the truncated-name tooltip.
-- Complete status/task feedback: selected count and size, total visible
-  size, free space, active task count, cancel buttons, recent task history,
-  and task registration for magic, thumbnails, enumeration, copy/move, and
-  trash.
+- Status/task feedback: shipped — selected count and size, total visible
+  size, free space, active task count, cancel buttons, the live rate/ETA
+  summary line and progress strip, recent task history (foreground tasks
+  only, in the panel's "Recent" section), and task registration across
+  enumeration, magic/quarantine/icon/thumbnail prefetch, folder sizes,
+  copy/move/duplicate/compress, search, disk usage, dupes, and trash.
 - Add notification and undo coverage for mutations: trash, rename, new
   folder, copy/move, permission errors, and long-running completions.
 
@@ -235,6 +237,19 @@ feature notes in [docs/features/](docs/features/README.md).
   both crates). Only the larger, deferred Windows-only ports remain:
   third-party shell-extension context-menu verbs (`IContextMenu`) and WSL
   integration.
+- Sleep/wake handling **shipped 2026-06-20**
+  ([docs/features/POWER.md](docs/features/POWER.md)): pause video + slideshow
+  on sleep, idle-sleep block (`IOPMAssertion` / `SetThreadExecutionState`)
+  around transfers, volume re-list + dir reload on wake. Windows
+  `WM_POWERBROADCAST` observer + `prevent_idle_sleep` are scaffolded and
+  compile for `x86_64-pc-windows-msvc`. Two Windows follow-ups remain:
+  display on/off events (`PBT_POWERSETTINGCHANGE` +
+  `RegisterPowerSettingNotification` for `GUID_CONSOLE_DISPLAY_STATE`), and —
+  if a transfer ever asserts from a thread-pool worker rather than the
+  foreground task — switching the guard from per-thread
+  `SetThreadExecutionState` to the process-wide Power Request API. Also: only
+  the most-recent viewer is paused (`ProcessState::viewer_window` tracks one);
+  pause all viewers once the process tracks a viewer list.
 - The Windows screenshot harness needs a `gpui_windows::render_to_image`
   patch that isn't upstream yet. Publish the gpui fork carrying it and point
   the `[patch]` block at `git = "<fork-url>", rev = "..."` so both platforms
