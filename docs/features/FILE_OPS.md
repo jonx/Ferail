@@ -100,6 +100,50 @@ volume-identity parity and the `.lnk` alias-in-dest path. Note: all drag
 gestures are OS-driven, so they can't be exercised by the screenshot harness —
 verify interactively.
 
+## Feedback UX Policy
+
+Feraille's mutation feedback should stay calm. The UI itself is the confirmation
+for direct, visible actions; notifications are for attention, ambiguity, or
+failure.
+
+### Success
+
+Do not show success notifications for immediate, visible edits:
+
+- New Folder.
+- Rename.
+- Quick alias creation.
+- Instant copy/move/duplicate/compress work that never surfaced in the task
+  UI.
+
+Show success only when at least one of these is true:
+
+- The task lived long enough to appear in the status bar or task panel.
+- The result is not visually obvious from the current view.
+- The action was destructive, delayed, or happened in another window/context.
+- The user explicitly requested background work and may have moved on.
+
+Implementation rule: task-backed actions use `TaskRegistry::end_and_was_surfaced`
+to decide whether a success toast is warranted. Sub-150 ms work stays silent.
+
+### Failure
+
+Failures always surface. The notification should include:
+
+- The user-facing operation name.
+- The raw underlying error or enum/code when available.
+- A practical next action.
+
+Examples:
+
+- `Rename failed: Permission denied (os error 13). Check permissions for the item or grant Feraille access in System Settings.`
+- `Search failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again.`
+- `Compress failed: ditto exited with 1: ... Free space on the destination volume or choose another destination.`
+
+Do not hide technical details. Feraille users are expected to be comfortable
+with OS/tool errors; the app adds context and advice instead of replacing the
+real cause with vague friendly copy.
+
 ## Platform tags
 
 **[mac]** = macOS-only today; **[win-parity]** = named Windows

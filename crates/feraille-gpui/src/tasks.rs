@@ -232,8 +232,16 @@ impl TaskRegistry {
     /// `Cancelled`, otherwise `Completed`. Workers that know they failed
     /// call [`Self::end_failed`] instead. Stale ids are silently ignored.
     pub fn end(&mut self, id: TaskId) {
+        let _ = self.end_and_was_surfaced(id);
+    }
+
+    /// Same as [`Self::end`], but returns whether the task had lived long
+    /// enough to be visible in the status bar / task panel. Callers use this
+    /// to avoid success toasts for sub-perceptual work.
+    pub fn end_and_was_surfaced(&mut self, id: TaskId) -> bool {
         if let Some(pos) = self.tasks.iter().position(|t| t.id == id) {
             let task = self.tasks.remove(pos);
+            let surfaced = task.is_surfaced();
             let cancelled = task
                 .cancel
                 .as_ref()
@@ -244,6 +252,9 @@ impl TaskRegistry {
                 Outcome::Completed
             };
             self.record_completed(&task, outcome);
+            surfaced
+        } else {
+            false
         }
     }
 
@@ -436,7 +447,11 @@ mod tests {
     #[test]
     fn end_does_not_record_ambient_tasks() {
         let mut r = TaskRegistry::new();
-        let id = r.begin(TaskKind::ThumbnailPrefetch, "Loading thumbnails\u{2026}", false);
+        let id = r.begin(
+            TaskKind::ThumbnailPrefetch,
+            "Loading thumbnails\u{2026}",
+            false,
+        );
         r.end(id);
         assert!(!r.has_history());
         assert_eq!(r.completed().count(), 0);
@@ -460,6 +475,13 @@ mod tests {
         r.end_failed(id, "disk full");
         let hist: Vec<_> = r.completed().collect();
         assert_eq!(hist[0].outcome, Outcome::Failed("disk full".into()));
+    }
+
+    #[test]
+    fn end_reports_whether_task_was_surfaced() {
+        let mut r = TaskRegistry::new();
+        let id = r.begin(TaskKind::FileOp, "Copying\u{2026}", true);
+        assert!(!r.end_and_was_surfaced(id));
     }
 
     #[test]

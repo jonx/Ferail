@@ -724,7 +724,7 @@ impl ShellArgs {
                     input.update(cx, |state, cx| {
                         state.set_value(text_for_input.clone(), window, cx);
                     });
-                    s.start_subtree_search(tab_id, needle.clone(), cx);
+                    s.start_subtree_search(tab_id, needle.clone(), None, cx);
                 });
             });
         }
@@ -732,7 +732,7 @@ impl ShellArgs {
             let force_panel = self.dupe_panel;
             shell.update(cx, |s, cx| {
                 let tab_id = s.active_tab().id;
-                s.start_duplicate_scan(tab_id, cx);
+                s.start_duplicate_scan(tab_id, None, cx);
                 if force_panel {
                     if let Some(dm) = s.active_tab_mut().dupe_mode.as_mut() {
                         dm.presentation = crate::feature_settings::DupePresentation::Panel;

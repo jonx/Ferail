@@ -22,16 +22,16 @@ and let git history plus release notes carry the record.
     covered by **Smart Folders / Saved Searches** under High-Value Features.)
   - Tear-off / collapse **remove** animation (add fade-in + dedup pulse shipped;
     the §3.2 collapse-on-remove still pops rather than animating).
-- **Notifications & undo coverage for mutations.** Today copy/move/trash show
-  success toasts and register undo; the gaps:
-  - Success notifications for **rename, new folder, duplicate, compress**
-    (these go through `spawn_file_op`, which only surfaces *errors*).
-  - Undo for **duplicate** and **compress** (no `UndoOp` today).
+- **Notifications & undo coverage for mutations.** Success feedback is now
+  intentionally quiet for immediate visible work: rename/new-folder stay silent
+  on success, and task-backed copy/move/duplicate/compress only toast after the
+  task surfaced. Remaining gaps:
   - **Cross-volume move undo** — `UndoOp::MoveBack` is registered only for
     same-volume moves; cross-volume moves fall back to copy-undo or none.
-  - Completion toasts for long-running **search / disk-usage / dupes** (they
-    land in Recent history but push no success notification).
-  - Specific handling for permission errors (today a generic failure toast).
+  - Completion toasts for long-running **disk-usage** scans in the secondary
+    window (main-shell search and duplicate scans are duration-gated now).
+  - Extend actionable raw-error messages beyond the common file-op/search/dupe
+    paths to every remaining mutation surface.
 - **Persist file-table column order** after drag-reorder. `move_column`
   reorders the live vec but never persists; widths already persist.
 - **Grid marquee / rubber-band selection** — the last grid-parity gap now that

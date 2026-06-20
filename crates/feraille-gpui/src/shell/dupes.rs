@@ -17,7 +17,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use feraille_core::{EnumerationError, FileEntry};
 use feraille_fs_native::{DEFAULT_DUPE_BATCH, DupeFact, DupeHashCache, DupeOpts, NativeFs};
-use gpui::Context;
+use gpui::{AnyWindowHandle, Context};
+use gpui_component::WindowExt;
 
 use super::Shell;
 use super::tab::{DupeGroupMember, DupeGroupView, DupeViewMode, TabId};
@@ -170,7 +171,12 @@ pub(super) fn storage_note(is_hardlink: bool, is_clone: bool) -> &'static str {
 impl Shell {
     /// Launch a duplicate-finder scan rooted at the tab's current
     /// directory, streaming grouped results into its list.
-    pub fn start_duplicate_scan(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+    pub fn start_duplicate_scan(
+        &mut self,
+        tab_id: TabId,
+        notify_window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else {
             return;
         };
@@ -261,7 +267,12 @@ impl Shell {
                             this.apply_dupe_batch_in_tab(idx, batch, cx);
                         }
                         if let Some(error) = done_error {
-                            this.apply_dupe_msg_in_tab(idx, DupeMsg::Done(error), cx);
+                            this.apply_dupe_msg_in_tab(
+                                idx,
+                                DupeMsg::Done(error),
+                                notify_window.clone(),
+                                cx,
+                            );
                         }
                         false
                     })
@@ -274,16 +285,56 @@ impl Shell {
         .detach();
     }
 
-    fn apply_dupe_msg_in_tab(&mut self, idx: usize, msg: DupeMsg, cx: &mut Context<Self>) {
+    fn apply_dupe_msg_in_tab(
+        &mut self,
+        idx: usize,
+        msg: DupeMsg,
+        notify_window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
         match msg {
             DupeMsg::Batch(batch) => self.apply_dupe_batch_in_tab(idx, batch, cx),
-            DupeMsg::Done(_error) => {
+            DupeMsg::Done(error) => {
+                let groups = self.tabs[idx]
+                    .dupe_mode
+                    .as_ref()
+                    .map(|mode| mode.groups)
+                    .unwrap_or(0);
+                let reclaimable = self.tabs[idx]
+                    .dupe_mode
+                    .as_ref()
+                    .map(|mode| mode.wasted_bytes)
+                    .unwrap_or(0);
+                let mut surfaced = false;
                 if let Some(tab) = self.tabs.get_mut(idx) {
                     if let Some(id) = tab.load_task.take() {
-                        self.process.tasks.borrow_mut().end(id);
+                        surfaced = self.process.tasks.borrow_mut().end_and_was_surfaced(id);
                     }
                     tab.load_cancel = None;
                     cx.notify();
+                }
+                if let Some(window) = notify_window {
+                    if let Some(error) = error {
+                        let message = super::enumeration_error_message("Duplicate scan", &error);
+                        let _ = window.update(cx, |_, window, cx| {
+                            use gpui_component::notification::Notification;
+                            window.push_notification(Notification::error(message), cx);
+                        });
+                    } else if surfaced {
+                        let message = if groups == 0 {
+                            "Duplicate scan finished: no duplicates found".to_string()
+                        } else {
+                            format!(
+                                "Duplicate scan finished: {groups} group{} \u{00B7} {} reclaimable",
+                                if groups == 1 { "" } else { "s" },
+                                feraille_fs_native::humanize_bytes(reclaimable)
+                            )
+                        };
+                        let _ = window.update(cx, |_, window, cx| {
+                            use gpui_component::notification::Notification;
+                            window.push_notification(Notification::success(message), cx);
+                        });
+                    }
                 }
             }
         }

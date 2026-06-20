@@ -65,6 +65,39 @@ enum FavoriteResolved {
     NotAFolder,
 }
 
+#[derive(Clone, Debug)]
+enum FileOpSuccessToast {
+    None,
+    IfSurfaced(String),
+}
+
+#[derive(Clone, Debug)]
+enum FileOpUndo {
+    None,
+    Rename { current: PathBuf, original: PathBuf },
+    DeleteFolder(PathBuf),
+    RemoveCreatedResult,
+}
+
+impl FileOpUndo {
+    fn push(self, shell: &mut Shell, created: Vec<PathBuf>) {
+        match self {
+            FileOpUndo::None => {}
+            FileOpUndo::Rename { current, original } => {
+                shell.push_undo(UndoOp::Rename { current, original });
+            }
+            FileOpUndo::DeleteFolder(path) => {
+                shell.push_undo(UndoOp::DeleteFolder(path));
+            }
+            FileOpUndo::RemoveCreatedResult => {
+                if !created.is_empty() {
+                    shell.push_undo(UndoOp::RemoveCreated(created));
+                }
+            }
+        }
+    }
+}
+
 /// Reversible operation pushed onto `Shell::undo_stack` after a
 /// successful mutation. Filesystem variants apply synchronously via
 /// [`UndoOp::apply_fs`]; favorites variants (`AddFavorite` /
@@ -153,6 +186,56 @@ impl UndoOp {
             UndoOp::RemoveCreated(_) => "Removed pasted items",
             UndoOp::TrashRestore(_) => "Restored from Trash",
         }
+    }
+}
+
+fn file_op_error_notification(
+    operation: &str,
+    err: &str,
+) -> gpui_component::notification::Notification {
+    use gpui_component::notification::Notification;
+
+    let lower = err.to_ascii_lowercase();
+    let advice = if lower.contains("permission denied")
+        || lower.contains("operation not permitted")
+        || lower.contains("os error 1")
+        || lower.contains("os error 13")
+    {
+        "Check permissions for the item or grant Feraille access in System Settings."
+    } else if lower.contains("no such file or directory")
+        || lower.contains("not found")
+        || lower.contains("os error 2")
+    {
+        "The item may have moved or been deleted. Refresh the folder and try again."
+    } else if lower.contains("file exists") || lower.contains("already exists") {
+        "Choose a different name or remove the existing item, then try again."
+    } else if lower.contains("no space left")
+        || lower.contains("not enough space")
+        || lower.contains("os error 28")
+    {
+        "Free space on the destination volume or choose another destination."
+    } else if lower.contains("read-only file system") || lower.contains("read only") {
+        "The destination is read-only. Choose a writable folder or change the volume permissions."
+    } else if lower.contains("too long") || lower.contains("name too long") {
+        "Use a shorter name or move the item to a path with fewer nested folders."
+    } else {
+        "Refresh the folder and try again. If it keeps failing, check the item in Finder."
+    };
+
+    Notification::error(format!("{operation} failed: {err}. {advice}"))
+}
+
+fn enumeration_error_message(operation: &str, err: &EnumerationError) -> String {
+    match err {
+        EnumerationError::PermissionDenied => format!(
+            "{operation} failed: PermissionDenied. Grant Feraille access to this location or run with sufficient permissions, then try again."
+        ),
+        EnumerationError::NotFound => format!(
+            "{operation} failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again."
+        ),
+        EnumerationError::Other(raw) => format!(
+            "{operation} failed: {raw} (EnumerationError::Other). Refresh and try again; if it repeats, inspect the folder permissions or filesystem state."
+        ),
     }
 }
 
@@ -968,7 +1051,7 @@ impl Shell {
         });
         let filter_subscription = cx.subscribe_in(&filter_input, window, {
             let filter_input = filter_input.clone();
-            move |this, _state, ev: &InputEvent, _window, cx| {
+            move |this, _state, ev: &InputEvent, window, cx| {
                 match ev {
                     InputEvent::Change => {
                         let value = filter_input.read(cx).value().to_string();
@@ -988,7 +1071,7 @@ impl Shell {
                     // and below (docs/features/SEARCH.md).
                     InputEvent::PressEnter { .. } => {
                         let value = filter_input.read(cx).value().to_string();
-                        this.start_subtree_search(tab_id, value, cx);
+                        this.start_subtree_search(tab_id, value, Some(window.window_handle()), cx);
                     }
                     _ => {}
                 }
@@ -1428,11 +1511,11 @@ impl Shell {
     pub fn on_find_duplicates(
         &mut self,
         _: &FindDuplicates,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let tab_id = self.active_tab().id;
-        self.start_duplicate_scan(tab_id, cx);
+        self.start_duplicate_scan(tab_id, Some(window.window_handle()), cx);
     }
 
     /// Toolbar Sort menu. Each `SortBy*` action picks a column;
@@ -2636,27 +2719,70 @@ impl Shell {
     }
 
     fn spawn_file_op(
-        &self,
+        &mut self,
         reload_path: PathBuf,
-        op: impl FnOnce() -> Result<(), String> + Send + 'static,
-        label: &'static str,
+        op: impl FnOnce() -> Result<Vec<PathBuf>, String> + Send + 'static,
+        failure_label: &'static str,
+        task_label: Option<String>,
+        success_toast: FileOpSuccessToast,
+        undo: FileOpUndo,
         window: &Window,
         cx: &mut Context<Self>,
     ) {
         let process = self.process.clone();
         let win = window.window_handle();
+        let weak = cx.weak_entity();
+        let task_id = task_label.map(|label| {
+            self.process
+                .tasks
+                .borrow_mut()
+                .begin(crate::tasks::TaskKind::FileOp, label, false)
+        });
         cx.spawn(async move |_this, cx| {
             let result = cx.background_executor().spawn(async move { op() }).await;
+            let created = result.as_ref().ok().cloned().unwrap_or_default();
+            let error = result.as_ref().err().cloned();
+            let surfaced = if let Some(shell) = weak.upgrade() {
+                let created_for_undo = created.clone();
+                shell.update(cx, move |this, cx| {
+                    let surfaced = task_id
+                        .map(|id| {
+                            if let Some(message) = error.as_ref() {
+                                this.process
+                                    .tasks
+                                    .borrow_mut()
+                                    .end_failed(id, message.clone());
+                                false
+                            } else {
+                                this.process.tasks.borrow_mut().end_and_was_surfaced(id)
+                            }
+                        })
+                        .unwrap_or(false);
+                    if error.is_none() {
+                        undo.push(this, created_for_undo);
+                    }
+                    cx.notify();
+                    surfaced
+                })
+            } else {
+                false
+            };
             match result {
-                Ok(()) => Shell::broadcast_reload_for_process(&process, vec![reload_path], cx),
+                Ok(_) => {
+                    Shell::broadcast_reload_for_process(&process, vec![reload_path], cx);
+                    if let FileOpSuccessToast::IfSurfaced(message) = success_toast {
+                        if surfaced {
+                            let _ = win.update(cx, |_, window, cx| {
+                                use gpui_component::notification::Notification;
+                                window.push_notification(Notification::success(message), cx);
+                            });
+                        }
+                    }
+                }
                 Err(e) => {
-                    crate::log_warn!(90, "{label} failed: {e}");
+                    crate::log_warn!(90, "{failure_label} failed: {e}");
                     let _ = win.update(cx, |_, window, cx| {
-                        use gpui_component::notification::Notification;
-                        window.push_notification(
-                            Notification::error(format!("{label} failed: {e}")),
-                            cx,
-                        );
+                        window.push_notification(file_op_error_notification(failure_label, &e), cx);
                     });
                 }
             }

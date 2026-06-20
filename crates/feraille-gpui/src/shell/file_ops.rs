@@ -160,12 +160,16 @@ impl Shell {
             self.spawn_file_op(
                 dest,
                 move || {
+                    let mut created = Vec::new();
                     for src in &sources {
-                        crate::platform_shell::make_alias_in(src, &dest_for_op).map(|_| ())?;
+                        created.push(crate::platform_shell::make_alias_in(src, &dest_for_op)?);
                     }
-                    Ok(())
+                    Ok(created)
                 },
-                "alias-drop",
+                "Create alias",
+                None,
+                FileOpSuccessToast::None,
+                FileOpUndo::None,
                 window,
                 cx,
             );
@@ -646,9 +650,14 @@ impl Shell {
             drop(sleep_blocker);
 
             // 4. Finish: end task, register undo, reload, notify.
+            let mut surfaced = false;
             if let Some(shell) = weak.upgrade() {
                 shell.update(cx, |this, cx| {
-                    this.process.tasks.borrow_mut().end(task_id);
+                    surfaced = this
+                        .process
+                        .tasks
+                        .borrow_mut()
+                        .end_and_was_surfaced(task_id);
                     if let Ok((outcome, all_same_volume, effective)) = &result {
                         if !outcome.created.is_empty() {
                             match effective {
@@ -686,6 +695,9 @@ impl Shell {
             let _ = win.update(cx, |_, window, cx| {
                 match &result {
                     Ok((outcome, _, effective)) => {
+                        if !surfaced && !outcome.cancelled && outcome.skipped == 0 {
+                            return;
+                        }
                         let done_verb = match effective {
                             TransferMode::Move => "Moved",
                             _ => "Copied",
@@ -1458,12 +1470,17 @@ impl Shell {
                 let undo_path = path.clone();
                 this.spawn_file_op(
                     cur,
-                    move || std::fs::create_dir(&op_path).map_err(|e| e.to_string()),
-                    "new-folder",
+                    move || {
+                        std::fs::create_dir(&op_path).map_err(|e| e.to_string())?;
+                        Ok(vec![op_path])
+                    },
+                    "New folder",
+                    None,
+                    FileOpSuccessToast::None,
+                    FileOpUndo::DeleteFolder(undo_path),
                     window,
                     cx,
                 );
-                this.push_undo(UndoOp::DeleteFolder(undo_path));
             },
             window,
             cx,
@@ -1566,15 +1583,20 @@ impl Shell {
                 let op_new_path = new_path.clone();
                 this.spawn_file_op(
                     parent.clone(),
-                    move || std::fs::rename(&op_old_path, &op_new_path).map_err(|e| e.to_string()),
-                    "rename",
+                    move || {
+                        std::fs::rename(&op_old_path, &op_new_path).map_err(|e| e.to_string())?;
+                        Ok(Vec::new())
+                    },
+                    "Rename",
+                    None,
+                    FileOpSuccessToast::None,
+                    FileOpUndo::Rename {
+                        current: new_path,
+                        original: old_path.clone(),
+                    },
                     window,
                     cx,
                 );
-                this.push_undo(UndoOp::Rename {
-                    current: new_path,
-                    original: old_path.clone(),
-                });
             },
             window,
             cx,
@@ -1628,15 +1650,37 @@ impl Shell {
             return;
         }
         let cur = self.active_tab().current_dir.clone();
+        let count = paths.len();
+        let task_label = format!(
+            "Duplicating {}",
+            if count == 1 {
+                paths[0]
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("item")
+                    .to_string()
+            } else {
+                format!("{count} items")
+            }
+        );
+        let success = if count == 1 {
+            "Duplicated item".to_string()
+        } else {
+            format!("Duplicated {count} items")
+        };
         self.spawn_file_op(
             cur,
             move || {
+                let mut created = Vec::new();
                 for path in paths {
-                    crate::platform_shell::duplicate_path(&path).map(|_| ())?;
+                    created.push(crate::platform_shell::duplicate_path(&path)?);
                 }
-                Ok(())
+                Ok(created)
             },
-            "duplicate",
+            "Duplicate",
+            Some(task_label),
+            FileOpSuccessToast::IfSurfaced(success),
+            FileOpUndo::RemoveCreatedResult,
             window,
             cx,
         );
@@ -1660,12 +1704,16 @@ impl Shell {
         self.spawn_file_op(
             cur,
             move || {
+                let mut created = Vec::new();
                 for path in paths {
-                    crate::platform_shell::make_alias(&path).map(|_| ())?;
+                    created.push(crate::platform_shell::make_alias(&path)?);
                 }
-                Ok(())
+                Ok(created)
             },
-            "make-alias",
+            "Make alias",
+            None,
+            FileOpSuccessToast::None,
+            FileOpUndo::None,
             window,
             cx,
         );
@@ -1686,14 +1734,32 @@ impl Shell {
             return;
         }
         let cur = self.active_tab().current_dir.clone();
+        let count = paths.len();
+        let task_label = if count == 1 {
+            let name = paths[0]
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("item");
+            format!("Compressing {name}")
+        } else {
+            format!("Compressing {count} items")
+        };
+        let success = if count == 1 {
+            "Created archive".to_string()
+        } else {
+            format!("Created archive from {count} items")
+        };
         self.spawn_file_op(
             cur,
             move || {
                 let targets: Vec<&std::path::Path> =
                     paths.iter().map(|path| path.as_path()).collect();
-                crate::platform_shell::compress_paths(&targets).map(|_| ())
+                crate::platform_shell::compress_paths(&targets).map(|path| vec![path])
             },
-            "compress",
+            "Compress",
+            Some(task_label),
+            FileOpSuccessToast::IfSurfaced(success),
+            FileOpUndo::RemoveCreatedResult,
             window,
             cx,
         );

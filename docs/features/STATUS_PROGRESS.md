@@ -108,8 +108,12 @@ foreground state needs to repaint.
 - Starting a task must not block the UI.
 - Progress updates must be throttled or sampled by the worker/poller.
 - Instant tasks should not surface visually.
+- Success notifications are gated by task visibility: if a task ended before
+  it lived long enough to appear in the status bar/panel, the UI change itself
+  is the confirmation.
 - Errors become toasts, recent-history failures, or status details, never
-  modal freezes.
+  modal freezes. Include the raw technical error/enum/code plus actionable next
+  steps.
 - Cancellation is cooperative: the UI flips a shared flag and the worker exits
   at its next checkpoint.
 
@@ -117,8 +121,8 @@ foreground state needs to repaint.
 
 Tracked in [TODO.md](../../TODO.md):
 
-- Completion toasts for long-running search, disk usage, and duplicate scans.
-- Success notifications for rename, new folder, duplicate, and compress.
+- Completion feedback for secondary-window scans, such as Disk Usage, that do
+  not yet have a clean notification handle.
 - Accessibility announcements for file operations and long-running tasks.
 - More consistent cancellation tokens for workers that currently only drop
   stale results at apply time.

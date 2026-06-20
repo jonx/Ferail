@@ -17,7 +17,8 @@ use std::sync::{
 
 use feraille_core::{EnumerationError, FileEntry};
 use feraille_fs_native::{DEFAULT_SEARCH_BATCH, NativeFs};
-use gpui::Context;
+use gpui::{AnyWindowHandle, Context};
+use gpui_component::WindowExt;
 use std::path::Path;
 
 use super::Shell;
@@ -186,7 +187,13 @@ impl Shell {
     /// Launch a recursive / global search rooted at the tab's current
     /// directory, replacing its listing with streamed results. Triggered
     /// by Enter in the filter box (and the `--search-subtree` CLI flag).
-    pub fn start_subtree_search(&mut self, tab_id: TabId, needle: String, cx: &mut Context<Self>) {
+    pub fn start_subtree_search(
+        &mut self,
+        tab_id: TabId,
+        needle: String,
+        notify_window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
         let needle = needle.trim().to_string();
         if needle.is_empty() {
             return;
@@ -257,7 +264,7 @@ impl Shell {
                         if this.tabs[idx].load_generation != generation {
                             return true;
                         }
-                        this.apply_search_msg_in_tab(idx, msg, cx);
+                        this.apply_search_msg_in_tab(idx, msg, notify_window.clone(), cx);
                         false
                     })
                     .unwrap_or(true);
@@ -269,15 +276,49 @@ impl Shell {
         .detach();
     }
 
-    fn apply_search_msg_in_tab(&mut self, idx: usize, msg: SearchMsg, cx: &mut Context<Self>) {
+    fn apply_search_msg_in_tab(
+        &mut self,
+        idx: usize,
+        msg: SearchMsg,
+        notify_window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
         match msg {
             SearchMsg::Batch(batch) => self.apply_search_batch_in_tab(idx, batch, cx),
-            SearchMsg::Done(_error) => {
+            SearchMsg::Done(error) => {
+                let result_count = self.tabs[idx].table.read(cx).delegate().entries.len();
+                let needle = self.tabs[idx]
+                    .search_mode
+                    .as_ref()
+                    .map(|mode| mode.needle.clone())
+                    .unwrap_or_default();
+                let mut surfaced = false;
                 if let Some(tab) = self.tabs.get_mut(idx) {
                     if let Some(id) = tab.load_task.take() {
-                        self.process.tasks.borrow_mut().end(id);
+                        surfaced = self.process.tasks.borrow_mut().end_and_was_surfaced(id);
                     }
                     tab.load_cancel = None;
+                }
+                if let Some(window) = notify_window {
+                    if let Some(error) = error {
+                        let message = super::enumeration_error_message("Search", &error);
+                        let _ = window.update(cx, |_, window, cx| {
+                            use gpui_component::notification::Notification;
+                            window.push_notification(Notification::error(message), cx);
+                        });
+                    } else if surfaced {
+                        let message = if result_count == 1 {
+                            format!("Search finished: 1 result for \u{201c}{needle}\u{201d}")
+                        } else {
+                            format!(
+                                "Search finished: {result_count} results for \u{201c}{needle}\u{201d}"
+                            )
+                        };
+                        let _ = window.update(cx, |_, window, cx| {
+                            use gpui_component::notification::Notification;
+                            window.push_notification(Notification::success(message), cx);
+                        });
+                    }
                 }
             }
         }
