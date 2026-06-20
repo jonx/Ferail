@@ -79,6 +79,13 @@ actions!(
         EditBreadcrumb,
         ShortcutsHelp,
         OpenDiskUsage,
+        /// Close the active tab's tool result surface and return to normal
+        /// directory browsing. Applies to Search, Duplicate Finder, and
+        /// docked Disk Usage.
+        CloseToolResult,
+        /// Pop the active docked Disk Usage surface into a standalone
+        /// window. No-op for other result types.
+        PopOutDiskUsage,
         /// Find duplicate files under the active tab's directory and show
         /// them grouped in the tab (docs/features/DUPLICATES.md).
         FindDuplicates,

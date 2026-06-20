@@ -384,15 +384,27 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::View,
         shortcuts: &[Shortcut::primary("0")],
     },
-    // Disk usage. Cmd+Shift+D opens (or focuses) the dedicated Disk
-    // Usage window. The other two commands are scoped to that window
-    // — the dispatcher gates them on focus so they don't shadow
-    // similarly-bound actions in the main file pane.
+    // Tool results. Cmd+Shift+D opens Disk Usage as a tab-local result
+    // surface; Search and Duplicate Finder use the same result host.
+    // Window-specific Disk Usage commands remain available for the
+    // standalone pop-out path.
     CommandSpec {
         id: CommandId("view.disk_usage"),
         title: "Disk Usage",
         category: Category::View,
         shortcuts: &[Shortcut::primary_shift("D")],
+    },
+    CommandSpec {
+        id: CommandId("view.close_results"),
+        title: "Close Results",
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
+        id: CommandId("disk_usage.open_in_window"),
+        title: "Open Disk Usage in Window",
+        category: Category::View,
+        shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("view.find_duplicates"),

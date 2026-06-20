@@ -7,6 +7,37 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-20 Tool Result Surfaces (landed)
+
+Search, Duplicate Finder, and docked Disk Usage now share a tab-local result
+surface model instead of each owning a separate "results mode" concept.
+
+- **One tab field:** `Tab::tool_result: Option<ToolResultSurface>` replaces the
+  parallel `search_mode` / `dupe_mode` fields. The enum variants are Search,
+  Duplicates, and DiskUsage.
+- **Enum over trait:** this is a placement/lifecycle abstraction, not a worker
+  framework. Search and duplicates still stream into the table; Disk Usage keeps
+  its own GPUI entity because treemap/layout/top-files state is not table-shaped.
+- **Host context event:** `ToolHostContext` / `ToolHostEvent` lives outside the
+  shell in `tool_results.rs`. Hosts dispatch `HostChanged(Docked | Windowed)`
+  through `ToolResultSurface::handle_host_event`; the active tool body reacts
+  by changing only host-sensitive chrome.
+- **Shared UX:** the breadcrumb row renders one result pill plus a close button.
+  Disk Usage also exposes an Open in Window pop-out button. Both are backed by
+  command-catalogue actions (`view.close_results`,
+  `disk_usage.open_in_window`). Closing a result reloads the root folder as a
+  normal directory. Navigation and watcher reloads treat any active tool result
+  uniformly.
+- **Docked DU:** `view.disk_usage` now installs Disk Usage in the active tab.
+  `DiskUsageView` measures its host element with `on_prepaint`, falling back to
+  the window viewport on the first frame, so the same view still works in a
+  standalone window. Pop-out windows opened from the shell receive a Dock in
+  Tab callback that returns the same `Entity<DiskUsageView>` to the owning
+  shell and closes the window.
+- **Host moves preserve state:** pop-out and dock-back move the existing DU
+  entity between hosts, so the scan queue/tree, progress, zoom path, selected
+  node, Top-N list, and package/size-mode toggles survive the move.
+
 # 2026-06-19 plugin seam + VLC video backend (planning)
 
 User wants a plugin system where plugins can override internal features —

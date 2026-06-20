@@ -36,11 +36,15 @@ use gpui_component::{
 };
 
 use crate::tasks::{TaskId, TaskKind, TaskRegistry};
+use crate::tool_results::{ToolHostContext, ToolHostEvent};
 
 /// Callback invoked after a task-registry mutation so the owning
 /// Shell can `cx.notify` itself (the registry is plain `Rc<RefCell>`
 /// with no built-in observers).
 pub type NotifyOwner = Rc<dyn Fn(&mut App)>;
+/// Callback used by a standalone Disk Usage window to dock itself back
+/// into the owning Shell. The shell decides which tab receives it.
+pub type DockOwner = Rc<dyn Fn(PathBuf, Entity<DiskUsageView>, &mut App)>;
 
 /// Treemap recursion depth used by the DU window. Matches the old
 /// app's DU_LAYOUT_DEPTH.
@@ -102,10 +106,10 @@ pub struct DiskUsageView {
     /// Show the Top-N panel? Toggleable via the header chip.
     topn_visible: bool,
 
-    /// Shared task registry from the parent Shell. The DU window
+    /// Shared task registry from the parent Shell. The DU view
     /// `begin`s a task at scan start, optionally updates progress, and
     /// `end`s it when the scan finishes — so the status bar's progress
-    /// strip stays live while the DU window scans.
+    /// strip stays live while the DU view scans.
     tasks: Rc<RefCell<TaskRegistry>>,
     /// Active task id while the scan is in flight. `None` after Done.
     task_id: Option<TaskId>,
@@ -113,6 +117,19 @@ pub struct DiskUsageView {
     /// owning Shell can `cx.notify` itself (the registry is plain
     /// `Rc<RefCell>` so it has no built-in observers).
     notify_owner: Option<NotifyOwner>,
+    /// Optional callback for standalone windows that can return to a
+    /// shell tab. `None` when already docked or opened without an owner.
+    dock_owner: Option<DockOwner>,
+    /// Current host placement. Docked DU can rely on the shell breadcrumb for
+    /// the root path; windowed DU must show the path itself.
+    host: ToolHostContext,
+
+    /// Last measured size of the host element. A standalone DU window and
+    /// a docked shell pane use the same view; render falls back to the
+    /// native window viewport on the first frame, then sizes from this
+    /// measured container so docked DU does not assume it owns the whole
+    /// shell window.
+    host_size: Option<(f32, f32)>,
 
     /// True once we've adopted the scanner's canonical root NodeId
     /// from the first incoming fact. Phase 6 regression fix: the
@@ -144,6 +161,7 @@ impl DiskUsageView {
         fs: Arc<NativeFs>,
         tasks: Rc<RefCell<TaskRegistry>>,
         notify_owner: Option<NotifyOwner>,
+        dock_owner: Option<DockOwner>,
         cx: &mut Context<Self>,
     ) -> Self {
         // Keep construction UI-cheap. The background scanner performs
@@ -181,11 +199,26 @@ impl DiskUsageView {
             tasks,
             task_id: None,
             notify_owner,
+            dock_owner,
+            host: ToolHostContext::Windowed,
+            host_size: None,
             root_resolved: false,
             focus_handle: cx.focus_handle(),
         };
         view.start_scan(fs, cx);
         view
+    }
+
+    pub fn set_dock_owner(&mut self, dock_owner: Option<DockOwner>, cx: &mut Context<Self>) {
+        self.dock_owner = dock_owner;
+        cx.notify();
+    }
+
+    pub fn handle_host_event(&mut self, event: ToolHostEvent, cx: &mut Context<Self>) {
+        match event {
+            ToolHostEvent::HostChanged(context) => self.host = context,
+        }
+        cx.notify();
     }
 
     /// Mutate the shared task registry and nudge the owner Shell to
@@ -449,6 +482,15 @@ impl DiskUsageView {
         cx.notify();
     }
 
+    fn update_host_size(&mut self, width: f32, height: f32, cx: &mut Context<Self>) {
+        let next = (width.max(260.0).round(), height.max(220.0).round());
+        if self.host_size == Some(next) {
+            return;
+        }
+        self.host_size = Some(next);
+        cx.notify();
+    }
+
     fn restart_scan(&mut self, cx: &mut Context<Self>) {
         self.cancel.store(true, Ordering::Relaxed);
         if let Some(id) = self.task_id.take() {
@@ -539,7 +581,11 @@ impl DiskUsageView {
 
     fn header(&self, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
-        let title = self.root_path.to_string_lossy().into_owned();
+        let title = if self.host == ToolHostContext::Docked {
+            "Disk Usage".to_string()
+        } else {
+            self.root_path.to_string_lossy().into_owned()
+        };
         let scanned = humanize_bytes(self.stats.bytes_scanned);
         let files = self.stats.files_scanned;
         let folders = self.stats.dirs_scanned;
@@ -566,6 +612,22 @@ impl DiskUsageView {
                 .tooltip("Refresh")
                 .on_click(cx.listener(|this, _, _, cx| this.restart_scan(cx)))
         };
+        let dock_button = self.dock_owner.as_ref().map(|dock| {
+            let dock = dock.clone();
+            let root = self.root_path.clone();
+            Button::new("du-dock")
+                .small()
+                .icon(Icon::empty().path("icons/view-list.svg"))
+                .tooltip("Dock in tab")
+                .on_click(cx.listener(move |_, _, window, cx| {
+                    let view = cx.entity().clone();
+                    let app: &mut App = std::borrow::BorrowMut::borrow_mut(cx);
+                    let dock = dock.clone();
+                    let root = root.clone();
+                    app.defer(move |cx| dock(root, view, cx));
+                    window.remove_window();
+                }))
+        });
         let mut col = v_flex()
             .w_full()
             .gap_2()
@@ -588,6 +650,7 @@ impl DiskUsageView {
                             .text_color(theme.foreground)
                             .child(SharedString::from(title)),
                     )
+                    .when_some(dock_button, |this, button| this.child(button))
                     .child(
                         Button::new("du-up")
                             .small()
@@ -1054,11 +1117,14 @@ impl Render for DiskUsageView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let topn_visible = self.topn_visible;
         let viewport = window.viewport_size();
+        let (host_w, host_h) = self
+            .host_size
+            .unwrap_or((viewport.width.as_f32(), viewport.height.as_f32()));
         let side_width = if topn_visible { TOPN_PANEL_WIDTH } else { 0.0 };
         let header_height = if self.volume.is_some() { 118.0 } else { 88.0 };
         let footer_height = 34.0;
-        let treemap_width = (viewport.width.as_f32() - side_width - 32.0).max(260.0);
-        let treemap_height = (viewport.height.as_f32() - header_height - footer_height).max(220.0);
+        let treemap_width = (host_w - side_width - 32.0).max(260.0);
+        let treemap_height = (host_h - header_height - footer_height).max(220.0);
         let header = self.header(cx);
         let treemap = self.treemap(treemap_width, treemap_height, cx);
         let topn = if topn_visible {
@@ -1067,10 +1133,20 @@ impl Render for DiskUsageView {
             None
         };
         let legend = self.legend(cx);
+        let view = cx.entity().clone();
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().background)
+            .on_prepaint(move |bounds, _, cx| {
+                view.update(cx, |this, cx| {
+                    this.update_host_size(
+                        f32::from(bounds.size.width),
+                        f32::from(bounds.size.height),
+                        cx,
+                    );
+                });
+            })
             .child(header)
             .child(
                 h_flex()
@@ -1187,8 +1263,32 @@ pub fn open_window(
     fs: Arc<NativeFs>,
     tasks: Rc<RefCell<TaskRegistry>>,
     notify_owner: Option<NotifyOwner>,
+    dock_owner: Option<DockOwner>,
     cx: &mut App,
 ) -> Result<WindowHandle<Root>, anyhow::Error> {
+    let view = cx.new(|cx| {
+        DiskUsageView::new(
+            root.clone(),
+            fs.clone(),
+            tasks.clone(),
+            notify_owner.clone(),
+            dock_owner.clone(),
+            cx,
+        )
+    });
+    open_existing_window(root, view, dock_owner, cx)
+}
+
+/// Open a standalone Disk Usage window around an existing view entity.
+/// Used for pop-out so the scan tree, progress, zoom, selection, and
+/// queues survive the host move.
+pub fn open_existing_window(
+    root: PathBuf,
+    view: Entity<DiskUsageView>,
+    dock_owner: Option<DockOwner>,
+    cx: &mut App,
+) -> Result<WindowHandle<Root>, anyhow::Error> {
+    view.update(cx, |view, cx| view.set_dock_owner(dock_owner, cx));
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(960.0), px(720.0)), cx)),
         titlebar: Some(TitlebarOptions {
@@ -1201,15 +1301,6 @@ pub fn open_window(
         ..Default::default()
     };
     let handle = cx.open_window(opts, |window, cx| {
-        let view = cx.new(|cx| {
-            DiskUsageView::new(
-                root.clone(),
-                fs.clone(),
-                tasks.clone(),
-                notify_owner.clone(),
-                cx,
-            )
-        });
         cx.new(|cx| Root::new(view, window, cx))
     })?;
     Ok(handle)

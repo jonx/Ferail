@@ -33,6 +33,7 @@ use crate::file_list::FileListDelegate;
 use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
 use crate::multi_table::{DataTable, TableEvent, TableState};
 use crate::tasks::TaskKind;
+use crate::tool_results::{ToolHostContext, ToolHostEvent};
 use crate::tree::{
     LabeledMenu, ShellSidebarItem, TreeChild, TreeGuide, TreeRowIcon, TreeRowSpec, TreeSection,
 };
@@ -55,7 +56,7 @@ use loading::{
     run_directory_load_streaming, run_tree_children_load,
 };
 pub use path::{canonicalize_for_identity, parse_breadcrumb_path, path_segments};
-pub use tab::{ClosedTab, HistoryEntry, Tab, TabId};
+pub use tab::{ClosedTab, HistoryEntry, Tab, TabId, ToolResultSurface};
 
 /// Classification produced by `Shell::resolve_favorite_target` so
 /// the toggle handler can show the appropriate toast for files.
@@ -1060,8 +1061,7 @@ impl Shell {
                             // Editing the filter while showing a results
                             // view returns to the live directory, then
                             // applies the in-directory filter.
-                            this.tabs[idx].search_mode = None;
-                            this.tabs[idx].dupe_mode = None;
+                            this.tabs[idx].tool_result = None;
                             let path = this.tabs[idx].current_dir.clone();
                             this.load_path_for_tab(tab_id, path, cx);
                         }
@@ -1351,16 +1351,14 @@ impl Shell {
         // empty and not showing results does Esc fall through to the
         // §2.5 selection-clear, which escapes out to the shell pane.
         let has_text = !self.active_tab().filter_text.is_empty();
-        let in_results =
-            self.active_tab().search_mode.is_some() || self.active_tab().dupe_mode.is_some();
+        let in_results = self.active_tab().tool_result.is_some();
         if has_text || in_results {
             let filter_input = self.active_tab().filter_input.clone();
             filter_input.update(cx, |state, cx| {
                 state.set_value("", window, cx);
             });
             self.active_tab_mut().filter_text.clear();
-            self.active_tab_mut().search_mode = None;
-            self.active_tab_mut().dupe_mode = None;
+            self.active_tab_mut().tool_result = None;
             let path = self.active_tab().current_dir.clone();
             self.load_path(path, cx);
             self.focus_filter_input(window, cx);
@@ -1489,21 +1487,149 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let root = self.active_tab().current_dir.clone();
+        self.dock_disk_usage_root(root, cx);
+    }
+
+    fn dock_disk_usage_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
         let fs = self.process.fs.clone();
         let tasks = self.process.tasks.clone();
-        // The DU window owns its own entity, so it can't drive our
-        // notify directly. We hand it a callback closing over a weak
-        // handle to this Shell; when the DU scan begin/ends a task, it
-        // calls back and we re-render to refresh the status bar.
+        let notify_owner = self.disk_usage_notify_owner(cx);
+        let view = cx.new(|cx| {
+            crate::disk_usage::DiskUsageView::new(
+                root.clone(),
+                fs.clone(),
+                tasks.clone(),
+                Some(notify_owner.clone()),
+                None,
+                cx,
+            )
+        });
+        self.dock_disk_usage_view(root, view, cx);
+    }
+
+    fn dock_disk_usage_view(
+        &mut self,
+        root: PathBuf,
+        view: Entity<crate::disk_usage::DiskUsageView>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_tab().current_dir != root {
+            self.navigate(root.clone(), cx);
+        }
+
+        let tab_id = self.active_tab().id;
+        let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else {
+            return;
+        };
+
+        if let Some(cancel) = self.tabs[idx].load_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(cancel) = self.tabs[idx].folder_size_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(previous) = self.tabs[idx].load_task.take() {
+            self.process.tasks.borrow_mut().end(previous);
+        }
+        self.tabs[idx].load_generation = self.tabs[idx].load_generation.wrapping_add(1);
+        self.tabs[idx].load_staging = None;
+        self.tabs[idx].dupe_groups.clear();
+
+        view.update(cx, |view, cx| view.set_dock_owner(None, cx));
+        let surface = ToolResultSurface::disk_usage(root, view);
+        surface.handle_host_event(ToolHostEvent::HostChanged(ToolHostContext::Docked), cx);
+        self.tabs[idx].tool_result = Some(surface);
+        cx.notify();
+    }
+
+    fn disk_usage_notify_owner(&self, cx: &mut Context<Self>) -> Rc<dyn Fn(&mut App)> {
+        // The DU view owns its own entity, so it can't drive our notify
+        // directly. We hand it a callback closing over a weak handle to
+        // this Shell; when the scan begins/ends a task, it calls back and
+        // we re-render to refresh the status bar.
         let weak: WeakEntity<Self> = cx.weak_entity();
-        let notify_owner: Rc<dyn Fn(&mut App)> = Rc::new(move |cx| {
+        Rc::new(move |cx| {
             if let Some(s) = weak.upgrade() {
                 s.update(cx, |_, cx| cx.notify());
             }
-        });
-        if let Err(e) = crate::disk_usage::open_window(root, fs, tasks, Some(notify_owner), cx) {
-            crate::log_warn!(90, "disk-usage: open_window failed: {e:?}");
+        })
+    }
+
+    fn disk_usage_dock_owner(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Rc<dyn Fn(PathBuf, Entity<crate::disk_usage::DiskUsageView>, &mut App)> {
+        let weak: WeakEntity<Self> = cx.weak_entity();
+        Rc::new(move |root, view, cx| {
+            if let Some(s) = weak.upgrade() {
+                s.update(cx, move |this, cx| {
+                    this.dock_disk_usage_view(root, view, cx);
+                });
+            }
+        })
+    }
+
+    pub(super) fn close_active_tool_result(&mut self, cx: &mut Context<Self>) {
+        if self.active_tab().tool_result.is_none() {
+            return;
         }
+        self.active_tab_mut().tool_result = None;
+        let path = self.active_tab().current_dir.clone();
+        self.load_path(path, cx);
+    }
+
+    fn on_close_tool_result(
+        &mut self,
+        _: &CloseToolResult,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_active_tool_result(cx);
+    }
+
+    pub(super) fn pop_out_active_disk_usage(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab::ToolResultMode::DiskUsage(du)) =
+            self.active_tab().tool_result.as_ref().map(|surface| &surface.mode)
+        else {
+            return;
+        };
+        let root = du.root.clone();
+        let view = du.view.clone();
+        let dock_owner = self.disk_usage_dock_owner(cx);
+
+        match crate::disk_usage::open_existing_window(
+            root.clone(),
+            view.clone(),
+            Some(dock_owner),
+            cx,
+        ) {
+            Ok(_) => {
+                ToolResultSurface::disk_usage(root, view)
+                    .handle_host_event(ToolHostEvent::HostChanged(ToolHostContext::Windowed), cx);
+                self.close_active_tool_result(cx);
+            }
+            Err(e) => {
+                crate::log_warn!(90, "disk-usage: pop-out failed: {e:?}");
+                use gpui_component::notification::Notification;
+                window.push_notification(
+                    Notification::error(format!("Could not pop out Disk Usage: {e:?}")),
+                    cx,
+                );
+            }
+        }
+    }
+
+    fn on_pop_out_disk_usage(
+        &mut self,
+        _: &PopOutDiskUsage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pop_out_active_disk_usage(window, cx);
     }
 
     /// Find Duplicates — scan the active tab's directory for duplicate
@@ -2670,10 +2796,10 @@ impl Shell {
         let targets: Vec<(TabId, PathBuf)> = self
             .tabs
             .iter()
-            // A tab showing a results view (search / duplicates) is not
+            // A tab showing a tool result is not
             // displaying its directory — a watcher reload would clobber
             // the results.
-            .filter(|tab| tab.search_mode.is_none() && tab.dupe_mode.is_none())
+            .filter(|tab| tab.tool_result.is_none())
             .filter(|tab| paths.iter().any(|path| path == &tab.current_dir))
             .map(|tab| (tab.id, tab.current_dir.clone()))
             .collect();
@@ -2685,14 +2811,14 @@ impl Shell {
     /// Reload every directory-displaying tab in this window. Used on
     /// wake-from-sleep (docs/features/POWER.md): contents may have
     /// changed while the watcher was asleep, and the cheapest correct
-    /// answer is a re-list. Skips results views (search / duplicates)
+    /// answer is a re-list. Skips tool results
     /// for the same reason `reload_tabs_matching_paths` does — a reload
     /// would clobber the results.
     pub(crate) fn reload_dir_tabs(&mut self, cx: &mut Context<Self>) {
         let targets: Vec<(TabId, PathBuf)> = self
             .tabs
             .iter()
-            .filter(|tab| tab.search_mode.is_none() && tab.dupe_mode.is_none())
+            .filter(|tab| tab.tool_result.is_none())
             .map(|tab| (tab.id, tab.current_dir.clone()))
             .collect();
         for (tab_id, path) in targets {
@@ -3787,8 +3913,7 @@ impl Shell {
         tab.filtered_out.clear();
         tab.range_live = false;
         // Leaving any results view: this commits a real directory.
-        tab.search_mode = None;
-        tab.dupe_mode = None;
+        tab.tool_result = None;
         tab.nav.navigate_to(node_id);
         // Any pending screenshot select belongs to the previous
         // path; drop it so a stale row index doesn't apply.

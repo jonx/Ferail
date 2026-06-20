@@ -188,15 +188,16 @@ is just the count of members where neither flag is set.
 
 ## GPUI integration
 
-A scan is a per-tab results view, like search ([SEARCH.md](SEARCH.md)). The
-tab carries a `DupeViewMode` (`shell/tab.rs`: scan root, running group /
-reclaim counts, and the resolved `presentation` cached at launch so render
-never reads settings). `shell/dupes.rs` runs `find_duplicates` off the UI
-thread via `begin_with_cancel(TaskKind::DuplicateScan, …)`, cache-backed by
-`DbHashCache`, and streams confirmed groups into the tab's table — and, for
-the panel, into a retained `Vec<DupeGroupView>` (`Tab::dupe_groups`) that the
-selection helpers and group actions operate on. Generation-gated so a stale
-batch from a superseded scan is dropped.
+A scan is a per-tab [Tool Result Surface](TOOL_RESULTS.md), like search
+([SEARCH.md](SEARCH.md)). The tab carries `ToolResultSurface::Duplicates`,
+whose `DupeViewMode` stores the scan root, running group / reclaim counts, and
+the resolved `presentation` cached at launch so render never reads settings.
+`shell/dupes.rs` runs `find_duplicates` off the UI thread via
+`begin_with_cancel(TaskKind::DuplicateScan, …)`, cache-backed by `DbHashCache`,
+and streams confirmed groups into the tab's table — and, for the panel, into a
+retained `Vec<DupeGroupView>` (`Tab::dupe_groups`) that the selection helpers
+and group actions operate on. Generation-gated so a stale batch from a
+superseded scan is dropped.
 
 The dedicated card view lives in `shell/dupe_panel.rs`; `file_pane_body`
 swaps it in when `presentation == Panel`, independent of list/grid view

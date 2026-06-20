@@ -1,10 +1,10 @@
 //! Search results in a tab (docs/features/SEARCH.md).
 //!
-//! A tab in [`SearchMode`] keeps its `current_dir` (the search root) for
-//! navigation, but its file list is fed by a search worker instead of
-//! `enumerate`. Results stream into the same table via the same
-//! [`LoadBatch`] shape the directory loader uses, so selection, sort,
-//! preview, and context menus all work unchanged. The engine
+//! A tab-local tool result surface keeps its `current_dir` (the search
+//! root) for navigation, but its file list is fed by a search worker
+//! instead of `enumerate`. Results stream into the same table via the
+//! same [`LoadBatch`] shape the directory loader uses, so selection,
+//! sort, preview, and context menus all work unchanged. The engine
 //! (Spotlight-when-available, else the built-in recursive walker) is
 //! chosen per the user's [`SearchConfig`].
 
@@ -23,7 +23,7 @@ use std::path::Path;
 
 use super::Shell;
 use super::loading::LoadBatch;
-use super::tab::{SearchMode, TabId};
+use super::tab::{TabId, ToolResultSurface};
 use crate::feature_settings::{SearchConfig, SearchEnginePref};
 use crate::tasks::TaskKind;
 
@@ -222,11 +222,11 @@ impl Shell {
             cancel.store(true, Ordering::Relaxed);
         }
         self.tabs[idx].load_staging = None;
-        self.tabs[idx].search_mode = Some(SearchMode {
-            needle: needle.clone(),
-            root: root.clone(),
+        self.tabs[idx].tool_result = Some(ToolResultSurface::search(
+            needle.clone(),
+            root.clone(),
             engine_label,
-        });
+        ));
         let table = self.tabs[idx].table.clone();
         table.update(cx, |state, cx| {
             state.delegate_mut().clear();
@@ -288,8 +288,9 @@ impl Shell {
             SearchMsg::Done(error) => {
                 let result_count = self.tabs[idx].table.read(cx).delegate().entries.len();
                 let needle = self.tabs[idx]
-                    .search_mode
+                    .tool_result
                     .as_ref()
+                    .and_then(|surface| surface.search_mode())
                     .map(|mode| mode.needle.clone())
                     .unwrap_or_default();
                 let mut surfaced = false;
@@ -356,10 +357,15 @@ impl Shell {
         let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else {
             return;
         };
-        if self.tabs[idx].search_mode.is_none() {
+        if self.tabs[idx]
+            .tool_result
+            .as_ref()
+            .and_then(|surface| surface.search_mode())
+            .is_none()
+        {
             return;
         }
-        self.tabs[idx].search_mode = None;
+        self.tabs[idx].tool_result = None;
         let path = self.tabs[idx].current_dir.clone();
         self.load_path_for_tab(tab_id, path, cx);
     }

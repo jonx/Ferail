@@ -9,9 +9,9 @@
 //! flow and node store are shared rather than duplicated.
 //!
 //! Prime directive: the render path reads the retained model only — no
-//! I/O, no settings reads (presentation is cached on `DupeViewMode` at
-//! scan launch). The destructive action runs the same off-thread trash
-//! worker as `on_move_to_trash`, then prunes the model and rebuilds the
+//! I/O, no settings reads (presentation is cached on the tab's tool result
+//! surface at scan launch). The destructive action runs the same off-thread
+//! trash worker as `on_move_to_trash`, then prunes the model and rebuilds the
 //! card list from what survived.
 
 use std::{
@@ -29,12 +29,16 @@ use super::tab::DupeGroupView;
 use super::*;
 
 impl Shell {
-    /// Card-based duplicate panel for the active tab. Caller guarantees
-    /// `dupe_mode` is `Some` with `presentation == Panel`.
+    /// Card-based duplicate panel for the active tab. Caller guarantees the
+    /// active tool result is Duplicates with `presentation == Panel`.
     pub(super) fn dupe_panel_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let tab = self.active_tab();
-        let Some(dm) = tab.dupe_mode.as_ref() else {
+        let Some(dm) = tab
+            .tool_result
+            .as_ref()
+            .and_then(|surface| surface.dupe_mode())
+        else {
             return div().into_any_element();
         };
         let selection = &tab.selection;
@@ -142,8 +146,9 @@ impl Shell {
                         move |this, visible_range: Range<usize>, _window, cx| {
                             let tab = this.active_tab();
                             let root = tab
-                                .dupe_mode
+                                .tool_result
                                 .as_ref()
+                                .and_then(|surface| surface.dupe_mode())
                                 .map(|dm| dm.root.clone())
                                 .unwrap_or_default();
                             let selection = tab.selection.clone();
@@ -714,7 +719,11 @@ impl Shell {
                 }
             }
         }
-        if let Some(dm) = tab.dupe_mode.as_mut() {
+        if let Some(dm) = tab
+            .tool_result
+            .as_mut()
+            .and_then(|surface| surface.dupe_mode_mut())
+        {
             dm.wasted_bytes = tab.dupe_groups.iter().map(|g| g.reclaimable_bytes()).sum();
         }
         cx.notify();
@@ -744,7 +753,11 @@ impl Shell {
             g.group_no = i + 1;
         }
         tab.selection.clear();
-        if let Some(dm) = tab.dupe_mode.as_mut() {
+        if let Some(dm) = tab
+            .tool_result
+            .as_mut()
+            .and_then(|surface| surface.dupe_mode_mut())
+        {
             dm.groups = tab.dupe_groups.len();
             dm.wasted_bytes = tab.dupe_groups.iter().map(|g| g.reclaimable_bytes()).sum();
         }

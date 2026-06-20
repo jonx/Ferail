@@ -22,6 +22,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [DUPLICATES.md](DUPLICATES.md) | Shipped with follow-ups | Size/partial/full-hash duplicate finder, clone/hard-link awareness, card panel, virtualization, and cleanup actions ship; faster enumeration and more benchmarks remain open. |
 | [FAVORITES.md](FAVORITES.md) | Shipped with follow-ups | Favorites persistence, sidebar, drag/drop, locate, rename, remove, keyboard actions, and cross-platform modal flow ship; tag favorites and file-watch missing transitions remain open. |
 | [FILE_OPS.md](FILE_OPS.md) | Shipped with follow-ups | Copy, cut, paste, move, trash, collision policy, progress, cancellation, undo, and platform integration ship; mutation toast/undo gaps remain open. |
+| [ICONS.md](ICONS.md) | Reference | Complete icon inventory: source (NSWorkspace / local Lucide bundle / upstream), attribution, command→icon map, and the rules for adding new icons. Flags missing/weak/reused glyphs. |
 | [LAZY_METADATA.md](LAZY_METADATA.md) | Shipped with follow-ups | Shared NodeStore, path guard, cached row metadata, background prefetch, metadata DB, and process-owned caches ship; rename/move identity completion remains open. |
 | [MAGIC_DESCRIPTION.md](MAGIC_DESCRIPTION.md) | Shipped | Format/Description columns, mismatch cues, quarantine badges, and structured descriptions ship. |
 | [MAGIC_SNIFFING.md](MAGIC_SNIFFING.md) | Shipped with follow-ups | Structured magic detector, DB cache, async prefetch, and quarantine fusion ship; long-tail formats, cloud skip rules, and debug views remain open. |
@@ -34,6 +35,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [STATUS_PROGRESS.md](STATUS_PROGRESS.md) | Shipped with follow-ups | Task registry, status strip, task popover, cancellation flags, recent history, and screenshot simulation ship; completion notifications and accessibility announcements remain open. |
 | [STREAMING_ENUMERATION.md](STREAMING_ENUMERATION.md) | Shipped with follow-ups | Directory enumeration is worker-driven, batched, cancellable, and notification-based; slow-path/stale-result tests and partial-error UI remain open. |
 | [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md) | Future | Debug-overlay design remains unimplemented beyond screenshot simulation hooks. |
+| [TOOL_RESULTS.md](TOOL_RESULTS.md) | Shipped with follow-ups | Shared tab-local result surface for Search, Duplicate Finder, and docked Disk Usage ships; pop-out/state migration remains open. |
 | [VIEWER.md](VIEWER.md) | Shipped with follow-ups | Viewer window, playlist navigation, images, Quick Look fallback, VLC-backed video, slideshow, zoom, and controls ship; richer playback/playlist polish remains open. |
 | [feraille-selection-dnd-spec.md](feraille-selection-dnd-spec.md) | Partial | Selection, row drag, external file drops, and many acceptance points ship; edge auto-scroll and favorite-row drops remain open. |
 | [feraille-windows-instances-tabs-spec.md](feraille-windows-instances-tabs-spec.md) | Partial | Process/window state split, tabs, closed-tab undo, and shared caches are in place; full multi-window/tear-off completion remains open. |
@@ -81,12 +83,20 @@ keep the UI off the I/O path.
 ## Panels & tools
 
 - [PREVIEW.md](PREVIEW.md) — preview pane with async text/image rendering.
+- [TOOL_RESULTS.md](TOOL_RESULTS.md) — shared tab-local result surfaces for
+  Search, Duplicate Finder, and docked Disk Usage.
 - [VIEWER.md](VIEWER.md) — viewer window: big preview, slideshow, sticky
   zoom across entries.
 - [FILE_OPS.md](FILE_OPS.md) — copy/paste/move engine: progress,
   cancellation, collision policy, clipboard verbs.
 - [DISK_USAGE.md](DISK_USAGE.md) — disk-usage window: scanning, treemap, and
   top-list views.
+
+## Look & feel
+
+- [ICONS.md](ICONS.md) — every icon's source, attribution, and command mapping,
+  plus the process for adding new ones. **Update it whenever you add, move, or
+  repurpose an icon.**
 
 ## Porting & verification
 

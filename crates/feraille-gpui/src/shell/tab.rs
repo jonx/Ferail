@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, atomic::AtomicBool};
 
 use feraille_core::{EnumerationError, FileEntry, NodeId, navigation::NavigationState};
-use gpui::{Entity, FocusHandle, Pixels, Subscription, UniformListScrollHandle, px};
+use gpui::{AppContext, Entity, FocusHandle, Pixels, Subscription, UniformListScrollHandle, px};
 use gpui_component::input::InputState;
 
 use crate::file_list::FileListDelegate;
@@ -35,7 +35,99 @@ impl HistoryEntry {
     }
 }
 
-/// State for a tab that is showing search results. The tab still has a
+/// State for a tab-local tool result surface. A tool result replaces the
+/// normal directory listing inside the active tab, but keeps `current_dir`
+/// as the root so navigation, Back, preview, and context-menu plumbing can
+/// stay shared with ordinary file-list rows.
+#[derive(Clone)]
+pub struct ToolResultSurface {
+    pub mode: ToolResultMode,
+}
+
+impl ToolResultSurface {
+    pub fn search(needle: String, root: PathBuf, engine_label: &'static str) -> Self {
+        Self {
+            mode: ToolResultMode::Search(SearchMode {
+                needle,
+                root,
+                engine_label,
+            }),
+        }
+    }
+
+    pub fn duplicates(
+        root: PathBuf,
+        presentation: crate::feature_settings::DupePresentation,
+    ) -> Self {
+        Self {
+            mode: ToolResultMode::Duplicates(DupeViewMode {
+                root,
+                groups: 0,
+                wasted_bytes: 0,
+                presentation,
+            }),
+        }
+    }
+
+    pub fn disk_usage(root: PathBuf, view: Entity<crate::disk_usage::DiskUsageView>) -> Self {
+        Self {
+            mode: ToolResultMode::DiskUsage(DiskUsageMode { root, view }),
+        }
+    }
+
+    pub fn handle_host_event<C: AppContext>(
+        &self,
+        event: crate::tool_results::ToolHostEvent,
+        cx: &mut C,
+    ) {
+        match &self.mode {
+            ToolResultMode::DiskUsage(du) => {
+                du.view
+                    .update(cx, |view, cx| view.handle_host_event(event, cx));
+            }
+            ToolResultMode::Search(_) | ToolResultMode::Duplicates(_) => {}
+        }
+    }
+
+    pub fn search_mode(&self) -> Option<&SearchMode> {
+        match &self.mode {
+            ToolResultMode::Search(search) => Some(search),
+            _ => None,
+        }
+    }
+
+    pub fn dupe_mode(&self) -> Option<&DupeViewMode> {
+        match &self.mode {
+            ToolResultMode::Duplicates(dupes) => Some(dupes),
+            _ => None,
+        }
+    }
+
+    pub fn dupe_mode_mut(&mut self) -> Option<&mut DupeViewMode> {
+        match &mut self.mode {
+            ToolResultMode::Duplicates(dupes) => Some(dupes),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum ToolResultMode {
+    Search(SearchMode),
+    Duplicates(DupeViewMode),
+    DiskUsage(DiskUsageMode),
+}
+
+#[derive(Clone)]
+pub struct DiskUsageMode {
+    /// Root the disk-usage scan was launched from.
+    pub root: PathBuf,
+    /// Stateful treemap/results view hosted inside the tab. The same view
+    /// type is still usable in a standalone window.
+    pub view: Entity<crate::disk_usage::DiskUsageView>,
+}
+
+/// State for a search result surface. The tab still has a
 /// `current_dir` (the search root, used for navigation and Back), but the
 /// file list is the result stream for `needle`.
 #[derive(Clone, Debug)]
@@ -49,7 +141,7 @@ pub struct SearchMode {
     pub engine_label: &'static str,
 }
 
-/// State for a tab showing duplicate-finder results. Like [`SearchMode`]
+/// State for a duplicate-finder result surface. Like [`SearchMode`]
 /// the tab keeps its `current_dir` (the scan root); the file list holds
 /// duplicate group members as adjacent rows.
 #[derive(Clone, Debug)]
@@ -263,23 +355,17 @@ pub struct Tab {
     /// back — i.e. no flicker. `None` for fresh navigation, which keeps
     /// the progressive streaming reveal.
     pub(crate) load_staging: Option<super::loading::LoadBatch>,
-    /// `Some` while this tab is showing *search results* rather than a
-    /// directory listing (docs/features/SEARCH.md). The tab stays rooted
-    /// at `current_dir` for navigation, but the file list is fed by a
-    /// search worker instead of `enumerate`, the watcher reload is
-    /// suppressed, and the breadcrumb shows the query. Cleared by
-    /// `navigate` and by clearing the filter, both of which reload the
-    /// directory.
-    pub search_mode: Option<SearchMode>,
-    /// `Some` while this tab is showing duplicate-finder results
-    /// (docs/features/DUPLICATES.md). Same results-view contract as
-    /// `search_mode`: watcher reloads suppressed, breadcrumb shows the
-    /// scan, cleared by `navigate` / clearing.
-    pub dupe_mode: Option<DupeViewMode>,
+    /// `Some` while this tab is showing a tool result surface rather than
+    /// a directory listing (docs/features/TOOL_RESULTS.md). The tab stays
+    /// rooted at `current_dir` for navigation, but the file-list body is
+    /// fed by the tool (search, duplicates, or Disk Usage).
+    /// Watcher reloads are suppressed and the shared result header explains
+    /// the tool/root. Cleared by `navigate` and by closing the result.
+    pub tool_result: Option<ToolResultSurface>,
     /// Retained duplicate groups backing the dedicated panel
-    /// ([`DupePresentation::Panel`]). Empty in grouped-rows mode and
-    /// whenever `dupe_mode` is `None`. Populated alongside the table rows
-    /// in `apply_dupe_batch_in_tab`; the panel render borrows it without
+    /// ([`DupePresentation::Panel`]). Empty in grouped-rows mode and whenever
+    /// the active tool result is not Duplicates. Populated alongside the table
+    /// rows in `apply_dupe_batch_in_tab`; the panel render borrows it without
     /// copying.
     pub dupe_groups: Vec<DupeGroupView>,
     /// Scroll handle for the dedicated duplicate-card panel. Per-tab so
@@ -355,8 +441,7 @@ impl Tab {
             load_task: None,
             load_pending_first_batch: false,
             load_staging: None,
-            search_mode: None,
-            dupe_mode: None,
+            tool_result: None,
             dupe_groups: Vec::new(),
             dupe_panel_scroll: VirtualListScrollHandle::new(),
             last_error: None,

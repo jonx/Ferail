@@ -147,30 +147,24 @@ Mac-safe behavior (mirrors the disk-usage walker):
 
 ## GPUI integration (shared by all tiers)
 
-A `SearchState` that is a near-clone of
-[`DiskUsageState`](../../crates/feraille-gpui/src/disk_usage.rs):
+Search is a tab-local [Tool Result Surface](TOOL_RESULTS.md). Pressing Return
+in the filter launches `Shell::start_subtree_search`, which:
 
-- `scan_generation`, `cancel: Arc<AtomicBool>`, `msg_queue: Arc<Mutex<VecDeque>>`,
-  `task_id`, and a results `Vec`.
-- `start_search()` registers `TaskKind::Search` via `begin_with_cancel`
-  ([tasks.rs](../../crates/feraille-gpui/src/tasks.rs)), spawns the worker on
-  `cx.background_executor()`, and drains the queue on the same throttled FG
-  timer (`DU_DRAIN_INTERVAL_*`), applying once per tick and gating on
-  `scan_generation` so stale results are dropped.
-- Results stream into the existing table delegate. The current in-directory
-  filter input escalates to a Tier 1 search via a modifier or an
-  "search this folder and below" affordance; an empty result can offer Tier 2.
-- Add `Search` to `TaskKind`.
+- stores `ToolResultSurface::Search` on the active tab;
+- bumps the tab load generation and cancels any superseded tab worker;
+- registers `TaskKind::Search` via `begin_with_cancel`;
+- spawns the selected engine on `cx.background_executor()`;
+- streams `LoadBatch` rows into the existing table delegate.
 
-For Tier 2, the engine (e.g. `feraille-shell-mac::spotlight`) emits the same
-`SearchFact` batches, so `SearchState` is unchanged across engines. Per the
-architecture invariants, `feraille-shell-mac` returns paths only and paints no
-UI.
+The table path is the same one directory enumeration uses, so selection, sort,
+preview, context menus, and file operations keep working. Tier 2 engines such
+as Spotlight emit paths that are converted to the same table rows; platform
+shell crates return data only and paint no UI.
 
 ## Build order
 
-1. **Tier 1 walker + `SearchState` + UI.** Self-contained, exercises all the
-   shared plumbing, immediately useful.
+1. **Tier 1 walker + tab result surface.** Shipped; self-contained, exercises
+   the shared plumbing, immediately useful.
 2. **Tier 2 Spotlight.** Spike with `mdfind` to validate UX, then decide
    whether the `MDQuery` FFI (live/async batching) is worth it over the CLI.
    Route by scope, fall back to Tier 1 where Spotlight is blind.

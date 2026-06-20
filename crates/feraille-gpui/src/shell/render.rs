@@ -109,6 +109,30 @@ fn tab_drop_gap(pos: usize, cx: &mut Context<Shell>) -> impl IntoElement {
 }
 
 impl Shell {
+    fn tool_result_breadcrumb_summary(&self) -> Option<String> {
+        let surface = self.active_tab().tool_result.as_ref()?;
+        match &surface.mode {
+            super::tab::ToolResultMode::Search(search) => Some(format!(
+                "\u{1F50D} {}  \u{00B7}  {}",
+                search.needle, search.engine_label
+            )),
+            super::tab::ToolResultMode::Duplicates(dupe) => Some(format!(
+                "\u{29C9} {} duplicate group{} \u{00B7} {} reclaimable",
+                dupe.groups,
+                if dupe.groups == 1 { "" } else { "s" },
+                feraille_fs_native::humanize_bytes(dupe.wasted_bytes),
+            )),
+            super::tab::ToolResultMode::DiskUsage(_) => Some("Disk Usage".to_string()),
+        }
+    }
+
+    fn active_tool_result_can_pop_out(&self) -> bool {
+        matches!(
+            self.active_tab().tool_result.as_ref().map(|surface| &surface.mode),
+            Some(super::tab::ToolResultMode::DiskUsage(_))
+        )
+    }
+
     /// Build the **Browse** section as a single-rooted, expandable
     /// tree starting at the home folder. (Phase 2: the flat
     /// shortcut list moved out into the dedicated Favorites menu
@@ -608,13 +632,26 @@ impl Shell {
             }
             return pane.into_any_element();
         }
-        // Dedicated duplicate panel takes over the pane when the scan was
-        // launched in Panel presentation — independent of list/grid view
-        // mode, like the grouped-rows view takes over the tab today.
-        if let Some(dm) = self.active_tab().dupe_mode.as_ref() {
+        // A tool result may own the pane body. Search and grouped-rows
+        // duplicates still use the normal table/grid path; the dedicated
+        // duplicate card panel replaces it.
+        if let Some(dm) = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .and_then(|surface| surface.dupe_mode())
+        {
             if dm.presentation == crate::feature_settings::DupePresentation::Panel {
                 return self.dupe_panel_body(cx);
             }
+        }
+        if let Some(super::tab::ToolResultMode::DiskUsage(du)) = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .map(|surface| &surface.mode)
+        {
+            return du.view.clone().into_any_element();
         }
         match self.active_tab().view_mode {
             crate::grid::ViewMode::List => DataTable::new(&self.active_tab().table)
@@ -1921,13 +1958,7 @@ impl Shell {
                                 .lines()
                                 .map(|line| {
                                     line.chars()
-                                        .map(|c| {
-                                            if c == '\t' {
-                                                PREVIEW_CODE_TAB_COLS
-                                            } else {
-                                                1
-                                            }
-                                        })
+                                        .map(|c| if c == '\t' { PREVIEW_CODE_TAB_COLS } else { 1 })
                                         .sum::<usize>()
                                 })
                                 .max()
@@ -2269,40 +2300,10 @@ impl Shell {
             .border_b_1()
             .border_color(cx.theme().border);
 
-        // Search-results indicator: a pill showing the query + engine,
-        // then "in" followed by the (root) breadcrumb segments. Makes it
-        // unmistakable the list is cross-directory results, not a folder.
-        if let Some(search) = self.active_tab().search_mode.clone() {
-            row = row
-                .child(
-                    div()
-                        .px_2()
-                        .py_0p5()
-                        .rounded(cx.theme().radius)
-                        .bg(cx.theme().accent.opacity(0.5))
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .text_xs()
-                        .text_color(cx.theme().foreground)
-                        .child(format!(
-                            "\u{1F50D} {}  \u{00B7}  {}",
-                            search.needle, search.engine_label
-                        )),
-                )
-                .child(
-                    div()
-                        .px_1()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("in"),
-                );
-        } else if let Some(dupe) = self.active_tab().dupe_mode.clone() {
-            let summary = format!(
-                "\u{29C9} {} duplicate group{} \u{00B7} {} reclaimable",
-                dupe.groups,
-                if dupe.groups == 1 { "" } else { "s" },
-                feraille_fs_native::humanize_bytes(dupe.wasted_bytes),
-            );
+        // Tool-result indicator: a shared pill showing the active tool's
+        // summary, then "in" followed by the root breadcrumb. Makes it
+        // unmistakable that the pane is a result surface, not a folder.
+        if let Some(summary) = self.tool_result_breadcrumb_summary() {
             row = row
                 .child(
                     div()
@@ -2448,6 +2449,28 @@ impl Shell {
                         .menu("New Folder Here", Box::new(NewFolderHere))
                 });
             row = row.child(crumb);
+        }
+        if self.active_tab().tool_result.is_some() {
+            if self.active_tool_result_can_pop_out() {
+                row = row.child(
+                    Button::new("tool-result-pop-out")
+                        .small()
+                        .icon(gpui_component::Icon::empty().path("icons/maximize.svg"))
+                        .tooltip("Open in window")
+                        .on_click(cx.listener(|_, _, window, cx| {
+                            window.dispatch_action(Box::new(PopOutDiskUsage), cx);
+                        })),
+                );
+            }
+            row = row.child(
+                Button::new("tool-result-close")
+                    .small()
+                    .icon(gpui_component::Icon::empty().path("icons/close.svg"))
+                    .tooltip("Close results")
+                    .on_click(cx.listener(|_, _, window, cx| {
+                        window.dispatch_action(Box::new(CloseToolResult), cx);
+                    })),
+            );
         }
         row
     }
@@ -2703,6 +2726,8 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_edit_breadcrumb))
             .on_action(cx.listener(Self::on_shortcuts_help))
             .on_action(cx.listener(Self::on_open_disk_usage))
+            .on_action(cx.listener(Self::on_close_tool_result))
+            .on_action(cx.listener(Self::on_pop_out_disk_usage))
             .on_action(cx.listener(Self::on_find_duplicates))
             .on_action(cx.listener(Self::on_open_viewer))
             .on_action(cx.listener(Self::on_slideshow_from_here))

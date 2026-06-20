@@ -1,7 +1,7 @@
 //! Duplicate-finder results in a tab (docs/features/DUPLICATES.md).
 //!
-//! Mirrors [`super::search`]: a tab in [`DupeViewMode`] keeps its
-//! `current_dir` (the scan root) while the file list holds duplicate
+//! Mirrors [`super::search`]: a tab-local tool result surface keeps
+//! `current_dir` as the scan root while the file list holds duplicate
 //! group members as adjacent rows. The funnel
 //! ([`NativeFs::find_duplicates`]) runs off the UI thread, cache-backed
 //! by [`crate::dupe_cache::DbHashCache`] so rescans skip full hashing,
@@ -21,7 +21,7 @@ use gpui::{AnyWindowHandle, Context};
 use gpui_component::WindowExt;
 
 use super::Shell;
-use super::tab::{DupeGroupMember, DupeGroupView, DupeViewMode, TabId};
+use super::tab::{DupeGroupMember, DupeGroupView, TabId, ToolResultSurface};
 use crate::dupe_cache::DbHashCache;
 use crate::feature_settings::DupeConfig;
 use crate::tasks::TaskKind;
@@ -194,13 +194,8 @@ impl Shell {
             cancel.store(true, Ordering::Relaxed);
         }
         self.tabs[idx].load_staging = None;
-        self.tabs[idx].search_mode = None;
-        self.tabs[idx].dupe_mode = Some(DupeViewMode {
-            root: root.clone(),
-            groups: 0,
-            wasted_bytes: 0,
-            presentation,
-        });
+        self.tabs[idx].tool_result =
+            Some(ToolResultSurface::duplicates(root.clone(), presentation));
         self.tabs[idx].dupe_groups.clear();
         self.tabs[idx].dupe_panel_scroll = crate::multi_table::VirtualListScrollHandle::new();
         let table = self.tabs[idx].table.clone();
@@ -296,13 +291,15 @@ impl Shell {
             DupeMsg::Batch(batch) => self.apply_dupe_batch_in_tab(idx, batch, cx),
             DupeMsg::Done(error) => {
                 let groups = self.tabs[idx]
-                    .dupe_mode
+                    .tool_result
                     .as_ref()
+                    .and_then(|surface| surface.dupe_mode())
                     .map(|mode| mode.groups)
                     .unwrap_or(0);
                 let reclaimable = self.tabs[idx]
-                    .dupe_mode
+                    .tool_result
                     .as_ref()
+                    .and_then(|surface| surface.dupe_mode())
                     .map(|mode| mode.wasted_bytes)
                     .unwrap_or(0);
                 let mut surfaced = false;
@@ -350,7 +347,8 @@ impl Shell {
         let panel_mode = self
             .tabs
             .get(idx)
-            .and_then(|t| t.dupe_mode.as_ref())
+            .and_then(|t| t.tool_result.as_ref())
+            .and_then(|surface| surface.dupe_mode())
             .is_some_and(|dm| dm.presentation == crate::feature_settings::DupePresentation::Panel);
         for (id, path) in &batch.paths {
             self.process
@@ -359,7 +357,11 @@ impl Shell {
                 .get_or_create_path_with_id(path.clone(), *id);
         }
         {
-            let Some(dm) = self.tabs.get_mut(idx).and_then(|t| t.dupe_mode.as_mut()) else {
+            let Some(dm) = self.tabs.get_mut(idx).and_then(|t| {
+                t.tool_result
+                    .as_mut()
+                    .and_then(|surface| surface.dupe_mode_mut())
+            }) else {
                 return;
             };
             dm.groups += batch.groups.len();

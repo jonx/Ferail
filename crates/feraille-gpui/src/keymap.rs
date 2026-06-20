@@ -1,7 +1,7 @@
 //! Command-catalogue-driven keymap installation.
 //!
 //! Single source of truth for which shortcut fires what command:
-//! [`feraille_core::commands`] (65 entries). At app start we walk
+//! [`feraille_core::commands`]. At app start we walk
 //! the catalogue, translate each `Shortcut` into the gpui
 //! `KeyBinding` string DSL, and bind it to the matching gpui
 //! `Action` type. Commands without a matching action (because the
@@ -18,15 +18,15 @@ use gpui::{App, KeyBinding};
 
 use crate::entry_info::{ENTRY_INFO_CONTEXT, EntryInfoDismiss};
 use crate::shell::{
-    self, ClearFilter, CloseTab, CloseWindow, CopyFiles, CopyPath, CursorDown, CursorDownExtend,
-    CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp, CursorUpExtend,
-    CutFiles, EditBreadcrumb, EmptyTrash, FindDuplicates, FocusFilter, GetInfo, GoHome, GridDown,
-    GridDownExtend, GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp, GridUpExtend,
-    MovePasteFiles, MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
-    NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, OpenViewer, PageDown,
-    PageDownExtend, PageUp, PageUpExtend, PasteFiles, PrevTab, QuickLook, Refresh, RenameSelected,
-    ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn,
-    ZoomOut, ZoomReset,
+    self, ClearFilter, CloseTab, CloseToolResult, CloseWindow, CopyFiles, CopyPath, CursorDown,
+    CursorDownExtend, CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp,
+    CursorUpExtend, CutFiles, EditBreadcrumb, EmptyTrash, FindDuplicates, FocusFilter, GetInfo,
+    GoHome, GridDown, GridDownExtend, GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp,
+    GridUpExtend, MovePasteFiles, MoveToTrash, NavigateBack, NavigateForward, NavigateParent,
+    NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings,
+    OpenViewer, PageDown, PageDownExtend, PageUp, PageUpExtend, PasteFiles, PopOutDiskUsage,
+    PrevTab, QuickLook, Refresh, RenameSelected, ReopenClosedTab, RevealInFinder, SelectAll,
+    ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::viewer::window::{
     VIEWER_CONTEXT, ViewerActualSize, ViewerDismiss, ViewerLeft, ViewerNext, ViewerPrev,
@@ -196,6 +196,10 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
 
         // -- Disk Usage -------------------------------------------
         "view.disk_usage" => cx.bind_keys([KeyBinding::new(kb_str, OpenDiskUsage, ctx)]),
+        "view.close_results" => cx.bind_keys([KeyBinding::new(kb_str, CloseToolResult, ctx)]),
+        "disk_usage.open_in_window" => {
+            cx.bind_keys([KeyBinding::new(kb_str, PopOutDiskUsage, ctx)])
+        }
         "view.find_duplicates" => cx.bind_keys([KeyBinding::new(kb_str, FindDuplicates, ctx)]),
 
         // -- Go ---------------------------------------------------

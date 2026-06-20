@@ -407,7 +407,9 @@ pub fn run(args: Args) -> Result<()> {
                             crate::tasks::TaskRegistry::new(),
                         ));
                         let view = cx.new(|cx| {
-                            crate::disk_usage::DiskUsageView::new(canonical, fs, tasks, None, cx)
+                            crate::disk_usage::DiskUsageView::new(
+                                canonical, fs, tasks, None, None, cx,
+                            )
                         });
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if let Some(target) = viewer_target.clone() {
@@ -734,7 +736,12 @@ impl ShellArgs {
                 let tab_id = s.active_tab().id;
                 s.start_duplicate_scan(tab_id, None, cx);
                 if force_panel {
-                    if let Some(dm) = s.active_tab_mut().dupe_mode.as_mut() {
+                    if let Some(dm) = s
+                        .active_tab_mut()
+                        .tool_result
+                        .as_mut()
+                        .and_then(|surface| surface.dupe_mode_mut())
+                    {
                         dm.presentation = crate::feature_settings::DupePresentation::Panel;
                     }
                 }

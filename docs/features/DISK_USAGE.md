@@ -1,37 +1,48 @@
 # Disk Usage
 
 Walks a directory tree off the UI thread and shows the result as an
-interactive squarified treemap in a dedicated window. Ported in
-iter-6.0…6.4 from the Ferail predecessor's spec
+interactive squarified treemap. It now docks into the active tab as a
+[Tool Result Surface](TOOL_RESULTS.md), while the standalone GPUI window
+renderer remains available for pop-out work. Ported in iter-6.0…6.4 from the
+Ferail predecessor's spec
 (`docs/done/DISK_USAGE.md` in the Ferail repo); the data model
 and layout algorithm are shared verbatim, the worker and visual
 control are macOS-native rewrites.
 
 ## Status
 
-Shipped with follow-ups. The Disk Usage window, scanner, treemap, Top-N panel,
-package handling, category filtering, allocated/apparent size modes, age
-heatmap, follow-navigation, geometry persistence, screenshot path, and CLI all
-ship. APFS-clone-aware sizing and richer iCloud download-state handling remain
+Shipped with follow-ups. The docked Disk Usage result surface, scanner, treemap,
+Top-N panel, package handling, category filtering, allocated/apparent size
+modes, screenshot path, and CLI all ship. APFS-clone-aware sizing, richer
+iCloud download-state handling, and explicit dock/pop-out state migration remain
 open — see "Still open" below.
 
 ## Surface
 
-- **Open**: `Cmd+Shift+D` (`view.disk_usage`). Opens (or focuses) a
-  separate `winit` window rooted at the active tab's current
-  directory. The main window is unaffected.
+- **Open**: `Cmd+Shift+D` (`view.disk_usage`). Opens Disk Usage docked in the
+  active tab, rooted at the tab's current directory. The breadcrumb row shows
+  the shared result-surface pill and close button, so the docked DU header uses
+  a compact "Disk Usage" title instead of repeating the full path.
+- **Open in window**: the result-surface header's pop-out button, or the
+  `disk_usage.open_in_window` command, opens the same root in the standalone
+  Disk Usage window and returns the tab to normal browsing. The same
+  `DiskUsageView` entity moves across, so scan progress, zoom, selection, and
+  Top-N state are preserved. In a standalone window the header shows the full
+  root path because there is no shell breadcrumb around it.
+- **Dock in tab**: standalone Disk Usage windows opened from the shell show a
+  Dock in Tab button. It docks the same root into the owning shell's active tab
+  and closes the window, preserving the same live view state.
 - **Refresh**: `[Refresh]` button in the header strip
   (`disk_usage.refresh`). Cancels any in-flight scan and re-walks the
   same root, preserving the descend-packages setting.
 - **Zoom in**: `Enter` on the selected rect, or "Zoom into" in the
   context menu, drills into a container.
 - **Zoom out**: `Backspace` (`disk_usage.zoom_out`) pops one level off
-  the zoom path. Active only when the DU window has focus and the path
-  is non-empty.
+  the zoom path. Active only when the DU view has focus and the path is
+  non-empty.
 - **Top-N panel**: toggleable via `disk_usage.toggle_topn`. Shows the
   50 largest individual files anywhere in the scanned tree, sorted by
-  size descending. Selection-synced with the treemap. Auto-hides when
-  the window is narrower than 700 DIPs.
+  size descending. Selection-synced with the treemap.
 - **Descend into packages**: `disk_usage.toggle_packages`. By default
   `.app`, `.bundle`, `.framework`, `.plugin`, `.kext`, `.xcodeproj`
   are treated as opaque leaves, matching Finder. Toggling re-scans.
@@ -52,16 +63,16 @@ vice versa.
 |  cancellable via Arc<AtomicBool>; flushes buffer + exits on cancel |
 +--------------------------------------------------------------------+
                        |
-                       | EventLoopProxy<AppEvent>
+                       | Arc<Mutex<VecDeque<ScanMsg>>>
                        v
-+---------------- DU window (main thread) --------------------------+
-|  AppEvent::DiskUsageBatch / Progress / Done                       |
++---------------- DiskUsageView entity (main thread) ---------------+
+|  bounded queue drain from worker messages                         |
 |  generation gate drops stale events                               |
 |  apply_facts -> debounced rebuild of layout cache + Top-N         |
-|  paint_du(state, viewport, splitter, renderer, tokens):           |
+|  render(host bounds):                                             |
 |    header (path/total/status/refresh) | volume row (free/used/bar) |
 |    treemap pane (squarified, hover/selection)                     |
-|    splitter | Top-N pane                                          |
+|    Top-N pane                                                     |
 +-------------------------------------------------------------------+
 ```
 
@@ -71,17 +82,15 @@ vice versa.
 |---|---|
 | `feraille-disk-usage` | Pure data model + squarified treemap. No I/O, no platform deps. Houses `DiskUsageTree`, `DiskUsageNode`, `DiskUsageLayoutNode`, `DiskUsageFact`, `compute_treemap`, `hit_test`, `build_layout_node`, `FileCategory`. |
 | `feraille-fs-native` | `NativeFs::scan_disk_usage` worker — DFS via `read_dir`, `symlink_metadata` (no follow), absorbs per-subdir permission errors, batched fact callback (`DEFAULT_DU_BATCH = 256`), throttled progress (~250 ms). |
-| `feraille-gpui` | `disk_usage.rs` — the Disk Usage window: squarified treemap + top-list views, hover/selection state, and worker orchestration, all as GPUI elements. |
+| `feraille-gpui` | `disk_usage.rs` — the Disk Usage view: squarified treemap + top-list views, hover/selection state, and worker orchestration, all as GPUI elements. |
 
 ### Data flow
 
-1. `Cmd+Shift+D` → `App::open_or_focus_disk_usage` posts a
-   `PendingDiskUsageOpen` and spawns the worker. The window itself is
-   created on the next `user_event` / `window_event` tick when
-   `&ActiveEventLoop` is in scope (`try_realize_disk_usage_window`).
-2. Worker emits `DiskUsageFact`s in batches over the
-   `EventLoopProxy<AppEvent>`. Stale generations are dropped at the
-   gate.
+1. `Cmd+Shift+D` → `Shell::on_open_disk_usage` creates a `DiskUsageView`
+   entity and stores it in `Tab::tool_result`.
+2. Worker emits `DiskUsageFact`s into the view's bounded queue. The foreground
+   drain task applies a limited number of messages per tick so the UI keeps
+   breathing.
 3. Each batch is applied to `DiskUsageTree`. Layout is rebuilt at most
    every 80 ms (`DU_LAYOUT_DEBOUNCE_MS`) until the scan completes; the
    `mark_complete` path forces one final rebuild so the last batch's
@@ -160,21 +169,15 @@ against a temp-dir fixture, with permission and cancellation cases).
 - **Right-click on multi-selection** — when the click target is part
   of the existing selection, the menu acts on the whole set
   ("Move 3 Items to Trash", "Reveal 3 in Finder", "Copy 3 Paths").
-- **Auto-rescan on navigation** — opt-in via View → Follow Tab
-  Navigation; default on. When the main window's active tab
-  navigates while DU is open, the scan re-roots automatically.
-- **Geometry persistence** — DU window width/height and Top-N panel
-  width are saved to
-  `~/Library/Application Support/Feraille/du_window.txt` on close
-  and restored on next open.
-- **Cmd+R refresh** — bound globally; no-op when DU window is
-  closed, so safe in either window.
+- **Docked host sizing** — the GPUI view measures its host element so the
+  treemap fits either the active tab or a standalone window.
+- **Cmd+R refresh** — refreshes the active DU view when focus is inside it.
 - **Menu checkmarks** — toggle states for Top-N / packages /
   follow-navigation / coloring / size-mode reflect live values.
 - **Refresh button** has hover + pressed visual states matching the
   main window's button styling.
-- **DU toast surface** — Move-to-Trash failures show up as a
-  bottom-right toast in the DU window instead of only stderr.
+- **DU toast surface** — Move-to-Trash failures surface through the GPUI
+  notification layer instead of only stderr.
 
 ## Still open
 

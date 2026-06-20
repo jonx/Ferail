@@ -28,10 +28,13 @@ and let git history plus release notes carry the record.
   task surfaced. Remaining gaps:
   - **Cross-volume move undo** — `UndoOp::MoveBack` is registered only for
     same-volume moves; cross-volume moves fall back to copy-undo or none.
-  - Completion toasts for long-running **disk-usage** scans in the secondary
-    window (main-shell search and duplicate scans are duration-gated now).
   - Extend actionable raw-error messages beyond the common file-op/search/dupe
     paths to every remaining mutation surface.
+- **Tool Result Surface polish** ([docs/features/TOOL_RESULTS.md](docs/features/TOOL_RESULTS.md)).
+  Search, Duplicate Finder, and docked Disk Usage now share one tab-local result
+  surface. Remaining:
+  - Decide whether the old standalone Disk Usage window should remain a command,
+    a pop-out action only, or a user preference.
 - **Persist file-table column order** after drag-reorder. `move_column`
   reorders the live vec but never persists; widths already persist.
 - **Grid marquee / rubber-band selection** — the last grid-parity gap now that
