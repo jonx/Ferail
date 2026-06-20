@@ -164,6 +164,37 @@ pub fn show_alert(title: &str, body: &str) {
 #[cfg(not(target_os = "macos"))]
 pub fn show_alert(_title: &str, _body: &str) {}
 
+/// Present a native folder picker (`NSOpenPanel` restricted to
+/// directories) and return the chosen path, or `None` if the user
+/// cancelled. Synchronous / modal like [`show_alert`] — must be called
+/// on the main thread. Backs the Favorites "Locate…" repoint flow
+/// (`docs/features/FAVORITES.md` §8.2 / §8.3).
+#[cfg(target_os = "macos")]
+pub fn pick_folder() -> Option<std::path::PathBuf> {
+    use objc2_app_kit::{NSModalResponseOK, NSOpenPanel};
+    use objc2_foundation::MainThreadMarker;
+
+    let mtm = MainThreadMarker::new()?;
+    unsafe {
+        let panel = NSOpenPanel::openPanel(mtm);
+        panel.setCanChooseFiles(false);
+        panel.setCanChooseDirectories(true);
+        panel.setAllowsMultipleSelection(false);
+        panel.setResolvesAliases(true);
+        if panel.runModal() != NSModalResponseOK {
+            return None;
+        }
+        let url = panel.URL()?;
+        let path = url.path()?;
+        Some(std::path::PathBuf::from(path.to_string()))
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn pick_folder() -> Option<std::path::PathBuf> {
+    None
+}
+
 /// Open `url` in the user's default handler (typically the browser).
 /// Best-effort — failures are logged at the AppKit level and we don't
 /// surface them. macOS uses NSWorkspace; non-macOS falls back to the
@@ -978,8 +1009,8 @@ pub fn clipboard_copy_file_urls(_paths: &[&std::path::Path]) {}
 /// Empty when the pasteboard holds no file URLs. Main-thread only.
 #[cfg(target_os = "macos")]
 pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
-    use objc2::ClassType as _;
     use objc2::runtime::AnyObject;
+    use objc2::ClassType as _;
     use objc2_app_kit::NSPasteboard;
     use objc2_foundation::{NSArray, NSURL};
     if objc2_foundation::MainThreadMarker::new().is_none() {
@@ -991,8 +1022,7 @@ pub fn clipboard_read_file_urls() -> Vec<std::path::PathBuf> {
             let url_cls: &AnyObject = std::mem::transmute(NSURL::class());
             objc2::msg_send_id![objc2::class!(NSArray), arrayWithObject: url_cls]
         };
-        let read: Option<objc2::rc::Retained<NSArray<NSURL>>> =
-            objc2::msg_send_id![&*pb, readObjectsForClasses: &*classes, options: std::ptr::null::<AnyObject>()];
+        let read: Option<objc2::rc::Retained<NSArray<NSURL>>> = objc2::msg_send_id![&*pb, readObjectsForClasses: &*classes, options: std::ptr::null::<AnyObject>()];
         let Some(urls) = read else {
             return Vec::new();
         };

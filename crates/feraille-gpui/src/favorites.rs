@@ -333,24 +333,12 @@ impl Favorites {
         let Some(pos) = self.entries.iter().position(|f| f.id == id) else {
             return;
         };
-        let target = (pos as isize + by).clamp(0, self.entries.len() as isize - 1) as usize;
-        if target == pos {
+        // Bound math is pure and unit-tested in
+        // `feraille_core::favorites::reorder_bounds`.
+        let indices: Vec<f64> = self.entries.iter().map(|f| f.sort_index).collect();
+        let Some((before, after)) = feraille_core::favorites::reorder_bounds(&indices, pos, by)
+        else {
             return;
-        }
-        let (before, after) = match by.signum() {
-            -1 if target == 0 => (f64::NEG_INFINITY, self.entries[target].sort_index),
-            -1 => (
-                self.entries[target - 1].sort_index,
-                self.entries[target].sort_index,
-            ),
-            1 if target == self.entries.len() - 1 => {
-                (self.entries[target].sort_index, f64::INFINITY)
-            }
-            1 => (
-                self.entries[target].sort_index,
-                self.entries[target + 1].sort_index,
-            ),
-            _ => return,
         };
         self.reorder_between(id, before, after, cx);
     }
@@ -403,11 +391,11 @@ impl Favorites {
     pub fn one_shot_sort(&mut self, by: FavoriteSort, cx: &mut Context<Self>) {
         match by {
             FavoriteSort::NameAsc => {
-                self.entries
-                    .sort_by_key(|a| a.effective_label());
+                self.entries.sort_by_key(|a| a.effective_label());
             }
             FavoriteSort::DateAddedNewest => {
-                self.entries.sort_by_key(|f| std::cmp::Reverse(f.date_added));
+                self.entries
+                    .sort_by_key(|f| std::cmp::Reverse(f.date_added));
             }
             FavoriteSort::DateAddedOldest => {
                 self.entries.sort_by_key(|a| a.date_added);

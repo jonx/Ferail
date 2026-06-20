@@ -16,19 +16,18 @@
 use feraille_core::commands::{CommandId, Shortcut, all_commands};
 use gpui::{App, KeyBinding};
 
+use crate::entry_info::{ENTRY_INFO_CONTEXT, EntryInfoDismiss};
 use crate::shell::{
     self, ClearFilter, CloseTab, CloseWindow, CopyFiles, CopyPath, CursorDown, CursorDownExtend,
-    CutFiles,
     CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp, CursorUpExtend,
-    EditBreadcrumb, EmptyTrash, FindDuplicates, FocusFilter, GetInfo, GoHome, GridDown,
+    CutFiles, EditBreadcrumb, EmptyTrash, FindDuplicates, FocusFilter, GetInfo, GoHome, GridDown,
     GridDownExtend, GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp, GridUpExtend,
-    MovePasteFiles, MoveToTrash, NavigateBack,
-    NavigateForward, NavigateParent, NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab,
-    OpenSelected, OpenSettings, OpenViewer, PageDown, PageDownExtend, PageUp, PageUpExtend,
-    PasteFiles, PrevTab, QuickLook, Refresh, RenameSelected, ReopenClosedTab, RevealInFinder,
-    SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
+    MovePasteFiles, MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
+    NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, OpenViewer, PageDown,
+    PageDownExtend, PageUp, PageUpExtend, PasteFiles, PrevTab, QuickLook, Refresh, RenameSelected,
+    ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn,
+    ZoomOut, ZoomReset,
 };
-use crate::entry_info::{ENTRY_INFO_CONTEXT, EntryInfoDismiss};
 use crate::viewer::window::{
     VIEWER_CONTEXT, ViewerActualSize, ViewerDismiss, ViewerLeft, ViewerNext, ViewerPrev,
     ViewerRight, ViewerRotateCcw, ViewerRotateCw, ViewerToggleAdjust, ViewerToggleFullscreen,
@@ -140,9 +139,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         // -- File -------------------------------------------------
         "file.new_tab" => cx.bind_keys([KeyBinding::new(kb_str, NewTab, ctx)]),
         "file.close_tab" => cx.bind_keys([KeyBinding::new(kb_str, CloseTab, ctx)]),
-        "file.reopen_closed_tab" => {
-            cx.bind_keys([KeyBinding::new(kb_str, ReopenClosedTab, ctx)])
-        }
+        "file.reopen_closed_tab" => cx.bind_keys([KeyBinding::new(kb_str, ReopenClosedTab, ctx)]),
         "file.new_folder" => cx.bind_keys([KeyBinding::new(kb_str, NewFolder, ctx)]),
         "file.move_to_trash" => cx.bind_keys([KeyBinding::new(kb_str, MoveToTrash, ctx)]),
         // No catalogue shortcut (the Shortcut DSL lacks Delete);
@@ -319,6 +316,35 @@ pub(crate) fn install_extras(cx: &mut App) {
             "cmd-alt-down",
             crate::shell::MoveFavoriteDown,
             Some(shell::SHELL_CONTEXT),
+        ),
+        // Arrow-key focus + Enter/Delete within the focused Favorites
+        // section (§11.4). Bound in FAVORITES_CONTEXT — more specific
+        // than SHELL_CONTEXT — so they only fire while the section is
+        // focused, never stealing the file list's arrow navigation.
+        KeyBinding::new(
+            "up",
+            crate::shell::FocusFavoriteUp,
+            Some(crate::favorites_section::FAVORITES_CONTEXT),
+        ),
+        KeyBinding::new(
+            "down",
+            crate::shell::FocusFavoriteDown,
+            Some(crate::favorites_section::FAVORITES_CONTEXT),
+        ),
+        KeyBinding::new(
+            "enter",
+            crate::shell::ActivateFavorite,
+            Some(crate::favorites_section::FAVORITES_CONTEXT),
+        ),
+        KeyBinding::new(
+            "backspace",
+            crate::shell::DeleteFavorite,
+            Some(crate::favorites_section::FAVORITES_CONTEXT),
+        ),
+        KeyBinding::new(
+            "delete",
+            crate::shell::DeleteFavorite,
+            Some(crate::favorites_section::FAVORITES_CONTEXT),
         ),
         // Spec §2.5 multi-select keyboard:
         //   Cmd+A — select every visible row.

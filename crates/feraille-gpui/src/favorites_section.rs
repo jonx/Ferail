@@ -7,13 +7,16 @@
 //! header collapse persists through `MetadataDb::favorites_section_collapsed`.
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::time::Duration;
 
 use feraille_core::favorites::{Favorite, FavoriteId, FavoriteKind, FavoriteState, FavoriteTarget};
-use gpui::{AnyElement, Context, WeakEntity, div};
+use gpui::{Animation, AnimationExt as _, AnyElement, Context, FocusHandle, WeakEntity, div};
 use gpui::{
     App, AppContext, ElementId, ExternalPaths, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, img, px, svg,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
+    ease_out_quint, img, px, svg,
 };
 use gpui_component::{
     ActiveTheme, Collapsible, h_flex, menu::ContextMenuExt as _, sidebar::SidebarItem, v_flex,
@@ -21,6 +24,25 @@ use gpui_component::{
 
 use crate::icons::IconCache;
 use crate::shell::Shell;
+
+/// Key context applied to the focused Favorites section so Up / Down /
+/// Enter / Delete route to the favorites focus actions instead of the
+/// file list (§11.4). More specific than `SHELL_CONTEXT`.
+pub const FAVORITES_CONTEXT: &str = "FerailleFavorites";
+
+/// Per-add fade-in duration (§2.2) and dedup-pulse flash duration.
+const APPEAR_MS: u64 = 150;
+const PULSE_MS: u64 = 450;
+
+/// Which one-shot animation, if any, a row should play this frame.
+#[derive(Clone, Copy)]
+enum RowAnim {
+    None,
+    /// Fade/scale-in on a freshly added favorite (§2.2).
+    Appear,
+    /// Dedup-pulse flash, keyed by generation so a repeat re-triggers.
+    Pulse(u32),
+}
 
 /// Payload carried by a favorite-row drag (§4.2). Implements `Render`
 /// so it doubles as its own drag preview — a faint chip showing the
@@ -61,14 +83,28 @@ pub struct FavoritesSection {
     shell: WeakEntity<Shell>,
     #[allow(dead_code)]
     icons: Rc<RefCell<IconCache>>,
+    /// Keyboard-focused favorite (§11.4) — drives the focus ring.
+    focused: Option<FavoriteId>,
+    /// Focus handle the section tracks so `FAVORITES_CONTEXT` bindings
+    /// fire only while the section is focused.
+    focus_handle: FocusHandle,
+    /// Ids that should play the §2.2 fade-in this frame.
+    appear: HashSet<FavoriteId>,
+    /// Dedup-pulse generation per id (§2.2).
+    pulse: HashMap<FavoriteId, u32>,
 }
 
 impl FavoritesSection {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         favorites: Vec<Favorite>,
         section_collapsed: bool,
         shell: WeakEntity<Shell>,
         icons: Rc<RefCell<IconCache>>,
+        focused: Option<FavoriteId>,
+        focus_handle: FocusHandle,
+        appear: HashSet<FavoriteId>,
+        pulse: HashMap<FavoriteId, u32>,
     ) -> Self {
         Self {
             favorites,
@@ -76,6 +112,10 @@ impl FavoritesSection {
             section_collapsed,
             shell,
             icons,
+            focused,
+            focus_handle,
+            appear,
+            pulse,
         }
     }
 }
@@ -262,11 +302,20 @@ impl SidebarItem for FavoritesSection {
                     self.favorites[i - 1].sort_index
                 };
                 let after = f.sort_index;
+                let anim = if self.appear.contains(&f.id) {
+                    RowAnim::Appear
+                } else if let Some(seq) = self.pulse.get(&f.id).copied() {
+                    RowAnim::Pulse(seq)
+                } else {
+                    RowAnim::None
+                };
                 elements.push(render_drop_gap(i, before, after, shell.clone(), cx));
                 elements.push(render_favorite_row(
                     i,
                     f,
                     states[i],
+                    self.focused == Some(f.id),
+                    anim,
                     &icons,
                     shell.clone(),
                     active_path.as_deref(),
@@ -289,7 +338,14 @@ impl SidebarItem for FavoritesSection {
             v_flex().w_full().children(elements).into_any_element()
         };
 
+        // The section tracks a focus handle and declares
+        // `FAVORITES_CONTEXT` so arrow/Enter/Delete bindings fire only
+        // while it's focused (§11.4). The action handlers themselves
+        // live on the Shell root and are reached by bubbling.
         v_flex()
+            .id("favorites-section")
+            .key_context(FAVORITES_CONTEXT)
+            .track_focus(&self.focus_handle)
             .w_full()
             .child(header)
             .child(body)
@@ -301,10 +357,13 @@ impl SidebarItem for FavoritesSection {
 /// Application targets get the kind-appropriate icon; saved searches
 /// and tags (reserved) fall back to a lucide glyph. Click navigates
 /// the active tab; iter 5 layers modifier-click and drag.
+#[allow(clippy::too_many_arguments)]
 fn render_favorite_row(
     index: usize,
     fav: &Favorite,
     state: FavoriteState,
+    is_focused: bool,
+    anim: RowAnim,
     icons: &Rc<RefCell<IconCache>>,
     shell: WeakEntity<Shell>,
     active_path: Option<&std::path::Path>,
@@ -340,7 +399,10 @@ fn render_favorite_row(
             .into_any_element(),
         (None, FavoriteTarget::Path(p)) => {
             let icon = icons.borrow_mut().folder_icon_for(p);
-            img(icon).w(px(crate::tree::SIDEBAR_ICON_PX)).h(px(crate::tree::SIDEBAR_ICON_PX)).into_any_element()
+            img(icon)
+                .w(px(crate::tree::SIDEBAR_ICON_PX))
+                .h(px(crate::tree::SIDEBAR_ICON_PX))
+                .into_any_element()
         }
         (None, FavoriteTarget::SavedSearch(_)) => svg()
             .path("icons/nav/star.svg")
@@ -394,6 +456,15 @@ fn render_favorite_row(
         let hover_bg = theme.sidebar_accent.opacity(0.5);
         row = row.hover(move |this| this.bg(hover_bg));
     }
+    // §11.4 keyboard focus ring — distinct from the §5 favorited
+    // indicator, hover, and the active/selected background. A 1-DIP
+    // inset ring keeps the row from shifting (the border replaces a
+    // transparent default rather than adding width).
+    row = row.border_1().border_color(if is_focused {
+        theme.ring
+    } else {
+        gpui::transparent_black()
+    });
     row = row.child(
         div()
             .flex_shrink_0()
@@ -432,22 +503,48 @@ fn render_favorite_row(
             .flex_shrink_0(),
     );
 
+    // §11.5 drop a file/folder *onto* a favorite row = move/copy into
+    // that folder (distinct from dropping *between* rows, which the
+    // drop gaps handle as a reorder / add). The whole row highlights as
+    // the drop target. Only `Available` path favorites accept the drop;
+    // dropping into a Missing / Unmounted target would fail in the
+    // worker, so those rows decline gracefully (no highlight, no drop).
+    if let (FavoriteState::Available, Some(dest)) = (state, path_for_click.clone()) {
+        let drop_accent = theme.sidebar_accent.opacity(0.6);
+        let shell_for_drop = shell.clone();
+        row = row
+            .drag_over::<ExternalPaths>(move |style, _payload, _window, _cx| style.bg(drop_accent))
+            .on_drop(move |paths: &ExternalPaths, window, cx| {
+                let Some(s) = shell_for_drop.upgrade() else {
+                    return;
+                };
+                let collected: Vec<_> = paths.paths().to_vec();
+                let dest = dest.clone();
+                // `handle_external_drop` reads the live modifiers
+                // (Option → copy) and resolves same- vs cross-volume on
+                // a worker, so this stays the same engine the file list
+                // uses (Prime Directive: no stat on the drop thread).
+                s.update(cx, |shell, cx| {
+                    shell.handle_external_drop(collected, dest, window, cx);
+                });
+            });
+    }
+
     let Some(p) = path_for_click else {
-        return row.into_any_element();
+        return apply_row_anim(row.into_any_element(), anim, fav.id, theme.primary);
     };
     let shell_for_click = shell.clone();
     let shell_for_menu = shell.clone();
     let path_for_menu = p.clone();
     let path_for_click = p;
     let fav_id = fav.id;
-    // Single-click navigates (§11.2). Cmd-click opens in a new tab
-    // (§11.3). Modifier inspection mirrors how file-list rows route
-    // open-in-new-tab through the same `open_path_in_new_tab` helper.
-    // The click also marks this favorite as the keyboard-reorder
-    // target (§4.4) so `Cmd+Option+Up/Down` operates on it.
-    // §8 click guard: refuse navigation for Missing / Unmounted; show
-    // a native alert instead. Locate dialog with NSOpenPanel is iter
-    // 11 polish.
+    // Single-click navigates (§11.2). Cmd-click opens a new tab, and
+    // Cmd+Option-click a new window (§11.3) — mirroring the file list's
+    // modifier vocabulary. The click also focuses the section (so the
+    // arrow/Delete keys take over, §11.4) and marks this favorite as the
+    // keyboard target for reorder / delete / activate. §8 click guard:
+    // a Missing / Unmounted row surfaces the Locate/Remove/Keep dialog
+    // instead of navigating into the void.
     let click_state = state;
     row = row.on_click(move |event, window, cx| {
         if let Some(s) = shell_for_click.upgrade() {
@@ -455,31 +552,19 @@ fn render_favorite_row(
             let path = path_for_click.clone();
             s.update(cx, |shell, cx| {
                 shell.focused_favorite = Some(fav_id);
+                window.focus(&shell.favorites_focus, cx);
                 match click_state {
                     FavoriteState::Available => {
-                        if modifiers.platform {
+                        if modifiers.platform && modifiers.alt {
+                            crate::shell::open_window_at(cx, path);
+                        } else if modifiers.platform {
                             shell.open_path_in_new_tab(path, window, cx);
                         } else {
                             shell.navigate(path, cx);
                         }
                     }
-                    FavoriteState::Unmounted => {
-                        crate::platform_shell::show_alert(
-                            "Volume not mounted",
-                            &format!(
-                                "\u{201C}{}\u{201D} isn\u{2019}t currently mounted.",
-                                path.display()
-                            ),
-                        );
-                    }
-                    FavoriteState::Missing => {
-                        crate::platform_shell::show_alert(
-                            "Favorite can\u{2019}t be found",
-                            &format!(
-                                "\u{201C}{}\u{201D} may have been moved or deleted.\nUse the \u{201C}Remove from Favorites\u{201D} context menu to remove this shortcut, or restore the original location.",
-                                path.display()
-                            ),
-                        );
+                    other => {
+                        shell.show_missing_favorite_dialog(fav_id, path, other, window, cx);
                     }
                 }
             });
@@ -487,46 +572,102 @@ fn render_favorite_row(
     });
     // `.context_menu(...)` changes the element type to `ContextMenu<...>`,
     // so it has to be the terminal call before returning.
-    row.context_menu(move |menu, window, cx| {
-        use crate::shell::{
-            CopyContextPath, RenameFavorite, ResetFavoriteIcon, ResetFavoriteName,
-            RevealContextPath, SetFavoriteIconArchive, SetFavoriteIconCode, SetFavoriteIconFolder,
-            SetFavoriteIconImage, SetFavoriteIconMusic, SetFavoriteIconStar,
-            ToggleFavoriteForTarget,
-        };
-        use gpui_component::menu::{PopupMenu, PopupMenuItem};
-        if let Some(s) = shell_for_menu.upgrade() {
-            s.update(cx, |shell, _| {
-                shell.context_target = Some(path_for_menu.clone());
-                shell.favorites_context_path = Some(path_for_menu.clone());
+    let menu_anim = anim;
+    let menu_fav_id = fav.id;
+    let menu_accent = theme.primary;
+    apply_row_anim(
+        row.context_menu(move |menu, window, cx| {
+            use crate::shell::{
+                CopyContextPath, LocateFavorite, RenameFavorite, ResetFavoriteIcon,
+                ResetFavoriteName, RevealContextPath, SetFavoriteIconArchive, SetFavoriteIconCode,
+                SetFavoriteIconFolder, SetFavoriteIconImage, SetFavoriteIconMusic,
+                SetFavoriteIconStar, ToggleFavoriteForTarget,
+            };
+            use gpui_component::menu::{PopupMenu, PopupMenuItem};
+            if let Some(s) = shell_for_menu.upgrade() {
+                s.update(cx, |shell, _| {
+                    shell.context_target = Some(path_for_menu.clone());
+                    shell.favorites_context_path = Some(path_for_menu.clone());
+                });
+            }
+            // Icon picker submenu (§7). Curated picks tied to the assets
+            // that actually ship under `resources/icons/` — a full visual
+            // picker is iter 11 polish.
+            let icon_submenu = PopupMenu::build(window, cx, move |m, _w, _c| {
+                m.menu("\u{2605} Star", Box::new(SetFavoriteIconStar))
+                    .menu("\u{1F4C1} Folder", Box::new(SetFavoriteIconFolder))
+                    .menu(
+                        "\u{27E8}\u{2009}/\u{2009}\u{27E9} Code",
+                        Box::new(SetFavoriteIconCode),
+                    )
+                    .menu("\u{1F5BC} Image", Box::new(SetFavoriteIconImage))
+                    .menu("\u{266B} Music", Box::new(SetFavoriteIconMusic))
+                    .menu("\u{1F5C4} Archive", Box::new(SetFavoriteIconArchive))
+                    .separator()
+                    .menu("Reset Icon", Box::new(ResetFavoriteIcon))
             });
-        }
-        // Icon picker submenu (§7). Curated picks tied to the assets
-        // that actually ship under `resources/icons/` — a full visual
-        // picker is iter 11 polish.
-        let icon_submenu = PopupMenu::build(window, cx, move |m, _w, _c| {
-            m.menu("\u{2605} Star", Box::new(SetFavoriteIconStar))
-                .menu("\u{1F4C1} Folder", Box::new(SetFavoriteIconFolder))
-                .menu(
-                    "\u{27E8}\u{2009}/\u{2009}\u{27E9} Code",
-                    Box::new(SetFavoriteIconCode),
-                )
-                .menu("\u{1F5BC} Image", Box::new(SetFavoriteIconImage))
-                .menu("\u{266B} Music", Box::new(SetFavoriteIconMusic))
-                .menu("\u{1F5C4} Archive", Box::new(SetFavoriteIconArchive))
+            menu.menu("Rename\u{2026}", Box::new(RenameFavorite))
+                .menu("Reset to Original Name", Box::new(ResetFavoriteName))
+                .item(PopupMenuItem::submenu("Change Icon", icon_submenu))
+                .menu("Locate\u{2026}", Box::new(LocateFavorite))
                 .separator()
-                .menu("Reset Icon", Box::new(ResetFavoriteIcon))
-        });
-        menu.menu("Rename\u{2026}", Box::new(RenameFavorite))
-            .menu("Reset to Original Name", Box::new(ResetFavoriteName))
-            .item(PopupMenuItem::submenu("Change Icon", icon_submenu))
-            .separator()
-            .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealContextPath))
-            .menu("Copy Path", Box::new(CopyContextPath))
-            .separator()
-            .menu("Remove from Favorites", Box::new(ToggleFavoriteForTarget))
-    })
-    .into_any_element()
+                .menu(
+                    feraille_core::commands::REVEAL_LABEL,
+                    Box::new(RevealContextPath),
+                )
+                .menu("Copy Path", Box::new(CopyContextPath))
+                .separator()
+                .menu("Remove from Favorites", Box::new(ToggleFavoriteForTarget))
+        })
+        .into_any_element(),
+        menu_anim,
+        menu_fav_id,
+        menu_accent,
+    )
+}
+
+/// Wrap a favorite row in its one-shot §2.2 animation, if any. `Appear`
+/// fades the row in over ~150ms (a freshly added favorite); `Pulse`
+/// flashes the row background to draw the eye to an existing entry on a
+/// duplicate-add. `with_animation` plays once per element-id lifetime,
+/// so a stable id replays nothing; the pulse id carries the generation
+/// so a *repeat* dedup re-triggers. `None` returns the row untouched.
+fn apply_row_anim(
+    row: AnyElement,
+    anim: RowAnim,
+    id: FavoriteId,
+    accent: gpui::Hsla,
+) -> AnyElement {
+    match anim {
+        RowAnim::None => row,
+        RowAnim::Appear => {
+            let key: SharedString = format!("fav-appear-{id}").into();
+            div()
+                .w_full()
+                .child(row)
+                .with_animation(
+                    ElementId::Name(key),
+                    Animation::new(Duration::from_millis(APPEAR_MS)).with_easing(ease_out_quint()),
+                    |this, delta| this.opacity(delta),
+                )
+                .into_any_element()
+        }
+        RowAnim::Pulse(seq) => {
+            let key: SharedString = format!("fav-pulse-{id}-{seq}").into();
+            div()
+                .w_full()
+                .child(row)
+                .with_animation(
+                    ElementId::Name(key),
+                    Animation::new(Duration::from_millis(PULSE_MS)),
+                    move |this, delta| {
+                        // Flash to the accent, then fade back to clear.
+                        this.bg(accent.opacity((1.0 - delta) * 0.5))
+                    },
+                )
+                .into_any_element()
+        }
+    }
 }
 
 /// Insertion-point drop gap between two favorite rows. Idle, it's a
@@ -607,10 +748,7 @@ fn render_drop_gap(
                     // Toast needs a Window we don't have in a drop
                     // closure; log-only until iter 11 routes this
                     // through an action (pre-existing limitation).
-                    crate::log_warn!(
-                        90,
-                        "favorites drop: rejected {rejected} non-folder item(s)"
-                    );
+                    crate::log_warn!(90, "favorites drop: rejected {rejected} non-folder item(s)");
                 }
                 let Some(shell) = shell_weak.upgrade() else {
                     return;

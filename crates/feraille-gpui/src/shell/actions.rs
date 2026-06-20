@@ -230,9 +230,27 @@ actions!(
         MoveFavoriteUp,
         /// Cmd+Option+Down — shift down one slot.
         MoveFavoriteDown,
-        /// Rename the favorite under `favorites_context_path` via a
-        /// native NSAlert prompt (§6).
+        /// Up/Down within the focused Favorites section — move keyboard
+        /// focus to the previous / next favorite row (§11.4). Sets
+        /// `Shell::focused_favorite`, which drives the focus ring and is
+        /// the target of `DeleteFavorite` / `ActivateFavorite`.
+        FocusFavoriteUp,
+        FocusFavoriteDown,
+        /// Enter on the focused favorite — navigate to it (§11.4).
+        ActivateFavorite,
+        /// Delete / Backspace on the focused favorite — remove it (with
+        /// undo), the keyboard twin of the context-menu remove (§3.1).
+        DeleteFavorite,
+        /// Rename the favorite under `favorites_context_path` via the
+        /// shared gpui text-prompt modal (§6) — the same surface every
+        /// other naming flow uses, so it's consistent and cross-platform
+        /// (no native text prompt exists on Windows).
         RenameFavorite,
+        /// "Locate…" (§8.2 / §8.3) — open a folder picker and repoint
+        /// the favorite under `favorites_context_path` at the chosen
+        /// folder, keeping its id / name / sort_index. Reachable from
+        /// the normal row context menu and the broken-state dialog.
+        LocateFavorite,
         /// Clear the favorite's custom display_name so it tracks the
         /// folder's on-disk basename again (§6 "Reset to Original Name").
         ResetFavoriteName,

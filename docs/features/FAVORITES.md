@@ -176,9 +176,10 @@ And toggling it updates the index, which updates every visible indicator in the 
 
 A favorite's `display_name` is independent of the underlying folder's name. Renaming the favorite is renaming the *shortcut's label*, not the folder.
 
-- **Trigger:** double-click the favorite's label (slow double-click, like Finder), or `Enter` with the favorite selected, or context menu → "Rename."
-- **Behavior:** the label becomes an inline text field, current name selected. `Enter` commits, `Esc` cancels, click-away commits.
-- **Empty name:** rejected — revert to the previous name (or to the folder basename if there was no custom name).
+- **Trigger:** context menu → "Rename…", or `Enter` with the favorite selected.
+- **Behavior:** a small modal text-prompt opens pre-filled with the current name, selected for overtype. `Enter` commits, `Esc` cancels.
+  - *Implementation note:* Feraille renames through the **shared gpui text-prompt modal** — the one surface every naming flow (file/folder rename, new folder) uses — rather than an in-row editable label. This is deliberate: it keeps one consistent, accessible naming surface and is cross-platform (Windows has no native text prompt), and it sidesteps per-view inline-edit plumbing in the non-virtualized sidebar. The spec's original "inline text field" wording predates that decision; the modal is the supported path.
+- **Empty name:** rejected — the commit is a no-op, leaving the previous name (or the folder basename if there was no custom name).
 - **"Reset name":** context menu offers "Reset to Original Name," which clears `display_name` back to tracking the folder basename.
 - Renaming the favorite does **not** rename the folder on disk. Make this unambiguous — if there's any doubt in testing, add a tooltip or a one-time hint.
 - If the underlying folder is later renamed on disk *and* the favorite had no custom name, the favorite's displayed name should follow the folder. If the favorite *had* a custom name, it keeps the custom name regardless.
@@ -293,7 +294,7 @@ For implementation against the library you're already using:
 - **Icon** — favorite icons, state glyphs, the favorited indicator.
 - **Menu** — the right-click context menus on favorites, on source folders, on the section header.
 - **Tooltip** — hover hints (full path on truncated names, "this renames the shortcut, not the folder" if needed).
-- **Input** — inline rename field.
+- **Input** — the rename text-prompt modal (Feraille renames via the shared modal, not an in-row field; see §6).
 - **Notification** — the remove/undo toast, the mount-failure toast, the "only folders" rejection toast.
 - **Dialog** / **Popover** — the missing-target "can't be found" prompt.
 - **Kbd** — showing shortcuts in menus and tooltips.

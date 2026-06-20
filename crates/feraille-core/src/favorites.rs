@@ -129,7 +129,10 @@ impl FavoriteIcon {
     pub fn from_db(s: &str) -> Option<Self> {
         if let Some(name) = s.strip_prefix("lucide:") {
             Some(Self::Lucide(name.to_string()))
-        } else { s.strip_prefix("tint:").map(|color| Self::TintedFolder(color.to_string())) }
+        } else {
+            s.strip_prefix("tint:")
+                .map(|color| Self::TintedFolder(color.to_string()))
+        }
     }
 }
 
@@ -217,6 +220,31 @@ pub fn fractional_between(a: f64, b: f64) -> f64 {
     }
 }
 
+/// Compute the `(before, after)` sort_index bounds for moving the entry
+/// at `pos` by `by` slots within a list whose sort_indices are `indices`
+/// (in list order). The runtime keyboard-reorder (`Favorites::shift`,
+/// §4.4) feeds these bounds to [`fractional_between`]. `NEG_INFINITY` /
+/// `INFINITY` mark the open ends. Returns `None` for a no-op move —
+/// already at the relevant edge, `pos` out of range, or a zero step.
+pub fn reorder_bounds(indices: &[f64], pos: usize, by: isize) -> Option<(f64, f64)> {
+    if pos >= indices.len() {
+        return None;
+    }
+    let last = indices.len() as isize - 1;
+    let target = (pos as isize + by).clamp(0, last) as usize;
+    if target == pos {
+        return None;
+    }
+    let bounds = match by.signum() {
+        -1 if target == 0 => (f64::NEG_INFINITY, indices[target]),
+        -1 => (indices[target - 1], indices[target]),
+        1 if target == indices.len() - 1 => (indices[target], f64::INFINITY),
+        1 => (indices[target], indices[target + 1]),
+        _ => return None,
+    };
+    Some(bounds)
+}
+
 /// Rewrite `(id, sort_index)` pairs in place with clean 0/1024/2048…
 /// values, preserving sort order. Used by the background renormalize
 /// pass and by one-shot section sorts.
@@ -259,6 +287,49 @@ mod tests {
             assert!(mid > a && mid < b, "mid {mid} not in ({a}, {b})");
             a = mid;
         }
+    }
+
+    #[test]
+    fn reorder_bounds_moves_down_between_neighbors() {
+        // [0, 1024, 2048, 3072]; move index 0 down one → lands between
+        // the entries now at indices 1 and 2 (1024 and 2048).
+        let idx = [0.0, 1024.0, 2048.0, 3072.0];
+        let (a, b) = reorder_bounds(&idx, 0, 1).unwrap();
+        assert_eq!((a, b), (1024.0, 2048.0));
+        // fractional_between picks the midpoint, so the moved row sorts
+        // strictly after its new left neighbor and before the right.
+        let mid = fractional_between(a, b);
+        assert!(mid > 1024.0 && mid < 2048.0);
+    }
+
+    #[test]
+    fn reorder_bounds_moves_up_to_top_uses_open_left() {
+        let idx = [0.0, 1024.0, 2048.0];
+        let (a, b) = reorder_bounds(&idx, 1, -1).unwrap();
+        assert_eq!(a, f64::NEG_INFINITY);
+        assert_eq!(b, 0.0);
+        assert!(fractional_between(a, b) < 0.0);
+    }
+
+    #[test]
+    fn reorder_bounds_moves_down_to_bottom_uses_open_right() {
+        let idx = [0.0, 1024.0, 2048.0];
+        let (a, b) = reorder_bounds(&idx, 1, 1).unwrap();
+        assert_eq!(a, 2048.0);
+        assert_eq!(b, f64::INFINITY);
+        assert!(fractional_between(a, b) > 2048.0);
+    }
+
+    #[test]
+    fn reorder_bounds_clamps_at_edges_to_noop() {
+        let idx = [0.0, 1024.0, 2048.0];
+        // Already at the top moving up, or bottom moving down → no-op.
+        assert_eq!(reorder_bounds(&idx, 0, -1), None);
+        assert_eq!(reorder_bounds(&idx, 2, 1), None);
+        // Out-of-range position → no-op.
+        assert_eq!(reorder_bounds(&idx, 9, 1), None);
+        // Zero step → no-op.
+        assert_eq!(reorder_bounds(&idx, 1, 0), None);
     }
 
     #[test]
