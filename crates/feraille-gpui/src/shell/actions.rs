@@ -263,18 +263,11 @@ actions!(
         ResetFavoriteName,
         /// Strip a custom icon, falling back to kind+target default (§7).
         ResetFavoriteIcon,
-        // Curated icon picks (§7 "Change Icon" submenu). Each sets
-        // `custom_icon = Some(Lucide(subpath))` on the contextual
-        // favorite, where the subpath references an asset under
-        // `crates/feraille-gpui/resources/icons/` (e.g. "nav/star",
-        // "file/code"). Six pre-curated picks; a full picker UI is a
-        // future polish piece.
-        SetFavoriteIconStar,
-        SetFavoriteIconFolder,
-        SetFavoriteIconCode,
-        SetFavoriteIconImage,
-        SetFavoriteIconMusic,
-        SetFavoriteIconArchive,
+        /// Open the icon-picker window (§7 "Change Icon…") for the
+        /// contextual favorite. The picker lists the bundled Lucide
+        /// library and writes the chosen glyph back as
+        /// `custom_icon = Some(Lucide(name))`. See `favorite_icon_picker`.
+        OpenFavoriteIconPicker,
         // Recents sidebar section (docs/features — Recents). The
         // section is a recency view over the Ant Trail visit log.
         /// Header click — flip the Recents section's disclosure

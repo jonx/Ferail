@@ -99,7 +99,8 @@ impl IconCache {
     /// Lets the shell decide which rows still need a background warm
     /// without mutating the cache from a render pass.
     pub fn has_folder_icon(&self, path: &Path) -> bool {
-        self.by_kind.contains_key(&format!("path:{}", path.display()))
+        self.by_kind
+            .contains_key(&format!("path:{}", path.display()))
     }
 
     /// Fetch-and-cache a path-keyed icon outside the render path.

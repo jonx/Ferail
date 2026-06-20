@@ -191,42 +191,66 @@ fn persist_ui_scale(value: f32) {
 
 fn persist_search_engine(value: &str) {
     let existing = app_state::load();
-    app_state::save(&AppState { search_engine: Some(value.to_string()), ..existing });
+    app_state::save(&AppState {
+        search_engine: Some(value.to_string()),
+        ..existing
+    });
 }
 
 fn persist_search_match_path(value: bool) {
     let existing = app_state::load();
-    app_state::save(&AppState { search_match_path: Some(value), ..existing });
+    app_state::save(&AppState {
+        search_match_path: Some(value),
+        ..existing
+    });
 }
 
 fn persist_search_include_hidden(value: bool) {
     let existing = app_state::load();
-    app_state::save(&AppState { search_include_hidden: Some(value), ..existing });
+    app_state::save(&AppState {
+        search_include_hidden: Some(value),
+        ..existing
+    });
 }
 
 fn persist_dupe_presentation(value: &str) {
     let existing = app_state::load();
-    app_state::save(&AppState { dupe_presentation: Some(value.to_string()), ..existing });
+    app_state::save(&AppState {
+        dupe_presentation: Some(value.to_string()),
+        ..existing
+    });
 }
 
 fn persist_dupe_min_size_mb(value: u64) {
     let existing = app_state::load();
-    app_state::save(&AppState { dupe_min_size_mb: Some(value.min(4096)), ..existing });
+    app_state::save(&AppState {
+        dupe_min_size_mb: Some(value.min(4096)),
+        ..existing
+    });
 }
 
 fn persist_dupe_skip_cloud(value: bool) {
     let existing = app_state::load();
-    app_state::save(&AppState { dupe_skip_cloud: Some(value), ..existing });
+    app_state::save(&AppState {
+        dupe_skip_cloud: Some(value),
+        ..existing
+    });
 }
 
 fn persist_dupe_include_packages(value: bool) {
     let existing = app_state::load();
-    app_state::save(&AppState { dupe_include_packages: Some(value), ..existing });
+    app_state::save(&AppState {
+        dupe_include_packages: Some(value),
+        ..existing
+    });
 }
 
 fn persist_dupe_paranoid(value: bool) {
     let existing = app_state::load();
-    app_state::save(&AppState { dupe_paranoid: Some(value), ..existing });
+    app_state::save(&AppState {
+        dupe_paranoid: Some(value),
+        ..existing
+    });
 }
 
 // =============================================================================
@@ -305,6 +329,9 @@ fn dropdown_setting(
     title: &'static str,
     description: &'static str,
     options: &'static [(&'static str, &'static str)],
+    // Option values rendered greyed and unselectable (e.g. a provider this
+    // build can't honour). Empty for an unrestricted dropdown.
+    disabled: &'static [&'static str],
     get: fn() -> String,
     persist: fn(&str),
 ) -> SettingItem {
@@ -346,9 +373,14 @@ fn dropdown_setting(
                                     options.iter().fold(menu, |menu, opt| {
                                         let (value, label) = *opt;
                                         let checked = value == current.as_str();
+                                        // A disabled item is greyed and its
+                                        // click handler is dropped by the menu
+                                        // (see PopupMenuItem render), so it
+                                        // can't be selected.
                                         menu.item(
                                             PopupMenuItem::new(label)
                                                 .checked(checked)
+                                                .disabled(disabled.contains(&value))
                                                 .on_click(move |_, _, _cx| persist(value)),
                                         )
                                     })
@@ -356,7 +388,13 @@ fn dropdown_setting(
                             ),
                     ),
             )
-            .child(div().w_full().text_sm().text_color(muted).child(description))
+            .child(
+                div()
+                    .w_full()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(description),
+            )
     })
 }
 
@@ -377,8 +415,9 @@ fn search_dupes_page() -> SettingPage {
         .icon(Icon::empty().path("icons/search.svg"))
         // ---- Search engine ----
         .group(
-            SettingGroup::new().title("Search").item(
-                dropdown_setting(
+            SettingGroup::new()
+                .title("Search")
+                .item(dropdown_setting(
                     "Search engine",
                     "Automatic uses Spotlight's live index when available \u{2014} instant, \
                      content-aware, near-zero CPU \u{2014} and falls back to the built-in \
@@ -389,35 +428,39 @@ fn search_dupes_page() -> SettingPage {
                         ("spotlight", "Spotlight"),
                         ("walker", "Built-in walker"),
                     ],
-                    || app_state::load().search_engine.unwrap_or_else(|| "auto".into()),
+                    &[],
+                    || {
+                        app_state::load()
+                            .search_engine
+                            .unwrap_or_else(|| "auto".into())
+                    },
                     persist_search_engine,
+                ))
+                .item(
+                    SettingItem::new(
+                        "Match full path",
+                        SettingField::switch(
+                            |_cx: &App| app_state::load().search_match_path.unwrap_or(false),
+                            |val: bool, _cx: &mut App| persist_search_match_path(val),
+                        )
+                        .default_value(false),
+                    )
+                    .description("Match the relative path, not just the file name."),
+                )
+                .item(
+                    SettingItem::new(
+                        "Include hidden files",
+                        SettingField::switch(
+                            |_cx: &App| {
+                                let s = app_state::load();
+                                s.search_include_hidden.or(s.show_hidden).unwrap_or(false)
+                            },
+                            |val: bool, _cx: &mut App| persist_search_include_hidden(val),
+                        )
+                        .default_value(false),
+                    )
+                    .description("Search dot-files and otherwise-hidden items too."),
                 ),
-            )
-            .item(
-                SettingItem::new(
-                    "Match full path",
-                    SettingField::switch(
-                        |_cx: &App| app_state::load().search_match_path.unwrap_or(false),
-                        |val: bool, _cx: &mut App| persist_search_match_path(val),
-                    )
-                    .default_value(false),
-                )
-                .description("Match the relative path, not just the file name."),
-            )
-            .item(
-                SettingItem::new(
-                    "Include hidden files",
-                    SettingField::switch(
-                        |_cx: &App| {
-                            let s = app_state::load();
-                            s.search_include_hidden.or(s.show_hidden).unwrap_or(false)
-                        },
-                        |val: bool, _cx: &mut App| persist_search_include_hidden(val),
-                    )
-                    .default_value(false),
-                )
-                .description("Search dot-files and otherwise-hidden items too."),
-            ),
         )
         // ---- Duplicate finder ----
         .group(
@@ -432,7 +475,12 @@ fn search_dupes_page() -> SettingPage {
                         ("grouped", "Grouped rows in a tab"),
                         ("panel", "Dedicated panel"),
                     ],
-                    || app_state::load().dupe_presentation.unwrap_or_else(|| "grouped".into()),
+                    &[],
+                    || {
+                        app_state::load()
+                            .dupe_presentation
+                            .unwrap_or_else(|| "grouped".into())
+                    },
                     persist_dupe_presentation,
                 ))
                 .item(dropdown_setting(
@@ -444,6 +492,7 @@ fn search_dupes_page() -> SettingPage {
                         ("10", "Skip under 10 MB"),
                         ("100", "Skip under 100 MB"),
                     ],
+                    &[],
                     || app_state::load().dupe_min_size_mb.unwrap_or(0).to_string(),
                     |v| persist_dupe_min_size_mb(v.parse().unwrap_or(0)),
                 ))
@@ -456,9 +505,7 @@ fn search_dupes_page() -> SettingPage {
                         )
                         .default_value(true),
                     )
-                    .description(
-                        "Don't download undownloaded iCloud files just to hash them.",
-                    ),
+                    .description("Don't download undownloaded iCloud files just to hash them."),
                 )
                 .item(
                     SettingItem::new(
@@ -577,6 +624,7 @@ fn layout_page() -> SettingPage {
                 ("1.15", "Medium (115%)"),
                 ("1.30", "Large (130%)"),
             ],
+            &[],
             || format!("{:.2}", app_state::load().ui_scale.unwrap_or(1.0)),
             |v| persist_ui_scale(v.parse().unwrap_or(1.0)),
         )))
@@ -600,6 +648,28 @@ fn persist_vlc_app_path(value: &str) {
 }
 
 fn plugins_page() -> SettingPage {
+    // The VLC provider is only compiled in with the `vlc` feature. In a stock
+    // build, grey the "VLC" option out (unselectable) and say why in the
+    // description, so it's discoverable but can't be picked into a no-op.
+    let (player_desc, player_disabled): (&'static str, &'static [&'static str]) =
+        if cfg!(feature = "vlc") {
+            (
+                "The built-in player uses the system frameworks (AVFoundation on macOS). \
+                 VLC plays virtually any container/codec and applies colour adjustments to \
+                 video itself. VLC needs VLC.app installed; a change takes effect on the \
+                 next viewer window.",
+                &[],
+            )
+        } else {
+            (
+                "The built-in player uses the system frameworks (AVFoundation on macOS). \
+                 VLC plays virtually any container/codec, but this build was compiled \
+                 without the `vlc` feature, so VLC is unavailable \u{2014} rebuild with \
+                 `cargo run --bin feraille-gpui --features vlc` (and VLC.app installed) \
+                 to enable it.",
+                &["vlc"],
+            )
+        };
     SettingPage::new("Plugins")
         .icon(Icon::empty().path("icons/settings.svg"))
         .group(
@@ -607,11 +677,9 @@ fn plugins_page() -> SettingPage {
                 .title("Video player")
                 .item(dropdown_setting(
                     "Player",
-                    "The built-in player uses the system frameworks (AVFoundation on macOS). \
-                     VLC plays virtually any container/codec and applies colour adjustments to \
-                     video itself. VLC needs a build with the `vlc` feature and VLC.app \
-                     installed; a change takes effect on the next viewer window.",
+                    player_desc,
                     &[("builtin", "Built-in"), ("vlc", "VLC")],
+                    player_disabled,
                     || {
                         app_state::load()
                             .video_backend

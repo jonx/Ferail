@@ -177,7 +177,10 @@ impl ViewerCache {
 /// Returns RGBA bytes + dimensions (channel swap to BGRA happens in
 /// [`build_frame`], same split as `preview::build_render_image`).
 pub fn decode_full_res(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
-    if let Some(frame) = std::fs::read(path).ok().and_then(|bytes| decode_raster(&bytes)) {
+    if let Some(frame) = std::fs::read(path)
+        .ok()
+        .and_then(|bytes| decode_raster(&bytes))
+    {
         return Some(frame);
     }
     // Quick Look fallback for non-raster formats (HEIC, PDF, video).

@@ -1592,8 +1592,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(tab::ToolResultMode::DiskUsage(du)) =
-            self.active_tab().tool_result.as_ref().map(|surface| &surface.mode)
+        let Some(tab::ToolResultMode::DiskUsage(du)) = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .map(|surface| &surface.mode)
         else {
             return;
         };
@@ -3510,63 +3513,22 @@ impl Shell {
         );
     }
 
-    fn set_favorite_lucide(&mut self, name: &'static str, cx: &mut Context<Self>) {
+    pub fn on_open_favorite_icon_picker(
+        &mut self,
+        _: &OpenFavoriteIconPicker,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Resolve the contextual favorite up front (same path Rename /
+        // Reset Icon use), then hand the shared favorites entity + id to
+        // the picker window. The picker writes the chosen glyph straight
+        // through the entity — no `favorites_context_path` to keep alive
+        // across the window's lifetime.
         let Some(id) = self.pop_favorite_id_for_action(cx) else {
             return;
         };
-        let icon = feraille_core::favorites::FavoriteIcon::Lucide(name.into());
-        self.process
-            .favorites
-            .update(cx, |f, cx| f.set_icon(id, Some(icon), cx));
-    }
-
-    pub fn on_set_favorite_icon_star(
-        &mut self,
-        _: &SetFavoriteIconStar,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_favorite_lucide("nav/star", cx);
-    }
-    pub fn on_set_favorite_icon_folder(
-        &mut self,
-        _: &SetFavoriteIconFolder,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_favorite_lucide("nav/folder", cx);
-    }
-    pub fn on_set_favorite_icon_code(
-        &mut self,
-        _: &SetFavoriteIconCode,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_favorite_lucide("file/code", cx);
-    }
-    pub fn on_set_favorite_icon_image(
-        &mut self,
-        _: &SetFavoriteIconImage,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_favorite_lucide("file/image", cx);
-    }
-    pub fn on_set_favorite_icon_music(
-        &mut self,
-        _: &SetFavoriteIconMusic,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_favorite_lucide("nav/music", cx);
-    }
-    pub fn on_set_favorite_icon_archive(
-        &mut self,
-        _: &SetFavoriteIconArchive,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_favorite_lucide("file/archive", cx);
+        let favorites = self.process.favorites.clone();
+        crate::favorite_icon_picker::open_window(cx, favorites, id);
     }
 
     /// Pick the path the next favorites mutation should target.

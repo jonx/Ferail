@@ -288,16 +288,12 @@ fn row(
     // open-with slots, etc.) read in muted grey so it's obvious they
     // can't be invoked from the palette; live ones keep full contrast.
     let title_color = if dispatchable { foreground } else { muted };
-    let mut title = h_flex()
-        .flex_1()
-        .items_center()
-        .gap_2()
-        .child(
-            div()
-                .text_sm()
-                .text_color(title_color)
-                .child(SharedString::from(spec.title)),
-        );
+    let mut title = h_flex().flex_1().items_center().gap_2().child(
+        div()
+            .text_sm()
+            .text_color(title_color)
+            .child(SharedString::from(spec.title)),
+    );
     if !dispatchable {
         // A trailing tag spells out *why* the row is dim, so it doesn't
         // just look like a styling glitch.

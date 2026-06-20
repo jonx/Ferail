@@ -617,7 +617,7 @@ impl DiskUsageView {
             let root = self.root_path.clone();
             Button::new("du-dock")
                 .small()
-                .icon(Icon::empty().path("icons/view-list.svg"))
+                .icon(Icon::empty().path("icons/minimize.svg"))
                 .tooltip("Dock in tab")
                 .on_click(cx.listener(move |_, _, window, cx| {
                     let view = cx.entity().clone();
@@ -1300,9 +1300,7 @@ pub fn open_existing_window(
         }),
         ..Default::default()
     };
-    let handle = cx.open_window(opts, |window, cx| {
-        cx.new(|cx| Root::new(view, window, cx))
-    })?;
+    let handle = cx.open_window(opts, |window, cx| cx.new(|cx| Root::new(view, window, cx)))?;
     Ok(handle)
 }
 

@@ -17,8 +17,8 @@ use std::path::PathBuf;
 use gpui::{Context, Task, Window};
 use gpui_component::input::{CompletionProvider, InputState, Rope};
 use lsp_types::{
-    CompletionContext, CompletionItem, CompletionItemKind, CompletionResponse,
-    CompletionTextEdit, Position, Range as LspRange, TextEdit,
+    CompletionContext, CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit,
+    Position, Range as LspRange, TextEdit,
 };
 
 /// Cap on suggestions per keystroke — a directory with thousands of

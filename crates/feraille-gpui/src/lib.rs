@@ -11,15 +11,16 @@
 #![recursion_limit = "256"]
 
 pub mod about;
+pub mod app_icon;
 pub mod app_state;
 pub mod assets;
 pub mod disk_usage;
 pub mod dupe_cache;
 pub mod entry_info;
+pub mod favorite_icon_picker;
 pub mod favorites;
-pub mod feature_settings;
 pub mod favorites_section;
-pub mod recents_section;
+pub mod feature_settings;
 pub mod file_list;
 pub mod folder_sizes;
 pub mod fs_watcher;
@@ -33,6 +34,7 @@ pub mod path_complete;
 pub mod prefetch;
 pub mod preview;
 pub mod process_state;
+pub mod recents_section;
 pub mod reset_db;
 pub mod screenshot;
 pub mod settings;
@@ -47,6 +49,8 @@ pub mod tool_results;
 pub mod tree;
 pub mod viewer;
 
+#[cfg(target_os = "linux")]
+pub use feraille_shell_linux as platform_shell;
 /// Platform shell abstraction. Resolves to `feraille_shell_mac` on
 /// macOS, `feraille_shell_win32` on Windows, and `feraille_shell_linux`
 /// on Linux; all three crates expose the same `pub fn` / type surface.
@@ -68,5 +72,3 @@ pub mod viewer;
 pub use feraille_shell_mac as platform_shell;
 #[cfg(windows)]
 pub use feraille_shell_win32 as platform_shell;
-#[cfg(target_os = "linux")]
-pub use feraille_shell_linux as platform_shell;

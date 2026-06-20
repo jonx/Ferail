@@ -62,6 +62,33 @@ Translate by intent:
 - SQLite metadata, Ant Trail, disk usage, magic, previews, and duplicate
   finding remain valuable but must use Mac-safe workers and identity.
 
+## Icons
+
+Every icon the app draws is cataloged in
+[docs/features/ICONS.md](docs/features/ICONS.md) — its source (macOS
+NSWorkspace / local Lucide-derived bundle / upstream `gpui-component-assets`),
+attribution, and the exact command/surface that uses it.
+
+**When you add, move, or repurpose any icon, update `docs/features/ICONS.md` in
+the same change.** Specifically:
+
+- Do not reuse an existing command's glyph for a different command — the
+  command→icon mapping is meant to stay ~1:1 so weak/overloaded icons are easy
+  to spot. Draw a distinct glyph instead.
+- Stay **platform-neutral** when possible: one icon set serves macOS, Windows,
+  and Linux, so avoid OS-specific metaphors (⌘/`command`, the Windows logo,
+  Finder chrome) for generic commands — use a universal glyph (`keyboard`, not
+  ⌘, for shortcuts). Platform-flavored glyphs are only OK on `#[cfg]`-gated
+  controls.
+- Before drawing or vendoring anything, check the **spare upstream pool** — the
+  `gpui-component-assets` bundle already ships ~68 unused Lucide glyphs you can
+  reference for free as `icons/<name>.svg`. ICONS.md lists them.
+- Keep the house style (24×24, `fill="none"`, `stroke="currentColor"`,
+  `stroke-width="1.75"`, round caps/joins). When the pool lacks a glyph, pull it
+  from [Lucide](https://lucide.dev) so the visual language stays consistent.
+- Add the new asset to the reference's inventory and command tables, note its
+  origin/attribution, and record anything that looks weak under "Known gaps".
+
 ## Where To Document Work
 
 - Current architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -85,3 +112,5 @@ Before finishing code changes:
   will be broken on GitHub.
 - Do not run whole-repo formatters casually; this repo may have local dirty
   work.
+- If the change touches icons, update
+  [docs/features/ICONS.md](docs/features/ICONS.md) (see [Icons](#icons)).

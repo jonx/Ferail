@@ -29,7 +29,10 @@ pub struct DbHashCache {
 
 impl DbHashCache {
     pub fn new(db: Arc<Mutex<MetadataDb>>, indexed_at_unix: i64) -> Self {
-        Self { db, indexed_at_unix }
+        Self {
+            db,
+            indexed_at_unix,
+        }
     }
 }
 
@@ -50,7 +53,9 @@ impl DupeHashCache for DbHashCache {
     }
 
     fn put_full(&self, path: &Path, size: u64, mtime_unix: i64, hash: &str) {
-        let Some(path_str) = path.to_str() else { return };
+        let Some(path_str) = path.to_str() else {
+            return;
+        };
         let Ok(guard) = self.db.lock() else { return };
         let rec = FileMetaRecord {
             path: path_str.to_string(),

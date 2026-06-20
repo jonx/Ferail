@@ -16,10 +16,9 @@ use feraille_gpui::{
     settings::{SettingsView, category_from_arg},
     shell::{
         CloseTab, CloseWindow, CopyPath, EmptyTrash, FindDuplicates, FocusFilter, GoHome,
-        MoveToTrash,
-        NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab, OpenDiskUsage,
-        OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell, ShowDesktop,
-        ToggleHidden,
+        MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
+        OpenDiskUsage, OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell,
+        ShowDesktop, ToggleHidden,
     },
 };
 use gpui::*;
@@ -34,10 +33,6 @@ use gpui_component::Theme;
 // - `NewWindow`   — Cmd+N. Opens a fresh window sharing the singleton
 //                   `ProcessState`. See `open_new_window`.
 actions!(app, [Quit, OpenAbout, NewWindow]);
-
-/// macOS Dock icon — set early via `NSApplication.setApplicationIconImage:`.
-/// Bytes embedded so the binary is self-contained.
-const APP_ICON_PNG: &[u8] = include_bytes!("../resources/feraille.png");
 
 fn main() -> Result<()> {
     // Pre-event-loop CLI handlers — run before the window opens.
@@ -367,7 +362,9 @@ fn run_gui(args: screenshot::Args) {
         // Replace the dock / About icon. Has to happen after gpui
         // has built its NSApplication — calling from `main()` panics
         // ("Ivar platform not found on class NSApplication").
-        let icon_result = feraille_gpui::platform_shell::set_app_icon_from_png_bytes(APP_ICON_PNG);
+        let icon_result = feraille_gpui::platform_shell::set_app_icon_from_png_bytes(
+            feraille_gpui::app_icon::PNG,
+        );
         feraille_gpui::log_info!(90, "set_app_icon: {:?}", icon_result);
         // Populate the About-panel dictionary so OpenAbout brings up a
         // dialog with our name + version instead of the AppKit bare
@@ -610,7 +607,10 @@ fn install_app_menus(cx: &mut App) {
     let show_desktop_available = feraille_gpui::platform_shell::show_desktop_available();
     let mut view_items = vec![
         MenuItem::action(title("view.search", "Find"), FocusFilter),
-        MenuItem::action(title("view.find_duplicates", "Find Duplicates"), FindDuplicates),
+        MenuItem::action(
+            title("view.find_duplicates", "Find Duplicates"),
+            FindDuplicates,
+        ),
         MenuItem::action(title("view.disk_usage", "Disk Usage"), OpenDiskUsage),
     ];
     if show_desktop_available {
@@ -653,7 +653,10 @@ fn install_app_menus(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action(title("selection.activate", "Open"), OpenSelected),
                 MenuItem::action(
-                    title("file.reveal_in_finder", feraille_core::commands::REVEAL_LABEL),
+                    title(
+                        "file.reveal_in_finder",
+                        feraille_core::commands::REVEAL_LABEL,
+                    ),
                     RevealInFinder,
                 ),
                 MenuItem::separator(),

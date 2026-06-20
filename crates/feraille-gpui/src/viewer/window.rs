@@ -403,6 +403,13 @@ enum SeekTarget {
 /// VLC provider (effective only in a `vlc`-feature build); `None` keeps the
 /// built-in player.
 fn resolve_vlc_pref() -> Option<PathBuf> {
+    // The VLC provider only exists in a `vlc`-feature build. Without it the
+    // saved preference is unhonourable, so refuse it here — otherwise the
+    // broad VLC container set (MKV/AVI/3GP…) would be treated as displayable
+    // video and mis-routed to the native player, which can't decode it.
+    if !cfg!(feature = "vlc") {
+        return None;
+    }
     let st = crate::app_state::load();
     (st.video_backend.as_deref() == Some("vlc")).then(|| {
         PathBuf::from(
@@ -699,7 +706,12 @@ impl ViewerWindow {
     /// text changed, so per-frame cost is one string compare.
     fn sync_title(&mut self, window: &mut Window) {
         let title = match self.current() {
-            Some(e) => format!("{} \u{2014} {} of {}", e.name, self.index + 1, self.playlist.len()),
+            Some(e) => format!(
+                "{} \u{2014} {} of {}",
+                e.name,
+                self.index + 1,
+                self.playlist.len()
+            ),
             None => "Viewer".to_string(),
         };
         if title != self.last_title {
@@ -1254,7 +1266,9 @@ impl ViewerWindow {
     }
 
     fn zoom_by(&mut self, factor: f32, cx: &mut Context<Self>) {
-        let Some(img) = self.content_dims() else { return };
+        let Some(img) = self.content_dims() else {
+            return;
+        };
         let view = self.last_stage_size;
         let center = (view.0 / 2.0, view.1 / 2.0);
         self.stage = stage::zoom_at(self.stage, center, img, view, factor);
@@ -1266,7 +1280,10 @@ impl ViewerWindow {
     /// stage sits directly under the toolbar, or at the window top in
     /// fullscreen; render keeps `stage_origin_y` current).
     fn stage_local(&self, position: Point<Pixels>) -> (f32, f32) {
-        (position.x.as_f32(), position.y.as_f32() - self.stage_origin_y)
+        (
+            position.x.as_f32(),
+            position.y.as_f32() - self.stage_origin_y,
+        )
     }
 
     /// Wheel = zoom toward the cursor (image-viewer convention; the
@@ -1282,7 +1299,9 @@ impl ViewerWindow {
         if dy == 0.0 {
             return;
         }
-        let Some(img) = self.content_dims() else { return };
+        let Some(img) = self.content_dims() else {
+            return;
+        };
         let factor = 2.0_f32.powf(dy / 240.0);
         let cursor = self.stage_local(e.position);
         self.stage = stage::zoom_at(self.stage, cursor, img, self.last_stage_size, factor);
@@ -1349,7 +1368,9 @@ impl ViewerWindow {
     /// the clicked image point so "double-click the detail" inspects
     /// that detail.
     fn toggle_actual_at(&mut self, cursor: (f32, f32), cx: &mut Context<Self>) {
-        let Some(f) = self.current_frame() else { return };
+        let Some(f) = self.current_frame() else {
+            return;
+        };
         if self.stage.mode == ZoomMode::Actual {
             self.stage = StageState::default();
         } else {
@@ -1402,7 +1423,12 @@ impl ViewerWindow {
 
     /// Space. On a video it toggles the clip's own play/pause; on a
     /// still it toggles the slideshow.
-    fn on_toggle_play(&mut self, _: &ViewerTogglePlay, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_toggle_play(
+        &mut self,
+        _: &ViewerTogglePlay,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.current_is_video() {
             self.toggle_video_paused(cx);
         } else {
@@ -1540,7 +1566,11 @@ impl ViewerWindow {
         }
         let frac = ((x.as_f32() - b.origin.x.as_f32()) / w).clamp(0.0, 1.0);
         let v = lo + frac * (hi - lo);
-        if id.centered() && v.abs() < 0.04 { 0.0 } else { v }
+        if id.centered() && v.abs() < 0.04 {
+            0.0
+        } else {
+            v
+        }
     }
 
     /// Commit a slider value to the matching `adjust`/`enhance` field, then
@@ -1651,8 +1681,7 @@ impl ViewerWindow {
                 let Some((rw, rh, buf)) = out else { return };
                 if this.process_gen == token {
                     if let Some(img) = build_video_frame(buf, rw, rh) {
-                        if let Some((.., old)) =
-                            this.processed.replace((idx, rot, grade, enh, img))
+                        if let Some((.., old)) = this.processed.replace((idx, rot, grade, enh, img))
                         {
                             this.video_frames_to_drop.push(old);
                         }
@@ -1673,10 +1702,7 @@ impl ViewerWindow {
     fn processed_still(&self, rot: u8) -> Option<Arc<RenderImage>> {
         match &self.processed {
             Some((i, r, g, e, img))
-                if *i == self.index
-                    && *r == rot
-                    && *g == self.adjust
-                    && *e == self.enhance =>
+                if *i == self.index && *r == rot && *g == self.adjust && *e == self.enhance =>
             {
                 Some(img.clone())
             }
@@ -1761,11 +1787,13 @@ impl ViewerWindow {
             )
             .child(
                 Button::new("viewer-play")
-                    .icon(gpui_component::Icon::empty().path(if self.playback.playing {
-                        "icons/pause.svg"
-                    } else {
-                        "icons/play.svg"
-                    }))
+                    .icon(
+                        gpui_component::Icon::empty().path(if self.playback.playing {
+                            "icons/pause.svg"
+                        } else {
+                            "icons/play.svg"
+                        }),
+                    )
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| {
                         let playing = this.playback.playing;
@@ -1809,29 +1837,26 @@ impl ViewerWindow {
             )
             // Rotate the current item (image or video). View-only,
             // per-item — R / Shift-R do the same from the keyboard.
-            .when(
-                self.current().is_some(),
-                |bar| {
-                    bar.child(
-                        Button::new("viewer-rotate")
-                            .icon(gpui_component::Icon::empty().path("icons/redo.svg"))
-                            .small()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.on_rotate_cw(&ViewerRotateCw, window, cx)
-                            })),
-                    )
-                    // Colour adjustments popup — also `E` / right-click.
-                    .child(
-                        Button::new("viewer-adjust")
-                            .icon(gpui_component::Icon::empty().path("icons/palette.svg"))
-                            .small()
-                            .selected(self.adjust_panel_open)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.on_toggle_adjust(&ViewerToggleAdjust, window, cx)
-                            })),
-                    )
-                },
-            )
+            .when(self.current().is_some(), |bar| {
+                bar.child(
+                    Button::new("viewer-rotate")
+                        .icon(gpui_component::Icon::empty().path("icons/redo.svg"))
+                        .small()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_rotate_cw(&ViewerRotateCw, window, cx)
+                        })),
+                )
+                // Colour adjustments popup — also `E` / right-click.
+                .child(
+                    Button::new("viewer-adjust")
+                        .icon(gpui_component::Icon::empty().path("icons/palette.svg"))
+                        .small()
+                        .selected(self.adjust_panel_open)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_toggle_adjust(&ViewerToggleAdjust, window, cx)
+                        })),
+                )
+            })
             // Video transport (native controls are hidden so they work
             // at any rotation): play/pause + a loop toggle.
             .when(is_video, |bar| {
@@ -1925,9 +1950,9 @@ impl ViewerWindow {
             );
             if !fresh {
                 if let Some(rotated) = rotate_render_image(&base, rot) {
-                    if let Some((_, _, old)) = self
-                        .video_rotated
-                        .replace((self.video_frame_seq, rot, rotated))
+                    if let Some((_, _, old)) =
+                        self.video_rotated
+                            .replace((self.video_frame_seq, rot, rotated))
                     {
                         self.video_frames_to_drop.push(old);
                     }
@@ -2052,11 +2077,9 @@ impl ViewerWindow {
             // stand-in when one is cached, laid out with the same
             // stage state so the swap to full-res doesn't jump.
             _ => {
-                let thumb = path
-                    .as_ref()
-                    .and_then(|p| crate::preview::loaded_image(
-                        self.process.preview_cache.borrow().get(p),
-                    ));
+                let thumb = path.as_ref().and_then(|p| {
+                    crate::preview::loaded_image(self.process.preview_cache.borrow().get(p))
+                });
                 match thumb {
                     Some(img) => {
                         let sz = img.size(0);
@@ -2308,7 +2331,13 @@ impl ViewerWindow {
         h_flex()
             .gap_2()
             .items_center()
-            .child(div().w(px(64.0)).text_xs().text_color(muted).child("Upscale"))
+            .child(
+                div()
+                    .w(px(64.0))
+                    .text_xs()
+                    .text_color(muted)
+                    .child("Upscale"),
+            )
             .child(
                 h_flex()
                     .gap_1()
@@ -2439,9 +2468,7 @@ impl ViewerWindow {
             // map a cursor x → fraction.
             .child(
                 canvas(
-                    move |bounds, _, cx| {
-                        entity.update(cx, |this, _| this.seek_bar_bounds = bounds)
-                    },
+                    move |bounds, _, cx| entity.update(cx, |this, _| this.seek_bar_bounds = bounds),
                     |_, _, _, _| {},
                 )
                 .absolute()
@@ -2592,7 +2619,11 @@ impl Render for ViewerWindow {
             self.chrome_hover = false;
         }
         let viewport = window.viewport_size();
-        let chrome_h = if fullscreen { 0.0 } else { TOOLBAR_H + STATUS_H };
+        let chrome_h = if fullscreen {
+            0.0
+        } else {
+            TOOLBAR_H + STATUS_H
+        };
         let stage_w = viewport.width.as_f32();
         let stage_h = (viewport.height.as_f32() - chrome_h).max(100.0);
         self.last_stage_size = (stage_w, stage_h);
@@ -2693,7 +2724,10 @@ mod grade_tests {
         assert_eq!((s.width.0, s.height.0), (3, 2), "180° keeps w/h");
 
         assert!(rotate_render_image(&base, 0).is_none(), "0° is a no-op");
-        assert!(rotate_render_image(&base, 4).is_none(), "full turn is a no-op");
+        assert!(
+            rotate_render_image(&base, 4).is_none(),
+            "full turn is a no-op"
+        );
     }
 
     #[test]

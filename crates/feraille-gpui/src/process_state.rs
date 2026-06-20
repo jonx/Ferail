@@ -37,9 +37,9 @@ use crate::favorites::Favorites;
 use crate::fs_watcher::FsWatcher;
 use crate::icons::IconCache;
 use crate::preview::PreviewCache;
-use crate::text_preview::TextPreviewCache;
 use crate::shell::{ClosedTab, Shell, UndoOp};
 use crate::tasks::TaskRegistry;
+use crate::text_preview::TextPreviewCache;
 
 /// Soft cap on the closed-tab stack. Cmd+Shift+T undoes the last N
 /// tab closes; older entries fall off the front. 16 matches Safari's

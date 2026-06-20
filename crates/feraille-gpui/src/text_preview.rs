@@ -84,7 +84,13 @@ impl TextPreviewCache {
 /// retry storms). Mirrors `preview::request`; call sites already hold
 /// `&mut Shell`.
 pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) {
-    if shell.process.text_preview_cache.borrow().get(&path).is_some() {
+    if shell
+        .process
+        .text_preview_cache
+        .borrow()
+        .get(&path)
+        .is_some()
+    {
         return;
     }
     shell
@@ -131,11 +137,7 @@ fn read_text_preview(path: &Path) -> Result<Option<String>, ()> {
         Err(_) => return Ok(None),
     };
     let text = std::str::from_utf8(&buf[..valid_end]).map_err(|_| ())?;
-    let mut out: String = text
-        .lines()
-        .take(MAX_LINES)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let mut out: String = text.lines().take(MAX_LINES).collect::<Vec<_>>().join("\n");
     if text.lines().count() > MAX_LINES {
         out.push_str("\n\u{2026}");
     }

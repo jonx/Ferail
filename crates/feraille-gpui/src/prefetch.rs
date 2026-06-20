@@ -20,7 +20,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use feraille_core::FileEntry;
-use feraille_fs_native::{detect_magic_info, fetch_quarantine_info, NativeFs};
+use feraille_fs_native::{NativeFs, detect_magic_info, fetch_quarantine_info};
 use feraille_meta::{FileMetaRecord, MetadataDb};
 use gpui::Entity;
 
@@ -189,9 +189,8 @@ fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> V
                         .map(|i| i.magic_type.display_name().to_string())
                         .unwrap_or_default()
                 });
-                let desc = cached_d.unwrap_or_else(|| {
-                    info.as_ref().map(|i| i.description()).unwrap_or_default()
-                });
+                let desc = cached_d
+                    .unwrap_or_else(|| info.as_ref().map(|i| i.description()).unwrap_or_default());
                 (label, desc)
             }
         };

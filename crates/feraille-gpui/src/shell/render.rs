@@ -128,7 +128,10 @@ impl Shell {
 
     fn active_tool_result_can_pop_out(&self) -> bool {
         matches!(
-            self.active_tab().tool_result.as_ref().map(|surface| &surface.mode),
+            self.active_tab()
+                .tool_result
+                .as_ref()
+                .map(|surface| &surface.mode),
             Some(super::tab::ToolResultMode::DiskUsage(_))
         )
     }
@@ -1461,7 +1464,7 @@ impl Shell {
                     Button::new("nav-back")
                         .small()
                         .ghost()
-                        .icon(gpui_component::Icon::empty().path("icons/chevron-left.svg"))
+                        .icon(gpui_component::Icon::empty().path("icons/nav/chevron-left.svg"))
                         .tooltip("Back  \u{2318}\u{5B}")
                         .disabled(!can_back)
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
@@ -1473,7 +1476,7 @@ impl Shell {
                     Button::new("nav-forward")
                         .small()
                         .ghost()
-                        .icon(gpui_component::Icon::empty().path("icons/chevron-right.svg"))
+                        .icon(gpui_component::Icon::empty().path("icons/nav/chevron-right.svg"))
                         .tooltip("Forward  \u{2318}\u{5D}")
                         .disabled(!can_forward)
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
@@ -2805,12 +2808,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_delete_favorite))
             .on_action(cx.listener(Self::on_reset_favorite_name))
             .on_action(cx.listener(Self::on_reset_favorite_icon))
-            .on_action(cx.listener(Self::on_set_favorite_icon_star))
-            .on_action(cx.listener(Self::on_set_favorite_icon_folder))
-            .on_action(cx.listener(Self::on_set_favorite_icon_code))
-            .on_action(cx.listener(Self::on_set_favorite_icon_image))
-            .on_action(cx.listener(Self::on_set_favorite_icon_music))
-            .on_action(cx.listener(Self::on_set_favorite_icon_archive))
+            .on_action(cx.listener(Self::on_open_favorite_icon_picker))
             // §3.1 tear-off remove. The favorites section's drop gaps
             // already intercept FavoriteDragPayload to reorder; any
             // drop that falls through to the shell's outer container

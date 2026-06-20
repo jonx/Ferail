@@ -149,6 +149,10 @@ pub struct Args {
     /// exists outside a live drag). Uses placeholder coloured tiles
     /// for the item images.
     pub drag_ghost: Option<usize>,
+    /// Render the favorite icon-picker window
+    /// ([`crate::favorite_icon_picker`]) instead of the shell, so the
+    /// Lucide glyph grid can be captured headlessly.
+    pub icon_picker: bool,
 }
 
 pub fn parse_args() -> Args {
@@ -255,6 +259,7 @@ pub fn parse_args() -> Args {
             }
             "--viewer" => args.viewer = iter.next().map(PathBuf::from),
             "--viewer-adjust" => args.viewer_adjust = true,
+            "--icon-picker" => args.icon_picker = true,
             "--drag-ghost" => args.drag_ghost = iter.next().and_then(|s| s.parse().ok()),
             "--help" | "-h" => {
                 print_help();
@@ -340,6 +345,7 @@ pub fn run(args: Args) -> Result<()> {
     let viewer_target = args.viewer.clone();
     let viewer_adjust = args.viewer_adjust;
     let drag_ghost = args.drag_ghost;
+    let icon_picker = args.icon_picker;
 
     let shell_args = ShellArgs::from(&args);
 
@@ -349,8 +355,7 @@ pub fn run(args: Args) -> Result<()> {
         crate::shell::init(cx);
         // Register the dock icon — see comment in main.rs::run_gui;
         // must happen post-NSApplication-init.
-        const APP_ICON_PNG: &[u8] = include_bytes!("../resources/feraille.png");
-        let _ = crate::platform_shell::set_app_icon_from_png_bytes(APP_ICON_PNG);
+        let _ = crate::platform_shell::set_app_icon_from_png_bytes(crate::app_icon::PNG);
         if let Some(mode) = theme_mode {
             Theme::change(mode, None, cx);
         }
@@ -454,6 +459,19 @@ pub fn run(args: Args) -> Result<()> {
                         if viewer_adjust {
                             view.update(cx, |w, _| w.open_adjust_panel());
                         }
+                        cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                    } else if icon_picker {
+                        // Headless icon-picker window: a standalone
+                        // Favorites entity + dummy id is enough to paint the
+                        // glyph grid (the grid is built from the asset
+                        // bundle, independent of any favorite data).
+                        let favorites = cx.new(|_| crate::favorites::Favorites::new(None));
+                        let id = feraille_core::favorites::FavoriteId::new();
+                        let view = cx.new(|cx| {
+                            crate::favorite_icon_picker::IconPickerView::new(
+                                favorites, id, window, cx,
+                            )
+                        });
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if let Some(n) = drag_ghost {
                         // Isolated drag-ghost preview: build a DragBadge

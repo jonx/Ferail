@@ -29,7 +29,7 @@ use std::sync::Arc;
 use feraille_core::{EntryKind, FileEntry};
 use gpui::RenderImage;
 
-use crate::icons::{build_render_image, file_type_icon, FileTypeTint};
+use crate::icons::{FileTypeTint, build_render_image, file_type_icon};
 
 /// Process-wide live toggle: whether the file list paints real Quick
 /// Look thumbnails (`true`) or stays on generic type icons (`false`).
@@ -45,7 +45,9 @@ impl gpui::Global for ShowThumbnails {}
 /// The toggle's value, defaulting to `true` (thumbnails on) when the
 /// global has not been seeded yet.
 pub fn show_thumbnails(cx: &gpui::App) -> bool {
-    cx.try_global::<ShowThumbnails>().map(|g| g.0).unwrap_or(true)
+    cx.try_global::<ShowThumbnails>()
+        .map(|g| g.0)
+        .unwrap_or(true)
 }
 
 /// Physical-pixel longest edge we ask Quick Look for. Sized for a
@@ -71,7 +73,10 @@ pub fn is_thumbnailable(entry: &FileEntry) -> bool {
     if !matches!(entry.kind, EntryKind::File) {
         return false;
     }
-    if matches!(file_type_icon(entry).tint, FileTypeTint::Image | FileTypeTint::Video) {
+    if matches!(
+        file_type_icon(entry).tint,
+        FileTypeTint::Image | FileTypeTint::Video
+    ) {
         return true;
     }
     matches!(

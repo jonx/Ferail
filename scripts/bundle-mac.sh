@@ -61,10 +61,15 @@ mkdir -p "${MACOS_DIR}" "${RES_DIR}"
 cp "${BIN_PATH}" "${MACOS_DIR}/${BIN_NAME}"
 cp "${REPO_ROOT}/packaging/macos/Info.plist" "${CONTENTS}/Info.plist"
 
-# Icon: convert the source PNG into a multi-resolution .icns. Best-effort
-# — the bundle is still valid (and still prompts) without it.
-PNG_SRC="${REPO_ROOT}/crates/feraille-gpui/resources/feraille.png"
-if [[ -f "${PNG_SRC}" ]] && command -v iconutil >/dev/null 2>&1; then
+# Icon: prefer the checked-in macOS .icns so bundle output stays stable.
+# If it is missing, regenerate from the macOS PNG source as a best-effort
+# fallback. Windows keeps using resources/feraille.ico via build.rs.
+ICNS_SRC="${REPO_ROOT}/crates/feraille-gpui/resources/feraille-macos.icns"
+PNG_SRC="${REPO_ROOT}/crates/feraille-gpui/resources/feraille-macos.png"
+if [[ -f "${ICNS_SRC}" ]]; then
+	cp "${ICNS_SRC}" "${RES_DIR}/feraille.icns"
+	echo "==> Copied Resources/feraille.icns"
+elif [[ -f "${PNG_SRC}" ]] && command -v iconutil >/dev/null 2>&1; then
 	ICONSET="$(mktemp -d)/feraille.iconset"
 	mkdir -p "${ICONSET}"
 	for size in 16 32 64 128 256 512; do
@@ -81,7 +86,7 @@ if [[ -f "${PNG_SRC}" ]] && command -v iconutil >/dev/null 2>&1; then
 	fi
 	rm -rf "$(dirname "${ICONSET}")"
 else
-	echo "warning: no icon source or iconutil; bundle has no icon" >&2
+	echo "warning: no macOS icon source or iconutil; bundle has no icon" >&2
 fi
 
 # Register the bundle with the Info.plist version so Finder shows metadata.

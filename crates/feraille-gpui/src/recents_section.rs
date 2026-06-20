@@ -136,7 +136,14 @@ impl SidebarItem for RecentsSection {
             .iter()
             .enumerate()
             .map(|(i, path)| {
-                render_recent_row(i, path, &icons, self.shell.clone(), active_path.as_deref(), cx)
+                render_recent_row(
+                    i,
+                    path,
+                    &icons,
+                    self.shell.clone(),
+                    active_path.as_deref(),
+                    cx,
+                )
             })
             .collect();
 
@@ -230,10 +237,13 @@ fn render_recent_row(
                 shell.context_target = Some(path_for_menu.clone());
             });
         }
-        menu.menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealContextPath))
-            .separator()
-            .menu("Remove from Recents", Box::new(RemoveFromRecents))
-            .menu("Clear Recents", Box::new(ClearRecents))
+        menu.menu(
+            feraille_core::commands::REVEAL_LABEL,
+            Box::new(RevealContextPath),
+        )
+        .separator()
+        .menu("Remove from Recents", Box::new(RemoveFromRecents))
+        .menu("Clear Recents", Box::new(ClearRecents))
     })
     .into_any_element()
 }

@@ -26,12 +26,12 @@ use gpui_component::{
     menu::{PopupMenu, PopupMenuItem},
     tooltip::Tooltip,
 };
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 use crate::icons::{IconCache, file_type_icon, tint_color};
 use crate::multi_table::{Column, ColumnSort, TableDelegate, TableEvent, TableState};
 use crate::tasks::{TaskKind, TaskRegistry};
-use crate::thumbnails::{is_thumbnailable, show_thumbnails, ThumbnailCache, THUMB_PX};
+use crate::thumbnails::{THUMB_PX, ThumbnailCache, is_thumbnailable, show_thumbnails};
 
 /// The floating ghost shown under the cursor while dragging rows out of
 /// the list (or to an in-app drop target) — gpui's `on_drag` needs an
@@ -630,15 +630,15 @@ impl TableDelegate for FileListDelegate {
                         }
                     },
                 ))
-                .on_drop(cx.listener(
-                    move |_state, paths: &ExternalPaths, _window, cx| {
+                .on_drop(
+                    cx.listener(move |_state, paths: &ExternalPaths, _window, cx| {
                         cx.stop_propagation();
                         cx.emit(TableEvent::ExternalDrop {
                             row_ix,
                             paths: paths.paths().to_vec(),
                         });
-                    },
-                ));
+                    }),
+                );
         }
         if kind_is_dir && heat > 0.0 {
             // Warm orange tint, scaled by heat. Stable hue across
@@ -676,22 +676,23 @@ impl TableDelegate for FileListDelegate {
             // filesystem.
             let want_thumb = show_thumbnails(cx);
             let mut ghost_icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]> = smallvec![];
-            let push_ghost = |entry: &FileEntry,
-                                  path: &PathBuf,
-                                  icons: &Rc<RefCell<IconCache>>,
-                                  thumbs: &Rc<RefCell<ThumbnailCache>>,
-                                  out: &mut SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>| {
-                if out.len() >= GHOST_STACK_CAP {
-                    return;
-                }
-                if want_thumb {
-                    if let Some(t) = thumbs.borrow().get(path, THUMB_PX) {
-                        out.push(t);
+            let push_ghost =
+                |entry: &FileEntry,
+                 path: &PathBuf,
+                 icons: &Rc<RefCell<IconCache>>,
+                 thumbs: &Rc<RefCell<ThumbnailCache>>,
+                 out: &mut SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>| {
+                    if out.len() >= GHOST_STACK_CAP {
                         return;
                     }
-                }
-                out.push(icons.borrow_mut().icon_for(entry, path));
-            };
+                    if want_thumb {
+                        if let Some(t) = thumbs.borrow().get(path, THUMB_PX) {
+                            out.push(t);
+                            return;
+                        }
+                    }
+                    out.push(icons.borrow_mut().icon_for(entry, path));
+                };
             if row_is_selected {
                 for selected in &self.entries {
                     if self.selected_set.contains(&selected.id) {
@@ -708,7 +709,13 @@ impl TableDelegate for FileListDelegate {
                     }
                 }
             } else if let Some(path) = self.path_for_entry(entry.id) {
-                push_ghost(entry, &path, &self.icons, &self.thumbnails, &mut ghost_icons);
+                push_ghost(
+                    entry,
+                    &path,
+                    &self.icons,
+                    &self.thumbnails,
+                    &mut ghost_icons,
+                );
                 drag_paths.push(path);
             }
             if !drag_paths.is_empty() {
@@ -1009,11 +1016,10 @@ impl TableDelegate for FileListDelegate {
             ClearQuarantine, Compress, CopyPath, Duplicate, GetInfo, MakeAlias, MoveToTrash,
             OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
             OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
-            OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11,
-            QuickLook, RenameSelected, RevealInFinder, SlideshowFromHere, ToggleFavoriteForTarget,
-            ToggleTagBlue,
-            ToggleTagGray, ToggleTagGreen, ToggleTagOrange, ToggleTagPurple, ToggleTagRed,
-            ToggleTagYellow,
+            OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook,
+            RenameSelected, RevealInFinder, SlideshowFromHere, ToggleFavoriteForTarget,
+            ToggleTagBlue, ToggleTagGray, ToggleTagGreen, ToggleTagOrange, ToggleTagPurple,
+            ToggleTagRed, ToggleTagYellow,
         };
 
         // Anchor keyboard-shortcut resolution to the shell's stable
@@ -1092,7 +1098,10 @@ impl TableDelegate for FileListDelegate {
         }
         let mut menu = menu
             .separator()
-            .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealInFinder))
+            .menu(
+                feraille_core::commands::REVEAL_LABEL,
+                Box::new(RevealInFinder),
+            )
             .menu("Copy Path", Box::new(CopyPath));
         if is_folder {
             // Folder-only: open a terminal at the right-clicked directory,
@@ -1172,9 +1181,7 @@ impl TableDelegate for FileListDelegate {
             // Cache miss — the warm fetch was kicked above; show a
             // disabled placeholder for this one open.
             None => {
-                menu = menu.item(
-                    PopupMenuItem::new("Open With (indexing\u{2026})").disabled(true),
-                );
+                menu = menu.item(PopupMenuItem::new("Open With (indexing\u{2026})").disabled(true));
             }
         }
 

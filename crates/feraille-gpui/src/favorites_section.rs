@@ -391,12 +391,6 @@ fn render_favorite_row(
             .h(px(crate::tree::SIDEBAR_ICON_PX))
             .text_color(theme.sidebar_foreground)
             .into_any_element(),
-        (Some(feraille_core::favorites::FavoriteIcon::TintedFolder(_color)), _) => svg()
-            .path("icons/nav/star.svg")
-            .w(px(crate::tree::SIDEBAR_ICON_PX))
-            .h(px(crate::tree::SIDEBAR_ICON_PX))
-            .text_color(theme.primary)
-            .into_any_element(),
         (None, FavoriteTarget::Path(p)) => {
             let icon = icons.borrow_mut().folder_icon_for(p);
             img(icon)
@@ -405,13 +399,13 @@ fn render_favorite_row(
                 .into_any_element()
         }
         (None, FavoriteTarget::SavedSearch(_)) => svg()
-            .path("icons/nav/star.svg")
+            .path("icons/nav/search.svg")
             .w(px(crate::tree::SIDEBAR_ICON_PX))
             .h(px(crate::tree::SIDEBAR_ICON_PX))
             .text_color(theme.sidebar_foreground)
             .into_any_element(),
         (None, FavoriteTarget::Tag(_)) => svg()
-            .path("icons/nav/star.svg")
+            .path("icons/nav/tag.svg")
             .w(px(crate::tree::SIDEBAR_ICON_PX))
             .h(px(crate::tree::SIDEBAR_ICON_PX))
             .text_color(theme.sidebar_foreground)
@@ -483,12 +477,12 @@ fn render_favorite_row(
     // Unmounted, plain star for Available.
     let trailing_icon = match state {
         FavoriteState::Available => "icons/nav/star.svg",
-        // gpui-component ships triangle-alert.svg; we reuse it for
-        // both Missing (file-not-found) and Unmounted (volume gone)
-        // — the muted color and dim row already disambiguate from
-        // a healthy favorite, and a future polish pass can swap a
-        // dedicated eject/offline glyph in once we have one.
-        FavoriteState::Unmounted | FavoriteState::Missing => "icons/triangle-alert.svg",
+        // Missing (file-not-found) keeps the warning triangle — it's a
+        // genuine error. Unmounted (volume offline) uses circle-x so it
+        // reads as "disconnected/unavailable" rather than "broken"; a
+        // dedicated eject glyph can replace circle-x in a later pass.
+        FavoriteState::Unmounted => "icons/circle-x.svg",
+        FavoriteState::Missing => "icons/triangle-alert.svg",
     };
     let trailing_color = match state {
         FavoriteState::Available => theme.primary,
@@ -576,39 +570,24 @@ fn render_favorite_row(
     let menu_fav_id = fav.id;
     let menu_accent = theme.primary;
     apply_row_anim(
-        row.context_menu(move |menu, window, cx| {
+        row.context_menu(move |menu, _window, cx| {
             use crate::shell::{
-                CopyContextPath, LocateFavorite, RenameFavorite, ResetFavoriteIcon,
-                ResetFavoriteName, RevealContextPath, SetFavoriteIconArchive, SetFavoriteIconCode,
-                SetFavoriteIconFolder, SetFavoriteIconImage, SetFavoriteIconMusic,
-                SetFavoriteIconStar, ToggleFavoriteForTarget,
+                CopyContextPath, LocateFavorite, OpenFavoriteIconPicker, RenameFavorite,
+                ResetFavoriteIcon, ResetFavoriteName, RevealContextPath, ToggleFavoriteForTarget,
             };
-            use gpui_component::menu::{PopupMenu, PopupMenuItem};
             if let Some(s) = shell_for_menu.upgrade() {
                 s.update(cx, |shell, _| {
                     shell.context_target = Some(path_for_menu.clone());
                     shell.favorites_context_path = Some(path_for_menu.clone());
                 });
             }
-            // Icon picker submenu (§7). Curated picks tied to the assets
-            // that actually ship under `resources/icons/` — a full visual
-            // picker is iter 11 polish.
-            let icon_submenu = PopupMenu::build(window, cx, move |m, _w, _c| {
-                m.menu("\u{2605} Star", Box::new(SetFavoriteIconStar))
-                    .menu("\u{1F4C1} Folder", Box::new(SetFavoriteIconFolder))
-                    .menu(
-                        "\u{27E8}\u{2009}/\u{2009}\u{27E9} Code",
-                        Box::new(SetFavoriteIconCode),
-                    )
-                    .menu("\u{1F5BC} Image", Box::new(SetFavoriteIconImage))
-                    .menu("\u{266B} Music", Box::new(SetFavoriteIconMusic))
-                    .menu("\u{1F5C4} Archive", Box::new(SetFavoriteIconArchive))
-                    .separator()
-                    .menu("Reset Icon", Box::new(ResetFavoriteIcon))
-            });
+            // §7 "Change Icon…" opens the Lucide icon-picker window
+            // (favorite_icon_picker); "Reset Icon" clears back to the
+            // kind+target default. The old curated emoji submenu is gone.
             menu.menu("Rename\u{2026}", Box::new(RenameFavorite))
                 .menu("Reset to Original Name", Box::new(ResetFavoriteName))
-                .item(PopupMenuItem::submenu("Change Icon", icon_submenu))
+                .menu("Change Icon\u{2026}", Box::new(OpenFavoriteIconPicker))
+                .menu("Reset Icon", Box::new(ResetFavoriteIcon))
                 .menu("Locate\u{2026}", Box::new(LocateFavorite))
                 .separator()
                 .menu(

@@ -24,11 +24,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use feraille_core::{EntryKind, NodeId};
-use feraille_fs_native::{humanize_bytes, recursive_size, NativeFs};
+use feraille_fs_native::{NativeFs, humanize_bytes, recursive_size};
 use feraille_meta::{FolderSizeRecord, MetadataDb};
 use gpui::Entity;
 
-use crate::file_list::{sort_in_place, FileListDelegate, SortColumn};
+use crate::file_list::{FileListDelegate, SortColumn, sort_in_place};
 use crate::multi_table::TableState;
 use crate::shell::{Shell, TabId};
 use crate::tasks::{TaskKind, TaskRegistry};

@@ -421,11 +421,11 @@ fn render_tree_row(
     let drop_shell = shell.clone();
     let drop_dest = path.clone();
     row = row
-        .drag_over::<ExternalPaths>(|style, _, _, cx| {
-            style.bg(cx.theme().accent.opacity(0.12))
-        })
+        .drag_over::<ExternalPaths>(|style, _, _, cx| style.bg(cx.theme().accent.opacity(0.12)))
         .on_drop(move |paths: &ExternalPaths, window, cx| {
-            let Some(shell) = drop_shell.upgrade() else { return };
+            let Some(shell) = drop_shell.upgrade() else {
+                return;
+            };
             let dropped = paths.paths().to_vec();
             let dest = drop_dest.clone();
             shell.update(cx, |this, cx| {
@@ -441,7 +441,9 @@ fn render_tree_row(
             if !e.bounds.contains(&e.event.position) {
                 return;
             }
-            let Some(shell) = hover_shell.upgrade() else { return };
+            let Some(shell) = hover_shell.upgrade() else {
+                return;
+            };
             let path = hover_path.clone();
             shell.update(cx, |this, cx| this.tree_drag_hover(&path, cx));
         });
@@ -489,9 +491,7 @@ fn render_tree_row(
         };
         let cell = match guide {
             TreeGuide::Blank => cell,
-            TreeGuide::Vertical => {
-                cell.child(div().ml(px(7.0)).w(px(1.0)).h_full().bg(line))
-            }
+            TreeGuide::Vertical => cell.child(div().ml(px(7.0)).w(px(1.0)).h_full().bg(line)),
             TreeGuide::Tee => cell
                 .child(elbow())
                 .child(div().ml(px(7.0)).w(px(1.0)).flex_1().bg(line)),
@@ -638,7 +638,10 @@ fn render_tree_row(
             let menu = menu
                 .menu("Open in New Tab", Box::new(OpenContextInNewTab))
                 .separator()
-                .menu(feraille_core::commands::REVEAL_LABEL, Box::new(RevealContextPath))
+                .menu(
+                    feraille_core::commands::REVEAL_LABEL,
+                    Box::new(RevealContextPath),
+                )
                 .menu("Copy Path", Box::new(CopyContextPath))
                 .menu("Open Terminal Here", Box::new(OpenTerminalAtContext))
                 .separator()

@@ -113,26 +113,22 @@ impl FavoriteTarget {
 /// target": folder icon, NSWorkspace volume icon, application bundle icon.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FavoriteIcon {
-    /// Named Lucide glyph, e.g. "star", "briefcase".
+    /// Named glyph from the bundled icon library, stored as the asset
+    /// sub-path (e.g. "star", "nav/folder"). Resolved as `icons/<name>.svg`.
     Lucide(String),
-    /// Tinted default-folder icon by named accent color.
-    TintedFolder(String),
 }
 
 impl FavoriteIcon {
     pub fn to_db(&self) -> String {
         match self {
             Self::Lucide(name) => format!("lucide:{name}"),
-            Self::TintedFolder(c) => format!("tint:{c}"),
         }
     }
     pub fn from_db(s: &str) -> Option<Self> {
-        if let Some(name) = s.strip_prefix("lucide:") {
-            Some(Self::Lucide(name.to_string()))
-        } else {
-            s.strip_prefix("tint:")
-                .map(|color| Self::TintedFolder(color.to_string()))
-        }
+        // Legacy `tint:` rows (the removed `TintedFolder` variant) parse to
+        // `None`, so the favorite falls back to its kind+target default icon.
+        s.strip_prefix("lucide:")
+            .map(|name| Self::Lucide(name.to_string()))
     }
 }
 
@@ -363,10 +359,10 @@ mod tests {
     #[test]
     fn icon_db_round_trip() {
         let lucide = FavoriteIcon::Lucide("star".into());
-        let tint = FavoriteIcon::TintedFolder("red".into());
         assert_eq!(FavoriteIcon::from_db(&lucide.to_db()), Some(lucide));
-        assert_eq!(FavoriteIcon::from_db(&tint.to_db()), Some(tint));
         assert!(FavoriteIcon::from_db("nonsense").is_none());
+        // Legacy tint: rows degrade to the default icon (None).
+        assert!(FavoriteIcon::from_db("tint:red").is_none());
     }
 
     #[test]

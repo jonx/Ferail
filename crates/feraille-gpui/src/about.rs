@@ -34,10 +34,6 @@ use gpui_component::{
 use image::{Frame, RgbaImage};
 use smallvec::SmallVec;
 
-/// Same PNG used as the macOS Dock icon. Bundled into the binary so
-/// the dialog has no filesystem dependency at runtime.
-const APP_ICON_PNG: &[u8] = include_bytes!("../resources/feraille.png");
-
 /// Process-wide flag: is an About dialog currently visible? Cheap
 /// guard against the menu item being clicked twice in quick
 /// succession (gpui-component allows stacking dialogs by default —
@@ -65,7 +61,11 @@ impl Global for AboutOpenFlag {}
 /// mutate the window immediately from the menu callback can get lost
 /// while the native menu is still dismissing.
 pub fn open_about_dialog(cx: &mut App) {
-    if cx.try_global::<AboutOpenFlag>().map(|f| f.0).unwrap_or(false) {
+    if cx
+        .try_global::<AboutOpenFlag>()
+        .map(|f| f.0)
+        .unwrap_or(false)
+    {
         return;
     }
     cx.set_global(AboutOpenFlag(true));
@@ -122,7 +122,7 @@ fn about_body() -> impl IntoElement {
     let arch = std::env::consts::ARCH;
     let version = env!("CARGO_PKG_VERSION");
 
-    let icon = decode_icon(APP_ICON_PNG);
+    let icon = decode_icon(crate::app_icon::PNG);
 
     v_flex()
         .items_center()

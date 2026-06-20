@@ -157,8 +157,6 @@ pub fn render(
         }
     };
 
-    
-
     h_flex()
         .w_full()
         .flex_shrink_0()
@@ -230,7 +228,10 @@ fn label_with_rate(task: &crate::tasks::ActiveTask) -> String {
     let mut s = task.label.clone();
     if let Some(t) = &task.transfer {
         if t.bytes_per_sec >= 1.0 {
-            s.push_str(&format!(" \u{00B7} {}/s", humanize_bytes(t.bytes_per_sec as u64)));
+            s.push_str(&format!(
+                " \u{00B7} {}/s",
+                humanize_bytes(t.bytes_per_sec as u64)
+            ));
         }
         if let Some(eta) = t.eta_secs {
             s.push_str(&format!(" \u{00B7} ~{}", humanize_secs(eta)));
@@ -269,7 +270,11 @@ fn compute_progress(registry: &TaskRegistry, simulated_progress: Option<f32>) ->
         return (true, true, 0.0);
     }
     // All determinate — show the primary task's fraction.
-    let fraction = match registry.primary().filter(|t| t.is_surfaced()).map(|t| t.progress) {
+    let fraction = match registry
+        .primary()
+        .filter(|t| t.is_surfaced())
+        .map(|t| t.progress)
+    {
         Some(TaskProgress::Determinate(p)) => p,
         _ => 0.0,
     };

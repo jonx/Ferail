@@ -68,9 +68,7 @@ pub enum TableEvent {
     /// addition). Emitted continuously while an `ExternalPaths` drag is
     /// over the row so the host can spring-load (drill into the folder
     /// after a short dwell). docs/features/FILE_OPS.md.
-    DragHover {
-        row_ix: usize,
-    },
+    DragHover { row_ix: usize },
     /// Single click or move to selected row.
     SelectRow(usize),
     /// Double click on the row.
@@ -1170,7 +1168,12 @@ where
                 strikethrough: None,
             };
             text_system
-                .shape_line(SharedString::from(line.to_string()), font_size, &[run], None)
+                .shape_line(
+                    SharedString::from(line.to_string()),
+                    font_size,
+                    &[run],
+                    None,
+                )
                 .width
         };
 

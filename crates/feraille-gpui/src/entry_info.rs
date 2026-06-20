@@ -14,8 +14,8 @@
 //! box). Editing is layered on top in a later pass; today the panel reads.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use feraille_core::commands::TagColor;
 use feraille_core::entry_info::{
@@ -24,8 +24,8 @@ use feraille_core::entry_info::{
 use feraille_core::name_hazards::{self, HazardKind};
 use gpui::*;
 use gpui_component::{
-    button::Button, checkbox::Checkbox, h_flex, notification::Notification, tooltip::Tooltip,
-    v_flex, ActiveTheme, Root, Sizable, WindowExt as _,
+    ActiveTheme, Root, Sizable, WindowExt as _, button::Button, checkbox::Checkbox, h_flex,
+    notification::Notification, tooltip::Tooltip, v_flex,
 };
 
 use crate::file_list::tag_color_rgba;
@@ -641,14 +641,17 @@ impl EntryInfoView {
                     .text_right()
                     .child(label.to_string()),
             )
-            .child(div().flex_1().text_xs().child(self.render_value(value, ix, cx)))
+            .child(
+                div()
+                    .flex_1()
+                    .text_xs()
+                    .child(self.render_value(value, ix, cx)),
+            )
     }
 
     fn render_value(&self, value: &InfoValue, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         match value {
-            InfoValue::Text(s) | InfoValue::Name(s) => {
-                div().child(s.clone()).into_any_element()
-            }
+            InfoValue::Text(s) | InfoValue::Name(s) => div().child(s.clone()).into_any_element(),
             InfoValue::Toggle { on, attr } => {
                 let attr = *attr;
                 Checkbox::new(ElementId::Name(format!("entry-info-tog-{ix}").into()))
