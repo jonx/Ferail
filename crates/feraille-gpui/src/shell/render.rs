@@ -593,7 +593,13 @@ impl Shell {
     /// `entries` + selection mirror the table does and routing every
     /// gesture through the same `Shell` methods. See `crate::grid`.
     fn grid_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::file_list::{DragBadge, GHOST_STACK_CAP};
+        use crate::thumbnails::THUMB_PX;
         use feraille_core::EntryKind;
+        use gpui::ExternalPaths;
+        use gpui_component::menu::ContextMenuExt as _;
+        use smallvec::SmallVec;
+        use std::sync::Arc;
 
         let icon_px = crate::grid::icon_size(cx);
         let slot = icon_px as f32;
@@ -609,16 +615,19 @@ impl Shell {
         let row_count = entries_len.div_ceil(cols);
 
         let theme = cx.theme();
-        let fg = theme.foreground;
         let muted = theme.muted_foreground;
-        let accent = theme.accent;
-        // Icons mode lives on a plain background with no row striping, so
-        // the old 10% wash was nearly invisible — bump the fill and give
-        // every selected cell an accent border (not just the lead) so
-        // multi-selection reads clearly. Lead keeps the full-strength
-        // border; other selected cells get a softer one.
-        let sel_bg = accent.opacity(0.24);
-        let sel_border = accent.opacity(0.6);
+        // Finder-style blue selection. The default theme's `accent` is a
+        // near-white gray — fine for hover, invisible as a selection on a
+        // busy thumbnail grid — so we key selection off the theme's
+        // saturated `blue` instead: a solid pill behind the label plus a
+        // light-blue wash and border on the cell. Lead is full-strength;
+        // other members of a multi-selection get a slightly lighter pill
+        // so the focused item still stands out. Border width stays 1px
+        // everywhere so selection never nudges cell layout by a pixel.
+        let blue = theme.blue;
+        let pill_fg = gpui::white();
+        let sel_bg = blue.opacity(0.14);
+        let sel_border = blue.opacity(0.55);
 
         let weak = cx.weak_entity();
         let scroll = self.active_tab().grid_scroll.clone();
@@ -694,7 +703,63 @@ impl Shell {
                         }
                     };
 
+                    // OS drag-out ghost (dnd-spec §3.1, mirrors the list
+                    // row): pressing a selected cell drags the whole
+                    // selection; an unselected cell drags just itself.
+                    // Ghost images come only from already-warm caches, so
+                    // building them never touches the filesystem.
+                    let is_dir = matches!(entry.kind, EntryKind::Directory);
+                    let mut drag_paths: SmallVec<[PathBuf; 2]> = SmallVec::new();
+                    let mut ghost_icons: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
+                        SmallVec::new();
+                    {
+                        let mut push_ghost = |e: &FileEntry, p: &PathBuf| {
+                            if ghost_icons.len() >= GHOST_STACK_CAP {
+                                return;
+                            }
+                            if show_thumbs {
+                                if let Some(t) = thumbs.borrow().get(p, THUMB_PX) {
+                                    ghost_icons.push(t);
+                                    return;
+                                }
+                            }
+                            ghost_icons.push(icons.borrow_mut().icon_for(e, p));
+                        };
+                        if selected {
+                            for e in entries.iter() {
+                                if del.selected_set.contains(&e.id) {
+                                    if let Some(p) = del.path_for_entry(e.id) {
+                                        push_ghost(e, &p);
+                                        drag_paths.push(p);
+                                    }
+                                }
+                            }
+                        } else {
+                            push_ghost(entry, &path);
+                            drag_paths.push(path.clone());
+                        }
+                    }
+                    let drag_count = drag_paths.len();
+                    let can_drag = !drag_paths.is_empty();
+                    let ghost_names: SmallVec<[SharedString; GHOST_STACK_CAP]> = drag_paths
+                        .iter()
+                        .take(GHOST_STACK_CAP)
+                        .map(|p| {
+                            p.file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default()
+                                .into()
+                        })
+                        .collect();
+                    // Finder-style selection pill behind the label: full
+                    // accent on the focused (lead) cell, slightly muted
+                    // for other members of a multi-selection.
+                    let label_pill = if is_lead { blue } else { blue.opacity(0.82) };
+
                     let weak_cell = weak.clone();
+                    let weak_menu = weak.clone();
+                    let weak_drop = weak.clone();
+                    let weak_hover = weak.clone();
                     let cell = v_flex()
                         .id(("grid-cell", i))
                         .w(px(cell_w))
@@ -708,7 +773,7 @@ impl Shell {
                         // Keep border width constant (border_1 everywhere) so
                         // selection never nudges cell layout by a pixel.
                         .when(selected, |d| d.bg(sel_bg))
-                        .when(is_lead, |d| d.border_1().border_color(accent))
+                        .when(is_lead, |d| d.border_1().border_color(blue))
                         .when(selected && !is_lead, |d| {
                             d.border_1().border_color(sel_border)
                         })
@@ -729,12 +794,15 @@ impl Shell {
                         )
                         .child(
                             div()
-                                .w_full()
-                                .px_1()
+                                .max_w_full()
+                                .px(px(5.0))
+                                .py(px(1.0))
+                                .rounded(px(4.0))
                                 .text_xs()
-                                .text_color(if selected { fg } else { muted })
                                 .text_center()
                                 .truncate()
+                                .when(selected, |d| d.bg(label_pill).text_color(pill_fg))
+                                .when(!selected, |d| d.text_color(muted))
                                 .child(SharedString::from(name)),
                         )
                         .on_click(move |ev: &ClickEvent, window, app| {
@@ -748,6 +816,72 @@ impl Shell {
                                     this.apply_row_click_gesture(i, mods, cx);
                                 }
                             });
+                        })
+                        .when(can_drag, |d| {
+                            d.on_drag(
+                                ExternalPaths(drag_paths),
+                                move |_paths, offset, _window, cx| {
+                                    cx.new(|_| DragBadge {
+                                        names: ghost_names.clone(),
+                                        icons: ghost_icons.clone(),
+                                        count: drag_count,
+                                        offset,
+                                    })
+                                },
+                            )
+                        })
+                        .when(is_dir, |d| {
+                            // Folder cells are OS-drag drop targets (accent
+                            // ring on hover) and spring-load: dwelling a drag
+                            // over one drills into it. Stop propagation so the
+                            // pane-background target underneath doesn't also
+                            // fire. Transfer + dwell logic is shared with the
+                            // list row via the Shell helpers.
+                            d.drag_over::<ExternalPaths>(move |style, _payload, _window, _cx| {
+                                style.border_1().border_color(blue).bg(blue.opacity(0.12))
+                            })
+                            .on_drop(move |paths: &ExternalPaths, window, app| {
+                                app.stop_propagation();
+                                let dropped = paths.paths().to_vec();
+                                let _ = weak_drop.update(app, |this, cx| {
+                                    this.drop_onto_folder_row(i, dropped, window, cx);
+                                });
+                            })
+                            .on_drag_move(
+                                move |e: &gpui::DragMoveEvent<ExternalPaths>, _window, app| {
+                                    if e.bounds.contains(&e.event.position) {
+                                        let _ = weak_hover.update(app, |this, cx| {
+                                            this.spring_load_hover(i, cx);
+                                        });
+                                    }
+                                },
+                            )
+                        })
+                        .context_menu(move |menu, window, cx| {
+                            // Same right-click menu the table uses, reached
+                            // through the shared TableState delegate — so
+                            // icons mode gets Rename, Open With, tags, Trash,
+                            // everything the list row has, from one menu
+                            // definition. Mirrors TableEvent::RightClickedRow:
+                            // select the cell (unless it's already inside the
+                            // selection) and stash context_row so the menu's
+                            // actions (Rename included) target it.
+                            use crate::multi_table::TableDelegate as _;
+                            let Some(shell_ent) = weak_menu.upgrade() else {
+                                return menu;
+                            };
+                            shell_ent.update(cx, |this, cx| {
+                                let was_selected = this
+                                    .node_id_at_row(i, cx)
+                                    .map(|id| this.active_tab().selection.contains(&id))
+                                    .unwrap_or(false);
+                                this.apply_row_right_click(i, cx);
+                                this.context_row = if was_selected { None } else { Some(i) };
+                                let table = this.active_tab().table.clone();
+                                table.update(cx, |tbl, cx| {
+                                    tbl.delegate_mut().context_menu(i, menu, window, cx)
+                                })
+                            })
                         });
                     row_el = row_el.child(cell);
                 }
@@ -823,7 +957,7 @@ impl Shell {
     /// Switch the active tab's view mode (toolbar switcher). Persists
     /// the choice as the new default for fresh tabs, focuses the grid
     /// and warms its first screen when switching to icons.
-    fn set_view_mode(
+    pub(crate) fn set_view_mode(
         &mut self,
         mode: crate::grid::ViewMode,
         window: &mut Window,

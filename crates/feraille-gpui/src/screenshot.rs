@@ -62,6 +62,10 @@ pub struct Args {
     /// verification of the selection-set rendering without
     /// simulating click+modifier sequences.
     pub select_rows: Vec<usize>,
+    /// Force the active tab's view mode (`--view grid` / `--view list`)
+    /// before capture, so the icon grid can be screenshotted without
+    /// mutating the user's persisted default.
+    pub view: Option<crate::grid::ViewMode>,
     /// Sidebar splitter position (DIPs). N/A in the GPUI shell —
     /// the sidebar width is currently a Settings choice, not a
     /// drag-resizable splitter.
@@ -178,6 +182,9 @@ pub fn parse_args() -> Args {
                 if let Some(p) = iter.next() {
                     args.expand.push(PathBuf::from(p));
                 }
+            }
+            "--view" => {
+                args.view = iter.next().map(|s| crate::grid::ViewMode::from_str(&s))
             }
             "--select-row" => args.select_row = iter.next().and_then(|s| s.parse().ok()),
             "--select-name" => args.select_name = iter.next(),
@@ -547,6 +554,7 @@ struct ShellArgs {
     select_row: Option<usize>,
     select_name: Option<String>,
     select_rows: Vec<usize>,
+    view: Option<crate::grid::ViewMode>,
     breadcrumb: Option<String>,
     keys: Option<String>,
     preview: bool,
@@ -582,6 +590,7 @@ impl From<&Args> for ShellArgs {
             select_row: a.select_row,
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
+            view: a.view,
             breadcrumb: a.breadcrumb.clone(),
             keys: a.keys.clone(),
             preview: a.preview,
@@ -640,6 +649,13 @@ impl ShellArgs {
         }
         if let Some(idx) = self.tab {
             shell.update(cx, |s, cx| s.select_tab(idx, cx));
+        }
+        if let Some(mode) = self.view {
+            // `set_view_mode` focuses the grid, which needs `&mut Window`.
+            let shell_for_view = shell.clone();
+            let _ = handle.update(cx, move |_root, window, cx| {
+                shell_for_view.update(cx, |s, cx| s.set_view_mode(mode, window, cx));
+            });
         }
         for path in self.expand.iter() {
             let p = canonicalize_or_passthrough(path);

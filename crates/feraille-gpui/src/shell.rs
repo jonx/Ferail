@@ -803,33 +803,16 @@ impl Shell {
                         // Dropped onto a folder row — transfer into
                         // that folder (dnd-spec §3.5). Non-folder rows
                         // never emit this; the pane background target
-                        // covers them with current-dir semantics.
-                        this.spring_load = None;
-                        if let Some(dest) = this.path_for_row(*row_ix, cx) {
-                            this.handle_external_drop(paths.clone(), dest, window, cx);
-                        }
+                        // covers them with current-dir semantics. Shared
+                        // with the icon grid's folder-cell drop.
+                        this.drop_onto_folder_row(*row_ix, paths.clone(), window, cx);
                     }
                     TableEvent::DragHover { row_ix } => {
                         // Spring-load: after a short dwell over a folder
                         // row, drill into it so the user can drop deeper
-                        // without releasing the drag.
-                        const SPRING_DWELL: std::time::Duration =
-                            std::time::Duration::from_millis(600);
-                        let now = std::time::Instant::now();
-                        match this.spring_load {
-                            Some((r, since)) if r == *row_ix => {
-                                if now.duration_since(since) >= SPRING_DWELL {
-                                    this.spring_load = None;
-                                    // Only folder rows emit DragHover, so
-                                    // the row's path is a directory by
-                                    // construction — no stat here.
-                                    if let Some(dest) = this.path_for_row(*row_ix, cx) {
-                                        this.navigate(dest, cx);
-                                    }
-                                }
-                            }
-                            _ => this.spring_load = Some((*row_ix, now)),
-                        }
+                        // without releasing the drag. Shared with the
+                        // icon grid's folder-cell hover.
+                        this.spring_load_hover(*row_ix, cx);
                     }
                     TableEvent::LeadMoved { row_ix, modifiers } => {
                         this.apply_row_keyboard_gesture(*row_ix, *modifiers, cx);
@@ -2732,7 +2715,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
         let Some(id) = self.pop_favorite_id_for_action(cx) else {
             return;
         };
@@ -2743,22 +2725,20 @@ impl Shell {
             .entry_by_id(id)
             .map(|f| f.effective_label())
             .unwrap_or_default();
-        // Native NSAlert prompt — keeps the rename path simple and
-        // matches macOS feel. Renaming the shortcut, not the folder.
-        let next = crate::platform_shell::prompt_for_text(
+        // Same gpui rename modal the file list uses (renaming the
+        // shortcut's label, not the folder on disk) — consistent
+        // surface and cross-platform, unlike the old native prompt.
+        self.open_rename_dialog(
             "Rename Favorite",
-            "Renames the shortcut\u{2019}s label only, not the folder on disk.",
-            &current,
+            current,
+            move |this, new_name, _window, cx| {
+                this.process
+                    .favorites
+                    .update(cx, |f, cx| f.rename(id, Some(new_name), cx));
+            },
+            window,
+            cx,
         );
-        let Some(value) = next else { return };
-        let trimmed = value.trim().to_string();
-        if trimmed.is_empty() {
-            window.push_notification(Notification::info("Name can\u{2019}t be empty."), cx);
-            return;
-        }
-        self.process
-            .favorites
-            .update(cx, |f, cx| f.rename(id, Some(trimmed), cx));
     }
 
     pub fn on_reset_favorite_name(

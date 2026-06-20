@@ -45,10 +45,17 @@ feature notes in [docs/features/](docs/features/README.md).
   access); drops on favorite *rows* (gaps accept folder-adds today). All
   drag gestures need interactive testing — not headlessly drivable.
 - Toolbar density follow-ups (refresh, new folder, sort dropdown, and
-  action-overflow menu shipped 2026-06-13): grid/icon view mode (a new
-  file-pane render path — feature-sized, its own iteration) and
-  grouping by kind/date (a new sort/render model). Both deferred from
-  the density pass on purpose.
+  action-overflow menu shipped 2026-06-13): grouping by kind/date (a new
+  sort/render model), deferred from the density pass on purpose.
+- Grid/icon view parity with the list (interaction parity shipped
+  2026-06-20: OS drag-out with ghost, drop-onto-folder + spring-load,
+  right-click context menu via the shared TableState delegate, Finder-
+  style blue selection — pill behind the label + wash/border — sharing
+  `drop_onto_folder_row`/`spring_load_hover` with the list). Remaining:
+  marquee/rubber-band selection (no list equivalent to copy); and the
+  per-cell adornments the list row paints that the grid cell still does
+  not — tag dots, favorite star, Ant Trail heat tint, cut-item dimming,
+  and the truncated-name tooltip.
 - Complete status/task feedback: selected count and size, total visible
   size, free space, active task count, cancel buttons, recent task history,
   and task registration for magic, thumbnails, enumeration, copy/move, and
@@ -218,11 +225,12 @@ feature notes in [docs/features/](docs/features/README.md).
 
 - Windows parity with the predecessor `../Ferail` is tracked in
   [docs/features/windows-port.md](docs/features/windows-port.md) §6b
-  (capability diff). Near-term, behavior-breaking stubs to close in
-  `feraille-shell-win32`: file-URL clipboard (`CF_HDROP` — breaks
-  Cmd+C/Cmd+V copy-paste today), volume device-change observer
-  (`WM_DEVICECHANGE`), and inline-rename text input (best as a gpui
-  modal). Larger, deferred Windows-only ports: third-party
+  (capability diff). Behavior-breaking stubs in `feraille-shell-win32`:
+  file-URL clipboard (`CF_HDROP` — Cmd+C/Cmd+V copy-paste) and the
+  volume device-change observer (`WM_DEVICECHANGE`) **shipped
+  2026-06-20**; the remaining one is inline-rename text input (best as
+  a gpui modal — also tracked under Favorites polish above, since the
+  same modal serves both). Larger, deferred Windows-only ports: third-party
   shell-extension context-menu verbs (`IContextMenu`) and WSL
   integration.
 - The Windows screenshot harness needs a `gpui_windows::render_to_image`

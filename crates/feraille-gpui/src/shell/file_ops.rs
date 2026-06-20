@@ -185,6 +185,45 @@ impl Shell {
         self.spawn_transfer_op(paths, dest, mode, window, cx);
     }
 
+    /// Transfer OS paths *into* the folder at `row_ix` (dnd-spec §3.5).
+    /// Shared by the list row and the icon-grid cell so both view modes
+    /// resolve the destination and clear any pending spring-load the
+    /// same way. Non-folder rows never call this — their drops fall
+    /// through to the pane-background target's current-dir semantics.
+    pub(crate) fn drop_onto_folder_row(
+        &mut self,
+        row_ix: usize,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.spring_load = None;
+        if let Some(dest) = self.path_for_row(row_ix, cx) {
+            self.handle_external_drop(paths, dest, window, cx);
+        }
+    }
+
+    /// Spring-load bookkeeping shared by the list and grid: while a drag
+    /// hovers a folder row, after a short dwell over the *same* row,
+    /// drill into it so the user can drop deeper without releasing the
+    /// drag. Only folder rows feed this, so the row's path is a
+    /// directory by construction — no stat here.
+    pub(crate) fn spring_load_hover(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        const SPRING_DWELL: std::time::Duration = std::time::Duration::from_millis(600);
+        let now = std::time::Instant::now();
+        match self.spring_load {
+            Some((r, since)) if r == row_ix => {
+                if now.duration_since(since) >= SPRING_DWELL {
+                    self.spring_load = None;
+                    if let Some(dest) = self.path_for_row(row_ix, cx) {
+                        self.navigate(dest, cx);
+                    }
+                }
+            }
+            _ => self.spring_load = Some((row_ix, now)),
+        }
+    }
+
     /// The transfer worker (docs/features/FILE_OPS.md): plan on the
     /// background executor, raise the collision dialog if needed, run
     /// the engine with throttled progress into the task registry
@@ -1392,6 +1431,65 @@ impl Shell {
         });
     }
 
+    /// Shared rename modal used by every rename surface (file/folder
+    /// rename here, favorite-shortcut rename in `shell.rs`). Pre-fills
+    /// `initial`, then — once the dialog has mounted — focuses the
+    /// field and selects its text so the name is ready to overtype.
+    /// `on_commit` runs with the trimmed new name when the user
+    /// confirms, and is skipped when the name is empty or unchanged.
+    ///
+    /// One gpui modal for every rename keeps the surface consistent and
+    /// is cross-platform: Windows has no native `prompt_for_text`, so
+    /// routing favorites through here (instead of the old NSAlert path)
+    /// is what makes favorite rename work there at all.
+    pub(crate) fn open_rename_dialog(
+        &mut self,
+        title: impl Into<SharedString>,
+        initial: String,
+        on_commit: impl Fn(&mut Self, String, &mut Window, &mut Context<Self>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let title = title.into();
+        let original = initial.clone();
+        let input_state = cx.new(|cx| InputState::new(window, cx).placeholder("New name"));
+        input_state.update(cx, |state, cx| {
+            state.set_value(initial, window, cx);
+        });
+        let on_commit = std::rc::Rc::new(on_commit);
+        let shell = cx.entity();
+        let input = input_state.clone();
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input = input.clone();
+            let shell = shell.clone();
+            let original = original.clone();
+            let on_commit = on_commit.clone();
+            let title = title.clone();
+            dialog
+                .title(title)
+                .child(Input::new(&input).small())
+                .on_ok(move |_, window, cx: &mut App| {
+                    let new_name = input.read(cx).value().trim().to_string();
+                    if new_name.is_empty() || new_name == original {
+                        return true;
+                    }
+                    let on_commit = on_commit.clone();
+                    shell.update(cx, move |this, cx| {
+                        on_commit(this, new_name, window, cx);
+                    });
+                    true
+                })
+        });
+        // Focus the field and select its contents on the next frame,
+        // once the dialog (and its input) are mounted in the tree —
+        // doing it synchronously here wouldn't stick. SelectAll is the
+        // input's own action, dispatched to the now-focused field.
+        window.on_next_frame(move |window, cx| {
+            input_state.read(cx).focus_handle(cx).focus(window, cx);
+            window.dispatch_action(Box::new(gpui_component::input::SelectAll), cx);
+        });
+    }
+
     pub(super) fn on_rename_selected(
         &mut self,
         _: &RenameSelected,
@@ -1415,55 +1513,30 @@ impl Shell {
         let Some(old_path) = self.path_for_row(row, cx) else {
             return;
         };
-        let original_name = entry.name.clone();
-        let input_state = cx.new(|cx| InputState::new(window, cx).placeholder("New name"));
-        input_state.update(cx, |state, cx| {
-            state.set_value(original_name.clone(), window, cx);
-        });
-        let input_for_ok = input_state.clone();
-        let shell = cx.entity();
         let parent = self.active_tab().current_dir.clone();
-        window.open_dialog(cx, move |dialog, _window, _cx| {
-            let input = input_state.clone();
-            let input_for_ok = input_for_ok.clone();
-            let shell = shell.clone();
-            let old_path = old_path.clone();
-            let original_name = original_name.clone();
-            let parent = parent.clone();
-            dialog
-                .title("Rename")
-                .child(Input::new(&input).small())
-                .on_ok(move |_, window, cx: &mut App| {
-                    let new_name = input_for_ok.read(cx).value().trim().to_string();
-                    if new_name.is_empty() || new_name == original_name {
-                        return true;
-                    }
-                    let mut new_path = old_path.clone();
-                    new_path.set_file_name(&new_name);
-                    let cur = parent.clone();
-                    let op_old_path = old_path.clone();
-                    let op_new_path = new_path.clone();
-                    let undo_current = new_path.clone();
-                    let undo_original = old_path.clone();
-                    shell.update(cx, move |this, cx| {
-                        this.spawn_file_op(
-                            cur,
-                            move || {
-                                std::fs::rename(&op_old_path, &op_new_path)
-                                    .map_err(|e| e.to_string())
-                            },
-                            "rename",
-                            window,
-                            cx,
-                        );
-                        this.push_undo(UndoOp::Rename {
-                            current: undo_current,
-                            original: undo_original,
-                        });
-                    });
-                    true
-                })
-        });
+        self.open_rename_dialog(
+            "Rename",
+            entry.name.clone(),
+            move |this, new_name, window, cx| {
+                let mut new_path = old_path.clone();
+                new_path.set_file_name(&new_name);
+                let op_old_path = old_path.clone();
+                let op_new_path = new_path.clone();
+                this.spawn_file_op(
+                    parent.clone(),
+                    move || std::fs::rename(&op_old_path, &op_new_path).map_err(|e| e.to_string()),
+                    "rename",
+                    window,
+                    cx,
+                );
+                this.push_undo(UndoOp::Rename {
+                    current: new_path,
+                    original: old_path.clone(),
+                });
+            },
+            window,
+            cx,
+        );
     }
 
     pub(super) fn on_quick_look(
