@@ -233,7 +233,7 @@ thread** (prime directive).
 |---|---|
 | `clipboard_copy_file_urls` / `clipboard_read_file_urls` | Clipboard with a `text/uri-list` target carrying `file://` URIs. GNOME apps additionally use the `x-special/gnome-copied-files` target (`copy\nfile:///path\n…`) and KDE its own — write/read the common `text/uri-list` first, add the GNOME target for Nautilus interop. Wayland: `smithay-clipboard` or `wl-clipboard` shell-out; X11: raw selections or `xclip`. (Plain text `copy_to_clipboard` can use [`arboard`](https://crates.io/crates/arboard), but it doesn't do custom MIME targets well — file-URLs need lower-level access.) |
 | `start_volume_observer` | udisks2 `InterfacesAdded`/`InterfacesRemoved` D-Bus signals on `org.freedesktop.UDisks2` (via `zbus`), or `GVolumeMonitor` mount/unmount signals, or an inotify watch on `/proc/self/mountinfo`. Mirror the macOS callback contract. |
-| `prompt_for_text(title, body, default)` | Build a small **gpui modal** in `feraille-gpui` and drop this from the platform shell entirely — it's cross-platform and matches the TODO "inline-rename text field" item. (Same recommendation as the Windows port.) |
+| *(text-naming prompt — no Linux work needed)* | Already solved cross-platform: the shared `open_text_prompt` gpui modal in `feraille-gpui` handles rename + new-folder on every platform, and the native `prompt_for_text` shell stub was deleted (2026-06-20). Nothing to port here. |
 
 ### The rest
 

@@ -10,8 +10,9 @@ feature notes in [docs/features/](docs/features/README.md).
 ## Highest Priority
 
 - Favorites polish — the v1 shipped per [docs/features/FAVORITES.md](docs/features/FAVORITES.md);
-  remaining items are inline-rename text field (today's rename uses a
-  native NSAlert prompt), live filesystem-watcher integration for
+  favorite-label rename now uses the shared cross-platform `open_text_prompt`
+  gpui modal (not the old native NSAlert). Remaining items are
+  live filesystem-watcher integration for
   Missing state transitions (mount/unmount transitions now ship via
   the NSWorkspace volume watch), Locate-via-NSOpenPanel, ~150ms fade/collapse +
   dedup-pulse animations, arrow-key sidebar focus + Delete-on-focus
@@ -225,13 +226,14 @@ feature notes in [docs/features/](docs/features/README.md).
 
 - Windows parity with the predecessor `../Ferail` is tracked in
   [docs/features/windows-port.md](docs/features/windows-port.md) §6b
-  (capability diff). Behavior-breaking stubs in `feraille-shell-win32`:
-  file-URL clipboard (`CF_HDROP` — Cmd+C/Cmd+V copy-paste) and the
-  volume device-change observer (`WM_DEVICECHANGE`) **shipped
-  2026-06-20**; the remaining one is inline-rename text input (best as
-  a gpui modal — also tracked under Favorites polish above, since the
-  same modal serves both). Larger, deferred Windows-only ports: third-party
-  shell-extension context-menu verbs (`IContextMenu`) and WSL
+  (capability diff). All three near-term behavior-breaking stubs in
+  `feraille-shell-win32` **shipped 2026-06-20**: file-URL clipboard
+  (`CF_HDROP` — Cmd+C/Cmd+V copy-paste), the volume device-change observer
+  (`WM_DEVICECHANGE`), and text-naming input — the last solved as the shared
+  cross-platform `open_text_prompt` gpui modal (rename + new-folder both route
+  through it; the dead native `prompt_for_text` shell stub was deleted from
+  both crates). Only the larger, deferred Windows-only ports remain:
+  third-party shell-extension context-menu verbs (`IContextMenu`) and WSL
   integration.
 - The Windows screenshot harness needs a `gpui_windows::render_to_image`
   patch that isn't upstream yet. Publish the gpui fork carrying it and point

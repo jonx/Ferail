@@ -1395,64 +1395,59 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let parent = self.active_tab().current_dir.clone();
-        let input_state = cx.new(|cx| InputState::new(window, cx).placeholder("Untitled folder"));
-        let input_for_ok = input_state.clone();
-        let shell = cx.entity();
-        window.open_dialog(cx, move |dialog, _window, _cx| {
-            let input = input_state.clone();
-            let input_for_ok = input_for_ok.clone();
-            let shell = shell.clone();
-            let parent = parent.clone();
-            dialog
-                .title("New Folder")
-                .child(Input::new(&input).small())
-                .on_ok(move |_, window, cx: &mut App| {
-                    let name = input_for_ok.read(cx).value().trim().to_string();
-                    if name.is_empty() {
-                        return true;
-                    }
-                    let mut path = parent.clone();
-                    path.push(&name);
-                    let cur = parent.clone();
-                    let op_path = path.clone();
-                    let undo_path = path.clone();
-                    shell.update(cx, move |this, cx| {
-                        this.spawn_file_op(
-                            cur,
-                            move || std::fs::create_dir(&op_path).map_err(|e| e.to_string()),
-                            "new-folder",
-                            window,
-                            cx,
-                        );
-                        this.push_undo(UndoOp::DeleteFolder(undo_path));
-                    });
-                    true
-                })
-        });
+        // Same focus/select-on-open modal the rename surfaces use. We
+        // start with an empty field (the "Untitled folder" placeholder
+        // is just a hint) so an empty submit is a no-op, matching the
+        // old behavior, and a typed name creates the folder.
+        self.open_text_prompt(
+            "New Folder",
+            "Untitled folder",
+            String::new(),
+            move |this, name, window, cx| {
+                let mut path = parent.clone();
+                path.push(&name);
+                let cur = parent.clone();
+                let op_path = path.clone();
+                let undo_path = path.clone();
+                this.spawn_file_op(
+                    cur,
+                    move || std::fs::create_dir(&op_path).map_err(|e| e.to_string()),
+                    "new-folder",
+                    window,
+                    cx,
+                );
+                this.push_undo(UndoOp::DeleteFolder(undo_path));
+            },
+            window,
+            cx,
+        );
     }
 
-    /// Shared rename modal used by every rename surface (file/folder
-    /// rename here, favorite-shortcut rename in `shell.rs`). Pre-fills
-    /// `initial`, then — once the dialog has mounted — focuses the
-    /// field and selects its text so the name is ready to overtype.
-    /// `on_commit` runs with the trimmed new name when the user
-    /// confirms, and is skipped when the name is empty or unchanged.
+    /// Shared single-line text-naming modal used by every naming
+    /// surface (file/folder rename and favorite-shortcut rename in
+    /// `shell.rs`, plus new-folder above). Pre-fills `initial`, then —
+    /// once the dialog has mounted — focuses the field and selects its
+    /// text so the name is ready to overtype. `on_commit` runs with the
+    /// trimmed new name when the user confirms, and is skipped when the
+    /// name is empty or unchanged from `initial`.
     ///
-    /// One gpui modal for every rename keeps the surface consistent and
-    /// is cross-platform: Windows has no native `prompt_for_text`, so
-    /// routing favorites through here (instead of the old NSAlert path)
-    /// is what makes favorite rename work there at all.
-    pub(crate) fn open_rename_dialog(
+    /// One gpui modal for every naming prompt keeps the surface
+    /// consistent and is cross-platform: there is no native text-prompt
+    /// on Windows, so routing every prompt through here (instead of a
+    /// per-platform native path) is what makes these flows work there.
+    pub(crate) fn open_text_prompt(
         &mut self,
         title: impl Into<SharedString>,
+        placeholder: impl Into<SharedString>,
         initial: String,
         on_commit: impl Fn(&mut Self, String, &mut Window, &mut Context<Self>) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let title = title.into();
+        let placeholder = placeholder.into();
         let original = initial.clone();
-        let input_state = cx.new(|cx| InputState::new(window, cx).placeholder("New name"));
+        let input_state = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         input_state.update(cx, |state, cx| {
             state.set_value(initial, window, cx);
         });
@@ -1514,8 +1509,9 @@ impl Shell {
             return;
         };
         let parent = self.active_tab().current_dir.clone();
-        self.open_rename_dialog(
+        self.open_text_prompt(
             "Rename",
+            "New name",
             entry.name.clone(),
             move |this, new_name, window, cx| {
                 let mut new_path = old_path.clone();

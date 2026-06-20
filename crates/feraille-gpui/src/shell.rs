@@ -2728,8 +2728,9 @@ impl Shell {
         // Same gpui rename modal the file list uses (renaming the
         // shortcut's label, not the folder on disk) — consistent
         // surface and cross-platform, unlike the old native prompt.
-        self.open_rename_dialog(
+        self.open_text_prompt(
             "Rename Favorite",
+            "New name",
             current,
             move |this, new_name, _window, cx| {
                 this.process

@@ -177,11 +177,10 @@ Also real but living in **`feraille-fs-native`** (not the shell crate), so alrea
 
 ### Stubs awaiting real implementation
 
-Ordered by approximate value × ease. Each function has a TODO at the top of its body in [crates/feraille-shell-win32/src/lib.rs](../../crates/feraille-shell-win32/src/lib.rs). `clipboard_copy_file_urls` / `clipboard_read_file_urls` (`CF_HDROP`) and `start_volume_observer` (`WM_DEVICECHANGE`) — the first two behavior-breaking stubs — **shipped 2026-06-20** and moved to the real-implementations table above. The one remaining feature-breaking stub is `prompt_for_text`.
+Ordered by approximate value × ease. Each function has a TODO at the top of its body in [crates/feraille-shell-win32/src/lib.rs](../../crates/feraille-shell-win32/src/lib.rs). All three behavior-breaking stubs are now closed: `clipboard_copy_file_urls` / `clipboard_read_file_urls` (`CF_HDROP`) and `start_volume_observer` (`WM_DEVICECHANGE`) **shipped 2026-06-20** and moved to the real-implementations table above; the text-naming gap is closed by the shared `open_text_prompt` gpui modal in `feraille-gpui` (rename + new-folder both route through it), and the dead `prompt_for_text` shell stub was deleted from both platform crates. Only feature-sized stubs remain.
 
 | Function | Breaks | Suggested approach |
 |---|---|---|
-| `prompt_for_text(title, body, default)` | **Inline rename / new-folder naming** (returns `None`, so the rename/new-folder flows have no name source on Windows). | Build a small **gpui modal** in feraille-gpui and drop this from the platform shell entirely — it's cross-platform and matches TODO.md's "inline-rename text field" item. |
 | `video_overlay_show` / `set_frame` / `remove` | Viewer video playback (shows static poster only). | Media Foundation / MFPlay child HWND floated over the viewer stage rect. Larger; viewer-feature-sized. See VIEWER.md. |
 | `read_canonical_tags`, `clear_tags` (+ `toggle_tag`) | Finder-tag color chips. | No native Windows equivalent. Drop for v1, or back via `feraille-meta` SQLite as private tags (no Explorer integration). |
 | `show_quick_look` | Spacebar Quick Look. | No Quick Look on Windows. Spacebar should pop the in-app preview pane (already wired) or no-op. |
@@ -214,11 +213,11 @@ Ferail hand-rolled these in Win32; in Feraille they're handled cross-platform an
 
 ### B. Real remaining gaps — Windows features Ferail had that Feraille lacks
 
-In rough priority order. The first three are the §6 stubs above (cross-referenced); the last two are genuinely absent from the whole workspace, not just stubbed:
+In rough priority order. The first three were the §6 stubs above and are now all shipped; the last two are genuinely absent from the whole workspace, not just stubbed:
 
 1. ~~**File-URL clipboard (`CF_HDROP`)**~~ — **shipped 2026-06-20** (§6 real table). Keyboard copy-paste + Explorer interop now work.
 2. ~~**Volume device-change observer (`WM_DEVICECHANGE`)**~~ — **shipped 2026-06-20** (§6 real table). Note the watch needed a hidden top-level window, *not* the theme observer's message-only one — message-only windows don't get broadcasts.
-3. **Inline-rename text input** — §6. Best solved as a gpui modal, not Win32. The one remaining behavior-breaking gap.
+3. ~~**Inline-rename / new-folder text input**~~ — **shipped 2026-06-20.** Solved as the shared cross-platform `open_text_prompt` gpui modal (`feraille-gpui`) rather than Win32; rename and new-folder both route through it (focus + select-on-open), and the dead native `prompt_for_text` stub was removed from both shell crates.
 4. **Third-party shell-extension context-menu verbs** — *absent everywhere.* Ferail's `shell_pump.rs` (~1,400 lines) enumerated registry `shellex\ContextMenuHandlers`, `CoCreateInstance`'d each handler, `IShellExtInit::Initialize`'d it with an `IDataObject`, and `QueryContextMenu`'d the verbs into the menu (7-Zip, TortoiseGit, "Scan with Defender", etc.) — including the undocumented `IWaitCursorManager` trick to suppress the busy cursor. Feraille's GPUI context menu has built-in actions + `Open With`, but **no third-party shell verbs.** This is the single biggest capability gap. It's also the hardest: STA-thread-only, PIDL lifetime management, and it must feed GPUI's menu model rather than an HMENU. Treat as its own feature iteration; the `IContextMenu` enumeration logic ports closely even though the rendering doesn't.
 5. **WSL integration** — *absent everywhere.* Ferail's `wsl.rs` (~480 lines): registry distro enumeration (`…\Lxss`), `\\wsl$\` / `\\wsl.localhost\` UNC path parsing, and `wsl.exe readlink` symlink resolution. Per the [porting rule](../../CLAUDE.md) WSL was deliberately deferred ("not a macOS v1 feature unless it maps to network/remote volumes"). It's a Windows-only differentiator worth restoring **after** the core port runs — net-new value, not a regression.
 
@@ -227,7 +226,7 @@ In rough priority order. The first three are the §6 stubs above (cross-referenc
 - **Menu preload** (`menu_preload.rs`): the *concept* — warm the expensive shell-verb enumeration on selection-change so the menu opens instantly — becomes valuable again **if and when** gap B.4 lands. Until there are third-party verbs to enumerate, there's nothing to preload. Keep the idea; the code is HMENU-bound.
 - **`FindFirstFileExW` fast enumeration**: revisit only if profiling shows `std::fs::read_dir` is a bottleneck on large Windows directories.
 
-**Bottom line:** B.1 + B.2 shipped 2026-06-20 in `feraille-shell-win32`; only B.3 (inline-rename, a cross-platform gpui modal) remains before the Windows build hits behavioral parity for everyday file management. B.4 (shell verbs) and B.5 (WSL) are the two substantial Ferail capabilities still worth a dedicated port afterward — and they're the only places Ferail remains genuinely "more advanced" than Feraille.
+**Bottom line:** B.1–B.3 all shipped 2026-06-20 — the Windows build is now at behavioral parity for everyday file management, with no behavior-breaking platform-shell stubs left. B.4 (shell verbs) and B.5 (WSL) are the two substantial Ferail capabilities still worth a dedicated port afterward — and they're the only places Ferail remains genuinely "more advanced" than Feraille.
 
 ---
 

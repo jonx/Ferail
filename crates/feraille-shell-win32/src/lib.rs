@@ -195,12 +195,6 @@ pub fn show_alert(title: &str, body: &str) {
 #[cfg(not(windows))]
 pub fn show_alert(_title: &str, _body: &str) {}
 
-/// Show a modal text-input prompt. Windows has no single API for
-/// this — the future impl will build a small gpui modal.
-pub fn prompt_for_text(_title: &str, _body: &str, _default: &str) -> Option<String> {
-    None
-}
-
 /// Open `url` in the default handler. macOS uses NSWorkspace; Linux
 /// `xdg-open`. Windows: `ShellExecuteW`. Today: shell out to
 /// `cmd /C start` which works on every Windows host without an
