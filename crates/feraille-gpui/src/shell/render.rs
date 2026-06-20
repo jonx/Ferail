@@ -696,16 +696,18 @@ impl Shell {
         let muted = theme.muted_foreground;
         // Finder-style blue selection. The default theme's `accent` is a
         // near-white gray — fine for hover, invisible as a selection on a
-        // busy thumbnail grid — so we key selection off the theme's
-        // saturated `blue` instead: a solid pill behind the label plus a
-        // light-blue wash and border on the cell. Lead is full-strength;
-        // other members of a multi-selection get a slightly lighter pill
-        // so the focused item still stands out. Border width stays 1px
-        // everywhere so selection never nudges cell layout by a pixel.
-        let blue = theme.blue;
-        let pill_fg = gpui::white();
-        let sel_bg = blue.opacity(0.14);
-        let sel_border = blue.opacity(0.55);
+        // busy thumbnail grid — so we key selection off the shared
+        // selection accent (`theme.blue` unless the user overrode it):
+        // a solid pill behind the label plus a light-blue wash and border
+        // on the cell. Lead is full-strength; other members of a
+        // multi-selection get a slightly lighter pill so the focused item
+        // still stands out. Border width stays 1px everywhere so selection
+        // never nudges cell layout by a pixel. The list pane reads the
+        // same `selection_colors` helpers, so the two views match.
+        let blue = crate::selection_colors::strong(cx);
+        let pill_fg = crate::selection_colors::text(cx);
+        let sel_bg = crate::selection_colors::fill(cx);
+        let sel_border = crate::selection_colors::border(cx);
         // Favorite-star tint (mirrors the list row's `theme.primary`)
         // and the gate for the crowding-prone adornments at small sizes.
         let star_color = theme.primary;

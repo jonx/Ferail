@@ -28,6 +28,11 @@ pub struct AppState {
     /// "light", "dark", or "system". `None` = follow the system
     /// detection done at startup (Stage 9.a default).
     pub theme_pref: Option<String>,
+    /// Selection / lead-highlight accent, as a `#RRGGBB(AA)` hex string
+    /// (the format gpui-component's color picker speaks). `None` ==
+    /// never set, in which case the file list and grid fall back to the
+    /// theme's blue. See [`crate::selection_colors`].
+    pub selection_color: Option<String>,
     /// User UI zoom factor (Cmd+= / Cmd+- / Cmd+0). Clamped at
     /// load to the same `[0.6, 2.0]` range Shell uses.
     pub ui_scale: Option<f32>,
@@ -149,6 +154,15 @@ pub fn load() -> AppState {
                     out.theme_pref = Some(v);
                 }
             }
+            "selection_color" => {
+                // Accept only a `#RRGGBB` / `#RRGGBBAA` hex so a garbage
+                // value can't poison the live accent global at startup.
+                let v = val.trim();
+                let body = v.strip_prefix('#').unwrap_or("");
+                if matches!(body.len(), 6 | 8) && body.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    out.selection_color = Some(format!("#{}", body.to_lowercase()));
+                }
+            }
             "ui_scale" => {
                 out.ui_scale = val.trim().parse::<f32>().ok().map(|n| n.clamp(0.6, 2.0));
             }
@@ -246,6 +260,9 @@ pub fn save(state: &AppState) {
     }
     if let Some(p) = &state.theme_pref {
         s.push_str(&format!("theme_pref={p}\n"));
+    }
+    if let Some(c) = &state.selection_color {
+        s.push_str(&format!("selection_color={c}\n"));
     }
     if let Some(z) = state.ui_scale {
         s.push_str(&format!("ui_scale={z}\n"));

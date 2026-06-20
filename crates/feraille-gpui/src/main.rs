@@ -527,7 +527,7 @@ fn run_gui(args: screenshot::Args) {
                     } else {
                         Some(page.as_str())
                     });
-                    let view = cx.new(|_| SettingsView::new(cat));
+                    let view = cx.new(|cx| SettingsView::new(cat, window, cx));
                     cx.new(|cx| gpui_component::Root::new(view, window, cx))
                 })
                 .expect("failed to open feraille settings window");

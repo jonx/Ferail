@@ -2130,6 +2130,14 @@ where
                 .when_some(self.selected_row, |this, _| {
                     this.when(is_selected && self.selection_mode.is_row(), |this| {
                         this.map(|this| {
+                            // Lead-row focus ring. Drawn from the shared
+                            // `selection_colors` palette (the saturated blue
+                            // the grid lead uses) instead of the theme's
+                            // `table_active` / `table_active_border`, which
+                            // are a desaturated gray the theme hard-caps at
+                            // alpha ≤ 0.2 and read as "too faint": a light
+                            // fill wash plus a full-strength accent border,
+                            // so the lead reads as the distinct focus ring.
                             if cx.theme().list.active_highlight {
                                 this.border_color(gpui::transparent_white()).child(
                                     div()
@@ -2138,12 +2146,12 @@ where
                                         .right(px(0.))
                                         .bottom(px(-1.))
                                         .absolute()
-                                        .bg(cx.theme().table_active)
+                                        .bg(crate::selection_colors::fill(cx))
                                         .border_1()
-                                        .border_color(cx.theme().table_active_border),
+                                        .border_color(crate::selection_colors::strong(cx)),
                                 )
                             } else {
-                                this.bg(cx.theme().accent)
+                                this.bg(crate::selection_colors::strong(cx))
                             }
                         })
                     })

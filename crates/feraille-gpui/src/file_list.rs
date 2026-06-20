@@ -657,8 +657,14 @@ impl TableDelegate for FileListDelegate {
         // EXCEPT the lead — the Table primitive draws its own
         // `selected_row` overlay on the lead, which serves as the
         // distinct focus ring spec §2.3 calls for.
+        //
+        // Uses the shared `selection_colors` wash (the saturated blue the
+        // grid uses) rather than the theme's `table_active`, which is a
+        // desaturated gray the theme hard-caps at alpha ≤ 0.2 and read as
+        // "too faint" next to the grid. Members get the fill only; the
+        // lead's full-strength focus ring is the contiguous-block divider.
         if in_set && !is_lead {
-            row = row.bg(cx.theme().table_active);
+            row = row.bg(crate::selection_colors::fill(cx));
         }
         // OS drag-out: GPUI's macOS backend recognises ExternalPaths
         // and uses NSFilePromise / NSPasteboard, so dragging rows to

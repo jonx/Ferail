@@ -20,6 +20,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{Axis, *};
 use gpui_component::{
     ActiveTheme, Icon, Root, Theme, ThemeMode,
+    color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
     setting::{SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
 };
 
@@ -267,21 +268,59 @@ pub struct SettingsView {
     /// click, which would otherwise pile up sync I/O on the UI
     /// thread. `None` when `$HOME` is unset (sandbox / CI).
     home_hidden_count: Option<usize>,
+    /// The Appearance page's selection-color picker. A `ColorPicker` is
+    /// a stateful entity (focus / popup / HSL sliders), so the view owns
+    /// one and re-renders a stateless `ColorPicker` element over it each
+    /// frame. A subscription set up in [`SettingsView::new`] persists +
+    /// pushes each change into the live `SelectionAccent` global.
+    selection_picker: Entity<ColorPickerState>,
 }
 
 impl SettingsView {
-    pub fn new(initial: SettingsCategory) -> Self {
+    pub fn new(initial: SettingsCategory, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // Seed the picker from the persisted color (works even on the
+        // standalone settings-window boot path, where no Shell has
+        // seeded the live global yet), falling back to the live accent.
+        let initial_color = app_state::load()
+            .selection_color
+            .as_deref()
+            .and_then(crate::selection_colors::parse_hex)
+            .unwrap_or_else(|| crate::selection_colors::accent(cx));
+        let selection_picker =
+            cx.new(|cx| ColorPickerState::new(window, cx).default_value(initial_color));
+
+        // Push every change straight into the live global (open windows
+        // repaint at once, like the thumbnail toggle) and persist it.
+        cx.subscribe(
+            &selection_picker,
+            |_this, _picker, event: &ColorPickerEvent, cx| {
+                let ColorPickerEvent::Change(color) = event;
+                cx.set_global(crate::selection_colors::SelectionAccent(*color));
+                persist_selection_color(*color);
+            },
+        )
+        .detach();
+
         Self {
             category: initial,
             home_hidden_count: count_home_hidden_items(),
+            selection_picker,
         }
     }
+}
+
+fn persist_selection_color(color: Option<Hsla>) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        selection_color: color.map(crate::selection_colors::to_hex),
+        ..existing
+    });
 }
 
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Settings::new("feraille-settings")
-            .pages(build_pages(self.home_hidden_count))
+            .pages(build_pages(self.home_hidden_count, &self.selection_picker))
             .default_selected_index(SelectIndex {
                 page_ix: self.category.page_index(),
                 group_ix: None,
@@ -300,7 +339,7 @@ pub fn open_settings_window(cx: &mut App) {
     };
     cx.spawn(async move |cx| {
         cx.open_window(opts, |window, cx| {
-            let view = cx.new(|_| SettingsView::new(SettingsCategory::Appearance));
+            let view = cx.new(|cx| SettingsView::new(SettingsCategory::Appearance, window, cx));
             cx.new(|cx| Root::new(view, window, cx))
         })
         .expect("failed to open settings window");
@@ -398,9 +437,12 @@ fn dropdown_setting(
     })
 }
 
-fn build_pages(home_hidden_count: Option<usize>) -> Vec<SettingPage> {
+fn build_pages(
+    home_hidden_count: Option<usize>,
+    selection_picker: &Entity<ColorPickerState>,
+) -> Vec<SettingPage> {
     vec![
-        appearance_page(),
+        appearance_page(selection_picker.clone()),
         files_page(home_hidden_count),
         search_dupes_page(),
         layout_page(),
@@ -538,7 +580,7 @@ fn search_dupes_page() -> SettingPage {
         )
 }
 
-fn appearance_page() -> SettingPage {
+fn appearance_page(selection_picker: Entity<ColorPickerState>) -> SettingPage {
     SettingPage::new("Appearance")
         .icon(Icon::empty().path("icons/palette.svg"))
         .group(
@@ -555,6 +597,26 @@ fn appearance_page() -> SettingPage {
                 )
                 .layout(Axis::Vertical)
                 .description("Match the system, or pick a side."),
+            ),
+        )
+        .group(
+            SettingGroup::new().title("Selection").item(
+                // The picker is a stateful entity owned by `SettingsView`;
+                // here we render a fresh stateless `ColorPicker` over it
+                // each frame. Changes flow through the entity's
+                // `ColorPickerEvent::Change` subscription (set up in
+                // `SettingsView::new`), which updates the live global and
+                // persists — so the file list and grid recolor at once.
+                SettingItem::new(
+                    "Selection color",
+                    SettingField::render(move |_options, _window, _cx| {
+                        ColorPicker::new(&selection_picker).into_any_element()
+                    }),
+                )
+                .description(
+                    "The highlight behind selected files in the list and grid. \
+                     Clear it to follow the theme's blue.",
+                ),
             ),
         )
 }

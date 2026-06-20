@@ -7,6 +7,60 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-20 unified selection color (list ⇄ grid) + customizable accent (in progress)
+
+The list pane's selection read as "too faint" next to the grid. Verified the
+cause: the grid keys selection off the saturated Finder `theme.blue` (0.14 wash
++ 0.55 border + solid label pill), but the list draws selection with
+`theme.table_active`, which the gpui-component theme **hard-caps at alpha ≤ 0.2**
+(`schema.rs:670`) and is a desaturated near-foreground gray. So the list could
+never match the grid no matter what.
+
+## Plan (approved 2026-06-20, both decisions locked with user)
+
+- **One source of truth, `crate::selection_colors`.** A `SelectionAccent(
+  Option<Hsla>)` process-wide `Global` (same pattern as `grid::IconSize` /
+  `thumbnails::ShowThumbnails`), seeded from `app_state` at startup. `accent(cx)`
+  returns the user override or falls back to `theme.blue`. Derived helpers
+  (`fill` 0.14, `member_fill` 0.14, `border` 0.55, `strong` full, `text` white)
+  are the **exact opacities the grid already used** — so the grid is visually
+  unchanged and the list now matches it.
+- Grid (`shell::render`), list members (`file_list::render_tr`), and the list
+  lead overlay (`multi_table::state::render_table_row`) all read these helpers
+  instead of inline `theme.blue` / `theme.table_active`.
+- **Customization (user chose "also add the picker", not just the seam):**
+  `app_state` persists `selection_color` as a hex string; the Appearance
+  settings page gets a gpui-component `ColorPicker` that sets the global live
+  (open windows repaint at once, like the thumbnail toggle) and persists the
+  hex. `ColorPickerState` is a stateful entity, so `SettingsView` owns one and
+  subscribes to `ColorPickerEvent::Change`; `SettingsView::new` gains
+  `window/cx` (3 call sites).
+
+## Decisions
+
+- **List is not a literal pixel-copy of the grid (user chose "exact grid
+  parity" on opacities).** Grid cells have gaps so the grid borders *every*
+  selected cell; list rows are contiguous, where per-member borders would paint
+  internal horizontal lines through a multi-selection. So: lead row = `fill`
+  bg + full-strength `strong` border (the focus ring, mirroring the grid lead);
+  non-lead members = `fill` bg only. The visible jump from faint to clear comes
+  mostly from the hue + the full-blue lead border (the old lead border was the
+  faint `table_active_border`).
+- **Edited the vendored `multi_table` directly** rather than keeping it
+  pristine — it's already app-customized (drag-delay behavior) and
+  `FileListDelegate` is its only delegate, so the change can't leak to another
+  table.
+- **Persist as hex**, not raw HSLA floats — matches the flat key=value
+  `app_state` format and what `ColorPicker` already speaks (`to_hex` /
+  `parse_hex`).
+
+## With more time
+
+- Separate accents for selection-fill vs. lead/highlight (a louder focus ring).
+- "Reset to theme default" on the picker row.
+- Heavier list-lead fill than the grid (no label pill carries color on a flat
+  row); kept parity per the user's choice — the most likely follow-up tweak.
+
 # 2026-06-20 Tool Result Surfaces (landed)
 
 Search, Duplicate Finder, and docked Disk Usage now share a tab-local result

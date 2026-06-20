@@ -509,7 +509,7 @@ pub fn run(args: Args) -> Result<()> {
                     } else if let Some(page) = settings_page.as_deref() {
                         let cat =
                             category_from_arg(if page.is_empty() { None } else { Some(page) });
-                        let view = cx.new(|_| SettingsView::new(cat));
+                        let view = cx.new(|cx| SettingsView::new(cat, window, cx));
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else {
                         let process = crate::process_state::process_state(cx);

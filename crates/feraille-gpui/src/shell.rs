@@ -679,6 +679,14 @@ impl Shell {
                 .icon_size
                 .unwrap_or(crate::grid::DEFAULT_ICON_SIZE),
         )));
+        // Seed the live selection accent (file list + grid share it).
+        // `None` ⇒ the helpers fall back to the theme's blue.
+        cx.set_global(crate::selection_colors::SelectionAccent(
+            persisted
+                .selection_color
+                .as_deref()
+                .and_then(crate::selection_colors::parse_hex),
+        ));
         // FERAILLE_UI_SCALE env var (regression tool / screenshots)
         // wins over the persisted value when set. Both are clamped.
         let ui_scale = std::env::var("FERAILLE_UI_SCALE")
