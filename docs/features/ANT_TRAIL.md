@@ -15,8 +15,9 @@ Feraille currently has:
 - Startup hydration of visits and recents from the metadata DB.
 - Navigation-commit recording with async DB write-through.
 - Log-scaled heat normalization.
-- Heat tinting in the file list/grid for visited directories, with a
-  customizable base color (Settings → Appearance → Ant Trail).
+- Heat tinting in the file list/grid for visited directories, with a master
+  on/off switch and a customizable base color (Settings → Appearance → Ant
+  Trail).
 - Recents sidebar section backed by the same visit log.
 - Remove-from-Recents and Clear-Recents actions; these intentionally clear the
   matching Ant Trail heat because the signal is shared.
@@ -81,6 +82,10 @@ Both knobs live in **Settings → Appearance → Ant Trail** and are backed by
 [`crate::ant_trail`] (process-wide `gpui::Global`s, the same live-update pattern
 as the selection accent):
 
+- **Show Ant Trail** (default on) — the master switch, `ant_trail_enabled` in
+  `app_state`, surfaced live as `ant_trail::AntTrailEnabled`. When off, the list
+  and grid skip the heat tint (`ant_trail::enabled(cx)` gates both render sites),
+  but visits are still recorded — Recents and future prediction keep working.
 - **Ant Trail color** — the base hue of the heat tint. Stored as a
   `#RRGGBB(AA)` hex in `app_state` (`ant_trail_color`); the picked alpha is
   ignored because per-folder heat drives the tint's translucency

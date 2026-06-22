@@ -54,6 +54,24 @@ pub fn tint(base: Hsla, heat: f32) -> Hsla {
     base.alpha((heat * 0.30).clamp(0.0, 1.0))
 }
 
+/// Master switch for the heat tint. Default `true`. When off, the list
+/// and grid skip the tint entirely — some find the colored rows noisy —
+/// but visits are still recorded, so Recents (and future prediction)
+/// keep working. Set live by the Appearance settings toggle; read during
+/// render so flipping it repaints open windows at once.
+#[derive(Clone, Copy)]
+pub struct AntTrailEnabled(pub bool);
+
+impl gpui::Global for AntTrailEnabled {}
+
+/// Whether the heat tint is painted. Defaults to `true` when the global
+/// hasn't been seeded yet.
+pub fn enabled(cx: &App) -> bool {
+    cx.try_global::<AntTrailEnabled>()
+        .map(|g| g.0)
+        .unwrap_or(true)
+}
+
 // Hex round-trip for persistence + the settings picker reuses
 // `selection_colors::{parse_hex, to_hex}` so the `Colorize` import and
 // the `#RRGGBB(AA)` format live in one place.

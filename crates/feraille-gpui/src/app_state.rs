@@ -51,6 +51,10 @@ pub struct AppState {
     /// Recents sidebar section disclosure state. None == never set
     /// (defaults to expanded).
     pub recents_collapsed: Option<bool>,
+    /// Whether the Ant Trail heat tint is painted at all. `None` ==
+    /// never set (defaults to `true`). Off hides the tint but still
+    /// records visits, so Recents keeps working. See [`crate::ant_trail`].
+    pub ant_trail_enabled: Option<bool>,
     /// Ant Trail base tint, as a `#RRGGBB(AA)` hex string (same format
     /// as `selection_color`). `None` == never set, in which case the
     /// list and grid fall back to the original warm orange. The alpha
@@ -201,6 +205,9 @@ pub fn load() -> AppState {
             "recents_collapsed" => {
                 out.recents_collapsed = parse_bool(val);
             }
+            "ant_trail_enabled" => {
+                out.ant_trail_enabled = parse_bool(val);
+            }
             "ant_trail_color" => {
                 // Same hex guard as `selection_color` so a garbage value
                 // can't poison the live tint global at startup.
@@ -304,6 +311,9 @@ pub fn save(state: &AppState) {
     }
     if let Some(b) = state.recents_collapsed {
         s.push_str(&format!("recents_collapsed={b}\n"));
+    }
+    if let Some(b) = state.ant_trail_enabled {
+        s.push_str(&format!("ant_trail_enabled={b}\n"));
     }
     if let Some(c) = &state.ant_trail_color {
         s.push_str(&format!("ant_trail_color={c}\n"));

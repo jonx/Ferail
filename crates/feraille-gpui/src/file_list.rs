@@ -764,11 +764,11 @@ impl TableDelegate for FileListDelegate {
                     }),
                 );
         }
-        if kind_is_dir && heat > 0.0 {
+        if kind_is_dir && heat > 0.0 && crate::ant_trail::enabled(cx) {
             // Customizable base tint, scaled by heat. Stable hue across
             // light/dark themes (it's a solid color, not a theme color
-            // whose alpha would compound in dark mode). See
-            // `crate::ant_trail`.
+            // whose alpha would compound in dark mode). Suppressed when
+            // the Ant Trail is disabled. See `crate::ant_trail`.
             row = row.bg(crate::ant_trail::tint(crate::ant_trail::base(cx), heat));
         }
         // Spec §2 multi-select fill. Painted for every set member

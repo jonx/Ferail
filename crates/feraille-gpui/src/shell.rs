@@ -692,6 +692,10 @@ impl Shell {
                 .as_deref()
                 .and_then(crate::selection_colors::parse_hex),
         ));
+        // Seed the Ant Trail master switch. Default true (tint on).
+        cx.set_global(crate::ant_trail::AntTrailEnabled(
+            persisted.ant_trail_enabled.unwrap_or(true),
+        ));
         // Seed the live Ant Trail tint (list + grid share it). `None` ⇒
         // the original warm orange via `ant_trail::default_base`.
         cx.set_global(crate::ant_trail::AntTrailColor(

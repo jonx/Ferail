@@ -732,9 +732,11 @@ impl Shell {
         let pill_fg = crate::selection_colors::text(cx);
         let sel_bg = crate::selection_colors::fill(cx);
         let sel_border = crate::selection_colors::border(cx);
-        // Ant Trail base tint, read once outside the per-cell loop (the
-        // cell `.when` closures can't reach `cx`). See `crate::ant_trail`.
+        // Ant Trail base tint + master switch, read once outside the
+        // per-cell loop (the cell `.when` closures can't reach `cx`).
+        // See `crate::ant_trail`.
         let ant_base = crate::ant_trail::base(cx);
+        let ant_enabled = crate::ant_trail::enabled(cx);
         // Favorite-star tint (mirrors the list row's `theme.primary`)
         // and the gate for the crowding-prone adornments at small sizes.
         let star_color = theme.primary;
@@ -916,7 +918,7 @@ impl Shell {
                         // Ant Trail heat tint behind unselected directory
                         // cells (selection bg wins when both apply). Stable
                         // warm hue across themes — same recipe as the row.
-                        .when(!selected && cell_is_dir && heat > 0.0, |d| {
+                        .when(ant_enabled && !selected && cell_is_dir && heat > 0.0, |d| {
                             d.bg(crate::ant_trail::tint(ant_base, heat))
                         })
                         // Keep border width constant (border_1 everywhere) so

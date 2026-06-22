@@ -352,6 +352,14 @@ fn persist_ant_trail_color(color: Option<Hsla>) {
     });
 }
 
+fn persist_ant_trail_enabled(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        ant_trail_enabled: Some(value),
+        ..existing
+    });
+}
+
 fn persist_exclude_favorites_from_tracking(value: bool) {
     let existing = app_state::load();
     app_state::save(&AppState {
@@ -673,6 +681,27 @@ fn appearance_page(
         .group(
             SettingGroup::new()
                 .title("Ant Trail")
+                .item(
+                    SettingItem::new(
+                        "Show Ant Trail",
+                        // Master switch. Persists *and* updates the live
+                        // global so the tint appears/vanishes in open
+                        // windows without a relaunch.
+                        SettingField::switch(
+                            |cx: &App| crate::ant_trail::enabled(cx),
+                            |val: bool, cx: &mut App| {
+                                persist_ant_trail_enabled(val);
+                                cx.set_global(crate::ant_trail::AntTrailEnabled(val));
+                            },
+                        )
+                        .default_value(true),
+                    )
+                    .description(
+                        "Tint your most-visited folders so the ones you open most stand out. \
+                         Off hides the tint entirely \u{2014} your visit history still feeds \
+                         Recents.",
+                    ),
+                )
                 .item(
                     // Same owned-picker pattern as Selection above; the
                     // entity's `ColorPickerEvent::Change` subscription
