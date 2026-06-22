@@ -13,6 +13,7 @@
 //! overlay-click / focus-trap come for free (same primitive as the About
 //! box). Editing is layered on top in a later pass; today the panel reads.
 
+use crate::text::TextScale as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -572,7 +573,7 @@ impl Render for EntryInfoView {
         let sections = match &self.state {
             GatherState::Loading => v_flex().child(
                 div()
-                    .text_sm()
+                    .text_scale_sm()
                     .text_color(muted)
                     .child("Gathering details\u{2026}"),
             ),
@@ -604,19 +605,19 @@ impl Render for EntryInfoView {
         }
         let mut header = v_flex().gap_0p5().child(
             div()
-                .text_lg()
+                .text_scale_lg()
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(name_hazard_element(&self.name, "popup-name")),
         );
         if let Some(warn) = name_hazard_warning(&self.name) {
             header = header.child(
                 div()
-                    .text_xs()
+                    .text_scale_xs()
                     .text_color(gpui::rgb(0xC2410C))
                     .child(format!("\u{26A0} {warn}")),
             );
         }
-        let header = header.child(div().text_xs().text_color(muted).child(self.kind.clone()));
+        let header = header.child(div().text_scale_xs().text_color(muted).child(self.kind.clone()));
 
         v_flex()
             .key_context(ENTRY_INFO_CONTEXT)
@@ -654,7 +655,7 @@ impl EntryInfoView {
     ) -> Div {
         let mut block = v_flex().gap_1().child(
             div()
-                .text_xs()
+                .text_scale_xs()
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(muted)
                 .child(section.title.clone()),
@@ -682,7 +683,7 @@ impl EntryInfoView {
                 div()
                     .w(px(96.0))
                     .flex_none()
-                    .text_xs()
+                    .text_scale_xs()
                     .text_color(muted)
                     .text_right()
                     .child(label.to_string()),
@@ -690,7 +691,7 @@ impl EntryInfoView {
             .child(
                 div()
                     .flex_1()
-                    .text_xs()
+                    .text_scale_xs()
                     .child(self.render_value(value, ix, cx)),
             )
     }
@@ -701,6 +702,7 @@ impl EntryInfoView {
             InfoValue::Toggle { on, attr } => {
                 let attr = *attr;
                 Checkbox::new(ElementId::Name(format!("entry-info-tog-{ix}").into()))
+                    .xsmall()
                     .checked(*on)
                     .on_click(cx.listener(move |this, checked: &bool, window, cx| {
                         this.apply_toggle(attr, *checked, window, cx);
@@ -789,7 +791,7 @@ impl EntryInfoView {
             let mut row = h_flex().gap_2().items_center().child(
                 div()
                     .w(px(44.0))
-                    .text_xs()
+                    .text_scale_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(label),
             );
@@ -802,6 +804,10 @@ impl EntryInfoView {
                 let base = m.clone();
                 row = row.child(
                     Checkbox::new(ElementId::Name(format!("perm-{ci}-{bit}").into()))
+                        // Match the dense token-xs labels around it; the
+                        // component default (Medium) renders the r/w/x
+                        // letters oversized.
+                        .xsmall()
                         .label(label)
                         .checked(on)
                         .on_click(cx.listener(move |this, checked: &bool, window, cx| {
@@ -824,7 +830,7 @@ impl EntryInfoView {
         }
         grid.child(
             div()
-                .text_xs()
+                .text_scale_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(m.symbolic()),
         )

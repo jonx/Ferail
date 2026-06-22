@@ -13,6 +13,7 @@
 //! `disk_usage_state` did. Cancellation is cooperative via
 //! `AtomicBool`.
 
+use crate::text::TextScale as _;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -645,7 +646,7 @@ impl DiskUsageView {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_sm()
+                            .text_scale_sm()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.foreground)
                             .child(SharedString::from(title)),
@@ -689,7 +690,7 @@ impl DiskUsageView {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_xs()
+                            .text_scale_xs()
                             .text_color(theme.muted_foreground)
                             .child(SharedString::from(summary)),
                     )
@@ -764,7 +765,7 @@ impl DiskUsageView {
                             )
                             .child(
                                 div()
-                                    .text_xs()
+                                    .text_scale_xs()
                                     .text_color(theme.muted_foreground)
                                     .child(SharedString::from(label)),
                             ),
@@ -816,7 +817,7 @@ impl DiskUsageView {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_xs()
+                            .text_scale_xs()
                             .text_color(if selected {
                                 theme.accent_foreground
                             } else {
@@ -827,7 +828,7 @@ impl DiskUsageView {
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_xs()
+                            .text_scale_xs()
                             .text_color(if selected {
                                 theme.accent_foreground.opacity(0.82)
                             } else {
@@ -851,7 +852,7 @@ impl DiskUsageView {
                     .py_2()
                     .border_b_1()
                     .border_color(theme.border)
-                    .text_xs()
+                    .text_scale_xs()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.muted_foreground)
                     .child("Largest files"),
@@ -869,7 +870,7 @@ impl DiskUsageView {
                             div()
                                 .px_2()
                                 .py_2()
-                                .text_xs()
+                                .text_scale_xs()
                                 .text_color(theme.muted_foreground)
                                 .child("No matching files yet"),
                         )
@@ -919,7 +920,7 @@ impl DiskUsageView {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_scale_xs()
                         .text_color(if selected {
                             theme.accent_foreground
                         } else {
@@ -955,7 +956,7 @@ impl DiskUsageView {
                 div()
                     .max_w(px(360.0))
                     .truncate()
-                    .text_xs()
+                    .text_scale_xs()
                     .text_color(theme.muted_foreground)
                     .child(SharedString::from(selection)),
             )
@@ -1022,7 +1023,7 @@ impl DiskUsageView {
                     .py_1()
                     .child(
                         div()
-                            .text_xs()
+                            .text_scale_xs()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgba(0xFFFFFFEE))
                             .child(SharedString::from(name)),
@@ -1030,7 +1031,7 @@ impl DiskUsageView {
                     .when(show_size, |this| {
                         this.child(
                             div()
-                                .text_xs()
+                                .text_scale_xs()
                                 .text_color(rgba(0xFFFFFFAA))
                                 .child(SharedString::from(size)),
                         )

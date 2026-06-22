@@ -15,6 +15,7 @@
 //! selection writes through the same path `Reset Icon` uses, no fragile
 //! context state.
 
+use crate::text::TextScale as _;
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Root, Sizable, h_flex,
@@ -123,7 +124,7 @@ impl Render for IconPickerView {
                         div()
                             .w_full()
                             .text_center()
-                            .text_xs()
+                            .text_scale_xs()
                             .text_color(theme.muted_foreground)
                             .truncate()
                             .child(name),
@@ -157,7 +158,7 @@ impl Render for IconPickerView {
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_xs()
+                            .text_scale_xs()
                             .text_color(theme.muted_foreground)
                             .child(count_label),
                     ),

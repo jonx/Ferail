@@ -167,6 +167,61 @@ Disk Usage opens as a separate GPUI window. Scanning is performed by
 `NativeFs::scan_disk_usage`; aggregation and layout live in
 `feraille-disk-usage`.
 
+## Typography And UI Scale
+
+Division of labour: the **gpui-component theme** (`cx.theme()`) owns colors
+and the **base font size** (`theme.font_size`, default 16px — the rem base
+that `Root::render` pumps into the window `rem_size` every frame). It does
+*not* provide a named multi-tier type scale for chrome — only that one base
+plus per-widget `Sizable` tiers. `feraille-design` fills that gap: a named
+scale layered on top of the theme's rem base.
+
+All chrome text is sized through that one design-token scale — never gpui's
+raw `.text_xs()` / `.text_sm()` Tailwind helpers. Those bake in a looser
+scale that can't be retuned in one place and silently drift whenever a
+component defaults to a different tier (that is how the Get Info permission
+grid ended up rendering its `r`/`w`/`x` labels oversized).
+
+- **Source of truth:** `feraille_design::TextTokens::BASE` — six tiers
+  (`xxs` 10, `xs` 11, `sm` 12, `md` 13, `lg` 15, `xl` 18 logical px; a dense
+  Zed-aligned scale). Retune the whole app by editing those six numbers.
+- **Applied via:** the `crate::text::TextScale` extension trait. Use
+  `.text_scale_xs()` … `.text_scale_xl()` (or `.text_token(TextSize::…)`)
+  anywhere you would reach for `.text_xs()`. It sets the font size
+  **rem-relative** (`token_px / 16`), so it cascades exactly like gpui's
+  helpers.
+- **UI zoom:** `Shell::ui_scale` (Cmd+= / Cmd+- / Cmd+0, persisted) feeds the
+  framework's own hook — `Shell::apply_ui_zoom` writes
+  `theme.font_size = 16 * ui_scale`, and `Root` copies that into the window
+  rem size each frame. Because every text size is rem-relative the whole
+  window scales together, **including Root-level overlays** (notifications,
+  dialogs) — which a `set_rem_size` confined to the shell subtree would miss.
+  Re-applied after a `Theme::change` (appearance flip can reset the base).
+  `ui_scale == 1.0` is the gpui default, a no-op. Fixed-px *layout* scaling
+  (pane widths, row heights) is still TODO.
+- **gpui-component widgets** (Checkbox, Button, Switch, …) carry their own
+  text via the `Sizable` trait, not the tokens. Size them to match the dense
+  scale — `.xsmall()` inline with body text, `.small()` in dialogs — instead
+  of leaving the `Medium` (16px) default. `Sizable` is also rem-relative, so
+  these zoom too.
+- **Chrome icons** scale with text via the `crate::text::IconScale` trait:
+  `gpui::svg(…).icon_px(24.0)` sizes a glyph rem-relative (its `px` is the
+  size at `ui_scale == 1`), so the sidebar icons, the cloud/star/eject
+  accessories, and the file-list badges grow with zoom. gpui-component's
+  `Icon` already inherits the rem-scaled ambient font size unless given an
+  explicit `with_size(px(…))` — the one such site (sidebar locations)
+  pre-multiplies by `ui_scale` instead, since `Size` is px-only.
+- **Exceptions kept on explicit `px`:** glyph affordances pinned to a
+  fixed-size box (disclosure triangles, the favorites `+`, the viewer seek
+  grip); the code-block preview font (a separate "content font" axis, cf.
+  Zed's buffer vs UI font); grid thumbnails + their overlay badges (their own
+  icon-size axis — the size slider); and the drag-ghost chip. These are
+  deliberately outside the UI scale.
+
+**Rule for new code:** size chrome text with `text_scale_*` / `text_token`,
+chrome icons with `icon_px`, component widgets with `Sizable`; never add a raw
+`.text_xs()` or a bare `px(N)` font/icon size for chrome.
+
 ## Context Menus And Native Actions
 
 Context menus use gpui-component menus where possible. Menu handlers set

@@ -963,8 +963,15 @@ impl ShellArgs {
                 });
             });
         }
-        if self.ui_scale.is_some() {
-            crate::log_warn!(90, "--ui-scale flag: UI zoom lands in Stage 9");
+        // UI zoom: the render path multiplies the window rem size by
+        // `ui_scale`, and all text is rem-relative through the design
+        // tokens, so this scales the whole UI. Clamp to the same range
+        // as the interactive Cmd+= / Cmd+- bindings.
+        if let Some(scale) = self.ui_scale {
+            shell.update(cx, |s, cx| {
+                s.ui_scale = scale.clamp(0.6, 2.0);
+                s.apply_ui_zoom(cx);
+            });
         }
         // Stage 5.c: push a toast notification via gpui-component's
         // built-in Notification primitive. The Root view renders the

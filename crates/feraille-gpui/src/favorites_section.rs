@@ -6,6 +6,7 @@
 //! built via `Shell::build_locations_menu` in `shell.rs`). Section-
 //! header collapse persists through `MetadataDb::favorites_section_collapsed`.
 
+use crate::text::{IconScale as _, TextScale as _};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -63,7 +64,7 @@ impl Render for FavoriteDragPayload {
             .border_1()
             .border_color(theme.border)
             .rounded(theme.radius)
-            .text_sm()
+            .text_scale_sm()
             .text_color(theme.sidebar_foreground)
             .child(self.label.clone())
     }
@@ -203,7 +204,7 @@ impl SidebarItem for FavoritesSection {
             .rounded(theme.radius)
             .h_8()
             .cursor_pointer()
-            .text_xs()
+            .text_scale_xs()
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(theme.sidebar_foreground.opacity(0.7))
             .child(
@@ -265,7 +266,7 @@ impl SidebarItem for FavoritesSection {
                 .pl_4()
                 .pr_2()
                 .py_1()
-                .text_xs()
+                .text_scale_xs()
                 .text_color(theme.muted_foreground.opacity(0.85))
                 .child("Drag folders here for quick access.")
                 .into_any_element()
@@ -387,27 +388,23 @@ fn render_favorite_row(
     let icon_el: AnyElement = match (&fav.custom_icon, &fav.target) {
         (Some(feraille_core::favorites::FavoriteIcon::Lucide(name)), _) => svg()
             .path(format!("icons/{name}.svg"))
-            .w(px(crate::tree::SIDEBAR_ICON_PX))
-            .h(px(crate::tree::SIDEBAR_ICON_PX))
+            .icon_px(crate::tree::SIDEBAR_ICON_PX)
             .text_color(theme.sidebar_foreground)
             .into_any_element(),
         (None, FavoriteTarget::Path(p)) => {
             let icon = icons.borrow_mut().folder_icon_for(p);
             img(icon)
-                .w(px(crate::tree::SIDEBAR_ICON_PX))
-                .h(px(crate::tree::SIDEBAR_ICON_PX))
+                .icon_px(crate::tree::SIDEBAR_ICON_PX)
                 .into_any_element()
         }
         (None, FavoriteTarget::SavedSearch(_)) => svg()
             .path("icons/nav/search.svg")
-            .w(px(crate::tree::SIDEBAR_ICON_PX))
-            .h(px(crate::tree::SIDEBAR_ICON_PX))
+            .icon_px(crate::tree::SIDEBAR_ICON_PX)
             .text_color(theme.sidebar_foreground)
             .into_any_element(),
         (None, FavoriteTarget::Tag(_)) => svg()
             .path("icons/nav/tag.svg")
-            .w(px(crate::tree::SIDEBAR_ICON_PX))
-            .h(px(crate::tree::SIDEBAR_ICON_PX))
+            .icon_px(crate::tree::SIDEBAR_ICON_PX)
             .text_color(theme.sidebar_foreground)
             .into_any_element(),
     };
@@ -428,7 +425,7 @@ fn render_favorite_row(
         .py_1()
         .gap_2()
         .items_center()
-        .text_sm()
+        .text_scale_sm()
         .rounded(theme.radius)
         .cursor_pointer()
         .opacity(row_opacity)
@@ -462,8 +459,7 @@ fn render_favorite_row(
     row = row.child(
         div()
             .flex_shrink_0()
-            .w(px(crate::tree::SIDEBAR_ICON_PX))
-            .h(px(crate::tree::SIDEBAR_ICON_PX))
+            .icon_px(crate::tree::SIDEBAR_ICON_PX)
             .child(icon_el),
     );
     row = row.child(
@@ -491,8 +487,7 @@ fn render_favorite_row(
     row = row.child(
         svg()
             .path(trailing_icon)
-            .w(px(11.0))
-            .h(px(11.0))
+            .icon_px(11.0)
             .text_color(trailing_color)
             .flex_shrink_0(),
     );
@@ -554,7 +549,7 @@ fn render_favorite_row(
                         } else if modifiers.platform {
                             shell.open_path_in_new_tab(path, window, cx);
                         } else {
-                            shell.navigate(path, cx);
+                            shell.navigate_from_favorite(path, cx);
                         }
                     }
                     other => {

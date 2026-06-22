@@ -9,6 +9,7 @@
 //! read-only visibility — answering "what is the app doing right
 //! now?".
 
+use crate::text::TextScale as _;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -60,7 +61,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
         .bg(theme_muted.opacity(0.06))
         .child(
             div()
-                .text_sm()
+                .text_scale_sm()
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(theme_fg)
                 .child(SharedString::from(header_text)),
@@ -70,7 +71,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
         div()
             .px_3()
             .py_3()
-            .text_xs()
+            .text_scale_xs()
             .text_color(theme_muted)
             .child(SharedString::from("No active tasks."))
             .into_any_element()
@@ -118,7 +119,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
-                                    .text_sm()
+                                    .text_scale_sm()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(theme_fg)
                                     .child(label),
@@ -126,7 +127,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                             .child(
                                 div()
                                     .flex_shrink_0()
-                                    .text_xs()
+                                    .text_scale_xs()
                                     .text_color(theme_muted)
                                     .child(SharedString::from(progress_text)),
                             )
@@ -141,7 +142,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                             .child(
                                 div()
                                     .flex_shrink_0()
-                                    .text_xs()
+                                    .text_scale_xs()
                                     .text_color(theme_muted)
                                     .child(SharedString::from(elapsed)),
                             ),
@@ -150,7 +151,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                         this.child(
                             div()
                                 .w_full()
-                                .text_xs()
+                                .text_scale_xs()
                                 .text_color(theme_muted)
                                 .child(SharedString::from(d)),
                         )
@@ -161,7 +162,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                                 .w_full()
                                 .min_w_0()
                                 .truncate()
-                                .text_xs()
+                                .text_scale_xs()
                                 .text_color(theme_muted.opacity(0.8))
                                 .child(SharedString::from(name)),
                         )
@@ -203,7 +204,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_xs()
+                            .text_scale_xs()
                             .text_color(glyph_color)
                             .child(SharedString::from(glyph)),
                     )
@@ -212,14 +213,14 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_xs()
+                            .text_scale_xs()
                             .text_color(theme_muted)
                             .child(SharedString::from(label)),
                     )
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_xs()
+                            .text_scale_xs()
                             .text_color(theme_muted.opacity(0.7))
                             .child(SharedString::from(humanize_secs(c.elapsed.as_secs()))),
                     )
@@ -234,7 +235,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                     div()
                         .px_3()
                         .py_1p5()
-                        .text_xs()
+                        .text_scale_xs()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme_muted)
                         .child(SharedString::from("Recent")),

@@ -23,6 +23,7 @@
 //!  - Platform (OS · arch), Author, clickable Website
 //!  - Copyright
 
+use crate::text::TextScale as _;
 use std::sync::Arc;
 
 use gpui::*;
@@ -172,18 +173,18 @@ struct WithTheme;
 impl WithTheme {
     fn wordmark() -> impl IntoElement {
         div()
-            .text_2xl()
+            .text_scale_xl()
             .font_weight(FontWeight::BOLD)
             .child("Feraille")
     }
     fn muted(s: impl Into<SharedString>) -> impl IntoElement {
-        div().text_xs().opacity(0.65).child(s.into())
+        div().text_scale_xs().opacity(0.65).child(s.into())
     }
     fn tagline(s: impl Into<SharedString>) -> impl IntoElement {
-        div().text_sm().child(s.into())
+        div().text_scale_sm().child(s.into())
     }
     fn copyright(s: impl Into<SharedString>) -> impl IntoElement {
-        div().text_xs().opacity(0.55).child(s.into())
+        div().text_scale_xs().opacity(0.55).child(s.into())
     }
 }
 
@@ -194,8 +195,8 @@ impl WithTheme {
 fn meta_row(label: &'static str, value: String) -> impl IntoElement {
     h_flex()
         .gap_2()
-        .child(div().text_xs().opacity(0.65).child(label))
-        .child(div().text_xs().child(value))
+        .child(div().text_scale_xs().opacity(0.65).child(label))
+        .child(div().text_scale_xs().child(value))
 }
 
 /// Website row. The value is clickable and routes through
@@ -203,12 +204,12 @@ fn meta_row(label: &'static str, value: String) -> impl IntoElement {
 fn website_row(url: &'static str) -> impl IntoElement {
     h_flex()
         .gap_2()
-        .child(div().text_xs().opacity(0.65).child("Website"))
+        .child(div().text_scale_xs().opacity(0.65).child("Website"))
         .child(
             div()
                 .id(ElementId::Name("about-website-link".into()))
                 .cursor_pointer()
-                .text_xs()
+                .text_scale_xs()
                 .underline()
                 .child(url)
                 .on_click(move |_: &ClickEvent, _window, _cx| {

@@ -55,7 +55,8 @@ The macOS feature spec in [feraille-windows-instances-tabs-spec.md](feraille-win
 crates/
 ├── feraille-core           Domain types, command catalogue, NodeId/FileEntry,
 │                           NodeStore. Zero platform deps.
-├── feraille-design         Shared visual constants. Mostly historical.
+├── feraille-design         Shared visual constants. `TextTokens` is now the
+│                           live type scale (see ARCHITECTURE Typography).
 ├── feraille-disk-usage     Pure disk-usage model + treemap layout. No I/O.
 ├── feraille-fs-native      std::fs backend + icons (NSWorkspace on Mac),
 │                           magic detection, disk-usage scanner, xattr

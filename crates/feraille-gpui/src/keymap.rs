@@ -411,5 +411,22 @@ pub(crate) fn install_extras(cx: &mut App) {
         // Colour adjustments popup (brightness / contrast / colour). Also
         // reachable by right-click on the stage or the toolbar button.
         KeyBinding::new("e", ViewerToggleAdjust, Some(VIEWER_CONTEXT)),
+        // -- Keyboard-layout alternates for the digit-based zoom keys --
+        // This build's gpui has no platform key-equivalents mapper, so
+        // bindings match the *character* a key produces, with no
+        // US-layout remapping (which is what lets ⌘0 work in native apps
+        // on a French keyboard). On AZERTY — and any layout where the
+        // number row needs Shift — pressing ⌘0 / ⌘1 physically emits
+        // `cmd-shift-0` / `cmd-shift-1`, so the catalogue's `cmd-0` never
+        // fires. Bind the shifted forms as alternates. Harmless on US
+        // layouts (no one presses ⌘⇧0); the catalogue keeps the canonical
+        // `cmd-0` so the menu/settings still read "⌘0". `=`/`+` get the
+        // same treatment for zoom-in; `-` is unshifted on these layouts
+        // so it already works.
+        KeyBinding::new("cmd-shift-0", ZoomReset, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("cmd-shift-=", ZoomIn, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("cmd-shift-0", ViewerZoomReset, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("cmd-shift-1", ViewerActualSize, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("cmd-shift-=", ViewerZoomIn, Some(VIEWER_CONTEXT)),
     ]);
 }

@@ -15,10 +15,13 @@ Feraille currently has:
 - Startup hydration of visits and recents from the metadata DB.
 - Navigation-commit recording with async DB write-through.
 - Log-scaled heat normalization.
-- Heat tinting in the file list/grid for visited directories.
+- Heat tinting in the file list/grid for visited directories, with a
+  customizable base color (Settings → Appearance → Ant Trail).
 - Recents sidebar section backed by the same visit log.
 - Remove-from-Recents and Clear-Recents actions; these intentionally clear the
   matching Ant Trail heat because the signal is shared.
+- A default-on "Don't track favorites" option that skips visit recording when a
+  folder is reached via its favorite (see [Customization](#customization)).
 
 The remaining work is prediction: using the heat signal to prewarm likely next
 folders and adding time decay/recency weighting once the data proves useful.
@@ -27,6 +30,10 @@ folders and adding time decay/recency weighting once the data proves useful.
 
 - Ant Trail records committed navigation, not mere hover.
 - Expanding/collapsing a tree node is not a visit.
+- Navigating *via a favorite* is, by default, not a visit — a favorite is a
+  deliberate shortcut, not organic browsing. Reaching the same folder any other
+  way still records. This is route-based, decided at the favorite-activation
+  site, and can be turned off (see [Customization](#customization)).
 - Reading heat for paint must be cheap and in-memory.
 - Persistence, decay, and prediction run outside paint.
 
@@ -42,6 +49,10 @@ On startup:
 
 On navigation commit:
 
+0. If the navigation came from a favorite and the "Don't track favorites"
+   setting is on (the default), stop here — no visit is recorded.
+   `Shell::navigate_from_favorite` gates the recording; every other route
+   falls through `Shell::navigate` and always records.
 1. Resolve the committed `NodeId` to a path at an action/job boundary.
 2. Increment the in-memory hit count.
 3. Promote the path to the front of Recents.
@@ -63,6 +74,25 @@ log2(visits + 1) / log2(max_visits + 1)
 ```
 
 That keeps one heavily used folder from washing out every other folder.
+
+## Customization
+
+Both knobs live in **Settings → Appearance → Ant Trail** and are backed by
+[`crate::ant_trail`] (process-wide `gpui::Global`s, the same live-update pattern
+as the selection accent):
+
+- **Ant Trail color** — the base hue of the heat tint. Stored as a
+  `#RRGGBB(AA)` hex in `app_state` (`ant_trail_color`); the picked alpha is
+  ignored because per-folder heat drives the tint's translucency
+  (`ant_trail::tint` *sets* alpha to `heat * 0.30`). Clearing the picker
+  (`None`) falls back to the original warm orange (`ant_trail::default_base`).
+  The list and grid read `ant_trail::base(cx)` during render, so editing the
+  color recolors open windows immediately.
+- **Don't track favorites** (default on) — `exclude_favorites_from_tracking` in
+  `app_state`, surfaced live as `ant_trail::ExcludeFavoritesFromTracking`. When
+  on, `Shell::navigate_from_favorite` skips `record_ant_visit`, which means the
+  folder neither gains Ant Trail heat nor enters Recents. Toggling it takes
+  effect on the next favorite click without a relaunch.
 
 ## Future Prediction
 

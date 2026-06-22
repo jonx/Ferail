@@ -16,6 +16,7 @@
 //! today it's a no-op placeholder — the popover lands in Stage 5.c
 //! alongside the toast surface.
 
+use crate::text::TextScale as _;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -167,7 +168,7 @@ pub fn render(
         .border_t_1()
         .border_color(theme_border)
         .bg(theme_secondary)
-        .text_xs()
+        .text_scale_xs()
         .text_color(theme_muted_fg)
         .child(div().flex_shrink_0().child(count_label))
         .when_some(task_label, |this, label| {

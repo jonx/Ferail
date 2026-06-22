@@ -5,6 +5,7 @@
 //! filterable by a top text-input. The state (visible flag + filter
 //! string) lives on `Shell`; this module is a pure render helper.
 
+use crate::text::TextScale as _;
 use feraille_core::commands::{Category, CommandSpec, Shortcut, all_commands};
 use gpui::*;
 use gpui_component::{
@@ -141,7 +142,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .gap_2()
         .child(
             div()
-                .text_lg()
+                .text_scale_lg()
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(foreground)
                 .child("Keyboard Shortcuts"),
@@ -245,7 +246,7 @@ fn section(
         .gap_1()
         .child(
             div()
-                .text_xs()
+                .text_scale_xs()
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(muted)
                 .child(title),
@@ -290,7 +291,7 @@ fn row(
     let title_color = if dispatchable { foreground } else { muted };
     let mut title = h_flex().flex_1().items_center().gap_2().child(
         div()
-            .text_sm()
+            .text_scale_sm()
             .text_color(title_color)
             .child(SharedString::from(spec.title)),
     );
@@ -299,7 +300,7 @@ fn row(
         // just look like a styling glitch.
         title = title.child(
             div()
-                .text_xs()
+                .text_scale_xs()
                 .text_color(muted)
                 .child(SharedString::from("\u{2014} unavailable here")),
         );

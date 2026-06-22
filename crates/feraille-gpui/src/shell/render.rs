@@ -1,3 +1,4 @@
+use crate::text::{IconScale as _, TextScale as _};
 use super::*;
 
 /// Minimum width for rendered-markdown preview content, so its prose
@@ -54,7 +55,7 @@ impl Render for TabDragPayload {
             .border_1()
             .border_color(theme.border)
             .rounded(theme.radius)
-            .text_sm()
+            .text_scale_sm()
             .text_color(theme.foreground)
             .child(self.label.clone())
     }
@@ -343,6 +344,9 @@ impl Shell {
                 .get_or_create_path_with_id(path.clone(), node_id);
             let active = path == current;
             let favorited = favs.contains_path(&path);
+            // In-memory lookup only — the iCloud probe ran off-thread at
+            // startup / volume refresh (ProcessState::cloud_locations).
+            let in_cloud = self.process.cloud_locations.borrow().contains(&path);
             let weak_for_click = weak.clone();
             let weak_for_menu = weak.clone();
             let path_for_menu = path.clone();
@@ -351,7 +355,10 @@ impl Shell {
                 .icon(
                     Icon::empty()
                         .path(loc.icon)
-                        .with_size(px(crate::tree::SIDEBAR_ICON_PX)),
+                        // gpui-component `Size` is px-only, so pre-multiply
+                        // by `ui_scale` to match the rem-scaled icons. (At
+                        // scale s: rems(24/16) * (16*s) == 24*s, identical.)
+                        .with_size(px(crate::tree::SIDEBAR_ICON_PX * self.ui_scale)),
                 )
                 .active(active)
                 .on_click(move |event, window, cx| {
@@ -384,18 +391,35 @@ impl Shell {
                         )
                         .menu("Copy Path", Box::new(CopyContextPath))
                 });
-            // §5: a Locations entry that's also a user Favorite gets the
-            // same trailing star treatment as everywhere else.
-            let item = if favorited {
-                item.suffix(|_, cx| {
+            // Trailing badges: a cloud for iCloud-synced Locations
+            // (Desktop / Documents under "Desktop & Documents Folders"),
+            // plus the §5 accent star when the entry is also a user
+            // Favorite. Cloud sits left of the star so the star stays
+            // the rightmost "favorited" marker, consistent with the file
+            // list, tree, and breadcrumb.
+            let item = if in_cloud || favorited {
+                item.suffix(move |_, cx| {
                     use gpui::svg;
-                    svg()
-                        .path("icons/nav/star.svg")
-                        .w(px(11.0))
-                        .h(px(11.0))
-                        .text_color(cx.theme().primary)
-                        .flex_shrink_0()
-                        .into_any_element()
+                    let mut badges = h_flex().items_center().gap_1();
+                    if in_cloud {
+                        badges = badges.child(
+                            svg()
+                                .path("icons/nav/cloud.svg")
+                                .icon_px(13.0)
+                                .text_color(cx.theme().muted_foreground)
+                                .flex_shrink_0(),
+                        );
+                    }
+                    if favorited {
+                        badges = badges.child(
+                            svg()
+                                .path("icons/nav/star.svg")
+                                .icon_px(11.0)
+                                .text_color(cx.theme().primary)
+                                .flex_shrink_0(),
+                        );
+                    }
+                    badges.into_any_element()
                 })
             } else {
                 item
@@ -590,7 +614,7 @@ impl Shell {
                 .p_8()
                 .child(
                     div()
-                        .text_lg()
+                        .text_scale_lg()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(cx.theme().foreground)
                         .child(copy.title),
@@ -598,7 +622,7 @@ impl Shell {
                 .child(
                     div()
                         .max_w(px(420.0))
-                        .text_sm()
+                        .text_scale_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(copy.body),
                 );
@@ -608,7 +632,7 @@ impl Shell {
                 pane = pane.child(
                     div()
                         .id("file-pane-error-settings-link")
-                        .text_sm()
+                        .text_scale_sm()
                         .text_color(cx.theme().primary)
                         .cursor_pointer()
                         .underline()
@@ -708,6 +732,9 @@ impl Shell {
         let pill_fg = crate::selection_colors::text(cx);
         let sel_bg = crate::selection_colors::fill(cx);
         let sel_border = crate::selection_colors::border(cx);
+        // Ant Trail base tint, read once outside the per-cell loop (the
+        // cell `.when` closures can't reach `cx`). See `crate::ant_trail`.
+        let ant_base = crate::ant_trail::base(cx);
         // Favorite-star tint (mirrors the list row's `theme.primary`)
         // and the gate for the crowding-prone adornments at small sizes.
         let star_color = theme.primary;
@@ -890,12 +917,7 @@ impl Shell {
                         // cells (selection bg wins when both apply). Stable
                         // warm hue across themes — same recipe as the row.
                         .when(!selected && cell_is_dir && heat > 0.0, |d| {
-                            d.bg(gpui::Rgba {
-                                r: 1.0,
-                                g: 0.55,
-                                b: 0.26,
-                                a: (heat * 0.30).clamp(0.0, 1.0),
-                            })
+                            d.bg(crate::ant_trail::tint(ant_base, heat))
                         })
                         // Keep border width constant (border_1 everywhere) so
                         // selection never nudges cell layout by a pixel.
@@ -960,7 +982,7 @@ impl Shell {
                                 .px(px(5.0))
                                 .py(px(1.0))
                                 .rounded(px(4.0))
-                                .text_xs()
+                                .text_scale_xs()
                                 .text_center()
                                 .truncate()
                                 .when(selected, |d| d.bg(label_pill).text_color(pill_fg))
@@ -1211,7 +1233,7 @@ impl Shell {
                 .py_1()
                 .rounded(theme.radius)
                 .cursor_pointer()
-                .text_sm()
+                .text_scale_sm()
                 .text_color(if is_active {
                     theme.foreground
                 } else {
@@ -1300,7 +1322,7 @@ impl Shell {
                     .id(("tab-close", idx))
                     .ml_1()
                     .px_1()
-                    .text_xs()
+                    .text_scale_xs()
                     .text_color(theme.muted_foreground)
                     .hover(|this| this.text_color(theme.foreground))
                     .child("x")
@@ -1357,7 +1379,7 @@ impl Shell {
                 .py_1()
                 .rounded(cx.theme().radius)
                 .cursor_pointer()
-                .text_sm()
+                .text_scale_sm()
                 .text_color(cx.theme().muted_foreground)
                 .hover(|this| this.bg(cx.theme().accent.opacity(0.10)))
                 .child("+")
@@ -1461,7 +1483,7 @@ impl Shell {
                 .child(
                     div()
                         .flex_shrink_0()
-                        .text_sm()
+                        .text_scale_sm()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(cx.theme().foreground)
                         .child("Feraille"),
@@ -1770,7 +1792,6 @@ impl Shell {
         use gpui_component::{
             Sizable as _,
             button::{Button, ButtonVariants as _},
-            description_list::{DescriptionItem, DescriptionList},
             scroll::Scrollbar,
             tooltip::Tooltip,
         };
@@ -1808,7 +1829,7 @@ impl Shell {
         }
 
         let header = div()
-            .text_xs()
+            .text_scale_xs()
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(cx.theme().muted_foreground)
             .child("Preview");
@@ -1819,7 +1840,7 @@ impl Shell {
                 .flex_1()
                 .items_center()
                 .justify_center()
-                .text_sm()
+                .text_scale_sm()
                 .text_color(cx.theme().muted_foreground)
                 .child("No selection")
                 .into_any_element(),
@@ -1904,7 +1925,7 @@ impl Shell {
                         .p_2()
                         .rounded(cx.theme().radius)
                         .bg(cx.theme().secondary.opacity(0.5))
-                        .text_xs();
+                        .text_scale_xs();
                     let block = if text.is_empty() {
                         block
                             .font_family("monospace")
@@ -2032,7 +2053,7 @@ impl Shell {
                             .h(px(200.0))
                             .rounded(cx.theme().radius)
                             .bg(cx.theme().secondary.opacity(0.5))
-                            .text_xs()
+                            .text_scale_xs()
                             .text_color(cx.theme().muted_foreground)
                             .child("Loading preview\u{2026}"),
                     );
@@ -2044,7 +2065,7 @@ impl Shell {
                 // highlighted with its own explanatory tooltip instead.
                 let name_header = div()
                     .id(("preview-name", entry.id.as_raw() as usize))
-                    .text_lg()
+                    .text_scale_lg()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(cx.theme().foreground);
                 let name_header = if feraille_core::name_hazards::has_hazards(&entry.name) {
@@ -2085,7 +2106,7 @@ impl Shell {
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
-                                    .text_xs()
+                                    .text_scale_xs()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(gpui::rgb(0xFF3B30))
                                     .child("Quarantined \u{00B7} Mark of the Web"),
@@ -2108,24 +2129,44 @@ impl Shell {
                     if let Some(q) = &entry.quarantine {
                         // where_from convention (both platforms): the
                         // first URL is the download source, the second
-                        // the referring page.
-                        let mut prov = DescriptionList::vertical().small().columns(1);
+                        // the referring page. Rendered as plain
+                        // `text_xs` label/value rows so the provenance
+                        // matches the Get Info rows directly above it.
+                        // (The gpui-component `DescriptionList` this
+                        // used before hardcodes its label at `text_sm`
+                        // and lets the value inherit the ambient size;
+                        // its `.small()`/`.xsmall()` knob only changes
+                        // gap + padding, not font size — so it always
+                        // rendered a notch larger than the rest of the
+                        // pane.)
+                        let muted = cx.theme().muted_foreground;
+                        let prov_row = |label: &str, value: AnyElement| {
+                            v_flex()
+                                .gap_0p5()
+                                .min_w_0()
+                                .child(
+                                    div()
+                                        .text_scale_xs()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(muted)
+                                        .child(label.to_string()),
+                                )
+                                .child(div().min_w_0().text_scale_xs().child(value))
+                        };
+                        let mut prov = v_flex().mt_1p5().gap_2();
                         let mut has_rows = false;
                         if let Some(src) = q.where_from.first() {
-                            prov = prov.child(
-                                DescriptionItem::new("Source").value(truncated_url_value(
-                                    "prov-source",
-                                    src,
-                                    entry.id,
-                                )),
-                            );
+                            prov = prov.child(prov_row(
+                                "Source",
+                                truncated_url_value("prov-source", src, entry.id),
+                            ));
                             has_rows = true;
                         }
                         if let Some(referrer) = q.where_from.get(1) {
-                            prov =
-                                prov.child(DescriptionItem::new("Referrer").value(
-                                    truncated_url_value("prov-referrer", referrer, entry.id),
-                                ));
+                            prov = prov.child(prov_row(
+                                "Referrer",
+                                truncated_url_value("prov-referrer", referrer, entry.id),
+                            ));
                             has_rows = true;
                         }
                         if q.agent.is_some() || q.downloaded_iso.is_some() {
@@ -2135,10 +2176,10 @@ impl Shell {
                                 (None, Some(t)) => t.clone(),
                                 (None, None) => unreachable!(),
                             };
-                            prov = prov.child(
-                                DescriptionItem::new("Downloaded via")
-                                    .value(SharedString::from(via)),
-                            );
+                            prov = prov.child(prov_row(
+                                "Downloaded via",
+                                div().child(SharedString::from(via)).into_any_element(),
+                            ));
                             has_rows = true;
                         }
                         if has_rows {
@@ -2322,14 +2363,14 @@ impl Shell {
                         .bg(cx.theme().accent.opacity(0.5))
                         .border_1()
                         .border_color(cx.theme().border)
-                        .text_xs()
+                        .text_scale_xs()
                         .text_color(cx.theme().foreground)
                         .child(summary),
                 )
                 .child(
                     div()
                         .px_1()
-                        .text_xs()
+                        .text_scale_xs()
                         .text_color(cx.theme().muted_foreground)
                         .child("in"),
                 );
@@ -2340,7 +2381,7 @@ impl Shell {
                 row = row.child(
                     div()
                         .px_1()
-                        .text_xs()
+                        .text_scale_xs()
                         .text_color(cx.theme().muted_foreground)
                         .child("\u{203A}"), // SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
                 );
@@ -2370,7 +2411,7 @@ impl Shell {
                 .px_2()
                 .py_1()
                 .rounded(cx.theme().radius)
-                .text_sm()
+                .text_scale_sm()
                 .flex()
                 .items_center()
                 .gap_1()
@@ -2387,8 +2428,7 @@ impl Shell {
                     this.child(
                         svg()
                             .path("icons/nav/star.svg")
-                            .w(px(11.0))
-                            .h(px(11.0))
+                            .icon_px(11.0)
                             .text_color(cx.theme().primary)
                             .flex_shrink_0(),
                     )
@@ -2500,6 +2540,10 @@ impl Render for Shell {
                 gpui_component::ThemeMode::Light
             };
             gpui_component::Theme::change(mode, Some(window), cx);
+            // `Theme::change` re-applies the theme config, which can
+            // reset the base font size — re-assert the current UI zoom
+            // so an appearance flip doesn't silently reset text scaling.
+            self.apply_ui_zoom(cx);
             // Keep native window chrome in step with the theme flip.
             crate::platform_shell::set_app_appearance(is_dark);
         }

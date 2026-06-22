@@ -16,6 +16,7 @@
 //!
 //! Internally everything below is now thin glue around the primitive.
 
+use crate::text::TextScale as _;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{Axis, *};
 use gpui_component::{
@@ -274,6 +275,11 @@ pub struct SettingsView {
     /// frame. A subscription set up in [`SettingsView::new`] persists +
     /// pushes each change into the live `SelectionAccent` global.
     selection_picker: Entity<ColorPickerState>,
+    /// The Appearance page's Ant Trail base-color picker. Same owned-
+    /// state pattern as `selection_picker`; its subscription updates the
+    /// live `AntTrailColor` global and persists each change, so the file
+    /// list and grid recolor at once.
+    ant_trail_picker: Entity<ColorPickerState>,
 }
 
 impl SettingsView {
@@ -301,10 +307,31 @@ impl SettingsView {
         )
         .detach();
 
+        // Ant Trail picker — same shape. Seed from the persisted hex,
+        // falling back to the original warm orange so an untouched
+        // profile shows the stock tint in the swatch.
+        let initial_trail = app_state::load()
+            .ant_trail_color
+            .as_deref()
+            .and_then(crate::selection_colors::parse_hex)
+            .unwrap_or_else(crate::ant_trail::default_base);
+        let ant_trail_picker =
+            cx.new(|cx| ColorPickerState::new(window, cx).default_value(initial_trail));
+        cx.subscribe(
+            &ant_trail_picker,
+            |_this, _picker, event: &ColorPickerEvent, cx| {
+                let ColorPickerEvent::Change(color) = event;
+                cx.set_global(crate::ant_trail::AntTrailColor(*color));
+                persist_ant_trail_color(*color);
+            },
+        )
+        .detach();
+
         Self {
             category: initial,
             home_hidden_count: count_home_hidden_items(),
             selection_picker,
+            ant_trail_picker,
         }
     }
 }
@@ -317,10 +344,30 @@ fn persist_selection_color(color: Option<Hsla>) {
     });
 }
 
+fn persist_ant_trail_color(color: Option<Hsla>) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        ant_trail_color: color.map(crate::selection_colors::to_hex),
+        ..existing
+    });
+}
+
+fn persist_exclude_favorites_from_tracking(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        exclude_favorites_from_tracking: Some(value),
+        ..existing
+    });
+}
+
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Settings::new("feraille-settings")
-            .pages(build_pages(self.home_hidden_count, &self.selection_picker))
+            .pages(build_pages(
+                self.home_hidden_count,
+                &self.selection_picker,
+                &self.ant_trail_picker,
+            ))
             .default_selected_index(SelectIndex {
                 page_ix: self.category.page_index(),
                 group_ix: None,
@@ -398,7 +445,7 @@ fn dropdown_setting(
                     .justify_between()
                     .items_center()
                     .gap_3()
-                    .child(div().flex_shrink_0().text_sm().text_color(fg).child(title))
+                    .child(div().flex_shrink_0().text_scale_sm().text_color(fg).child(title))
                     .child(
                         Button::new(SharedString::from(format!("dd-{title}")))
                             .label(current_label)
@@ -430,7 +477,7 @@ fn dropdown_setting(
             .child(
                 div()
                     .w_full()
-                    .text_sm()
+                    .text_scale_sm()
                     .text_color(muted)
                     .child(description),
             )
@@ -440,9 +487,10 @@ fn dropdown_setting(
 fn build_pages(
     home_hidden_count: Option<usize>,
     selection_picker: &Entity<ColorPickerState>,
+    ant_trail_picker: &Entity<ColorPickerState>,
 ) -> Vec<SettingPage> {
     vec![
-        appearance_page(selection_picker.clone()),
+        appearance_page(selection_picker.clone(), ant_trail_picker.clone()),
         files_page(home_hidden_count),
         search_dupes_page(),
         layout_page(),
@@ -580,7 +628,10 @@ fn search_dupes_page() -> SettingPage {
         )
 }
 
-fn appearance_page(selection_picker: Entity<ColorPickerState>) -> SettingPage {
+fn appearance_page(
+    selection_picker: Entity<ColorPickerState>,
+    ant_trail_picker: Entity<ColorPickerState>,
+) -> SettingPage {
     SettingPage::new("Appearance")
         .icon(Icon::empty().path("icons/palette.svg"))
         .group(
@@ -618,6 +669,54 @@ fn appearance_page(selection_picker: Entity<ColorPickerState>) -> SettingPage {
                      Clear it to follow the theme's blue.",
                 ),
             ),
+        )
+        .group(
+            SettingGroup::new()
+                .title("Ant Trail")
+                .item(
+                    // Same owned-picker pattern as Selection above; the
+                    // entity's `ColorPickerEvent::Change` subscription
+                    // (set up in `SettingsView::new`) updates the live
+                    // `AntTrailColor` global and persists.
+                    SettingItem::new(
+                        "Ant Trail color",
+                        SettingField::render(move |_options, _window, _cx| {
+                            ColorPicker::new(&ant_trail_picker).into_any_element()
+                        }),
+                    )
+                    .description(
+                        "The tint behind your most-visited folders in the list and grid. \
+                         Brightness still tracks visit frequency. Clear it for the stock orange.",
+                    ),
+                )
+                .item(
+                    SettingItem::new(
+                        "Don't track favorites",
+                        // Persists *and* updates the live policy global so
+                        // the change takes effect on the next favorite
+                        // click without a relaunch.
+                        SettingField::switch(
+                            |_cx: &App| {
+                                app_state::load()
+                                    .exclude_favorites_from_tracking
+                                    .unwrap_or(true)
+                            },
+                            |val: bool, cx: &mut App| {
+                                persist_exclude_favorites_from_tracking(val);
+                                cx.set_global(
+                                    crate::ant_trail::ExcludeFavoritesFromTracking(val),
+                                );
+                            },
+                        )
+                        .default_value(true),
+                    )
+                    .description(
+                        "When on, opening a folder from your Favorites doesn't count toward \
+                         its Ant Trail heat or add it to Recents \u{2014} so deliberate \
+                         shortcuts don't crowd out folders you actually browse to. Reaching \
+                         the same folder any other way still counts.",
+                    ),
+                ),
         )
 }
 
@@ -800,7 +899,7 @@ fn shortcuts_page() -> SettingPage {
                             .bg(theme.muted.opacity(0.6))
                             .border_1()
                             .border_color(theme.border)
-                            .text_xs()
+                            .text_scale_xs()
                             .text_color(theme.muted_foreground)
                             .child(SharedString::from(chord_for_render.clone())),
                     )
@@ -840,24 +939,24 @@ fn about_page() -> SettingPage {
                     .items_center()
                     .child(
                         div()
-                            .text_lg()
+                            .text_scale_lg()
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.foreground)
                             .child("Feraille"),
                     )
-                    .child(div().text_xs().text_color(theme.muted_foreground).child(
+                    .child(div().text_scale_xs().text_color(theme.muted_foreground).child(
                         SharedString::from(concat!("Version ", env!("CARGO_PKG_VERSION"))),
                     ))
                     .child(
                         div()
                             .mt_2()
-                            .text_sm()
+                            .text_scale_sm()
                             .text_color(theme.foreground)
                             .child("The macOS port of Ferail — a Finder-class file explorer."),
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_scale_xs()
                             .text_color(theme.muted_foreground)
                             .child("Built for speed, predictability, and a calm UI."),
                     )
@@ -1035,7 +1134,7 @@ fn theme_tile_body(pref: ThemePref) -> impl IntoElement {
                 // Strengthened active state — accent ring + check
                 // badge — applied as a wrapper around the label.
                 .child(active_state_decoration(pref))
-                .child(div().text_xs().child(pref.label())),
+                .child(div().text_scale_xs().child(pref.label())),
         )
 }
 

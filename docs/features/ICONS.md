@@ -39,6 +39,10 @@ file. **Consequence worth remembering:** a path like `icons/folder.svg` (no
   ~28 of them.
 - **Apple system icons** via `NSWorkspace iconForFile:` — Apple artwork,
   fetched at runtime, never redistributed. Folders/volumes only.
+- **[Bootstrap Icons](https://icons.getbootstrap.com)** — MIT License. One
+  glyph so far: `nav/cloud.svg` (filled-outline `cloud`), used because its cloud
+  reads more clearly than Lucide's lopsided one. Filled style (`fill="currentColor"`),
+  native `0 0 16 16` viewBox kept so the path scales correctly.
 
 If we ever ship a `LICENSE`/attribution bundle, Lucide's ISC notice covers both
 SVG bundles; Apache-2.0 covers the upstream crate.
@@ -154,7 +158,20 @@ All local, all Lucide-derived.
 | Pictures | `nav/pictures.svg` | `image` |
 
 Mounted **volumes** in the tree use `nav/drive.svg` (Lucide `hard-drive`) —
-[tree.rs](../../crates/feraille-gpui/src/tree.rs).
+[tree.rs](../../crates/feraille-gpui/src/tree.rs). Removable/external volume
+rows (`is_removable`, i.e. the boot disk never) also draw a **trailing**
+`nav/eject.svg` button (Lucide `eject`, local 1.75): clicking it unmounts the
+drive (`Shell::eject_path`) without opening the context menu, matching Finder.
+
+iCloud-synced Locations draw a **trailing** `nav/cloud.svg` badge (Bootstrap
+Icons filled `cloud`, `muted_foreground` — chosen over Lucide's lopsided cloud
+for a clearer read) — e.g. Desktop / Documents under
+"Desktop & Documents Folders" (render.rs `build_locations_menu`). Sync status is
+detected off-thread by `feraille_fs_native::path_is_cloud_synced`
+(`~/Library/Mobile Documents/` prefix **or** `NSURLIsUbiquitousItemKey`) and
+cached in `ProcessState::cloud_locations`, so render never touches the
+filesystem. When an entry is both synced and a Favorite, the cloud sits left of
+the trailing star.
 
 ## Toolbar / chrome / commands
 
@@ -283,7 +300,9 @@ issues in [TODO.md](../../TODO.md).
    star remains only the plain-path and trailing "favorited" marker.
 7. ✅ **`triangle-alert` reused for two states.** *Missing* keeps the warning
    triangle; *Unmounted* now uses `icons/circle-x.svg` ("disconnected"). A
-   dedicated eject glyph could replace circle-x later if we want a truer read.
+   dedicated `nav/eject.svg` now exists, but for the *action* of unmounting a
+   live removable volume (trailing button on Volumes rows) — distinct from
+   circle-x, which still marks a Favorite whose volume is gone.
 8. ✅ **PDF `<text>` render check.** Verified by screenshot that GPUI's SVG stack
    (usvg/resvg) **does** render the `<text>` "PDF" label crisply at row scale —
    no change needed. The other in-house glyphs (`show-desktop`, `apps`, `app`,

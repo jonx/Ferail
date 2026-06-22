@@ -89,6 +89,30 @@ the same change.** Specifically:
 - Add the new asset to the reference's inventory and command tables, note its
   origin/attribution, and record anything that looks weak under "Known gaps".
 
+## Typography
+
+All chrome text is sized through one design-token scale, not gpui's raw
+Tailwind helpers. See
+[Typography And UI Scale](docs/ARCHITECTURE.md#typography-and-ui-scale) for the
+full picture. The rules:
+
+- Size text with `crate::text::TextScale` — `.text_scale_xs()` …
+  `.text_scale_xl()` (or `.text_token(TextSize::…)`). **Never** add a raw
+  `.text_xs()` / `.text_sm()` or a `px(N)` font size for chrome text.
+- Size chrome icons with `crate::text::IconScale` — `svg(…).icon_px(N)` (the
+  `N` is the size at `ui_scale == 1`), so they zoom with the text. A
+  gpui-component `Icon` with no `with_size` already scales; if it needs an
+  explicit `px` size, multiply by `ui_scale`.
+- The scales live in `feraille_design` (`TextTokens::BASE`, `IconTokens`).
+  Change sizes there, in one place — not at call sites.
+- Size gpui-component widgets (Checkbox, Button, Switch, …) with `Sizable`
+  (`.xsmall()` inline, `.small()` in dialogs) so their text matches the dense
+  scale instead of the `Medium` 16px default.
+- Stay on explicit `px` only for: glyph affordances pinned to a fixed-size box
+  (disclosure triangles, the favorites `+`, the viewer seek grip), the
+  code-block preview font, grid thumbnails + their badges (own size axis), and
+  the drag-ghost chip. Everything else is rem-relative so `ui_scale` scales it.
+
 ## Where To Document Work
 
 - Current architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)

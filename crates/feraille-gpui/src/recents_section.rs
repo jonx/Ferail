@@ -8,6 +8,7 @@
 //! never touches SQLite. Modeled on [`crate::favorites_section`] but
 //! simpler: no drag-reorder, no per-row availability state, no rename.
 
+use crate::text::{IconScale as _, TextScale as _};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -94,7 +95,7 @@ impl SidebarItem for RecentsSection {
             .rounded(theme.radius)
             .h_8()
             .cursor_pointer()
-            .text_xs()
+            .text_scale_xs()
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(theme.sidebar_foreground.opacity(0.7))
             .child(
@@ -178,7 +179,7 @@ fn render_recent_row(
         .py_1()
         .gap_2()
         .items_center()
-        .text_sm()
+        .text_scale_sm()
         .rounded(theme.radius)
         .cursor_pointer()
         .text_color(if is_active {
@@ -196,12 +197,10 @@ fn render_recent_row(
         .child(
             div()
                 .flex_shrink_0()
-                .w(px(crate::tree::SIDEBAR_ICON_PX))
-                .h(px(crate::tree::SIDEBAR_ICON_PX))
+                .icon_px(crate::tree::SIDEBAR_ICON_PX)
                 .child(
                     img(icon)
-                        .w(px(crate::tree::SIDEBAR_ICON_PX))
-                        .h(px(crate::tree::SIDEBAR_ICON_PX)),
+                        .icon_px(crate::tree::SIDEBAR_ICON_PX),
                 ),
         )
         .child(

@@ -51,6 +51,17 @@ pub struct AppState {
     /// Recents sidebar section disclosure state. None == never set
     /// (defaults to expanded).
     pub recents_collapsed: Option<bool>,
+    /// Ant Trail base tint, as a `#RRGGBB(AA)` hex string (same format
+    /// as `selection_color`). `None` == never set, in which case the
+    /// list and grid fall back to the original warm orange. The alpha
+    /// is ignored — heat drives the tint's translucency. See
+    /// [`crate::ant_trail`].
+    pub ant_trail_color: Option<String>,
+    /// When `true` (the default), reaching a folder by clicking its
+    /// favorite is *not* recorded as a visit — it neither bumps the
+    /// Ant Trail heat nor pushes the folder into Recents. `None` ==
+    /// never set (defaults to `true`). See [`crate::ant_trail`].
+    pub exclude_favorites_from_tracking: Option<bool>,
 
     // ---- Search (docs/features/SEARCH.md) ----
     /// Global-search engine preference: "auto" (Spotlight when
@@ -190,6 +201,18 @@ pub fn load() -> AppState {
             "recents_collapsed" => {
                 out.recents_collapsed = parse_bool(val);
             }
+            "ant_trail_color" => {
+                // Same hex guard as `selection_color` so a garbage value
+                // can't poison the live tint global at startup.
+                let v = val.trim();
+                let body = v.strip_prefix('#').unwrap_or("");
+                if matches!(body.len(), 6 | 8) && body.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    out.ant_trail_color = Some(format!("#{}", body.to_lowercase()));
+                }
+            }
+            "exclude_favorites_from_tracking" => {
+                out.exclude_favorites_from_tracking = parse_bool(val);
+            }
             "search_engine" => {
                 let v = val.trim().to_lowercase();
                 if matches!(v.as_str(), "auto" | "spotlight" | "walker") {
@@ -281,6 +304,12 @@ pub fn save(state: &AppState) {
     }
     if let Some(b) = state.recents_collapsed {
         s.push_str(&format!("recents_collapsed={b}\n"));
+    }
+    if let Some(c) = &state.ant_trail_color {
+        s.push_str(&format!("ant_trail_color={c}\n"));
+    }
+    if let Some(b) = state.exclude_favorites_from_tracking {
+        s.push_str(&format!("exclude_favorites_from_tracking={b}\n"));
     }
     if let Some(e) = &state.search_engine {
         s.push_str(&format!("search_engine={e}\n"));

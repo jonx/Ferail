@@ -138,11 +138,60 @@ pub struct RadiusTokens {
 
 #[derive(Clone, Copy, Debug)]
 pub struct TextTokens {
+    pub xxs: f32,
     pub xs: f32,
     pub sm: f32,
     pub md: f32,
     pub lg: f32,
     pub xl: f32,
+}
+
+/// A named tier in the canonical type scale. Every text size in the app
+/// resolves to one of these — the single source of truth for typography.
+/// Render code maps a tier to logical px via [`TextTokens::get`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextSize {
+    /// Micro labels / dense overlays.
+    Xxs,
+    /// Body and metadata — the workhorse tier.
+    Xs,
+    /// Slightly emphasized labels and rows.
+    Sm,
+    /// Default-weight body for roomier surfaces.
+    Md,
+    /// Section headers.
+    Lg,
+    /// Hero / title text.
+    Xl,
+}
+
+impl TextTokens {
+    /// The canonical type scale, in logical px at `ui_scale = 1.0`
+    /// (Zed-aligned, denser than browser defaults). This is the single
+    /// source of truth for text sizing. `feraille-gpui`'s `TextScale`
+    /// trait reads these and applies them rem-relative, so UI zoom (the
+    /// window rem size) scales every tier together. Retune the whole app
+    /// by editing these six numbers.
+    pub const BASE: Self = Self {
+        xxs: 10.0,
+        xs: 11.0,
+        sm: 12.0,
+        md: 13.0,
+        lg: 15.0,
+        xl: 18.0,
+    };
+
+    /// Logical px for `size` in this token set.
+    pub const fn get(&self, size: TextSize) -> f32 {
+        match size {
+            TextSize::Xxs => self.xxs,
+            TextSize::Xs => self.xs,
+            TextSize::Sm => self.sm,
+            TextSize::Md => self.md,
+            TextSize::Lg => self.lg,
+            TextSize::Xl => self.xl,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -254,6 +303,7 @@ impl Tokens {
         self.space.xl *= s;
         self.space.xxl *= s;
 
+        self.text.xxs *= s;
         self.text.xs *= s;
         self.text.sm *= s;
         self.text.md *= s;
@@ -329,7 +379,7 @@ impl Tokens {
                 popover: 6.0,
                 full: 9999.0,
             },
-            text: TextTokens { xs: 11.0, sm: 12.0, md: 13.0, lg: 15.0, xl: 18.0 },
+            text: TextTokens::BASE,
             hit: HitTokens { min: 24.0, row: 28.0, button: 32.0, input: 32.0 },
             icon: IconTokens { sm: 14.0, md: 16.0, lg: 20.0, xl: 32.0 },
             layout: LayoutTokens {

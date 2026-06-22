@@ -1,3 +1,4 @@
+use crate::text::TextScale as _;
 use super::*;
 
 /// Copy vs move for [`Shell::spawn_transfer_op`].
@@ -556,12 +557,13 @@ impl Shell {
                             );
                         let mut d = dialog
                             .title("An item already exists")
-                            .child(div().text_sm().child(format!(
+                            .child(div().text_scale_sm().child(format!(
                                 "\u{201c}{name}\u{201d} already exists in \u{201c}{dest_label}\u{201d}."
                             )));
                         if remaining > 1 {
                             d = d.child(
                                 gpui_component::checkbox::Checkbox::new("collision-apply-rest")
+                                    .small()
                                     .label(format!(
                                         "Apply to the remaining {} item{}",
                                         remaining - 1,
@@ -907,10 +909,20 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
         let Some(path) = self.context_target.take() else {
             return;
         };
+        self.eject_path(path, window, cx);
+    }
+
+    /// Eject the volume mounted at `path`. Shared by the context-menu
+    /// "Eject" action and the trailing eject button drawn on ejectable
+    /// volume rows. Unmounts on a worker (`unmountAndEject` can block
+    /// while the system flushes/closes the device), then reports
+    /// success or failure as a toast. The volume observer drops the row
+    /// from the sidebar once the unmount lands.
+    pub(crate) fn eject_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::notification::Notification;
         let name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -1358,7 +1370,7 @@ impl Shell {
                     };
                     dialog
                         .title("Empty Trash?")
-                        .child(div().text_sm().child(body))
+                        .child(div().text_scale_sm().child(body))
                         .child(
                             h_flex().pt_2().child(
                                 Button::new("empty-trash-go")

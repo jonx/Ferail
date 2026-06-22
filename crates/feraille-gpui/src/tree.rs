@@ -25,6 +25,7 @@
 //! `Shell::load_path` is too — moving both to a background-executor
 //! pipeline is a unified follow-on (streaming enumeration).
 
+use crate::text::{IconScale as _, TextScale as _};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -183,7 +184,7 @@ pub(crate) fn section_header(label: SharedString, cx: &App) -> Div {
         .flex_shrink_0()
         .px_2()
         .rounded(theme.radius)
-        .text_xs()
+        .text_scale_xs()
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(theme.sidebar_foreground.opacity(0.7))
         .h_8()
@@ -388,7 +389,7 @@ fn render_tree_row(
         .py_1()
         .gap_1()
         .items_center()
-        .text_sm()
+        .text_scale_sm()
         .rounded(theme.radius)
         .cursor_pointer()
         .text_color(if is_active {
@@ -547,22 +548,19 @@ fn render_tree_row(
         TreeRowIcon::Folder => {
             let icon = icons.borrow_mut().folder_icon_for(&path);
             img(icon)
-                .w(px(SIDEBAR_ICON_PX))
-                .h(px(SIDEBAR_ICON_PX))
+                .icon_px(SIDEBAR_ICON_PX)
                 .into_any_element()
         }
         TreeRowIcon::Volume => svg()
             .path("icons/nav/drive.svg")
-            .w(px(SIDEBAR_ICON_PX))
-            .h(px(SIDEBAR_ICON_PX))
+            .icon_px(SIDEBAR_ICON_PX)
             .text_color(icon_color)
             .into_any_element(),
     };
     row = row.child(
         div()
             .flex_shrink_0()
-            .w(px(SIDEBAR_ICON_PX))
-            .h(px(SIDEBAR_ICON_PX))
+            .icon_px(SIDEBAR_ICON_PX)
             .child(icon_el),
     );
 
@@ -584,10 +582,48 @@ fn render_tree_row(
             this.child(
                 svg()
                     .path("icons/nav/star.svg")
-                    .w(px(12.0))
-                    .h(px(12.0))
+                    .icon_px(12.0)
                     .text_color(cx.theme().primary)
                     .flex_shrink_0(),
+            )
+        })
+        .when(ejectable, |this| {
+            // Trailing eject affordance — Finder draws an ⏏ on every
+            // removable/external volume row so a drive can be unmounted
+            // without opening the context menu. Stops propagation so the
+            // click ejects rather than navigating into the volume. The
+            // glyph carries its own `text_color` (a raw `svg()` doesn't
+            // inherit the parent's currentColor, unlike `Icon`), so the
+            // hover affordance is a background highlight instead.
+            let eject_shell = shell.clone();
+            let eject_path = path.clone();
+            let eject_key: SharedString = format!("tree-eject-{}", path.display()).into();
+            let glyph = theme.muted_foreground;
+            let hover_bg = theme.sidebar_accent;
+            this.child(
+                h_flex()
+                    .id(ElementId::Name(eject_key))
+                    .flex_shrink_0()
+                    .icon_px(18.0)
+                    .items_center()
+                    .justify_center()
+                    .rounded(theme.radius)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .child(
+                        svg()
+                            .path("icons/nav/eject.svg")
+                            .icon_px(14.0)
+                            .text_color(glyph)
+                            .flex_shrink_0(),
+                    )
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        if let Some(shell) = eject_shell.upgrade() {
+                            let path = eject_path.clone();
+                            shell.update(cx, |s, cx| s.eject_path(path, window, cx));
+                        }
+                    }),
             )
         })
         .on_click({

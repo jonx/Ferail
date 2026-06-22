@@ -24,7 +24,7 @@
 //! the `Rc<ProcessState>` itself never crosses thread boundaries.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -127,6 +127,13 @@ pub struct ProcessState {
     /// Disk Arbitration listener can refresh it from any window.
     pub volumes: RefCell<Vec<VolumeInfo>>,
 
+    /// Well-known Location paths macOS reports as iCloud-synced (e.g.
+    /// Desktop/Documents under "Desktop & Documents Folders"). Computed
+    /// off-thread at startup and refreshed alongside `volumes`; the
+    /// sidebar reads it to draw a trailing cloud badge without ever
+    /// touching the filesystem on the render path.
+    pub cloud_locations: RefCell<HashSet<PathBuf>>,
+
     /// Monotonic counter for minting process-local `TabId`s. Stable
     /// for the tab's lifetime; survives tab reorder and (Phase F)
     /// tear-off between windows.
@@ -205,6 +212,7 @@ impl ProcessState {
             preview_cache: RefCell::new(PreviewCache::new()),
             text_preview_cache: RefCell::new(TextPreviewCache::new()),
             volumes: RefCell::new(list_volumes()),
+            cloud_locations: RefCell::new(feraille_fs_native::cloud_synced_locations()),
             next_tab_id: Cell::new(0),
             metadata_loaded: Cell::new(false),
             favorites_section_collapsed: Cell::new(false),
@@ -365,13 +373,19 @@ pub fn start_volume_watch(cx: &mut App) {
             // Coalesce bursts — a mount often arrives with a rename
             // right behind it; one re-list covers both.
             while rx.try_recv().is_ok() {}
-            let vols = cx
+            let (vols, clouds) = cx
                 .background_executor()
-                .spawn(async { list_volumes() })
+                .spawn(async {
+                    (
+                        list_volumes(),
+                        feraille_fs_native::cloud_synced_locations(),
+                    )
+                })
                 .await;
             cx.update(|cx| {
                 let process = process_state(cx);
                 *process.volumes.borrow_mut() = vols;
+                *process.cloud_locations.borrow_mut() = clouds;
                 process
                     .favorites
                     .update(cx, |favs, cx| favs.refresh_mount_states(cx));
@@ -423,13 +437,19 @@ pub fn start_power_watch(cx: &mut App) {
                     }
                 });
             } else if event.is_system_wake() {
-                let vols = cx
+                let (vols, clouds) = cx
                     .background_executor()
-                    .spawn(async { list_volumes() })
+                    .spawn(async {
+                        (
+                            list_volumes(),
+                            feraille_fs_native::cloud_synced_locations(),
+                        )
+                    })
                     .await;
                 cx.update(|cx| {
                     let process = process_state(cx);
                     *process.volumes.borrow_mut() = vols;
+                    *process.cloud_locations.borrow_mut() = clouds;
                     process
                         .favorites
                         .update(cx, |favs, cx| favs.refresh_mount_states(cx));

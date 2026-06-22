@@ -11,6 +11,7 @@
 #![recursion_limit = "256"]
 
 pub mod about;
+pub mod ant_trail;
 pub mod app_icon;
 pub mod app_state;
 pub mod assets;
@@ -44,6 +45,7 @@ pub mod status_bar;
 pub mod syntax_extra;
 pub mod task_panel;
 pub mod tasks;
+pub mod text;
 pub mod text_preview;
 pub mod thumbnails;
 pub mod tool_results;

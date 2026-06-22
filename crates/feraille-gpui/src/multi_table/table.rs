@@ -1,3 +1,4 @@
+use crate::text::TextScale as _;
 use gpui::{
     AnyElement, App, InteractiveElement as _, IntoElement, ParentElement, Pixels, RenderOnce,
     StyleRefinement, Styled, TextAlign, Window, div, prelude::FluentBuilder as _, px, relative,
@@ -91,7 +92,7 @@ impl RenderOnce for Table {
         div()
             .id(("table", self.ix))
             .w_full()
-            .text_sm()
+            .text_scale_sm()
             .overflow_hidden()
             .bg(cx.theme().table)
             .refine_style(&self.style)
@@ -631,7 +632,7 @@ impl RenderOnce for TableCaption {
             .w_full()
             .px(paddings.left)
             .py(paddings.top)
-            .text_sm()
+            .text_scale_sm()
             .text_color(cx.theme().muted_foreground)
             .text_center()
             .refine_style(&self.style)

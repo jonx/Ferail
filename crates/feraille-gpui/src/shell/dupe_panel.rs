@@ -14,6 +14,7 @@
 //! trash worker as `on_move_to_trash`, then prunes the model and rebuilds the
 //! card list from what survived.
 
+use crate::text::TextScale as _;
 use std::{
     ops::Range,
     path::{Path, PathBuf},
@@ -64,7 +65,7 @@ impl Shell {
             .border_color(theme.border)
             .child(
                 div()
-                    .text_sm()
+                    .text_scale_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.foreground)
                     .child(summary),
@@ -72,7 +73,7 @@ impl Shell {
             .when(scanning, |this| {
                 this.child(
                     div()
-                        .text_xs()
+                        .text_scale_xs()
                         .text_color(theme.muted_foreground)
                         .child("scanning\u{2026}"),
                 )
@@ -116,7 +117,7 @@ impl Shell {
                 .child(
                     div()
                         .p_8()
-                        .text_sm()
+                        .text_scale_sm()
                         .text_color(theme.muted_foreground)
                         .child(if scanning {
                             "Scanning for duplicates\u{2026}"
@@ -241,14 +242,14 @@ impl Shell {
                 ))
                 .child(
                     div()
-                        .text_sm()
+                        .text_scale_sm()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme.foreground)
                         .child(format!("#{group_no}")),
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_scale_xs()
                         .text_color(theme.muted_foreground)
                         .child(format!(
                             "{copies} copies \u{00B7} {} each \u{00B7} {} reclaimable",
@@ -318,7 +319,7 @@ impl Shell {
                     .justify_center()
                     .cursor_pointer()
                     .when(marked, |this| {
-                        this.child(div().text_xs().text_color(gpui::white()).child("\u{2713}"))
+                        this.child(div().text_scale_xs().text_color(gpui::white()).child("\u{2713}"))
                     })
                     .on_click(cx.listener(move |this, _, _, cx| this.dupe_toggle_mark(node, cx)));
 
@@ -366,7 +367,7 @@ impl Shell {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_sm()
+                            .text_scale_sm()
                             .text_color(if shares {
                                 theme.muted_foreground
                             } else {
@@ -379,7 +380,7 @@ impl Shell {
                             .flex_shrink_0()
                             .max_w(px(280.0))
                             .truncate()
-                            .text_xs()
+                            .text_scale_xs()
                             .text_color(theme.muted_foreground)
                             .child(format!("{location}{note}")),
                     );
@@ -612,7 +613,7 @@ impl Shell {
                     );
                     dialog
                         .title("Dedup with clones?")
-                        .child(div().text_sm().child(body))
+                        .child(div().text_scale_sm().child(body))
                         .child(
                             h_flex().pt_2().child(
                                 Button::new("dupe-clone-go")

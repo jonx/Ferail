@@ -649,6 +649,79 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
     }
 }
 
+/// True when macOS reports `path` as an iCloud-synced item. Two
+/// signals, cheapest first:
+///
+/// 1. **Path prefix** — everything macOS stores under
+///    `~/Library/Mobile Documents/` is ubiquity-managed (iCloud Drive
+///    and per-app containers). A `starts_with`, no syscall.
+/// 2. **`NSURLIsUbiquitousItemKey`** — catches the Desktop & Documents
+///    folders that iCloud manages *in place*: their path stays
+///    `~/Desktop` / `~/Documents`, so the prefix check alone misses
+///    them. This is exactly the signal Finder uses to draw its cloud
+///    badge.
+///
+/// Reads cached resource values only — never downloads a placeholder or
+/// spins a sleeping disk. Always `false` off macOS. Per the prime
+/// directive, callers must not invoke this from the paint path.
+#[cfg(target_os = "macos")]
+pub fn path_is_cloud_synced(path: &Path) -> bool {
+    if let Some(home) = std::env::var_os("HOME") {
+        let mobile = PathBuf::from(home).join("Library/Mobile Documents");
+        if path.starts_with(&mobile) {
+            return true;
+        }
+    }
+    url_is_ubiquitous(path).unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn path_is_cloud_synced(_path: &Path) -> bool {
+    false
+}
+
+/// Read `NSURLIsUbiquitousItemKey` for `path`. `None` when the path is
+/// non-UTF-8, the URL lookup fails, or the key is absent (a non-cloud
+/// item). Mirrors the cached-key discipline of `volume_info_for_path`.
+#[cfg(target_os = "macos")]
+fn url_is_ubiquitous(path: &Path) -> Option<bool> {
+    use objc2::msg_send;
+    use objc2::msg_send_id;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2::ClassType;
+    use objc2_foundation::{NSArray, NSString, NSURLIsUbiquitousItemKey, NSURLResourceKey, NSURL};
+
+    let path_str = path.to_str()?;
+    unsafe {
+        let ns_path = NSString::from_str(path_str);
+        let url: Retained<NSURL> = NSURL::fileURLWithPath(&ns_path);
+        let key_ptrs: [*const NSURLResourceKey; 1] = [NSURLIsUbiquitousItemKey];
+        let keys: Retained<NSArray<NSURLResourceKey>> = msg_send_id![
+            NSArray::<NSURLResourceKey>::class(),
+            arrayWithObjects: key_ptrs.as_ptr(),
+            count: key_ptrs.len(),
+        ];
+        let dict = url.resourceValuesForKeys_error(&keys).ok()?;
+        let obj: &AnyObject = dict.get(NSURLIsUbiquitousItemKey)?;
+        let b: bool = msg_send![obj, boolValue];
+        Some(b)
+    }
+}
+
+/// The subset of the sidebar's well-known Locations that macOS reports
+/// as iCloud-synced, as an owned set the UI can probe per render
+/// without touching the filesystem. Computed off the render thread
+/// (startup + volume/wake refresh); empty off macOS. The result feeds
+/// the trailing cloud badge in the Locations section.
+pub fn cloud_synced_locations() -> std::collections::HashSet<PathBuf> {
+    paths::well_known_locations()
+        .into_iter()
+        .map(|loc| loc.path)
+        .filter(|p| path_is_cloud_synced(p))
+        .collect()
+}
+
 fn describe_kind(kind: EntryKind, name: &str) -> String {
     match kind {
         EntryKind::Directory => "Folder".to_string(),
@@ -852,5 +925,31 @@ mod tests {
         let avail = info.available_bytes.expect("available capacity for /");
         assert!(total > 0);
         assert!(avail <= total);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cloud_sync_matches_mobile_documents_prefix() {
+        // The path-prefix arm is a pure `starts_with`, independent of
+        // whether the file exists — anything under the ubiquity
+        // container counts as cloud-synced.
+        let home = std::env::var_os("HOME").expect("HOME set on test runner");
+        let container = PathBuf::from(&home).join("Library/Mobile Documents");
+        assert!(
+            path_is_cloud_synced(&container.join("com~apple~CloudDocs/Notes.txt")),
+            "items inside the iCloud container are cloud-synced"
+        );
+        assert!(
+            path_is_cloud_synced(&container),
+            "the ubiquity container root itself is cloud-synced"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn boot_volume_is_not_cloud_synced() {
+        // `/` is neither under the container nor an ubiquitous item, so
+        // both detection arms must report false.
+        assert!(!path_is_cloud_synced(Path::new("/")));
     }
 }

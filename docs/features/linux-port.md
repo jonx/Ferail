@@ -155,7 +155,8 @@ is OS-agnostic — it'll work on Linux once the platform layer is caught up.
 crates/
 ├── feraille-core           Domain types, command catalogue, NodeId/FileEntry,
 │                           NodeStore. Zero platform deps.
-├── feraille-design         Shared visual constants. Mostly historical.
+├── feraille-design         Shared visual constants. `TextTokens` is now the
+│                           live type scale (see ARCHITECTURE Typography).
 ├── feraille-disk-usage     Pure disk-usage model + treemap layout. No I/O.
 ├── feraille-fs-native      std::fs backend + icons, magic detection,
 │                           disk-usage scanner, xattr. Already has generic

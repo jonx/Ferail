@@ -6,6 +6,7 @@
 //! and view state. Keyboard goes through gpui actions gated on
 //! [`VIEWER_CONTEXT`] so Shell shortcuts can't fire here and vice versa.
 
+use crate::text::TextScale as _;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -1773,7 +1774,7 @@ impl ViewerWindow {
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_scale_xs()
                     .text_color(cx.theme().muted_foreground)
                     .min_w(px(56.0))
                     .text_center()
@@ -1815,7 +1816,7 @@ impl ViewerWindow {
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_scale_xs()
                     .text_color(cx.theme().muted_foreground)
                     .min_w(px(44.0))
                     .text_center()
@@ -1885,6 +1886,7 @@ impl ViewerWindow {
                 )
                 .child(
                     Checkbox::new("viewer-video-loop")
+                        .small()
                         .label("Loop")
                         .checked(video_loop)
                         .on_click(move |checked, _window, app| {
@@ -1899,6 +1901,7 @@ impl ViewerWindow {
             // Keep the viewer above other windows.
             .child(
                 Checkbox::new("viewer-stay-on-top")
+                    .small()
                     .label("Stay on top")
                     .checked(stay_on_top)
                     .on_click(move |checked, window, app| {
@@ -1917,7 +1920,7 @@ impl ViewerWindow {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_sm()
+                    .text_scale_sm()
                     .text_center()
                     .truncate()
                     .text_color(cx.theme().foreground)
@@ -2068,7 +2071,7 @@ impl ViewerWindow {
             }
             Some(FrameState::Failed) => area.flex().items_center().justify_center().child(
                 div()
-                    .text_sm()
+                    .text_scale_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child("No preview available"),
             ),
@@ -2096,7 +2099,7 @@ impl ViewerWindow {
                     }
                     None => area.flex().items_center().justify_center().child(
                         div()
-                            .text_sm()
+                            .text_scale_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child("Loading\u{2026}"),
                     ),
@@ -2139,7 +2142,7 @@ impl ViewerWindow {
             .items_center()
             .child(
                 div()
-                    .text_sm()
+                    .text_scale_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(foreground)
                     .child("Adjustments"),
@@ -2310,7 +2313,7 @@ impl ViewerWindow {
             .child(
                 div()
                     .w(px(64.0))
-                    .text_xs()
+                    .text_scale_xs()
                     .text_color(muted)
                     .child(id.label()),
             )
@@ -2320,7 +2323,7 @@ impl ViewerWindow {
                     .w(px(30.0))
                     .flex()
                     .justify_end()
-                    .child(div().text_xs().text_color(muted).child(readout)),
+                    .child(div().text_scale_xs().text_color(muted).child(readout)),
             )
     }
 
@@ -2334,7 +2337,7 @@ impl ViewerWindow {
             .child(
                 div()
                     .w(px(64.0))
-                    .text_xs()
+                    .text_scale_xs()
                     .text_color(muted)
                     .child("Upscale"),
             )
@@ -2400,7 +2403,7 @@ impl ViewerWindow {
             .px_3()
             .border_t_1()
             .border_color(cx.theme().border)
-            .text_xs()
+            .text_scale_xs()
             .text_color(cx.theme().muted_foreground)
             .child(pos)
             .when(!dims.is_empty(), |this| this.child(dims))

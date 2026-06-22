@@ -6,6 +6,7 @@
 //! are Name / Size / Kind / Modified, pre-formatted on the domain
 //! side per the UI_NONBLOCKING contract.
 
+use crate::text::{IconScale as _, TextScale as _};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -88,7 +89,7 @@ impl Render for DragBadge {
                 .border_1()
                 .border_color(theme.border)
                 .shadow_lg()
-                .text_sm()
+                .text_scale_sm()
                 .text_color(theme.foreground)
                 .when_some(self.icons.first().cloned(), |this, image| {
                     this.child(img(image).w(px(ICON)).h(px(ICON)).flex_shrink_0())
@@ -141,7 +142,7 @@ impl Render for DragBadge {
                     .border_2()
                     .border_color(theme.background)
                     .text_color(gpui::white())
-                    .text_xs()
+                    .text_scale_xs()
                     .font_weight(FontWeight::BOLD)
                     .child(format!("{}", self.count)),
             );
@@ -151,7 +152,7 @@ impl Render for DragBadge {
                 .flex()
                 .flex_col()
                 .gap_0p5()
-                .text_sm()
+                .text_scale_sm()
                 .text_color(theme.foreground);
             for name in self.names.iter().take(GHOST_NAME_CAP) {
                 names = names.child(div().max_w(px(220.0)).truncate().child(name.clone()));
@@ -159,7 +160,7 @@ impl Render for DragBadge {
             if self.count > shown {
                 names = names.child(
                     div()
-                        .text_xs()
+                        .text_scale_xs()
                         .text_color(theme.muted_foreground)
                         .child(format!("+{} more", self.count - shown)),
                 );
@@ -764,17 +765,11 @@ impl TableDelegate for FileListDelegate {
                 );
         }
         if kind_is_dir && heat > 0.0 {
-            // Warm orange tint, scaled by heat. Stable hue across
-            // light/dark themes (a theme-color .opacity() would
-            // multiply the theme's existing alpha and dim out in
-            // dark mode).
-            let alpha = (heat * 0.30).clamp(0.0, 1.0);
-            row = row.bg(gpui::Rgba {
-                r: 1.0,
-                g: 0.55,
-                b: 0.26,
-                a: alpha,
-            });
+            // Customizable base tint, scaled by heat. Stable hue across
+            // light/dark themes (it's a solid color, not a theme color
+            // whose alpha would compound in dark mode). See
+            // `crate::ant_trail`.
+            row = row.bg(crate::ant_trail::tint(crate::ant_trail::base(cx), heat));
         }
         // Spec §2 multi-select fill. Painted for every set member
         // EXCEPT the lead — the Table primitive draws its own
@@ -988,8 +983,7 @@ impl TableDelegate for FileListDelegate {
                 let star = if is_favorited && matches!(entry.kind, EntryKind::Directory) {
                     svg()
                         .path("icons/nav/star.svg")
-                        .w(px(12.0))
-                        .h(px(12.0))
+                        .icon_px(12.0)
                         .text_color(star_color)
                         .into_any_element()
                 } else {
@@ -1000,7 +994,7 @@ impl TableDelegate for FileListDelegate {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_sm()
+                    .text_scale_sm()
                     .text_color(cx.theme().foreground)
                     .child(icon_wrapper)
                     .child(
@@ -1016,7 +1010,7 @@ impl TableDelegate for FileListDelegate {
                     .into_any_element()
             }
             "size" => div()
-                .text_xs()
+                .text_scale_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(entry.display_size.clone()))
                 .into_any_element(),
@@ -1036,7 +1030,7 @@ impl TableDelegate for FileListDelegate {
                     .flex()
                     .items_center()
                     .gap_1p5()
-                    .text_xs()
+                    .text_scale_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(
                         div()
@@ -1051,8 +1045,7 @@ impl TableDelegate for FileListDelegate {
                         .child(
                             svg()
                                 .path("icons/triangle-alert.svg")
-                                .w(px(12.0))
-                                .h(px(12.0))
+                                .icon_px(12.0)
                                 .text_color(alert_color),
                         )
                         .tooltip(move |window, cx| {
@@ -1066,7 +1059,7 @@ impl TableDelegate for FileListDelegate {
                 row.into_any_element()
             }
             "modified" => div()
-                .text_xs()
+                .text_scale_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(entry.display_mtime.clone()))
                 .into_any_element(),
@@ -1074,7 +1067,7 @@ impl TableDelegate for FileListDelegate {
             // populated lazily by the prefetch worker. Empty string
             // renders as an empty cell — no skeleton shimmer in v1.
             "description" => div()
-                .text_xs()
+                .text_scale_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(entry.display_description.clone()))
                 .into_any_element(),
@@ -1414,13 +1407,12 @@ impl TableDelegate for FileListDelegate {
             .child(
                 gpui::svg()
                     .path("icons/inbox.svg")
-                    .w(px(48.0))
-                    .h(px(48.0))
+                    .icon_px(48.0)
                     .text_color(cx.theme().muted_foreground.opacity(0.5)),
             )
             .child(
                 div()
-                    .text_sm()
+                    .text_scale_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child("This folder is empty."),
             )

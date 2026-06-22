@@ -5,6 +5,7 @@
 //! Phase 4.b will wire the sidebar to real Locations/Volumes. Phase
 //! 4.c brings the virtualized file list.
 
+use crate::text::TextScale as _;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -389,8 +390,12 @@ pub struct Shell {
     /// the Cmd+I popup uses, in `embedded` mode). `None` until first shown.
     pub preview_info: Option<gpui::Entity<crate::entry_info::EntryInfoView>>,
     /// UI zoom factor (Stage 9.b.5). 1.0 = default; bumped by Cmd+=
-    /// and Cmd+-. Applied to font sizes / icon sizes via Tokens-
-    /// derived scaling at render time. Persisted in app_state.
+    /// and Cmd+-. Applied via `apply_ui_zoom`, which writes the
+    /// gpui-component theme base font size (`theme.font_size`); `Root`
+    /// pumps that into the window rem size every frame, and all text is
+    /// rem-relative through the `crate::text` design tokens, so it
+    /// scales as one. Icon/layout scaling is still TODO. Persisted in
+    /// app_state.
     pub ui_scale: f32,
     /// Resizable-splitter state for the sidebar / center / preview
     /// columns. Persists across renders so the drag handles work as
@@ -687,6 +692,18 @@ impl Shell {
                 .as_deref()
                 .and_then(crate::selection_colors::parse_hex),
         ));
+        // Seed the live Ant Trail tint (list + grid share it). `None` ⇒
+        // the original warm orange via `ant_trail::default_base`.
+        cx.set_global(crate::ant_trail::AntTrailColor(
+            persisted
+                .ant_trail_color
+                .as_deref()
+                .and_then(crate::selection_colors::parse_hex),
+        ));
+        // Seed the favorites-tracking policy. Default true (exclude).
+        cx.set_global(crate::ant_trail::ExcludeFavoritesFromTracking(
+            persisted.exclude_favorites_from_tracking.unwrap_or(true),
+        ));
         // FERAILLE_UI_SCALE env var (regression tool / screenshots)
         // wins over the persisted value when set. Both are clamped.
         let ui_scale = std::env::var("FERAILLE_UI_SCALE")
@@ -859,6 +876,9 @@ impl Shell {
             _subscriptions: vec![breadcrumb_subscription, shortcuts_help_subscription],
         };
         shell.process.register_shell(cx.weak_entity());
+        // Seed the theme base font size from the persisted/CLI zoom so
+        // the very first `Root::render` lays out at the right rem size.
+        shell.apply_ui_zoom(cx);
         // §5.3 live-sync: every folder-rendering view observes the
         // Favorites entity through Shell, so a single `cx.notify()`
         // here re-renders the sidebar (FavoritesSection), the
@@ -1895,21 +1915,38 @@ impl Shell {
         );
     }
 
+    /// Push the current UI zoom into the gpui-component theme's base
+    /// font size. `Root::render` copies `theme.font_size` into the
+    /// window rem size every frame, and all chrome text is rem-relative
+    /// through the `crate::text` design tokens, so this is the
+    /// framework-native zoom hook: it scales the whole window —
+    /// including Root-level overlays (notifications, dialogs) — rather
+    /// than fighting `Root` by overriding `rem_size` on just the shell
+    /// subtree. (Icon and fixed-px layout scaling are still TODO.)
+    pub(crate) fn apply_ui_zoom(&self, cx: &mut App) {
+        if cx.has_global::<gpui_component::Theme>() {
+            gpui_component::Theme::global_mut(cx).font_size =
+                px(crate::text::BASE_REM_PX * self.ui_scale);
+        }
+    }
+
     /// Cmd+= / Cmd+- / Cmd+0 — UI zoom. Bumps `ui_scale` by ±0.1
-    /// (clamped to [0.6, 2.0]). The render functions multiply
-    /// text sizes against this value; a full pass through every
-    /// `.text_*` call site lands with the per-tokens refactor.
-    fn on_zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
+    /// (clamped to [0.6, 2.0]) and re-applies it to the theme base font
+    /// size; `window.refresh()` forces `Root` to re-read it this frame.
+    fn on_zoom_in(&mut self, _: &ZoomIn, window: &mut Window, cx: &mut Context<Self>) {
         self.ui_scale = (self.ui_scale + 0.1).clamp(0.6, 2.0);
-        cx.notify();
+        self.apply_ui_zoom(cx);
+        window.refresh();
     }
-    fn on_zoom_out(&mut self, _: &ZoomOut, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_zoom_out(&mut self, _: &ZoomOut, window: &mut Window, cx: &mut Context<Self>) {
         self.ui_scale = (self.ui_scale - 0.1).clamp(0.6, 2.0);
-        cx.notify();
+        self.apply_ui_zoom(cx);
+        window.refresh();
     }
-    fn on_zoom_reset(&mut self, _: &ZoomReset, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_zoom_reset(&mut self, _: &ZoomReset, window: &mut Window, cx: &mut Context<Self>) {
         self.ui_scale = 1.0;
-        cx.notify();
+        self.apply_ui_zoom(cx);
+        window.refresh();
     }
 
     /// Open the selected row's path in a new tab (context-menu
@@ -2427,13 +2464,29 @@ impl Shell {
             self.process.tasks.borrow_mut().end(id);
         }
         self.tabs[idx].load_cancel = None;
-        if let Some(staged) = self.tabs[idx].load_staging.take() {
+        if let Some(mut staged) = self.tabs[idx].load_staging.take() {
             // In-place reload finished: swap the complete listing in
             // atomically over the still-visible old rows. One rebuild,
             // no intermediate empty/partial state — the refresh is
             // flicker-free. Reconcile passes run once against the final
             // model, mirroring the streaming path's per-batch passes.
             self.tabs[idx].load_pending_first_batch = false;
+            // Reapply the user's active column sort. A re-enumeration
+            // arrives in raw readdir order, so without this an in-place
+            // reload (FS-watcher external change, Refresh, show-hidden
+            // toggle) would silently revert a sorted view to readdir
+            // order. That order change also scrambles the selection: a
+            // live Shift-range is recomputed by position just below
+            // (`recompute_live_range_in_tab`), so reordered endpoints
+            // capture a different span of rows. Reapplying the sort
+            // keeps the order stable, which makes the range recompute a
+            // no-op and preserves the selection. Sort the staged model
+            // *before* heats are gathered so the parallel heat vec stays
+            // row-aligned. `current_sort == None` keeps natural (readdir)
+            // order, matching the streaming first-load path.
+            if let Some((col, asc)) = self.tabs[idx].table.read(cx).delegate().current_sort {
+                crate::file_list::sort_in_place(&mut staged.entries, col, asc);
+            }
             let heats: Vec<f32> = staged
                 .entries
                 .iter()
@@ -3461,7 +3514,7 @@ impl Shell {
             let body = body.clone();
             dialog
                 .title(title)
-                .child(div().text_sm().child(body))
+                .child(div().text_scale_sm().child(body))
                 .footer(
                     DialogFooter::new()
                         .child(
@@ -3582,7 +3635,7 @@ impl Shell {
             return;
         };
         match self.process.favorites.read(cx).state_for(id) {
-            FavoriteState::Available => self.navigate(path, cx),
+            FavoriteState::Available => self.navigate_from_favorite(path, cx),
             other => self.show_missing_favorite_dialog(id, path, other, window, cx),
         }
     }
@@ -3948,6 +4001,29 @@ impl Shell {
     /// (see `navigate_back` / `navigate_forward` which seed the
     /// restored selection before calling here).
     pub fn navigate(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.navigate_with_tracking(path, true, cx);
+    }
+
+    /// Navigate originating from a favorite (sidebar click / Enter). When
+    /// the "exclude favorites from tracking" setting is on — the default
+    /// — the visit is *not* recorded: clicking a favorite is a deliberate
+    /// shortcut, not organic browsing, so it shouldn't inflate the
+    /// folder's Ant Trail heat or push it into Recents. The same folder
+    /// reached by browsing still records normally.
+    pub fn navigate_from_favorite(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let record = !crate::ant_trail::exclude_favorites(cx);
+        self.navigate_with_tracking(path, record, cx);
+    }
+
+    /// Shared navigation body. `record_visit` gates the Ant Trail +
+    /// Recents bump (see [`Shell::navigate_from_favorite`]); the public
+    /// [`Shell::navigate`] always records.
+    fn navigate_with_tracking(
+        &mut self,
+        path: PathBuf,
+        record_visit: bool,
+        cx: &mut Context<Self>,
+    ) {
         crate::log_info!(90, "navigate: {}", path.display());
         let node_id = self.process.fs.id_for_path(&path);
         self.process
@@ -3987,7 +4063,9 @@ impl Shell {
         // path; drop it so a stale row index doesn't apply.
         self.active_tab_mut().pending_select_row = None;
         self.active_tab_mut().pending_select_rows.clear();
-        self.record_ant_visit(node_id, cx);
+        if record_visit {
+            self.record_ant_visit(node_id, cx);
+        }
         self.load_path(path, cx);
     }
 
