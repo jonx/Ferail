@@ -143,3 +143,43 @@ pub fn capture_window_rgba(hwnd_raw: isize) -> Result<(u32, u32, Vec<u8>), Strin
     }
     Ok((width as u32, height as u32, rgba))
 }
+
+/// Make a window invisible to the user while keeping it *shown* (so its
+/// DirectComposition swap chain still presents a frame for
+/// [`capture_window_rgba`]). Used by the headless `--screenshot` harness: the
+/// window is already positioned far off-screen, and this additionally removes
+/// its taskbar / Alt-Tab button (`WS_EX_TOOLWINDOW`, clearing
+/// `WS_EX_APPWINDOW`) and marks it no-activate so it can't steal focus. This
+/// is the closest we get to macOS's hidden offscreen render until
+/// `gpui_windows` grows a `render_to_image` (docs/GPUI-UPSTREAM.md item 7).
+/// Best-effort — failures are silent.
+pub fn hide_window_for_capture(hwnd_raw: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW,
+    };
+    if hwnd_raw == 0 {
+        return;
+    }
+    let hwnd = HWND(hwnd_raw as *mut _);
+    unsafe {
+        let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let toolwindow = WS_EX_TOOLWINDOW.0 as isize;
+        let noactivate = WS_EX_NOACTIVATE.0 as isize;
+        let appwindow = WS_EX_APPWINDOW.0 as isize;
+        let updated = (current | toolwindow | noactivate) & !appwindow;
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, updated);
+        // The taskbar only re-reads the ex-style on a frame change.
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
+    }
+}

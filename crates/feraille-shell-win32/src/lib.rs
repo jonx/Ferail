@@ -29,7 +29,7 @@ mod preview_handler;
 #[cfg(windows)]
 mod capture;
 #[cfg(windows)]
-pub use capture::capture_window_rgba;
+pub use capture::{capture_window_rgba, hide_window_for_capture};
 
 // =============================================================
 // Types — defined unconditionally so callers can name them on

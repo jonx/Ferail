@@ -379,9 +379,17 @@ pub fn run(args: Args) -> Result<()> {
             // DirectComposition swap chain to have presented at least one
             // frame, so the window must be SHOWN there (brief flash, acceptable
             // for a CLI tool). See `capture_window` below.
+            // On Windows the swap chain must present (window shown) for
+            // PrintWindow to see content — but we place it far off-screen so
+            // it's invisible to the user (the closest we get to macOS's hidden
+            // offscreen render without a gpui_windows render_to_image impl).
+            #[cfg(windows)]
+            let origin = gpui::point(px(-8000.0), px(-8000.0));
+            #[cfg(not(windows))]
+            let origin = gpui::Point::default();
             let opts = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
-                    origin: gpui::Point::default(),
+                    origin,
                     size: gpui::size(px(width), px(height)),
                 })),
                 // Match the live GUI's title-bar mode (see
@@ -522,6 +530,21 @@ pub fn run(args: Args) -> Result<()> {
                     }
                 })
                 .expect("failed to open window for screenshot");
+
+            // Windows: the window must stay shown (so its swap chain presents a
+            // frame for PrintWindow), but we strip its taskbar/Alt-Tab button
+            // and no-activate it so it's invisible to the user — it's already
+            // positioned off-screen above. (No-op until the HWND resolves.)
+            #[cfg(windows)]
+            if let Ok(Some(hwnd)) = cx.update_window(*handle, |_, window, _| {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                match window.window_handle().map(|h| h.as_raw()) {
+                    Ok(RawWindowHandle::Win32(h)) => Some(isize::from(h.hwnd)),
+                    _ => None,
+                }
+            }) {
+                crate::platform_shell::hide_window_for_capture(hwnd);
+            }
 
             if let Some(shell) = shell_entity {
                 shell_args.apply(&shell, &handle, cx).await;
