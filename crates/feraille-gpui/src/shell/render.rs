@@ -2931,14 +2931,13 @@ impl Render for Shell {
                         this.handle_external_drop(paths.paths().to_vec(), dest, window, cx);
                     }))
                     .child(file_body);
-                // Auto-hide the preview when the window is too narrow
-                // to fit sidebar + file list + preview comfortably.
-                // The user's explicit `preview_visible` flag still
-                // wins when there's room — the threshold only
-                // suppresses the pane, never re-enables it.
-                let viewport_w = f32::from(window.viewport_size().width);
-                let preview_visible =
-                    self.preview_visible && viewport_w >= PREVIEW_AUTOHIDE_THRESHOLD;
+                // The preview pane is hidden by default; whenever it's visible
+                // the user explicitly turned it on (Cmd+P / View menu), so
+                // honour that at any window width — the splitter's per-panel
+                // min widths keep the layout sane on narrow windows. (A prior
+                // auto-hide below 900px silently suppressed the explicit
+                // toggle, so Cmd+P appeared to do nothing on smaller windows.)
+                let preview_visible = self.preview_visible;
                 let preview_pane = if preview_visible {
                     Some(self.preview(cx))
                 } else {

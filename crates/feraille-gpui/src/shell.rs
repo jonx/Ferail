@@ -613,11 +613,6 @@ const ICON_WARM_INTERVAL: Duration = Duration::from_millis(16);
 /// because the next render re-checks the interval and flushes.
 const SPLITTER_PERSIST_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Window viewport width (DIPs) below which the preview pane is
-/// auto-hidden regardless of `preview_visible`. The threshold leaves
-/// roughly: sidebar 220 + file list ~500 + preview 280 = 1000, so
-/// dropping under ~900 makes the file list painfully narrow.
-const PREVIEW_AUTOHIDE_THRESHOLD: f32 = 900.0;
 const SIDEBAR_COLLAPSED_WIDTH: f32 = 48.0;
 const SIDEBAR_MIN_WIDTH: f32 = 160.0;
 const SIDEBAR_MAX_WIDTH: f32 = 400.0;
@@ -1858,6 +1853,19 @@ impl Shell {
     /// shown; toggling off gives the file list the full content width.
     fn on_toggle_preview(&mut self, _: &TogglePreview, _: &mut Window, cx: &mut Context<Self>) {
         self.preview_visible = !self.preview_visible;
+        // When revealing the pane, make sure the current lead selection's
+        // preview is requested. Selection-change normally kicks this off, but
+        // request again so an explicit Cmd+P never reveals an empty pane (e.g.
+        // if the cached entry was evicted, or selection predates the toggle).
+        if self.preview_visible {
+            let lead = {
+                let entries = &self.active_tab().table.read(cx).delegate().entries;
+                self.active_tab().lead_row(entries)
+            };
+            if let Some(row) = lead {
+                self.request_preview_for_row(row, cx);
+            }
+        }
         cx.notify();
     }
 
