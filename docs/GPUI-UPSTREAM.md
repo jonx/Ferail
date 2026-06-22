@@ -187,4 +187,35 @@ previews is already in.
 - Document/expose wheel scroll-chaining behavior so nested scroll containers
   bubble at the boundary predictably.
 
+## 7. `gpui_windows` has no `Window::render_to_image` — headless capture needs a workaround
+
+**Hit during:** Windows port — the `--screenshot` CLI harness
+(`feraille-gpui/src/screenshot.rs`).
+
+`gpui_macos` implements `Window::render_to_image` (MetalRenderer samples an
+offscreen target, so a *hidden* window can be captured). `gpui_windows` does
+**not** implement it — the method returns `Err("render_to_image not implemented
+for this platform")`. So the unified `capture_window()` the macOS side wrote
+(assuming both platforms had `render_to_image`) panics on Windows. A stale code
+comment referenced a `gpui-windows-render-to-image` `[patch]` that was never
+actually wired into the root `Cargo.toml`.
+
+**Workaround (shipped):** on Windows, capture the *shown* window with
+`PrintWindow(PW_RENDERFULLCONTENT)` via `feraille_shell_win32::capture_window_rgba`
+(a Win32 BGRA DIB readback). Because a DirectComposition swap chain only
+presents when visible, the screenshot window is opened with `show: true` on
+Windows (`show: cfg!(windows)`), causing a brief on-screen flash — acceptable
+for a CLI tool, but not *truly* headless.
+
+**What upstream could do / our planned PR:**
+- Implement `Window::render_to_image` in `gpui_windows`: render the scene into
+  an offscreen D3D11 render-target texture (or copy the swap-chain back buffer
+  into a `D3D11_USAGE_STAGING` texture), `Map` it, and return the RGBA bytes —
+  mirroring `gpui_macos`'s offscreen path. That makes headless capture work
+  with the window hidden and lets us delete the PrintWindow workaround + the
+  `show: cfg!(windows)` special case. This is the PR to prepare.
+- The zed source for the pinned rev is already on disk at
+  `~/.cargo/git/checkouts/zed-*/<rev>/crates/gpui_windows/`; a local copy +
+  `[patch."https://github.com/zed-industries/zed"]` is the dev loop.
+
 <!-- Add new findings above this line as the bump surfaces them. -->

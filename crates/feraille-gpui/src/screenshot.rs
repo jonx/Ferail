@@ -371,13 +371,14 @@ pub fn run(args: Args) -> Result<()> {
         let disk_usage_root = disk_usage_root.clone();
         let viewer_target = viewer_target.clone();
         cx.spawn(async move |cx| {
-            // Headless capture goes through gpui's `Window::render_to_image`
-            // on both platforms now that `gpui_windows` has a D3D11
-            // staging-texture readback (upstream patch on branch
-            // `gpui-windows-render-to-image` — see
-            // `[patch."https://github.com/zed-industries/zed"]` in the
-            // workspace Cargo.toml while this is local). Window stays
-            // hidden on every platform.
+            // Headless capture: on macOS gpui's `MetalRenderer::render_to_image`
+            // samples an offscreen target with the window hidden. gpui_windows
+            // has no `render_to_image` yet (implementing it upstream is tracked
+            // in docs/GPUI-UPSTREAM.md), so on Windows we capture the live
+            // window with `PrintWindow(PW_RENDERFULLCONTENT)` — which needs the
+            // DirectComposition swap chain to have presented at least one
+            // frame, so the window must be SHOWN there (brief flash, acceptable
+            // for a CLI tool). See `capture_window` below.
             let opts = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
                     origin: gpui::Point::default(),
@@ -389,7 +390,9 @@ pub fn run(args: Args) -> Result<()> {
                 // gpui-component's TitleBar widget replaces the OS
                 // default and hosts our brand + filter + nav row.
                 titlebar: Some(gpui_component::TitleBar::title_bar_options()),
-                show: false,
+                // Hidden on macOS (offscreen render); shown on Windows so the
+                // swap chain presents a frame for PrintWindow to capture.
+                show: cfg!(windows),
                 focus: false,
                 ..Default::default()
             };
@@ -549,21 +552,44 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Headless capture — unified across platforms.
+// Headless capture — per-platform.
 // ---------------------------------------------------------------------------
 //
-// Both platforms now go through gpui's `Window::render_to_image`. The
-// macOS path uses gpui_macos's MetalRenderer (always present). The
-// Windows path uses gpui_windows's DirectX staging-texture readback
-// (added in the upstream `gpui-windows-render-to-image` patch — under
-// `[patch]` in this repo's root Cargo.toml while local). With both
-// implementations in place we can finally keep the screenshot window
-// hidden on every target.
+// macOS: gpui's `Window::render_to_image` (gpui_macos's MetalRenderer samples
+// an offscreen target; window stays hidden).
+//
+// Windows: gpui_windows has no `render_to_image`, so capture the shown window
+// via `PrintWindow(PW_RENDERFULLCONTENT)` through `capture_window_rgba` — the
+// Win32 analogue. Implementing `render_to_image` in gpui_windows (DirectX
+// staging-texture readback) so this can go hidden-and-unified is the upstream
+// task tracked in docs/GPUI-UPSTREAM.md.
 
+#[cfg(not(windows))]
 fn capture_window(handle: &AnyWindowHandle, cx: &mut AsyncApp) -> Result<image::RgbaImage> {
     cx.update_window(*handle, |_, window, _| window.render_to_image())
         .map_err(|e| anyhow::anyhow!("update_window failed: {e}"))?
         .map_err(|e| anyhow::anyhow!("render_to_image failed: {e}"))
+}
+
+#[cfg(windows)]
+fn capture_window(handle: &AnyWindowHandle, cx: &mut AsyncApp) -> Result<image::RgbaImage> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    // Pull the raw HWND out of gpui's window (it implements HasWindowHandle).
+    let hwnd: isize = cx
+        .update_window(*handle, |_, window, _| {
+            match window.window_handle().map(|h| h.as_raw()) {
+                Ok(RawWindowHandle::Win32(h)) => Ok(isize::from(h.hwnd)),
+                Ok(_) => Err(anyhow::anyhow!("window handle was not Win32")),
+                Err(e) => Err(anyhow::anyhow!("window_handle failed: {e}")),
+            }
+        })
+        .map_err(|e| anyhow::anyhow!("update_window failed: {e}"))??;
+
+    let (w, h, rgba) = crate::platform_shell::capture_window_rgba(hwnd)
+        .map_err(|e| anyhow::anyhow!("capture_window_rgba: {e}"))?;
+    image::RgbaImage::from_raw(w, h, rgba)
+        .ok_or_else(|| anyhow::anyhow!("capture produced a mis-sized buffer ({w}x{h})"))
 }
 
 // ---------------------------------------------------------------------------
