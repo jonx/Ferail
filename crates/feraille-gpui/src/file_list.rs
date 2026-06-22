@@ -191,6 +191,118 @@ impl Render for DragBadge {
     }
 }
 
+/// One target row's capability snapshot for context-menu gating,
+/// projected from the cached `FileEntry` at right-click time — no I/O,
+/// no path resolution. Add a field here when a command needs to gate on
+/// a new per-file capability (e.g. `is_symlink`, `is_app`).
+#[derive(Clone, Copy)]
+pub struct TargetCap {
+    pub kind: EntryKind,
+    pub is_quarantined: bool,
+}
+
+impl From<&FileEntry> for TargetCap {
+    fn from(e: &FileEntry) -> Self {
+        TargetCap {
+            kind: e.kind,
+            is_quarantined: e.is_quarantined,
+        }
+    }
+}
+
+/// Capabilities of the rows a context command will act on, resolved once
+/// at menu-open time with the SAME logic as
+/// `Shell::action_entries_visible_order` so the menu the user sees
+/// matches the set the handler touches (see docs/features/CONTEXT_MENU.md).
+///
+/// `caps` drives **bulk** commands (Clear Quarantine, Trash, …) through
+/// the `any`/`all` quantifiers. `anchor` drives **anchor** commands (Open
+/// Terminal Here, Slideshow from Here) that act on the single clicked row.
+#[derive(Clone, Default)]
+pub struct MenuTargets {
+    pub caps: Vec<TargetCap>,
+    pub anchor: Option<TargetCap>,
+}
+
+impl MenuTargets {
+    pub fn len(&self) -> usize {
+        self.caps.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.caps.is_empty()
+    }
+
+    /// Exactly one target — the gate for commands that only make sense
+    /// per single file (Copy Path, Rename, Open With).
+    pub fn is_single(&self) -> bool {
+        self.caps.len() == 1
+    }
+
+    /// More than one target.
+    pub fn is_multi(&self) -> bool {
+        self.caps.len() > 1
+    }
+
+    /// "Any" quantifier: at least one target satisfies `pred`. Show the
+    /// item and let the handler act on the qualifying subset.
+    pub fn any(&self, pred: impl Fn(&TargetCap) -> bool) -> bool {
+        self.caps.iter().any(pred)
+    }
+
+    /// "All" quantifier: the set is non-empty and every target satisfies
+    /// `pred`. Show only when the command is valid for the whole set.
+    pub fn all(&self, pred: impl Fn(&TargetCap) -> bool) -> bool {
+        !self.caps.is_empty() && self.caps.iter().all(pred)
+    }
+}
+
+/// Availability rule for a context command whose visibility depends on
+/// the resolved selection (docs/features/CONTEXT_MENU.md). Commands that
+/// always apply to a group — whether as one batch op (Compress, Trash)
+/// or fanned out per file (Open, Quick Look, Get Info) — need no rule
+/// and are added unconditionally; only the two cases below gate.
+pub enum Availability {
+    /// Meaningful for exactly one file; hidden once more than one row is
+    /// targeted (Copy Path, Rename, Open With).
+    SingleOnly,
+    /// Per-command callback over the resolved targets — the escape hatch
+    /// for capability and anchor rules (Clear Quarantine = any
+    /// quarantined; Open Terminal Here = anchor is a folder; Slideshow =
+    /// anchor is a file).
+    When(fn(&MenuTargets) -> bool),
+}
+
+impl Availability {
+    pub fn allows(&self, t: &MenuTargets) -> bool {
+        match self {
+            Availability::SingleOnly => t.is_single(),
+            Availability::When(f) => f(t),
+        }
+    }
+}
+
+/// Capability: at least one target carries the Mark-of-the-Web. The
+/// handler (`Shell::on_clear_quarantine`) strips it from the quarantined
+/// subset, so "any" is the right quantifier.
+fn avail_any_quarantined(t: &MenuTargets) -> bool {
+    t.any(|c| c.is_quarantined)
+}
+
+/// Anchor rule: the right-clicked (else lead) row is a folder — for
+/// commands that act on one directory (Open Terminal Here, Favorites).
+fn avail_anchor_dir(t: &MenuTargets) -> bool {
+    matches!(t.anchor.map(|c| c.kind), Some(EntryKind::Directory))
+}
+
+/// Anchor rule: the right-clicked (else lead) row is a non-directory —
+/// for file-anchored commands (Slideshow from Here).
+fn avail_anchor_file(t: &MenuTargets) -> bool {
+    t.anchor
+        .map(|c| !matches!(c.kind, EntryKind::Directory))
+        .unwrap_or(false)
+}
+
 /// Delegate that vends the current directory's entries to the
 /// Table. Holds the live `Vec<FileEntry>`; the Shell rotates it on
 /// every `navigate()`. The Vec is already filtered by both
@@ -266,6 +378,14 @@ pub struct FileListDelegate {
     /// the menu was BUILT is the app that opens — re-fetching at
     /// dispatch could reorder candidates and launch the wrong app.
     pub open_with_warm: Option<(PathBuf, Vec<crate::platform_shell::OpenWithCandidate>)>,
+    /// Capabilities of the rows the next context-menu command will
+    /// target, pushed by `Shell::push_menu_targets` on every row
+    /// right-click before `context_menu` builds. Lets bulk commands gate
+    /// on the WHOLE resolved target set — e.g. Clear Quarantine shows
+    /// when ANY selected row is quarantined — instead of just the
+    /// physically-clicked row. Reset on `clear`/`replace_entries` so a
+    /// stale set can't gate a freshly loaded folder.
+    pub menu_targets: MenuTargets,
     /// The user's active column sort, recorded by `perform_sort` /
     /// `apply_sort`. `None` = natural (name-ascending) order. Read
     /// by the folder-size worker so late-arriving sizes can re-apply
@@ -330,6 +450,7 @@ impl FileListDelegate {
             is_favorited: Vec::new(),
             selected_set: HashSet::new(),
             lead: None,
+            menu_targets: MenuTargets::default(),
             open_with_warm: None,
             current_sort: None,
             shell_focus,
@@ -410,6 +531,7 @@ impl FileListDelegate {
         self.heats.clear();
         self.tags.clear();
         self.is_favorited.clear();
+        self.menu_targets = MenuTargets::default();
         // selected_set / lead are NodeId-keyed and reconciled by
         // Shell against the new model; not cleared here.
     }
@@ -425,6 +547,7 @@ impl FileListDelegate {
         self.heats = heats;
         self.tags = vec![Vec::new(); self.entries.len()];
         self.is_favorited = vec![false; self.entries.len()];
+        self.menu_targets = MenuTargets::default();
         // selected_set / lead are NodeId-keyed; reconciliation is
         // Shell's job (see `refresh_file_list_selection`).
     }
@@ -1078,11 +1201,17 @@ impl TableDelegate for FileListDelegate {
         let tag_purple_on = applied_tags.contains(&feraille_core::commands::TagColor::Purple);
         let tag_gray_on = applied_tags.contains(&feraille_core::commands::TagColor::Gray);
 
-        let is_folder = self
-            .entries
-            .get(row_ix)
-            .map(|e| matches!(e.kind, EntryKind::Directory))
-            .unwrap_or(false);
+        // Availability over the resolved target set (the same set the
+        // handler will act on), routed through `Availability`. Anchor
+        // rules use the clicked/lead row; `SingleOnly` and capability
+        // rules use the whole set. See docs/features/CONTEXT_MENU.md.
+        let t = &self.menu_targets;
+        let show_slideshow = Availability::When(avail_anchor_file).allows(t);
+        let show_terminal = Availability::When(avail_anchor_dir).allows(t);
+        let show_favorites = Availability::When(avail_anchor_dir).allows(t);
+        let show_clear_quarantine = Availability::When(avail_any_quarantined).allows(t);
+        let show_single_only = Availability::SingleOnly.allows(t);
+
         let already_favorited = self.is_favorited.get(row_ix).copied().unwrap_or(false);
         let favorite_label = if already_favorited {
             "Remove from Favorites"
@@ -1096,50 +1225,55 @@ impl TableDelegate for FileListDelegate {
             .separator()
             .menu("Get Info", Box::new(GetInfo))
             .menu("Quick Look", Box::new(QuickLook));
-        if !is_folder {
-            // Start the viewer slideshow anchored to this file
-            // (docs/features/VIEWER.md). Folder rows can't anchor a
-            // slideshow, so the item is file-only.
+        if show_slideshow {
+            // Anchor command: start the viewer slideshow anchored to the
+            // clicked file (docs/features/VIEWER.md). Folder anchors can't
+            // start a slideshow, so the item is file-anchored.
             menu = menu.menu("Slideshow from Here", Box::new(SlideshowFromHere));
         }
-        let mut menu = menu
-            .separator()
-            .menu(
-                feraille_core::commands::REVEAL_LABEL,
-                Box::new(RevealInFinder),
-            )
-            .menu("Copy Path", Box::new(CopyPath));
-        if is_folder {
-            // Folder-only: open a terminal at the right-clicked directory,
-            // sitting directly under Copy Path so the two path-oriented
-            // actions group together.
+        let mut menu = menu.separator().menu(
+            feraille_core::commands::REVEAL_LABEL,
+            Box::new(RevealInFinder),
+        );
+        if show_single_only {
+            // SingleOnly: copying one path is the row action; copying many
+            // joined paths is a deliberate, separate gesture, so this hides
+            // past a single target rather than silently concatenating.
+            menu = menu.menu("Copy Path", Box::new(CopyPath));
+        }
+        if show_terminal {
+            // Anchor command: open a terminal at the clicked directory,
+            // grouped with the path-oriented actions above.
             menu = menu.menu("Open Terminal Here", Box::new(OpenTerminalHere));
         }
+        let mut menu = menu.separator();
+        if show_single_only {
+            // SingleOnly: Rename targets one file (single-target, like
+            // Finder's inline rename); hidden on a multi-selection.
+            menu = menu.menu("Rename\u{2026}", Box::new(RenameSelected));
+        }
         let mut menu = menu
-            .separator()
-            .menu("Rename\u{2026}", Box::new(RenameSelected))
             .menu("Duplicate", Box::new(Duplicate))
             .menu("Make Alias", Box::new(MakeAlias))
             .menu("Compress", Box::new(Compress));
-        if self
-            .entries
-            .get(row_ix)
-            .map(|e| e.is_quarantined)
-            .unwrap_or(false)
-        {
-            // Quarantined rows only: strip the Mark-of-the-Web + its
-            // where-from provenance. Reads the cached row flag — no
-            // xattr query at menu-open time.
+        if show_clear_quarantine {
+            // Capability command (docs/features/CONTEXT_MENU.md): show when
+            // ANY row in the resolved target set carries the
+            // Mark-of-the-Web, matching `Shell::on_clear_quarantine`, which
+            // strips it from the quarantined subset. Reads the caps
+            // `push_menu_targets` staged at right-click time — no xattr
+            // query at menu-open time. Right-clicking the clean file in a
+            // mixed selection now offers the command too, instead of hiding
+            // it based on the single clicked row.
             menu = menu.separator().menu(
                 feraille_core::commands::CLEAR_QUARANTINE_LABEL,
                 Box::new(ClearQuarantine),
             );
         }
-        if is_folder {
-            // Toggle the row's path against the user's Favorites
-            // (docs/features/FAVORITES.md §2.1). The right-click already
-            // set `context_row`; `resolve_favorite_target` picks the
-            // row's path from there.
+        if show_favorites {
+            // Anchor command: toggle the clicked folder's path against the
+            // user's Favorites (docs/features/FAVORITES.md §2.1).
+            // `resolve_favorite_target` reads the row from `context_row`.
             menu = menu
                 .separator()
                 .menu(favorite_label, Box::new(ToggleFavoriteForTarget));
@@ -1151,43 +1285,50 @@ impl TableDelegate for FileListDelegate {
         // through `PopupMenuItem::submenu(label, entity)`.
         let app_cx: &mut gpui::App = cx;
 
-        match &warmed_candidates {
-            Some(candidates) if !candidates.is_empty() => {
-                let candidates_for_build = candidates.clone();
-                let open_with_submenu = PopupMenu::build(window, app_cx, move |mut m, _w, _c| {
-                    for (i, cand) in candidates_for_build.iter().take(12).enumerate() {
-                        let label = if cand.is_default {
-                            SharedString::from(format!("{} (default)", cand.name))
-                        } else {
-                            SharedString::from(cand.name.clone())
-                        };
-                        let action: Box<dyn gpui::Action> = match i {
-                            0 => Box::new(OpenWithSlot0),
-                            1 => Box::new(OpenWithSlot1),
-                            2 => Box::new(OpenWithSlot2),
-                            3 => Box::new(OpenWithSlot3),
-                            4 => Box::new(OpenWithSlot4),
-                            5 => Box::new(OpenWithSlot5),
-                            6 => Box::new(OpenWithSlot6),
-                            7 => Box::new(OpenWithSlot7),
-                            8 => Box::new(OpenWithSlot8),
-                            9 => Box::new(OpenWithSlot9),
-                            10 => Box::new(OpenWithSlot10),
-                            _ => Box::new(OpenWithSlot11),
-                        };
-                        m = m.menu(label, action);
-                    }
-                    m
-                });
-                menu = menu.item(PopupMenuItem::submenu("Open With", open_with_submenu));
-            }
-            // Cache warm but LaunchServices offered nothing: omit the
-            // submenu entirely (pre-existing behavior for empty sets).
-            Some(_) => {}
-            // Cache miss — the warm fetch was kicked above; show a
-            // disabled placeholder for this one open.
-            None => {
-                menu = menu.item(PopupMenuItem::new("Open With (indexing\u{2026})").disabled(true));
+        // SingleOnly: "Open With" resolves one warmed path; on a
+        // multi-selection the slot indices wouldn't map to a single app,
+        // so the submenu is hidden rather than acting on just the anchor.
+        if show_single_only {
+            match &warmed_candidates {
+                Some(candidates) if !candidates.is_empty() => {
+                    let candidates_for_build = candidates.clone();
+                    let open_with_submenu =
+                        PopupMenu::build(window, app_cx, move |mut m, _w, _c| {
+                            for (i, cand) in candidates_for_build.iter().take(12).enumerate() {
+                                let label = if cand.is_default {
+                                    SharedString::from(format!("{} (default)", cand.name))
+                                } else {
+                                    SharedString::from(cand.name.clone())
+                                };
+                                let action: Box<dyn gpui::Action> = match i {
+                                    0 => Box::new(OpenWithSlot0),
+                                    1 => Box::new(OpenWithSlot1),
+                                    2 => Box::new(OpenWithSlot2),
+                                    3 => Box::new(OpenWithSlot3),
+                                    4 => Box::new(OpenWithSlot4),
+                                    5 => Box::new(OpenWithSlot5),
+                                    6 => Box::new(OpenWithSlot6),
+                                    7 => Box::new(OpenWithSlot7),
+                                    8 => Box::new(OpenWithSlot8),
+                                    9 => Box::new(OpenWithSlot9),
+                                    10 => Box::new(OpenWithSlot10),
+                                    _ => Box::new(OpenWithSlot11),
+                                };
+                                m = m.menu(label, action);
+                            }
+                            m
+                        });
+                    menu = menu.item(PopupMenuItem::submenu("Open With", open_with_submenu));
+                }
+                // Cache warm but LaunchServices offered nothing: omit the
+                // submenu entirely (pre-existing behavior for empty sets).
+                Some(_) => {}
+                // Cache miss — the warm fetch was kicked above; show a
+                // disabled placeholder for this one open.
+                None => {
+                    menu = menu
+                        .item(PopupMenuItem::new("Open With (indexing\u{2026})").disabled(true));
+                }
             }
         }
 
@@ -1489,4 +1630,194 @@ pub fn apply_sort<C: gpui::AppContext>(
 #[allow(dead_code)]
 fn _font_weight_check() -> FontWeight {
     FontWeight::MEDIUM
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::{SortColumn, sort_in_place};
+    use feraille_core::{EntryKind, FileEntry, NodeId};
+
+    fn entry(id: u64, name: &str, kind: EntryKind, size: u64, mtime: i64) -> FileEntry {
+        FileEntry {
+            id: NodeId::from_raw(id).unwrap(),
+            name: name.into(),
+            kind,
+            size,
+            mtime_unix: mtime,
+            display_size: String::new(),
+            display_mtime: String::new(),
+            display_kind: String::new(),
+            display_magic: String::new(),
+            display_description: String::new(),
+            is_quarantined: false,
+            quarantine: None,
+            hidden: false,
+        }
+    }
+
+    fn ids(entries: &[FileEntry]) -> Vec<u64> {
+        entries.iter().map(|e| e.id.as_raw()).collect()
+    }
+
+    /// A re-enumeration arrives in raw readdir order, so the in-place
+    /// reload path reapplies the tab's active sort. This guards the
+    /// invariant that makes that correct: sorting is a pure function of
+    /// the rows, so reapplying the same `(col, asc)` to the same set in
+    /// any incoming order lands on one canonical order. If this ever
+    /// stops holding, a watcher-driven reload (e.g. clearing the
+    /// Mark-of-the-Web) would shuffle a sorted view and scramble a
+    /// live Shift-range selection.
+    #[test]
+    fn reapplying_sort_is_order_independent() {
+        let mk = || {
+            vec![
+                entry(1, "bravo.txt", EntryKind::File, 30, 100),
+                entry(2, "alpha.txt", EntryKind::File, 10, 300),
+                entry(3, "charlie.txt", EntryKind::File, 20, 200),
+                entry(4, "sub", EntryKind::Directory, 0, 50),
+            ]
+        };
+        for (col, asc) in [
+            (SortColumn::Name, true),
+            (SortColumn::Size, false),
+            (SortColumn::Modified, false),
+        ] {
+            let mut from_load_order = mk();
+            sort_in_place(&mut from_load_order, col, asc);
+
+            // Same rows, different incoming (readdir) order.
+            let mut reshuffled = mk();
+            reshuffled.reverse();
+            sort_in_place(&mut reshuffled, col, asc);
+
+            assert_eq!(
+                ids(&from_load_order),
+                ids(&reshuffled),
+                "sort {col:?} asc={asc} must be independent of arrival order"
+            );
+        }
+    }
+
+    /// Folders sort ahead of files regardless of direction; the sort
+    /// key only orders within each group (Finder convention). The
+    /// reload reapplies via this same helper, so the grouping survives.
+    #[test]
+    fn folders_lead_in_both_directions() {
+        let mut rows = vec![
+            entry(1, "zeta.txt", EntryKind::File, 0, 0),
+            entry(2, "dir-b", EntryKind::Directory, 0, 0),
+            entry(3, "alpha.txt", EntryKind::File, 0, 0),
+            entry(4, "dir-a", EntryKind::Directory, 0, 0),
+        ];
+        sort_in_place(&mut rows, SortColumn::Name, false);
+        assert!(
+            matches!(rows[0].kind, EntryKind::Directory)
+                && matches!(rows[1].kind, EntryKind::Directory),
+            "directories must lead even on a descending sort"
+        );
+    }
+}
+
+#[cfg(test)]
+mod menu_targets_tests {
+    use super::{
+        Availability, MenuTargets, TargetCap, avail_anchor_dir, avail_anchor_file,
+        avail_any_quarantined,
+    };
+    use feraille_core::EntryKind;
+
+    fn cap(is_quarantined: bool) -> TargetCap {
+        TargetCap {
+            kind: EntryKind::File,
+            is_quarantined,
+        }
+    }
+
+    fn dir_cap() -> TargetCap {
+        TargetCap {
+            kind: EntryKind::Directory,
+            is_quarantined: false,
+        }
+    }
+
+    fn targets(caps: Vec<TargetCap>) -> MenuTargets {
+        MenuTargets {
+            caps,
+            anchor: None,
+        }
+    }
+
+    fn with_anchor(anchor: TargetCap) -> MenuTargets {
+        MenuTargets {
+            caps: vec![anchor],
+            anchor: Some(anchor),
+        }
+    }
+
+    /// The reported bug: a mixed selection (one quarantined, one clean)
+    /// must offer Clear Quarantine no matter which row was right-clicked.
+    /// `any` is the gate, so the order of the set is irrelevant — that is
+    /// exactly what decouples the menu from "the file selected last".
+    #[test]
+    fn any_shows_on_mixed_selection_regardless_of_order() {
+        let quarantined_first = targets(vec![cap(true), cap(false)]);
+        let clean_first = targets(vec![cap(false), cap(true)]);
+        assert!(quarantined_first.any(|c| c.is_quarantined));
+        assert!(clean_first.any(|c| c.is_quarantined));
+    }
+
+    /// No quarantined target anywhere in the set → the bulk command is
+    /// hidden. A single clean row behaves the same as a clean multi-set.
+    #[test]
+    fn any_hidden_when_no_target_qualifies() {
+        assert!(!targets(vec![cap(false), cap(false)]).any(|c| c.is_quarantined));
+        assert!(!targets(vec![]).any(|c| c.is_quarantined));
+    }
+
+    /// `all` is the conservative quantifier for commands that should only
+    /// appear when the whole selection qualifies; the empty set is never
+    /// "all" so an empty target list can't surface such a command.
+    #[test]
+    fn all_requires_every_target_and_rejects_empty() {
+        assert!(targets(vec![cap(true), cap(true)]).all(|c| c.is_quarantined));
+        assert!(!targets(vec![cap(true), cap(false)]).all(|c| c.is_quarantined));
+        assert!(!targets(vec![]).all(|c| c.is_quarantined));
+    }
+
+    /// Count helpers back the SingleOnly archetype.
+    #[test]
+    fn count_helpers() {
+        assert!(targets(vec![]).is_empty());
+        assert!(targets(vec![cap(false)]).is_single());
+        assert!(!targets(vec![cap(false)]).is_multi());
+        assert!(targets(vec![cap(false), cap(false)]).is_multi());
+        assert_eq!(targets(vec![cap(false), cap(false)]).len(), 2);
+    }
+
+    /// SingleOnly (Copy Path, Rename, Open With) shows for exactly one
+    /// target and hides for zero or many — the Type-B rule.
+    #[test]
+    fn single_only_shows_for_exactly_one() {
+        assert!(!Availability::SingleOnly.allows(&targets(vec![])));
+        assert!(Availability::SingleOnly.allows(&targets(vec![cap(false)])));
+        assert!(!Availability::SingleOnly.allows(&targets(vec![cap(false), cap(false)])));
+    }
+
+    /// The `When` callback drives capability and anchor rules. Clear
+    /// Quarantine fires on any quarantined target regardless of order;
+    /// the anchor predicates key off the clicked/lead row's kind.
+    #[test]
+    fn when_callbacks_for_capability_and_anchor() {
+        let quar = Availability::When(avail_any_quarantined);
+        assert!(quar.allows(&targets(vec![cap(false), cap(true)])));
+        assert!(!quar.allows(&targets(vec![cap(false), cap(false)])));
+
+        assert!(Availability::When(avail_anchor_dir).allows(&with_anchor(dir_cap())));
+        assert!(!Availability::When(avail_anchor_dir).allows(&with_anchor(cap(false))));
+        assert!(Availability::When(avail_anchor_file).allows(&with_anchor(cap(false))));
+        assert!(!Availability::When(avail_anchor_file).allows(&with_anchor(dir_cap())));
+        // No anchor → neither anchor rule fires.
+        assert!(!Availability::When(avail_anchor_dir).allows(&targets(vec![])));
+        assert!(!Availability::When(avail_anchor_file).allows(&targets(vec![])));
+    }
 }

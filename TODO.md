@@ -88,6 +88,13 @@ relative to the daily value. Ordered by bang-for-buck.
 - Context-menu follow-ups: compact Finder-style tag swatch row, async Open With
   prewarm if cold-cache stutter appears, and per-target enable/disable rules for
   read-only volumes, missing files, and permission-denied targets.
+- Tags checkmarks over a multi-selection: the Tags submenu now reads only the
+  clicked row's `tags`, but the toggle applies to the whole resolved selection.
+  Make the checkmarks a true group state (✓ = applied to all targets,
+  mixed-state for partial) by projecting per-target tag sets into `TargetCap`
+  and reading them through `MenuTargets::all`, mirroring the bulk/anchor model
+  Clear Quarantine now uses (docs/features/CONTEXT_MENU.md → Command
+  availability over a group).
 
 ## File Ops, Trash & Drag
 

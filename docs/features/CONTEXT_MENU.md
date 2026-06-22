@@ -54,10 +54,91 @@ Synchronous-but-fast Cocoa hops:
 
 ## Multi-Selection
 
-The list pane respects `SelectionSet`. Right-clicking an already-selected
-row keeps the multi-set; right-clicking elsewhere collapses the selection
-to that row. Action titles update to "Reveal N in Finder", "Compress N
-Items", etc. Rename is single-target only (matching Finder).
+The list pane respects the per-tab selection set. Right-clicking an
+already-selected row keeps the multi-set; right-clicking elsewhere
+collapses the selection to that row. Action titles update to "Reveal N in
+Finder", "Compress N Items", etc. Rename is single-target only (matching
+Finder).
+
+### Command availability over a group (GPUI)
+
+A context command's *visibility* and its *execution* must agree on which
+files they target — otherwise a command can be shown for a file it won't
+touch, or hidden for one it would (the Clear-Quarantine-on-a-mixed-pair
+bug). The GPUI shell guarantees this by resolving the target set **once**,
+from a single place, and reusing it for both:
+
+- `Shell::resolve_targets(context_row, …)` is the single resolver:
+  `context_row` (right-click on an unselected row) → the whole visible
+  selection → the lead row. `action_entries_visible_order` *consumes*
+  `context_row` for one-shot dispatch; `build_menu_targets` *peeks* it so
+  the menu is built against the identical set the handler will act on.
+- On every row right-click, `Shell::push_menu_targets` stages a
+  `MenuTargets` snapshot (`Vec<TargetCap>` capability caps + a single
+  `anchor`) into the `FileListDelegate`. The gpui-component context menu
+  builds in a deferred closure (next frame), so the staged caps are always
+  fresh by menu-build time. Both the list and the icons-grid right-click
+  sites stage it.
+
+#### Three command archetypes
+
+Every command is classified by how it behaves across a multi-selection:
+
+1. **Batch** — one operation over the whole set (Compress → one archive,
+   Move to Trash → one batch op, Tags → applied to all). Always shown; a
+   large count is the point, so it is never guarded.
+2. **FanOut** — invoked once per file (Open, Quick Look, Reveal in Finder,
+   Get Info, Open in New Tab, Duplicate, Make Alias). Always shown, but the
+   handler iterates over the resolved set.
+3. **SingleOnly** — meaningful only for one file (Copy Path, Rename, Open
+   With). Hidden once more than one row is targeted.
+
+Plus **capability / anchor** rules that don't fit a count (Clear
+Quarantine = any target quarantined; Open Terminal Here / Favorites =
+anchor is a folder; Slideshow from Here = anchor is a file).
+
+Visibility is expressed with the `Availability` type and evaluated against
+the staged `MenuTargets`:
+
+```rust
+enum Availability {
+    SingleOnly,                     // hide once >1 target
+    When(fn(&MenuTargets) -> bool), // capability / anchor callback
+}
+```
+
+Batch and FanOut need no rule — they're added unconditionally and differ
+only in how the *handler* treats the group. `SingleOnly` gates on
+`MenuTargets::is_single()`; `When` is the per-command callback the menu
+asked for. Clear Quarantine is `When(avail_any_quarantined)`, matching
+`Shell::on_clear_quarantine`, which strips the Mark-of-the-Web from the
+quarantined subset — so right-clicking the clean file in a mixed selection
+still offers it.
+
+To gate a new command, pick `SingleOnly` or write a `When` closure; to
+gate on a new per-file capability, add a field to `TargetCap` (projected
+from the cached `FileEntry` — no I/O) and read it through `any`/`all`.
+Caps are cache-only, honouring the prime directive.
+
+#### Fan-out confirmation
+
+A FanOut command that spawns a *separate foreground artifact per file* — a
+tab, a Get Info window, an app launch, a Finder reveal — routes through
+`Shell::confirm_fanout`. Below the threshold (10) it runs immediately;
+at or above it, a confirmation dialog asks first so a stray 200-row
+selection can't silently open 200 windows. Power users can still proceed.
+Batch commands that collapse to one operation (Compress, Trash, Tags) and
+single-window FanOut (Quick Look opens one HUD for all paths) never
+confirm. Guarded today: Open, Open in New Tab, Get Info, Reveal in Finder.
+
+A FanOut that opens its own OS windows (Get Info) cascades them along a
+spiral instead of stacking on the centred spot — see `crate::window_cascade`.
+The slot is an Archimedean spiral (`r ∝ √slot`, `θ ∝ √slot`, equal
+arc-length steps) around the display centre, clamped to stay on-screen so a
+large batch is still grabbable. Each window holds a slot guard that frees
+its slot on close, so closing them all re-centres the next one. The module
+is window-kind-agnostic — any future multi-window surface can reuse it with
+its own slot counter.
 
 ## Tags
 

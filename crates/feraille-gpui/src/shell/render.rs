@@ -1045,6 +1045,10 @@ impl Shell {
                                     .unwrap_or(false);
                                 this.apply_row_right_click(i, cx);
                                 this.context_row = if was_selected { None } else { Some(i) };
+                                // Same target-set staging as the list
+                                // path so the grid menu gates bulk
+                                // commands on the whole selection.
+                                this.push_menu_targets(i, cx);
                                 let table = this.active_tab().table.clone();
                                 table.update(cx, |tbl, cx| {
                                     tbl.delegate_mut().context_menu(i, menu, window, cx)

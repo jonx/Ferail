@@ -800,7 +800,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use gpui_component::notification::Notification;
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
@@ -809,21 +808,36 @@ impl Shell {
         if paths.is_empty() {
             return;
         }
-        for path in &paths {
-            crate::platform_shell::reveal_in_finder(path);
-        }
-        let reveal_target = if cfg!(windows) { "Explorer" } else { "Finder" };
-        let msg = if paths.len() == 1 {
-            let name = paths[0]
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("item")
-                .to_string();
-            format!("Showing \u{201C}{}\u{201D} in {}", name, reveal_target)
-        } else {
-            format!("Showing {} items in {}", paths.len(), reveal_target)
-        };
-        window.push_notification(Notification::info(msg), cx);
+        // FanOut: each path is revealed in its own Finder window, so a
+        // large selection is guarded behind a confirm.
+        let count = paths.len();
+        let plural = if count == 1 { "item" } else { "items" };
+        self.confirm_fanout(
+            count,
+            "Reveal in Finder?",
+            format!("Reveal {count} {plural} in Finder?"),
+            "Reveal",
+            window,
+            cx,
+            move |_this, window, cx| {
+                use gpui_component::notification::Notification;
+                for path in &paths {
+                    crate::platform_shell::reveal_in_finder(path);
+                }
+                let reveal_target = if cfg!(windows) { "Explorer" } else { "Finder" };
+                let msg = if paths.len() == 1 {
+                    let name = paths[0]
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("item")
+                        .to_string();
+                    format!("Showing \u{201C}{}\u{201D} in {}", name, reveal_target)
+                } else {
+                    format!("Showing {} items in {}", paths.len(), reveal_target)
+                };
+                window.push_notification(Notification::info(msg), cx);
+            },
+        );
     }
 
     pub(super) fn on_reveal_context_path(
@@ -1433,6 +1447,70 @@ impl Shell {
                         )),
                         cx,
                     ),
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Run `work` immediately when fanning out to `count` artifacts is
+    /// small; otherwise pop a confirmation and run it only if the user
+    /// proceeds. `work` re-enters the live Shell / Window / Context on
+    /// confirm. Used to guard commands that each spawn a separate
+    /// foreground artifact (a tab, a Get Info window, an app launch, a
+    /// Finder reveal) so a stray 200-row selection asks first instead of
+    /// opening 200 things. Batch commands that collapse to one operation
+    /// (Compress, Move to Trash, Tags) never route through here.
+    /// (docs/features/CONTEXT_MENU.md)
+    pub(super) fn confirm_fanout(
+        &mut self,
+        count: usize,
+        title: &'static str,
+        body: String,
+        ok_label: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        work: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        /// At or above this many fan-out artifacts, confirm first.
+        const FANOUT_CONFIRM_THRESHOLD: usize = 10;
+        if count < FANOUT_CONFIRM_THRESHOLD {
+            work(self, window, cx);
+            return;
+        }
+        let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
+        let win = window.window_handle();
+        let _ = window.open_dialog(cx, move |dialog, _window, _cx| {
+            let tx_go = go_tx.clone();
+            let tx_cancel = go_tx.clone();
+            let body = body.clone();
+            dialog
+                .title(title)
+                .child(div().text_sm().child(body))
+                .child(
+                    h_flex().pt_2().child(
+                        Button::new("confirm-fanout-go")
+                            .label(ok_label)
+                            .small()
+                            .on_click(move |_, window, cx| {
+                                let _ = tx_go.try_send(true);
+                                window.close_dialog(cx);
+                            }),
+                    ),
+                )
+                .on_cancel(move |_, _, _| {
+                    let _ = tx_cancel.try_send(false);
+                    true
+                })
+        });
+        let weak = cx.weak_entity();
+        cx.spawn(async move |_, cx| {
+            if !matches!(go_rx.recv().await, Ok(true)) {
+                return;
+            }
+            let _ = win.update(cx, |_, window, cx| {
+                if let Some(shell) = weak.upgrade() {
+                    shell.update(cx, |shell, cx| work(shell, window, cx));
                 }
             });
         })

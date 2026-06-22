@@ -1043,6 +1043,11 @@ impl Shell {
                             // when the click replaced selection
                             // to that unselected row.
                             this.context_row = if row_was_selected { None } else { Some(r) };
+                            // Stage the resolved target caps so the
+                            // menu about to build gates bulk commands
+                            // (Clear Quarantine) on the whole set, not
+                            // just row `r`.
+                            this.push_menu_targets(r, cx);
                         } else {
                             this.context_row = None;
                         }
@@ -1260,14 +1265,23 @@ impl Shell {
             .collect()
     }
 
-    /// Resolve the target set for a command. A right-click on an
-    /// unselected row consumes `context_row` and returns just that row;
-    /// a right-click inside a selected set leaves `context_row` empty,
-    /// so bulk-capable commands operate on the whole visible selection.
-    /// Keyboard/menu invocations also use the selection when present,
-    /// falling back to the lead row for legacy single-row commands.
-    fn action_entries_visible_order(&mut self, cx: &App) -> Vec<(usize, FileEntry, PathBuf)> {
-        if let Some(row) = self.context_row.take() {
+    /// Resolve the target set for a command from a given `context_row`.
+    /// A right-click on an unselected row sets `context_row` to just that
+    /// row; a right-click inside a selected set leaves it empty, so
+    /// bulk-capable commands operate on the whole visible selection.
+    /// Keyboard/menu invocations pass `None` and use the selection when
+    /// present, falling back to the lead row for single-row commands.
+    ///
+    /// Read-only (`&self`): the caller decides whether to consume
+    /// `context_row`. `action_entries_visible_order` takes it (one-shot
+    /// dispatch); `build_menu_targets` peeks it so the menu is built
+    /// against the identical set the handler will later act on.
+    fn resolve_targets(
+        &self,
+        context_row: Option<usize>,
+        cx: &App,
+    ) -> Vec<(usize, FileEntry, PathBuf)> {
+        if let Some(row) = context_row {
             return self.entry_path_for_row(row, cx).into_iter().collect();
         }
         let selected = self.selected_entries_visible_order(cx);
@@ -1281,6 +1295,50 @@ impl Shell {
             .collect()
     }
 
+    /// Resolve and consume `context_row`: the set a dispatched command
+    /// acts on. Consuming means the next keyboard action falls through to
+    /// the selection/lead instead of re-targeting the last right-click.
+    fn action_entries_visible_order(&mut self, cx: &App) -> Vec<(usize, FileEntry, PathBuf)> {
+        let context_row = self.context_row.take();
+        self.resolve_targets(context_row, cx)
+    }
+
+    /// Project the resolved target set into the capability snapshot the
+    /// context menu gates on, plus the clicked row as the single
+    /// `anchor` for "…from Here" commands. Peeks `context_row` (set just
+    /// before this runs) WITHOUT consuming it, so menu visibility and the
+    /// later handler agree by construction. Model/cache-only — the path
+    /// resolution it inherits reads cached snapshots, no filesystem.
+    fn build_menu_targets(&self, clicked_row: usize, cx: &App) -> crate::file_list::MenuTargets {
+        let caps = self
+            .resolve_targets(self.context_row, cx)
+            .into_iter()
+            .map(|(_, entry, _)| crate::file_list::TargetCap::from(&entry))
+            .collect();
+        let anchor = self
+            .active_tab()
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .get(clicked_row)
+            .map(crate::file_list::TargetCap::from);
+        crate::file_list::MenuTargets { caps, anchor }
+    }
+
+    /// Stage the menu-target caps into the active tab's delegate so the
+    /// next `context_menu` build gates against the whole resolved set.
+    /// Called from both right-click sites (list rows and the icons grid)
+    /// right after `context_row` is set. No `refresh` — this only feeds
+    /// the menu about to open, not the painted rows.
+    fn push_menu_targets(&mut self, clicked_row: usize, cx: &mut Context<Self>) {
+        let targets = self.build_menu_targets(clicked_row, cx);
+        let table = self.active_tab().table.clone();
+        table.update(cx, |state, _| {
+            state.delegate_mut().menu_targets = targets;
+        });
+    }
+
     fn on_navigate_back(&mut self, _: &NavigateBack, _: &mut Window, cx: &mut Context<Self>) {
         self.navigate_back(cx);
     }
@@ -1290,7 +1348,6 @@ impl Shell {
     }
 
     fn on_open_selected(&mut self, _: &OpenSelected, window: &mut Window, cx: &mut Context<Self>) {
-        use gpui_component::notification::Notification;
         let entries = self.action_entries_visible_order(cx);
         if entries.is_empty() {
             return;
@@ -1299,23 +1356,28 @@ impl Shell {
             self.activate_row(entries[0].0, cx);
             return;
         }
-        const OPEN_MANY_CAP: usize = 10;
-        if entries.len() > OPEN_MANY_CAP {
-            window.push_notification(
-                Notification::info(format!(
-                    "Select {OPEN_MANY_CAP} or fewer items to open them together"
-                )),
-                cx,
-            );
-            return;
-        }
-        for (_, entry, path) in entries {
-            if matches!(entry.kind, EntryKind::Directory) {
-                self.open_path_in_new_tab(path, window, cx);
-            } else {
-                let _ = open_with_default(&path);
-            }
-        }
+        // FanOut: opening N items launches N apps / opens N folder tabs.
+        // Power users can open many at once; `confirm_fanout` only asks
+        // once the count crosses the threshold (then opens all).
+        let count = entries.len();
+        let plural = if count == 1 { "item" } else { "items" };
+        self.confirm_fanout(
+            count,
+            "Open Items?",
+            format!("Open {count} {plural}?"),
+            "Open",
+            window,
+            cx,
+            move |this, window, cx| {
+                for (_, entry, path) in entries {
+                    if matches!(entry.kind, EntryKind::Directory) {
+                        this.open_path_in_new_tab(path, window, cx);
+                    } else {
+                        let _ = open_with_default(&path);
+                    }
+                }
+            },
+        );
     }
 
     fn on_refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
@@ -1781,52 +1843,56 @@ impl Shell {
     pub(crate) fn on_get_info(
         &mut self,
         _: &GetInfo,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         use feraille_core::entry_info::InfoTarget;
-        let (path, name, target, known_size) = match self.target_row(cx) {
-            Some(row) => {
-                let Some(path) = self.path_for_row(row, cx) else {
-                    return;
-                };
-                let entry = self
-                    .active_tab()
-                    .table
-                    .read(cx)
-                    .delegate()
-                    .entries
-                    .get(row)
-                    .cloned();
-                let kind = entry.as_ref().map(|e| e.kind);
-                let target = match kind {
-                    Some(EntryKind::Directory) => InfoTarget::Folder,
-                    _ => InfoTarget::File,
-                };
-                // Reuse the file list's recursive folder size when it has one.
-                let known_size = match (target, entry.as_ref()) {
-                    (InfoTarget::Folder, Some(e)) if e.size > 0 => Some(e.size),
-                    _ => None,
-                };
-                let name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .map(str::to_string)
-                    .unwrap_or_default();
-                (path, name, target, known_size)
-            }
-            None => {
-                let dir = self.active_tab().current_dir.clone();
-                let name = dir
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| dir.display().to_string());
-                (dir, name, InfoTarget::Folder, None)
-            }
-        };
-        let weak = cx.weak_entity();
-        crate::entry_info::open(path, name, target, known_size, weak, cx);
+        let targets = self.action_entries_visible_order(cx);
+        // Nothing targeted → info on the current folder (Finder parity).
+        if targets.is_empty() {
+            let dir = self.active_tab().current_dir.clone();
+            let name = dir
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| dir.display().to_string());
+            let weak = cx.weak_entity();
+            crate::entry_info::open(dir, name, InfoTarget::Folder, None, weak, cx);
+            return;
+        }
+        // FanOut: one Get Info window per file (each `entry_info::open`
+        // spawns its own window). Guard the noisy case behind a confirm.
+        let count = targets.len();
+        let plural = if count == 1 { "window" } else { "windows" };
+        self.confirm_fanout(
+            count,
+            "Get Info?",
+            format!("Open {count} Get Info {plural}?"),
+            "Get Info",
+            window,
+            cx,
+            move |_this, _window, cx| {
+                for (_, entry, path) in targets {
+                    let target = match entry.kind {
+                        EntryKind::Directory => InfoTarget::Folder,
+                        _ => InfoTarget::File,
+                    };
+                    // Reuse the file list's recursive folder size if known.
+                    let known_size = if matches!(target, InfoTarget::Folder) && entry.size > 0 {
+                        Some(entry.size)
+                    } else {
+                        None
+                    };
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .map(str::to_string)
+                        .unwrap_or_default();
+                    let weak = cx.weak_entity();
+                    crate::entry_info::open(path, name, target, known_size, weak, cx);
+                }
+            },
+        );
     }
 
     /// Cmd+= / Cmd+- / Cmd+0 — UI zoom. Bumps `ui_scale` by ±0.1
@@ -1855,11 +1921,43 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let path = match self.target_row(cx).and_then(|r| self.path_for_row(r, cx)) {
-            Some(p) => p,
-            None => self.active_tab().current_dir.clone(),
-        };
-        self.open_path_in_new_tab(path, window, cx);
+        let targets = self.action_entries_visible_order(cx);
+        // Nothing targeted (e.g. background invocation) → open the current
+        // folder in a new tab, matching the prior single-target fallback.
+        if targets.is_empty() {
+            let path = self.active_tab().current_dir.clone();
+            self.open_path_in_new_tab(path, window, cx);
+            return;
+        }
+        if targets.len() == 1 {
+            self.open_path_in_new_tab(targets[0].2.clone(), window, cx);
+            return;
+        }
+        // FanOut: a tab per folder (Finder's "Open in New Tabs"); files
+        // can't anchor a folder tab, so they're skipped.
+        let folders: Vec<PathBuf> = targets
+            .into_iter()
+            .filter(|(_, e, _)| matches!(e.kind, EntryKind::Directory))
+            .map(|(_, _, p)| p)
+            .collect();
+        if folders.is_empty() {
+            return;
+        }
+        let count = folders.len();
+        let plural = if count == 1 { "tab" } else { "tabs" };
+        self.confirm_fanout(
+            count,
+            "Open in New Tabs?",
+            format!("Open {count} folders in new {plural}?"),
+            "Open",
+            window,
+            cx,
+            move |this, window, cx| {
+                for path in folders {
+                    this.open_path_in_new_tab(path, window, cx);
+                }
+            },
+        );
     }
 
     /// Push a new tab at `path` and switch to it. Shared entry point

@@ -49,6 +49,7 @@ pub mod thumbnails;
 pub mod tool_results;
 pub mod tree;
 pub mod viewer;
+pub mod window_cascade;
 
 #[cfg(target_os = "linux")]
 pub use feraille_shell_linux as platform_shell;

@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use feraille_core::commands::TagColor;
 use feraille_core::entry_info::{
@@ -49,11 +49,40 @@ const TAG_COLORS: [TagColor; 7] = [
     TagColor::Gray,
 ];
 
+/// Number of standalone Get Info windows currently open. Drives the spiral
+/// cascade (see [`crate::window_cascade`]) so a fan-out over many files
+/// spreads its windows out instead of stacking them on the same centred
+/// spot. A [`CascadeGuard`] held by each window keeps this in sync — once
+/// they all close, the next one re-centres.
+static OPEN_GET_INFO_WINDOWS: AtomicUsize = AtomicUsize::new(0);
+
+/// Claims a cascade slot on construction and releases it on drop (the
+/// owning [`EntryInfoView`] drops when its window closes). The held `slot`
+/// is the number of windows already open, i.e. this window's spiral index.
+struct CascadeGuard {
+    slot: usize,
+}
+
+impl CascadeGuard {
+    fn claim() -> Self {
+        let slot = OPEN_GET_INFO_WINDOWS.fetch_add(1, Ordering::Relaxed);
+        CascadeGuard { slot }
+    }
+}
+
+impl Drop for CascadeGuard {
+    fn drop(&mut self) {
+        OPEN_GET_INFO_WINDOWS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// Open a Get Info window for `path`. A standalone, resizable, movable OS
 /// window — not tied to the main window — so several can be open at once for
-/// different files. `name`/`target` are the caller's best guess (from the
-/// selected row) for the loading header; the background gather recomputes
-/// them. `shell` lets edits reload the affected directory.
+/// different files. Opening more than one (e.g. Get Info over a selection)
+/// cascades them along a spiral so they don't stack. `name`/`target` are the
+/// caller's best guess (from the selected row) for the loading header; the
+/// background gather recomputes them. `shell` lets edits reload the
+/// affected directory.
 pub fn open(
     path: PathBuf,
     name: String,
@@ -63,16 +92,26 @@ pub fn open(
     cx: &mut App,
 ) {
     let title: SharedString = format!("Get Info \u{2014} {name}").into();
+    // Claim the next spiral slot; the guard rides along in the view and
+    // releases the slot when the window closes.
+    let cascade = CascadeGuard::claim();
+    let window_size = size(px(420.0), px(680.0));
     let opts = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(420.0), px(680.0)), cx)),
+        window_bounds: Some(crate::window_cascade::cascaded_bounds(
+            cascade.slot,
+            window_size,
+            cx,
+        )),
         titlebar: Some(TitlebarOptions {
             title: Some(title),
             ..Default::default()
         }),
         ..Default::default()
     };
-    let _ = cx.open_window(opts, |window, cx| {
-        let view = cx.new(|cx| EntryInfoView::new(path, name, target, known_size, shell, cx));
+    let _ = cx.open_window(opts, move |window, cx| {
+        let view = cx.new(|cx| {
+            EntryInfoView::new(path, name, target, known_size, shell, Some(cascade), cx)
+        });
         cx.new(|cx| Root::new(view, window, cx))
     });
 }
@@ -304,6 +343,10 @@ pub struct EntryInfoView {
     /// One-shot guard: grab focus on the window's first paint so Esc works
     /// immediately, before any control is clicked.
     did_focus: bool,
+    /// Holds this window's spiral-cascade slot for its lifetime; dropping it
+    /// (on window close) frees the slot. `None` for the embedded preview,
+    /// which isn't a standalone window. Kept only for its `Drop`.
+    _cascade: Option<CascadeGuard>,
 }
 
 impl EntryInfoView {
@@ -313,9 +356,10 @@ impl EntryInfoView {
         target: InfoTarget,
         known_size: Option<u64>,
         shell: WeakEntity<Shell>,
+        cascade: Option<CascadeGuard>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::build(path, name, target, known_size, shell, false, cx)
+        Self::build(path, name, target, known_size, shell, false, cascade, cx)
     }
 
     /// Construct for embedding in the preview pane: section rows only, no
@@ -329,7 +373,7 @@ impl EntryInfoView {
         shell: WeakEntity<Shell>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::build(path, name, target, known_size, shell, true, cx)
+        Self::build(path, name, target, known_size, shell, true, None, cx)
     }
 
     fn build(
@@ -339,6 +383,7 @@ impl EntryInfoView {
         known_size: Option<u64>,
         shell: WeakEntity<Shell>,
         embedded: bool,
+        cascade: Option<CascadeGuard>,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self {
@@ -353,6 +398,7 @@ impl EntryInfoView {
             known_size,
             focus_handle: cx.focus_handle(),
             did_focus: false,
+            _cascade: cascade,
         };
         this.refresh(cx);
         this
