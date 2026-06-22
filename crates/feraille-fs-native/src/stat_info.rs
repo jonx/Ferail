@@ -100,7 +100,65 @@ pub fn read_stat_info(path: &Path) -> Option<StatInfo> {
     })
 }
 
-#[cfg(not(unix))]
+/// Windows facts for the Get Info panel, the rough analogue of the unix
+/// `lstat` read. `std`'s `MetadataExt` exposes everything the Properties
+/// dialog's General tab shows — size, the created/modified/accessed
+/// timestamps, and the read-only / hidden attribute bits — with no `windows`
+/// crate needed. There is no POSIX uid/gid/mode, so a permission mode is
+/// synthesised from the read-only attribute (write bits cleared when set) and
+/// the owner shows the current account (best-effort).
+#[cfg(windows)]
+pub fn read_stat_info(path: &Path) -> Option<StatInfo> {
+    use std::os::windows::fs::MetadataExt;
+
+    // symlink_metadata so a symlink / junction reports as itself, matching the
+    // unix lstat path and the directory enumerator.
+    let md = std::fs::symlink_metadata(path).ok()?;
+    let attrs = md.file_attributes();
+
+    const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+
+    let is_dir = attrs & FILE_ATTRIBUTE_DIRECTORY != 0;
+    let is_symlink = attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+    let readonly = attrs & FILE_ATTRIBUTE_READONLY != 0;
+    let hidden = attrs & FILE_ATTRIBUTE_HIDDEN != 0;
+
+    // Windows FILETIME is 100ns ticks since 1601-01-01; 0 means "not recorded".
+    fn filetime_to_unix(ft: u64) -> Option<i64> {
+        if ft == 0 {
+            return None;
+        }
+        const TICKS_PER_SEC: u64 = 10_000_000;
+        const EPOCH_DIFF_SECS: i64 = 11_644_473_600; // 1601-01-01 -> 1970-01-01
+        Some((ft / TICKS_PER_SEC) as i64 - EPOCH_DIFF_SECS)
+    }
+
+    // Synthesised POSIX-ish mode for the permissions matrix: base perms by
+    // type, write bits cleared when the read-only attribute is set.
+    let base: u32 = if is_dir { 0o755 } else { 0o644 };
+    let mode = if readonly { base & !0o222 } else { base };
+
+    Some(StatInfo {
+        size: md.file_size(),
+        uid: 0,
+        gid: 0,
+        owner_name: std::env::var("USERNAME").unwrap_or_default(),
+        group_name: String::new(),
+        mode,
+        is_symlink,
+        is_dir,
+        created_unix: filetime_to_unix(md.creation_time()),
+        modified_unix: filetime_to_unix(md.last_write_time()).unwrap_or(0),
+        accessed_unix: filetime_to_unix(md.last_access_time()),
+        is_locked: readonly,
+        is_invisible: hidden,
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn read_stat_info(_path: &Path) -> Option<StatInfo> {
     None
 }
@@ -204,12 +262,58 @@ pub fn set_permissions(path: &Path, mode: u32) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows "Locked" == the read-only file attribute; "Invisible" == the
+/// hidden attribute. Both map onto the same `Attributes` toggles the Get Info
+/// panel shows and the Properties dialog calls "Read-only" / "Hidden".
+#[cfg(windows)]
+pub fn set_locked(path: &Path, locked: bool) -> Result<(), String> {
+    const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
+    set_win_attr(path, FILE_ATTRIBUTE_READONLY, locked)
+}
+
+#[cfg(windows)]
+pub fn set_invisible(path: &Path, invisible: bool) -> Result<(), String> {
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    set_win_attr(path, FILE_ATTRIBUTE_HIDDEN, invisible)
+}
+
+/// Read the current attribute mask, set or clear `attr`, write it back so the
+/// other attributes survive. `windows`-crate `Get/SetFileAttributesW`.
+#[cfg(windows)]
+fn set_win_attr(path: &Path, attr: u32, on: bool) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Storage::FileSystem::{
+        GetFileAttributesW, SetFileAttributesW, FILE_FLAGS_AND_ATTRIBUTES,
+    };
+    use windows::core::PCWSTR;
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let current = GetFileAttributesW(PCWSTR(wide.as_ptr()));
+        if current == u32::MAX {
+            // INVALID_FILE_ATTRIBUTES
+            return Err(format!(
+                "GetFileAttributesW: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let updated = if on { current | attr } else { current & !attr };
+        SetFileAttributesW(PCWSTR(wide.as_ptr()), FILE_FLAGS_AND_ATTRIBUTES(updated))
+            .map_err(|e| format!("SetFileAttributesW: {e}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn set_locked(_path: &Path, _locked: bool) -> Result<(), String> {
     Err("set_locked is macOS-only".into())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn set_invisible(_path: &Path, _invisible: bool) -> Result<(), String> {
     Err("set_invisible is macOS-only".into())
 }

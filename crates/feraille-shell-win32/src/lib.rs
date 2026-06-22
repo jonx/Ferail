@@ -883,10 +883,60 @@ pub fn fetch_quick_look_thumbnail(
 // Get Info — shell facts (the NSURL-resource-values equivalent)
 // =============================================================
 
-/// Shell-sourced Get Info facts. On Windows there is no per-file UTI,
-/// "date added", or per-file hide-extension flag, so this returns the
-/// default (all `None`); the Get Info panel falls back to magic detection
-/// for the "Kind" row. Mirrors `feraille_shell_mac::read_shell_info`.
+/// Shell-sourced Get Info facts. On Windows the meaningful one is the
+/// localized **type description** (`SHGetFileInfoW` + `SHGFI_TYPENAME`) — the
+/// "Type" field the Properties dialog shows, e.g. "Markdown Source File" or
+/// "File folder". There is no per-file UTI, "date added", or per-file
+/// hide-extension flag, so those stay `None`; the `.lnk` extension marks a
+/// shortcut (Windows' alias). Mirrors `feraille_shell_mac::read_shell_info`.
+#[cfg(windows)]
+pub fn read_shell_info(path: &std::path::Path) -> ShellInfo {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
+    use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_TYPENAME};
+
+    let mut info = ShellInfo {
+        is_alias: Some(
+            path.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("lnk")),
+        ),
+        ..Default::default()
+    };
+
+    // Shell APIs reject the `\\?\` extended-length prefix the file list uses
+    // internally; strip it (drive paths only) so SHGetFileInfoW resolves.
+    let display = path.to_string_lossy();
+    let cleaned = display.strip_prefix(r"\\?\").unwrap_or(&display);
+    let wide: Vec<u16> = cleaned
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut shfi = SHFILEINFOW::default();
+    let res = unsafe {
+        SHGetFileInfoW(
+            PCWSTR(wide.as_ptr()),
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            Some(&mut shfi),
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            SHGFI_TYPENAME,
+        )
+    };
+    if res != 0 {
+        let len = shfi
+            .szTypeName
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(shfi.szTypeName.len());
+        let kind = String::from_utf16_lossy(&shfi.szTypeName[..len]);
+        if !kind.is_empty() {
+            info.kind = Some(kind);
+        }
+    }
+    info
+}
+
+#[cfg(not(windows))]
 pub fn read_shell_info(_path: &std::path::Path) -> ShellInfo {
     ShellInfo::default()
 }
