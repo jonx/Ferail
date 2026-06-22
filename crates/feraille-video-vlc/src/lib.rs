@@ -19,23 +19,26 @@
 //! decode pointer for the vout thread, hands finished frames across under a
 //! mutex, and forwards end-of-clip via a `Send` callback.
 
-#[cfg(target_os = "macos")]
+// libvlc is loaded at runtime on every desktop OS (macOS / Windows / Linux);
+// the loader and on-disk layout differ per platform, all handled inside `imp`.
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 mod imp;
 
 use std::path::Path;
 
 use feraille_core::video::VideoBackend;
 
-/// Build the VLC backend from a VLC.app bundle path, or `None` if libvlc
-/// can't be loaded/initialised there (caller falls back to native). The
-/// libvlc instance is created once per process and reused.
-#[cfg(target_os = "macos")]
-pub fn backend(vlc_app: &Path) -> Option<Box<dyn VideoBackend>> {
-    imp::backend(vlc_app)
+/// Build the VLC backend from the user-pointed VLC location (a `VLC.app`
+/// bundle on macOS, the install dir on Windows/Linux), or `None` if libvlc
+/// can't be loaded/initialised there (caller falls back to the native player).
+/// The libvlc instance is created once per process and reused.
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+pub fn backend(vlc_path: &Path) -> Option<Box<dyn VideoBackend>> {
+    imp::backend(vlc_path)
 }
 
-/// Non-macOS: no VLC provider yet (libvlc loading is mac-specific here).
-#[cfg(not(target_os = "macos"))]
-pub fn backend(_vlc_app: &Path) -> Option<Box<dyn VideoBackend>> {
+/// Other targets: no VLC provider.
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+pub fn backend(_vlc_path: &Path) -> Option<Box<dyn VideoBackend>> {
     None
 }

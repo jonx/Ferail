@@ -69,17 +69,20 @@ feraille-disk-usage.workspace = true
 # surface mirrors between the two so `crate::platform_shell` (in
 # `lib.rs`) can alias them with a single `#[cfg]` switch; gpui call
 # sites use `platform_shell::*` and don't care which is active.
+# Optional VLC video provider (enabled by the `vlc` feature). libvlc is
+# loaded at runtime on every desktop OS, so the dep is declared per-target
+# alongside each platform's shell crate.
 [target.'cfg(target_os = "macos")'.dependencies]
 feraille-shell-mac.workspace = true
-# Optional VLC video provider (enabled by the `vlc` feature). macOS-only
-# for now — the libvlc loader is mac-specific.
 feraille-video-vlc = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 feraille-shell-win32.workspace = true
+feraille-video-vlc = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 feraille-shell-linux.workspace = true
+feraille-video-vlc = { workspace = true, optional = true }
 
 # Windows-only build script that embeds resources/feraille.ico and a
 # VERSIONINFO block into the .exe. On non-Windows the build script

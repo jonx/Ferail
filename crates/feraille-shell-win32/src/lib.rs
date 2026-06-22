@@ -57,6 +57,34 @@ pub enum SetIconResult {
     DecodeFailed,
 }
 
+/// Get Info facts for one path that come from the OS shell rather than
+/// POSIX `stat`. Shape mirrored from `feraille_shell_mac::ShellInfo` so the
+/// Get Info panel ([`feraille-gpui/src/entry_info.rs`]) reads one type
+/// through the `platform_shell` alias on every OS.
+///
+/// On Windows most of these have no exact analogue: there is no per-file
+/// "uniform type identifier", no Finder "date added to folder", and the
+/// "hide known extension" toggle is a global Explorer setting, not a
+/// per-file bit. The Get Info panel falls back to magic detection for the
+/// "Kind" row when `kind` is `None`, so a default value is harmless. A
+/// richer Windows fill (e.g. `kind` from `SHGetFileInfo`/`SHGFI_TYPENAME`)
+/// can land later without touching callers.
+#[derive(Clone, Debug, Default)]
+pub struct ShellInfo {
+    /// Uniform type identifier (macOS only) — always `None` on Windows.
+    pub uti: Option<String>,
+    /// Localized type description, e.g. "PNG image".
+    pub kind: Option<String>,
+    /// When the item was added to its folder (macOS only) — `None` here.
+    pub added_unix: Option<i64>,
+    /// "Hide extension" state (macOS per-file flag) — `None` on Windows.
+    pub hidden_extension: Option<bool>,
+    /// True for package/bundle directories (macOS) — `None` on Windows.
+    pub is_package: Option<bool>,
+    /// True for alias files (macOS) — `None` on Windows (`.lnk` is a file).
+    pub is_alias: Option<bool>,
+}
+
 // =============================================================
 // App menu / About
 // =============================================================
@@ -852,6 +880,25 @@ pub fn fetch_quick_look_thumbnail(
 }
 
 // =============================================================
+// Get Info — shell facts (the NSURL-resource-values equivalent)
+// =============================================================
+
+/// Shell-sourced Get Info facts. On Windows there is no per-file UTI,
+/// "date added", or per-file hide-extension flag, so this returns the
+/// default (all `None`); the Get Info panel falls back to magic detection
+/// for the "Kind" row. Mirrors `feraille_shell_mac::read_shell_info`.
+pub fn read_shell_info(_path: &std::path::Path) -> ShellInfo {
+    ShellInfo::default()
+}
+
+/// Set Finder's per-file "Hide extension" flag. Windows has no per-file
+/// equivalent (Explorer hides known extensions globally), so this is
+/// unsupported. Mirrors `feraille_shell_mac::set_hidden_extension`.
+pub fn set_hidden_extension(_path: &std::path::Path, _hide: bool) -> Result<(), String> {
+    Err("hiding the extension per-file is macOS-only".into())
+}
+
+// =============================================================
 // Finder Tags — no Windows equivalent
 // =============================================================
 
@@ -1080,6 +1127,20 @@ pub fn system_is_dark() -> bool {
 /// this way yet; the mac shell owns the real implementation. Kept so
 /// `platform_shell::set_app_appearance` resolves cross-platform.
 pub fn set_app_appearance(_dark: bool) {}
+
+/// Whether a "Show Desktop" affordance should appear. macOS resolves a
+/// private CoreDock symbol for this; Windows has the Win+D shell verb but
+/// the sidebar button is a macOS concept, so it's hidden here.
+pub fn show_desktop_available() -> bool {
+    false
+}
+
+/// Perform the "Show Desktop" reveal. No-op on Windows (the button is
+/// hidden — see [`show_desktop_available`]); returns `false` to report it
+/// did nothing.
+pub fn show_desktop() -> bool {
+    false
+}
 
 /// Subscribe to system theme changes.
 ///

@@ -487,6 +487,38 @@ pub fn fetch_quick_look_thumbnail(_path: &Path, _size_px: u32) -> Option<(Vec<u8
 }
 
 // =============================================================
+// Get Info — shell facts (the NSURL-resource-values equivalent)
+// =============================================================
+
+/// Shell-sourced Get Info facts. Shape mirrored from
+/// `feraille_shell_mac::ShellInfo` so the Get Info panel reads one type
+/// through the `platform_shell` alias on every OS. Linux has no per-file
+/// UTI / "date added" / per-file hide-extension flag, so this is all
+/// `None` for now (a future fill could derive `kind` from the shared MIME
+/// database). The panel falls back to magic detection for the "Kind" row.
+#[derive(Clone, Debug, Default)]
+pub struct ShellInfo {
+    pub uti: Option<String>,
+    pub kind: Option<String>,
+    pub added_unix: Option<i64>,
+    pub hidden_extension: Option<bool>,
+    pub is_package: Option<bool>,
+    pub is_alias: Option<bool>,
+}
+
+/// Shell-sourced Get Info facts for `path`. Default (all `None`) on Linux.
+/// Mirrors `feraille_shell_mac::read_shell_info`.
+pub fn read_shell_info(_path: &Path) -> ShellInfo {
+    ShellInfo::default()
+}
+
+/// Set the per-file "Hide extension" flag — a macOS Finder concept with no
+/// Linux equivalent. Mirrors `feraille_shell_mac::set_hidden_extension`.
+pub fn set_hidden_extension(_path: &Path, _hide: bool) -> Result<(), String> {
+    Err("hiding the extension per-file is macOS-only".into())
+}
+
+// =============================================================
 // Tags (Finder color tags) — no portable Linux equivalent
 // =============================================================
 

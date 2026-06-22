@@ -11,6 +11,31 @@ use std::path::Path;
 
 use feraille_core::video::{VideoBackend, VideoEnhance, VideoStream};
 
+/// The conventional VLC location for this OS, used as the default in
+/// Settings → Plugins when the user hasn't set one. The user points at a
+/// `VLC.app` bundle on macOS and the install directory on Windows/Linux;
+/// [`feraille_video_vlc::backend`] knows how to find `libvlc` inside each.
+pub fn default_vlc_path() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "/Applications/VLC.app"
+    }
+    #[cfg(windows)]
+    {
+        r"C:\Program Files\VideoLAN\VLC"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Pointed at a dir we load from there; left blank, the loader finds the
+        // system libvlc.so by soname. A common explicit location:
+        "/usr/lib"
+    }
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+    {
+        ""
+    }
+}
+
 /// Select the active video provider. `vlc_app` is `Some(path)` when the
 /// user picked VLC in Settings → Plugins (resolved once by the viewer, so
 /// no settings I/O happens on a hot path). In a build with the `vlc`

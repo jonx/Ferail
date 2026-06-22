@@ -150,7 +150,11 @@ fn display_name(path: &Path, target: InfoTarget, vol_name: Option<&str>) -> Stri
 /// rescan, shown with a refresh affordance.
 pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     use feraille_fs_native as fsn;
-    use feraille_shell_mac as shell;
+    // Routes through the per-OS shell alias so Get Info builds on every
+    // platform; on macOS this *is* `feraille_shell_mac`, so behaviour is
+    // unchanged. read_shell_info / read_canonical_tags / open_with_candidates
+    // are real on macOS and graceful no-ops on win32/linux.
+    use crate::platform_shell as shell;
 
     let target = classify(path);
     let stat = fsn::stat_info::read_stat_info(path);
@@ -524,7 +528,7 @@ impl EntryInfoView {
         let result = match attr {
             Attr::Locked => stat_info::set_locked(&self.path, on),
             Attr::Invisible => stat_info::set_invisible(&self.path, on),
-            Attr::HiddenExtension => feraille_shell_mac::set_hidden_extension(&self.path, on),
+            Attr::HiddenExtension => crate::platform_shell::set_hidden_extension(&self.path, on),
             Attr::Stationery => Err("Stationery editing is not supported yet".into()),
         };
         self.after_write(result, window, cx);
@@ -532,7 +536,7 @@ impl EntryInfoView {
 
     /// Add or remove a Finder color label, preserving other tags.
     fn toggle_color(&mut self, color: TagColor, window: &mut Window, cx: &mut Context<Self>) {
-        let result = feraille_shell_mac::toggle_tag(&self.path, color);
+        let result = crate::platform_shell::toggle_tag(&self.path, color);
         self.after_write(result, window, cx);
     }
 

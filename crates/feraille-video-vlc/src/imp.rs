@@ -30,15 +30,106 @@ const ADJUST_GAMMA: c_uint = 5;
 // libvlc_event_e: MediaPlayer events start at 0x100; EndReached is +9.
 const EVENT_END_REACHED: c_int = 0x100 + 9;
 
-// ---- dlfcn -----------------------------------------------------------------
+// ---- cross-platform dynamic loader -----------------------------------------
+//
+// libvlc is loaded at runtime (no build-time link) so a stock build needs no
+// VLC. The three desktop OSes differ only in *how* you open a shared library
+// and set an env var; symbol resolution and the libvlc ABI below are identical
+// everywhere. Unix (macOS + Linux) uses `dlopen`/`dlsym`/`setenv`; Windows uses
+// `LoadLibraryW`/`GetProcAddress`/`SetEnvironmentVariableW` (raw kernel32 FFI,
+// matching this file's no-extra-deps style).
+mod dynload {
+    use std::ffi::c_void;
+    use std::path::Path;
 
-extern "C" {
-    fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
-    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
-    fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
+    /// Open a shared library by path (or, on Unix, by bare soname — the loader
+    /// then searches its standard paths). Null on failure.
+    #[cfg(unix)]
+    pub unsafe fn open(path: &Path) -> *mut c_void {
+        use std::ffi::{c_char, c_int, CString};
+        extern "C" {
+            fn dlopen(filename: *const c_char, flag: c_int) -> *mut c_void;
+        }
+        const RTLD_NOW: c_int = 2;
+        const RTLD_GLOBAL: c_int = 8;
+        match CString::new(path.to_string_lossy().as_bytes().to_vec()) {
+            Ok(c) => dlopen(c.as_ptr(), RTLD_NOW | RTLD_GLOBAL),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }
+
+    /// Resolve a symbol; null if absent.
+    #[cfg(unix)]
+    pub unsafe fn sym(handle: *mut c_void, name: &str) -> *mut c_void {
+        use std::ffi::{c_char, CString};
+        extern "C" {
+            fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+        }
+        match CString::new(name) {
+            Ok(c) => dlsym(handle, c.as_ptr()),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }
+
+    /// Set a process env var (libvlc reads `VLC_PLUGIN_PATH` from the env).
+    #[cfg(unix)]
+    pub fn set_env(name: &str, value: &Path) {
+        use std::ffi::{c_char, c_int, CString};
+        extern "C" {
+            fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
+        }
+        if let (Ok(n), Ok(v)) = (
+            CString::new(name),
+            CString::new(value.to_string_lossy().as_bytes().to_vec()),
+        ) {
+            unsafe { setenv(n.as_ptr(), v.as_ptr(), 1) };
+        }
+    }
+
+    #[cfg(windows)]
+    pub unsafe fn open(path: &Path) -> *mut c_void {
+        use std::os::windows::ffi::OsStrExt;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn LoadLibraryW(name: *const u16) -> *mut c_void;
+        }
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        LoadLibraryW(wide.as_ptr())
+    }
+
+    #[cfg(windows)]
+    pub unsafe fn sym(handle: *mut c_void, name: &str) -> *mut c_void {
+        use std::ffi::{c_char, CString};
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetProcAddress(module: *mut c_void, name: *const c_char) -> *mut c_void;
+        }
+        match CString::new(name) {
+            Ok(c) => GetProcAddress(handle, c.as_ptr()),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn set_env(name: &str, value: &Path) {
+        use std::os::windows::ffi::OsStrExt;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
+        }
+        let n: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        let v: Vec<u16> = value
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        unsafe { SetEnvironmentVariableW(n.as_ptr(), v.as_ptr()) };
+    }
 }
-const RTLD_NOW: c_int = 2;
-const RTLD_GLOBAL: c_int = 8;
 
 // ---- callback ABI ----------------------------------------------------------
 
@@ -82,7 +173,7 @@ struct LibVlc {
 /// `dlsym` a symbol and transmute it to the bound function-pointer type.
 macro_rules! sym {
     ($h:expr, $name:literal) => {{
-        let p = dlsym($h, concat!($name, "\0").as_ptr() as *const c_char);
+        let p = dynload::sym($h, $name);
         if p.is_null() {
             return Err(format!("libvlc: missing symbol {}", $name));
         }
@@ -90,33 +181,113 @@ macro_rules! sym {
     }};
 }
 
-impl LibVlc {
-    /// Load libvlc from a VLC.app bundle and resolve our symbols. Also sets
-    /// `VLC_PLUGIN_PATH` (libvlc's only plugin-discovery mechanism — the
-    /// path comes from settings, never a user-set env var).
-    unsafe fn load(vlc_app: &Path) -> Result<LibVlc, String> {
-        let macos = vlc_app.join("Contents/MacOS");
-        let core_path = macos.join("lib/libvlccore.dylib");
-        let lib_path = macos.join("lib/libvlc.dylib");
-        let plugins = macos.join("plugins");
-        if !lib_path.exists() {
-            return Err(format!("no libvlc at {}", lib_path.display()));
-        }
-        if let Ok(c) = CString::new(plugins.to_string_lossy().as_bytes().to_vec()) {
-            let k = CString::new("VLC_PLUGIN_PATH").unwrap();
-            setenv(k.as_ptr(), c.as_ptr(), 1);
-        }
+/// Resolved on-disk locations for one platform's libvlc.
+struct VlcPaths {
+    /// libvlccore, pre-loaded by full path before libvlc so the loader binds
+    /// libvlc's reference to the already-loaded image (macOS `@rpath`, Windows
+    /// same-dir import). `None` on Linux, where the dynamic linker resolves the
+    /// core as an ordinary `NEEDED` dependency.
+    core: Option<PathBuf>,
+    /// libvlc itself — a full path, or (Linux fallback) a bare soname the
+    /// loader searches for.
+    lib: PathBuf,
+    /// Plugin directory for `VLC_PLUGIN_PATH`. `None` lets libvlc auto-discover.
+    plugins: Option<PathBuf>,
+}
 
-        let cstr = |p: &Path| CString::new(p.to_string_lossy().as_bytes().to_vec()).unwrap();
-        // libvlc.dylib references @rpath/libvlccore.dylib; pre-load core by
-        // full path so dyld satisfies that from the already-loaded image.
-        let core = dlopen(cstr(&core_path).as_ptr(), RTLD_NOW | RTLD_GLOBAL);
-        if core.is_null() {
-            return Err(format!("dlopen {} failed", core_path.display()));
+/// macOS: the user points at `VLC.app`; everything lives under `Contents/MacOS`.
+#[cfg(target_os = "macos")]
+fn resolve_paths(vlc: &Path) -> Result<VlcPaths, String> {
+    let macos = vlc.join("Contents/MacOS");
+    let lib = macos.join("lib/libvlc.dylib");
+    if !lib.exists() {
+        return Err(format!("no libvlc at {}", lib.display()));
+    }
+    Ok(VlcPaths {
+        core: Some(macos.join("lib/libvlccore.dylib")),
+        lib,
+        plugins: Some(macos.join("plugins")),
+    })
+}
+
+/// Windows: the user points at the VLC install dir (e.g.
+/// `C:\Program Files\VideoLAN\VLC`), or at `vlc.exe` / `libvlc.dll` inside it.
+/// `libvlc.dll`, `libvlccore.dll` and `plugins\` sit side by side there.
+#[cfg(windows)]
+fn resolve_paths(vlc: &Path) -> Result<VlcPaths, String> {
+    let dir = if vlc.is_dir() {
+        vlc.to_path_buf()
+    } else {
+        vlc.parent().unwrap_or(vlc).to_path_buf()
+    };
+    let lib = dir.join("libvlc.dll");
+    if !lib.exists() {
+        return Err(format!("no libvlc.dll in {}", dir.display()));
+    }
+    Ok(VlcPaths {
+        core: Some(dir.join("libvlccore.dll")),
+        lib,
+        plugins: Some(dir.join("plugins")),
+    })
+}
+
+/// Linux: if pointed at a directory holding `libvlc.so*`, load from there;
+/// otherwise fall back to the system library by soname (the loader searches
+/// the standard paths) and let libvlc auto-discover its plugins.
+#[cfg(target_os = "linux")]
+fn resolve_paths(vlc: &Path) -> Result<VlcPaths, String> {
+    if vlc.is_dir() {
+        for name in ["libvlc.so", "libvlc.so.5"] {
+            let p = vlc.join(name);
+            if p.exists() {
+                let plugins = vlc.join("vlc/plugins");
+                return Ok(VlcPaths {
+                    core: None,
+                    lib: p,
+                    plugins: plugins.is_dir().then_some(plugins),
+                });
+            }
         }
-        let lib = dlopen(cstr(&lib_path).as_ptr(), RTLD_NOW | RTLD_GLOBAL);
+    } else if vlc.is_file() {
+        return Ok(VlcPaths {
+            core: None,
+            lib: vlc.to_path_buf(),
+            plugins: None,
+        });
+    }
+    // System install: dlopen by soname searches the loader path.
+    Ok(VlcPaths {
+        core: None,
+        lib: PathBuf::from("libvlc.so.5"),
+        plugins: None,
+    })
+}
+
+impl LibVlc {
+    /// Load libvlc from the user-pointed VLC location and resolve our symbols.
+    /// Also sets `VLC_PLUGIN_PATH` (libvlc's plugin-discovery mechanism — the
+    /// path comes from settings, never a user-set env var).
+    unsafe fn load(vlc: &Path) -> Result<LibVlc, String> {
+        let paths = resolve_paths(vlc)?;
+        if let Some(plugins) = paths.plugins.as_deref() {
+            dynload::set_env("VLC_PLUGIN_PATH", plugins);
+        }
+        // Pre-load libvlccore by full path where we know it, so the loader
+        // binds libvlc's core reference to the already-loaded image instead of
+        // searching (see `VlcPaths::core`).
+        let core = match paths.core.as_deref() {
+            Some(cp) => {
+                let h = dynload::open(cp);
+                if h.is_null() {
+                    return Err(format!("loading {} failed", cp.display()));
+                }
+                h
+            }
+            None => std::ptr::null_mut(),
+        };
+        let lib = dynload::open(&paths.lib);
         if lib.is_null() {
-            return Err(format!("dlopen {} failed", lib_path.display()));
+            return Err(format!("loading {} failed", paths.lib.display()));
         }
         Ok(LibVlc {
             _core: core,

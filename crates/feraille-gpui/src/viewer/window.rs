@@ -415,7 +415,7 @@ fn resolve_vlc_pref() -> Option<PathBuf> {
     (st.video_backend.as_deref() == Some("vlc")).then(|| {
         PathBuf::from(
             st.vlc_app_path
-                .unwrap_or_else(|| "/Applications/VLC.app".to_string()),
+                .unwrap_or_else(|| super::backend_native::default_vlc_path().to_string()),
         )
     })
 }

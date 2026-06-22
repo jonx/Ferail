@@ -844,18 +844,18 @@ fn plugins_page() -> SettingPage {
     let (player_desc, player_disabled): (&'static str, &'static [&'static str]) =
         if cfg!(feature = "vlc") {
             (
-                "The built-in player uses the system frameworks (AVFoundation on macOS). \
-                 VLC plays virtually any container/codec and applies colour adjustments to \
-                 video itself. VLC needs VLC.app installed; a change takes effect on the \
-                 next viewer window.",
+                "The built-in player uses the platform's native media frameworks \
+                 (AVFoundation on macOS, Media Foundation on Windows). VLC plays virtually \
+                 any container/codec and applies colour adjustments to the video itself. \
+                 VLC must be installed; a change takes effect on the next viewer window.",
                 &[],
             )
         } else {
             (
-                "The built-in player uses the system frameworks (AVFoundation on macOS). \
+                "The built-in player uses the platform's native media frameworks. \
                  VLC plays virtually any container/codec, but this build was compiled \
                  without the `vlc` feature, so VLC is unavailable \u{2014} rebuild with \
-                 `cargo run --bin feraille-gpui --features vlc` (and VLC.app installed) \
+                 `cargo run --bin feraille-gpui --features vlc` (with VLC installed) \
                  to enable it.",
                 &["vlc"],
             )
@@ -879,19 +879,22 @@ fn plugins_page() -> SettingPage {
                 ))
                 .item(
                     SettingItem::new(
-                        "VLC.app path",
+                        "VLC location",
                         SettingField::input(
                             |_cx: &App| {
                                 SharedString::from(
-                                    app_state::load()
-                                        .vlc_app_path
-                                        .unwrap_or_else(|| "/Applications/VLC.app".into()),
+                                    app_state::load().vlc_app_path.unwrap_or_else(|| {
+                                        crate::viewer::backend_native::default_vlc_path().into()
+                                    }),
                                 )
                             },
                             |val: SharedString, _cx: &mut App| persist_vlc_app_path(val.as_ref()),
                         ),
                     )
-                    .description("The VLC.app bundle libvlc is loaded from."),
+                    .description(
+                        "Where libvlc is loaded from — a VLC.app bundle on macOS, the VLC \
+                         install folder on Windows/Linux (e.g. C:\\Program Files\\VideoLAN\\VLC).",
+                    ),
                 ),
         )
 }
