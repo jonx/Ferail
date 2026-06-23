@@ -479,10 +479,11 @@ fn dropdown_setting(
             .child(
                 gpui_component::h_flex()
                     .w_full()
-                    .justify_between()
                     .items_center()
                     .gap_3()
-                    .child(div().flex_shrink_0().text_scale_sm().text_color(fg).child(title))
+                    // flex_1 title + control after it pins the control to the
+                    // right deterministically; justify_between reflowed mid-resize.
+                    .child(div().flex_1().min_w_0().text_scale_sm().text_color(fg).child(title))
                     .child(
                         Button::new(SharedString::from(format!("dd-{title}")))
                             .label(current_label)
@@ -560,23 +561,28 @@ fn switch_setting(
             .child(
                 gpui_component::h_flex()
                     .w_full()
-                    .justify_between()
                     .items_center()
                     .gap_3()
-                    .child(div().flex_shrink_0().text_scale_sm().text_color(fg).child(title))
+                    // The title fills the line (flex_1) and the control is pinned
+                    // after it (flex_shrink_0) — deterministic, so the control
+                    // doesn't jump while the dialog is resized. `justify_between`
+                    // distributed free space and reflowed mid-drag.
+                    .child(div().flex_1().min_w_0().text_scale_sm().text_color(fg).child(title))
                     .child(
-                        Switch::new(SharedString::from(format!("sw-{title}")))
-                            .checked(checked)
-                            .small()
-                            .on_click(move |checked: &bool, window: &mut Window, cx: &mut App| {
-                                set_value(*checked, cx);
-                                // The Switch is controlled by `checked`, which is
-                                // re-read from app state on the next render — so we
-                                // must request that render, or the toggle never
-                                // visibly moves. (macOS repaints eagerly enough to
-                                // hide this; Windows does not.)
-                                window.refresh();
-                            }),
+                        div().flex_shrink_0().child(
+                            Switch::new(SharedString::from(format!("sw-{title}")))
+                                .checked(checked)
+                                .small()
+                                .on_click(move |checked: &bool, window: &mut Window, cx: &mut App| {
+                                    // The Switch is controlled by `checked`, re-read
+                                    // from app state next render — request that
+                                    // render or the toggle never visibly moves.
+                                    // (macOS repaints eagerly per event; Windows
+                                    // does not.)
+                                    set_value(*checked, cx);
+                                    window.refresh();
+                                }),
+                        ),
                     ),
             )
             .child(
