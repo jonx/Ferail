@@ -59,6 +59,21 @@ impl VideoEnhance {
     }
 }
 
+/// A transparent-colour key applied to a layer: pixels within `similarity` of
+/// `color` go transparent and `blend` feathers the edge. A backend that can
+/// key live (mpv, via a `colorkey` filter) makes the keyed pixels arrive with
+/// alpha = 0 so the layer(s) beneath show through. See
+/// [docs/features/VIDEO-MPV.md](../../../docs/features/VIDEO-MPV.md).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct ChromaKey {
+    /// Target colour as `[r, g, b]`, 0..=255.
+    pub color: [u8; 3],
+    /// How close a pixel must be to `color` to count, `0..1`.
+    pub similarity: f32,
+    /// Edge feather, `0..1` (0 = hard cut).
+    pub blend: f32,
+}
+
 /// Opens video streams. The "plugin" that a provider implements to become
 /// the viewer's video player.
 pub trait VideoBackend {
@@ -111,6 +126,24 @@ pub trait VideoStream {
     /// or `false` if unsupported (the default) — the viewer keeps grading
     /// frames on the CPU. `VideoAdjust::default()` clears the grade.
     fn set_adjust(&mut self, _adjust: VideoAdjust) -> bool {
+        false
+    }
+
+    /// Change enhancement filters *live*. Returns `true` if the backend
+    /// applied them without a re-open (mpv, via its runtime filter chain), or
+    /// `false` (the default) — meaning the caller must re-open the stream to
+    /// change `VideoEnhance` (the old libvlc path). `VideoEnhance::default()`
+    /// clears them.
+    fn set_enhance(&mut self, _enhance: VideoEnhance) -> bool {
+        false
+    }
+
+    /// Apply or clear a transparent-colour key *live*. Returns `true` if the
+    /// backend keyed natively so the keyed pixels carry alpha = 0 (mpv, via a
+    /// `colorkey` filter), letting the viewer composite layers beneath; or
+    /// `false` (the default) — the viewer keys on the CPU itself. `None`
+    /// clears the key.
+    fn set_chroma_key(&mut self, _key: Option<ChromaKey>) -> bool {
         false
     }
 }

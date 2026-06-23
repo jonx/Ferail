@@ -2062,6 +2062,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "feraille-video-mpv"
+version = "0.0.1"
+dependencies = [
+ "feraille-core",
+]
+
+[[package]]
 name = "feraille-video-vlc"
 version = "0.0.1"
 dependencies = [
