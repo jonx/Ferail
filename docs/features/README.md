@@ -37,6 +37,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md) | Future | Debug-overlay design remains unimplemented beyond screenshot simulation hooks. |
 | [THEMES.md](THEMES.md) | Planned (Phase 0 shipped) | User-facing theming plan: the selection-accent override + color picker ship; bundled themes, a theme picker, a drop-in user themes folder, and a generalized override layer are scoped but unbuilt. |
 | [TOOL_RESULTS.md](TOOL_RESULTS.md) | Shipped with follow-ups | Shared tab-local result surface for Search, Duplicate Finder, and docked Disk Usage ships; pop-out/state migration remains open. |
+| [VIDEO-MPV.md](VIDEO-MPV.md) | Planned | Replace the VLC video backend with libmpv (live filters, alpha) and build an N-layer transparent-colour (chroma-key) compositor on top. Phase 0 spike gates it; nothing shipped yet. |
 | [VIEWER.md](VIEWER.md) | Shipped with follow-ups | Viewer window, playlist navigation, images, Quick Look fallback, VLC-backed video, slideshow, zoom, and controls ship; richer playback/playlist polish remains open. |
 | [feraille-selection-dnd-spec.md](feraille-selection-dnd-spec.md) | Partial | Selection, row drag, external file drops, and many acceptance points ship; edge auto-scroll and favorite-row drops remain open. |
 | [feraille-windows-instances-tabs-spec.md](feraille-windows-instances-tabs-spec.md) | Partial | Process/window state split, tabs, closed-tab undo, and shared caches are in place; full multi-window/tear-off completion remains open. |
@@ -88,6 +89,8 @@ keep the UI off the I/O path.
   Search, Duplicate Finder, and docked Disk Usage.
 - [VIEWER.md](VIEWER.md) — viewer window: big preview, slideshow, sticky
   zoom across entries.
+- [VIDEO-MPV.md](VIDEO-MPV.md) — replacing the VLC video backend with libmpv,
+  and the N-layer transparent-colour (chroma-key) compositor it enables.
 - [FILE_OPS.md](FILE_OPS.md) — copy/paste/move engine: progress,
   cancellation, collision policy, clipboard verbs.
 - [DISK_USAGE.md](DISK_USAGE.md) — disk-usage window: scanning, treemap, and
