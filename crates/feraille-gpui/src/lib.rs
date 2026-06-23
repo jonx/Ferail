@@ -49,6 +49,7 @@ pub mod text;
 pub mod text_preview;
 pub mod thumbnails;
 pub mod tool_results;
+pub mod trail;
 pub mod tree;
 pub mod viewer;
 pub mod window_cascade;

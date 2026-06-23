@@ -485,6 +485,14 @@ pub struct Shell {
     /// main pane). Once cached, re-expand is instant; collapsing a
     /// folder doesn't evict its cache.
     pub tree_children: HashMap<PathBuf, Vec<TreeChild>>,
+    /// Last OS-level window title pushed via `set_window_title`. The
+    /// app's custom titlebar hides the native caption, but Windows
+    /// Alt+Tab / the taskbar (and the macOS Window menu) still read it,
+    /// so an empty caption shows a nameless entry. Synced from the
+    /// active tab's folder at render; cached here so the platform call
+    /// only fires when the text actually changed (one string compare
+    /// per frame — see `sync_window_title`).
+    last_window_title: String,
     /// Live subscription handles (Input change, future watchers).
     /// Dropping them tears down the listeners — keep alongside the
     /// Shell so they outlive any frame.
@@ -510,6 +518,45 @@ impl Shell {
     #[inline]
     pub fn current_node(&self) -> NodeId {
         self.active_tab().nav.current()
+    }
+
+    /// Keep the OS-level window caption in step with the active tab's
+    /// folder. The custom titlebar hides the native caption, but the
+    /// Windows taskbar / Alt+Tab switcher (and the macOS Window menu)
+    /// still read it — without this the window shows up nameless when
+    /// switching tasks. Called from render; the cached `last_window_title`
+    /// makes the per-frame cost a single string compare and the platform
+    /// `SetWindowTextW`/`setTitle:` call only fires on change.
+    ///
+    /// Reads only in-memory state (the cached `current_dir` PathBuf), so
+    /// it honours the no-I/O-on-the-UI-thread Prime Directive.
+    fn sync_window_title(&mut self, window: &mut Window) {
+        let title = window_title_for(&self.active_tab().current_dir);
+        if title != self.last_window_title {
+            window.set_window_title(&title);
+            self.last_window_title = title;
+        }
+    }
+}
+
+/// The OS window caption for a folder: its basename plus the app name,
+/// e.g. `Documents — Feraille`. Roots like `C:\` or `/` have an empty
+/// `file_name()`, so fall back to the full path; a fully empty path
+/// yields the bare app name. The app name is always present so the
+/// Windows Alt+Tab / taskbar entry is never blank.
+fn window_title_for(dir: &Path) -> String {
+    match dir.file_name() {
+        Some(name) if !name.is_empty() => {
+            format!("{} \u{2014} Feraille", name.to_string_lossy())
+        }
+        _ => {
+            let path = dir.to_string_lossy();
+            if path.is_empty() {
+                "Feraille".to_string()
+            } else {
+                format!("{path} \u{2014} Feraille")
+            }
+        }
     }
 }
 
@@ -892,6 +939,7 @@ impl Shell {
             menu_bar,
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
+            last_window_title: String::new(),
             _subscriptions: vec![breadcrumb_subscription, shortcuts_help_subscription],
         };
         shell.process.register_shell(cx.weak_entity());
@@ -1433,6 +1481,7 @@ impl Shell {
     }
 
     fn on_toggle_hidden(&mut self, _: &ToggleHidden, _: &mut Window, cx: &mut Context<Self>) {
+        crate::trail::command("Toggle Hidden Files");
         self.toggle_hidden(cx);
     }
 
@@ -1763,6 +1812,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        crate::trail::command("Find Duplicates");
         let tab_id = self.active_tab().id;
         self.start_duplicate_scan(tab_id, Some(window.window_handle()), cx);
     }
@@ -2089,6 +2139,7 @@ impl Shell {
             let entry = tab.history[tab.history_index].clone();
             (entry.path.clone(), entry)
         };
+        crate::trail::navigate(crate::trail::NavKind::Back, &path);
         self.restore_from_history(snapshot, path, cx);
     }
 
@@ -2107,6 +2158,7 @@ impl Shell {
             let entry = tab.history[tab.history_index].clone();
             (entry.path.clone(), entry)
         };
+        crate::trail::navigate(crate::trail::NavKind::Forward, &path);
         self.restore_from_history(snapshot, path, cx);
     }
 
@@ -3133,6 +3185,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        crate::trail::command("Undo");
         use gpui_component::notification::Notification;
         let Some(op) = self.process.undo_stack.borrow_mut().pop_back() else {
             window.push_notification(Notification::info("Nothing to undo"), cx);
@@ -4068,6 +4121,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         crate::log_info!(90, "navigate: {}", path.display());
+        crate::trail::navigate(crate::trail::NavKind::Go, &path);
         let node_id = self.process.fs.id_for_path(&path);
         self.process
             .node_store
@@ -4331,5 +4385,34 @@ impl Shell {
             self.expanded.insert(a.clone());
             self.ensure_tree_children(&a);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window_title_for;
+    use std::path::Path;
+
+    #[test]
+    fn window_title_includes_folder_and_app_name() {
+        assert_eq!(
+            window_title_for(Path::new("/Users/jk/Documents")),
+            "Documents \u{2014} Feraille"
+        );
+    }
+
+    #[test]
+    fn window_title_falls_back_to_full_path_at_a_root() {
+        // A filesystem root has an empty `file_name()` on every
+        // platform; show the path itself rather than dropping to the
+        // bare app name. (`/` is a root with empty `file_name()` on
+        // both Windows and Unix, so this stays platform-stable.)
+        assert_eq!(window_title_for(Path::new("/")), "/ \u{2014} Feraille");
+    }
+
+    #[test]
+    fn window_title_is_never_blank() {
+        // Empty path → the switcher entry still reads the app name.
+        assert_eq!(window_title_for(Path::new("")), "Feraille");
     }
 }

@@ -190,6 +190,14 @@ fallback). Remaining is the UX the system explorers have and we don't:
 
 ## Settings, Commands & Accessibility
 
+- Diagnostics, activity trail & issue reporter
+  ([docs/features/DIAGNOSTICS.md](docs/features/DIAGNOSTICS.md)). Phase 1 (the
+  typed activity-trail ring buffer + navigation/key-command hooks) shipped.
+  Remaining: **Phase 2** — `diagnostics.rs` health checks (storage writability,
+  paths, deps, env) run off-thread, surfaced as a Settings → Diagnostics page +
+  a `--doctor` CLI flag over the same `run_checks()`; **Phase 3** — in-app issue
+  reporter that bundles diagnostics + trail + a redactable screenshot into a
+  `.zip` and reveals it.
 - Settings "Saved" feedback pill or toast (changes persist silently today).
 - **Themes & color customization** ([docs/features/THEMES.md](docs/features/THEMES.md)).
   Phase 0 shipped: a selection-accent override + Appearance color picker

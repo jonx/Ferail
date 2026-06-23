@@ -85,6 +85,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        crate::trail::command("Paste");
         use gpui_component::notification::Notification;
         let sources = crate::platform_shell::clipboard_read_file_urls();
         if sources.is_empty() {
@@ -114,6 +115,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        crate::trail::command("Move Here (Paste)");
         self.paste_from_clipboard(TransferMode::Move, window, cx);
     }
 
@@ -1232,6 +1234,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        crate::trail::command("Move to Trash");
         use gpui_component::notification::Notification;
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
@@ -1322,6 +1325,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        crate::trail::command("Empty Trash");
         use gpui_component::button::ButtonVariants as _;
         use gpui_component::notification::Notification;
         let process = self.process.clone();
@@ -1543,6 +1547,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        crate::trail::command("New Folder");
         let parent = self.active_tab().current_dir.clone();
         // Same focus/select-on-open modal the rename surfaces use. We
         // start with an empty field (the "Untitled folder" placeholder
@@ -1644,6 +1649,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        crate::trail::command("Rename");
         let Some(row) = self.target_row(cx) else {
             return;
         };
