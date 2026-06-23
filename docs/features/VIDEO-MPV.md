@@ -10,6 +10,18 @@ through — potentially other videos that are themselves keyed.
 
 ## Status
 
+Phases 0–4 shipped (2026-06-23), all compile-green; see commits + the
+[NOTES.md](../../NOTES.md) decision log. At a glance:
+
+- **0** spike — SW render emits real alpha ✅
+- **1a** `feraille-video-mpv` crate to parity ✅
+- **1b** optional backend swapped to mpv, `feraille-video-vlc` deleted ✅
+- **2** live `set_enhance`, VLC-era reopen apparatus removed ✅
+- **3** single-layer chroma key + eyedropper ✅ (screenshot-verified)
+- **UI** professional popup rework (labeled sections, swatch/hex/Pick) ✅
+- **4** N-layer background compositing + Layers UI ✅ (UI screenshot-verified)
+- **5/4b/rename** — deferred items below
+
 **Phase 4 done — compile + UI verified (2026-06-23)** — Phase 4 adds the
 N-layer compositor (additive: `video_overlay` stays the keyed top layer,
 untouched; a `Vec<BgLayer>` of muted background videos is pulled in the same
@@ -23,7 +35,7 @@ don't all play audio. Screenshot-verified the four-section popup
 (`screenshots/mpv-ui-layers.png`); live multi-video compositing needs the poll
 to run, so it's manual-verify (a follow-up, same as the live keyed video).
 
-Phase 3 (below) plus Phase 3: single-layer chroma key. A "Transparent colour" section
+Phase 3 — single-layer chroma key: a "Transparent colour" section
 in the adjustments popup (mpv video only) with an on/off toggle, an
 **eyedropper swatch** (click it, then click the video to sample the key
 colour from the live frame), and **Similarity** (range width) + **Blend**
