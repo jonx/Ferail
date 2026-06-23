@@ -1,5 +1,5 @@
-use crate::text::{IconScale as _, TextScale as _};
 use super::*;
+use crate::text::{IconScale as _, TextScale as _};
 
 /// Minimum width for rendered-markdown preview content, so its prose
 /// reads as a column instead of folding to slivers in the narrow preview
@@ -1203,17 +1203,27 @@ impl Shell {
     /// a filled background. A trailing "+" opens a new tab; each
     /// non-active tab has a small "x" hover-affordance to close.
     fn tabstrip(&self, cx: &mut Context<Self>) -> Div {
+        use gpui_component::Sizable as _;
+        use gpui_component::button::{Button, ButtonVariants as _};
+
+        // One arrow click pages the strip by ~one-and-a-half tab widths.
+        const TAB_SCROLL_STEP: Pixels = px(200.0);
+
         let active = self.active;
         let multi = self.tabs.len() > 1;
+        // The chips live in a horizontally scrollable strip so the tab
+        // row can hold more tabs than fit the window. Trackpad / shift-
+        // wheel scrolling rides `overflow_x_scroll` directly; the chevron
+        // arrows added below page it for mouse-only users. A `flex_1`
+        // viewport (assembled after the loop) clips the strip so the
+        // arrows and trailing "+" stay pinned while the chips scroll
+        // under them. See `Shell::scroll_tabs`.
         let mut row = h_flex()
-            .w_full()
+            .id("tabstrip-scroll")
             .items_center()
             .gap_1()
-            .px_2()
-            .py_1()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().secondary);
+            .overflow_x_scroll()
+            .track_scroll(&self.tab_scroll);
 
         for (idx, tab) in self.tabs.iter().enumerate() {
             // Phase D: drop gap *before* this tab. Catches a drag
@@ -1370,20 +1380,76 @@ impl Shell {
             }
             row = row.child(chip);
         }
-        // Phase D: trailing drop gap after the last tab.
+        // Phase D: trailing drop gap after the last tab. Stays inside
+        // the scrollable strip so a drop past the last chip still lands.
         row = row.child(tab_drop_gap(self.tabs.len(), cx));
-        // Trailing "+" — new tab.
-        row = row.child(
+
+        // Scroll state measured last frame, used to drive the arrows.
+        // `max_offset().x > 0` means the chips overflow the viewport, so
+        // the arrows are worth showing; `offset().x` runs from 0 (start)
+        // down to `-max` (end), the same convention as the preview scroll
+        // (see `on_preview_text_scroll`). A small epsilon absorbs float
+        // fuzz when deciding whether either end is reachable.
+        let off = self.tab_scroll.offset().x;
+        let max = self.tab_scroll.max_offset().x;
+        let overflow = max > px(0.5);
+        let can_left = off < px(-0.5);
+        let can_right = off > -max + px(0.5);
+
+        let theme = cx.theme();
+        let mut outer = h_flex()
+            .w_full()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_1()
+            .border_b_1()
+            .border_color(theme.border)
+            .bg(theme.secondary);
+
+        // Left arrow — only while the strip overflows; dimmed once
+        // scrolled fully to the start.
+        if overflow {
+            outer = outer.child(
+                Button::new("tab-scroll-left")
+                    .xsmall()
+                    .ghost()
+                    .icon(gpui_component::Icon::empty().path("icons/nav/chevrons-left.svg"))
+                    .tooltip("Scroll tabs left")
+                    .disabled(!can_left)
+                    .on_click(cx.listener(|this, _, _, cx| this.scroll_tabs(TAB_SCROLL_STEP, cx))),
+            );
+        }
+
+        // The scrollable strip, clipped to the remaining width so the
+        // arrows + "+" stay pinned to the row's right edge.
+        outer = outer.child(h_flex().flex_1().overflow_x_hidden().child(row));
+
+        // Right arrow — mirror of the left; dimmed once at the end.
+        if overflow {
+            outer = outer.child(
+                Button::new("tab-scroll-right")
+                    .xsmall()
+                    .ghost()
+                    .icon(gpui_component::Icon::empty().path("icons/nav/chevrons-right.svg"))
+                    .tooltip("Scroll tabs right")
+                    .disabled(!can_right)
+                    .on_click(cx.listener(|this, _, _, cx| this.scroll_tabs(-TAB_SCROLL_STEP, cx))),
+            );
+        }
+
+        // Trailing "+" — new tab. Pinned outside the scroll viewport.
+        outer = outer.child(
             div()
                 .id("tab-new")
                 .ml_1()
                 .px_2()
                 .py_1()
-                .rounded(cx.theme().radius)
+                .rounded(theme.radius)
                 .cursor_pointer()
                 .text_scale_sm()
-                .text_color(cx.theme().muted_foreground)
-                .hover(|this| this.bg(cx.theme().accent.opacity(0.10)))
+                .text_color(theme.muted_foreground)
+                .hover(|this| this.bg(theme.accent.opacity(0.10)))
                 .child("+")
                 .on_click(cx.listener(|this, _, window, cx| {
                     // Spec §4.3: new tab opens beside the active tab,
@@ -1401,7 +1467,22 @@ impl Shell {
                     this.load_path(path, cx);
                 })),
         );
-        row
+        outer
+    }
+
+    /// Page the tab strip horizontally by `dx` DIPs — positive reveals
+    /// tabs toward the start (scroll left), negative toward the end
+    /// (scroll right) — clamped to the scrollable range. Drives the
+    /// tab-strip chevron arrows; trackpad / shift-wheel scrolling goes
+    /// straight through `overflow_x_scroll` and never reaches here. The
+    /// offset convention matches the preview scroll: `0` at the start,
+    /// `-max_offset().x` at the end.
+    fn scroll_tabs(&mut self, dx: Pixels, cx: &mut Context<Self>) {
+        let max = self.tab_scroll.max_offset().x;
+        let cur = self.tab_scroll.offset();
+        let x = (cur.x + dx).clamp(-max, px(0.0));
+        self.tab_scroll.set_offset(point(x, cur.y));
+        cx.notify();
     }
 
     // Toolbar removed in Phase 7. Back / forward / filter went into
@@ -1433,9 +1514,13 @@ impl Shell {
         // Active sort drives the sort button's glyph (asc/descending)
         // and the checkmark in its menu. Read once here — render-time
         // cache read, no I/O.
-        let current_sort = self.active_tab().table.read(cx).delegate().current_sort;
-        let sort_col = current_sort.map(|(c, _)| c);
-        let sort_asc = current_sort.map(|(_, a)| a).unwrap_or(true);
+        let current_sort = self
+            .process
+            .list_sort
+            .get()
+            .unwrap_or((SortColumn::Name, true));
+        let sort_col = current_sort.0;
+        let sort_asc = current_sort.1;
         let sort_icon = if sort_asc {
             "icons/sort-ascending.svg"
         } else {
@@ -1564,22 +1649,22 @@ impl Shell {
                                     menu.action_context(sort_menu_focus.clone())
                                         .menu_with_check(
                                             "Name",
-                                            sort_col == Some(SortColumn::Name),
+                                            sort_col == SortColumn::Name,
                                             Box::new(SortByName),
                                         )
                                         .menu_with_check(
                                             "Size",
-                                            sort_col == Some(SortColumn::Size),
+                                            sort_col == SortColumn::Size,
                                             Box::new(SortBySize),
                                         )
                                         .menu_with_check(
                                             "Kind",
-                                            sort_col == Some(SortColumn::Format),
+                                            sort_col == SortColumn::Format,
                                             Box::new(SortByKind),
                                         )
                                         .menu_with_check(
                                             "Date Modified",
-                                            sort_col == Some(SortColumn::Modified),
+                                            sort_col == SortColumn::Modified,
                                             Box::new(SortByModified),
                                         )
                                 }),

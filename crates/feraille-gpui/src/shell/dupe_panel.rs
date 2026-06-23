@@ -319,7 +319,12 @@ impl Shell {
                     .justify_center()
                     .cursor_pointer()
                     .when(marked, |this| {
-                        this.child(div().text_scale_xs().text_color(gpui::white()).child("\u{2713}"))
+                        this.child(
+                            div()
+                                .text_scale_xs()
+                                .text_color(gpui::white())
+                                .child("\u{2713}"),
+                        )
                     })
                     .on_click(cx.listener(move |this, _, _, cx| this.dupe_toggle_mark(node, cx)));
 

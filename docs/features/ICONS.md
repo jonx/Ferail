@@ -183,6 +183,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Sidebar toggle | *(SidebarToggleButton)* ↑ `panel-left-open/close` | Lucide | render.rs:1442 |
 | Back | `icons/nav/chevron-left.svg` | Lucide `chevron-left` (local 1.75) | render.rs:1464 |
 | Forward | `icons/nav/chevron-right.svg` | Lucide `chevron-right` (local 1.75) | render.rs:1476 |
+| Scroll tabs left / right | `icons/nav/chevrons-left.svg` / `chevrons-right.svg` | In-house, Lucide `chevrons-left` / `-right` (local 1.75) | render.rs `tabstrip` |
 | Sort (asc/desc) | `icons/sort-ascending.svg` / `sort-descending.svg` ↑ | Lucide | render.rs:1407 |
 | Show Desktop | `icons/nav/show-desktop.svg` | In-house (corner-arrows) | render.rs:1562 |
 | New Folder | `icons/nav/folder.svg` | Lucide `folder` (1.75) | render.rs:1575 |
@@ -193,7 +194,8 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Overflow menu | `icons/ellipsis.svg` ↑ | Lucide | render.rs:1668 |
 | Column sort header | `IconName::SortAscending` / `SortDescending` / `ChevronsUpDown` ↑ | Lucide | multi_table/state.rs:1509 |
 | Empty table state | `IconName::Inbox` ↑ / `icons/inbox.svg` ↑ | Lucide | multi_table/delegate.rs:137, file_list.rs:1262 |
-| Format-mismatch warning | `icons/triangle-alert.svg` ↑ | Lucide | file_list.rs:917 |
+| Format disguise (danger) | `icons/triangle-alert.svg` ↑ | Lucide | file_list.rs `render_td` "format" |
+| Format benign-mismatch cue | `icons/circle-help.svg` | **In-house** Lucide `circle-help` (house style; spare pool has `circle-check`/`circle-x`/`circle-user` but no neutral `?`-in-circle). Muted, non-danger. | file_list.rs `render_td` "format" |
 | Tool-result pop-out | `icons/maximize.svg` ↑ | Lucide | render.rs:2458 |
 | Tool-result close | `icons/close.svg` ↑ | Lucide | render.rs:2468 |
 | Task-panel dismiss | `icons/close.svg` ↑ | Lucide | task_panel.rs:101 |

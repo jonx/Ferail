@@ -22,6 +22,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [DUPLICATES.md](DUPLICATES.md) | Shipped with follow-ups | Size/partial/full-hash duplicate finder, clone/hard-link awareness, card panel, virtualization, and cleanup actions ship; faster enumeration and more benchmarks remain open. |
 | [FAVORITES.md](FAVORITES.md) | Shipped with follow-ups | Favorites persistence, sidebar, drag/drop, locate, rename, remove, keyboard actions, and cross-platform modal flow ship; tag favorites and file-watch missing transitions remain open. |
 | [FILE_OPS.md](FILE_OPS.md) | Shipped with follow-ups | Copy, cut, paste, move, trash, collision policy, progress, cancellation, undo, and platform integration ship; mutation toast/undo gaps remain open. |
+| [FRESHNESS.md](FRESHNESS.md) | Shipped with follow-ups | Keeps subtree-derived caches (folder sizes, Get Info "Calculate") honest via mtime + TTL validity, exact ancestor invalidation on in-app mutations, and a forced refresh when the window returns to the foreground; multi-parent moves and a live-watch upgrade path remain open. |
 | [ICONS.md](ICONS.md) | Reference | Complete icon inventory: source (NSWorkspace / local Lucide bundle / upstream), attribution, command→icon map, and the rules for adding new icons. Flags missing/weak/reused glyphs. |
 | [LAZY_METADATA.md](LAZY_METADATA.md) | Shipped with follow-ups | Shared NodeStore, path guard, cached row metadata, background prefetch, metadata DB, and process-owned caches ship; rename/move identity completion remains open. |
 | [MAGIC_DESCRIPTION.md](MAGIC_DESCRIPTION.md) | Shipped | Format/Description columns, mismatch cues, quarantine badges, and structured descriptions ship. |
@@ -54,6 +55,9 @@ keep the UI off the I/O path.
   contents so large folders stay responsive.
 - [LAZY_METADATA.md](LAZY_METADATA.md) — defer expensive metadata out of the
   render path.
+- [FRESHNESS.md](FRESHNESS.md) — keep subtree-derived caches (folder sizes, Get
+  Info size) fresh through mtime + TTL, ancestor invalidation, and an
+  activation refresh, without a recursive watcher.
 - [MOUSE_PREDICTOR.md](MOUSE_PREDICTOR.md) — prewarm metadata ahead of hover.
 - [STATUS_PROGRESS.md](STATUS_PROGRESS.md) — status bar and task progress with
   cancellation.

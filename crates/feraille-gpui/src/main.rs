@@ -66,6 +66,11 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
         // Health check. `--doctor` is also accepted (it would otherwise fall
         // through to the GUI as an unknown flag).
         "doctor" | "--doctor" => Ok(Some(run_doctor_cli())),
+        // Privileged file-op worker: a re-launch of this binary (usually
+        // elevated) that performs one copy/move descriptor headlessly and
+        // writes a result file, then exits. Never opens a window. Runs before
+        // any GUI init so it works as root with no window-server access.
+        "--elevated-op" => Ok(Some(feraille_gpui::elevation::run_elevated_op_worker(&args))),
         "help" | "-h" | "--help" => {
             print_cli_help();
             Ok(Some(0))

@@ -1261,3 +1261,131 @@ pub fn apply_native_chrome(window: &winit::window::Window) -> f32 {
 pub fn apply_native_chrome(_window: &winit::window::Window) -> f32 {
     0.0
 }
+
+// ---------------------------------------------------------------------------
+// Privilege escalation + locked-file diagnostics (resilient file operations).
+//
+// Same public surface in every shell crate (`platform_shell::*`). The host
+// gpui builds the op descriptor; this crate only knows how to "re-launch the
+// current binary elevated and wait" — it never sees the op type.
+// ---------------------------------------------------------------------------
+
+/// A process holding a file the user is trying to mutate, so a "the file is
+/// open in X" message and a force-close affordance can name it. Identical
+/// shape in every shell crate so it round-trips through the `platform_shell`
+/// alias.
+#[derive(Clone, Debug)]
+pub struct LockingProcess {
+    pub pid: u32,
+    pub name: String,
+}
+
+/// Whether this platform can run a privileged retry. macOS: yes, via osascript
+/// `with administrator privileges`.
+#[cfg(target_os = "macos")]
+pub fn elevation_available() -> bool {
+    true
+}
+#[cfg(not(target_os = "macos"))]
+pub fn elevation_available() -> bool {
+    false
+}
+
+/// Re-launch THIS executable with `args`, elevated, and block until it exits;
+/// returns the child exit code. macOS routes through osascript `do shell script
+/// … with administrator privileges` (one OS auth prompt; the child runs as
+/// root). The caller passes `--elevated-op <descriptor>` so the same binary
+/// performs the file op as root and writes a result file. Blocks on the auth
+/// dialog — call off the UI thread.
+#[cfg(target_os = "macos")]
+pub fn run_elevated_self(args: &[String]) -> Result<i32, String> {
+    elevation::run_elevated_self(args)
+}
+#[cfg(not(target_os = "macos"))]
+pub fn run_elevated_self(_args: &[String]) -> Result<i32, String> {
+    Err("elevation is not available on this platform".into())
+}
+
+/// Whether this platform can enumerate the processes holding a locked file.
+/// macOS file locking is advisory and rarely the cause, so this is deferred —
+/// it lands with the Windows Restart Manager work.
+pub fn lock_diagnostics_available() -> bool {
+    false
+}
+
+/// Processes currently holding `path` open. Empty when unknown/unsupported.
+pub fn processes_using(_path: &std::path::Path) -> Vec<LockingProcess> {
+    Vec::new()
+}
+
+/// Ask the given processes to close so a locked file can be retried.
+/// Unsupported on macOS for now.
+pub fn force_close_processes(_pids: &[u32]) -> Result<(), String> {
+    Err("closing the locking process isn't supported on this platform yet".into())
+}
+
+/// osascript-backed privileged re-exec. Two layers of quoting: each token is
+/// POSIX single-quoted for the shell, and the whole command is escaped as an
+/// AppleScript string literal.
+#[cfg(target_os = "macos")]
+mod elevation {
+    pub fn run_elevated_self(args: &[String]) -> Result<i32, String> {
+        let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
+        let mut shell_cmd = shell_quote(&exe.to_string_lossy());
+        for a in args {
+            shell_cmd.push(' ');
+            shell_cmd.push_str(&shell_quote(a));
+        }
+        let script = format!(
+            "do shell script {} with administrator privileges",
+            applescript_quote(&shell_cmd)
+        );
+        let out = std::process::Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(&script)
+            .output()
+            .map_err(|e| format!("osascript: {e}"))?;
+        if out.status.success() {
+            // `do shell script` raises on a non-zero child exit, so reaching
+            // here means the worker ran and wrote its result file.
+            return Ok(0);
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        // -128 / "User canceled" == the user dismissed the auth dialog.
+        if err.contains("-128") || err.contains("User canceled") {
+            Err("cancelled".into())
+        } else {
+            Err(format!("elevation failed: {}", err.trim()))
+        }
+    }
+
+    /// Wrap in single quotes, turning each interior `'` into `'\''`.
+    fn shell_quote(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('\'');
+        for ch in s.chars() {
+            if ch == '\'' {
+                out.push_str("'\\''");
+            } else {
+                out.push(ch);
+            }
+        }
+        out.push('\'');
+        out
+    }
+
+    /// AppleScript string literal: wrap in `"…"`, escaping `\` and `"`.
+    fn applescript_quote(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('"');
+        for ch in s.chars() {
+            match ch {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                _ => out.push(ch),
+            }
+        }
+        out.push('"');
+        out
+    }
+}

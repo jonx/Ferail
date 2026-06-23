@@ -1,5 +1,5 @@
-use crate::text::TextScale as _;
 use super::*;
+use crate::text::TextScale as _;
 
 /// Copy vs move for [`Shell::spawn_transfer_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -699,6 +699,52 @@ impl Shell {
             let _ = win.update(cx, |_, window, cx| {
                 match &result {
                     Ok((outcome, _, effective)) => {
+                        // Failures always surface — even for sub-150ms ops —
+                        // as a per-item, classified report. The toast offers
+                        // Copy (raw detail → clipboard), an in-process Retry of
+                        // just the failed items, and Retry as administrator…
+                        // when a permission denial could be fixed by elevating.
+                        if outcome.has_failures() {
+                            let op_noun = match effective {
+                                TransferMode::Move => "Move",
+                                _ => "Copy",
+                            };
+                            let summary = file_op_outcome_summary(op_noun, outcome);
+                            // The failed top-level sources: those with a failure
+                            // recorded against them (path equals or sits under
+                            // the source). Excludes succeeded and skipped items.
+                            let retry_sources: Vec<PathBuf> = sources
+                                .iter()
+                                .filter(|s| {
+                                    let s: &PathBuf = s;
+                                    outcome
+                                        .failed
+                                        .iter()
+                                        .any(|f| f.path == *s || f.path.starts_with(s))
+                                })
+                                .cloned()
+                                .collect();
+                            if retry_sources.is_empty() {
+                                window.push_notification(error_notification(summary), cx);
+                            } else {
+                                let elevation_recoverable = outcome
+                                    .failed
+                                    .iter()
+                                    .any(|f| f.kind.is_elevation_recoverable());
+                                let retry = crate::shell::TransferRetry {
+                                    shell: weak.clone(),
+                                    sources: retry_sources,
+                                    dest: dest.clone(),
+                                    mode: *effective,
+                                    elevation_recoverable,
+                                };
+                                window.push_notification(
+                                    crate::shell::transfer_failure_notification(summary, retry),
+                                    cx,
+                                );
+                            }
+                            return;
+                        }
                         if !surfaced && !outcome.cancelled && outcome.skipped == 0 {
                             return;
                         }
@@ -737,6 +783,94 @@ impl Shell {
         })
         .detach();
     }
+
+    /// Re-run the failed items of a transfer **with administrator privileges**.
+    /// Serialises them into an `ElevatedOp` and runs the privileged worker
+    /// (which re-execs this binary elevated — one OS auth prompt); reads back
+    /// which items still failed and reports it. The whole thing runs off the UI
+    /// thread because the auth dialog blocks.
+    pub(crate) fn retry_transfer_elevated(
+        &mut self,
+        sources: Vec<PathBuf>,
+        dest: PathBuf,
+        mode: TransferMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+
+        let is_move = matches!(mode, TransferMode::Move);
+        let op = crate::elevation::ElevatedOp {
+            is_move,
+            dest_dir: dest.clone(),
+            sources: sources.clone(),
+        };
+        let process = self.process.clone();
+        let win = window.window_handle();
+        cx.spawn(async move |_this, cx| {
+            // Blocks on the OS auth dialog — keep it on the executor, never the
+            // UI thread (Prime Directive).
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::elevation::run_elevated_op(&op) })
+                .await;
+
+            // Refresh the destination, plus the moved-from parents on a move —
+            // a partial elevated run may have changed either side.
+            let mut reload = vec![dest.clone()];
+            if is_move {
+                for s in &sources {
+                    if let Some(p) = s.parent() {
+                        let p = p.to_path_buf();
+                        if !reload.contains(&p) {
+                            reload.push(p);
+                        }
+                    }
+                }
+            }
+            Shell::broadcast_reload_for_process(&process, reload, cx);
+
+            let _ = win.update(cx, |_, window, cx| match result {
+                Ok(r) if r.failures.is_empty() => {
+                    let items = if r.ok == 1 { "item" } else { "items" };
+                    window.push_notification(
+                        Notification::success(format!(
+                            "Completed {} {items} as administrator",
+                            r.ok
+                        )),
+                        cx,
+                    );
+                }
+                Ok(r) => {
+                    let mut msg = format!(
+                        "As administrator: {} done \u{00b7} {} still failed",
+                        r.ok,
+                        r.failures.len()
+                    );
+                    for (kind, path) in r.failures.iter().take(4) {
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.display().to_string());
+                        msg.push_str(&format!("\n\u{2022} {name} \u{2014} {}", kind.summary()));
+                    }
+                    window.push_notification(error_notification(msg), cx);
+                }
+                Err(e) if e == "cancelled" => {
+                    window
+                        .push_notification(Notification::info("Administrator retry cancelled"), cx);
+                }
+                Err(e) => {
+                    window.push_notification(
+                        error_notification(format!("Retry as administrator failed: {e}")),
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn on_copy_path(
         &mut self,
         _: &CopyPath,
@@ -928,7 +1062,12 @@ impl Shell {
     /// while the system flushes/closes the device), then reports
     /// success or failure as a toast. The volume observer drops the row
     /// from the sidebar once the unmount lands.
-    pub(crate) fn eject_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn eject_path(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use gpui_component::notification::Notification;
         let name = path
             .file_name()

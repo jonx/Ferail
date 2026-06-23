@@ -144,6 +144,41 @@ Do not hide technical details. Feraille users are expected to be comfortable
 with OS/tool errors; the app adds context and advice instead of replacing the
 real cause with vague friendly copy.
 
+### Resilient failures — per-item reporting + coping (2026-06-23)
+
+A copy/move no longer aborts the whole batch on the first item's failure, and
+no longer flattens the cause into a bare string. The engine
+(`feraille-fs-native/src/file_ops.rs`) classifies each per-item `io::Error`
+into a **`FileOpError { kind, path, raw, os_code }`** (`FileOpErrorKind` =
+`PermissionDenied | Locked | NotFound | NoSpace | ReadOnly | NameTooLong |
+AlreadyExists | Other`), records it in **`OpOutcome.failed`**, and **keeps
+going**. So a 10-item paste that trips on item 3 still attempts 4–10.
+
+`spawn_transfer_op` surfaces a transparent toast — *"Move: 7 of 10 done · 3
+failed"* with the first few items and their plain-language reasons — that
+always appears (even sub-150 ms ops) and carries actions to **cope**:
+
+- **Copy** — the raw detail to the clipboard for a bug report.
+- **Retry** — re-run just the failed top-level items in-process.
+- **Retry as administrator…** — shown when a failure is a bare permission
+  denial and the platform can elevate. It re-runs the failed items elevated by
+  re-launching this binary with `--elevated-op <descriptor>` (one OS auth
+  prompt; the worker performs the op as root/admin and writes a result file).
+  See `crate::elevation` + `platform_shell::{elevation_available,
+  run_elevated_self}`.
+
+`FileOpErrorKind::is_lock()` + `platform_shell::{processes_using,
+force_close_processes}` back a future "the file is open in X — close it and
+retry / force-close" affordance. The lock primitives are **Windows-native
+(Restart Manager) and deferred** to the on-device session; macOS/Linux return
+empty for now. The string-error surfaces (rename, duplicate, compress, alias)
+share the one advice table via `classify_error_text`.
+
+**Platform status:** transparency + classification are cross-platform; macOS
+ships real osascript elevation; Windows/Linux elevation + lock detection are
+stubbed (`elevation_available()` = false) pending the native pass — see
+windows-port.md.
+
 ## Platform tags
 
 **[mac]** = macOS-only today; **[win-parity]** = named Windows

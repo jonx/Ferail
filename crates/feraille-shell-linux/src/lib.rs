@@ -1101,3 +1101,37 @@ mod tests {
         assert_eq!(file_uri(Path::new("/a b/c#d")), "file:///a%20b/c%23d");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Privilege escalation + locked-file diagnostics (resilient file operations).
+//
+// STUBS for now. Linux follow-up: pkexec/sudo re-exec for run_elevated_self;
+// /proc/*/fd scan for processes_using; SIGTERM for force_close_processes.
+// ---------------------------------------------------------------------------
+
+/// A process holding a file open. Identical shape in every shell crate.
+#[derive(Clone, Debug)]
+pub struct LockingProcess {
+    pub pid: u32,
+    pub name: String,
+}
+
+pub fn elevation_available() -> bool {
+    false
+}
+
+pub fn run_elevated_self(_args: &[String]) -> Result<i32, String> {
+    Err("elevation not implemented on Linux yet (pkexec re-exec)".into())
+}
+
+pub fn lock_diagnostics_available() -> bool {
+    false
+}
+
+pub fn processes_using(_path: &std::path::Path) -> Vec<LockingProcess> {
+    Vec::new()
+}
+
+pub fn force_close_processes(_pids: &[u32]) -> Result<(), String> {
+    Err("force-close not implemented on Linux yet".into())
+}

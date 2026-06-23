@@ -7,14 +7,14 @@
 //! side per the UI_NONBLOCKING contract.
 
 use crate::text::{IconScale as _, TextScale as _};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use feraille_core::{EntryKind, FileEntry, FsBackend, NodeId};
+use feraille_core::{EntryKind, FileEntry, FormatFlag, FsBackend, NodeId};
 use feraille_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -392,6 +392,10 @@ pub struct FileListDelegate {
     /// by the folder-size worker so late-arriving sizes can re-apply
     /// a live Size sort instead of leaving rows in stale positions.
     pub current_sort: Option<(SortColumn, bool)>,
+    /// Shared process-wide sort preference. New folder loads and new tabs
+    /// seed from this so navigation doesn't silently fall back to raw
+    /// filesystem enumeration order.
+    sort_state: Rc<Cell<Option<(SortColumn, bool)>>>,
     /// The Shell's focus handle, carrying the `SHELL_CONTEXT` key
     /// context. Handed to the row right-click menu as its
     /// `action_context` so gpui-component resolves each item's
@@ -409,8 +413,10 @@ impl FileListDelegate {
         thumbnails: Rc<RefCell<ThumbnailCache>>,
         tasks: Rc<RefCell<TaskRegistry>>,
         cut_marker: Rc<RefCell<Vec<PathBuf>>>,
+        sort_state: Rc<Cell<Option<(SortColumn, bool)>>>,
         shell_focus: gpui::FocusHandle,
     ) -> Self {
+        let current_sort = sort_state.get();
         Self {
             entries: Vec::new(),
             // Next-level Phase 1: Magic-driven `Format` column
@@ -453,8 +459,81 @@ impl FileListDelegate {
             lead: None,
             menu_targets: MenuTargets::default(),
             open_with_warm: None,
-            current_sort: None,
+            current_sort,
+            sort_state,
             shell_focus,
+        }
+    }
+
+    fn effective_sort(&self) -> (SortColumn, bool) {
+        self.current_sort.unwrap_or((SortColumn::Name, true))
+    }
+
+    pub fn sync_sort_from_process(&mut self) {
+        self.current_sort = self.sort_state.get();
+    }
+
+    fn set_current_sort(&mut self, sort: Option<(SortColumn, bool)>) {
+        self.current_sort = sort;
+        self.sort_state.set(sort);
+    }
+
+    /// Sort the visible row model and all row-parallel decoration vectors
+    /// together. Sorting only `entries` makes heat tint, tag dots, and favorite
+    /// stars drift onto the wrong rows.
+    pub fn apply_effective_sort(&mut self) {
+        self.sync_sort_from_process();
+        let (col, asc) = self.effective_sort();
+        self.sort_model(col, asc);
+    }
+
+    pub fn apply_sort(&mut self, col: SortColumn, asc: bool) {
+        self.set_current_sort(Some((col, asc)));
+        self.sort_model(col, asc);
+    }
+
+    pub fn reset_sort(&mut self) {
+        self.set_current_sort(None);
+        self.sort_model(SortColumn::Name, true);
+    }
+
+    fn sort_model(&mut self, col: SortColumn, asc: bool) {
+        if self.entries.len() <= 1 {
+            return;
+        }
+
+        let mut row_state: HashMap<NodeId, (f32, Vec<feraille_core::commands::TagColor>, bool)> =
+            self.entries
+                .iter()
+                .enumerate()
+                .map(|(ix, entry)| {
+                    (
+                        entry.id,
+                        (
+                            self.heats.get(ix).copied().unwrap_or(0.0),
+                            self.tags.get(ix).cloned().unwrap_or_default(),
+                            self.is_favorited.get(ix).copied().unwrap_or(false),
+                        ),
+                    )
+                })
+                .collect();
+
+        sort_in_place(&mut self.entries, col, asc);
+
+        self.heats.clear();
+        self.tags.clear();
+        self.is_favorited.clear();
+        self.heats.reserve(self.entries.len());
+        self.tags.reserve(self.entries.len());
+        self.is_favorited.reserve(self.entries.len());
+        for entry in &self.entries {
+            let (heat, tags, favorited) =
+                row_state
+                    .remove(&entry.id)
+                    .unwrap_or((0.0, Vec::new(), false));
+            self.heats.push(heat);
+            self.tags.push(tags);
+            self.is_favorited.push(favorited);
         }
     }
 
@@ -523,6 +602,7 @@ impl FileListDelegate {
         for _ in TAG_PREFETCH_CAP..self.entries.len() {
             self.tags.push(Vec::new());
         }
+        self.apply_effective_sort();
         handle.error
     }
 
@@ -549,6 +629,7 @@ impl FileListDelegate {
         self.tags = vec![Vec::new(); self.entries.len()];
         self.is_favorited = vec![false; self.entries.len()];
         self.menu_targets = MenuTargets::default();
+        self.apply_effective_sort();
         // selected_set / lead are NodeId-keyed; reconciliation is
         // Shell's job (see `refresh_file_list_selection`).
     }
@@ -566,6 +647,16 @@ impl FileListDelegate {
         self.tags.extend((0..n).map(|_| Vec::new()));
         self.is_favorited.extend((0..n).map(|_| false));
         // selected_set / lead untouched — NodeId-keyed, not row-keyed.
+    }
+
+    pub fn append_entries_sorted(
+        &mut self,
+        entries: Vec<FileEntry>,
+        paths: HashMap<NodeId, PathBuf>,
+        heats: Vec<f32>,
+    ) {
+        self.append_entries(entries, paths, heats);
+        self.apply_effective_sort();
     }
 
     pub fn path_for_entry(&self, id: NodeId) -> Option<PathBuf> {
@@ -1014,12 +1105,15 @@ impl TableDelegate for FileListDelegate {
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(entry.display_size.clone()))
                 .into_any_element(),
-            // Unified Format column (next-level Phase 1): replaces
-            // the old Kind + Magic duplication. Mismatch indicator
-            // surfaces when extension and magic disagree (renamed or
-            // corrupted file).
+            // Unified Format column: replaces the old Kind + Magic
+            // duplication. The trailing indicator grades how the
+            // extension and the content-detected type relate — a red
+            // danger triangle only for genuine disguises (dangerous
+            // content under an innocent extension), a quiet neutral cue
+            // for benign renamed/resaved files. See
+            // `FileEntry::format_label` / `FormatFlag`.
             "format" => {
-                let (label, mismatch) = entry.format_label();
+                let (label, flag) = entry.format_label();
                 if label.is_empty() {
                     return div().into_any_element();
                 }
@@ -1039,22 +1133,42 @@ impl TableDelegate for FileListDelegate {
                             .truncate()
                             .child(SharedString::from(label.clone())),
                     );
-                if mismatch {
-                    let alert_color = cx.theme().danger;
-                    row = row
-                        .child(
-                            svg()
-                                .path("icons/triangle-alert.svg")
-                                .icon_px(12.0)
-                                .text_color(alert_color),
-                        )
-                        .tooltip(move |window, cx| {
-                            Tooltip::new(SharedString::from(format!(
-                                "Extension says \u{201C}{}\u{201D} but content looks like \u{201C}{}\u{201D}.",
-                                tip_kind, tip_magic
-                            )))
-                            .build(window, cx)
-                        });
+                match flag {
+                    FormatFlag::Alert => {
+                        let alert_color = cx.theme().danger;
+                        row = row
+                            .child(
+                                svg()
+                                    .path("icons/triangle-alert.svg")
+                                    .icon_px(12.0)
+                                    .text_color(alert_color),
+                            )
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(SharedString::from(format!(
+                                    "Extension says \u{201C}{}\u{201D} but the content is \u{201C}{}\u{201D} — possible disguised file.",
+                                    tip_kind, tip_magic
+                                )))
+                                .build(window, cx)
+                            });
+                    }
+                    FormatFlag::Notice => {
+                        let cue_color = cx.theme().muted_foreground;
+                        row = row
+                            .child(
+                                svg()
+                                    .path("icons/circle-help.svg")
+                                    .icon_px(12.0)
+                                    .text_color(cue_color),
+                            )
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(SharedString::from(format!(
+                                    "Extension says \u{201C}{}\u{201D} but the content looks like \u{201C}{}\u{201D}.",
+                                    tip_kind, tip_magic
+                                )))
+                                .build(window, cx)
+                            });
+                    }
+                    FormatFlag::None => {}
                 }
                 row.into_any_element()
             }
@@ -1377,16 +1491,13 @@ impl TableDelegate for FileListDelegate {
                 // "Reset to natural order" — sort by name ascending
                 // (Finder convention) as a deterministic fallback,
                 // since we don't retain the load-time order.
-                sort_in_place(&mut self.entries, SortColumn::Name, true);
-                self.current_sort = None;
+                self.reset_sort();
             }
             ColumnSort::Ascending => {
-                sort_in_place(&mut self.entries, sort_col, true);
-                self.current_sort = Some((sort_col, true));
+                self.apply_sort(sort_col, true);
             }
             ColumnSort::Descending => {
-                sort_in_place(&mut self.entries, sort_col, false);
-                self.current_sort = Some((sort_col, false));
+                self.apply_sort(sort_col, false);
             }
         }
     }
@@ -1554,34 +1665,44 @@ impl std::str::FromStr for SortColumn {
 /// In-place sort with folders-first grouping (Finder convention).
 /// Pure logic, easy to extend.
 pub fn sort_in_place(entries: &mut [feraille_core::FileEntry], col: SortColumn, asc: bool) {
+    entries.sort_by(|a, b| compare_entries(a, b, col, asc));
+}
+
+fn compare_entries(
+    a: &feraille_core::FileEntry,
+    b: &feraille_core::FileEntry,
+    col: SortColumn,
+    asc: bool,
+) -> std::cmp::Ordering {
     use std::cmp::Ordering;
-    entries.sort_by(|a, b| {
-        // Folders always come before non-folders, regardless of
-        // sort direction. The sort key only orders within each
-        // group.
-        let group_order = match (a.kind, b.kind) {
-            (feraille_core::EntryKind::Directory, feraille_core::EntryKind::Directory) => {
-                Ordering::Equal
-            }
-            (feraille_core::EntryKind::Directory, _) => Ordering::Less,
-            (_, feraille_core::EntryKind::Directory) => Ordering::Greater,
-            _ => Ordering::Equal,
-        };
-        if group_order != Ordering::Equal {
-            return group_order;
+    // Folders always come before non-folders, regardless of sort direction.
+    // The sort key only orders within each group.
+    let group_order = match (a.kind, b.kind) {
+        (feraille_core::EntryKind::Directory, feraille_core::EntryKind::Directory) => {
+            Ordering::Equal
         }
-        let cmp = match col {
-            SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            SortColumn::Size => a.size.cmp(&b.size),
-            SortColumn::Format => a
-                .format_label()
-                .0
-                .to_lowercase()
-                .cmp(&b.format_label().0.to_lowercase()),
-            SortColumn::Modified => a.mtime_unix.cmp(&b.mtime_unix),
-        };
-        if asc { cmp } else { cmp.reverse() }
-    });
+        (feraille_core::EntryKind::Directory, _) => Ordering::Less,
+        (_, feraille_core::EntryKind::Directory) => Ordering::Greater,
+        _ => Ordering::Equal,
+    };
+    if group_order != Ordering::Equal {
+        return group_order;
+    }
+
+    let primary = match col {
+        SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        SortColumn::Size => a.size.cmp(&b.size),
+        SortColumn::Format => a
+            .format_label()
+            .0
+            .to_lowercase()
+            .cmp(&b.format_label().0.to_lowercase()),
+        SortColumn::Modified => a.mtime_unix.cmp(&b.mtime_unix),
+    };
+    let primary = if asc { primary } else { primary.reverse() };
+    primary
+        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        .then_with(|| a.id.as_raw().cmp(&b.id.as_raw()))
 }
 
 /// Apply a column sort to the live Table by enum. The toolbar sort
@@ -1594,8 +1715,7 @@ pub fn apply_sort_column<C: gpui::AppContext>(
     cx: &mut C,
 ) {
     table.update(cx, |state, cx| {
-        sort_in_place(&mut state.delegate_mut().entries, col, ascending);
-        state.delegate_mut().current_sort = Some((col, ascending));
+        state.delegate_mut().apply_sort(col, ascending);
         state.refresh(cx);
     });
 }
@@ -1733,10 +1853,7 @@ mod menu_targets_tests {
     }
 
     fn targets(caps: Vec<TargetCap>) -> MenuTargets {
-        MenuTargets {
-            caps,
-            anchor: None,
-        }
+        MenuTargets { caps, anchor: None }
     }
 
     fn with_anchor(anchor: TargetCap) -> MenuTargets {

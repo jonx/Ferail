@@ -195,46 +195,112 @@ fn file_op_error_notification(
     operation: &str,
     err: &str,
 ) -> gpui_component::notification::Notification {
+    let advice = classify_error_text(err).advice();
+    error_notification(format!("{operation} failed: {err}. {advice}"))
+}
+
+/// Best-effort classification of a stringly-typed error message (the mutation
+/// surfaces that still return `Result<_, String>` — duplicate, compress,
+/// alias, rename) into a [`FileOpErrorKind`], so every surface shares the one
+/// advice table the structured engine path uses.
+fn classify_error_text(err: &str) -> feraille_fs_native::file_ops::FileOpErrorKind {
+    use feraille_fs_native::file_ops::FileOpErrorKind as K;
     let lower = err.to_ascii_lowercase();
-    let advice = if lower.contains("permission denied")
+    if lower.contains("permission denied")
         || lower.contains("operation not permitted")
         || lower.contains("os error 1")
         || lower.contains("os error 13")
+        || lower.contains("access is denied")
     {
-        "Check permissions for the item or grant Feraille access in System Settings."
+        K::PermissionDenied
+    } else if lower.contains("being used by another")
+        || lower.contains("in use by")
+        || lower.contains("sharing violation")
+        || lower.contains("text file busy")
+        || lower.contains("resource busy")
+    {
+        K::Locked
     } else if lower.contains("no such file or directory")
         || lower.contains("not found")
         || lower.contains("os error 2")
     {
-        "The item may have moved or been deleted. Refresh the folder and try again."
+        K::NotFound
     } else if lower.contains("file exists") || lower.contains("already exists") {
-        "Choose a different name or remove the existing item, then try again."
+        K::AlreadyExists
     } else if lower.contains("no space left")
         || lower.contains("not enough space")
         || lower.contains("os error 28")
     {
-        "Free space on the destination volume or choose another destination."
+        K::NoSpace
     } else if lower.contains("read-only file system") || lower.contains("read only") {
-        "The destination is read-only. Choose a writable folder or change the volume permissions."
+        K::ReadOnly
     } else if lower.contains("too long") || lower.contains("name too long") {
-        "Use a shorter name or move the item to a path with fewer nested folders."
+        K::NameTooLong
     } else {
-        "Refresh the folder and try again. If it keeps failing, check the item in Finder."
-    };
+        K::Other
+    }
+}
 
-    error_notification(format!("{operation} failed: {err}. {advice}"))
+/// The most actionable failure kind in a batch — the one whose advice we show
+/// and whose retry affordance (elevation / who's-locking) we offer. Permission
+/// and lock failures win because the user can do something about them.
+fn dominant_failure_kind(
+    failed: &[feraille_fs_native::file_ops::FileOpError],
+) -> feraille_fs_native::file_ops::FileOpErrorKind {
+    use feraille_fs_native::file_ops::FileOpErrorKind as K;
+    let priority = |k: K| match k {
+        K::PermissionDenied => 0,
+        K::Locked => 1,
+        K::NoSpace => 2,
+        K::ReadOnly => 3,
+        K::NameTooLong => 4,
+        K::AlreadyExists => 5,
+        K::NotFound => 6,
+        K::Other => 9,
+    };
+    failed
+        .iter()
+        .map(|e| e.kind)
+        .min_by_key(|k| priority(*k))
+        .unwrap_or(K::Other)
+}
+
+/// A transparent, per-item summary for a file op that partly failed:
+/// "Move: 7 of 10 done · 3 failed", the first few items with their
+/// plain-language reasons, then one piece of advice for the most actionable
+/// failure. The raw OS detail rides along (it's what the Copy action carries).
+pub(crate) fn file_op_outcome_summary(
+    operation: &str,
+    outcome: &feraille_fs_native::file_ops::OpOutcome,
+) -> String {
+    const SHOW: usize = 4;
+    let done = outcome.created.len();
+    let failed = outcome.failed.len();
+    let total = done + failed + outcome.skipped as usize;
+    let mut msg = format!("{operation}: {done} of {total} done \u{00b7} {failed} failed");
+    for e in outcome.failed.iter().take(SHOW) {
+        msg.push_str(&format!(
+            "\n\u{2022} {} \u{2014} {}",
+            e.item_label(),
+            e.kind.summary()
+        ));
+    }
+    if failed > SHOW {
+        msg.push_str(&format!("\n\u{2022} \u{2026}and {} more", failed - SHOW));
+    }
+    msg.push('\n');
+    msg.push_str(dominant_failure_kind(&outcome.failed).advice());
+    msg
 }
 
 /// An error notification with a **Copy** action that puts the full message on
 /// the clipboard — handy for pasting a failure into a bug report. Setting an
 /// action also keeps the toast from auto-hiding, so the user has time to read
 /// and copy it.
-pub(crate) fn error_notification(
-    message: String,
-) -> gpui_component::notification::Notification {
+pub(crate) fn error_notification(message: String) -> gpui_component::notification::Notification {
+    use gpui_component::Sizable as _;
     use gpui_component::button::{Button, ButtonVariants as _};
     use gpui_component::notification::Notification;
-    use gpui_component::Sizable as _;
 
     let for_copy = message.clone();
     Notification::error(message).action(move |_, _, _| {
@@ -244,6 +310,113 @@ pub(crate) fn error_notification(
             .ghost()
             .small()
             .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&m))
+    })
+}
+
+/// What a failure toast's Retry buttons need to re-run the failed items. The
+/// notification's action/content builders run on every render, so this is
+/// cloned per build (hence `Clone`).
+#[derive(Clone)]
+pub(crate) struct TransferRetry {
+    pub shell: WeakEntity<Shell>,
+    /// The failed top-level sources to re-attempt (not the ones that succeeded
+    /// or were skipped).
+    pub sources: Vec<PathBuf>,
+    pub dest: PathBuf,
+    /// The *resolved* mode (never `Auto`), so the retry behaves identically.
+    pub mode: file_ops::TransferMode,
+    /// At least one failure is a bare permission denial — elevation may help.
+    pub elevation_recoverable: bool,
+}
+
+/// The transparent failure toast: the per-item "N of M · why" summary plus
+/// actions to cope — **Copy** (raw detail → clipboard for a bug report),
+/// in-process **Retry** of the failed items, and, when a permission failure
+/// could be fixed by elevating and the platform supports it, **Retry as
+/// administrator…**. Setting `.action` also keeps the toast from auto-hiding.
+pub(crate) fn transfer_failure_notification(
+    summary: String,
+    retry: TransferRetry,
+) -> gpui_component::notification::Notification {
+    use gpui_component::Sizable as _;
+    use gpui_component::button::{Button, ButtonVariants as _};
+    use gpui_component::notification::Notification;
+
+    let offer_admin = retry.elevation_recoverable && crate::platform_shell::elevation_available();
+
+    // Primary action button (disables autohide): elevate when that can help,
+    // otherwise a plain retry.
+    let primary = retry.clone();
+    let note = Notification::error(summary.clone()).action(move |_, _, _| {
+        let r = primary.clone();
+        if offer_admin {
+            Button::new("retry-elevated")
+                .label("Retry as administrator\u{2026}")
+                .small()
+                .on_click(move |_, window, cx| {
+                    let _ = r.shell.update(cx, |shell, cx| {
+                        shell.retry_transfer_elevated(
+                            r.sources.clone(),
+                            r.dest.clone(),
+                            r.mode,
+                            window,
+                            cx,
+                        );
+                    });
+                })
+        } else {
+            Button::new("retry-inproc")
+                .label("Retry")
+                .small()
+                .on_click(move |_, window, cx| {
+                    let _ = r.shell.update(cx, |shell, cx| {
+                        shell.spawn_transfer_op(
+                            r.sources.clone(),
+                            r.dest.clone(),
+                            r.mode,
+                            window,
+                            cx,
+                        );
+                    });
+                })
+        }
+    });
+
+    // Secondary row: Copy always; a plain Retry too when the primary was the
+    // elevated one (so the user can still try in-process without the prompt).
+    let copy_msg = summary;
+    let secondary = retry;
+    note.content(move |_, _, _| {
+        let copy_msg = copy_msg.clone();
+        let mut row = h_flex().gap_2().pt_1();
+        row = row.child(
+            Button::new("copy-failure")
+                .label("Copy")
+                .ghost()
+                .small()
+                .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&copy_msg)),
+        );
+        if offer_admin {
+            let r = secondary.clone();
+            row = row.child(
+                Button::new("retry-inproc-2")
+                    .label("Retry")
+                    .ghost()
+                    .small()
+                    .on_click(move |_, window, cx| {
+                        let _ = r.shell.update(cx, |shell, cx| {
+                            shell.spawn_transfer_op(
+                                r.sources.clone(),
+                                r.dest.clone(),
+                                r.mode,
+                                window,
+                                cx,
+                            );
+                        });
+                    }),
+            );
+        }
+        row.into_any_element()
     })
 }
 
@@ -402,6 +575,13 @@ pub struct Shell {
     /// `preview_scroll` (see `Shell::preview`). Reset to top on selection
     /// change alongside `preview_scroll`.
     pub preview_text_scroll: ScrollHandle,
+    /// Scroll position of the tab strip, so the row of tabs can scroll
+    /// horizontally when there are more open tabs than fit the window.
+    /// The chevron arrows in `Shell::tabstrip` page it; trackpad /
+    /// shift-wheel scrolling rides `overflow_x_scroll` directly.
+    /// Persistent across renders so the position — and the measured
+    /// `max_offset` the arrows read — survive frame to frame.
+    pub tab_scroll: ScrollHandle,
     /// Path the preview pane showed last frame — the selection-change
     /// edge detector for the scroll reset above.
     pub preview_scroll_path: Option<PathBuf>,
@@ -493,6 +673,13 @@ pub struct Shell {
     /// only fires when the text actually changed (one string compare
     /// per frame — see `sync_window_title`).
     last_window_title: String,
+    /// Tracks the window's OS activation so the activation observer
+    /// only force-refreshes folder sizes on a genuine background→
+    /// foreground return (where a 3rd-party tool may have changed
+    /// things the non-recursive watcher never saw), not on the initial
+    /// launch activation or a same-state re-fire. Seeded `true`: the
+    /// window starts active, so launch doesn't trigger a re-walk.
+    was_window_active: bool,
     /// Live subscription handles (Input change, future watchers).
     /// Dropping them tears down the listeners — keep alongside the
     /// Shell so they outlive any frame.
@@ -558,6 +745,23 @@ fn window_title_for(dir: &Path) -> String {
             }
         }
     }
+}
+
+/// When Back lands on an ancestor of the folder we just left, select the
+/// immediate child folder under that destination. Examples:
+/// `/A/B` -> `/A` selects `/A/B`; `/A/B/C` -> `/A` selects `/A/B`.
+fn history_child_to_select(from: &Path, destination: &Path) -> Option<PathBuf> {
+    if from == destination {
+        return None;
+    }
+    let relative = from.strip_prefix(destination).ok()?;
+    relative.components().find_map(|component| {
+        if let std::path::Component::Normal(name) = component {
+            Some(destination.join(name))
+        } else {
+            None
+        }
+    })
 }
 
 #[derive(Copy, Clone)]
@@ -918,6 +1122,7 @@ impl Shell {
             preview_info: None,
             preview_scroll: ScrollHandle::new(),
             preview_text_scroll: ScrollHandle::new(),
+            tab_scroll: ScrollHandle::new(),
             preview_scroll_path: None,
             ui_scale,
             splitter_state: cx.new(|_| gpui_component::resizable::ResizableState::default()),
@@ -940,6 +1145,7 @@ impl Shell {
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
             last_window_title: String::new(),
+            was_window_active: true,
             _subscriptions: vec![breadcrumb_subscription, shortcuts_help_subscription],
         };
         shell.process.register_shell(cx.weak_entity());
@@ -1041,6 +1247,25 @@ impl Shell {
         });
         shell._subscriptions.push(drag_esc_subscription);
 
+        // Activation refresh (docs/features/FRESHNESS.md): when the
+        // window returns from the background, a 3rd-party tool may have
+        // changed content the non-recursive watcher never saw — and a
+        // deep change leaves folder mtimes untouched, so the size cache
+        // still reads valid. On a genuine inactive→active transition,
+        // re-walk visible folder sizes with the cache bypassed. The
+        // initial launch activation is skipped (`was_window_active`
+        // starts `true`), and a same-state re-fire can't pass the
+        // transition guard, so app-switch thrash is bounded.
+        let activation_subscription = cx.observe_window_activation(window, |this, window, cx| {
+            let active = window.is_window_active();
+            let returned = active && !this.was_window_active;
+            this.was_window_active = active;
+            if returned {
+                this.restart_folder_size_passes(true, cx);
+            }
+        });
+        shell._subscriptions.push(activation_subscription);
+
         shell.start_metadata_load(cx);
         shell.load_path(start, cx);
         shell
@@ -1070,6 +1295,7 @@ impl Shell {
             process.thumbnails.clone(),
             process.tasks.clone(),
             process.cut_marker.clone(),
+            process.list_sort.clone(),
             shell_focus,
         );
         let table = cx.new(|cx| {
@@ -1825,9 +2051,13 @@ impl Shell {
     fn set_sort_column(&mut self, col: crate::file_list::SortColumn, cx: &mut Context<Self>) {
         use crate::file_list::SortColumn;
         let table = self.active_tab().table.clone();
-        let current = table.read(cx).delegate().current_sort;
+        let current = self
+            .process
+            .list_sort
+            .get()
+            .unwrap_or((SortColumn::Name, true));
         let ascending = match current {
-            Some((c, a)) if c == col => !a,
+            (c, a) if c == col => !a,
             _ => matches!(col, SortColumn::Name | SortColumn::Format),
         };
         crate::file_list::apply_sort_column(&table, col, ascending, cx);
@@ -1953,12 +2183,7 @@ impl Shell {
     /// Cmd+I — open the Get Info popup for the target row (the right-click
     /// row, else the lead selection). With nothing selected, gets info on
     /// the tab's current folder, matching Finder.
-    pub(crate) fn on_get_info(
-        &mut self,
-        _: &GetInfo,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn on_get_info(&mut self, _: &GetInfo, window: &mut Window, cx: &mut Context<Self>) {
         use feraille_core::entry_info::InfoTarget;
         let targets = self.action_entries_visible_order(cx);
         // Nothing targeted → info on the current folder (Finder parity).
@@ -2123,11 +2348,12 @@ impl Shell {
     }
 
     pub fn navigate_back(&mut self, cx: &mut Context<Self>) {
-        let (path, snapshot) = {
+        let (path, mut snapshot, came_from_path) = {
             let tab = self.active_tab_mut();
             if tab.history_index == 0 {
                 return;
             }
+            let came_from_path = tab.current_dir.clone();
             // Save the current entry's selection before stepping
             // back, so a subsequent Forward restores it.
             if let Some(cur) = tab.history.get_mut(tab.history_index) {
@@ -2137,8 +2363,15 @@ impl Shell {
             }
             tab.history_index -= 1;
             let entry = tab.history[tab.history_index].clone();
-            (entry.path.clone(), entry)
+            (entry.path.clone(), entry, came_from_path)
         };
+        if let Some(child_path) = history_child_to_select(&came_from_path, &path) {
+            let child_id = self.process.fs.id_for_path(&child_path);
+            snapshot.selection.clear();
+            snapshot.selection.insert(child_id);
+            snapshot.anchor = Some(child_id);
+            snapshot.lead = Some(child_id);
+        }
         crate::trail::navigate(crate::trail::NavKind::Back, &path);
         self.restore_from_history(snapshot, path, cx);
     }
@@ -2393,7 +2626,7 @@ impl Shell {
             }
             state
                 .delegate_mut()
-                .append_entries(batch.entries, batch.paths, heats);
+                .append_entries_sorted(batch.entries, batch.paths, heats);
             state.refresh(cx);
         });
         // Repaint the §5 star badge on each row whose path is now in
@@ -2559,29 +2792,16 @@ impl Shell {
             self.process.tasks.borrow_mut().end(id);
         }
         self.tabs[idx].load_cancel = None;
-        if let Some(mut staged) = self.tabs[idx].load_staging.take() {
+        if let Some(staged) = self.tabs[idx].load_staging.take() {
             // In-place reload finished: swap the complete listing in
             // atomically over the still-visible old rows. One rebuild,
             // no intermediate empty/partial state — the refresh is
             // flicker-free. Reconcile passes run once against the final
             // model, mirroring the streaming path's per-batch passes.
             self.tabs[idx].load_pending_first_batch = false;
-            // Reapply the user's active column sort. A re-enumeration
-            // arrives in raw readdir order, so without this an in-place
-            // reload (FS-watcher external change, Refresh, show-hidden
-            // toggle) would silently revert a sorted view to readdir
-            // order. That order change also scrambles the selection: a
-            // live Shift-range is recomputed by position just below
-            // (`recompute_live_range_in_tab`), so reordered endpoints
-            // capture a different span of rows. Reapplying the sort
-            // keeps the order stable, which makes the range recompute a
-            // no-op and preserves the selection. Sort the staged model
-            // *before* heats are gathered so the parallel heat vec stays
-            // row-aligned. `current_sort == None` keeps natural (readdir)
-            // order, matching the streaming first-load path.
-            if let Some((col, asc)) = self.tabs[idx].table.read(cx).delegate().current_sort {
-                crate::file_list::sort_in_place(&mut staged.entries, col, asc);
-            }
+            // `replace_entries` reapplies the delegate's effective sort while
+            // keeping row-parallel vectors aligned. Re-enumeration arrives in
+            // raw readdir order, so the swap must not inherit that order.
             let heats: Vec<f32> = staged
                 .entries
                 .iter()
@@ -2660,6 +2880,7 @@ impl Shell {
             size_tab_id,
             size_generation,
             size_cancel,
+            false,
             cx,
         );
         let icon_seeds = self.icon_seeds_from_table_in_tab(idx, cx);
@@ -3013,17 +3234,19 @@ impl Shell {
                 // cache-blind (metadata_db was still None) and
                 // couldn't persist what they computed. One re-kick
                 // with the DB attached makes the cache durable.
-                this.restart_folder_size_passes(cx);
+                this.restart_folder_size_passes(false, cx);
                 cx.notify();
             });
         })
         .detach();
     }
 
-    /// Re-run the folder-size pass for every tab against the (now
-    /// attached) metadata DB. Cancels any cache-blind pass still in
-    /// flight first.
-    fn restart_folder_size_passes(&mut self, cx: &mut Context<Self>) {
+    /// Re-run the folder-size pass for every tab. Cancels any pass
+    /// still in flight first. Called when the metadata DB attaches
+    /// (`force = false`: the cache is authoritative, just re-seed it)
+    /// and on app activation (`force = true`: bypass the cache so a
+    /// deep external change made while we were away is re-walked).
+    fn restart_folder_size_passes(&mut self, force: bool, cx: &mut Context<Self>) {
         let db = self.process.db_snapshot();
         if db.is_none() {
             return;
@@ -3044,6 +3267,7 @@ impl Shell {
                 self.tabs[idx].id,
                 self.tabs[idx].load_generation,
                 cancel,
+                force,
                 cx,
             );
         }
@@ -3091,6 +3315,7 @@ impl Shell {
         if paths.is_empty() {
             return;
         }
+        Self::invalidate_folder_size_ancestors(process, &paths, cx);
         for weak in process.live_shells() {
             if let Some(shell) = weak.upgrade() {
                 let paths = paths.clone();
@@ -3099,6 +3324,41 @@ impl Shell {
                 });
             }
         }
+    }
+
+    /// Drop cached folder sizes for each changed directory and all of
+    /// its ancestors. A change at `P` alters the recursive size of `P`
+    /// and every directory above it (each contains the change), yet
+    /// only `P`'s own mtime moves — the ancestors' rows would read
+    /// stale until their TTL lapses (see folder_sizes.rs). This is the
+    /// exact, immediate path for *in-app* work and for external
+    /// shallow changes the watcher catches; the deletes run off the UI
+    /// thread and are single-row primary-key hits.
+    fn invalidate_folder_size_ancestors(
+        process: &Rc<crate::process_state::ProcessState>,
+        paths: &[PathBuf],
+        cx: &mut AsyncApp,
+    ) {
+        let Some(db) = process.db_snapshot() else {
+            return;
+        };
+        // Normalize to the same key shape the cache stores
+        // (`normalize_path_key`, matching folder_sizes seeds).
+        let keys: Vec<PathBuf> = paths
+            .iter()
+            .map(|p| feraille_core::node_store::normalize_path_key(p))
+            .collect();
+        cx.background_executor()
+            .spawn(async move {
+                if let Ok(guard) = db.lock() {
+                    for key in &keys {
+                        for ancestor in key.ancestors() {
+                            let _ = guard.delete_folder_size(&ancestor.to_string_lossy());
+                        }
+                    }
+                }
+            })
+            .detach();
     }
 
     fn spawn_file_op(
@@ -4390,8 +4650,8 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::window_title_for;
-    use std::path::Path;
+    use super::{history_child_to_select, window_title_for};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn window_title_includes_folder_and_app_name() {
@@ -4414,5 +4674,36 @@ mod tests {
     fn window_title_is_never_blank() {
         // Empty path → the switcher entry still reads the app name.
         assert_eq!(window_title_for(Path::new("")), "Feraille");
+    }
+
+    #[test]
+    fn history_child_selects_direct_child_when_back_lands_on_parent() {
+        assert_eq!(
+            history_child_to_select(Path::new("/Users/jk/Projects"), Path::new("/Users/jk")),
+            Some(PathBuf::from("/Users/jk/Projects"))
+        );
+    }
+
+    #[test]
+    fn history_child_selects_first_child_when_back_lands_on_ancestor() {
+        assert_eq!(
+            history_child_to_select(
+                Path::new("/Users/jk/Projects/Feraille"),
+                Path::new("/Users/jk")
+            ),
+            Some(PathBuf::from("/Users/jk/Projects"))
+        );
+    }
+
+    #[test]
+    fn history_child_ignores_same_or_unrelated_paths() {
+        assert_eq!(
+            history_child_to_select(Path::new("/Users/jk"), Path::new("/Users/jk")),
+            None
+        );
+        assert_eq!(
+            history_child_to_select(Path::new("/Users/jk/Projects"), Path::new("/tmp")),
+            None
+        );
     }
 }

@@ -34,6 +34,7 @@ use feraille_fs_native::{NativeFs, VolumeInfo, list_volumes};
 use gpui::{App, Entity, WeakEntity, WindowHandle};
 
 use crate::favorites::Favorites;
+use crate::file_list::SortColumn;
 use crate::fs_watcher::FsWatcher;
 use crate::icons::IconCache;
 use crate::preview::PreviewCache;
@@ -151,6 +152,11 @@ pub struct ProcessState {
     /// can pick this up without re-opening the DB.
     pub favorites_section_collapsed: Cell<bool>,
 
+    /// Process-wide file-list sort. This is intentionally global for now:
+    /// every folder view should keep the same ordering until the user changes
+    /// it. `None` means the deterministic default, Name ascending.
+    pub list_sort: Rc<Cell<Option<(SortColumn, bool)>>>,
+
     /// Weak handles for all live Shell windows. Reload fan-out walks
     /// this list and asks every matching tab in every live window to
     /// refresh. Dead windows are pruned opportunistically.
@@ -216,6 +222,7 @@ impl ProcessState {
             next_tab_id: Cell::new(0),
             metadata_loaded: Cell::new(false),
             favorites_section_collapsed: Cell::new(false),
+            list_sort: Rc::new(Cell::new(None)),
             shells: RefCell::new(Vec::new()),
             closed_tabs: RefCell::new(VecDeque::new()),
             viewers: RefCell::new(Vec::new()),
@@ -375,12 +382,7 @@ pub fn start_volume_watch(cx: &mut App) {
             while rx.try_recv().is_ok() {}
             let (vols, clouds) = cx
                 .background_executor()
-                .spawn(async {
-                    (
-                        list_volumes(),
-                        feraille_fs_native::cloud_synced_locations(),
-                    )
-                })
+                .spawn(async { (list_volumes(), feraille_fs_native::cloud_synced_locations()) })
                 .await;
             cx.update(|cx| {
                 let process = process_state(cx);
@@ -439,12 +441,7 @@ pub fn start_power_watch(cx: &mut App) {
             } else if event.is_system_wake() {
                 let (vols, clouds) = cx
                     .background_executor()
-                    .spawn(async {
-                        (
-                            list_volumes(),
-                            feraille_fs_native::cloud_synced_locations(),
-                        )
-                    })
+                    .spawn(async { (list_volumes(), feraille_fs_native::cloud_synced_locations()) })
                     .await;
                 cx.update(|cx| {
                     let process = process_state(cx);

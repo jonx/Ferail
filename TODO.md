@@ -28,8 +28,15 @@ and let git history plus release notes carry the record.
   task surfaced. Remaining gaps:
   - **Cross-volume move undo** — `UndoOp::MoveBack` is registered only for
     same-volume moves; cross-volume moves fall back to copy-undo or none.
-  - Extend actionable raw-error messages beyond the common file-op/search/dupe
-    paths to every remaining mutation surface.
+  - Resilient file-op failures shipped on the copy/move/paste/drag path
+    (docs/features/FILE_OPS.md → "Resilient failures"): structured per-item
+    `FileOpError`, batch continues past a failure, a transparent "N of M · why"
+    toast with Copy / Retry / **Retry as administrator…** (macOS osascript real;
+    Windows/Linux elevation stubbed). Remaining: extend the structured report to
+    the surfaces that still swallow or first-error their failures — the trash
+    worker and Empty Trash (show partial + per-item), Clear Quarantine (count
+    only today), and the **silent** context-menu tag-toggle (logs, never
+    notifies).
 - **Persist file-table column order** after drag-reorder. `move_column`
   reorders the live vec but never persists; widths already persist.
 - **Grid marquee / rubber-band selection** — the last grid-parity gap now that
@@ -172,6 +179,13 @@ fallback). Remaining is the UX the system explorers have and we don't:
 
 - Finish the stable **NodeStore identity** model for rename, move, mount
   changes, Ant Trail, selection, watcher events, and metadata cache keys.
+- **Cache freshness follow-ups** ([docs/features/FRESHNESS.md](docs/features/FRESHNESS.md)).
+  Subtree-derived caches now stay honest via mtime + TTL validity, exact
+  ancestor invalidation on in-app mutations, and a forced size refresh when the
+  window returns to the foreground. Remaining: invalidate **both** parents'
+  ancestor chains on a cross-directory move (`spawn_file_op` reloads a single
+  `reload_path` today); and reuse the same model for the next recursive
+  aggregates (item counts, APFS clone-aware sizing) rather than a parallel one.
 - Add **cancellation tokens** consistently for enumeration, preview, thumbnails,
   disk usage, search, copy/move, and duplicate finding (most register tasks
   now, but several still drop stale results at apply rather than cancelling).
@@ -255,6 +269,17 @@ fallback). Remaining is the UX the system explorers have and we don't:
   context-menu verbs (`IContextMenu`) and WSL integration. The near-term
   behavior-breaking stubs (CF_HDROP clipboard, `WM_DEVICECHANGE` volume
   observer, text-naming modal) all shipped.
+- **Resilient file-op coping — Windows-native primitives** (the cross-platform
+  surface + macOS already landed; see docs/features/FILE_OPS.md). Implement on
+  the Windows box behind the existing `platform_shell` stubs:
+  `run_elevated_self` via `ShellExecuteExW` verb `"runas"` (UAC) +
+  wait-for-exit, so **Retry as administrator** works; `processes_using` via the
+  **Restart Manager** (`RmStartSession`/`RmRegisterResources`/`RmGetList`) to
+  name the process holding a locked file; `force_close_processes` via
+  `RmShutdown` (+ `TerminateProcess` fallback) for force-close-and-retry. Then
+  flip `elevation_available()` / `lock_diagnostics_available()` true and wire
+  the "See what's using it" / force-close buttons (the GPUI side already gates
+  on those bools). Linux follow-up: `pkexec` re-exec + `/proc/*/fd` lockers.
 - Linux port ([docs/features/linux-port.md](docs/features/linux-port.md)):
   `feraille-gpui` now **builds and runs** on Linux (verified on WSL2 / Ubuntu
   24.04 under WSLg + lavapipe — launches a Wayland window, opens its XDG SQLite

@@ -19,6 +19,7 @@
 //! Never touches UI, pasteboard, SQLite, or AppKit.
 
 use std::ffi::OsStr;
+use std::fmt;
 use std::fs;
 #[cfg(not(target_os = "macos"))]
 use std::io::{Read, Write};
@@ -38,6 +39,189 @@ const COPY_CHUNK: usize = 8 * 1024 * 1024;
 /// format+alloc per file (the byte/item counters are lock-free atomics;
 /// only the name is gated).
 const NAME_PUBLISH_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Why one item in a file operation failed, classified so the UI can both
+/// explain it in plain terms and decide whether *coping* with it is possible
+/// (re-running elevated, or naming the process that holds a locked file).
+///
+/// The flat `Result<_, String>` the engine returned before threw away the
+/// `ErrorKind` / OS code at the `format!` boundary; this keeps it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileOpErrorKind {
+    /// EACCES/EPERM, Windows `ERROR_ACCESS_DENIED`. The one class where
+    /// retrying with elevated privileges plausibly helps.
+    PermissionDenied,
+    /// The file is open in another process — unix ETXTBSY/EBUSY, Windows
+    /// `ERROR_SHARING_VIOLATION`/`ERROR_LOCK_VIOLATION`. Elevation does *not*
+    /// help (it can't release another process's handle); closing it does.
+    Locked,
+    /// The source/destination vanished mid-operation.
+    NotFound,
+    /// ENOSPC/EDQUOT, Windows `ERROR_DISK_FULL`.
+    NoSpace,
+    /// EROFS / write-protected device. A read-only *volume*, not an attribute.
+    ReadOnly,
+    NameTooLong,
+    AlreadyExists,
+    /// Anything not specifically classified — the raw text still carries it.
+    Other,
+}
+
+impl FileOpErrorKind {
+    /// A short, plain-language label for the per-item failure list, e.g.
+    /// "Documents — in use by another program".
+    pub fn summary(self) -> &'static str {
+        match self {
+            Self::PermissionDenied => "permission denied",
+            Self::Locked => "in use by another program",
+            Self::NotFound => "no longer exists",
+            Self::NoSpace => "no space left on the destination",
+            Self::ReadOnly => "destination is read-only",
+            Self::NameTooLong => "name too long",
+            Self::AlreadyExists => "already exists",
+            Self::Other => "could not be completed",
+        }
+    }
+
+    /// One practical next step for this failure class (centralises the advice
+    /// the GPUI notification used to string-match into existence).
+    pub fn advice(self) -> &'static str {
+        match self {
+            Self::PermissionDenied => {
+                "Retry as administrator, or check the item's permissions."
+            }
+            Self::Locked => {
+                "The file is open in another program. Close it and retry, or see what's using it."
+            }
+            Self::NotFound => "The item may have moved or been deleted. Refresh the folder and try again.",
+            Self::NoSpace => "Free space on the destination volume or choose another destination.",
+            Self::ReadOnly => "The destination is read-only. Choose a writable folder or change the volume's permissions.",
+            Self::NameTooLong => "Use a shorter name or move the item to a path with fewer nested folders.",
+            Self::AlreadyExists => "Choose a different name or remove the existing item, then try again.",
+            Self::Other => "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager.",
+        }
+    }
+
+    /// True when re-running this item with elevated privileges could succeed.
+    /// Only a bare permission denial qualifies — a locked file, a full disk,
+    /// or a read-only volume aren't fixed by becoming root/admin.
+    pub fn is_elevation_recoverable(self) -> bool {
+        matches!(self, Self::PermissionDenied)
+    }
+
+    /// True when the failure is a file held open by another process.
+    pub fn is_lock(self) -> bool {
+        matches!(self, Self::Locked)
+    }
+}
+
+/// A structured, per-item file-operation failure: what kind, which path, and
+/// the untouched raw OS detail (never hidden — power users want it, and it's
+/// what the Copy-to-clipboard bug-report action carries).
+#[derive(Clone, Debug)]
+pub struct FileOpError {
+    pub kind: FileOpErrorKind,
+    /// The item the failure is about (the source or the destination).
+    pub path: PathBuf,
+    /// The raw underlying error text (OS error + message).
+    pub raw: String,
+    /// The raw OS error code, when one was available.
+    pub os_code: Option<i32>,
+}
+
+impl FileOpError {
+    /// Classify a `std::io::Error` from an op on `path`: the portable
+    /// `ErrorKind` cases first, then the raw OS code for the ones it doesn't
+    /// name (locked file, full/read-only volume). Raw text always preserved.
+    pub fn from_io(err: &std::io::Error, path: &Path) -> Self {
+        FileOpError {
+            kind: classify_io_kind(err),
+            path: path.to_path_buf(),
+            raw: err.to_string(),
+            os_code: err.raw_os_error(),
+        }
+    }
+
+    /// A non-`io::Error` failure (e.g. "no free name") with an explicit kind.
+    pub fn other(path: &Path, kind: FileOpErrorKind, raw: impl Into<String>) -> Self {
+        FileOpError {
+            kind,
+            path: path.to_path_buf(),
+            raw: raw.into(),
+            os_code: None,
+        }
+    }
+
+    /// The item's basename for the user-facing list, falling back to the full
+    /// path for roots.
+    pub fn item_label(&self) -> String {
+        self.path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.path.display().to_string())
+    }
+}
+
+impl fmt::Display for FileOpError {
+    /// The detailed form (path + raw) for logs and the bug-report clipboard.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.path.display(), self.raw)
+    }
+}
+
+fn classify_io_kind(err: &std::io::Error) -> FileOpErrorKind {
+    use std::io::ErrorKind as K;
+    match err.kind() {
+        K::PermissionDenied => FileOpErrorKind::PermissionDenied,
+        K::NotFound => FileOpErrorKind::NotFound,
+        K::AlreadyExists => FileOpErrorKind::AlreadyExists,
+        _ => classify_os_code(err.raw_os_error()),
+    }
+}
+
+/// Map a raw OS error code to a [`FileOpErrorKind`] for the cases `ErrorKind`
+/// doesn't surface portably. Uses `libc` constants on unix (errno values vary
+/// across unix flavours, so literals would be wrong) and the documented
+/// `winerror.h` values on Windows.
+fn classify_os_code(code: Option<i32>) -> FileOpErrorKind {
+    let Some(code) = code else {
+        return FileOpErrorKind::Other;
+    };
+    #[cfg(unix)]
+    {
+        match code {
+            c if c == libc::EACCES || c == libc::EPERM => FileOpErrorKind::PermissionDenied,
+            c if c == libc::ETXTBSY || c == libc::EBUSY => FileOpErrorKind::Locked,
+            c if c == libc::ENOSPC || c == libc::EDQUOT => FileOpErrorKind::NoSpace,
+            c if c == libc::EROFS => FileOpErrorKind::ReadOnly,
+            c if c == libc::ENAMETOOLONG => FileOpErrorKind::NameTooLong,
+            c if c == libc::ENOENT => FileOpErrorKind::NotFound,
+            c if c == libc::EEXIST => FileOpErrorKind::AlreadyExists,
+            _ => FileOpErrorKind::Other,
+        }
+    }
+    #[cfg(windows)]
+    {
+        // winerror.h values. Literals (not a crate dep) — this whole arm only
+        // compiles on Windows, so it can't be exercised from the macOS build;
+        // it's a pure data mapping, verified against the SDK headers.
+        match code {
+            5 => FileOpErrorKind::PermissionDenied,        // ERROR_ACCESS_DENIED
+            32 | 33 => FileOpErrorKind::Locked,            // SHARING / LOCK_VIOLATION
+            39 | 112 => FileOpErrorKind::NoSpace,          // HANDLE_DISK_FULL / DISK_FULL
+            19 => FileOpErrorKind::ReadOnly,               // ERROR_WRITE_PROTECT
+            206 => FileOpErrorKind::NameTooLong,           // ERROR_FILENAME_EXCED_RANGE
+            2 | 3 => FileOpErrorKind::NotFound,            // FILE / PATH_NOT_FOUND
+            80 | 183 => FileOpErrorKind::AlreadyExists,    // FILE_EXISTS / ALREADY_EXISTS
+            _ => FileOpErrorKind::Other,
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = code;
+        FileOpErrorKind::Other
+    }
+}
 
 /// Shared, lock-light progress sink for a transfer.
 ///
@@ -199,6 +383,18 @@ pub struct OpOutcome {
     pub skipped: u64,
     pub replaced: u64,
     pub cancelled: bool,
+    /// Items that could not be transferred, each with its classified cause.
+    /// A failed item no longer aborts the batch — the engine records it here
+    /// and moves on, so a 10-item paste that trips on item 3 still attempts
+    /// 4..10 and reports exactly what failed and why.
+    pub failed: Vec<FileOpError>,
+}
+
+impl OpOutcome {
+    /// True when at least one item failed (distinct from cancellation).
+    pub fn has_failures(&self) -> bool {
+        !self.failed.is_empty()
+    }
 }
 
 /// Naming scheme for collision-free names.
@@ -376,47 +572,69 @@ pub fn plan_transfer(
     })
 }
 
-/// Resolve where a top-level item lands under `policy`. `None` =
-/// skip this item. Replace deletes the existing destination here —
-/// immediately before its copy starts, never earlier.
+/// What [`resolve_dest`] decided for one top-level item.
+enum Resolution {
+    /// Collision + Skip policy: leave the existing item, don't transfer.
+    Skip,
+    /// Transfer to `dst`. `replaced` is true when an existing destination was
+    /// removed to make room (Replace policy).
+    Proceed { dst: PathBuf, replaced: bool },
+}
+
+/// Resolve where a top-level item lands under `policy`. Replace deletes the
+/// existing destination here — immediately before its copy starts, never
+/// earlier. No longer mutates the outcome (the caller owns the counters now,
+/// so a per-item failure can be recorded without double-counting).
 fn resolve_dest(
     src: &Path,
     dest_dir: &Path,
     policy: CollisionPolicy,
-    outcome: &mut OpOutcome,
-) -> Result<Option<PathBuf>, String> {
-    let name = src
-        .file_name()
-        .ok_or_else(|| format!("{}: no file name", src.display()))?;
+) -> Result<Resolution, FileOpError> {
+    let Some(name) = src.file_name() else {
+        return Err(FileOpError::other(
+            src,
+            FileOpErrorKind::Other,
+            format!("{}: no file name", src.display()),
+        ));
+    };
     let plain = dest_dir.join(name);
     if !plain.exists() && !plain.is_symlink() {
-        return Ok(Some(plain));
+        return Ok(Resolution::Proceed {
+            dst: plain,
+            replaced: false,
+        });
     }
     match policy {
-        CollisionPolicy::Skip => {
-            outcome.skipped += 1;
-            Ok(None)
-        }
+        CollisionPolicy::Skip => Ok(Resolution::Skip),
         CollisionPolicy::Replace => {
-            let meta = fs::symlink_metadata(&plain).map_err(|e| format!("{}: {e}", plain.display()))?;
+            let meta = fs::symlink_metadata(&plain).map_err(|e| FileOpError::from_io(&e, &plain))?;
             let removed = if meta.is_dir() && !meta.is_symlink() {
                 fs::remove_dir_all(&plain)
             } else {
                 fs::remove_file(&plain)
             };
-            removed.map_err(|e| format!("replace {}: {e}", plain.display()))?;
-            outcome.replaced += 1;
-            Ok(Some(plain))
+            removed.map_err(|e| FileOpError::from_io(&e, &plain))?;
+            Ok(Resolution::Proceed {
+                dst: plain,
+                replaced: true,
+            })
         }
-        CollisionPolicy::KeepBoth => pick_available_name(dest_dir, name, NameScheme::Numbered)
-            .map(Some)
-            .ok_or_else(|| {
+        CollisionPolicy::KeepBoth => match pick_available_name(dest_dir, name, NameScheme::Numbered)
+        {
+            Some(dst) => Ok(Resolution::Proceed {
+                dst,
+                replaced: false,
+            }),
+            None => Err(FileOpError::other(
+                &plain,
+                FileOpErrorKind::AlreadyExists,
                 format!(
                     "no free name for {} in {}",
                     name.to_string_lossy(),
                     dest_dir.display()
-                )
-            }),
+                ),
+            )),
+        },
     }
 }
 
@@ -429,7 +647,7 @@ fn copy_leaf_file(
     dst: &Path,
     prog: &TransferProgress,
     cancel: &AtomicBool,
-) -> Result<bool, String> {
+) -> Result<bool, FileOpError> {
     #[cfg(target_os = "macos")]
     {
         mac::copy_file(src, dst, prog, cancel)
@@ -450,14 +668,14 @@ fn copy_file_chunked(
     dst: &Path,
     prog: &TransferProgress,
     cancel: &AtomicBool,
-) -> Result<bool, String> {
-    let mut reader = fs::File::open(src).map_err(|e| format!("{}: {e}", src.display()))?;
-    let mut writer = fs::File::create(dst).map_err(|e| format!("{}: {e}", dst.display()))?;
+) -> Result<bool, FileOpError> {
+    let mut reader = fs::File::open(src).map_err(|e| FileOpError::from_io(&e, src))?;
+    let mut writer = fs::File::create(dst).map_err(|e| FileOpError::from_io(&e, dst))?;
     let mut buf = vec![0u8; COPY_CHUNK];
     loop {
         let n = reader
             .read(&mut buf)
-            .map_err(|e| format!("{}: {e}", src.display()))?;
+            .map_err(|e| FileOpError::from_io(&e, src))?;
         if n == 0 {
             break;
         }
@@ -470,7 +688,7 @@ fn copy_file_chunked(
         }
         writer
             .write_all(&buf[..n])
-            .map_err(|e| format!("{}: {e}", dst.display()))?;
+            .map_err(|e| FileOpError::from_io(&e, dst))?;
         prog.add_bytes(n as u64);
     }
     if let Ok(meta) = fs::metadata(src) {
@@ -489,8 +707,8 @@ fn copy_item(
     dst: &Path,
     prog: &TransferProgress,
     cancel: &AtomicBool,
-) -> Result<bool, String> {
-    let meta = fs::symlink_metadata(src).map_err(|e| format!("{}: {e}", src.display()))?;
+) -> Result<bool, FileOpError> {
+    let meta = fs::symlink_metadata(src).map_err(|e| FileOpError::from_io(&e, src))?;
     if meta.is_symlink() {
         recreate_symlink(src, dst)?;
         prog.add_items(1);
@@ -505,14 +723,14 @@ fn copy_item(
         return Ok(ok);
     }
     // Directory: depth-first with explicit stack of (src, dst) pairs.
-    fs::create_dir_all(dst).map_err(|e| format!("{}: {e}", dst.display()))?;
+    fs::create_dir_all(dst).map_err(|e| FileOpError::from_io(&e, dst))?;
     prog.add_items(1);
     let mut stack: Vec<(PathBuf, PathBuf)> = vec![(src.to_path_buf(), dst.to_path_buf())];
     while let Some((sdir, ddir)) = stack.pop() {
         if cancel.load(Ordering::Relaxed) {
             return Ok(false);
         }
-        let rd = fs::read_dir(&sdir).map_err(|e| format!("{}: {e}", sdir.display()))?;
+        let rd = fs::read_dir(&sdir).map_err(|e| FileOpError::from_io(&e, &sdir))?;
         for dirent in rd.flatten() {
             let sp = dirent.path();
             let Some(name) = sp.file_name() else { continue };
@@ -524,7 +742,7 @@ fn copy_item(
                 recreate_symlink(&sp, &dp)?;
                 prog.add_items(1);
             } else if m.is_dir() {
-                fs::create_dir_all(&dp).map_err(|e| format!("{}: {e}", dp.display()))?;
+                fs::create_dir_all(&dp).map_err(|e| FileOpError::from_io(&e, &dp))?;
                 prog.add_items(1);
                 stack.push((sp, dp));
             } else {
@@ -543,18 +761,22 @@ fn copy_item(
 /// Links are never followed (same stance as the disk-usage walker) —
 /// copying a folder of symlinks must not balloon into copying their
 /// targets. [win-parity: symlink creation needs privilege; revisit]
-fn recreate_symlink(src: &Path, dst: &Path) -> Result<(), String> {
-    let target = fs::read_link(src).map_err(|e| format!("{}: {e}", src.display()))?;
+fn recreate_symlink(src: &Path, dst: &Path) -> Result<(), FileOpError> {
+    let target = fs::read_link(src).map_err(|e| FileOpError::from_io(&e, src))?;
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(&target, dst).map_err(|e| format!("{}: {e}", dst.display()))
+        std::os::unix::fs::symlink(&target, dst).map_err(|e| FileOpError::from_io(&e, dst))
     }
     #[cfg(not(unix))]
     {
         let _ = target;
-        Err(format!(
-            "symlink {} not copied (unsupported on this platform)",
-            src.display()
+        Err(FileOpError::other(
+            src,
+            FileOpErrorKind::Other,
+            format!(
+                "symlink {} not copied (unsupported on this platform)",
+                src.display()
+            ),
         ))
     }
 }
@@ -592,19 +814,41 @@ pub fn run_copy(
             outcome.cancelled = true;
             return Ok(outcome);
         }
-        let Some(dst) = resolve_dest(src, &plan.dest_dir, policy_for(src), &mut outcome)? else {
-            continue;
+        // A per-item resolution failure (bad name, failed Replace-delete, no
+        // free name) is recorded and skipped — it no longer aborts the batch.
+        let (dst, replaced) = match resolve_dest(src, &plan.dest_dir, policy_for(src)) {
+            Ok(Resolution::Skip) => {
+                outcome.skipped += 1;
+                continue;
+            }
+            Ok(Resolution::Proceed { dst, replaced }) => (dst, replaced),
+            Err(e) => {
+                outcome.failed.push(e);
+                continue;
+            }
         };
+        if replaced {
+            outcome.replaced += 1;
+        }
         prog.note_current(src);
         // Tier 1: same-volume clone — instant, whole tree, zero bytes.
-        if try_clone(src, &dst, &plan.dest_dir) {
+        let item = if try_clone(src, &dst, &plan.dest_dir) {
             prog.add_bytes(plan.source_bytes.get(i).copied().unwrap_or(0));
             prog.add_items(plan.source_items.get(i).copied().unwrap_or(0));
-        } else if !copy_item(src, &dst, prog, cancel)? {
-            outcome.cancelled = true;
-            return Ok(outcome);
+            Ok(true)
+        } else {
+            copy_item(src, &dst, prog, cancel)
+        };
+        match item {
+            Ok(true) => outcome.created.push((src.clone(), dst)),
+            // Cancellation mid-item stops the whole batch (partial reported).
+            Ok(false) => {
+                outcome.cancelled = true;
+                return Ok(outcome);
+            }
+            // A hard failure on this item is recorded; the batch continues.
+            Err(e) => outcome.failed.push(e),
         }
-        outcome.created.push((src.clone(), dst));
     }
     Ok(outcome)
 }
@@ -625,29 +869,58 @@ pub fn run_move(
             outcome.cancelled = true;
             return Ok(outcome);
         }
-        let Some(dst) = resolve_dest(src, &plan.dest_dir, policy_for(src), &mut outcome)? else {
-            continue;
+        let (dst, replaced) = match resolve_dest(src, &plan.dest_dir, policy_for(src)) {
+            Ok(Resolution::Skip) => {
+                outcome.skipped += 1;
+                continue;
+            }
+            Ok(Resolution::Proceed { dst, replaced }) => (dst, replaced),
+            Err(e) => {
+                outcome.failed.push(e);
+                continue;
+            }
         };
+        if replaced {
+            outcome.replaced += 1;
+        }
         prog.note_current(src);
-        if same_volume(src, &plan.dest_dir) {
-            fs::rename(src, &dst).map_err(|e| format!("{}: {e}", src.display()))?;
-            // Credit the whole item's bytes/items in one jump.
-            prog.add_bytes(plan.source_bytes.get(i).copied().unwrap_or(0));
-            prog.add_items(plan.source_items.get(i).copied().unwrap_or(0));
+        let item: Result<bool, FileOpError> = if same_volume(src, &plan.dest_dir) {
+            match fs::rename(src, &dst) {
+                Ok(()) => {
+                    // Credit the whole item's bytes/items in one jump.
+                    prog.add_bytes(plan.source_bytes.get(i).copied().unwrap_or(0));
+                    prog.add_items(plan.source_items.get(i).copied().unwrap_or(0));
+                    Ok(true)
+                }
+                Err(e) => Err(FileOpError::from_io(&e, src)),
+            }
         } else {
-            if !copy_item(src, &dst, prog, cancel)? {
+            // Cross-volume: copy, then delete the source only when its copy
+            // fully landed (a cancelled copy leaves the source intact).
+            match copy_item(src, &dst, prog, cancel) {
+                Ok(false) => Ok(false),
+                Ok(true) => match fs::symlink_metadata(src) {
+                    Ok(meta) => {
+                        let removed = if meta.is_dir() && !meta.is_symlink() {
+                            fs::remove_dir_all(src)
+                        } else {
+                            fs::remove_file(src)
+                        };
+                        removed.map(|_| true).map_err(|e| FileOpError::from_io(&e, src))
+                    }
+                    Err(e) => Err(FileOpError::from_io(&e, src)),
+                },
+                Err(e) => Err(e),
+            }
+        };
+        match item {
+            Ok(true) => outcome.created.push((src.clone(), dst)),
+            Ok(false) => {
                 outcome.cancelled = true;
                 return Ok(outcome);
             }
-            let meta = fs::symlink_metadata(src).map_err(|e| format!("{}: {e}", src.display()))?;
-            let removed = if meta.is_dir() && !meta.is_symlink() {
-                fs::remove_dir_all(src)
-            } else {
-                fs::remove_file(src)
-            };
-            removed.map_err(|e| format!("remove {}: {e}", src.display()))?;
+            Err(e) => outcome.failed.push(e),
         }
-        outcome.created.push((src.clone(), dst));
     }
     Ok(outcome)
 }
@@ -658,7 +931,7 @@ pub fn run_move(
 /// rest of the engine stays platform-neutral.
 #[cfg(target_os = "macos")]
 mod mac {
-    use super::{AtomicBool, Ordering, Path, TransferProgress};
+    use super::{AtomicBool, FileOpError, FileOpErrorKind, Ordering, Path, TransferProgress};
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
@@ -757,14 +1030,22 @@ mod mac {
         dst: &Path,
         prog: &TransferProgress,
         cancel: &AtomicBool,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, FileOpError> {
         let (Some(s), Some(d)) = (cstr(src), cstr(dst)) else {
-            return Err(format!("{}: path has interior NUL", src.display()));
+            return Err(FileOpError::other(
+                src,
+                FileOpErrorKind::Other,
+                format!("{}: path has interior NUL", src.display()),
+            ));
         };
         // SAFETY: alloc returns an opaque handle we free below.
         let state = unsafe { libc::copyfile_state_alloc() };
         if state.is_null() {
-            return Err(format!("{}: copyfile_state_alloc failed", src.display()));
+            return Err(FileOpError::other(
+                src,
+                FileOpErrorKind::Other,
+                format!("{}: copyfile_state_alloc failed", src.display()),
+            ));
         }
         let mut ctx = CbCtx {
             prog: prog as *const _,
@@ -806,7 +1087,9 @@ mod mac {
             return Ok(false);
         }
         let _ = std::fs::remove_file(dst);
-        Err(format!("{} → {}: {err}", src.display(), dst.display()))
+        // The copy itself failed — classify the captured OS error against the
+        // source (the item the user asked to move/copy).
+        Err(FileOpError::from_io(&err, src))
     }
 }
 
@@ -1138,5 +1421,67 @@ mod tests {
             "copy inflated sparse file: src {src_blocks} blocks, dst {dst_blocks}"
         );
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A hard failure on one top-level item must not abandon the rest: the
+    /// engine records it in `outcome.failed` (classified) and keeps copying.
+    /// Driven deterministically (no uid/permission dependence) by handing
+    /// `run_copy` a plan whose second source never existed — its copy faults
+    /// `NotFound` while the first lands normally.
+    #[test]
+    fn partial_failure_continues_and_is_recorded() {
+        let root = scratch("partial-failure");
+        let good = root.join("src/good.txt");
+        write(&good, b"kept");
+        let ghost = root.join("src/ghost.txt"); // never created
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+
+        let cancel = no_cancel();
+        let prog = TransferProgress::new();
+        // Build the plan by hand so the missing source reaches run_copy
+        // (plan_transfer would reject it up front — that's a separate path).
+        let plan = OpPlan {
+            sources: vec![good.clone(), ghost.clone()],
+            dest_dir: dest.clone(),
+            total_bytes: 4,
+            total_items: 2,
+            conflicts: vec![],
+            source_bytes: vec![4, 0],
+            source_items: vec![1, 1],
+        };
+        let out = run_copy(&plan, &|_| CollisionPolicy::KeepBoth, &prog, &cancel).unwrap();
+
+        assert!(!out.cancelled);
+        assert_eq!(out.created.len(), 1, "the good item still copied");
+        assert_eq!(fs::read(dest.join("good.txt")).unwrap(), b"kept");
+        assert!(out.has_failures());
+        assert_eq!(out.failed.len(), 1);
+        assert_eq!(out.failed[0].kind, FileOpErrorKind::NotFound);
+        assert_eq!(out.failed[0].item_label(), "ghost.txt");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// The classifier turns raw OS errors into the kinds the UI keys off —
+    /// especially the elevation-recoverable / lock distinction that drives
+    /// the Retry-as-administrator vs. who's-locking-it affordances.
+    #[cfg(unix)]
+    #[test]
+    fn classify_maps_os_errors_to_kinds() {
+        let p = Path::new("/tmp/whatever");
+        let of = |code: i32| FileOpError::from_io(&std::io::Error::from_raw_os_error(code), p);
+
+        assert_eq!(of(libc::EACCES).kind, FileOpErrorKind::PermissionDenied);
+        assert_eq!(of(libc::EPERM).kind, FileOpErrorKind::PermissionDenied);
+        assert_eq!(of(libc::ETXTBSY).kind, FileOpErrorKind::Locked);
+        assert_eq!(of(libc::ENOSPC).kind, FileOpErrorKind::NoSpace);
+        assert_eq!(of(libc::EROFS).kind, FileOpErrorKind::ReadOnly);
+        assert_eq!(of(libc::ENOENT).kind, FileOpErrorKind::NotFound);
+
+        // The predicates the GPUI layer gates retry/escalation on.
+        assert!(FileOpErrorKind::PermissionDenied.is_elevation_recoverable());
+        assert!(!FileOpErrorKind::Locked.is_elevation_recoverable());
+        assert!(FileOpErrorKind::Locked.is_lock());
+        assert!(of(libc::EACCES).os_code.is_some());
     }
 }

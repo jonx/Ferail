@@ -618,6 +618,18 @@ impl MetadataDb {
         Ok(())
     }
 
+    /// Drop the cached size for exactly `path`. Used to invalidate
+    /// after an in-app mutation: a change deep inside a subtree
+    /// leaves the folder's own `mtime` untouched, so the mtime
+    /// fast-path can't tell the cached size is now wrong. The caller
+    /// invalidates the mutated path *and its ancestors*; the next
+    /// size pass recomputes them. Deleting an absent row is a no-op.
+    pub fn delete_folder_size(&self, path: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM folder_sizes WHERE path = ?1", params![path])?;
+        Ok(())
+    }
+
     // ---- window / layout / tabs ----
 
     pub fn save_window_state(&self, s: &WindowState) -> Result<()> {
@@ -1046,6 +1058,23 @@ mod tests {
         let r = db.get_folder_size("/dir").unwrap().unwrap();
         assert_eq!(r.mtime_unix, 200);
         assert_eq!(r.size, 99);
+    }
+
+    #[test]
+    fn folder_size_delete_invalidates() {
+        let db = MetadataDb::in_memory().unwrap();
+        db.upsert_folder_size(&FolderSizeRecord {
+            path: "/dir".into(),
+            mtime_unix: 100,
+            size: 42,
+            computed_at_unix: 100,
+        })
+        .unwrap();
+        assert!(db.get_folder_size("/dir").unwrap().is_some());
+        db.delete_folder_size("/dir").unwrap();
+        assert!(db.get_folder_size("/dir").unwrap().is_none());
+        // Deleting an absent row is a no-op, not an error.
+        db.delete_folder_size("/dir").unwrap();
     }
 
     #[test]

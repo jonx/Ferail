@@ -499,10 +499,17 @@ impl EntryInfoView {
         let cancel = Arc::new(AtomicBool::new(false));
         self.size_cancel = Some(cancel.clone());
         let path = self.path.clone();
+        // Share the file list's folder-size cache so a folder already
+        // sized in the Size column answers instantly, and a value
+        // computed here feeds that column too (one source of truth,
+        // one invalidation path — see docs/features/FRESHNESS.md).
+        let db = crate::process_state::process_state(cx).db_snapshot();
         cx.spawn(async move |this, cx| {
             let bytes = cx
                 .background_executor()
-                .spawn(async move { feraille_fs_native::recursive_size(&path, &cancel) })
+                .spawn(async move {
+                    crate::folder_sizes::folder_size_cached(&path, db.as_ref(), &cancel)
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.known_size = Some(bytes);

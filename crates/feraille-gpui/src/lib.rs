@@ -18,6 +18,7 @@ pub mod assets;
 pub mod diagnostics;
 pub mod disk_usage;
 pub mod dupe_cache;
+pub mod elevation;
 pub mod entry_info;
 pub mod favorite_icon_picker;
 pub mod favorites;

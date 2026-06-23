@@ -87,24 +87,59 @@ pub struct FileEntry {
     pub hidden: bool,
 }
 
+/// How strongly the Format column should flag the relationship between a
+/// file's extension and its content-detected type.
+///
+/// The model is *directional risk escalation*, not symmetric disagreement:
+/// a file is only alarming when its real content is more dangerous than its
+/// extension lets on. Benign disagreements (a PNG kept as `.txt`, a config
+/// that is really XML) are surfaced quietly so they don't drown out the
+/// genuine disguises.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FormatFlag {
+    /// Extension and content agree, it's an honest executable, or there is
+    /// no extension claim to contradict. Draw nothing.
+    None,
+    /// They describe different but *benign* formats — a renamed or resaved
+    /// file. Worth a quiet, non-alarming cue; not a threat.
+    Notice,
+    /// The content is active/dangerous and the extension hides that — an
+    /// executable or script wearing an image/document/text extension,
+    /// hidden macros in an Office file, or an archive/binary smuggled
+    /// inside a media/document/text file. Draw the danger indicator.
+    Alert,
+}
+
+impl FormatFlag {
+    pub fn is_alert(self) -> bool {
+        matches!(self, FormatFlag::Alert)
+    }
+    pub fn is_notice(self) -> bool {
+        matches!(self, FormatFlag::Notice)
+    }
+}
+
 impl FileEntry {
-    /// Unified Format label for the file list (next-level Phase 1):
-    /// prefer the magic-detected description, fall back to the
-    /// extension-derived kind. Returns `(primary, has_mismatch)` where
-    /// `has_mismatch` is true when both fields are populated *and*
-    /// they describe genuinely different format families (a renamed
-    /// PDF claiming `.txt`, for example) — not just terminology
-    /// differences (e.g. `JSON` / `Plain text` is fine).
-    pub fn format_label(&self) -> (String, bool) {
+    /// Unified Format label for the file list: prefer the magic-detected
+    /// description, fall back to the extension-derived kind. Returns
+    /// `(primary, flag)` where `flag` grades how the extension and the
+    /// detected content relate — see [`FormatFlag`]. The danger tier fires
+    /// only for genuine disguises (dangerous content under an innocent
+    /// extension); mere terminology or benign-format differences earn the
+    /// quiet [`FormatFlag::Notice`] tier instead.
+    pub fn format_label(&self) -> (String, FormatFlag) {
         let mag = self.display_magic.trim();
         let kind = self.display_kind.trim();
         if mag.is_empty() {
-            return (kind.to_string(), false);
+            return (kind.to_string(), FormatFlag::None);
         }
         if kind.is_empty() {
-            return (mag.to_string(), false);
+            return (mag.to_string(), FormatFlag::None);
         }
-        (mag.to_string(), !formats_compatible(kind, mag))
+        (
+            mag.to_string(),
+            classify_format(kind, mag, &self.display_description),
+        )
     }
 }
 
@@ -179,6 +214,188 @@ fn formats_compatible(kind: &str, magic: &str) -> bool {
     false
 }
 
+/// Coarse danger class of *content*, derived from the magic label and the
+/// description string (the macro flag rides in the description as
+/// `… · macro-enabled`). Drives [`classify_format`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ContentRisk {
+    /// Native code or an executable bundle (PE / ELF / Mach-O / .NET /
+    /// JAR / APK / Java class) or an OS shortcut (`.lnk` / `.url`).
+    Executable,
+    /// An interpreted script (shell / python / perl / ruby / node / …).
+    Script,
+    /// A macro-enabled Office document.
+    Macro,
+    /// An opaque archive or unrecognized binary blob.
+    ArchiveOrBinary,
+    /// Everything inert: images, audio, video, PDFs, plain text, markup,
+    /// data, fonts, unknown text.
+    Passive,
+}
+
+fn content_risk(magic: &str, description: &str) -> ContentRisk {
+    // Macro-enabled Office is only distinguishable from a plain document
+    // via the description (`display_magic` collapses both to e.g. "Word
+    // document"). Check it first so a macro doc never reads as Passive.
+    if description.to_ascii_lowercase().contains("macro-enabled") {
+        return ContentRisk::Macro;
+    }
+    let m = magic.to_ascii_lowercase();
+    if m.contains("executable")
+        || m.contains("dylib")
+        || m.contains("pe /")
+        || m.contains("java jar")
+        || m.contains("java class")
+        || m.contains("android apk")
+        || m.contains("shortcut")
+    {
+        return ContentRisk::Executable;
+    }
+    if m.contains("script") {
+        return ContentRisk::Script;
+    }
+    if m.contains("archive") || m == "binary" {
+        return ContentRisk::ArchiveOrBinary;
+    }
+    ContentRisk::Passive
+}
+
+/// Coarse class of the *extension* claim, derived from the uppercased
+/// extension that `describe_kind` stores in `display_kind`. Tells us what
+/// the file is presenting itself as, so we can spot when the content is
+/// more dangerous than the presentation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExtClass {
+    /// The extension itself denotes runnable code or a shortcut, so
+    /// executable/script content is honest, not a disguise.
+    Code,
+    /// A macro-enabled Office extension (`.docm` / `.xlsm` / …), where
+    /// macros are expected rather than hidden.
+    OfficeMacro,
+    /// Image / audio / video.
+    Media,
+    /// A document the user opens to read, not to run.
+    Document,
+    /// Plain text, source, markup, or config.
+    Text,
+    /// A declared archive / disk image — archive content is honest here.
+    Archive,
+    /// A recognized extension that fits none of the above (opaque data).
+    Opaque,
+    /// No usable extension claim: `File` / `Folder` / `Symlink` / empty.
+    Placeholder,
+}
+
+fn ext_class(kind: &str) -> ExtClass {
+    let k = kind.trim().to_ascii_lowercase();
+    if k.is_empty() || matches!(k.as_str(), "file" | "folder" | "symlink") {
+        return ExtClass::Placeholder;
+    }
+    const CODE: &[&str] = &[
+        "exe", "dll", "so", "dylib", "scr", "com", "bat", "cmd", "ps1", "psm1",
+        "vbs", "vbe", "wsf", "wsh", "hta", "msi", "msix", "msp", "appx", "app",
+        "pkg", "run", "jar", "apk", "class", "jnlp", "gadget", "sh", "bash",
+        "zsh", "fish", "ksh", "csh", "command", "py", "pyw", "rb", "pl", "pm",
+        "lua", "tcl", "ahk", "js", "mjs", "cjs", "ts", "lnk", "url", "desktop",
+    ];
+    const OFFICE_MACRO: &[&str] = &[
+        "docm", "dotm", "xlsm", "xltm", "xlam", "pptm", "potm", "ppam", "ppsm",
+    ];
+    const MEDIA: &[&str] = &[
+        "jpg", "jpeg", "png", "gif", "bmp", "webp", "ico", "tif", "tiff",
+        "heic", "heif", "svg", "mp4", "mov", "avi", "mkv", "webm", "m4v",
+        "wmv", "flv", "mpg", "mpeg", "3gp", "mp3", "wav", "flac", "ogg",
+        "oga", "m4a", "aac", "wma", "aiff", "opus",
+    ];
+    const DOCUMENT: &[&str] = &[
+        "pdf", "doc", "docx", "dot", "dotx", "xls", "xlsx", "xlt", "xltx",
+        "ppt", "pptx", "pps", "ppsx", "odt", "ods", "odp", "rtf", "epub",
+        "pages", "key", "numbers",
+    ];
+    const TEXT: &[&str] = &[
+        "txt", "md", "markdown", "rst", "log", "json", "xml", "yaml", "yml",
+        "toml", "ini", "config", "cfg", "conf", "csv", "tsv", "html", "htm",
+        "css", "scss", "tex", "srt", "vtt", "plist", "properties", "env",
+    ];
+    const ARCHIVE: &[&str] = &[
+        "zip", "rar", "7z", "gz", "tgz", "bz2", "tbz2", "xz", "zst", "tar",
+        "war", "ear", "cab", "iso", "dmg", "lz", "lzma",
+    ];
+    let has = |set: &[&str]| set.contains(&k.as_str());
+    if has(OFFICE_MACRO) {
+        ExtClass::OfficeMacro
+    } else if has(CODE) {
+        ExtClass::Code
+    } else if has(MEDIA) {
+        ExtClass::Media
+    } else if has(DOCUMENT) {
+        ExtClass::Document
+    } else if has(TEXT) {
+        ExtClass::Text
+    } else if has(ARCHIVE) {
+        ExtClass::Archive
+    } else {
+        ExtClass::Opaque
+    }
+}
+
+/// Grade the relationship between an extension and the content actually
+/// found inside the file. The danger tier ([`FormatFlag::Alert`]) is
+/// reserved for genuine disguises — dangerous content wearing an innocent
+/// extension. Benign disagreements fall to [`FormatFlag::Notice`], and
+/// anything consistent (or lacking an extension claim) is
+/// [`FormatFlag::None`].
+fn classify_format(kind: &str, magic: &str, description: &str) -> FormatFlag {
+    let ext = ext_class(kind);
+    // No extension claim → nothing to contradict.
+    if ext == ExtClass::Placeholder {
+        return FormatFlag::None;
+    }
+    match content_risk(magic, description) {
+        // Runnable code / scripts / shortcuts are honest only when the
+        // extension itself advertises code. A `.exe` holding a PE is fine;
+        // a `.jpg` holding one is a disguise.
+        ContentRisk::Executable | ContentRisk::Script => {
+            if ext == ExtClass::Code {
+                FormatFlag::None
+            } else {
+                FormatFlag::Alert
+            }
+        }
+        // Macros are expected only under a macro extension. Hidden in a
+        // plain `.docx` / `.xlsx` / `.pptx`, they're the disguise.
+        ContentRisk::Macro => {
+            if ext == ExtClass::OfficeMacro {
+                FormatFlag::None
+            } else {
+                FormatFlag::Alert
+            }
+        }
+        // Archives are honest under an archive extension or the ZIP-wrapped
+        // document family (docx / jar / apk / epub …, handled by
+        // `formats_compatible`). Hidden inside something the user opens to
+        // *view* — a picture, a document, a text file — it's smuggled.
+        ContentRisk::ArchiveOrBinary => {
+            if ext == ExtClass::Archive || formats_compatible(kind, magic) {
+                FormatFlag::None
+            } else if matches!(ext, ExtClass::Media | ExtClass::Document | ExtClass::Text) {
+                FormatFlag::Alert
+            } else {
+                FormatFlag::Notice
+            }
+        }
+        // Inert content: agreement is None, anything else is a benign
+        // renamed/resaved file → the quiet cue.
+        ContentRisk::Passive => {
+            if formats_compatible(kind, magic) {
+                FormatFlag::None
+            } else {
+                FormatFlag::Notice
+            }
+        }
+    }
+}
+
 /// Normalize a format label for comparison. Strips common qualifier
 /// words (`image`, `archive`, `document`, `file`, `data`), then maps
 /// known aliases to a single canonical spelling so e.g. `JPG` and
@@ -231,125 +448,172 @@ mod format_label_tests {
         }
     }
 
+    fn entry_desc(kind: &str, magic: &str, description: &str) -> FileEntry {
+        let mut e = entry(kind, magic);
+        e.display_description = description.into();
+        e
+    }
+
+    fn flag(kind: &str, magic: &str) -> FormatFlag {
+        entry(kind, magic).format_label().1
+    }
+
     #[test]
     fn magic_is_primary() {
-        let (label, mismatch) = entry("PNG", "PNG image").format_label();
+        let (label, flag) = entry("PNG", "PNG image").format_label();
         assert_eq!(label, "PNG image");
-        assert!(!mismatch);
+        assert_eq!(flag, FormatFlag::None);
     }
 
     #[test]
     fn empty_magic_falls_back_to_kind() {
-        let (label, mismatch) = entry("PDF", "").format_label();
+        let (label, flag) = entry("PDF", "").format_label();
         assert_eq!(label, "PDF");
-        assert!(!mismatch);
+        assert_eq!(flag, FormatFlag::None);
+    }
+
+    // --- Agreement / terminology differences: never flagged. ---
+
+    #[test]
+    fn json_vs_plain_text_is_none() {
+        assert_eq!(flag("JSON", "Plain text"), FormatFlag::None);
     }
 
     #[test]
-    fn json_vs_plain_text_is_compatible() {
-        let (_, mismatch) = entry("JSON", "Plain text").format_label();
-        assert!(!mismatch);
+    fn docx_vs_zip_archive_is_none() {
+        assert_eq!(flag("DOCX", "ZIP archive"), FormatFlag::None);
     }
 
     #[test]
-    fn docx_vs_zip_archive_is_compatible() {
-        let (_, mismatch) = entry("DOCX", "Zip archive").format_label();
-        assert!(!mismatch);
+    fn jpg_vs_jpeg_image_is_none() {
+        assert_eq!(flag("JPG", "JPEG image"), FormatFlag::None, "jpg ≡ jpeg");
     }
 
     #[test]
-    fn png_kind_vs_plain_text_magic_is_mismatch() {
-        let (_, mismatch) = entry("PNG", "Plain text").format_label();
-        assert!(mismatch, "PNG declared but content is text → flag");
+    fn tif_vs_tiff_image_is_none() {
+        assert_eq!(flag("TIF", "TIFF image"), FormatFlag::None, "tif ≡ tiff");
     }
 
     #[test]
-    fn pdf_kind_vs_zip_archive_magic_is_mismatch() {
-        let (_, mismatch) = entry("PDF", "Zip archive").format_label();
-        assert!(mismatch, "PDF declared but content is zip → flag");
-    }
-
-    // Regression: phase 1 review caught these as false positives —
-    // alias normalization in normalize_format covers them now.
-    #[test]
-    fn jpg_kind_vs_jpeg_image_magic_is_compatible() {
-        let (_, mismatch) = entry("JPG", "JPEG image").format_label();
-        assert!(!mismatch, "jpg ≡ jpeg");
+    fn htm_vs_html_is_none() {
+        assert_eq!(flag("HTM", "HTML document"), FormatFlag::None, "htm ≡ html");
     }
 
     #[test]
-    fn tif_kind_vs_tiff_image_magic_is_compatible() {
-        let (_, mismatch) = entry("TIF", "TIFF image").format_label();
-        assert!(!mismatch, "tif ≡ tiff");
+    fn yml_vs_yaml_is_none() {
+        assert_eq!(flag("YML", "YAML data"), FormatFlag::None, "yml ≡ yaml");
     }
 
     #[test]
-    fn htm_kind_vs_html_magic_is_compatible() {
-        let (_, mismatch) = entry("HTM", "HTML document").format_label();
-        assert!(!mismatch, "htm ≡ html");
+    fn office_subtypes_are_none() {
+        assert_eq!(flag("PPTX", "PowerPoint presentation"), FormatFlag::None);
+        assert_eq!(flag("DOCX", "Word document"), FormatFlag::None);
+        assert_eq!(flag("XLSX", "Excel spreadsheet"), FormatFlag::None);
     }
 
     #[test]
-    fn yml_kind_vs_yaml_magic_is_compatible() {
-        let (_, mismatch) = entry("YML", "YAML data").format_label();
-        assert!(!mismatch, "yml ≡ yaml");
-    }
-
-    // Regression: magic detector reports Office subtypes directly
-    // ("PowerPoint presentation" etc.) rather than the underlying
-    // "Zip archive" — the old zip-kindly check missed these.
-    #[test]
-    fn pptx_vs_powerpoint_presentation_is_compatible() {
-        let (_, mismatch) = entry("PPTX", "PowerPoint presentation").format_label();
-        assert!(!mismatch, "pptx ≡ PowerPoint presentation");
+    fn pdf_vs_pdf_document_is_none() {
+        assert_eq!(flag("PDF", "PDF document"), FormatFlag::None);
     }
 
     #[test]
-    fn docx_vs_word_document_is_compatible() {
-        let (_, mismatch) = entry("DOCX", "Word document").format_label();
-        assert!(!mismatch, "docx ≡ Word document");
+    fn honest_executables_are_none() {
+        // The extension already advertises code — not a disguise.
+        assert_eq!(flag("EXE", "PE / DOS executable"), FormatFlag::None);
+        assert_eq!(flag("DLL", "PE / DOS executable"), FormatFlag::None);
+        assert_eq!(flag("SO", "ELF executable"), FormatFlag::None);
+        assert_eq!(flag("PY", "Python script"), FormatFlag::None);
+        assert_eq!(flag("SH", "Shell script"), FormatFlag::None);
+        assert_eq!(flag("LNK", "Windows shortcut"), FormatFlag::None);
     }
 
     #[test]
-    fn xlsx_vs_excel_spreadsheet_is_compatible() {
-        let (_, mismatch) = entry("XLSX", "Excel spreadsheet").format_label();
-        assert!(!mismatch, "xlsx ≡ Excel spreadsheet");
+    fn no_extension_executable_is_none() {
+        // Bare unix binaries (kind="File") are normal, not disguises.
+        assert_eq!(flag("File", "Mach-O executable"), FormatFlag::None);
+        assert_eq!(flag("File", "ELF executable"), FormatFlag::None);
+        assert_eq!(flag("Folder", "directory"), FormatFlag::None);
+        assert_eq!(flag("Symlink", "symbolic link"), FormatFlag::None);
     }
 
     #[test]
-    fn pdf_kind_vs_pdf_document_magic_is_compatible() {
-        let (_, mismatch) = entry("PDF", "PDF document").format_label();
-        assert!(!mismatch, "qualifier strip — pdf == pdf document");
-    }
-
-    #[test]
-    fn png_image_kind_vs_png_image_magic_is_compatible() {
-        // Both sides arrive as the same display string; trivial equality
-        // after normalisation.
-        let (_, mismatch) = entry("PNG image", "PNG image").format_label();
-        assert!(!mismatch);
-    }
-
-    #[test]
-    fn placeholder_file_kind_never_mismatches_magic() {
-        // No-extension files surface as kind="File" — that's a missing-
-        // info placeholder, not an assertion about the format. It
-        // shouldn't ever flag a mismatch.
-        let (_, mismatch) = entry("File", "Mach-O 64-bit").format_label();
-        assert!(
-            !mismatch,
-            "kind=File is a placeholder, can't disagree with magic"
+    fn macro_doc_under_macro_extension_is_none() {
+        // .docm/.xlsm expect macros — not hidden.
+        assert_eq!(
+            entry_desc("DOCM", "Word document", "Word document · macro-enabled")
+                .format_label()
+                .1,
+            FormatFlag::None
         );
-        let (_, mismatch) = entry("File", "ELF executable").format_label();
-        assert!(!mismatch);
+        assert_eq!(
+            entry_desc("XLSM", "Excel spreadsheet", "Excel spreadsheet · macro-enabled")
+                .format_label()
+                .1,
+            FormatFlag::None
+        );
+    }
+
+    // --- Dangerous disguises: red alert. ---
+
+    #[test]
+    fn executable_under_image_extension_is_alert() {
+        assert_eq!(flag("JPG", "PE / DOS executable"), FormatFlag::Alert);
+        assert_eq!(flag("PNG", "Mach-O executable"), FormatFlag::Alert);
+        assert_eq!(flag("GIF", "ELF executable"), FormatFlag::Alert);
     }
 
     #[test]
-    fn folder_and_symlink_kinds_never_mismatch() {
-        let (_, mismatch) = entry("Folder", "directory").format_label();
-        assert!(!mismatch);
-        let (_, mismatch) = entry("Symlink", "symbolic link").format_label();
-        assert!(!mismatch);
+    fn script_under_innocent_extension_is_alert() {
+        assert_eq!(flag("PNG", "Shell script"), FormatFlag::Alert);
+        assert_eq!(flag("CSV", "Python script"), FormatFlag::Alert);
+        assert_eq!(flag("TXT", "Shell script"), FormatFlag::Alert);
+    }
+
+    #[test]
+    fn shortcut_under_image_extension_is_alert() {
+        // A .lnk renamed to .jpg is a classic lure.
+        assert_eq!(flag("JPG", "Windows shortcut"), FormatFlag::Alert);
+    }
+
+    #[test]
+    fn hidden_macros_in_plain_office_doc_is_alert() {
+        // Macros where the extension claims a plain document.
+        assert_eq!(
+            entry_desc("DOCX", "Word document", "Word document · macro-enabled")
+                .format_label()
+                .1,
+            FormatFlag::Alert
+        );
+    }
+
+    #[test]
+    fn smuggled_archive_in_media_or_doc_is_alert() {
+        // A picture/PDF/text file that is really an opaque archive/blob.
+        assert_eq!(flag("JPG", "ZIP archive"), FormatFlag::Alert);
+        assert_eq!(flag("PDF", "ZIP archive"), FormatFlag::Alert);
+        assert_eq!(flag("PNG", "RAR archive"), FormatFlag::Alert);
+        assert_eq!(flag("TXT", "Binary"), FormatFlag::Alert);
+    }
+
+    // --- Benign disagreements: quiet notice, never the danger tier. ---
+
+    #[test]
+    fn config_that_is_xml_is_notice_not_alert() {
+        // The motivating case: a .config that's really XML is harmless.
+        assert_eq!(flag("CONFIG", "XML"), FormatFlag::Notice);
+    }
+
+    #[test]
+    fn png_saved_as_txt_is_notice() {
+        // Used to be a red mismatch; an image under .txt isn't dangerous.
+        assert_eq!(flag("TXT", "PNG image"), FormatFlag::Notice);
+        assert_eq!(flag("DAT", "PNG image"), FormatFlag::Notice);
+    }
+
+    #[test]
+    fn archive_under_opaque_extension_is_notice() {
+        // .dat that's a ZIP isn't a disguise — .dat promises nothing.
+        assert_eq!(flag("DAT", "ZIP archive"), FormatFlag::Notice);
     }
 }
 

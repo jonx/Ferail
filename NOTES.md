@@ -1380,3 +1380,55 @@ process is in scope (Windows-native, Chunk C).
   close, `runas` re-exec. macOS elevation via osascript is the simplest viable
   mechanism (runs the worker as root, generic auth dialog) — a `SMAppService`
   privileged helper is the upgrade.
+
+## Chunk B — landed (this session): retry + elevation vertical slice
+
+Verified end-to-end on macOS (only the literal auth prompt is the manual step).
+
+- **Descriptor model + worker** (`crates/feraille-gpui/src/elevation.rs`):
+  `ElevatedOp { is_move, dest_dir, sources }` + `ElevatedResult`, NUL-separated
+  encoding (robust against any path on unix; no serde). `--elevated-op
+  <descriptor> --elevated-result <result>` CLI mode (dispatched in main.rs
+  before any GUI init) runs the op via the *same engine* the GUI uses, writes
+  per-item results, and **exits 0 even when items fail** (failures live in the
+  result file) so the osascript wrapper treats "ran" as success. Round-trip
+  unit tests + a direct CLI test (copied/moved real files, spaced filenames).
+- **Platform surface** (all three shell crates, `platform_shell::*`):
+  `elevation_available()`, `run_elevated_self(args)`, `lock_diagnostics_available()`,
+  `processes_using(path) -> Vec<LockingProcess>`, `force_close_processes(pids)`.
+  The primitive is deliberately dumb — "re-launch THIS exe elevated with these
+  args and wait" — so it never sees the op type and the shell crates need no
+  dep on gpui's descriptor. macOS `run_elevated_self` = osascript `do shell
+  script … with administrator privileges` (two-layer quoting: POSIX
+  single-quote per token, then AppleScript string escaping — verified through
+  osascript with a spaced filename). Windows/Linux = stubs (Chunk C / pkexec).
+- **UI** (`shell.rs` `transfer_failure_notification` + `TransferRetry`;
+  `file_ops.rs` `retry_transfer_elevated`): the failure toast offers Copy +
+  in-process **Retry** (re-runs just the failed top-level sources) + **Retry as
+  administrator…** (gated on `is_elevation_recoverable() && elevation_available()`).
+  Elevated retry runs `run_elevated_op` on the executor (the auth dialog
+  blocks), reloads, and reports "completed N as administrator" / "M still
+  failed". gpui-component `Notification`: `.action` sets the primary button AND
+  disables autohide; `.content` renders the secondary button row.
+
+### Decisions / trade-offs
+
+- **macOS PermissionDenied + TCC**: "Retry as administrator" runs the worker as
+  root, which fixes Unix-ownership denials but NOT TCC/privacy denials (root is
+  still gated on protected folders without Full Disk Access). The follow-up
+  toast reports honestly when it still fails. The old mac-specific "grant Full
+  Disk Access in System Settings" hint is dropped in favour of one
+  platform-neutral advice line; acceptable, revisit if it confuses.
+- **Scope held**: only the copy/move/paste/drag transfer path got the retry UI
+  this session. The other silent/first-error surfaces (trash, tag-toggle) are
+  noted in TODO, not done — they're separate surfaces, and the user was editing
+  in parallel (`//`), so I kept the blast radius tight.
+- **Clippy**: my additions are warning-clean; the few workspace warnings live in
+  files I didn't touch (search.rs, open_text_prompt region) — pre-existing or
+  the parallel edits, left alone.
+
+### Chunk C (next, on the Windows box) — see TODO "Resilient file-op coping"
+
+`ShellExecuteExW` runas for `run_elevated_self`; Restart Manager for
+`processes_using`; `RmShutdown`/`TerminateProcess` for `force_close_processes`;
+then flip the two `*_available()` bools true.

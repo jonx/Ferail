@@ -29,6 +29,9 @@ use feraille_core::commands::{Category, all_commands};
 
 use crate::app_state::{self, AppState};
 
+const SETTINGS_SWITCH_LANE: f32 = 36.0;
+const SETTINGS_DROPDOWN_LANE: f32 = 260.0;
+
 // =============================================================================
 // Categories — external API
 // =============================================================================
@@ -452,10 +455,17 @@ fn dropdown_setting(
 ) -> SettingItem {
     // Persist, then repaint so the button reflects the pick. Live settings
     // skip this wrapper and pass their own `on_pick` to recompute a global.
-    dropdown_setting_with(title, description, options, disabled, get, move |value, cx| {
-        persist(value);
-        cx.refresh_windows();
-    })
+    dropdown_setting_with(
+        title,
+        description,
+        options,
+        disabled,
+        get,
+        move |value, cx| {
+            persist(value);
+            cx.refresh_windows();
+        },
+    )
 }
 
 /// The shared dropdown rendering behind [`dropdown_setting`], parameterised by
@@ -491,46 +501,54 @@ fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
             .child(
                 gpui_component::h_flex()
                     .w_full()
-                    .justify_between()
                     .items_center()
                     .gap_3()
-                    .child(div().flex_shrink_0().text_scale_sm().text_color(fg).child(title))
                     .child(
-                        Button::new(SharedString::from(format!("dd-{title}")))
-                            .label(current_label)
-                            .dropdown_caret(true)
-                            .outline()
-                            .small()
-                            .max_w(px(260.0))
-                            .dropdown_menu_with_anchor(
-                                gpui::Anchor::TopRight,
-                                move |menu, _window, _cx| {
-                                    options.iter().fold(menu, |menu, opt| {
-                                        let (value, label) = *opt;
-                                        let checked = value == current.as_str();
-                                        // A disabled item is greyed and its
-                                        // click handler is dropped by the menu
-                                        // (see PopupMenuItem render), so it
-                                        // can't be selected.
-                                        menu.item(
-                                            PopupMenuItem::new(label)
-                                                .checked(checked)
-                                                .disabled(disabled.contains(&value))
-                                                .on_click(move |_, _window: &mut Window, cx: &mut App| {
-                                                    // `on_pick` persists and repaints
-                                                    // (and, for a live setting, also
-                                                    // recomputes its global). The
-                                                    // refresh inside must hit every
-                                                    // window — this fires in the popup,
-                                                    // so a window-local refresh would
-                                                    // repaint the popup, not the page
-                                                    // behind it.
-                                                    on_pick(value, cx);
-                                                }),
-                                        )
-                                    })
-                                },
-                            ),
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_scale_sm()
+                            .text_color(fg)
+                            .child(title),
+                    )
+                    .child(
+                        div().flex_none().w(px(SETTINGS_DROPDOWN_LANE)).flex().justify_end().child(
+                            Button::new(SharedString::from(format!("dd-{title}")))
+                                .label(current_label)
+                                .dropdown_caret(true)
+                                .outline()
+                                .small()
+                                .max_w(px(SETTINGS_DROPDOWN_LANE))
+                                .dropdown_menu_with_anchor(
+                                    gpui::Anchor::TopRight,
+                                    move |menu, _window, _cx| {
+                                        options.iter().fold(menu, |menu, opt| {
+                                            let (value, label) = *opt;
+                                            let checked = value == current.as_str();
+                                            // A disabled item is greyed and its
+                                            // click handler is dropped by the menu
+                                            // (see PopupMenuItem render), so it
+                                            // can't be selected.
+                                            menu.item(
+                                                PopupMenuItem::new(label)
+                                                    .checked(checked)
+                                                    .disabled(disabled.contains(&value))
+                                                    .on_click(move |_, _window: &mut Window, cx: &mut App| {
+                                                        // `on_pick` persists and repaints
+                                                        // (and, for a live setting, also
+                                                        // recomputes its global). The
+                                                        // refresh inside must hit every
+                                                        // window — this fires in the popup,
+                                                        // so a window-local refresh would
+                                                        // repaint the popup, not the page
+                                                        // behind it.
+                                                        on_pick(value, cx);
+                                                    }),
+                                            )
+                                        })
+                                    },
+                                ),
+                        ),
                     ),
             )
             .child(
@@ -541,6 +559,7 @@ fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
                     .child(description),
             )
     })
+    .keywords([title, description])
 }
 
 /// A boolean setting laid out like [`dropdown_setting`]: the title and the
@@ -555,6 +574,7 @@ fn switch_setting(
     set_value: impl Fn(bool, &mut App) + 'static,
 ) -> SettingItem {
     let description = description.into();
+    let keyword_description = description.clone();
     // The SettingItem render closure is `Fn` (re-invoked each frame), so the
     // setter (moved into the switch's `on_click`) must be shareable: `Rc` it
     // and hand each render a clone.
@@ -574,24 +594,32 @@ fn switch_setting(
             .child(
                 gpui_component::h_flex()
                     .w_full()
-                    .justify_between()
                     .items_center()
                     .gap_3()
-                    .child(div().flex_shrink_0().text_scale_sm().text_color(fg).child(title))
                     .child(
-                        Switch::new(SharedString::from(format!("sw-{title}")))
-                            .checked(checked)
-                            .small()
-                            .on_click(move |checked: &bool, _window: &mut Window, cx: &mut App| {
-                                set_value(*checked, cx);
-                                // The Switch is controlled by `checked`, re-read
-                                // from app state on the next render — so we must
-                                // request one or the toggle never visibly moves.
-                                // refresh_windows() is the same call the theme
-                                // tiles use; it repaints every window. (macOS
-                                // repaints eagerly per event; Windows does not.)
-                                cx.refresh_windows();
-                            }),
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_scale_sm()
+                            .text_color(fg)
+                            .child(title),
+                    )
+                    .child(
+                        div().flex_none().w(px(SETTINGS_SWITCH_LANE)).flex().justify_end().child(
+                            Switch::new(SharedString::from(format!("sw-{title}")))
+                                .checked(checked)
+                                .small()
+                                .on_click(move |checked: &bool, _window: &mut Window, cx: &mut App| {
+                                    set_value(*checked, cx);
+                                    // The Switch is controlled by `checked`, re-read
+                                    // from app state on the next render — so we must
+                                    // request one or the toggle never visibly moves.
+                                    // refresh_windows() is the same call the theme
+                                    // tiles use; it repaints every window. (macOS
+                                    // repaints eagerly per event; Windows does not.)
+                                    cx.refresh_windows();
+                                }),
+                        ),
                     ),
             )
             .child(
@@ -602,6 +630,7 @@ fn switch_setting(
                     .child(description),
             )
     })
+    .keywords([SharedString::from(title), keyword_description])
 }
 
 fn build_pages(
@@ -629,28 +658,29 @@ fn build_pages(
 fn diagnostics_page(report: std::rc::Rc<crate::diagnostics::Report>) -> SettingPage {
     use crate::diagnostics::Status;
 
-    let mut page =
-        SettingPage::new("Diagnostics").icon(Icon::empty().path("icons/activity.svg"));
+    let mut page = SettingPage::new("Diagnostics").icon(Icon::empty().path("icons/activity.svg"));
 
     // Summary header.
     {
         let report = report.clone();
-        page = page.group(SettingGroup::new().item(SettingItem::render(move |_o, _w, cx| {
-            let (ok, warn, fail) = report.tally();
-            let fg = cx.theme().foreground;
-            let muted = cx.theme().muted_foreground;
-            gpui_component::v_flex()
-                .w_full()
-                .gap_1()
-                .child(div().text_scale_sm().text_color(fg).child(format!(
-                    "Feraille v{} · {}/{} · {ok} OK, {warn} WARN, {fail} FAIL",
-                    report.app_version, report.os, report.arch
-                )))
-                .child(div().w_full().text_scale_xs().text_color(muted).child(
-                    "Health check of the app's storage and environment. \
+        page = page.group(
+            SettingGroup::new().item(SettingItem::render(move |_o, _w, cx| {
+                let (ok, warn, fail) = report.tally();
+                let fg = cx.theme().foreground;
+                let muted = cx.theme().muted_foreground;
+                gpui_component::v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(div().text_scale_sm().text_color(fg).child(format!(
+                        "Feraille v{} · {}/{} · {ok} OK, {warn} WARN, {fail} FAIL",
+                        report.app_version, report.os, report.arch
+                    )))
+                    .child(div().w_full().text_scale_xs().text_color(muted).child(
+                        "Health check of the app's storage and environment. \
                      Run `feraille --doctor` for the same report from a terminal.",
-                ))
-        })));
+                    ))
+            })),
+        );
     }
 
     // One group per check group, one row per check.
@@ -725,35 +755,40 @@ fn diagnostics_page(report: std::rc::Rc<crate::diagnostics::Report>) -> SettingP
     );
 
     // Copy-report action.
-    page = page.group(SettingGroup::new().item(SettingItem::render(move |_o, _w, _cx| {
-        use gpui_component::{Sizable as _, button::Button};
-        let report = report.clone();
-        gpui_component::h_flex().w_full().gap_2().child(
-            Button::new("diag-copy")
-                .label("Copy report")
-                .outline()
-                .small()
-                .on_click(move |_, _w, _cx| {
-                    let mut text = crate::diagnostics::render_text(&report);
-                    let trail = crate::trail::render_lines();
-                    if !trail.is_empty() {
-                        text.push_str("\n[Activity trail]\n");
-                        for l in &trail {
-                            text.push_str(l);
-                            text.push('\n');
-                        }
-                    }
-                    crate::platform_shell::copy_to_clipboard(&text);
-                }),
-        )
-        .child(
-            Button::new("diag-report")
-                .label("Create report bundle\u{2026}")
-                .outline()
-                .small()
-                .on_click(|_, window, _cx| crate::report::open_reporter(window)),
-        )
-    })));
+    page = page.group(
+        SettingGroup::new().item(SettingItem::render(move |_o, _w, _cx| {
+            use gpui_component::{Sizable as _, button::Button};
+            let report = report.clone();
+            gpui_component::h_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    Button::new("diag-copy")
+                        .label("Copy report")
+                        .outline()
+                        .small()
+                        .on_click(move |_, _w, _cx| {
+                            let mut text = crate::diagnostics::render_text(&report);
+                            let trail = crate::trail::render_lines();
+                            if !trail.is_empty() {
+                                text.push_str("\n[Activity trail]\n");
+                                for l in &trail {
+                                    text.push_str(l);
+                                    text.push('\n');
+                                }
+                            }
+                            crate::platform_shell::copy_to_clipboard(&text);
+                        }),
+                )
+                .child(
+                    Button::new("diag-report")
+                        .label("Create report bundle\u{2026}")
+                        .outline()
+                        .small()
+                        .on_click(|_, window, _cx| crate::report::open_reporter(window)),
+                )
+        })),
+    );
 
     page
 }
@@ -893,6 +928,7 @@ fn appearance_page(
                         ColorPicker::new(&selection_picker).into_any_element()
                     }),
                 )
+                .layout(Axis::Vertical)
                 .description(
                     "The highlight behind selected files in the list and grid. \
                      Clear it to follow the theme's blue.",
@@ -926,6 +962,7 @@ fn appearance_page(
                             ColorPicker::new(&ant_trail_picker).into_any_element()
                         }),
                     )
+                    .layout(Axis::Vertical)
                     .description(
                         "The tint behind your most-visited folders in the list and grid. \
                          Brightness still tracks visit frequency. Clear it for the stock orange.",
@@ -994,8 +1031,11 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
     // Known-Folder-Move can split a folder between local and cloud, i.e.
     // Windows. Omitted elsewhere.
     #[cfg(target_os = "windows")]
-    let page =
-        page.group(SettingGroup::new().title("Locations").item(locations_mode_setting()));
+    let page = page.group(
+        SettingGroup::new()
+            .title("Locations")
+            .item(locations_mode_setting()),
+    );
     page
 }
 
@@ -1112,15 +1152,14 @@ fn plugins_page() -> SettingPage {
                         "VLC location",
                         SettingField::input(
                             |_cx: &App| {
-                                SharedString::from(
-                                    app_state::load().vlc_app_path.unwrap_or_else(|| {
-                                        crate::viewer::backend_native::default_vlc_path().into()
-                                    }),
-                                )
+                                SharedString::from(app_state::load().vlc_app_path.unwrap_or_else(
+                                    || crate::viewer::backend_native::default_vlc_path().into(),
+                                ))
                             },
                             |val: SharedString, _cx: &mut App| persist_vlc_app_path(val.as_ref()),
                         ),
                     )
+                    .layout(Axis::Vertical)
                     .description(
                         "Where libvlc is loaded from — a VLC.app bundle on macOS, the VLC \
                          install folder on Windows/Linux (e.g. C:\\Program Files\\VideoLAN\\VLC).",
@@ -1147,28 +1186,56 @@ fn shortcuts_page() -> SettingPage {
         let title = SharedString::from(spec.title);
         let cat_name = SharedString::from(category_name(spec.category));
         let chord_for_render = chord.clone();
-        let item = SettingItem::new(
+        let title_for_render = title.clone();
+        let cat_for_render = cat_name.clone();
+        let item = SettingItem::render(move |_options, _window, cx| {
+            let theme = cx.theme();
+            gpui_component::v_flex()
+                .w_full()
+                .gap_1()
+                .child(
+                    gpui_component::h_flex()
+                        .w_full()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_scale_sm()
+                                .text_color(theme.foreground)
+                                .child(title_for_render.clone()),
+                        )
+                        .child(
+                            div().flex_none().flex().justify_end().child(
+                                div()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded(theme.radius)
+                                    .bg(theme.muted.opacity(0.6))
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .text_scale_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(SharedString::from(chord_for_render.clone())),
+                            ),
+                        ),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .text_scale_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(format!("{cat_for_render} \u{00B7} {chord_for_render}")),
+                )
+                .into_any_element()
+        })
+        .keywords([
             title,
-            SettingField::render(move |_options, _window, cx| {
-                let theme = cx.theme();
-                gpui_component::h_flex()
-                    .justify_end()
-                    .child(
-                        div()
-                            .px_2()
-                            .py_0p5()
-                            .rounded(theme.radius)
-                            .bg(theme.muted.opacity(0.6))
-                            .border_1()
-                            .border_color(theme.border)
-                            .text_scale_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(SharedString::from(chord_for_render.clone())),
-                    )
-                    .into_any_element()
-            }),
-        )
-        .description(format!("{cat_name} \u{00B7} {chord}"));
+            cat_name.clone(),
+            SharedString::from(chord.clone()),
+            SharedString::from(format!("{cat_name} \u{00B7} {chord}")),
+        ]);
         if let Some((_, items)) = groups_by_cat.iter_mut().find(|(c, _)| *c == spec.category) {
             items.push(item);
         } else {
@@ -1206,9 +1273,15 @@ fn about_page() -> SettingPage {
                             .text_color(theme.foreground)
                             .child("Feraille"),
                     )
-                    .child(div().text_scale_xs().text_color(theme.muted_foreground).child(
-                        SharedString::from(concat!("Version ", env!("CARGO_PKG_VERSION"))),
-                    ))
+                    .child(
+                        div()
+                            .text_scale_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(concat!(
+                                "Version ",
+                                env!("CARGO_PKG_VERSION")
+                            ))),
+                    )
                     .child(
                         div()
                             .mt_2()
