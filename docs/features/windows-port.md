@@ -62,17 +62,28 @@ own commit on the `windows-parity` branch:
   Volumes, per-file icons, dark theme chrome (custom titlebar), grid/list/
   settings/disk-usage/search/duplicates rendering.
 
-**Remaining (the two large/blocked items):**
+**Both of the previously-large items are now DONE:**
 
-1. **Native-default video** (`video_overlay_*` still stubbed). Out-of-box video
-   needs a Media Foundation backend (`IMFMediaEngine` frame-server: D3D11 device
-   + `TransferVideoFrame` readback + audio, the analogue of macOS AVFoundation).
-   A faithful player needs A/V-with-sync, so it's a dedicated effort — **the VLC
-   plugin covers full playback in the meantime.**
-2. **Truly-headless screenshot**: implement `render_to_image` in `gpui_windows`
-   (D3D11 staging-texture readback) to drop the PrintWindow/off-screen hack —
-   tracked in [GPUI-UPSTREAM.md](../GPUI-UPSTREAM.md) item 7; needs a zed fork +
-   `[patch]` to land committably.
+1. **Native-default video** — *done.* `video_overlay_*` is implemented natively
+   via Media Foundation's `IMFMediaEngine` frame-server (D3D11 device +
+   `TransferVideoFrame` readback + automatic audio/sync), the analogue of macOS
+   AVFoundation. Verified decoding + displaying real frames. VLC remains the
+   optional cross-platform plugin. See `crates/feraille-shell-win32/src/video_mf.rs`.
+2. **Truly-headless screenshot** — *done.* `render_to_image` is implemented in
+   `gpui_windows` (D3D11 staging-texture readback); the harness captures with
+   the window never shown — no flash. The change lives in
+   [`patches/gpui-windows-render-to-image.patch`](../../patches/gpui-windows-render-to-image.patch),
+   applied locally via a `[patch]` to a sibling zed clone (NOT committed — a
+   local path would break the macOS build). Open it as a zed PR to land it
+   permanently; until then it's a local-dev patch. See
+   [GPUI-UPSTREAM.md](../GPUI-UPSTREAM.md) item 7.
+
+**Still genuinely remaining:**
+
+- A handful of interaction/UX items surfaced by on-device testing (e.g. the
+  Settings → Plugins VLC dropdown selection — logic verified, but needs an
+  interactive repro).
+- Linux parity (the sister [linux-port.md](linux-port.md)).
 
 The rest of §2–§6 below is the original Mac-authored handoff and predates this
 work; read it for the architecture/mechanics, but treat §2.0 as the current
