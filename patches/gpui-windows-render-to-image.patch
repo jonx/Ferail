@@ -1,0 +1,125 @@
+--- a/crates/gpui_windows/src/directx_renderer.rs	2026-06-23 00:50:21.174261700 +0200
++++ b/crates/gpui_windows/src/directx_renderer.rs	2026-06-23 03:17:52.630590700 +0200
+@@ -317,7 +317,14 @@
+         })?;
+ 
+         self.upload_scene_buffers(scene)?;
++        self.draw_batches(scene)?;
++        self.present()
++    }
+ 
++    /// Encode every primitive batch of `scene` into the bound render target.
++    /// Shared by [`draw`](Self::draw) (which then presents) and
++    /// [`render_to_image`](Self::render_to_image) (which reads back instead).
++    fn draw_batches(&mut self, scene: &Scene) -> Result<()> {
+         for batch in scene.batches() {
+             match batch {
+                 PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
+@@ -352,7 +359,78 @@
+                 scene.surfaces.len(),
+             ))?;
+         }
+-        self.present()
++        Ok(())
++    }
++
++    /// Render `scene` to an offscreen CPU image **without presenting** — so the
++    /// window need never be shown (the headless-screenshot path on macOS goes
++    /// through MetalRenderer; this is the Windows analogue). Draws into the
++    /// existing render target (created at window construction), copies it into a
++    /// `D3D11_USAGE_STAGING` texture, maps it, and converts BGRA → RGBA.
++    #[cfg(any(test, feature = "test-support"))]
++    pub(crate) fn render_to_image(
++        &mut self,
++        scene: &Scene,
++        background_appearance: WindowBackgroundAppearance,
++    ) -> Result<image::RgbaImage> {
++        self.pre_draw(&match background_appearance {
++            WindowBackgroundAppearance::Opaque => [1.0f32; 4],
++            _ => [0.0f32; 4],
++        })?;
++        self.upload_scene_buffers(scene)?;
++        self.draw_batches(scene)?;
++
++        let devices = self.devices.as_ref().context("devices missing")?;
++        let device = &devices.device;
++        let context = &devices.device_context;
++        let resources = self.resources.as_ref().context("resources missing")?;
++        let render_target = resources
++            .render_target
++            .as_ref()
++            .context("render target missing")?;
++
++        // A CPU-readable copy of the render target.
++        let mut desc = D3D11_TEXTURE2D_DESC::default();
++        unsafe { render_target.GetDesc(&mut desc) };
++        let width = desc.Width;
++        let height = desc.Height;
++        let staging_desc = D3D11_TEXTURE2D_DESC {
++            Usage: D3D11_USAGE_STAGING,
++            BindFlags: 0,
++            CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
++            MiscFlags: 0,
++            MipLevels: 1,
++            ArraySize: 1,
++            SampleDesc: DXGI_SAMPLE_DESC {
++                Count: 1,
++                Quality: 0,
++            },
++            ..desc
++        };
++        let mut staging: Option<ID3D11Texture2D> = None;
++        unsafe { device.CreateTexture2D(&staging_desc, None, Some(&mut staging))? };
++        let staging = staging.context("creating staging texture")?;
++        unsafe { context.CopyResource(&staging, render_target) };
++
++        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
++        unsafe { context.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))? };
++        let row_bytes = (width as usize) * 4;
++        let mut pixels = vec![0u8; row_bytes * height as usize];
++        unsafe {
++            let src = mapped.pData as *const u8;
++            for row in 0..height as usize {
++                let s = src.add(row * mapped.RowPitch as usize);
++                let d = pixels.as_mut_ptr().add(row * row_bytes);
++                std::ptr::copy_nonoverlapping(s, d, row_bytes);
++            }
++            context.Unmap(&staging, 0);
++        }
++        // The render target is BGRA; image::RgbaImage expects RGBA.
++        for px in pixels.chunks_exact_mut(4) {
++            px.swap(0, 2);
++        }
++        image::RgbaImage::from_raw(width, height, pixels)
++            .context("Failed to build RgbaImage from staging readback")
+     }
+ 
+     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
+--- a/crates/gpui_windows/src/window.rs	2026-06-23 00:50:21.245099600 +0200
++++ b/crates/gpui_windows/src/window.rs	2026-06-23 03:18:30.427266700 +0200
+@@ -947,6 +947,14 @@
+             .log_err();
+     }
+ 
++    #[cfg(any(test, feature = "test-support"))]
++    fn render_to_image(&self, scene: &Scene) -> anyhow::Result<image::RgbaImage> {
++        self.state
++            .renderer
++            .borrow_mut()
++            .render_to_image(scene, self.state.background_appearance.get())
++    }
++
+     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+         self.state.renderer.borrow().sprite_atlas()
+     }
+--- a/crates/gpui_platform/Cargo.toml	2026-06-23 00:50:20.865813000 +0200
++++ b/crates/gpui_platform/Cargo.toml	2026-06-23 03:26:28.645760100 +0200
+@@ -14,7 +14,7 @@
+ [features]
+ default = []
+ font-kit = ["gpui_macos/font-kit"]
+-test-support = ["gpui/test-support", "gpui_macos/test-support"]
++test-support = ["gpui/test-support", "gpui_macos/test-support", "gpui_windows/test-support"]
+ screen-capture = ["gpui/screen-capture", "gpui_macos/screen-capture", "gpui_windows/screen-capture", "gpui_linux/screen-capture"]
+ runtime_shaders = ["gpui_macos/runtime_shaders"]
+ wayland = ["gpui_linux/wayland"]

@@ -200,22 +200,24 @@ for this platform")`. So the unified `capture_window()` the macOS side wrote
 comment referenced a `gpui-windows-render-to-image` `[patch]` that was never
 actually wired into the root `Cargo.toml`.
 
-**Workaround (shipped):** on Windows, capture the *shown* window with
-`PrintWindow(PW_RENDERFULLCONTENT)` via `feraille_shell_win32::capture_window_rgba`
-(a Win32 BGRA DIB readback). Because a DirectComposition swap chain only
-presents when visible, the screenshot window is opened with `show: true` on
-Windows (`show: cfg!(windows)`), causing a brief on-screen flash — acceptable
-for a CLI tool, but not *truly* headless.
+**IMPLEMENTED (local patch, PR-ready).** We implemented `render_to_image` in
+`gpui_windows` and run against it via a `[patch]` to a local zed clone:
 
-**What upstream could do / our planned PR:**
-- Implement `Window::render_to_image` in `gpui_windows`: render the scene into
-  an offscreen D3D11 render-target texture (or copy the swap-chain back buffer
-  into a `D3D11_USAGE_STAGING` texture), `Map` it, and return the RGBA bytes —
-  mirroring `gpui_macos`'s offscreen path. That makes headless capture work
-  with the window hidden and lets us delete the PrintWindow workaround + the
-  `show: cfg!(windows)` special case. This is the PR to prepare.
-- The zed source for the pinned rev is already on disk at
-  `~/.cargo/git/checkouts/zed-*/<rev>/crates/gpui_windows/`; a local copy +
-  `[patch."https://github.com/zed-industries/zed"]` is the dev loop.
+- `DirectXRenderer::render_to_image(scene, bg)` — draws the scene into the
+  existing render target (created at window construction, so no window need be
+  shown), copies it into a `D3D11_USAGE_STAGING` texture, `Map`s it, and
+  converts BGRA → RGBA — the Windows analogue of `gpui_macos`'s offscreen Metal
+  path. The batch loop is factored into a shared `draw_batches` so `draw`
+  (present) and `render_to_image` (readback) stay in sync. Gated on
+  `cfg(any(test, feature = "test-support"))` to match the trait method.
+- `WindowsWindow::render_to_image` overrides the `PlatformWindow` trait default.
+- The diff is captured at [`patches/gpui-windows-render-to-image.patch`](../patches/gpui-windows-render-to-image.patch)
+  — ready to open as a zed PR. Once merged upstream, bump the gpui rev in the
+  root `Cargo.toml` and drop the `[patch]` + the PrintWindow fallback.
+
+With the patch active, the screenshot harness opens the window with
+`show: false` and captures via `render_to_image` — **truly headless, no flash**.
+The PrintWindow path (`feraille_shell_win32::capture_window_rgba` + off-screen
+move) remains as the fallback for builds without the patch.
 
 <!-- Add new findings above this line as the bump surfaces them. -->
