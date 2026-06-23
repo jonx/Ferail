@@ -18,7 +18,7 @@ use feraille_gpui::{
         CloseTab, CloseWindow, CopyPath, EmptyTrash, FindDuplicates, FocusFilter, GoHome,
         MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
         OpenDiskUsage, OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell,
-        ShowDesktop, ToggleHidden,
+        ShowDesktop, ToggleHidden, TogglePreview,
     },
 };
 use gpui::*;
@@ -621,6 +621,10 @@ fn install_app_menus(cx: &mut App) {
         ));
     }
     view_items.push(MenuItem::separator());
+    view_items.push(MenuItem::action(
+        title("view.toggle_preview", "Show Preview Pane"),
+        TogglePreview,
+    ));
     view_items.push(MenuItem::action(
         title("view.toggle_hidden", "Show Hidden Files"),
         ToggleHidden,
