@@ -224,12 +224,49 @@ pub fn show_alert(title: &str, body: &str) {
 pub fn show_alert(_title: &str, _body: &str) {}
 
 /// Present a native folder picker and return the chosen directory, or
-/// `None` if cancelled. Mirrors `feraille_shell_mac::pick_folder` so
-/// the Favorites "Locate…" repoint flow (`docs/features/FAVORITES.md`
-/// §8.2) is cross-platform. Windows wants `IFileOpenDialog` with the
-/// `FOS_PICKFOLDERS` option; until that lands this returns `None`
-/// (the caller treats `None` as "cancelled" and leaves the favorite
-/// untouched).
+/// `None` if cancelled. Mirrors `feraille_shell_mac::pick_folder` so the
+/// Favorites "Locate…" repoint flow (`docs/features/FAVORITES.md` §8.2) is
+/// cross-platform. The modern `IFileOpenDialog` with `FOS_PICKFOLDERS` (the
+/// Vista+ common item dialog) — user-cancel comes back as an error HRESULT,
+/// which maps cleanly to `None` (the caller leaves the favorite untouched).
+#[cfg(windows)]
+pub fn pick_folder() -> Option<std::path::PathBuf> {
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{
+        FileOpenDialog, IFileOpenDialog, FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
+    };
+
+    unsafe {
+        let co = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let we_initialized = co.is_ok();
+
+        let chosen = (|| -> Option<std::path::PathBuf> {
+            let dialog: IFileOpenDialog =
+                CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+            let opts = dialog.GetOptions().ok()?;
+            dialog
+                .SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM)
+                .ok()?;
+            // No owner HWND; user-cancel returns an error HRESULT → None.
+            dialog.Show(None).ok()?;
+            let item = dialog.GetResult().ok()?;
+            let pwstr = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+            let path = pwstr.to_string().ok().map(std::path::PathBuf::from);
+            CoTaskMemFree(Some(pwstr.0 as *const core::ffi::c_void));
+            path
+        })();
+
+        if we_initialized {
+            CoUninitialize();
+        }
+        chosen
+    }
+}
+
+#[cfg(not(windows))]
 pub fn pick_folder() -> Option<std::path::PathBuf> {
     None
 }
@@ -355,10 +392,93 @@ pub fn open_terminal(_path: &std::path::Path) {}
 
 /// Duplicate `src` next to itself with Explorer's " - Copy" /
 /// " - Copy (2)" naming. Files use `fs::copy`; directories use a
-/// Unmount and eject the volume mounted at `path`. Not implemented on
-/// Windows yet; returns an error the host can surface as a toast.
+/// Unmount and eject the volume mounted at `path` (a drive root like `E:\`).
+/// Opens the volume device `\\.\E:`, flushes + locks it best-effort, dismounts
+/// it (`FSCTL_DISMOUNT_VOLUME`), re-allows media removal, then ejects
+/// (`IOCTL_STORAGE_EJECT_MEDIA` — opens the tray for optical media, powers down
+/// removable media). Succeeds if either the dismount or the eject takes; a
+/// hard failure (e.g. files still open) is surfaced to the host as a toast.
+#[cfg(windows)]
+pub fn eject_volume(path: &std::path::Path) -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::Ioctl::{
+        FSCTL_DISMOUNT_VOLUME, FSCTL_LOCK_VOLUME, IOCTL_STORAGE_EJECT_MEDIA,
+        IOCTL_STORAGE_MEDIA_REMOVAL, PREVENT_MEDIA_REMOVAL,
+    };
+    use windows::Win32::System::IO::DeviceIoControl;
+
+    // GENERIC_READ | GENERIC_WRITE (kept as a literal to avoid the access-right
+    // newtype churn between `windows` crate versions).
+    const GENERIC_READ_WRITE: u32 = 0x8000_0000 | 0x4000_0000;
+
+    let s = path.to_string_lossy();
+    let drive = s
+        .trim_start_matches(r"\\?\")
+        .chars()
+        .next()
+        .filter(|c| c.is_ascii_alphabetic())
+        .ok_or_else(|| format!("eject: not a drive path: {s}"))?;
+    let device = format!(r"\\.\{}:", drive.to_ascii_uppercase());
+    let wide: Vec<u16> = device.encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let handle = CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            GENERIC_READ_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        )
+        .map_err(|e| format!("open volume {device}: {e}"))?;
+
+        let mut returned: u32 = 0;
+        let mut ioctl = |code: u32, inbuf: Option<*const core::ffi::c_void>, insize: u32| {
+            DeviceIoControl(
+                handle,
+                code,
+                inbuf,
+                insize,
+                None,
+                0,
+                Some(&mut returned),
+                None,
+            )
+        };
+
+        // Best-effort lock (fails if files are open — dismount still tried).
+        let _ = ioctl(FSCTL_LOCK_VOLUME, None, 0);
+        let dismounted = ioctl(FSCTL_DISMOUNT_VOLUME, None, 0);
+        // Allow the media to be removed, then eject.
+        let mut allow = PREVENT_MEDIA_REMOVAL {
+            PreventMediaRemoval: false.into(),
+        };
+        let _ = ioctl(
+            IOCTL_STORAGE_MEDIA_REMOVAL,
+            Some(&mut allow as *mut _ as *const core::ffi::c_void),
+            std::mem::size_of::<PREVENT_MEDIA_REMOVAL>() as u32,
+        );
+        let ejected = ioctl(IOCTL_STORAGE_EJECT_MEDIA, None, 0);
+
+        let _ = CloseHandle(handle);
+
+        if dismounted.is_err() && ejected.is_err() {
+            return Err(format!(
+                "could not dismount or eject {device} (files may still be open)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
 pub fn eject_volume(_path: &std::path::Path) -> Result<(), String> {
-    Err("eject is not implemented on Windows yet".into())
+    Err("eject is not implemented on this OS".into())
 }
 
 /// recursive copy walk (std has no recursive copy). Returns the
@@ -434,16 +554,16 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
     Ok(())
 }
 
-/// Make a `.lnk` shortcut next to `target` pointing at it. Uses the
-/// canonical `IShellLink` / `IPersistFile` COM pattern: create the
-/// shell-link object, set its target, persist as a `.lnk` file at
-/// `target.lnk` (or `target - Shortcut.lnk` if that path is taken).
-///
-/// Caller must NOT pass a directory whose parent is unwritable;
-/// the COM call returns an `E_ACCESSDENIED` HRESULT that becomes a
-/// generic error string here.
+/// Write a `.lnk` shortcut to `target` inside `dir`, picking an unused
+/// `<stem>.lnk` / `<stem> (N).lnk` name. The canonical `IShellLink` /
+/// `IPersistFile` COM dance: create the shell-link object, set its target,
+/// persist. Returns the shortcut path. Shared by [`make_alias`] (drops next
+/// to the target) and [`make_alias_in`] (drops into a destination folder).
 #[cfg(windows)]
-pub fn make_alias(target: &std::path::Path) -> Result<std::path::PathBuf, String> {
+fn write_shell_link(
+    target: &std::path::Path,
+    dir: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::{Interface, PCWSTR};
     use windows::Win32::System::Com::{
@@ -452,19 +572,16 @@ pub fn make_alias(target: &std::path::Path) -> Result<std::path::PathBuf, String
     };
     use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 
-    let parent = target
-        .parent()
-        .ok_or_else(|| "make_alias: target has no parent".to_string())?;
     let stem = target
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or_else(|| "make_alias: target has no valid file stem".to_string())?;
 
-    // Pick an unused .lnk path next to the target.
-    let mut shortcut: std::path::PathBuf = parent.join(format!("{stem}.lnk"));
+    // Pick an unused .lnk path in `dir`.
+    let mut shortcut: std::path::PathBuf = dir.join(format!("{stem}.lnk"));
     if shortcut.exists() {
         for n in 2..=99 {
-            let candidate = parent.join(format!("{stem} ({n}).lnk"));
+            let candidate = dir.join(format!("{stem} ({n}).lnk"));
             if !candidate.exists() {
                 shortcut = candidate;
                 break;
@@ -509,19 +626,39 @@ pub fn make_alias(target: &std::path::Path) -> Result<std::path::PathBuf, String
     }
 }
 
+/// Make a `.lnk` shortcut next to `target` pointing at it (the macOS
+/// "Make Alias" equivalent). Drops `target.lnk` (or `target (N).lnk`) in the
+/// target's own folder.
+#[cfg(windows)]
+pub fn make_alias(target: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| "make_alias: target has no parent".to_string())?;
+    write_shell_link(target, parent)
+}
+
 #[cfg(not(windows))]
 pub fn make_alias(_target: &std::path::Path) -> Result<std::path::PathBuf, String> {
     Err("make_alias: not implemented on this OS".into())
 }
 
-/// Make a shortcut to `target` inside `dest_dir` (Cmd+Option alias-drop
-/// equivalent). [win-parity] the real `.lnk`-in-dest path is deferred
-/// with the rest of the Windows pasteboard work; stubbed for now.
+/// Make a `.lnk` shortcut to `target` inside `dest_dir` — the Windows form of
+/// the Cmd+Option alias-drop (drag a file into a folder while making an alias
+/// instead of moving). Drops `<stem>.lnk` into `dest_dir`.
+#[cfg(windows)]
+pub fn make_alias_in(
+    target: &std::path::Path,
+    dest_dir: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    write_shell_link(target, dest_dir)
+}
+
+#[cfg(not(windows))]
 pub fn make_alias_in(
     _target: &std::path::Path,
     _dest_dir: &std::path::Path,
 ) -> Result<std::path::PathBuf, String> {
-    Err("make_alias_in: not implemented on Windows yet".into())
+    Err("make_alias_in: not implemented on this OS".into())
 }
 
 /// Compress `targets` into a `.zip` written next to the first
@@ -1807,4 +1944,34 @@ pub fn set_window_floating(_ns_view: *mut std::ffi::c_void, _floating: bool) {}
 #[cfg(windows)]
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(all(test, windows))]
+mod win_tests {
+    use super::*;
+
+    /// make_alias_in drops a real `.lnk` (via the IShellLink COM path) into
+    /// the destination folder, with a unique name.
+    #[test]
+    fn make_alias_in_creates_lnk_in_dest() {
+        let base = std::env::temp_dir().join(format!("feraille-aliasin-{}", std::process::id()));
+        let dest = base.join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        let target = base.join("target.txt");
+        std::fs::write(&target, b"hello").unwrap();
+
+        let lnk = make_alias_in(&target, &dest).expect("alias created");
+        assert!(lnk.exists(), "shortcut exists at {lnk:?}");
+        assert_eq!(lnk.parent().unwrap(), dest, "shortcut landed in dest dir");
+        assert_eq!(
+            lnk.extension().and_then(|e| e.to_str()),
+            Some("lnk"),
+            "shortcut is a .lnk"
+        );
+        // A second alias of the same target gets a distinct name.
+        let lnk2 = make_alias_in(&target, &dest).expect("second alias created");
+        assert_ne!(lnk, lnk2, "second shortcut has a unique name");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

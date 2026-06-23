@@ -30,13 +30,21 @@ windows = { version = "0.58", features = [
     "Win32_System_Memory",
     "Win32_System_Ole",
     # fetch_quick_look_thumbnail → SHCreateItemFromParsingName +
-    # IShellItemImageFactory + GDI GetDIBits
+    # IShellItemImageFactory + GDI GetDIBits; SHGetFileInfoW (read_shell_info);
+    # eject_volume → CreateFileW + FILE_SHARE_* + OPEN_EXISTING
     "Win32_UI_Shell",
+    "Win32_Storage_FileSystem",
+    # CreateFileW's SECURITY_ATTRIBUTES param
+    "Win32_Security",
     "Win32_System_Com",
     "Win32_Graphics_Gdi",
     # IPreviewHandler fallback (preview_handler.rs)
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_Storage_Xps",
+    # eject_volume → CreateFileW(\\.\X:) + DeviceIoControl(FSCTL_DISMOUNT/
+    # IOCTL_STORAGE_EJECT_MEDIA)
+    "Win32_System_Ioctl",
+    "Win32_System_IO",
 ] }
 
 [target.'cfg(windows)'.dev-dependencies]
