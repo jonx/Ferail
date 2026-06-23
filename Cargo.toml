@@ -65,7 +65,12 @@ blake3      = "1"
 # test-support: enables `Window::render_to_image` + the matching impl
 # in `gpui_macos` so the headless screenshot CLI in feraille-gpui works.
 gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["test-support"] }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["font-kit", "test-support"] }
+# wayland + x11 enable gpui_linux's compositor backends (gpui_platform's
+# wayland/x11 features pull gpui_linux/wayland|x11). Without them the Linux
+# build compiles but panics at startup — guess_compositor() returns "Wayland"
+# and hits the unreachable arm. No-op on macOS/Windows (gpui_linux is
+# Linux-only there).
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["font-kit", "test-support", "wayland", "x11"] }
 # `tree-sitter-languages` pulls in the full tree-sitter grammar set so
 # the preview pane's TextView highlights fenced code blocks (and
 # markdown code) for every language (docs/features/PREVIEW.md). Each

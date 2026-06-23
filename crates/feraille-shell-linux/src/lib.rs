@@ -233,6 +233,22 @@ pub fn open_with_app(_target: &Path, _app_path: &Path) -> Result<(), String> {
 }
 
 // =============================================================
+// Clipboard
+// =============================================================
+
+/// Place plain text on the system clipboard (used by the copyable error
+/// toast, "copy path", etc.). `arboard` handles both Wayland and X11.
+#[cfg(target_os = "linux")]
+pub fn copy_to_clipboard(text: &str) {
+    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+        let _ = clipboard.set_text(text.to_owned());
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn copy_to_clipboard(_text: &str) {}
+
+// =============================================================
 // Clipboard (file URLs)
 // =============================================================
 

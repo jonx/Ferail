@@ -14,8 +14,11 @@ feraille-core.workspace = true
 # mirroring feraille-shell-win32's identical use. Same major/features as win32.
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
-# NOTE: the remaining Linux-specific shell work (clipboard, trash, thumbnails,
-# the dark/volume/power observers, video) will pull `ashpd`/`zbus`/`gstreamer`,
-# etc. — see docs/features/linux-port.md §6 for the mechanism each maps to. Add
-# those under `[target.'cfg(target_os = "linux")'.dependencies]` so the crate
-# keeps compiling on macOS/Windows as a workspace member.
+# Linux-only shell deps. Kept under cfg(target_os = "linux") so the crate still
+# compiles on macOS/Windows as a workspace member (the cfg(not(linux)) stub arms).
+# The remaining work (file-URL clipboard, thumbnails, dark/volume/power
+# observers, video) will pull `ashpd`/`zbus`/`gstreamer` — see
+# docs/features/linux-port.md §6.
+[target.'cfg(target_os = "linux")'.dependencies]
+# copy_to_clipboard — plain-text clipboard over Wayland + X11.
+arboard = "3"
