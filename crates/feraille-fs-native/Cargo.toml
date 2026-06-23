@@ -27,9 +27,13 @@ windows = { version = "0.58", features = [
     "Win32_System_Com",
 ] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-# getuid() for the per-volume `.Trashes/<uid>` path (trash_dirs).
+# stat_info.rs reads ownership / mode / timestamps via libc on ALL unix
+# (lstat, getpwuid_r, chmod, localtime_r), and getuid() backs the per-volume
+# `.Trashes/<uid>` path on macOS — so libc is a unix-wide dep, not macOS-only.
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
 xattr = "1"
 plist = "1"
 objc2 = "0.5"
