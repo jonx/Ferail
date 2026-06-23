@@ -494,7 +494,7 @@ fn dropdown_setting(
                     .w_full()
                     .text_scale_sm()
                     .text_color(muted)
-                    .child(description.clone()),
+                    .child(description),
             )
     })
 }
