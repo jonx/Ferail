@@ -10,8 +10,20 @@ through — potentially other videos that are themselves keyed.
 
 ## Status
 
-**Phase 3 done — compile-green (2026-06-23)** — Phases 0, 1a, 1b, 2 (see
-below) plus Phase 3: single-layer chroma key. A "Transparent colour" section
+**Phase 4 done — compile + UI verified (2026-06-23)** — Phase 4 adds the
+N-layer compositor (additive: `video_overlay` stays the keyed top layer,
+untouched; a `Vec<BgLayer>` of muted background videos is pulled in the same
+poll and drawn *beneath* it, so the top's keyed-transparent pixels reveal
+them). A new **Layers** section in the popup adds background videos from the
+playlist (Add) and removes them (✕). Per-layer keying and a native file picker
+for arbitrary sources are deferred (Phase 4b) — layers currently source from
+the open folder and render opaque under the keyed top. `set_muted` was added to
+the seam (mpv mutes via the `mute` property; native no-ops) so stacked layers
+don't all play audio. Screenshot-verified the four-section popup
+(`screenshots/mpv-ui-layers.png`); live multi-video compositing needs the poll
+to run, so it's manual-verify (a follow-up, same as the live keyed video).
+
+Phase 3 (below) plus Phase 3: single-layer chroma key. A "Transparent colour" section
 in the adjustments popup (mpv video only) with an on/off toggle, an
 **eyedropper swatch** (click it, then click the video to sample the key
 colour from the live frame), and **Similarity** (range width) + **Blend**
@@ -31,7 +43,8 @@ check -p feraille-gpui --features vlc` is green.
 > screenshot of a *live keyed video* (the keyed pixels actually transparent),
 > which needs the poll to run — a follow-up.
 
-Still open: the N-layer stack (Phase 4), docs/icons (Phase 5), and the cosmetic
+Still open: per-layer keying + a file picker for layer sources (Phase 4b),
+runtime verification of live compositing, docs/icons (Phase 5), and the cosmetic
 rename below. Phase 2 recap: removed the VLC-era seamless-reopen apparatus —
 `commit_video_enhance` now pushes filters through live `set_enhance`; the
 `video_pending_seek`/`video_repause` deferral and the poll's pre-seek-frame

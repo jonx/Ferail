@@ -146,4 +146,9 @@ pub trait VideoStream {
     fn set_chroma_key(&mut self, _key: Option<ChromaKey>) -> bool {
         false
     }
+
+    /// Mute or unmute this stream's audio. Used to silence composited
+    /// background layers so only the focused (top) video is heard. Default
+    /// no-op for backends without audio control.
+    fn set_muted(&mut self, _muted: bool) {}
 }

@@ -567,6 +567,11 @@ impl VideoStream for MpvStream {
         self.rebuild_vf();
         true
     }
+
+    fn set_muted(&mut self, muted: bool) {
+        let v = if muted { "yes" } else { "no" };
+        (self.lib.set_property_string)(self.h, cstr("mute").as_ptr(), cstr(v).as_ptr());
+    }
 }
 
 impl Drop for MpvStream {
