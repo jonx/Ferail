@@ -482,7 +482,15 @@ fn dropdown_setting(
                                             PopupMenuItem::new(label)
                                                 .checked(checked)
                                                 .disabled(disabled.contains(&value))
-                                                .on_click(move |_, _, _cx| persist(value)),
+                                                .on_click(move |_, window: &mut Window, _cx| {
+                                                    persist(value);
+                                                    // Re-render so the dropdown
+                                                    // button reflects the new pick
+                                                    // (and the checkmark moves) —
+                                                    // otherwise it looks like the
+                                                    // click did nothing.
+                                                    window.refresh();
+                                                }),
                                         )
                                     })
                                 },
@@ -538,8 +546,14 @@ fn switch_setting(
                         Switch::new(SharedString::from(format!("sw-{title}")))
                             .checked(checked)
                             .small()
-                            .on_click(move |checked: &bool, _, cx: &mut App| {
-                                set_value(*checked, cx)
+                            .on_click(move |checked: &bool, window: &mut Window, cx: &mut App| {
+                                set_value(*checked, cx);
+                                // The Switch is controlled by `checked`, which is
+                                // re-read from app state on the next render — so we
+                                // must request that render, or the toggle never
+                                // visibly moves. (macOS repaints eagerly enough to
+                                // hide this; Windows does not.)
+                                window.refresh();
                             }),
                     ),
             )
