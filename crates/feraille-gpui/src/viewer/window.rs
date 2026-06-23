@@ -521,6 +521,10 @@ pub struct ViewerWindow {
     /// the desktop, composited by the OS window server on the GPU
     /// (docs/features/VIDEO-MPV.md).
     transparent: bool,
+    /// Whether this viewer window is the active (focused) one. Background
+    /// windows mute their video so stacked transparent viewers don't all play
+    /// audio at once — only the focused window is audible.
+    window_active: bool,
     /// Current video `(position, duration)` in seconds, refreshed by a
     /// poll while a video overlay is live. Drives the seek bar + time.
     video_position: (f64, f64),
@@ -624,6 +628,18 @@ impl ViewerWindow {
         // repositions to the new stage.
         cx.observe_window_bounds(window, |_, _, cx| cx.notify())
             .detach();
+        // Mute the video while this window isn't focused, so stacked
+        // transparent viewer windows don't all play audio at once — only the
+        // active one is audible. `set_muted` no-ops on the built-in player.
+        cx.observe_window_activation(window, |this, window, cx| {
+            let active = window.is_window_active();
+            this.window_active = active;
+            if let Some((stream, _)) = &mut this.video_overlay {
+                stream.set_muted(!active);
+            }
+            cx.notify();
+        })
+        .detach();
         let interval = crate::app_state::load()
             .viewer_slideshow_interval
             .unwrap_or(super::playback::DEFAULT_INTERVAL_SECS);
@@ -664,6 +680,7 @@ impl ViewerWindow {
             video_loop: false,
             stay_on_top: false,
             transparent: false,
+            window_active: true,
             video_position: (0.0, 0.0),
             cue_in: 0.0,
             cue_out: 1.0,
@@ -911,6 +928,13 @@ impl ViewerWindow {
             self.video_dims = (0.0, 0.0);
             self.video_overlay = Some((stream, path));
             self.video_enhance_applied = enhance;
+            // A freshly opened stream is unmuted; mute it if this window isn't
+            // the focused one (the activation observer handles later changes).
+            if !self.window_active {
+                if let Some((stream, _)) = &mut self.video_overlay {
+                    stream.set_muted(true);
+                }
+            }
             // Push any live grade into the backend (mpv applies it natively;
             // the native player reports unsupported).
             self.apply_video_adjust();

@@ -64,8 +64,11 @@ check -p feraille-gpui --features mpv` is green.
 > screenshot of a *live keyed video* (the keyed pixels actually transparent),
 > which needs the poll to run — a follow-up.
 
-Still open: the GPU video path (mpv GL → IOSurface → `gpui::surface`) and
-per-window mute. Phase 2 recap: removed the VLC-era seamless-reopen apparatus —
+Still open: the GPU video path (mpv GL → IOSurface → `gpui::surface`).
+Per-window mute shipped — a viewer window mutes its video while it isn't the
+active window (`observe_window_activation` → `set_muted`), so stacked
+transparent viewers don't all play audio at once. Phase 2 recap: removed the
+VLC-era seamless-reopen apparatus —
 `commit_video_enhance` now pushes filters through live `set_enhance`; the
 `video_pending_seek`/`video_repause` deferral and the poll's pre-seek-frame
 dance are gone (−67 lines in `window.rs`). The decision log is in
