@@ -63,6 +63,9 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
         "magic" => run_magic_cli(&args[1..]).map(Some),
         "du" | "disk-usage" => run_disk_usage_cli(&args[1..]).map(Some),
         "thumb" | "thumbnail" => run_thumb_cli(&args[1..]).map(Some),
+        // Health check. `--doctor` is also accepted (it would otherwise fall
+        // through to the GUI as an unknown flag).
+        "doctor" | "--doctor" => Ok(Some(run_doctor_cli())),
         "help" | "-h" | "--help" => {
             print_cli_help();
             Ok(Some(0))
@@ -81,9 +84,22 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
     }
 }
 
+/// `feraille doctor` / `feraille --doctor` — print the diagnostics health
+/// report and exit. Runs before the event loop, so it works even when the GUI
+/// can't start (the common "nothing happens" case). Exit code 1 if any check
+/// FAILs, else 0 — so it's scriptable / pasteable into a bug report.
+fn run_doctor_cli() -> i32 {
+    let report = feraille_gpui::diagnostics::run_checks();
+    print!("{}", feraille_gpui::diagnostics::render_text(&report));
+    match report.worst() {
+        feraille_gpui::diagnostics::Status::Fail => 1,
+        _ => 0,
+    }
+}
+
 fn print_cli_help() {
     println!(
-        "Feraille\n\nUsage:\n  feraille                 Open the GPUI file manager\n  feraille magic [path]...  Print magic-byte format (defaults to current directory; directories are listed shallow)\n  feraille du [options] <path>  Print disk-usage summary\n  feraille thumb <path> [--out <png>] [--size N]  Extract a file's thumbnail/preview to a PNG\n\nDisk usage options:\n  --top <n>        Number of entries to show (default: 20)\n  --packages       Descend into macOS package directories\n\nThumb options:\n  --out <path>     Output PNG path (default: thumb.png)\n  --size <px>      Max edge in pixels (default: 512)"
+        "Feraille\n\nUsage:\n  feraille                 Open the GPUI file manager\n  feraille magic [path]...  Print magic-byte format (defaults to current directory; directories are listed shallow)\n  feraille du [options] <path>  Print disk-usage summary\n  feraille thumb <path> [--out <png>] [--size N]  Extract a file's thumbnail/preview to a PNG\n  feraille doctor          Print a health check (config / storage / deps) and exit\n\nDisk usage options:\n  --top <n>        Number of entries to show (default: 20)\n  --packages       Descend into macOS package directories\n\nThumb options:\n  --out <path>     Output PNG path (default: thumb.png)\n  --size <px>      Max edge in pixels (default: 512)"
     );
 }
 

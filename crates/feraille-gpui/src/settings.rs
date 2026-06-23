@@ -41,6 +41,7 @@ pub enum SettingsCategory {
     Layout,
     Plugins,
     Shortcuts,
+    Diagnostics,
     About,
 }
 
@@ -52,6 +53,7 @@ impl SettingsCategory {
         SettingsCategory::Layout,
         SettingsCategory::Plugins,
         SettingsCategory::Shortcuts,
+        SettingsCategory::Diagnostics,
         SettingsCategory::About,
     ];
 
@@ -63,6 +65,7 @@ impl SettingsCategory {
             SettingsCategory::Plugins => "Plugins",
             SettingsCategory::Layout => "Layout",
             SettingsCategory::Shortcuts => "Keyboard Shortcuts",
+            SettingsCategory::Diagnostics => "Diagnostics",
             SettingsCategory::About => "About",
         }
     }
@@ -75,7 +78,8 @@ impl SettingsCategory {
             SettingsCategory::Layout => 3,
             SettingsCategory::Plugins => 4,
             SettingsCategory::Shortcuts => 5,
-            SettingsCategory::About => 6,
+            SettingsCategory::Diagnostics => 6,
+            SettingsCategory::About => 7,
         }
     }
 }
@@ -87,6 +91,7 @@ pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {
         "layout" => SettingsCategory::Layout,
         "plugins" | "plugin" => SettingsCategory::Plugins,
         "shortcuts" | "keyboard" | "keys" => SettingsCategory::Shortcuts,
+        "diagnostics" | "diag" | "health" | "doctor" => SettingsCategory::Diagnostics,
         "about" => SettingsCategory::About,
         _ => SettingsCategory::Appearance,
     }
@@ -280,6 +285,11 @@ pub struct SettingsView {
     /// live `AntTrailColor` global and persists each change, so the file
     /// list and grid recolor at once.
     ant_trail_picker: Entity<ColorPickerState>,
+    /// The Diagnostics page's health report, computed once when the settings
+    /// window opens (same one-time-I/O-in-`new` pattern as
+    /// `home_hidden_count`). Reopening Settings re-runs the checks. `Rc` so the
+    /// per-frame page-render closures can share it cheaply.
+    diagnostics: std::rc::Rc<crate::diagnostics::Report>,
 }
 
 impl SettingsView {
@@ -332,6 +342,7 @@ impl SettingsView {
             home_hidden_count: count_home_hidden_items(),
             selection_picker,
             ant_trail_picker,
+            diagnostics: std::rc::Rc::new(crate::diagnostics::run_checks()),
         }
     }
 }
@@ -375,6 +386,7 @@ impl Render for SettingsView {
                 self.home_hidden_count,
                 &self.selection_picker,
                 &self.ant_trail_picker,
+                &self.diagnostics,
             ))
             .default_selected_index(SelectIndex {
                 page_ix: self.category.page_index(),
@@ -596,6 +608,7 @@ fn build_pages(
     home_hidden_count: Option<usize>,
     selection_picker: &Entity<ColorPickerState>,
     ant_trail_picker: &Entity<ColorPickerState>,
+    diagnostics: &std::rc::Rc<crate::diagnostics::Report>,
 ) -> Vec<SettingPage> {
     vec![
         appearance_page(selection_picker.clone(), ant_trail_picker.clone()),
@@ -604,8 +617,145 @@ fn build_pages(
         layout_page(),
         plugins_page(),
         shortcuts_page(),
+        diagnostics_page(diagnostics.clone()),
         about_page(),
     ]
+}
+
+/// The Diagnostics page: the health-check report grouped by area, the recent
+/// activity trail, and a "Copy report" button. The report is computed once in
+/// [`SettingsView::new`]; this only renders it. `feraille --doctor` prints the
+/// same report from a terminal.
+fn diagnostics_page(report: std::rc::Rc<crate::diagnostics::Report>) -> SettingPage {
+    use crate::diagnostics::Status;
+
+    let mut page =
+        SettingPage::new("Diagnostics").icon(Icon::empty().path("icons/activity.svg"));
+
+    // Summary header.
+    {
+        let report = report.clone();
+        page = page.group(SettingGroup::new().item(SettingItem::render(move |_o, _w, cx| {
+            let (ok, warn, fail) = report.tally();
+            let fg = cx.theme().foreground;
+            let muted = cx.theme().muted_foreground;
+            gpui_component::v_flex()
+                .w_full()
+                .gap_1()
+                .child(div().text_scale_sm().text_color(fg).child(format!(
+                    "Feraille v{} · {}/{} · {ok} OK, {warn} WARN, {fail} FAIL",
+                    report.app_version, report.os, report.arch
+                )))
+                .child(div().w_full().text_scale_xs().text_color(muted).child(
+                    "Health check of the app's storage and environment. \
+                     Run `feraille --doctor` for the same report from a terminal.",
+                ))
+        })));
+    }
+
+    // One group per check group, one row per check.
+    for (gi, group) in report.groups.iter().enumerate() {
+        let mut sg = SettingGroup::new().title(group.title);
+        for ci in 0..group.checks.len() {
+            let report = report.clone();
+            sg = sg.item(SettingItem::render(move |_o, _w, cx| {
+                let check = &report.groups[gi].checks[ci];
+                let (tag_color, tag) = match check.status {
+                    Status::Ok => (gpui::rgb(0x16a34a), "OK"),
+                    Status::Warn => (gpui::rgb(0xd97706), "WARN"),
+                    Status::Fail => (gpui::rgb(0xdc2626), "FAIL"),
+                };
+                let fg = cx.theme().foreground;
+                let muted = cx.theme().muted_foreground;
+                gpui_component::v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(
+                        gpui_component::h_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .w(px(38.0))
+                                    .text_scale_xs()
+                                    .text_color(tag_color)
+                                    .child(tag),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_scale_sm()
+                                    .text_color(fg)
+                                    .child(SharedString::from(check.name.clone())),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .text_scale_xs()
+                            .text_color(muted)
+                            .child(SharedString::from(check.detail.clone())),
+                    )
+            }));
+        }
+        page = page.group(sg);
+    }
+
+    // Recent activity trail (last ~20 events).
+    page = page.group(
+        SettingGroup::new()
+            .title("Activity trail")
+            .item(SettingItem::render(move |_o, _w, cx| {
+                let muted = cx.theme().muted_foreground;
+                let lines = crate::trail::render_lines();
+                let body = if lines.is_empty() {
+                    "No activity recorded yet.".to_string()
+                } else {
+                    let start = lines.len().saturating_sub(20);
+                    lines[start..].join("\n")
+                };
+                div()
+                    .w_full()
+                    .text_scale_xs()
+                    .text_color(muted)
+                    .child(SharedString::from(body))
+            })),
+    );
+
+    // Copy-report action.
+    page = page.group(SettingGroup::new().item(SettingItem::render(move |_o, _w, _cx| {
+        use gpui_component::{Sizable as _, button::Button};
+        let report = report.clone();
+        gpui_component::h_flex().w_full().gap_2().child(
+            Button::new("diag-copy")
+                .label("Copy report")
+                .outline()
+                .small()
+                .on_click(move |_, _w, _cx| {
+                    let mut text = crate::diagnostics::render_text(&report);
+                    let trail = crate::trail::render_lines();
+                    if !trail.is_empty() {
+                        text.push_str("\n[Activity trail]\n");
+                        for l in &trail {
+                            text.push_str(l);
+                            text.push('\n');
+                        }
+                    }
+                    crate::platform_shell::copy_to_clipboard(&text);
+                }),
+        )
+        .child(
+            Button::new("diag-report")
+                .label("Create report bundle\u{2026}")
+                .outline()
+                .small()
+                .on_click(|_, window, _cx| crate::report::open_reporter(window)),
+        )
+    })));
+
+    page
 }
 
 fn search_dupes_page() -> SettingPage {

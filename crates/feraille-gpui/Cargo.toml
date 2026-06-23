@@ -42,6 +42,10 @@ smallvec = "1"
 # loader (docs/features/VIEWER.md); non-raster formats fall back to
 # Quick Look thumbnails.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+# The issue reporter bundles the diagnostics report + activity trail + a
+# (redacted) screenshot into a `.zip`. Same major/features as the shell crates'
+# compress_paths so the graph holds a single zip.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 # Used by the --screenshot harness on Windows to pull the HWND out of
 # gpui::Window (which implements HasWindowHandle). Same major as
 # gpui's transitive use so we stay single-copy in the graph.

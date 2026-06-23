@@ -238,6 +238,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Layout | `icons/settings-2.svg` ↑ | Lucide |
 | Plugins | `icons/settings.svg` ↑ | Lucide |
 | Keyboard Shortcuts | `icons/keyboard.svg` | **In-house** Lucide `keyboard` (stroke 2, matches rail) |
+| Diagnostics | `icons/activity.svg` | **In-house** Lucide `activity` (heartbeat line; stroke 2, matches rail). Spare pool lacked a health/diagnostic glyph (only `circle-check`/`heart`, both taken). |
 | About | `icons/info.svg` ↑ | Lucide |
 | (in-page checkmark) | `icons/circle-check.svg` ↑ | Lucide |
 
