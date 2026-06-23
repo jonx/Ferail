@@ -25,6 +25,61 @@ The **prime directive** from [ARCHITECTURE.md](../ARCHITECTURE.md): the UI must 
 
 ---
 
+## 2.0 Status update — `windows-parity` branch (2026-06-23)
+
+The port was first built/run **natively on Windows** (not just cross-checked
+from Mac) and brought to broad feature parity. All of the below is verified by
+building + running + screenshotting on a real Windows 11 box. Each landed as its
+own commit on the `windows-parity` branch:
+
+- **Build restored.** The big macOS refresh had leaked 5 Mac-only assumptions
+  into `feraille-gpui` (direct `feraille_shell_mac::` calls in `entry_info.rs`;
+  `show_desktop` / `show_desktop_available` missing from win32/linux). Routed
+  through `platform_shell`; added the missing surface to both shell crates.
+- **VLC video is cross-platform.** `feraille-video-vlc` was macOS-only; its
+  decode/vmem model is platform-neutral — only the `dlopen` loader + `.app`
+  layout were Mac-shaped. Generalised to a `dynload` shim (dlopen on unix,
+  `LoadLibraryW` on Windows) + per-OS path resolution. `--features vlc` now
+  works on Windows/Linux; point Settings → Plugins at the VLC **install dir**
+  (`C:\Program Files\VideoLAN\VLC`).
+- **Headless `--screenshot` works** (it had regressed — gpui_windows has no
+  `render_to_image`). Restored via `PrintWindow(PW_RENDERFULLCONTENT)`, with the
+  window placed off-screen + `WS_EX_TOOLWINDOW` so it's invisible to the user.
+- **Get Info is now Properties-dialog-level.** `read_stat_info` was unix-only →
+  returned `None` on Windows (Size "0 B", no dates). Implemented via
+  `MetadataExt` (size, created/modified/accessed, read-only/hidden attrs); the
+  Locked/Invisible toggles write via `Get/SetFileAttributesW`; `read_shell_info`
+  returns the native type name (`SHGetFileInfoW`/`SHGFI_TYPENAME`).
+- **Cmd+P preview fixed** — an auto-hide below 900px was silently suppressing
+  the explicit toggle on smaller windows.
+- **make_alias_in / pick_folder / eject_volume** implemented (IShellLink in a
+  dest dir; `IFileOpenDialog` + `FOS_PICKFOLDERS`; dismount + `IOCTL_STORAGE_EJECT_MEDIA`).
+- **Sidebar Locations resolve via `SHGetKnownFolderPath`** so OneDrive-moved
+  Documents/Pictures/etc. point at the real path (was a literal
+  `%USERPROFILE%\Pictures` that "Folder not found"-ed on most OneDrive boxes).
+- **Verified working as-is** (no change needed): Mark-of-the-Web (`Zone.Identifier`
+  ADS → the same quarantine UI as macOS, with Source/Referrer + Unblock), drive
+  Volumes, per-file icons, dark theme chrome (custom titlebar), grid/list/
+  settings/disk-usage/search/duplicates rendering.
+
+**Remaining (the two large/blocked items):**
+
+1. **Native-default video** (`video_overlay_*` still stubbed). Out-of-box video
+   needs a Media Foundation backend (`IMFMediaEngine` frame-server: D3D11 device
+   + `TransferVideoFrame` readback + audio, the analogue of macOS AVFoundation).
+   A faithful player needs A/V-with-sync, so it's a dedicated effort — **the VLC
+   plugin covers full playback in the meantime.**
+2. **Truly-headless screenshot**: implement `render_to_image` in `gpui_windows`
+   (D3D11 staging-texture readback) to drop the PrintWindow/off-screen hack —
+   tracked in [GPUI-UPSTREAM.md](../GPUI-UPSTREAM.md) item 7; needs a zed fork +
+   `[patch]` to land committably.
+
+The rest of §2–§6 below is the original Mac-authored handoff and predates this
+work; read it for the architecture/mechanics, but treat §2.0 as the current
+state.
+
+---
+
 ## 2. State of the Windows port (as of this writing)
 
 **Already done from macOS** (committed; verified from Mac via `cargo check --target x86_64-pc-windows-msvc`):
