@@ -156,9 +156,9 @@ impl Shell {
         // Hide Locations from the Browse tree so the same depth-1 entry
         // (Documents, Downloads, etc.) doesn't appear twice. User-curated
         // Favorites are *not* hidden — those are intentional shortcuts.
-        let location_paths: HashSet<PathBuf> = feraille_fs_native::paths::well_known_locations()
-            .into_iter()
-            .map(|loc| loc.path)
+        let location_paths: HashSet<PathBuf> = crate::special_folders::locations(cx)
+            .iter()
+            .map(|loc| loc.path.clone())
             .collect();
         let current = self.active_tab().current_dir.clone();
         let node_id = self.process.fs.id_for_path(&home);
@@ -335,7 +335,7 @@ impl Shell {
         let current = self.active_tab().current_dir.clone();
         let mut menu = SidebarMenu::new();
         let favs = self.process.favorites.read(cx);
-        for loc in feraille_fs_native::paths::well_known_locations() {
+        for loc in crate::special_folders::locations(cx).iter() {
             let path = loc.path.clone();
             let node_id = self.process.fs.id_for_path(&path);
             self.process

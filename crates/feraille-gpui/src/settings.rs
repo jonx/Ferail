@@ -425,7 +425,9 @@ pub fn open_settings_window(cx: &mut App) {
 ///
 /// `get` returns the current stored value; `persist` writes the picked
 /// value. Both are plain `fn` pointers (the getters/setters capture
-/// nothing — they read/write `app_state`).
+/// nothing — they read/write `app_state`). Most dropdowns only persist;
+/// when a pick also has to apply live (recompute a global), use
+/// [`dropdown_setting_with`], which hands the setter `&mut App`.
 fn dropdown_setting(
     title: &'static str,
     description: &'static str,
@@ -435,6 +437,26 @@ fn dropdown_setting(
     disabled: &'static [&'static str],
     get: fn() -> String,
     persist: fn(&str),
+) -> SettingItem {
+    // Persist, then repaint so the button reflects the pick. Live settings
+    // skip this wrapper and pass their own `on_pick` to recompute a global.
+    dropdown_setting_with(title, description, options, disabled, get, move |value, cx| {
+        persist(value);
+        cx.refresh_windows();
+    })
+}
+
+/// The shared dropdown rendering behind [`dropdown_setting`], parameterised by
+/// what a pick does. `on_pick` runs with `&mut App`, so a live setting can
+/// recompute a global and repaint — not just persist. `Copy` so every menu
+/// item can capture its own copy.
+fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
+    title: &'static str,
+    description: &'static str,
+    options: &'static [(&'static str, &'static str)],
+    disabled: &'static [&'static str],
+    get: fn() -> String,
+    on_pick: F,
 ) -> SettingItem {
     SettingItem::render(move |_options, _window, cx| {
         use gpui_component::{
@@ -483,16 +505,15 @@ fn dropdown_setting(
                                                 .checked(checked)
                                                 .disabled(disabled.contains(&value))
                                                 .on_click(move |_, _window: &mut Window, cx: &mut App| {
-                                                    persist(value);
-                                                    // Re-render so the dropdown
-                                                    // button reflects the new pick.
-                                                    // This fires inside the popup, so
-                                                    // window.refresh() would repaint
-                                                    // the popup, not the settings page
-                                                    // behind it — refresh_windows
-                                                    // (what the theme tiles use) hits
-                                                    // every window.
-                                                    cx.refresh_windows();
+                                                    // `on_pick` persists and repaints
+                                                    // (and, for a live setting, also
+                                                    // recomputes its global). The
+                                                    // refresh inside must hit every
+                                                    // window — this fires in the popup,
+                                                    // so a window-local refresh would
+                                                    // repaint the popup, not the page
+                                                    // behind it.
+                                                    on_pick(value, cx);
                                                 }),
                                         )
                                     })
@@ -795,7 +816,7 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
         ),
         _ => "Reveal items that start with a dot, like .config and .ssh. Takes effect on next launch.".to_string(),
     };
-    SettingPage::new("Files")
+    let page = SettingPage::new("Files")
         .icon(Icon::empty().path("icons/folder.svg"))
         .group(
             SettingGroup::new()
@@ -818,7 +839,47 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
                         cx.set_global(crate::thumbnails::ShowThumbnails(val));
                     },
                 )),
-        )
+        );
+    // Sidebar special-folder root — only meaningful where OneDrive's
+    // Known-Folder-Move can split a folder between local and cloud, i.e.
+    // Windows. Omitted elsewhere.
+    #[cfg(target_os = "windows")]
+    let page =
+        page.group(SettingGroup::new().title("Locations").item(locations_mode_setting()));
+    page
+}
+
+/// The sidebar Locations root dropdown (Windows / OneDrive). Picks which copy
+/// of a moved folder the sidebar points at; applies live via the
+/// `ResolvedLocations` global so open windows' sidebars update without a
+/// relaunch. See [`crate::special_folders`].
+#[cfg(target_os = "windows")]
+fn locations_mode_setting() -> SettingItem {
+    dropdown_setting_with(
+        "Special folders",
+        "When OneDrive moves your Desktop, Documents, or Pictures into the cloud it often \
+         leaves a local copy behind, so \u{201C}where is my Documents?\u{201D} has two answers. \
+         Automatic follows Windows (cloud where it moved them, local otherwise). Local prefers \
+         your %USERPROFILE% copy; OneDrive prefers the OneDrive copy \u{2014} each falls back to \
+         the other when its copy doesn\u{2019}t exist, so a shortcut never opens to nothing.",
+        &[
+            ("auto", "Automatic (recommended)"),
+            ("local", "Local profile"),
+            ("onedrive", "OneDrive"),
+        ],
+        &[],
+        || {
+            app_state::load()
+                .special_folder_mode
+                .unwrap_or_else(|| "auto".into())
+        },
+        |value: &str, cx: &mut App| {
+            crate::special_folders::persist_and_apply(
+                feraille_fs_native::paths::SpecialFolderMode::from_str(value),
+                cx,
+            );
+        },
+    )
 }
 
 fn layout_page() -> SettingPage {

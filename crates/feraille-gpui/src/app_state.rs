@@ -10,6 +10,13 @@ use std::path::PathBuf;
 
 const FILENAME: &str = "gpui-state.txt";
 
+/// Full path to the settings file (config dir + filename), or `None` when the
+/// platform's config directory can't be resolved. Exposed for the diagnostics
+/// health check.
+pub fn config_path() -> Option<PathBuf> {
+    config_dir().map(|d| d.join(FILENAME))
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AppState {
     pub last_dir: Option<PathBuf>,
@@ -102,10 +109,17 @@ pub struct AppState {
     /// Path to the VLC.app bundle the VLC provider loads libvlc from.
     /// `None` == the default `/Applications/VLC.app`.
     pub vlc_app_path: Option<String>,
+
+    // ---- Sidebar Locations (Windows / OneDrive) ----
+    /// Which root the sidebar's special folders resolve against when
+    /// OneDrive has moved them: "auto" (shell default), "local"
+    /// (`%USERPROFILE%`), or "onedrive". `None` == auto. Windows-only;
+    /// ignored elsewhere. See [`feraille_fs_native::paths::SpecialFolderMode`].
+    pub special_folder_mode: Option<String>,
 }
 
 #[cfg(target_os = "macos")]
-fn config_dir() -> Option<PathBuf> {
+pub fn config_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     let mut p = PathBuf::from(home);
     p.push("Library/Application Support/Feraille");
@@ -113,7 +127,7 @@ fn config_dir() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
-fn config_dir() -> Option<PathBuf> {
+pub fn config_dir() -> Option<PathBuf> {
     // Windows has no $HOME — per-user app config lives under %APPDATA%
     // (Roaming). Without this the whole settings store silently no-ops:
     // save() bails when config_dir() is None and load() returns defaults, so
@@ -132,7 +146,7 @@ fn config_dir() -> Option<PathBuf> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-fn config_dir() -> Option<PathBuf> {
+pub fn config_dir() -> Option<PathBuf> {
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
         let mut p = PathBuf::from(xdg);
         p.push("feraille");
@@ -280,6 +294,12 @@ pub fn load() -> AppState {
                     out.vlc_app_path = Some(val.trim().to_string());
                 }
             }
+            "special_folder_mode" => {
+                let v = val.trim().to_lowercase();
+                if matches!(v.as_str(), "auto" | "local" | "onedrive") {
+                    out.special_folder_mode = Some(v);
+                }
+            }
             _ => {}
         }
     }
@@ -369,6 +389,9 @@ pub fn save(state: &AppState) {
     }
     if let Some(p) = &state.vlc_app_path {
         s.push_str(&format!("vlc_app_path={p}\n"));
+    }
+    if let Some(m) = &state.special_folder_mode {
+        s.push_str(&format!("special_folder_mode={m}\n"));
     }
     let _ = std::fs::write(dir.join(FILENAME), s);
 }

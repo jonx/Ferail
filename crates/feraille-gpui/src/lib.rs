@@ -41,6 +41,7 @@ pub mod screenshot;
 pub mod selection_colors;
 pub mod settings;
 pub mod shell;
+pub mod special_folders;
 pub mod status_bar;
 pub mod syntax_extra;
 pub mod task_panel;

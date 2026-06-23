@@ -474,6 +474,11 @@ fn run_gui(args: screenshot::Args) {
         let process = feraille_gpui::shell::Shell::build_process_state(cx);
         cx.set_global(feraille_gpui::process_state::ProcessStateGlobal(process));
 
+        // Resolve the sidebar Locations for the persisted special-folder
+        // mode (Windows/OneDrive) once, before any window paints. Render
+        // reads this cached global — it must never stat (Prime Directive).
+        feraille_gpui::special_folders::seed(cx);
+
         // Live volume mount/unmount watch: NSWorkspace notifications
         // [mac] feed a coalescing channel; the drain task re-lists
         // volumes off-thread and fans the change out to every window's
