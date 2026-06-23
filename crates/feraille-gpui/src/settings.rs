@@ -22,6 +22,7 @@ use gpui::{Axis, *};
 use gpui_component::{
     ActiveTheme, Icon, Root, Theme, ThemeMode,
     color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
+    input::{Input, InputEvent, InputState},
     setting::{SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
 };
 
@@ -280,6 +281,12 @@ pub struct SettingsView {
     /// live `AntTrailColor` global and persists each change, so the file
     /// list and grid recolor at once.
     ant_trail_picker: Entity<ColorPickerState>,
+    /// The Plugins page's "VLC location" text field. An editable path needs a
+    /// managed `InputState` (cursor, selection, edits), so the view owns one and
+    /// renders a stateless `Input` over it each frame. Its subscription persists
+    /// every edit; the "Browse…" button writes a picked folder back into it.
+    vlc_path_input: Entity<InputState>,
+    _vlc_path_sub: Subscription,
 }
 
 impl SettingsView {
@@ -327,11 +334,25 @@ impl SettingsView {
         )
         .detach();
 
+        // VLC location field. Seed from the persisted path (or the platform
+        // default), and persist every edit so a typed path sticks.
+        let initial_vlc_path: String = app_state::load()
+            .vlc_app_path
+            .unwrap_or_else(|| crate::viewer::backend_native::default_vlc_path().into());
+        let vlc_path_input =
+            cx.new(|cx| InputState::new(window, cx).default_value(initial_vlc_path));
+        let _vlc_path_sub =
+            cx.subscribe(&vlc_path_input, |_this, input, _event: &InputEvent, cx| {
+                persist_vlc_app_path(input.read(cx).value().as_ref());
+            });
+
         Self {
             category: initial,
             home_hidden_count: count_home_hidden_items(),
             selection_picker,
             ant_trail_picker,
+            vlc_path_input,
+            _vlc_path_sub,
         }
     }
 }
@@ -375,6 +396,7 @@ impl Render for SettingsView {
                 self.home_hidden_count,
                 &self.selection_picker,
                 &self.ant_trail_picker,
+                &self.vlc_path_input,
             ))
             .default_selected_index(SelectIndex {
                 page_ix: self.category.page_index(),
@@ -571,13 +593,14 @@ fn build_pages(
     home_hidden_count: Option<usize>,
     selection_picker: &Entity<ColorPickerState>,
     ant_trail_picker: &Entity<ColorPickerState>,
+    vlc_path_input: &Entity<InputState>,
 ) -> Vec<SettingPage> {
     vec![
         appearance_page(selection_picker.clone(), ant_trail_picker.clone()),
         files_page(home_hidden_count),
         search_dupes_page(),
         layout_page(),
-        plugins_page(),
+        plugins_page(vlc_path_input.clone()),
         shortcuts_page(),
         about_page(),
     ]
@@ -852,7 +875,7 @@ fn persist_vlc_app_path(value: &str) {
     });
 }
 
-fn plugins_page() -> SettingPage {
+fn plugins_page(vlc_path_input: Entity<InputState>) -> SettingPage {
     // The VLC provider is only compiled in with the `vlc` feature. In a stock
     // build, grey the "VLC" option out (unselectable) and say why in the
     // description, so it's discoverable but can't be picked into a no-op.
@@ -892,26 +915,67 @@ fn plugins_page() -> SettingPage {
                     },
                     persist_video_backend,
                 ))
-                .item(
-                    SettingItem::new(
-                        "VLC location",
-                        SettingField::input(
-                            |_cx: &App| {
-                                SharedString::from(
-                                    app_state::load().vlc_app_path.unwrap_or_else(|| {
-                                        crate::viewer::backend_native::default_vlc_path().into()
-                                    }),
-                                )
-                            },
-                            |val: SharedString, _cx: &mut App| persist_vlc_app_path(val.as_ref()),
-                        ),
-                    )
-                    .description(
+                .item(vlc_location_setting(vlc_path_input)),
+        )
+}
+
+/// The "VLC location" row: a label, an editable path field with a "Browse…"
+/// button to its right, and a full-width description below. Laid out like
+/// [`switch_setting`] / [`dropdown_setting`] (control on the top line, full-width
+/// description) so the description never squeezes the path field into a clipped
+/// sliver. The field is a managed `InputState` owned by the `SettingsView`; the
+/// Browse button opens the native folder picker and writes the choice back.
+fn vlc_location_setting(input: Entity<InputState>) -> SettingItem {
+    SettingItem::render(move |_options, _window, cx| {
+        use gpui_component::{ActiveTheme as _, Sizable as _, button::Button};
+
+        let muted = cx.theme().muted_foreground;
+        let fg = cx.theme().foreground;
+        let input_for_browse = input.clone();
+
+        gpui_component::v_flex()
+            .w_full()
+            .gap_1()
+            .child(div().text_scale_sm().text_color(fg).child("VLC location"))
+            .child(
+                gpui_component::h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().child(Input::new(&input)))
+                    .child(
+                        Button::new("vlc-browse")
+                            .label("Browse\u{2026}")
+                            .outline()
+                            .small()
+                            .flex_shrink_0()
+                            .on_click(move |_, window: &mut Window, cx: &mut App| {
+                                // Native folder picker. Synchronous + user-
+                                // initiated; the OS pumps its own modal loop.
+                                if let Some(dir) = crate::platform_shell::pick_folder() {
+                                    let picked = dir.to_string_lossy().into_owned();
+                                    input_for_browse.update(cx, |state, cx| {
+                                        state.set_value(picked.clone(), window, cx);
+                                    });
+                                    // set_value suppresses the change event, so
+                                    // persist + repaint explicitly.
+                                    persist_vlc_app_path(&picked);
+                                    window.refresh();
+                                }
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .text_scale_sm()
+                    .text_color(muted)
+                    .child(
                         "Where libvlc is loaded from — a VLC.app bundle on macOS, the VLC \
                          install folder on Windows/Linux (e.g. C:\\Program Files\\VideoLAN\\VLC).",
                     ),
-                ),
-        )
+            )
+    })
 }
 
 fn shortcuts_page() -> SettingPage {
