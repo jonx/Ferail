@@ -44,8 +44,11 @@ use windows::Win32::Media::MediaFoundation::{
     MF_MEDIA_ENGINE_DXGI_MANAGER, MF_MEDIA_ENGINE_EVENT_CANPLAY, MF_MEDIA_ENGINE_EVENT_ENDED,
     MF_MEDIA_ENGINE_EVENT_ERROR, MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT,
 };
-use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
-use windows::Win32::Foundation::RECT;
+use windows::Win32::Foundation::{RECT, RPC_E_CHANGED_MODE};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+    COINIT_APARTMENTTHREADED,
+};
 
 /// MF version arg to `MFStartup` (MF_VERSION = 0x00020070).
 const MF_VERSION: u32 = 0x0002_0070;
@@ -116,6 +119,44 @@ struct Player {
     ready: Arc<AtomicBool>,
     ended: Arc<AtomicBool>,
     last_pts: i64,
+    // Keep COM initialized until after the Media Engine interfaces above drop.
+    _com: ComApartment,
+}
+
+/// COM apartment ownership for the thread that owns a `Player`.
+///
+/// A Media Foundation player stores COM interfaces in the thread-local
+/// registry, so COM must stay initialized until the player is removed. If this
+/// thread was already initialized in a different apartment, proceed without
+/// calling `CoUninitialize`; COM is still active and we do not own that count.
+struct ComApartment {
+    uninitialize_on_drop: bool,
+}
+
+impl ComApartment {
+    fn init() -> Option<Self> {
+        let result = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok() };
+        match result {
+            Ok(()) => Some(Self {
+                uninitialize_on_drop: true,
+            }),
+            Err(e) if e.code() == RPC_E_CHANGED_MODE => Some(Self {
+                uninitialize_on_drop: false,
+            }),
+            Err(e) => {
+                eprintln!("[mf] CoInitializeEx failed: {:?}", e);
+                None
+            }
+        }
+    }
+}
+
+impl Drop for ComApartment {
+    fn drop(&mut self) {
+        if self.uninitialize_on_drop {
+            unsafe { CoUninitialize() };
+        }
+    }
 }
 
 /// Build a D3D11 device with BGRA + video support and multithread protection
@@ -173,6 +214,8 @@ macro_rules! mf_step {
 }
 
 fn try_show(path: &Path, on_ended: Box<dyn Fn() + 'static + Send>) -> Option<u64> {
+    let com = ComApartment::init()?;
+
     let (device, context) = match create_device() {
         Some(d) => d,
         None => {
@@ -259,6 +302,7 @@ fn try_show(path: &Path, on_ended: Box<dyn Fn() + 'static + Send>) -> Option<u64
                 ready,
                 ended,
                 last_pts: -1,
+                _com: com,
             },
         );
     });

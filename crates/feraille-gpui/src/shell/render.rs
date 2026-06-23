@@ -2587,6 +2587,10 @@ impl Render for Shell {
         }
         self.start_tree_icon_warm(icon_warm, cx);
         let breadcrumb = self.breadcrumb(cx);
+        // Keep the OS window caption (Windows taskbar / Alt+Tab,
+        // macOS Window menu) in step with the active folder — without
+        // it the window is nameless when switching tasks.
+        self.sync_window_title(window);
         let path_str = self.active_tab().current_dir.to_string_lossy().into_owned();
 
         // `.collapsible(false)` disables gpui-component's animatable

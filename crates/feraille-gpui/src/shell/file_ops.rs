@@ -812,14 +812,20 @@ impl Shell {
         if paths.is_empty() {
             return;
         }
-        // FanOut: each path is revealed in its own Finder window, so a
+        // FanOut: each path is revealed in its own platform file manager, so a
         // large selection is guarded behind a confirm.
         let count = paths.len();
         let plural = if count == 1 { "item" } else { "items" };
+        let reveal_target = if cfg!(windows) { "Explorer" } else { "Finder" };
+        let reveal_title = if cfg!(windows) {
+            "Reveal in Explorer?"
+        } else {
+            "Reveal in Finder?"
+        };
         self.confirm_fanout(
             count,
-            "Reveal in Finder?",
-            format!("Reveal {count} {plural} in Finder?"),
+            reveal_title,
+            format!("Reveal {count} {plural} in {reveal_target}?"),
             "Reveal",
             window,
             cx,
@@ -828,7 +834,6 @@ impl Shell {
                 for path in &paths {
                     crate::platform_shell::reveal_in_finder(path);
                 }
-                let reveal_target = if cfg!(windows) { "Explorer" } else { "Finder" };
                 let msg = if paths.len() == 1 {
                     let name = paths[0]
                         .file_name()

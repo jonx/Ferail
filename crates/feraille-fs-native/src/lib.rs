@@ -463,64 +463,142 @@ pub fn trash_dirs() -> Vec<PathBuf> {
     Vec::new()
 }
 
-/// Send `path` to the Windows Recycle Bin via `SHFileOperationW`
-/// with `FO_DELETE` + `FOF_ALLOWUNDO`. The legacy API rather than
-/// `IFileOperation` because it's a single function call with no COM
-/// init / reference counting — sufficient for moving one item to
-/// the Recycle Bin.
+/// Send `path` to the Windows Recycle Bin via `IFileOperation`.
 ///
-/// Suppresses confirmation prompts and error UI (`FOF_NOCONFIRMATION
-/// | FOF_NOERRORUI | FOF_SILENT`) so the worker doesn't pop a system
-/// dialog. Errors come back through the `SHFileOperationW` return.
+/// `SHFileOperationW` rejects the `\\?\` extended-length prefix that
+/// `std::fs::canonicalize` returns on Windows, which left long or verbatim
+/// paths unable to use the Recycle Bin. `IFileOperation` is the modern shell
+/// file-operation API and works through an `IShellItem`, so it is the right
+/// surface for long-path-compatible recycle semantics.
+///
+/// Suppresses confirmation prompts and error UI (`FOF_NOCONFIRMATION |
+/// FOF_NOERRORUI | FOF_SILENT`) so the worker does not pop a system dialog.
+/// Errors come back through the returned HRESULT / abort flag.
 #[cfg(windows)]
 pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED,
+    };
     use windows::Win32::UI::Shell::{
-        SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE,
-        SHFILEOPSTRUCTW,
+        FileOperation, IFileOperation, IShellItem, SHCreateItemFromParsingName, FOF_ALLOWUNDO,
+        FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FOFX_RECYCLEONDELETE,
     };
 
-    // SHFileOperationW (the legacy shell API) does NOT accept the `\\?\`
-    // extended-length prefix the file list uses internally — it just fails.
-    // Strip it (handling the `\\?\UNC\` form too) so trashing works for the
-    // common case; very-long paths (> MAX_PATH) would need IFileOperation.
-    let raw = path.to_string_lossy();
-    let cleaned: std::borrow::Cow<str> = if let Some(unc) = raw.strip_prefix(r"\\?\UNC\") {
-        std::borrow::Cow::Owned(format!(r"\\{unc}"))
-    } else if let Some(drive) = raw.strip_prefix(r"\\?\") {
-        std::borrow::Cow::Borrowed(drive)
-    } else {
-        std::borrow::Cow::Borrowed(raw.as_ref())
-    };
-
-    // SHFileOperationW takes a double-null-terminated wide string
-    // list. For a single path that's `<path>\0\0`.
-    let mut pfrom: Vec<u16> = cleaned.encode_utf16().collect();
-    pfrom.push(0); // path terminator
-    pfrom.push(0); // list terminator
-
-    let mut op = SHFILEOPSTRUCTW::default();
-    op.wFunc = FO_DELETE as u32;
-    op.pFrom = windows::core::PCWSTR::from_raw(pfrom.as_ptr());
-    op.fFlags = (FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT).0 as u16;
-
-    let rc = unsafe { SHFileOperationW(&mut op) };
-    if rc == 0 && !op.fAnyOperationsAborted.as_bool() {
-        // SHFileOperationW doesn't report the recycled location, so
-        // Recycle Bin restore-undo isn't available on Windows yet.
-        Ok(None)
-    } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "SHFileOperationW failed for {} (rc={}, aborted={})",
-                path.display(),
-                rc,
-                op.fAnyOperationsAborted.as_bool()
-            ),
-        ))
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
     }
-}
 
+    fn io_other(msg: impl Into<String>) -> std::io::Error {
+        std::io::Error::new(std::io::ErrorKind::Other, msg.into())
+    }
+
+    fn io_from_windows(context: &str, err: windows::core::Error) -> std::io::Error {
+        io_other(format!("{context}: {err}"))
+    }
+
+    fn eq_ascii_u16(a: u16, b: u8) -> bool {
+        let lower = if a >= b'A' as u16 && a <= b'Z' as u16 {
+            a + 32
+        } else {
+            a
+        };
+        lower == (b as char).to_ascii_lowercase() as u16
+    }
+
+    fn nul_terminate(mut wide: Vec<u16>) -> Vec<u16> {
+        wide.push(0);
+        wide
+    }
+
+    fn shell_parsing_names(path: &Path) -> Vec<Vec<u16>> {
+        let raw: Vec<u16> = path.as_os_str().encode_wide().collect();
+        let verbatim = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+        let fallback = if raw.starts_with(&verbatim)
+            && raw.len() >= 8
+            && eq_ascii_u16(raw[4], b'U')
+            && eq_ascii_u16(raw[5], b'N')
+            && eq_ascii_u16(raw[6], b'C')
+            && raw[7] == b'\\' as u16
+        {
+            let mut unc = vec![b'\\' as u16, b'\\' as u16];
+            unc.extend_from_slice(&raw[8..]);
+            Some(unc)
+        } else if raw.starts_with(&verbatim) {
+            Some(raw[4..].to_vec())
+        } else {
+            None
+        };
+
+        let raw = nul_terminate(raw);
+        match fallback.map(nul_terminate) {
+            Some(fallback) if fallback != raw => vec![raw, fallback],
+            _ => vec![raw],
+        }
+    }
+
+    let co = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok() };
+    let _com = match co {
+        Ok(()) => ComGuard(true),
+        Err(e) if e.code() == RPC_E_CHANGED_MODE => ComGuard(false),
+        Err(e) => return Err(io_from_windows("CoInitializeEx", e)),
+    };
+
+    let mut last_item_error = None;
+    let mut item = None;
+    for wide in shell_parsing_names(path) {
+        match unsafe { SHCreateItemFromParsingName(PCWSTR::from_raw(wide.as_ptr()), None) } {
+            Ok(shell_item) => {
+                item = Some(shell_item);
+                break;
+            }
+            Err(e) => last_item_error = Some(e),
+        }
+    }
+    let item: IShellItem = item.ok_or_else(|| {
+        last_item_error
+            .map(|e| io_from_windows("SHCreateItemFromParsingName", e))
+            .unwrap_or_else(|| io_other("SHCreateItemFromParsingName: no parsing candidates"))
+    })?;
+
+    let op: IFileOperation = unsafe {
+        CoCreateInstance(&FileOperation, None, CLSCTX_INPROC_SERVER)
+            .map_err(|e| io_from_windows("CoCreateInstance(FileOperation)", e))?
+    };
+
+    unsafe {
+        op.SetOperationFlags(
+            FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT | FOFX_RECYCLEONDELETE,
+        )
+        .map_err(|e| io_from_windows("IFileOperation::SetOperationFlags", e))?;
+        op.DeleteItem(&item, None)
+            .map_err(|e| io_from_windows("IFileOperation::DeleteItem", e))?;
+        op.PerformOperations()
+            .map_err(|e| io_from_windows("IFileOperation::PerformOperations", e))?;
+        if op
+            .GetAnyOperationsAborted()
+            .map_err(|e| io_from_windows("IFileOperation::GetAnyOperationsAborted", e))?
+            .as_bool()
+        {
+            return Err(io_other(format!(
+                "IFileOperation aborted moving {} to the Recycle Bin",
+                path.display()
+            )));
+        }
+    }
+
+    // IFileOperation does not report the recycled location, so Recycle Bin
+    // restore-undo is not available on Windows yet.
+    Ok(None)
+}
 /// Linux: the freedesktop Trash spec (`$XDG_DATA_HOME/Trash/{files,info}` plus
 /// per-volume `.Trash-<uid>`), via the `trash` crate. The recycled location
 /// isn't surfaced (the file list refreshes from disk), so returns `Ok(None)`.
@@ -829,9 +907,9 @@ mod tests {
     use super::*;
 
     /// Trashing must work on the `\\?\`-prefixed paths the file list uses
-    /// (std::fs::canonicalize yields them on Windows). SHFileOperationW
-    /// rejects that prefix, so move_to_trash strips it. Regression test for
-    /// "move to trash failed when deleting duplicates".
+    /// (std::fs::canonicalize yields them on Windows). The Windows path now
+    /// feeds an IShellItem to IFileOperation so Recycle Bin moves are not
+    /// limited to the legacy SHFileOperationW surface.
     #[cfg(windows)]
     #[test]
     fn move_to_trash_handles_verbatim_prefix() {
