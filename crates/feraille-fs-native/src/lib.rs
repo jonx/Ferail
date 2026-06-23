@@ -521,9 +521,19 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+/// Linux: the freedesktop Trash spec (`$XDG_DATA_HOME/Trash/{files,info}` plus
+/// per-volume `.Trash-<uid>`), via the `trash` crate. The recycled location
+/// isn't surfaced (the file list refreshes from disk), so returns `Ok(None)`.
+#[cfg(target_os = "linux")]
 pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
-    // Conservative on non-macOS/Windows — refuse rather than silently delete.
+    trash::delete(path)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+    Ok(None)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
+    // Conservative on other targets — refuse rather than silently delete.
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         format!(
