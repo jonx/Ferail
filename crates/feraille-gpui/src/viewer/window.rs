@@ -137,17 +137,6 @@ fn build_video_frame(bgra: Vec<u8>, w: u32, h: u32) -> Option<Arc<RenderImage>> 
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(buf)])))
 }
 
-/// One composited background layer beneath the primary video — a muted video
-/// stream whose latest frame is drawn under the (keyed) top video so the
-/// keyed-transparent pixels reveal it (docs/features/VIDEO-MPV.md, layers).
-struct BgLayer {
-    stream: Box<dyn VideoStream>,
-    path: PathBuf,
-    name: String,
-    frame: Option<Arc<RenderImage>>,
-    seq: u64,
-}
-
 /// Number of draggable sliders in the adjustments popup. The colour group
 /// (brightness/contrast/color, plus hue/gamma for VLC video) and the
 /// enhancement group (denoise/sharpen, plus debanding/grain for VLC video).
@@ -480,10 +469,6 @@ pub struct ViewerWindow {
     /// frames are pulled out and drawn through the same stage path as
     /// stills, so the video is a real gpui element (docs/features/VIEWER.md).
     video_overlay: Option<(Box<dyn VideoStream>, PathBuf)>,
-    /// Composited background layers beneath the primary video, bottom-first.
-    /// Each is a muted video stream pulled in the same poll and drawn under the
-    /// keyed top video so its transparent pixels reveal them.
-    video_layers: Vec<BgLayer>,
     /// Bumped on every `open`; the frame-pull loop captures it and exits
     /// once it no longer matches (a newer clip opened, or playback ended).
     /// Replaces the old player-handle-as-key now that the handle is boxed.
@@ -531,6 +516,11 @@ pub struct ViewerWindow {
     /// Keep the viewer window above other windows (the stay-on-top
     /// checkbox). Applied to the native window level.
     stay_on_top: bool,
+    /// Transparent-window mode: the window background + stage canvas go fully
+    /// see-through so a chroma-keyed video stacks over other viewer windows /
+    /// the desktop, composited by the OS window server on the GPU
+    /// (docs/features/VIDEO-MPV.md).
+    transparent: bool,
     /// Current video `(position, duration)` in seconds, refreshed by a
     /// poll while a video overlay is live. Drives the seek bar + time.
     video_position: (f64, f64),
@@ -661,7 +651,6 @@ impl ViewerWindow {
             chrome_hover: false,
             last_title: String::new(),
             video_overlay: None,
-            video_layers: Vec::new(),
             video_epoch: 0,
             vlc_pref: resolve_vlc_pref(),
             video_adjust_native: false,
@@ -674,6 +663,7 @@ impl ViewerWindow {
             video_paused: false,
             video_loop: false,
             stay_on_top: false,
+            transparent: false,
             video_position: (0.0, 0.0),
             cue_in: 0.0,
             cue_out: 1.0,
@@ -960,13 +950,6 @@ impl ViewerWindow {
             self.video_frames_to_drop.push(img);
         }
         self.video_dims = (0.0, 0.0);
-        // Drop background layers (their streams tear down on drop) and retire
-        // their frames for atlas eviction. Layers don't persist across nav.
-        for mut layer in self.video_layers.drain(..) {
-            if let Some(img) = layer.frame.take() {
-                self.video_frames_to_drop.push(img);
-            }
-        }
     }
 
     /// Toggle play/pause of the current video (our gpui control stands in
@@ -1147,21 +1130,6 @@ impl ViewerWindow {
                 self.video_frame_seq = self.video_frame_seq.wrapping_add(1);
             }
         }
-        // Pull each background layer's newest frame (muted, plays independently
-        // of the primary). Collect retired frames out-of-loop to avoid a
-        // double borrow of `self`.
-        let mut layer_drop = Vec::new();
-        for layer in &mut self.video_layers {
-            if let Some((w, h, bytes)) = layer.stream.copy_frame() {
-                if let Some(img) = build_video_frame(bytes, w, h) {
-                    if let Some(old) = layer.frame.replace(img) {
-                        layer_drop.push(old);
-                    }
-                    layer.seq = layer.seq.wrapping_add(1);
-                }
-            }
-        }
-        self.video_frames_to_drop.extend(layer_drop);
         // Enforce the Out cue. A full-length Out (1.0) is the clip's
         // natural end — left to the end-of-play notification
         // (`on_video_ended`) so we don't race it; only a real trim
@@ -1848,7 +1816,9 @@ impl ViewerWindow {
         let video_paused = self.video_paused;
         let video_loop = self.video_loop;
         let stay_on_top = self.stay_on_top;
+        let transparent = self.transparent;
         let entity = cx.entity().clone();
+        let t_entity = cx.entity().clone();
 
         h_flex()
             .h(px(TOOLBAR_H))
@@ -2008,6 +1978,27 @@ impl ViewerWindow {
                         });
                     }),
             )
+            // Transparent-window mode: see through the keyed video AND the
+            // window background, so stacked viewer windows composite via the
+            // OS window server (GPU). Pair with "Stay on top" to layer them.
+            .child(
+                Checkbox::new("viewer-transparent")
+                    .small()
+                    .label("Transparent")
+                    .checked(transparent)
+                    .on_click(move |checked, window, app| {
+                        let on = *checked;
+                        window.set_background_appearance(if on {
+                            gpui::WindowBackgroundAppearance::Transparent
+                        } else {
+                            gpui::WindowBackgroundAppearance::Opaque
+                        });
+                        t_entity.update(app, |this, cx| {
+                            this.transparent = on;
+                            cx.notify();
+                        });
+                    }),
+            )
             .child(
                 div()
                     .flex_1()
@@ -2080,73 +2071,6 @@ impl ViewerWindow {
         )
     }
 
-    /// Background-layer frames laid out under the primary video, bottom-first,
-    /// through the same `stage::layout` so they stay aligned with the top one.
-    fn layer_stages(&self, stage_w: f32, stage_h: f32) -> Vec<gpui::Img> {
-        self.video_layers
-            .iter()
-            .filter_map(|layer| {
-                let img = layer.frame.clone()?;
-                let sz = img.size(0);
-                let dims = self.to_logical((sz.width.0 as f32, sz.height.0 as f32));
-                let r = stage::layout(dims, (stage_w, stage_h), self.stage);
-                Some(
-                    gpui::img(img)
-                        .absolute()
-                        .left(px(r.x))
-                        .top(px(r.y))
-                        .w(px(r.w))
-                        .h(px(r.h)),
-                )
-            })
-            .collect()
-    }
-
-    /// Add the next eligible playlist video (not the current entry, not already
-    /// a layer) as a muted background layer beneath the primary video.
-    fn add_layer(&mut self, cx: &mut Context<Self>) {
-        let current = self.current().map(|e| e.path.clone());
-        let used: std::collections::HashSet<PathBuf> =
-            self.video_layers.iter().map(|l| l.path.clone()).collect();
-        let pick = self
-            .playlist
-            .iter()
-            .find(|e| {
-                self.is_video_path(&e.path)
-                    && Some(&e.path) != current.as_ref()
-                    && !used.contains(&e.path)
-            })
-            .cloned();
-        let Some(entry) = pick else { return };
-        let stream = video_backend(self.vlc_pref.as_deref()).open(
-            &entry.path,
-            Box::new(|| {}),
-            VideoEnhance::default(),
-        );
-        if let Some(mut stream) = stream {
-            stream.set_muted(true);
-            self.video_layers.push(BgLayer {
-                stream,
-                path: entry.path,
-                name: entry.name,
-                frame: None,
-                seq: 0,
-            });
-            cx.notify();
-        }
-    }
-
-    /// Remove the background layer at `idx`, retiring its frame.
-    fn remove_layer(&mut self, idx: usize, cx: &mut Context<Self>) {
-        if idx < self.video_layers.len() {
-            let mut layer = self.video_layers.remove(idx);
-            if let Some(img) = layer.frame.take() {
-                self.video_frames_to_drop.push(img);
-            }
-            cx.notify();
-        }
-    }
-
     fn stage_area(&mut self, stage_w: f32, stage_h: f32, cx: &mut Context<Self>) -> Div {
         let path = self.current().map(|e| e.path.clone());
         let state = path.as_ref().and_then(|p| self.cache.get(p));
@@ -2155,7 +2079,11 @@ impl ViewerWindow {
             .overflow_hidden()
             .w_full()
             .h(px(stage_h))
-            .bg(cx.theme().secondary.opacity(0.35))
+            .bg(if self.transparent {
+                cx.theme().secondary.opacity(0.0)
+            } else {
+                cx.theme().secondary.opacity(0.35)
+            })
             .on_scroll_wheel(cx.listener(Self::on_stage_scroll))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_stage_mouse_down))
             // Right-click anywhere on the stage opens (toggles) the
@@ -2181,10 +2109,7 @@ impl ViewerWindow {
         // Quick Look poster below.
         if self.current_is_video() {
             if let Some(child) = self.video_stage(stage_w, stage_h) {
-                // Background layers render under the (keyed) primary so its
-                // transparent pixels reveal them; primary drawn last = on top.
-                let layers = self.layer_stages(stage_w, stage_h);
-                return area.children(layers).child(child);
+                return area.child(child);
             }
         }
         match state {
@@ -2314,12 +2239,6 @@ impl ViewerWindow {
         let chroma_on = self.chroma_on;
         let chroma_armed = self.eyedrop_armed;
         let chroma_color = self.chroma_color;
-        let layers: Vec<(usize, String)> = self
-            .video_layers
-            .iter()
-            .enumerate()
-            .map(|(i, l)| (i, l.name.clone()))
-            .collect();
 
         let header = h_flex()
             .justify_between()
@@ -2493,51 +2412,6 @@ impl ViewerWindow {
                 })
                 .child(self.slider_row(SliderId::Similarity, cx))
                 .child(self.slider_row(SliderId::Blend, cx))
-            })
-            // Layers — composite background videos beneath the keyed top one.
-            // The top video's transparent (keyed) pixels reveal them.
-            .when(vlc_video, |d| {
-                let d = d.child(
-                    h_flex()
-                        .mt_1()
-                        .justify_between()
-                        .items_center()
-                        .child(
-                            div()
-                                .text_scale_xs()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(cx.theme().muted_foreground)
-                                .child("Layers"),
-                        )
-                        .child(
-                            Button::new("viewer-layer-add")
-                                .label("Add")
-                                .small()
-                                .on_click(cx.listener(|this, _, _, cx| this.add_layer(cx))),
-                        ),
-                );
-                if layers.is_empty() {
-                    return d.child(
-                        div()
-                            .text_scale_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Add a video to show beneath the keyed top."),
-                    );
-                }
-                d.children(layers.into_iter().map(|(i, name)| {
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .child(div().flex_1().text_scale_xs().text_color(foreground).child(name))
-                        .child(
-                            Button::new(("viewer-layer-rm", i))
-                                .label("\u{2715}")
-                                .small()
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.remove_layer(i, cx)),
-                                ),
-                        )
-                }))
             })
     }
 
@@ -2978,7 +2852,11 @@ impl Render for ViewerWindow {
             .on_action(cx.listener(Self::on_dismiss))
             .relative()
             .size_full()
-            .bg(cx.theme().background);
+            .bg(if self.transparent {
+                cx.theme().background.opacity(0.0)
+            } else {
+                cx.theme().background
+            });
 
         let panel = if self.adjust_panel_open {
             Some(self.adjust_panel(cx))

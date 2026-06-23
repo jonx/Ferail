@@ -19,21 +19,30 @@ Phases 0–4 shipped (2026-06-23), all compile-green; see commits + the
 - **2** live `set_enhance`, VLC-era reopen apparatus removed ✅
 - **3** single-layer chroma key + eyedropper ✅ (screenshot-verified)
 - **UI** professional popup rework (labeled sections, swatch/hex/Pick) ✅
-- **4** N-layer background compositing + Layers UI ✅ (UI screenshot-verified)
+- **fix** `vo=libmpv` — mpv was opening its own native window + deadlocking ✅
+- **4** **transparent stacking windows** (replaced the in-app layer stack) ✅
 - **5/4b/rename** — deferred items below
 
-**Phase 4 done — compile + UI verified (2026-06-23)** — Phase 4 adds the
-N-layer compositor (additive: `video_overlay` stays the keyed top layer,
-untouched; a `Vec<BgLayer>` of muted background videos is pulled in the same
-poll and drawn *beneath* it, so the top's keyed-transparent pixels reveal
-them). A new **Layers** section in the popup adds background videos from the
-playlist (Add) and removes them (✕). Per-layer keying and a native file picker
-for arbitrary sources are deferred (Phase 4b) — layers currently source from
-the open folder and render opaque under the keyed top. `set_muted` was added to
-the seam (mpv mutes via the `mute` property; native no-ops) so stacked layers
-don't all play audio. Screenshot-verified the four-section popup
-(`screenshots/mpv-ui-layers.png`); live multi-video compositing needs the poll
-to run, so it's manual-verify (a follow-up, same as the live keyed video).
+**Compositing model: transparent stacking windows (2026-06-23).** The first
+Phase 4 cut composited background videos *inside one window* (a `Vec<BgLayer>`
+stack with a "Layers" popup section). That was the wrong model — per user
+direction, the real design is **one keyed video per window, and the windows
+themselves are transparent**, so independent viewer windows stack and the
+**OS window server composites them on the GPU**. So the in-app layer stack was
+removed and replaced by a **Transparent** toggle in the viewer toolbar
+(`window.set_background_appearance(Transparent)` + transparent root/stage
+backgrounds). With it on, the chroma-keyed-transparent video pixels *and* the
+window background are see-through, so stacking two viewer windows (pair with
+**Stay on top**) shows the lower video through the upper's keyed regions —
+composited by macOS, no app-side compositing. This also answers "rendering on
+the GPU": **layer compositing is now fully GPU via the window server.** The
+remaining CPU cost is the per-window SW frame pull; eliminating *that* (mpv GL
+render → IOSurface → `gpui::surface`) is the documented escalation, still open.
+
+The earlier deadlock fix: without an explicit `vo`, mpv created its native
+macOS `gpu` (Cocoa) video output — a separate "- mpv" window with a
+CVDisplayLink that `dispatch_sync`s to the main thread, deadlocking on
+teardown. `vo=libmpv` makes the SW render context the only output (no window).
 
 Phase 3 — single-layer chroma key: a "Transparent colour" section
 in the adjustments popup (mpv video only) with an on/off toggle, an
