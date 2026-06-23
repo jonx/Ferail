@@ -18,8 +18,8 @@ pub mod window;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use gpui::{
-    App, AppContext as _, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px,
-    size,
+    App, AppContext as _, Bounds, SharedString, Styled, TitlebarOptions, WindowBackgroundAppearance,
+    WindowBounds, WindowOptions, px, size,
 };
 use gpui_component::Root;
 
@@ -58,6 +58,12 @@ fn open_viewer_inner(playlist: Vec<PlaylistEntry>, start: usize, autoplay: bool,
             title: Some(SharedString::from("Viewer")),
             ..Default::default()
         }),
+        // Create the window transparency-capable so the in-viewer "Transparent"
+        // toggle actually shows through (the macOS CAMetalLayer's transparency
+        // is fixed at creation; flipping it at runtime on an opaque window only
+        // changes the NSWindow, not the drawable). Normal mode keeps an opaque
+        // content background, so it looks identical until the toggle is on.
+        window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
     };
     let mut weak_view = None;
@@ -65,7 +71,11 @@ fn open_viewer_inner(playlist: Vec<PlaylistEntry>, start: usize, autoplay: bool,
         let view =
             cx.new(|cx| ViewerWindow::new(playlist, start, autoplay, process.clone(), window, cx));
         weak_view = Some(view.downgrade());
-        cx.new(|cx| Root::new(view, window, cx))
+        // gpui_component's Root paints an opaque theme background; override it
+        // to transparent so the viewer's own (toggle-controlled) background is
+        // what determines see-through. Normal mode still looks opaque because
+        // the viewer fills the window with an opaque background of its own.
+        cx.new(|cx| Root::new(view, window, cx).bg(gpui::transparent_black()))
     });
     match (handle, weak_view) {
         (Ok(handle), Some(weak)) => {
