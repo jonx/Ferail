@@ -540,7 +540,9 @@ impl EntryInfoView {
         self.after_write(result, window, cx);
     }
 
-    /// Rewrite the permission mode after a single rwx box flipped.
+    /// Rewrite the permission mode after a single rwx box flipped. Unix only —
+    /// Windows shows a read-only summary instead of the editable rwx grid.
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn apply_permissions(&mut self, mode: u32, window: &mut Window, cx: &mut Context<Self>) {
         let result = feraille_fs_native::stat_info::set_permissions(&self.path, mode);
         self.after_write(result, window, cx);
@@ -788,6 +790,23 @@ impl EntryInfoView {
     /// Editable 3×3 read/write/execute grid (owner / group / other), plus
     /// the octal readout. Each box rewrites the whole mode via `chmod`.
     fn render_permissions(&self, m: &PermMatrix, cx: &mut Context<Self>) -> AnyElement {
+        // Windows files are governed by NTFS ACLs, not Unix owner/group/other
+        // rwx bits, so the synthesized 3×3 grid + octal would only mislead.
+        // Surface the one concept that maps cleanly — writable vs read-only —
+        // and leave the editable read-only/hidden toggles to the Attributes
+        // section above.
+        #[cfg(target_os = "windows")]
+        {
+            let label = if m.owner.write { "Read & write" } else { "Read-only" };
+            return div()
+                .text_scale_sm()
+                .text_color(cx.theme().foreground)
+                .child(SharedString::from(label))
+                .into_any_element();
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
         let classes: [(&str, PermBits); 3] =
             [("Owner", m.owner), ("Group", m.group), ("Other", m.other)];
         let mut grid = v_flex().gap_0p5();
@@ -839,6 +858,7 @@ impl EntryInfoView {
                 .child(m.symbolic()),
         )
         .into_any_element()
+        }
     }
 }
 
