@@ -494,6 +494,60 @@ fn dropdown_setting(
                     .w_full()
                     .text_scale_sm()
                     .text_color(muted)
+                    .child(description.clone()),
+            )
+    })
+}
+
+/// A boolean setting laid out like [`dropdown_setting`]: the title and the
+/// switch share the top line, and the **description spans the full width**
+/// below them — rather than being squeezed into the stock `SettingItem`'s
+/// narrow left column next to the control. `value` reads the current state;
+/// `set_value` persists a toggle.
+fn switch_setting(
+    title: &'static str,
+    description: impl Into<SharedString>,
+    value: impl Fn(&App) -> bool + 'static,
+    set_value: impl Fn(bool, &mut App) + 'static,
+) -> SettingItem {
+    let description = description.into();
+    // The SettingItem render closure is `Fn` (re-invoked each frame), so the
+    // setter (moved into the switch's `on_click`) must be shareable: `Rc` it
+    // and hand each render a clone.
+    let set_value = std::rc::Rc::new(set_value);
+    SettingItem::render(move |_options, _window, cx| {
+        use gpui_component::{ActiveTheme as _, Sizable as _, switch::Switch};
+
+        let muted = cx.theme().muted_foreground;
+        let fg = cx.theme().foreground;
+        let checked = value(cx);
+        let set_value = set_value.clone();
+        let description = description.clone();
+
+        gpui_component::v_flex()
+            .w_full()
+            .gap_1()
+            .child(
+                gpui_component::h_flex()
+                    .w_full()
+                    .justify_between()
+                    .items_center()
+                    .gap_3()
+                    .child(div().flex_shrink_0().text_scale_sm().text_color(fg).child(title))
+                    .child(
+                        Switch::new(SharedString::from(format!("sw-{title}")))
+                            .checked(checked)
+                            .small()
+                            .on_click(move |checked: &bool, _, cx: &mut App| {
+                                set_value(*checked, cx)
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .text_scale_sm()
+                    .text_color(muted)
                     .child(description),
             )
     })
@@ -541,31 +595,21 @@ fn search_dupes_page() -> SettingPage {
                     },
                     persist_search_engine,
                 ))
-                .item(
-                    SettingItem::new(
-                        "Match full path",
-                        SettingField::switch(
-                            |_cx: &App| app_state::load().search_match_path.unwrap_or(false),
-                            |val: bool, _cx: &mut App| persist_search_match_path(val),
-                        )
-                        .default_value(false),
-                    )
-                    .description("Match the relative path, not just the file name."),
-                )
-                .item(
-                    SettingItem::new(
-                        "Include hidden files",
-                        SettingField::switch(
-                            |_cx: &App| {
-                                let s = app_state::load();
-                                s.search_include_hidden.or(s.show_hidden).unwrap_or(false)
-                            },
-                            |val: bool, _cx: &mut App| persist_search_include_hidden(val),
-                        )
-                        .default_value(false),
-                    )
-                    .description("Search dot-files and otherwise-hidden items too."),
-                ),
+                .item(switch_setting(
+                    "Match full path",
+                    "Match the relative path, not just the file name.",
+                    |_cx: &App| app_state::load().search_match_path.unwrap_or(false),
+                    |val: bool, _cx: &mut App| persist_search_match_path(val),
+                ))
+                .item(switch_setting(
+                    "Include hidden files",
+                    "Search dot-files and otherwise-hidden items too.",
+                    |_cx: &App| {
+                        let s = app_state::load();
+                        s.search_include_hidden.or(s.show_hidden).unwrap_or(false)
+                    },
+                    |val: bool, _cx: &mut App| persist_search_include_hidden(val),
+                )),
         )
         // ---- Duplicate finder ----
         .group(
@@ -601,45 +645,26 @@ fn search_dupes_page() -> SettingPage {
                     || app_state::load().dupe_min_size_mb.unwrap_or(0).to_string(),
                     |v| persist_dupe_min_size_mb(v.parse().unwrap_or(0)),
                 ))
-                .item(
-                    SettingItem::new(
-                        "Skip cloud placeholders",
-                        SettingField::switch(
-                            |_cx: &App| app_state::load().dupe_skip_cloud.unwrap_or(true),
-                            |val: bool, _cx: &mut App| persist_dupe_skip_cloud(val),
-                        )
-                        .default_value(true),
-                    )
-                    .description("Don't download undownloaded iCloud files just to hash them."),
-                )
-                .item(
-                    SettingItem::new(
-                        "Compare inside app bundles",
-                        SettingField::switch(
-                            |_cx: &App| app_state::load().dupe_include_packages.unwrap_or(false),
-                            |val: bool, _cx: &mut App| persist_dupe_include_packages(val),
-                        )
-                        .default_value(false),
-                    )
-                    .description(
-                        "Descend into .app / .bundle packages and compare their inner files. \
-                         Off keeps packages opaque.",
-                    ),
-                )
-                .item(
-                    SettingItem::new(
-                        "Byte-for-byte verify",
-                        SettingField::switch(
-                            |_cx: &App| app_state::load().dupe_paranoid.unwrap_or(false),
-                            |val: bool, _cx: &mut App| persist_dupe_paranoid(val),
-                        )
-                        .default_value(false),
-                    )
-                    .description(
-                        "Confirm each match byte-for-byte after hashing. Removes any \
-                         hash-collision doubt at the cost of re-reading confirmed groups.",
-                    ),
-                ),
+                .item(switch_setting(
+                    "Skip cloud placeholders",
+                    "Don't download undownloaded iCloud files just to hash them.",
+                    |_cx: &App| app_state::load().dupe_skip_cloud.unwrap_or(true),
+                    |val: bool, _cx: &mut App| persist_dupe_skip_cloud(val),
+                ))
+                .item(switch_setting(
+                    "Compare inside app bundles",
+                    "Descend into .app / .bundle packages and compare their inner files. \
+                     Off keeps packages opaque.",
+                    |_cx: &App| app_state::load().dupe_include_packages.unwrap_or(false),
+                    |val: bool, _cx: &mut App| persist_dupe_include_packages(val),
+                ))
+                .item(switch_setting(
+                    "Byte-for-byte verify",
+                    "Confirm each match byte-for-byte after hashing. Removes any \
+                     hash-collision doubt at the cost of re-reading confirmed groups.",
+                    |_cx: &App| app_state::load().dupe_paranoid.unwrap_or(false),
+                    |val: bool, _cx: &mut App| persist_dupe_paranoid(val),
+                )),
         )
 }
 
@@ -688,27 +713,19 @@ fn appearance_page(
         .group(
             SettingGroup::new()
                 .title("Ant Trail")
-                .item(
-                    SettingItem::new(
-                        "Show Ant Trail",
-                        // Master switch. Persists *and* updates the live
-                        // global so the tint appears/vanishes in open
-                        // windows without a relaunch.
-                        SettingField::switch(
-                            |cx: &App| crate::ant_trail::enabled(cx),
-                            |val: bool, cx: &mut App| {
-                                persist_ant_trail_enabled(val);
-                                cx.set_global(crate::ant_trail::AntTrailEnabled(val));
-                            },
-                        )
-                        .default_value(true),
-                    )
-                    .description(
-                        "Tint your most-visited folders so the ones you open most stand out. \
-                         Off hides the tint entirely \u{2014} your visit history still feeds \
-                         Recents.",
-                    ),
-                )
+                // Master switch. Persists *and* updates the live global so the
+                // tint appears/vanishes in open windows without a relaunch.
+                .item(switch_setting(
+                    "Show Ant Trail",
+                    "Tint your most-visited folders so the ones you open most stand out. \
+                     Off hides the tint entirely \u{2014} your visit history still feeds \
+                     Recents.",
+                    |cx: &App| crate::ant_trail::enabled(cx),
+                    |val: bool, cx: &mut App| {
+                        persist_ant_trail_enabled(val);
+                        cx.set_global(crate::ant_trail::AntTrailEnabled(val));
+                    },
+                ))
                 .item(
                     // Same owned-picker pattern as Selection above; the
                     // entity's `ColorPickerEvent::Change` subscription
@@ -725,34 +742,24 @@ fn appearance_page(
                          Brightness still tracks visit frequency. Clear it for the stock orange.",
                     ),
                 )
-                .item(
-                    SettingItem::new(
-                        "Don't track favorites",
-                        // Persists *and* updates the live policy global so
-                        // the change takes effect on the next favorite
-                        // click without a relaunch.
-                        SettingField::switch(
-                            |_cx: &App| {
-                                app_state::load()
-                                    .exclude_favorites_from_tracking
-                                    .unwrap_or(true)
-                            },
-                            |val: bool, cx: &mut App| {
-                                persist_exclude_favorites_from_tracking(val);
-                                cx.set_global(
-                                    crate::ant_trail::ExcludeFavoritesFromTracking(val),
-                                );
-                            },
-                        )
-                        .default_value(true),
-                    )
-                    .description(
-                        "When on, opening a folder from your Favorites doesn't count toward \
-                         its Ant Trail heat or add it to Recents \u{2014} so deliberate \
-                         shortcuts don't crowd out folders you actually browse to. Reaching \
-                         the same folder any other way still counts.",
-                    ),
-                ),
+                // Persists *and* updates the live policy global so the change
+                // takes effect on the next favorite click without a relaunch.
+                .item(switch_setting(
+                    "Don't track favorites",
+                    "When on, opening a folder from your Favorites doesn't count toward \
+                     its Ant Trail heat or add it to Recents \u{2014} so deliberate \
+                     shortcuts don't crowd out folders you actually browse to. Reaching \
+                     the same folder any other way still counts.",
+                    |_cx: &App| {
+                        app_state::load()
+                            .exclude_favorites_from_tracking
+                            .unwrap_or(true)
+                    },
+                    |val: bool, cx: &mut App| {
+                        persist_exclude_favorites_from_tracking(val);
+                        cx.set_global(crate::ant_trail::ExcludeFavoritesFromTracking(val));
+                    },
+                )),
         )
 }
 
@@ -775,37 +782,24 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
         .group(
             SettingGroup::new()
                 .title("Visibility")
-                .item(
-                    SettingItem::new(
-                        "Show hidden files",
-                        SettingField::switch(
-                            |_cx: &App| app_state::load().show_hidden.unwrap_or(false),
-                            |val: bool, _cx: &mut App| persist_show_hidden(val),
-                        )
-                        .default_value(false),
-                    )
-                    .description(description),
-                )
-                .item(
-                    SettingItem::new(
-                        "Show thumbnails",
-                        // Persists *and* updates the live process global,
-                        // so flipping it repaints open windows at once
-                        // (no relaunch) — same mechanism as the theme.
-                        SettingField::switch(
-                            |cx: &App| crate::thumbnails::show_thumbnails(cx),
-                            |val: bool, cx: &mut App| {
-                                persist_show_thumbnails(val);
-                                cx.set_global(crate::thumbnails::ShowThumbnails(val));
-                            },
-                        )
-                        .default_value(true),
-                    )
-                    .description(
-                        "Preview photos, videos, and PDFs as their actual content in the \
-                         file list. Off shows generic type icons.",
-                    ),
-                ),
+                .item(switch_setting(
+                    "Show hidden files",
+                    description,
+                    |_cx: &App| app_state::load().show_hidden.unwrap_or(false),
+                    |val: bool, _cx: &mut App| persist_show_hidden(val),
+                ))
+                // Persists *and* updates the live process global, so flipping
+                // it repaints open windows at once (no relaunch).
+                .item(switch_setting(
+                    "Show thumbnails",
+                    "Preview photos, videos, and PDFs as their actual content in the \
+                     file list. Off shows generic type icons.",
+                    |cx: &App| crate::thumbnails::show_thumbnails(cx),
+                    |val: bool, cx: &mut App| {
+                        persist_show_thumbnails(val);
+                        cx.set_global(crate::thumbnails::ShowThumbnails(val));
+                    },
+                )),
         )
 }
 
