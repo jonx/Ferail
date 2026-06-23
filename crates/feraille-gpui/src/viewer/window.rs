@@ -20,7 +20,7 @@ use gpui_component::{
 
 use std::time::Duration;
 
-use feraille_core::video::{VideoAdjust, VideoEnhance, VideoStream};
+use feraille_core::video::{ChromaKey, VideoAdjust, VideoEnhance, VideoStream};
 
 use super::backend_native::video_backend;
 use super::loader::{self, FrameState, ViewerFrame};
@@ -140,8 +140,9 @@ fn build_video_frame(bgra: Vec<u8>, w: u32, h: u32) -> Option<Arc<RenderImage>> 
 /// Number of draggable sliders in the adjustments popup. The colour group
 /// (brightness/contrast/color, plus hue/gamma for VLC video) and the
 /// enhancement group (denoise/sharpen, plus debanding/grain for VLC video).
-/// Upscale is buttons, not a slider.
-const SLIDER_COUNT: usize = 9;
+/// Upscale is buttons, not a slider. The two chroma-key sliders (similarity /
+/// blend) bring the mpv-video total to 11.
+const SLIDER_COUNT: usize = 11;
 /// Longest-edge cap (px) for an upscale, matching the loader's decode cap
 /// so a 4× enlargement of a large image can't blow past texture limits.
 const UPSCALE_MAX_EDGE: u32 = 8192;
@@ -165,6 +166,10 @@ enum SliderId {
     Banding,
     /// Film grain (`grain`) — VLC video only.
     Grain,
+    /// Chroma-key range width (`colorkey` similarity) — mpv video only.
+    Similarity,
+    /// Chroma-key edge feather (`colorkey` blend) — mpv video only.
+    Blend,
 }
 
 impl SliderId {
@@ -180,6 +185,8 @@ impl SliderId {
             SliderId::Sharpen => 6,
             SliderId::Banding => 7,
             SliderId::Grain => 8,
+            SliderId::Similarity => 9,
+            SliderId::Blend => 10,
         }
     }
     fn label(self) -> &'static str {
@@ -193,15 +200,20 @@ impl SliderId {
             SliderId::Sharpen => "Sharpen",
             SliderId::Banding => "Debanding",
             SliderId::Grain => "Film grain",
+            SliderId::Similarity => "Similarity",
+            SliderId::Blend => "Blend",
         }
     }
     /// `(min, max)` of the value, and whether it detents to zero at centre.
     /// Colour controls are bipolar; enhancement controls are one-sided.
     fn range(self) -> (f32, f32) {
         match self {
-            SliderId::Denoise | SliderId::Sharpen | SliderId::Banding | SliderId::Grain => {
-                (0.0, 1.0)
-            }
+            SliderId::Denoise
+            | SliderId::Sharpen
+            | SliderId::Banding
+            | SliderId::Grain
+            | SliderId::Similarity
+            | SliderId::Blend => (0.0, 1.0),
             _ => (-1.0, 1.0),
         }
     }
@@ -546,6 +558,21 @@ pub struct ViewerWindow {
     /// Whether the adjustments popup is open (toggled by `E`, a right-click
     /// on the stage, or the toolbar button).
     adjust_panel_open: bool,
+    /// Transparent-colour (chroma-key) state for mpv video — keyed pixels go
+    /// transparent so the stage background (or, later, a lower layer) shows
+    /// through. Window-level and view-only, carried across navigation like
+    /// the grade. `chroma_color` is RGB.
+    chroma_on: bool,
+    chroma_color: [u8; 3],
+    chroma_similarity: f32,
+    chroma_blend: f32,
+    /// While true, the next stage click samples a pixel as the key colour
+    /// (the swatch arms it); reads from `video_frame_raw`.
+    eyedrop_armed: bool,
+    /// The latest decoded frame's raw BGRA, kept only while keying or arming
+    /// the eyedropper, so a stage click can sample the key colour without
+    /// reading back the GPU `RenderImage`.
+    video_frame_raw: Option<(u32, u32, Vec<u8>)>,
     /// Which slider the in-flight pointer drag is moving (`None` idle).
     slider_drag: Option<SliderId>,
     /// Track bounds for each popup slider, captured each render so a cursor
@@ -639,6 +666,12 @@ impl ViewerWindow {
             adjust: ColorAdjust::default(),
             enhance: EnhanceParams::default(),
             adjust_panel_open: false,
+            chroma_on: false,
+            chroma_color: [0, 255, 0],
+            chroma_similarity: 0.30,
+            chroma_blend: 0.05,
+            eyedrop_armed: false,
+            video_frame_raw: None,
             slider_drag: None,
             slider_bounds: [Bounds::default(); SLIDER_COUNT],
             processed: None,
@@ -972,6 +1005,52 @@ impl ViewerWindow {
         };
     }
 
+    /// The active transparent-colour key, or `None` when the toggle is off.
+    fn chroma_key(&self) -> Option<ChromaKey> {
+        self.chroma_on.then_some(ChromaKey {
+            color: self.chroma_color,
+            similarity: self.chroma_similarity,
+            blend: self.chroma_blend,
+        })
+    }
+
+    /// Push the transparent-colour key to the live video stream. mpv keys it
+    /// in its filter chain so the keyed pixels arrive with alpha = 0 (the
+    /// stage background, or a lower layer, shows through); the native player
+    /// reports it unsupported. No-op when no video is open.
+    fn apply_video_chroma(&mut self) {
+        let key = self.chroma_key();
+        if let Some((stream, _)) = &mut self.video_overlay {
+            stream.set_chroma_key(key);
+        }
+    }
+
+    /// Eyedropper: sample the key colour from the live frame at a stage-local
+    /// cursor, turn keying on, and disarm. Reads the kept raw BGRA frame
+    /// (`video_frame_raw`) through the same stage layout the frame is drawn
+    /// with. Rotation isn't accounted for (keying a rotated video is rare —
+    /// a follow-up).
+    fn pick_chroma_at(&mut self, cursor: (f32, f32), cx: &mut Context<Self>) {
+        self.eyedrop_armed = false;
+        let Some((w, h, bytes)) = self.video_frame_raw.clone() else {
+            cx.notify();
+            return;
+        };
+        let img = self.to_logical((w as f32, h as f32));
+        let r = stage::layout(img, self.last_stage_size, self.stage);
+        let fx = ((cursor.0 - r.x) / r.w).clamp(0.0, 1.0);
+        let fy = ((cursor.1 - r.y) / r.h).clamp(0.0, 1.0);
+        let px = ((fx * w as f32) as u32).min(w.saturating_sub(1));
+        let py = ((fy * h as f32) as u32).min(h.saturating_sub(1));
+        let i = (py as usize * w as usize + px as usize) * 4;
+        if i + 2 < bytes.len() {
+            self.chroma_color = [bytes[i + 2], bytes[i + 1], bytes[i]]; // BGRA → RGB
+            self.chroma_on = true;
+            self.apply_video_chroma();
+        }
+        cx.notify();
+    }
+
     /// Drive the live video at ~display rate while player `id` is the
     /// current one: pull the newest decoded frame (BGRA → `RenderImage`)
     /// and refresh the seek bar's `(position, duration)` + intrinsic
@@ -1020,6 +1099,16 @@ impl ViewerWindow {
         }
         self.video_position = pos;
         if let Some((w, h, bytes)) = frame {
+            // Keep the raw BGRA for the eyedropper while the adjustments popup
+            // is open on an mpv video (or while keying/arming) — so the last
+            // frame is held even after a pause (videos auto-play on open, so a
+            // frame is captured during playback before the user pauses to
+            // pick). Cheap no-op otherwise.
+            if self.video_adjust_native
+                && (self.adjust_panel_open || self.chroma_on || self.eyedrop_armed)
+            {
+                self.video_frame_raw = Some((w, h, bytes.clone()));
+            }
             if let Some(img) = build_video_frame(bytes, w, h) {
                 if let Some(old) = self.video_frame_image.replace(img) {
                     self.video_frames_to_drop.push(old);
@@ -1251,6 +1340,12 @@ impl ViewerWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Eyedropper: while armed, a stage click samples the key colour from
+        // the live frame instead of dismissing the popup or starting a pan.
+        if self.eyedrop_armed {
+            self.pick_chroma_at(self.stage_local(e.position), cx);
+            return;
+        }
         // A click on the stage (i.e. outside the popup, which swallows its
         // own clicks) dismisses the adjustments popup.
         if self.adjust_panel_open {
@@ -1486,6 +1581,8 @@ impl ViewerWindow {
             SliderId::Sharpen => self.enhance.sharpen,
             SliderId::Banding => self.enhance.banding,
             SliderId::Grain => self.enhance.grain,
+            SliderId::Similarity => self.chroma_similarity,
+            SliderId::Blend => self.chroma_blend,
         }
     }
 
@@ -1521,6 +1618,8 @@ impl ViewerWindow {
             SliderId::Sharpen => self.enhance.sharpen = v,
             SliderId::Banding => self.enhance.banding = v,
             SliderId::Grain => self.enhance.grain = v,
+            SliderId::Similarity => self.chroma_similarity = v,
+            SliderId::Blend => self.chroma_blend = v,
         }
         self.after_adjust_change(cx);
     }
@@ -1549,6 +1648,9 @@ impl ViewerWindow {
         // applies it natively; native player keeps the CPU path).
         if self.current_is_video() {
             self.apply_video_adjust();
+            if self.chroma_on {
+                self.apply_video_chroma();
+            }
         }
         self.schedule_process(cx);
         cx.notify();
@@ -2069,6 +2171,11 @@ impl ViewerWindow {
         // a VLC stream — the native player has no filter chain.
         let vlc_video = is_video && self.video_adjust_native;
         let show_enhance = !is_video || vlc_video;
+        // Chroma-key state read up front so the section's builder closure
+        // doesn't re-borrow self for these.
+        let chroma_on = self.chroma_on;
+        let chroma_armed = self.eyedrop_armed;
+        let chroma_color = self.chroma_color;
 
         let header = h_flex()
             .justify_between()
@@ -2152,6 +2259,84 @@ impl ViewerWindow {
                 } else {
                     d.child(self.upscale_row(cx))
                 }
+            })
+            // Transparent colour (chroma key) — mpv video only. Keyed pixels
+            // go transparent so the stage background (later: a lower layer)
+            // shows through. Pick the colour with the eyedropper swatch.
+            .when(vlc_video, |d| {
+                let col = chroma_color;
+                let swatch =
+                    gpui::rgb(((col[0] as u32) << 16) | ((col[1] as u32) << 8) | col[2] as u32);
+                let d = d
+                    .child(div().h_px().my_1().bg(border))
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_scale_xs()
+                                    .text_color(foreground)
+                                    .child("Transparent colour"),
+                            )
+                            .child(
+                                Button::new("viewer-chroma-toggle")
+                                    .label(if chroma_on { "On" } else { "Off" })
+                                    .small()
+                                    .selected(chroma_on)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.chroma_on = !this.chroma_on;
+                                        if !this.chroma_on {
+                                            this.eyedrop_armed = false;
+                                        }
+                                        this.apply_video_chroma();
+                                        cx.notify();
+                                    })),
+                            ),
+                    );
+                if !chroma_on {
+                    return d;
+                }
+                d.child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            div()
+                                .id("viewer-chroma-swatch")
+                                .w(px(28.0))
+                                .h(px(16.0))
+                                .rounded(px(4.0))
+                                .border_1()
+                                .border_color(if chroma_armed {
+                                    cx.theme().primary
+                                } else {
+                                    border
+                                })
+                                .bg(swatch)
+                                .cursor_pointer()
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.eyedrop_armed = !this.eyedrop_armed;
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_scale_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(if chroma_armed {
+                                    "click the video to pick"
+                                } else {
+                                    "click swatch, then the video"
+                                }),
+                        ),
+                )
+                .child(self.slider_row(SliderId::Similarity, cx))
+                .child(self.slider_row(SliderId::Blend, cx))
             })
     }
 

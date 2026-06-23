@@ -10,16 +10,29 @@ through — potentially other videos that are themselves keyed.
 
 ## Status
 
-**Phase 2 done (2026-06-23)** — Phase 0 spike green; Phase 1a (the
-`feraille-video-mpv` crate to parity), Phase 1b (swap the optional provider to
-mpv, delete `feraille-video-vlc`), and Phase 2 (remove the VLC-era
-seamless-reopen apparatus — `commit_video_enhance` now pushes filters through
-live `set_enhance`; the `video_pending_seek`/`video_repause` deferral and the
-poll's pre-seek-frame dance are gone, −67 lines in `window.rs`) have all
-landed. `cargo check -p feraille-gpui --features vlc` is green. Still open: the
-chroma-key UI (Phase 3), the N-layer stack (Phase 4), docs/icons (Phase 5), and
-the cosmetic rename below. The decision log is in [NOTES.md](../../NOTES.md)
-(2026-06-23 entry).
+**Phase 3 done — compile-green (2026-06-23)** — Phases 0, 1a, 1b, 2 (see
+below) plus Phase 3: single-layer chroma key. A "Transparent colour" section
+in the adjustments popup (mpv video only) with an on/off toggle, an
+**eyedropper swatch** (click it, then click the video to sample the key
+colour from the live frame), and **Similarity** (range width) + **Blend**
+(edge feather) sliders. The key is pushed live via `set_chroma_key`, so keyed
+pixels arrive transparent and the stage background shows through. No new icon
+(the swatch is the eyedropper affordance), so `ICONS.md` is untouched. `cargo
+check -p feraille-gpui --features vlc` is green.
+
+> **Deferred verification:** the chroma UI is compile-green and logically
+> sound (the Phase 0 spike proved alpha survives SW render; gpui composites
+> the alpha'd frame over the stage bg like a transparent PNG), but a **runtime
+> screenshot of a keyed mpv video is still pending** — it needs a stable tree
+> + harness setup (mpv backend selected, a solid-colour test clip). To do once
+> the parallel work settles.
+
+Still open: the N-layer stack (Phase 4), docs/icons (Phase 5), and the cosmetic
+rename below. Phase 2 recap: removed the VLC-era seamless-reopen apparatus —
+`commit_video_enhance` now pushes filters through live `set_enhance`; the
+`video_pending_seek`/`video_repause` deferral and the poll's pre-seek-frame
+dance are gone (−67 lines in `window.rs`). The decision log is in
+[NOTES.md](../../NOTES.md) (2026-06-23 entry).
 
 ### Deferred cosmetic rename (pinned by hot `settings.rs`)
 
