@@ -285,6 +285,14 @@ impl VideoBackend for MpvBackend {
         // with copy-back so the SW render path gets frames in system memory;
         // keep-open so a seek-after-end (the viewer's loop) still works; quiet.
         for (k, v) in [
+            // CRITICAL: route video output through the render API, not a
+            // native window. Without this mpv creates a macOS `gpu` (Cocoa)
+            // vo with a CVDisplayLink that `dispatch_sync`s to the main thread
+            // — and since we tear the stream down (and pull frames) from the
+            // main thread, that deadlocks (vo_thread waits on main, main waits
+            // joining vo_thread). `vo=libmpv` makes the SW render context the
+            // only output: no NSWindow, no display link, no main-thread hop.
+            ("vo", "libmpv"),
             ("config", "no"),
             ("osc", "no"),
             ("osd-level", "0"),
