@@ -10,10 +10,28 @@ through — potentially other videos that are themselves keyed.
 
 ## Status
 
-**Phase 0 done (2026-06-23)** — design approved; the throwaway
-`spikes/mpv-probe/` ran green against Homebrew libmpv and retired the gating
-unknown (mirrors how `spikes/vlc-probe/` de-risked libvlc). Phases 1–5 not yet
-started. The decision log is in [NOTES.md](../../NOTES.md) (2026-06-23 entry).
+**Phase 1 in progress (2026-06-23)** — Phase 0 spike green; Phase 1a (the
+`feraille-video-mpv` crate to parity) and Phase 1b (swap the optional provider
+to mpv, delete `feraille-video-vlc`) have landed. `cargo check -p
+feraille-gpui --features vlc` is green. Still open in Phase 1/2: removing the
+VLC-era seamless-reopen apparatus in favour of live `set_enhance`, and the
+cosmetic rename below. The decision log is in [NOTES.md](../../NOTES.md)
+(2026-06-23 entry).
+
+### Deferred cosmetic rename (pinned by hot `settings.rs`)
+
+The optional provider **is** mpv now (the libvlc crate is gone), but three
+user-facing identifiers still read `vlc` because Settings → Plugins
+(`settings.rs`) and the persisted [`app_state`] fields pin them, and that file
+was under concurrent edit when this landed:
+
+- the cargo feature `vlc` (→ `mpv`),
+- the persisted setting `video_backend == "vlc"` and field `vlc_app_path`
+  (→ `"mpv"` / `mpv_path`),
+- the Settings → Plugins dropdown label "VLC" (→ "mpv").
+
+These are a single mechanical rename to do once `settings.rs`/`app_state.rs`
+are free; the implementation behind them is already mpv.
 
 ### Phase 0 findings (verified, not assumed)
 

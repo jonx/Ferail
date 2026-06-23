@@ -115,15 +115,15 @@ fn app_group() -> Group {
     };
     let vlc = if cfg!(feature = "vlc") {
         Check::new(
-            "VLC support",
+            "mpv support",
             Status::Ok,
             "compiled in (built with --features vlc)",
         )
     } else {
         Check::new(
-            "VLC support",
+            "mpv support",
             Status::Warn,
-            "not compiled in — rebuild with --features vlc to use the VLC player",
+            "not compiled in — rebuild with --features vlc to use the mpv player",
         )
     };
     Group {
@@ -152,10 +152,10 @@ fn dependencies_group() -> Group {
             .clone()
             .unwrap_or_else(|| crate::viewer::backend_native::default_vlc_path().to_string());
         if Path::new(&path).exists() {
-            Check::new("VLC install", Status::Ok, format!("{path} (found)"))
+            Check::new("mpv install", Status::Ok, format!("{path} (found)"))
         } else {
             Check::new(
-                "VLC install",
+                "mpv install",
                 Status::Fail,
                 format!("{path} — not found; video will fall back to the built-in player"),
             )

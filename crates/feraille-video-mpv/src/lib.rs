@@ -1,10 +1,10 @@
 //! mpv (libmpv) video provider for Feraille's viewer.
 //!
-//! A sibling of `feraille-video-vlc` implementing the same
-//! [`feraille_core::video`] seam, but built on libmpv's **software render
-//! API**: rather than libvlc's push callbacks, frames are *pulled* by calling
-//! `mpv_render_context_render` into a BGRA buffer we own — the exact
-//! windowless model the viewer wants (`copy_frame → (w, h, BGRA)`).
+//! The optional video provider behind the [`feraille_core::video`] seam (it
+//! replaced the libvlc one), built on libmpv's **software render API**: frames
+//! are *pulled* by calling `mpv_render_context_render` into a BGRA buffer we
+//! own — the exact windowless model the viewer wants (`copy_frame → (w, h,
+//! BGRA)`).
 //!
 //! Why mpv over VLC (see docs/features/VIDEO-MPV.md): libmpv's filter chain is
 //! settable **live** (`vf` property), so colour grade, enhancement, and the

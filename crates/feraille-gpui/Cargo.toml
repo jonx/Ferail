@@ -11,9 +11,11 @@ rust-version = "1.85"
 publish = false
 
 [features]
-# Compile in the VLC video provider (libvlc, loaded at runtime from the
-# VLC.app set in Settings). Off by default so a stock build needs nothing.
-vlc = ["dep:feraille-video-vlc"]
+# Compile in the optional mpv video provider (libmpv, loaded at runtime from
+# the path set in Settings). Off by default so a stock build needs nothing.
+# The feature name stays `vlc` because Settings → Plugins (settings.rs) pins
+# it; the cosmetic rename to `mpv` is a deferred follow-up (see VIDEO-MPV.md).
+vlc = ["dep:feraille-video-mpv"]
 
 [dependencies]
 anyhow.workspace = true
@@ -73,20 +75,20 @@ feraille-disk-usage.workspace = true
 # surface mirrors between the two so `crate::platform_shell` (in
 # `lib.rs`) can alias them with a single `#[cfg]` switch; gpui call
 # sites use `platform_shell::*` and don't care which is active.
-# Optional VLC video provider (enabled by the `vlc` feature). libvlc is
+# Optional mpv video provider (enabled by the `vlc` feature). libmpv is
 # loaded at runtime on every desktop OS, so the dep is declared per-target
 # alongside each platform's shell crate.
 [target.'cfg(target_os = "macos")'.dependencies]
 feraille-shell-mac.workspace = true
-feraille-video-vlc = { workspace = true, optional = true }
+feraille-video-mpv = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 feraille-shell-win32.workspace = true
-feraille-video-vlc = { workspace = true, optional = true }
+feraille-video-mpv = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 feraille-shell-linux.workspace = true
-feraille-video-vlc = { workspace = true, optional = true }
+feraille-video-mpv = { workspace = true, optional = true }
 
 # Windows-only build script that embeds resources/feraille.ico and a
 # VERSIONINFO block into the .exe. On non-Windows the build script

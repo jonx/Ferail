@@ -2003,7 +2003,7 @@ dependencies = [
  "feraille-shell-linux",
  "feraille-shell-mac",
  "feraille-shell-win32",
- "feraille-video-vlc",
+ "feraille-video-mpv",
  "gpui",
  "gpui-component",
  "gpui-component-assets",
@@ -2063,13 +2063,6 @@ dependencies = [
 
 [[package]]
 name = "feraille-video-mpv"
-version = "0.0.1"
-dependencies = [
- "feraille-core",
-]
-
-[[package]]
-name = "feraille-video-vlc"
 version = "0.0.1"
 dependencies = [
  "feraille-core",

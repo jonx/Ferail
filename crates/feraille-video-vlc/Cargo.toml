@@ -1,9 +1,0 @@
-[package]
-name = "feraille-video-vlc"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-description = "VLC (libvlc) video provider for Feraille's viewer — any format + native adjustments."
-
-[dependencies]
-feraille-core = { workspace = true }

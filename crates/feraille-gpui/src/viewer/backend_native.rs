@@ -5,29 +5,37 @@
 //! `platform_shell::video_overlay_*` functions (AVFoundation on macOS, a
 //! stub on win32), keyed by the opaque `u64` handle they hand back. The
 //! whole point is that the viewer no longer names these functions
-//! directly; an alternative provider (e.g. VLC) can take their place.
+//! directly; an alternative provider (mpv) can take their place.
+//!
+//! NB: the optional provider is **mpv** (`feraille-video-mpv`), which replaced
+//! the libvlc one. The cargo feature and the persisted setting are still named
+//! `vlc`/`vlc_app_path` because Settings → Plugins (`settings.rs`) pins those
+//! identifiers; the cosmetic rename to `mpv` is a deferred follow-up (see
+//! docs/features/VIDEO-MPV.md / TODO).
 
 use std::path::Path;
 
 use feraille_core::video::{VideoBackend, VideoEnhance, VideoStream};
 
-/// The conventional VLC location for this OS, used as the default in
-/// Settings → Plugins when the user hasn't set one. The user points at a
-/// `VLC.app` bundle on macOS and the install directory on Windows/Linux;
-/// [`feraille_video_vlc::backend`] knows how to find `libvlc` inside each.
+/// The default libmpv location for this OS, used as the default in
+/// Settings → Plugins when the user hasn't set one. The user may point at the
+/// libmpv shared library, a directory containing it, or `mpv.app`;
+/// [`feraille_video_mpv::backend`] resolves the actual dylib from there (and
+/// falls back to the platform's usual install paths).
 pub fn default_vlc_path() -> &'static str {
     #[cfg(target_os = "macos")]
     {
-        "/Applications/VLC.app"
+        // Homebrew's libmpv; the resolver also probes Intel/`/usr/local`.
+        "/opt/homebrew/opt/mpv/lib/libmpv.dylib"
     }
     #[cfg(windows)]
     {
-        r"C:\Program Files\VideoLAN\VLC"
+        r"C:\Program Files\mpv"
     }
     #[cfg(target_os = "linux")]
     {
         // Pointed at a dir we load from there; left blank, the loader finds the
-        // system libvlc.so by soname. A common explicit location:
+        // system libmpv.so by soname. A common explicit location:
         "/usr/lib"
     }
     #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
@@ -36,21 +44,22 @@ pub fn default_vlc_path() -> &'static str {
     }
 }
 
-/// Select the active video provider. `vlc_app` is `Some(path)` when the
-/// user picked VLC in Settings → Plugins (resolved once by the viewer, so
-/// no settings I/O happens on a hot path). In a build with the `vlc`
-/// feature this returns the VLC backend when libvlc loads at that path;
-/// otherwise (or on any failure) it falls back to the native player.
-pub fn video_backend(vlc_app: Option<&Path>) -> Box<dyn VideoBackend> {
+/// Select the active video provider. `hint` is `Some(path)` when the user
+/// picked the mpv provider in Settings → Plugins (resolved once by the viewer,
+/// so no settings I/O happens on a hot path). In a build with the `vlc`
+/// feature (the optional-provider gate; now wired to mpv) this returns the mpv
+/// backend when libmpv loads; otherwise (or on any failure) it falls back to
+/// the native player.
+pub fn video_backend(hint: Option<&Path>) -> Box<dyn VideoBackend> {
     #[cfg(feature = "vlc")]
-    if let Some(path) = vlc_app {
-        if let Some(b) = feraille_video_vlc::backend(path) {
+    if let Some(path) = hint {
+        if let Some(b) = feraille_video_mpv::backend(path) {
             return b;
         }
         // Selected but unavailable → fall through to the native player.
     }
     #[cfg(not(feature = "vlc"))]
-    let _ = vlc_app;
+    let _ = hint;
     Box::new(NativeBackend)
 }
 
