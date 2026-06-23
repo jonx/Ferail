@@ -30,6 +30,14 @@ and let git history plus release notes carry the record.
     same-volume moves; cross-volume moves fall back to copy-undo or none.
   - Extend actionable raw-error messages beyond the common file-op/search/dupe
     paths to every remaining mutation surface.
+  - **Error-notification UX** — add a **copy** button so the user can copy the
+    message (and full technical detail) to the clipboard, and an
+    **expand/unfold** control to reveal the complete technical error when the
+    toast text is truncated. Notifications render through the gpui-component
+    `Notification` (`window.push_notification`, `Root::render_notification_layer`),
+    so this needs either an extension to the pinned gpui-component fork or a
+    custom notification body that carries a short summary plus the collapsible
+    full error.
 - **Persist file-table column order** after drag-reorder. `move_column`
   reorders the live vec but never persists; widths already persist.
 - **Grid marquee / rubber-band selection** — the last grid-parity gap now that
@@ -85,6 +93,12 @@ relative to the daily value. Ordered by bang-for-buck.
   (group headers with members beneath). Deferred from the density pass.
 - Persist per-tab sort/filter/scroll state where it is not already stable.
 - Add configurable visible columns and a widths/order reset.
+- **Hidden-file affordances.** When *show hidden* is on, render hidden entries
+  dimmed/greyed (row text + icon) so they read as distinct from normal files.
+  When hidden files are *off*, surface their presence passively — aggregate
+  count and total size of the hidden entries in the current folder — somewhere
+  unobtrusive (status bar / folder footer / Get Info) so the user knows hidden
+  content exists and how much space it occupies.
 - Context-menu follow-ups: compact Finder-style tag swatch row, async Open With
   prewarm if cold-cache stutter appears, and per-target enable/disable rules for
   read-only volumes, missing files, and permission-denied targets.
@@ -107,11 +121,39 @@ relative to the daily value. Ordered by bang-for-buck.
   session-scoped); a richer **Trash browsing view** (original-location column).
   Windows Recycle Bin restore is blocked (`SHFileOperationW` doesn't report the
   recycled location).
+- **Permanent delete (Shift+Delete).** Add a `DeletePermanently` action that
+  deletes the selection outright, bypassing Trash/Recycle Bin, **behind a
+  mandatory confirmation modal** ("Permanently delete N items? This can't be
+  undone."). Bind it to `shift-delete` in `keymap.rs` (Windows convention; pair
+  with the platform-appropriate chord on macOS, e.g. `cmd-shift-delete`). Reuse
+  the empty-trash confirmation pattern in `on_empty_trash` (`file_ops.rs`) and
+  add a permanent-delete fs call alongside `move_to_trash` / `MoveToTrash`.
+  There is no undo — it skips the `(original, trashed)` pairs Cmd+Z relies on —
+  so the confirmation cannot be optional.
 - File-ops: Windows pasteboard **volume-identity parity** (CF_HDROP copy/paste
   itself shipped — docs/features/FILE_OPS.md).
 - Recents follow-ups: recently-opened **files** (needs a file-open signal — we
   only log folder visits today); optionally a dedicated recents store decoupled
   from the heat map (today Clear/Remove also clears that folder's heat).
+- **Refresh folder sizes after size-changing ops.** After a mutation that
+  changes a directory's contents — trash/delete, move, copy/paste, duplicate,
+  compress — invalidate and recompute the affected folder-size rows instead of
+  waiting for a navigation/reload (today the only trigger is `folder_sizes::start`
+  from `finish_directory_load_in_tab`). The cache contract in `folder_sizes.rs`
+  validates a row by the folder's *own* mtime, but a directory's mtime bumps only
+  on *direct* child changes, so a delete deep in a subtree leaves a stale size;
+  recompute both the directories whose contents changed and the current folder's
+  own aggregate. The durable fix is the watcher/FSEvents-driven invalidation
+  already flagged in `folder_sizes.rs` and under Responsiveness & Data
+  Architecture.
+  - This must also catch **external changes from third-party apps** — deletes,
+    adds, or edits made outside Feraille (another file manager, a terminal `rm`,
+    an installer). Feraille can't self-report those, so only a live filesystem
+    watcher (FSEvents / `ReadDirectoryChangesW` / inotify) closes the gap; it
+    should refresh the *listing* (rows appearing/disappearing) and the folder
+    *sizes* together, since both go stale the same way. Pairs with the existing
+    watcher items under Favorites (**Missing transitions**) and Responsiveness
+    & Data Architecture (**NodeStore identity** → watcher events).
 
 ## Search
 
@@ -167,6 +209,17 @@ fallback). Remaining is the UX the system explorers have and we don't:
 - **Magic detection**: the table (~67 signatures + structured parsers for
   exe/zip/image/audio/video) is solid; expand the long tail and add the CLI
   modes (see CLI section).
+- **Directories get a file-format label (bug).** Folders are showing a magic
+  *format* in the Format/Description columns — observed as two folders rendered
+  `ZIP archive · N files` under `dev-angular/Archive`. One of them
+  (`sba-latest-test`) has no extension, so the label is not an extension-derived
+  `display_kind`; it is a `display_magic` value applied to a directory row by the
+  magic prefetch / SQLite cache (`prefetch.rs`, `e.display_magic =
+  row.magic_label`) — likely a stale path-keyed cache entry or the worker
+  sniffing a dir. Guard so directory rows never receive a magic label at the
+  worker entry *and* at the prefetch apply; `format_label` already
+  belt-and-suspenders folders in the *mismatch* check, but the label itself
+  still leaks the archive kind into the column.
 - **Quarantine / provenance UI**: badge halo + clear-quarantine action ship.
   Add Gatekeeper assessment, code-signature identity, and in-list provenance
   display (where-from is cached but only shown in the preview pane).
