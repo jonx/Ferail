@@ -147,6 +147,20 @@ fallback). Remaining is the UX the system explorers have and we don't:
   shows cost, precise/scrubbing seek (`seekToTime:` tolerance-zero), volume
   control. Windows parity: Ctrl/F11 chords, `IShellItemImageFactory` fallback,
   Media Foundation video frame source feeding the shared `RenderImage` path.
+- **mpv video backend → retire VLC** ([docs/features/VIDEO_MPV.md](docs/features/VIDEO_MPV.md)).
+  Add a libmpv provider behind the existing `VideoBackend` seam (runtime
+  `dlopen`, SW render into the BGRA pull buffer) that plays the same broad set
+  *and* applies denoise/sharpen/deband/grain **live** via `vf set` — fixing the
+  VLC limitation that forces a stream re-open on every filter change. macOS
+  first. Iterations: (1) crate + playback + frame pull, (2) transport, (3) live
+  grade, (4) live `vf` filters + `set_enhance` seam method + Plugins option,
+  (5) **retire VLC** once mpv is verified — remove the crate/feature and delete
+  the seamless-reopen / `video_pending_seek` / `video_repause` machinery.
+- **Color-key transparency** (follow-on, [docs/features/VIDEO_MPV.md](docs/features/VIDEO_MPV.md)
+  §Color-key). Rides the mpv backend's per-pixel alpha pass: key a chosen color
+  to transparent so the video shows through. v1 = RGB-distance + tolerance
+  slider. Open product fork before it starts: see-through to an in-app backdrop
+  (cheap) vs. to the desktop via a transparent window (the "wow" version, ~3×).
 
 ## Metadata & Intelligence
 

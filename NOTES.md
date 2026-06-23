@@ -7,6 +7,63 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-06-23 mpv video backend, VLC retirement & color-key transparency (planned)
+
+Full plan: [docs/features/VIDEO_MPV.md](docs/features/VIDEO_MPV.md). Planned, not
+started; implementation begins on macOS.
+
+## The decision (mpv over VLC and over raw FFmpeg)
+
+The pain that started this: I wanted the Adjustments popup's denoise/sharpen/
+deband/grain to apply **live** on video. They can't with VLC — libvlc only takes
+those as instance args to `libvlc_new`, so a slider release re-opens the whole
+stream (that's what all the `video_pending_seek` / `video_repause` / kept-frame
+machinery in `window.rs` is for). Only the colour grade is live there.
+
+Weighed three providers behind the existing `VideoBackend` seam:
+
+- **VLC** — player for free, but filters are structurally not live. Status quo.
+- **raw FFmpeg (libav\*)** — filters live, but FFmpeg is a *library, not a
+  player*: I'd have to build demux/decode/audio/A-V sync/clock/seek myself. Big
+  lift for a file-manager viewer. Rejected.
+- **libmpv** — FFmpeg *with a player attached*. Plays the same broad set, owns
+  audio/sync/seek, **and** exposes the libavfilter graph at runtime
+  (`vf set`/`vf command`) — the same `hqdn3d`/`unsharp`/`gradfun`/`noise`
+  filters VLC wraps, but live. Loads via `dlopen` like libvlc (stock build
+  links nothing), and its **software render API writes frames straight into a
+  caller buffer**, which is almost exactly our BGRA pull seam. **Chosen.**
+
+mpv is a functional superset of the VLC backend for local files, so the plan is
+to **add mpv, prove it on the mac, then retire VLC** (iteration 5) — which also
+lets me delete the re-open machinery. Not deleting VLC atomically with landing
+mpv: don't remove a shipping/tested backend before its replacement is verified.
+
+## Key decisions
+
+- **One additive seam change:** `VideoStream::set_enhance(&mut self, VideoEnhance)
+  -> bool`, default `false`. VLC/native/MF inherit `false` (existing re-open
+  path); only mpv overrides it to `true` via live `vf set`. `commit_video_enhance`
+  tries it first, re-opens only on `false`.
+- **Hand-written FFI, no `libmpv`/`mpv` Rust crate** — mirrors the deliberate
+  no-`vlc-rs` decision and the runtime-`dlopen` posture of the VLC crate.
+- **Grade via mpv's equalizer properties** (live), with lavfi `eq`/`hue` as the
+  fallback if the equalizer turns out not to apply under SW render (the one open
+  uncertainty — verify on the mac).
+- **SW format `bgr0` → must fill alpha to `0xFF`.** `build_video_frame` reads the
+  4th byte as alpha verbatim, and `bgr0` leaves it `0` (fully transparent). That
+  forced alpha pass is also what makes the **color-key transparency** idea nearly
+  free: key per pixel instead of blind-filling. Logged as a follow-on feature in
+  the plan doc (with its own gates), with one open product fork — see-through to
+  an in-app backdrop (cheap) vs. to the desktop via a transparent window (the
+  "wow" version, ~3× the work).
+
+## With more time / deferred
+
+- Color-key v1 (RGB-distance + tolerance), then eyedropper, then YUV chroma-key.
+- Bundle libmpv for a redistributable build (later phase, like VLC's bundling).
+- `CVDisplayLink` background frame pull if 4K60 shows main-thread cost (shared
+  follow-up with the native/VLC backends).
+
 # 2026-06-20 unified selection color (list ⇄ grid) + customizable accent (in progress)
 
 The list pane's selection read as "too faint" next to the grid. Verified the
