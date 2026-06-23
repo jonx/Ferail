@@ -187,7 +187,22 @@ pub fn clear_quarantine(path: &Path) -> std::io::Result<()> {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+/// Linux: drop the freedesktop provenance xattrs (the "Unblock" equivalent).
+/// Best-effort and idempotent — a missing attribute is success.
+#[cfg(target_os = "linux")]
+pub fn clear_quarantine(path: &Path) -> std::io::Result<()> {
+    for attr in ["user.xdg.origin.url", "user.xdg.referrer.url"] {
+        match xattr::remove(path, attr) {
+            Ok(()) => {}
+            // Missing attr (ENODATA/ENOATTR) or unsupported FS — nothing to do.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {}
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub fn clear_quarantine(_path: &Path) -> std::io::Result<()> {
     // No quarantine concept on this platform.
     Ok(())
@@ -256,7 +271,42 @@ pub fn parse_url_host(url: &str) -> Option<&str> {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+/// Linux: freedesktop download provenance. Browsers (Firefox, Chromium, …)
+/// set the `user.xdg.origin.url` xattr (and optionally `user.xdg.referrer.url`)
+/// on downloaded files — the Linux analogue of macOS quarantine / Windows
+/// Mark-of-the-Web. Presence of an origin URL marks the file as "downloaded".
+/// There's no agent name or timestamp in this scheme, so those stay `None`.
+#[cfg(target_os = "linux")]
+pub fn fetch_quarantine_info(path: &Path) -> QuarantineInfo {
+    let read = |attr: &str| -> Option<String> {
+        xattr::get(path, attr)
+            .ok()
+            .flatten()
+            .and_then(|b| String::from_utf8(b).ok())
+            .map(|s| s.trim_end_matches('\0').trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let origin = read("user.xdg.origin.url");
+    let referrer = read("user.xdg.referrer.url");
+
+    let mut where_from = Vec::new();
+    if let Some(o) = &origin {
+        where_from.push(o.clone());
+    }
+    if let Some(r) = &referrer {
+        if origin.as_ref() != Some(r) {
+            where_from.push(r.clone());
+        }
+    }
+    QuarantineInfo {
+        quarantined: origin.is_some(),
+        agent: None,
+        downloaded_at: None,
+        where_from,
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub fn fetch_quarantine_info(_path: &Path) -> QuarantineInfo {
     QuarantineInfo::empty()
 }
@@ -306,6 +356,38 @@ pub fn details_from(info: &QuarantineInfo) -> QuarantineDetails {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Linux download-provenance round-trip: a browser-style
+    /// `user.xdg.origin.url` xattr is read as "downloaded", surfaced in
+    /// where_from, and cleared by clear_quarantine. Skips when the temp
+    /// filesystem doesn't support user xattrs (e.g. some tmpfs mounts).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_provenance_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("feraille-prov-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("download.bin");
+        std::fs::write(&f, b"x").unwrap();
+
+        if xattr::set(&f, "user.xdg.origin.url", b"https://example.com/file.bin").is_err() {
+            eprintln!("skip: filesystem does not support user xattrs");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        let _ = xattr::set(&f, "user.xdg.referrer.url", b"https://example.com/");
+
+        let info = fetch_quarantine_info(&f);
+        assert!(info.quarantined, "origin url marks it downloaded");
+        assert_eq!(info.where_from[0], "https://example.com/file.bin");
+        assert!(info.where_from.contains(&"https://example.com/".to_string()));
+
+        clear_quarantine(&f).unwrap();
+        assert!(
+            !fetch_quarantine_info(&f).quarantined,
+            "unblock removed the provenance"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn iso_minute_known_epoch() {

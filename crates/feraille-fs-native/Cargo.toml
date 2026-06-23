@@ -32,6 +32,9 @@ windows = { version = "0.58", features = [
 # `.Trashes/<uid>` path on macOS — so libc is a unix-wide dep, not macOS-only.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# xattr_info.rs reads download-provenance / quarantine xattrs on unix:
+# com.apple.quarantine on macOS, user.xdg.origin.url on Linux.
+xattr = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # move_to_trash → the freedesktop Trash spec (XDG Trash + per-volume
@@ -39,7 +42,6 @@ libc = "0.2"
 trash = "5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-xattr = "1"
 plist = "1"
 objc2 = "0.5"
 objc2-foundation = { version = "0.2", features = [
