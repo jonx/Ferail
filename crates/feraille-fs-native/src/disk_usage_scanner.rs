@@ -258,8 +258,18 @@ pub fn recursive_size(root: &Path, cancel: &AtomicBool) -> u64 {
             if cancel.load(Ordering::Relaxed) {
                 return total;
             }
-            let p = dirent.path();
-            let meta = match fs::symlink_metadata(&p) {
+            // Read the metadata captured during directory enumeration instead of
+            // re-`stat`ing each path. This is not just faster: on Windows
+            // `DirEntry::metadata()` returns the cached `WIN32_FIND_DATA` from the
+            // enumeration with NO file open, whereas `fs::symlink_metadata(path)`
+            // opens a handle per file — which on a OneDrive / cloud folder makes
+            // Windows hydrate (download) every placeholder we touch, exactly the
+            // behavior we must never trigger (see the Prime Directive in
+            // CLAUDE.md). The logical size is already in the find data, so the
+            // folder total is correct without pulling a byte from the cloud.
+            // `DirEntry::metadata()` does not follow symlinks, matching the
+            // previous `symlink_metadata` semantics.
+            let meta = match dirent.metadata() {
                 Ok(m) => m,
                 Err(_) => continue,
             };
@@ -268,7 +278,7 @@ pub fn recursive_size(root: &Path, cancel: &AtomicBool) -> u64 {
                 continue;
             }
             if ft.is_dir() {
-                stack.push(p);
+                stack.push(dirent.path());
             } else {
                 total = total.saturating_add(meta.len());
             }
