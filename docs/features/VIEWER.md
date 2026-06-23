@@ -243,33 +243,25 @@ another entry keeps `{mode, center}` verbatim:
     bipolar `[-1, 1]` slider that detents to neutral at centre. Cheap
     per-pixel maths (`grade_bgra`, a brightness+contrast LUT plus optional
     saturation mix over the BGRA buffer). Applies to **stills and video**.
-    For a **VLC video** two more bipolar sliders appear — **Hue** and
-    **Gamma** — applied live by libvlc's colour adjust (`ADJUST_HUE` mapped
-    to ±180°, `ADJUST_GAMMA` mapped `2^v` around neutral). They're hidden
-    for stills and the built-in player, which have no equivalent CPU stage.
+    For an **mpv video** two more bipolar sliders appear — **Hue** and
+    **Gamma** — applied live in mpv's filter chain. They're hidden for stills
+    and the built-in player, which have no equivalent stage.
   - **Enhancement** — Denoise + Sharpen, plus an Upscale `1× / 2× / 4×`
     (Lanczos, capped at `UPSCALE_MAX_EDGE`). For **stills** these run the CPU
     pipeline below; Upscale feeds a higher-res bitmap into the *same* layout
-    rect, so the win shows when zoomed past 100 %. For a **VLC video**,
-    Denoise/Sharpen are shown too — plus **Debanding** (`gradfun`) and
-    **Film grain** (`grain`) — and apply via libvlc's filter chain in the
-    order **denoise → deband → sharpen → grain** (clean the source before
-    sharpening so `sharpen`, a Laplacian high-pass with no edge threshold,
-    enhances real detail instead of amplifying grain; `sigma` mapped to the
-    gentle `strength*0.5`). There is **no public libvlc API to change a video
-    filter at runtime** (only deinterlace/adjust/logo/marquee have live
-    setters; arbitrary `video-filter` needs the internal `vout` via
-    `var_SetString`, which isn't exported), so a slider change re-opens the
-    stream on release (`commit_video_enhance`). The re-open is **seamless**:
-    the on-screen frame is kept (no black flash), and because a `seek` issued
-    before the new input is live is silently dropped, the seek is *deferred*
-    (`video_pending_seek`) — the poll fires it on the new stream's first
-    frame, optionally re-pauses (`video_repause`), and **discards that
-    pre-seek frame** so the previous frame holds until the correctly-
-    positioned, freshly-filtered one lands. No flash, no jump to the clip
-    start, no visible playback even when paused. Upscale is still-only. The
-    built-in (AVFoundation) player has no filter chain, so the section is
-    hidden for it.
+    rect, so the win shows when zoomed past 100 %. For an **mpv video**,
+    Denoise/Sharpen are shown too — plus **Debanding** and **Film grain** —
+    and apply **live** through mpv's `vf` filter chain (order **denoise →
+    deband → sharpen → grain**, so `sharpen` enhances real detail rather than
+    amplifying grain), with **no stream re-open** (`set_enhance`). Upscale is
+    still-only; the built-in (AVFoundation) player has no filter chain, so the
+    section is hidden for it.
+  - **Transparent colour** — an mpv-video-only chroma key (a colour **swatch +
+    eyedropper**, plus **Similarity** and **Blend** sliders) that makes a
+    picked colour transparent, paired with a **Transparent** window toggle so
+    keyed videos stack across windows (OS-composited). See
+    [VIDEO-MPV.md](VIDEO-MPV.md) for the mpv backend, chroma key, and
+    transparent-window details.
   - **Threading**: the still pipeline (grade → denoise → upscale → sharpen
     → rotate, `process_still_pixels`) is convolution/resampling-heavy, so
     it **never runs on the render path** — it's dispatched to the
@@ -281,9 +273,9 @@ another entry keeps `{mode, center}` verbatim:
     seq) since it can't be pre-baked off-thread.
 - **Video provider is pluggable** (`feraille_core::video::VideoBackend`,
   see NOTES.md 2026-06-19): the built-in AVFoundation player or, in a
-  `--features vlc` build with VLC selected in Settings → Plugins, a libvlc
+  `--features mpv` build with mpv selected in Settings → Plugins, a libmpv
   backend that plays virtually any container (the eligible-extension set is
-  backend-aware — `VLC_VIDEO_EXTS` only counts when VLC is active) and grades
+  backend-aware — `MPV_VIDEO_EXTS` only counts when mpv is active) and grades
   video natively. Both decode into a BGRA pull buffer drawn as a gpui `img`;
   the viewer never names a concrete player.
 - **Stay on top** checkbox raises the window to the floating `NSWindow`

@@ -8,7 +8,7 @@
 //!
 //! Providers are selected at runtime (a "Plugins" settings section, not a
 //! cargo cfg) and compiled in: the platform-native player is one, an
-//! optional VLC backend is another. The trait is deliberately
+//! optional mpv backend is another. The trait is deliberately
 //! object-shaped (`open` → boxed stream, `Drop` tears the player down) so
 //! the viewer holds one `Box<dyn VideoStream>` and ownership maps cleanly.
 //!
@@ -78,7 +78,7 @@ pub struct ChromaKey {
 /// the viewer's video player.
 pub trait VideoBackend {
     /// Open `path` for playback. `on_ended` fires when the clip reaches its
-    /// natural end. It may fire on a non-main thread (libvlc raises it from
+    /// natural end. It may fire on a non-main thread (libmpv raises it from
     /// a decoder thread), so it must be `Send`; the viewer forwards it
     /// through a channel and must not re-enter the backend synchronously.
     ///
@@ -132,7 +132,7 @@ pub trait VideoStream {
     /// Change enhancement filters *live*. Returns `true` if the backend
     /// applied them without a re-open (mpv, via its runtime filter chain), or
     /// `false` (the default) — meaning the caller must re-open the stream to
-    /// change `VideoEnhance` (the old libvlc path). `VideoEnhance::default()`
+    /// change `VideoEnhance` (the old libmpv path). `VideoEnhance::default()`
     /// clears them.
     fn set_enhance(&mut self, _enhance: VideoEnhance) -> bool {
         false

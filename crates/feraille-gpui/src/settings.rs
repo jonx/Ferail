@@ -1098,36 +1098,37 @@ fn persist_video_backend(value: &str) {
     });
 }
 
-fn persist_vlc_app_path(value: &str) {
+fn persist_mpv_path(value: &str) {
     let existing = app_state::load();
     let v = value.trim();
     app_state::save(&AppState {
-        vlc_app_path: (!v.is_empty()).then(|| v.to_string()),
+        mpv_path: (!v.is_empty()).then(|| v.to_string()),
         ..existing
     });
 }
 
 fn plugins_page() -> SettingPage {
-    // The VLC provider is only compiled in with the `vlc` feature. In a stock
-    // build, grey the "VLC" option out (unselectable) and say why in the
+    // The mpv provider is only compiled in with the `mpv` feature. In a stock
+    // build, grey the "mpv" option out (unselectable) and say why in the
     // description, so it's discoverable but can't be picked into a no-op.
     let (player_desc, player_disabled): (&'static str, &'static [&'static str]) =
-        if cfg!(feature = "vlc") {
+        if cfg!(feature = "mpv") {
             (
                 "The built-in player uses the platform's native media frameworks \
-                 (AVFoundation on macOS, Media Foundation on Windows). VLC plays virtually \
-                 any container/codec and applies colour adjustments to the video itself. \
-                 VLC must be installed; a change takes effect on the next viewer window.",
+                 (AVFoundation on macOS, Media Foundation on Windows). mpv plays virtually \
+                 any container/codec and applies colour adjustments and a transparent-colour \
+                 key to the video itself. libmpv must be installed; a change takes effect on \
+                 the next viewer window.",
                 &[],
             )
         } else {
             (
                 "The built-in player uses the platform's native media frameworks. \
-                 VLC plays virtually any container/codec, but this build was compiled \
-                 without the `vlc` feature, so VLC is unavailable \u{2014} rebuild with \
-                 `cargo run --bin feraille-gpui --features vlc` (with VLC installed) \
+                 mpv plays virtually any container/codec, but this build was compiled \
+                 without the `mpv` feature, so mpv is unavailable \u{2014} rebuild with \
+                 `cargo run --bin feraille-gpui --features mpv` (with libmpv installed) \
                  to enable it.",
-                &["vlc"],
+                &["mpv"],
             )
         };
     SettingPage::new("Plugins")
@@ -1138,7 +1139,7 @@ fn plugins_page() -> SettingPage {
                 .item(dropdown_setting(
                     "Player",
                     player_desc,
-                    &[("builtin", "Built-in"), ("vlc", "VLC")],
+                    &[("builtin", "Built-in"), ("mpv", "mpv")],
                     player_disabled,
                     || {
                         app_state::load()
@@ -1149,20 +1150,20 @@ fn plugins_page() -> SettingPage {
                 ))
                 .item(
                     SettingItem::new(
-                        "VLC location",
+                        "mpv library",
                         SettingField::input(
                             |_cx: &App| {
-                                SharedString::from(app_state::load().vlc_app_path.unwrap_or_else(
-                                    || crate::viewer::backend_native::default_vlc_path().into(),
+                                SharedString::from(app_state::load().mpv_path.unwrap_or_else(
+                                    || crate::viewer::backend_native::default_mpv_path().into(),
                                 ))
                             },
-                            |val: SharedString, _cx: &mut App| persist_vlc_app_path(val.as_ref()),
+                            |val: SharedString, _cx: &mut App| persist_mpv_path(val.as_ref()),
                         ),
                     )
                     .layout(Axis::Vertical)
                     .description(
-                        "Where libvlc is loaded from — a VLC.app bundle on macOS, the VLC \
-                         install folder on Windows/Linux (e.g. C:\\Program Files\\VideoLAN\\VLC).",
+                        "Where libmpv is loaded from — the dylib, a directory containing it, \
+                         or mpv.app on macOS. Blank uses the platform default (Homebrew).",
                     ),
                 ),
         )

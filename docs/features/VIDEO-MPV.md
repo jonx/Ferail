@@ -21,7 +21,7 @@ Phases 0–4 shipped (2026-06-23), all compile-green; see commits + the
 - **UI** professional popup rework (labeled sections, swatch/hex/Pick) ✅
 - **fix** `vo=libmpv` — mpv was opening its own native window + deadlocking ✅
 - **4** **transparent stacking windows** (replaced the in-app layer stack) ✅
-- **5/4b/rename** — deferred items below
+- **5/4b** — deferred items below (rename: done)
 
 **Compositing model: transparent stacking windows (2026-06-23).** The first
 Phase 4 cut composited background videos *inside one window* (a `Vec<BgLayer>`
@@ -51,7 +51,7 @@ colour from the live frame), and **Similarity** (range width) + **Blend**
 (edge feather) sliders. The key is pushed live via `set_chroma_key`, so keyed
 pixels arrive transparent and the stage background shows through. No new icon
 (the swatch is the eyedropper affordance), so `ICONS.md` is untouched. `cargo
-check -p feraille-gpui --features vlc` is green.
+check -p feraille-gpui --features mpv` is green.
 
 > **Verified by screenshot + UI reworked.** The adjustments popup renders
 > correctly with the full mpv-video control set (a new screenshot-only
@@ -64,28 +64,27 @@ check -p feraille-gpui --features vlc` is green.
 > screenshot of a *live keyed video* (the keyed pixels actually transparent),
 > which needs the poll to run — a follow-up.
 
-Still open: per-layer keying + a file picker for layer sources (Phase 4b),
-runtime verification of live compositing, docs/icons (Phase 5), and the cosmetic
-rename below. Phase 2 recap: removed the VLC-era seamless-reopen apparatus —
+Still open: the GPU video path (mpv GL → IOSurface → `gpui::surface`) and
+per-window mute. Phase 2 recap: removed the VLC-era seamless-reopen apparatus —
 `commit_video_enhance` now pushes filters through live `set_enhance`; the
 `video_pending_seek`/`video_repause` deferral and the poll's pre-seek-frame
 dance are gone (−67 lines in `window.rs`). The decision log is in
 [NOTES.md](../../NOTES.md) (2026-06-23 entry).
 
-### Deferred cosmetic rename (pinned by hot `settings.rs`)
+### Identifier rename to mpv — done
 
-The optional provider **is** mpv now (the libvlc crate is gone), but three
-user-facing identifiers still read `vlc` because Settings → Plugins
-(`settings.rs`) and the persisted [`app_state`] fields pin them, and that file
-was under concurrent edit when this landed:
+Every user-facing `vlc` identifier was renamed to `mpv`:
 
-- the cargo feature `vlc` (→ `mpv`),
-- the persisted setting `video_backend == "vlc"` and field `vlc_app_path`
-  (→ `"mpv"` / `mpv_path`),
-- the Settings → Plugins dropdown label "VLC" (→ "mpv").
+- the cargo feature `vlc` → **`mpv`** (build with `--features mpv`),
+- the persisted `video_backend` value `"vlc"` → **`"mpv"`** and field
+  `vlc_app_path` → **`mpv_path`** (the Settings "mpv library" input),
+- the Settings → Plugins dropdown label "VLC" → **"mpv"**, plus all the
+  internal symbols (`resolve_mpv_pref`, `default_mpv_path`, `MPV_VIDEO_EXTS`, …)
+  and comments.
 
-These are a single mechanical rename to do once `settings.rs`/`app_state.rs`
-are free; the implementation behind them is already mpv.
+**Back-compat:** `app_state` still accepts a legacy `video_backend=vlc` on load
+and normalises it to `mpv`, so existing configs keep selecting the provider; the
+next settings save writes `mpv`.
 
 ### Phase 0 findings (verified, not assumed)
 

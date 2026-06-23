@@ -55,7 +55,7 @@ for how this is enforced across the codebase.
 - **Preview pane** — dense, async metadata surface for the current selection.
   ([spec](docs/features/PREVIEW.md))
 - **Media viewer** — built-in image and video viewer with live colour,
-  sharpen, denoise, and upscale adjustments; VLC-backed for any-format video.
+  sharpen, denoise, and upscale adjustments; mpv-backed for any-format video.
   ([spec](docs/features/VIEWER.md))
 - **Disk Usage window** — async scanning with squarified treemap and top-list
   views. ([spec](docs/features/DISK_USAGE.md))

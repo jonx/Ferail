@@ -82,14 +82,14 @@ const CHROME_REVEAL_STRIP: f32 = 56.0;
 
 /// Extensions the built-in (AVFoundation) player reliably plays. Routed to
 /// the video path for *any* backend. Everything else stays a Quick Look
-/// poster unless the VLC backend (broad set below) is active. [mac]
+/// poster unless the mpv backend (broad set below) is active. [mac]
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov"];
 
-/// Containers VLC plays that the built-in player can't — only treated as
-/// video when the VLC backend is selected (otherwise they'd open as a
+/// Containers mpv plays that the built-in player can't — only treated as
+/// video when the mpv backend is selected (otherwise they'd open as a
 /// Quick Look poster image, e.g. a 3GP showing as a still). Not exhaustive
-/// — libvlc handles more — but covers the common cases.
-const VLC_VIDEO_EXTS: &[&str] = &[
+/// — libmpv handles more — but covers the common cases.
+const MPV_VIDEO_EXTS: &[&str] = &[
     "mkv", "webm", "avi", "flv", "wmv", "asf", "mpg", "mpeg", "mpe", "m2v", "mpv", "3gp", "3g2",
     "ts", "mts", "m2ts", "vob", "ogv", "ogm", "divx", "rm", "rmvb", "f4v", "mxf", "dv", "qt",
     "amv", "nsv", "y4m", "h264", "hevc", "av1",
@@ -138,8 +138,8 @@ fn build_video_frame(bgra: Vec<u8>, w: u32, h: u32) -> Option<Arc<RenderImage>> 
 }
 
 /// Number of draggable sliders in the adjustments popup. The colour group
-/// (brightness/contrast/color, plus hue/gamma for VLC video) and the
-/// enhancement group (denoise/sharpen, plus debanding/grain for VLC video).
+/// (brightness/contrast/color, plus hue/gamma for mpv video) and the
+/// enhancement group (denoise/sharpen, plus debanding/grain for mpv video).
 /// Upscale is buttons, not a slider. The two chroma-key sliders (similarity /
 /// blend) bring the mpv-video total to 11.
 const SLIDER_COUNT: usize = 11;
@@ -156,15 +156,15 @@ enum SliderId {
     Contrast,
     /// "Color" in the UI — chroma intensity.
     Saturation,
-    /// Hue rotation — VLC video only.
+    /// Hue rotation — mpv video only.
     Hue,
-    /// Gamma — VLC video only.
+    /// Gamma — mpv video only.
     Gamma,
     Denoise,
     Sharpen,
-    /// Gradient debanding (`gradfun`) — VLC video only.
+    /// Gradient debanding (`gradfun`) — mpv video only.
     Banding,
-    /// Film grain (`grain`) — VLC video only.
+    /// Film grain (`grain`) — mpv video only.
     Grain,
     /// Chroma-key range width (`colorkey` similarity) — mpv video only.
     Similarity,
@@ -240,7 +240,7 @@ struct ColorAdjust {
     brightness: f32,
     contrast: f32,
     saturation: f32,
-    /// Hue / gamma are VLC-video-only (the still CPU grade ignores them);
+    /// Hue / gamma are mpv-video-only (the still CPU grade ignores them);
     /// they ride here so the shared colour sliders can write them. Both
     /// `[-1, 1]`, 0 = neutral.
     hue: f32,
@@ -274,7 +274,7 @@ struct EnhanceParams {
     denoise: f32,
     sharpen: f32,
     upscale: u8,
-    /// Debanding (`gradfun`) and film grain (`grain`) are VLC-video-only
+    /// Debanding (`gradfun`) and film grain (`grain`) are mpv-video-only
     /// filters; the still CPU pipeline ignores them. Both `0..1`, 0 = off.
     banding: f32,
     grain: f32,
@@ -413,21 +413,21 @@ enum SeekTarget {
 
 /// Read the persisted video-provider choice once at viewer construction —
 /// settings I/O must never touch the render path. `Some(path)` selects the
-/// VLC provider (effective only in a `vlc`-feature build); `None` keeps the
+/// mpv provider (effective only in an `mpv`-feature build); `None` keeps the
 /// built-in player.
-fn resolve_vlc_pref() -> Option<PathBuf> {
-    // The VLC provider only exists in a `vlc`-feature build. Without it the
+fn resolve_mpv_pref() -> Option<PathBuf> {
+    // The mpv provider only exists in an `mpv`-feature build. Without it the
     // saved preference is unhonourable, so refuse it here — otherwise the
-    // broad VLC container set (MKV/AVI/3GP…) would be treated as displayable
+    // broad mpv container set (MKV/AVI/3GP…) would be treated as displayable
     // video and mis-routed to the native player, which can't decode it.
-    if !cfg!(feature = "vlc") {
+    if !cfg!(feature = "mpv") {
         return None;
     }
     let st = crate::app_state::load();
-    (st.video_backend.as_deref() == Some("vlc")).then(|| {
+    (st.video_backend.as_deref() == Some("mpv")).then(|| {
         PathBuf::from(
-            st.vlc_app_path
-                .unwrap_or_else(|| super::backend_native::default_vlc_path().to_string()),
+            st.mpv_path
+                .unwrap_or_else(|| super::backend_native::default_mpv_path().to_string()),
         )
     })
 }
@@ -465,7 +465,7 @@ pub struct ViewerWindow {
     last_title: String,
     /// Live windowless video player: (the open stream, the entry path it
     /// plays). `None` when the current entry isn't a video. The concrete
-    /// player is chosen behind the [`VideoBackend`] seam (native or VLC);
+    /// player is chosen behind the [`VideoBackend`] seam (native or mpv);
     /// frames are pulled out and drawn through the same stage path as
     /// stills, so the video is a real gpui element (docs/features/VIEWER.md).
     video_overlay: Option<(Box<dyn VideoStream>, PathBuf)>,
@@ -473,12 +473,12 @@ pub struct ViewerWindow {
     /// once it no longer matches (a newer clip opened, or playback ended).
     /// Replaces the old player-handle-as-key now that the handle is boxed.
     video_epoch: u64,
-    /// `Some(VLC.app path)` when the user selected the VLC provider in
+    /// `Some(mpv.app path)` when the user selected the mpv provider in
     /// Settings → Plugins. Resolved once at construction (no settings I/O
     /// on the render path); `None` keeps the native player.
-    vlc_pref: Option<PathBuf>,
+    mpv_pref: Option<PathBuf>,
     /// Whether the active video backend applied the colour grade itself
-    /// (VLC does, natively on the GPU/decoder). When true the viewer skips
+    /// (mpv does, natively on the GPU/decoder). When true the viewer skips
     /// its per-frame CPU grade for video — the frames already carry it.
     /// Doubles as "the current video stream grades natively" (mpv does).
     video_adjust_native: bool,
@@ -652,7 +652,7 @@ impl ViewerWindow {
             last_title: String::new(),
             video_overlay: None,
             video_epoch: 0,
-            vlc_pref: resolve_vlc_pref(),
+            mpv_pref: resolve_mpv_pref(),
             video_adjust_native: false,
             video_enhance_applied: VideoEnhance::default(),
             video_frame_image: None,
@@ -819,8 +819,8 @@ impl ViewerWindow {
     // -- video overlay [mac] ---------------------------------------
 
     /// Whether `path` should open as video for the *active* backend: the
-    /// built-in formats always, plus the broad VLC container set when the
-    /// VLC backend is selected (so a 3GP/MKV/AVI plays instead of showing a
+    /// built-in formats always, plus the broad mpv container set when the
+    /// mpv backend is selected (so a 3GP/MKV/AVI plays instead of showing a
     /// Quick Look poster).
     fn is_video_path(&self, path: &std::path::Path) -> bool {
         let Some(ext) = path
@@ -831,7 +831,7 @@ impl ViewerWindow {
             return false;
         };
         VIDEO_EXTS.contains(&ext.as_str())
-            || (self.vlc_pref.is_some() && VLC_VIDEO_EXTS.contains(&ext.as_str()))
+            || (self.mpv_pref.is_some() && MPV_VIDEO_EXTS.contains(&ext.as_str()))
     }
 
     /// True when the *current* entry plays as video (slideshow advance is
@@ -877,7 +877,7 @@ impl ViewerWindow {
     }
 
     /// The current enhancement filters (denoise / sharpen / debanding /
-    /// film grain) a VLC stream would be opened with. Upscale is still-only,
+    /// film grain) a mpv stream would be opened with. Upscale is still-only,
     /// so it's excluded.
     fn video_enhance(&self) -> VideoEnhance {
         VideoEnhance {
@@ -896,7 +896,7 @@ impl ViewerWindow {
         let tx = self.video_ended_tx.clone();
         let ended_path = path.clone();
         let enhance = self.video_enhance();
-        let stream = video_backend(self.vlc_pref.as_deref()).open(
+        let stream = video_backend(self.mpv_pref.as_deref()).open(
             &path,
             Box::new(move || {
                 let _ = tx.try_send(ended_path.clone());
@@ -1002,7 +1002,7 @@ impl ViewerWindow {
     }
 
     /// Hand the current colour grade to the video backend. A backend that
-    /// applies it natively (VLC) returns true, and the viewer then skips
+    /// applies it natively (mpv) returns true, and the viewer then skips
     /// its per-frame CPU grade for video; the native player returns false,
     /// leaving the CPU path in charge. No-op when no video is open.
     fn apply_video_adjust(&mut self) {
@@ -1669,7 +1669,7 @@ impl ViewerWindow {
         if let Some((.., old)) = self.video_adjusted.take() {
             self.video_frames_to_drop.push(old);
         }
-        // A live video gets the colour grade pushed to its backend (VLC
+        // A live video gets the colour grade pushed to its backend (mpv
         // applies it natively; native player keeps the CPU path).
         if self.current_is_video() {
             self.apply_video_adjust();
@@ -2050,7 +2050,7 @@ impl ViewerWindow {
             }
         };
         // Skip the per-frame CPU grade when the backend already graded the
-        // pixels (VLC). Otherwise apply it on the CPU (native player).
+        // pixels (mpv). Otherwise apply it on the CPU (native player).
         let image = if self.video_adjust_native {
             image
         } else {
@@ -2232,8 +2232,8 @@ impl ViewerWindow {
         // Denoise/sharpen apply to stills (CPU) and to mpv video (filter
         // chain); upscale stays stills-only. `video_adjust_native` marks an
         // mpv stream — the native player has no filter chain.
-        let vlc_video = self.sim_video_panel || (is_video && self.video_adjust_native);
-        let show_enhance = !is_video || vlc_video;
+        let mpv_video = self.sim_video_panel || (is_video && self.video_adjust_native);
+        let show_enhance = !is_video || mpv_video;
         // Chroma-key state read up front so the section's builder closure
         // doesn't re-borrow self for these.
         let chroma_on = self.chroma_on;
@@ -2279,7 +2279,7 @@ impl ViewerWindow {
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
                     this.slider_drag = None;
-                    // Denoise/sharpen for a VLC video are baked in at open,
+                    // Denoise/sharpen for a mpv video are baked in at open,
                     // so a changed value re-opens the stream on release
                     // (kept off the live drag — re-opening per move thrashes).
                     this.commit_video_enhance(cx);
@@ -2298,10 +2298,10 @@ impl ViewerWindow {
             .child(self.slider_row(SliderId::Brightness, cx))
             .child(self.slider_row(SliderId::Contrast, cx))
             .child(self.slider_row(SliderId::Saturation, cx))
-            // Hue + gamma are live libvlc colour-adjust controls — only the
-            // VLC backend applies them, so they're hidden for stills and the
+            // Hue + gamma are live libmpv colour-adjust controls — only the
+            // mpv backend applies them, so they're hidden for stills and the
             // built-in player.
-            .when(vlc_video, |d| {
+            .when(mpv_video, |d| {
                 d.child(self.slider_row(SliderId::Hue, cx))
                     .child(self.slider_row(SliderId::Gamma, cx))
             })
@@ -2310,9 +2310,9 @@ impl ViewerWindow {
                     .child(self.section_header("Enhance", cx))
                     .child(self.slider_row(SliderId::Denoise, cx))
                     .child(self.slider_row(SliderId::Sharpen, cx));
-                // Debanding + film grain are VLC-only filters (gradfun /
+                // Debanding + film grain are mpv-only filters (gradfun /
                 // grain), baked into the decode like denoise/sharpen.
-                let d = d.when(vlc_video, |d| {
+                let d = d.when(mpv_video, |d| {
                     d.child(self.slider_row(SliderId::Banding, cx))
                         .child(self.slider_row(SliderId::Grain, cx))
                 });
@@ -2327,7 +2327,7 @@ impl ViewerWindow {
             // Transparent colour (chroma key) — mpv video only. Keyed pixels
             // go transparent so the stage background (later: a lower layer)
             // shows through. Pick the colour with the eyedropper swatch.
-            .when(vlc_video, |d| {
+            .when(mpv_video, |d| {
                 let col = chroma_color;
                 let swatch =
                     gpui::rgb(((col[0] as u32) << 16) | ((col[1] as u32) << 8) | col[2] as u32);

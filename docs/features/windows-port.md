@@ -36,12 +36,11 @@ own commit on the `windows-parity` branch:
   into `feraille-gpui` (direct `feraille_shell_mac::` calls in `entry_info.rs`;
   `show_desktop` / `show_desktop_available` missing from win32/linux). Routed
   through `platform_shell`; added the missing surface to both shell crates.
-- **VLC video is cross-platform.** `feraille-video-vlc` was macOS-only; its
-  decode/vmem model is platform-neutral — only the `dlopen` loader + `.app`
-  layout were Mac-shaped. Generalised to a `dynload` shim (dlopen on unix,
-  `LoadLibraryW` on Windows) + per-OS path resolution. `--features vlc` now
-  works on Windows/Linux; point Settings → Plugins at the VLC **install dir**
-  (`C:\Program Files\VideoLAN\VLC`).
+- **mpv video is cross-platform.** Its SW-render frame-pull model is
+  platform-neutral — only the `dlopen` loader + dylib layout are Mac-shaped.
+  A `dynload` shim (dlopen on unix, `LoadLibraryW` on Windows) + per-OS path
+  resolution generalise it. `--features mpv` works on Windows/Linux; point
+  Settings → Plugins at the libmpv library (e.g. `libmpv-2.dll` on Windows).
 - **Headless `--screenshot` works** (it had regressed — gpui_windows has no
   `render_to_image`). Restored via `PrintWindow(PW_RENDERFULLCONTENT)`, with the
   window placed off-screen + `WS_EX_TOOLWINDOW` so it's invisible to the user.
@@ -67,7 +66,7 @@ own commit on the `windows-parity` branch:
 1. **Native-default video** — *done.* `video_overlay_*` is implemented natively
    via Media Foundation's `IMFMediaEngine` frame-server (D3D11 device +
    `TransferVideoFrame` readback + automatic audio/sync), the analogue of macOS
-   AVFoundation. Verified decoding + displaying real frames. VLC remains the
+   AVFoundation. Verified decoding + displaying real frames. mpv remains the
    optional cross-platform plugin. See `crates/feraille-shell-win32/src/video_mf.rs`.
 2. **Truly-headless screenshot** — *done.* `render_to_image` is implemented in
    `gpui_windows` (D3D11 staging-texture readback); the harness captures with
@@ -81,7 +80,7 @@ own commit on the `windows-parity` branch:
 **Still genuinely remaining:**
 
 - A handful of interaction/UX items surfaced by on-device testing (e.g. the
-  Settings → Plugins VLC dropdown selection — logic verified, but needs an
+  Settings → Plugins mpv dropdown selection — logic verified, but needs an
   interactive repro).
 - Linux parity (the sister [linux-port.md](linux-port.md)).
 

@@ -45,11 +45,11 @@ Not yet surfaced in the UI — Phase 2's Diagnostics page renders it.
 `crates/feraille-gpui/src/diagnostics.rs` — `run_checks()` produces a
 `DiagnosticsReport` of `Check { name, status: Ok|Warn|Fail, detail }`, grouped
 App / Storage / Dependencies / Environment. Checks:
-- App: version, debug/release, features (`vlc`), commit.
+- App: version, debug/release, features (`mpv`), commit.
 - **Storage** (bug-catcher): config dir path/exists/**writable** (temp-file
   probe); settings file exists/parseable; metadata DB path/openable/writable;
   cache/thumbnail dirs.
-- Dependencies: VLC path valid + libvlc loadable (when selected).
+- Dependencies: mpv path valid + libmpv loadable (when selected).
 - Environment: OS/version/arch, env-var **presence** only (APPDATA/HOME/XDG —
   privacy), free space on the config volume, platform capabilities.
 

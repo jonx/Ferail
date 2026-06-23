@@ -103,12 +103,12 @@ pub struct AppState {
     pub dupe_paranoid: Option<bool>,
 
     // ---- Plugins (docs/features/VIEWER.md) ----
-    /// Video player provider: "builtin" (AVFoundation) or "vlc". `None` ==
-    /// builtin. VLC only takes effect in a build with the `vlc` feature.
+    /// Video player provider: "builtin" (AVFoundation) or "mpv". `None` ==
+    /// builtin. mpv only takes effect in a build with the `mpv` feature.
     pub video_backend: Option<String>,
-    /// Path to the VLC.app bundle the VLC provider loads libvlc from.
-    /// `None` == the default `/Applications/VLC.app`.
-    pub vlc_app_path: Option<String>,
+    /// Path the mpv provider loads libmpv from (the dylib, a directory, or
+    /// `mpv.app`). `None` == the platform default (Homebrew on macOS).
+    pub mpv_path: Option<String>,
 
     // ---- Sidebar Locations (Windows / OneDrive) ----
     /// Which root the sidebar's special folders resolve against when
@@ -285,13 +285,13 @@ pub fn load() -> AppState {
             }
             "video_backend" => {
                 let v = val.trim().to_lowercase();
-                if matches!(v.as_str(), "builtin" | "vlc") {
+                if matches!(v.as_str(), "builtin" | "mpv") {
                     out.video_backend = Some(v);
                 }
             }
-            "vlc_app_path" => {
+            "mpv_path" => {
                 if !val.trim().is_empty() {
-                    out.vlc_app_path = Some(val.trim().to_string());
+                    out.mpv_path = Some(val.trim().to_string());
                 }
             }
             "special_folder_mode" => {
@@ -387,8 +387,8 @@ pub fn save(state: &AppState) {
     if let Some(v) = &state.video_backend {
         s.push_str(&format!("video_backend={v}\n"));
     }
-    if let Some(p) = &state.vlc_app_path {
-        s.push_str(&format!("vlc_app_path={p}\n"));
+    if let Some(p) = &state.mpv_path {
+        s.push_str(&format!("mpv_path={p}\n"));
     }
     if let Some(m) = &state.special_folder_mode {
         s.push_str(&format!("special_folder_mode={m}\n"));

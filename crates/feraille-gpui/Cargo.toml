@@ -13,9 +13,7 @@ publish = false
 [features]
 # Compile in the optional mpv video provider (libmpv, loaded at runtime from
 # the path set in Settings). Off by default so a stock build needs nothing.
-# The feature name stays `vlc` because Settings → Plugins (settings.rs) pins
-# it; the cosmetic rename to `mpv` is a deferred follow-up (see VIDEO-MPV.md).
-vlc = ["dep:feraille-video-mpv"]
+mpv = ["dep:feraille-video-mpv"]
 
 [dependencies]
 anyhow.workspace = true
@@ -75,7 +73,7 @@ feraille-disk-usage.workspace = true
 # surface mirrors between the two so `crate::platform_shell` (in
 # `lib.rs`) can alias them with a single `#[cfg]` switch; gpui call
 # sites use `platform_shell::*` and don't care which is active.
-# Optional mpv video provider (enabled by the `vlc` feature). libmpv is
+# Optional mpv video provider (enabled by the `mpv` feature). libmpv is
 # loaded at runtime on every desktop OS, so the dep is declared per-target
 # alongside each platform's shell crate.
 [target.'cfg(target_os = "macos")'.dependencies]

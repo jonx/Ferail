@@ -1,13 +1,12 @@
 //! macOS/Windows/Linux libmpv binding. Hand-written FFI (the surface is ~14
 //! stable functions; the Phase 0 spike confirmed raw FFI is enough — no
-//! `libmpv`/`mpv` crate dep, matching the VLC provider's no-extra-deps style).
+//! `libmpv`/`mpv` crate dep, no extra deps at all).
 //!
-//! Unlike libvlc (push: lock/unlock/display callbacks), libmpv is **pull**: we
-//! create a software render context once and call `mpv_render_context_render`
-//! to fill a BGRA buffer whenever `mpv_render_context_update` reports a new
-//! frame. Colour grade, enhancement filters, and the chroma key are all one
-//! live `vf` filtergraph (`rebuild_vf`) — no per-change re-open (the whole
-//! reason this replaces VLC).
+//! libmpv is **pull**-based: we create a software render context once and call
+//! `mpv_render_context_render` to fill a BGRA buffer whenever
+//! `mpv_render_context_update` reports a new frame. Colour grade, enhancement
+//! filters, and the chroma key are all one live `vf` filtergraph
+//! (`rebuild_vf`) — no per-change stream re-open.
 
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void, CString};
@@ -58,7 +57,7 @@ struct MpvEventEndFile {
 // ---- cross-platform dynamic loader -----------------------------------------
 //
 // libmpv is loaded at runtime (no build-time link) so a stock build needs no
-// mpv. mpv is self-contained (ffmpeg built in), so — unlike libvlc — there is
+// mpv. mpv is self-contained (ffmpeg built in), so there is
 // no plugin directory to point an env var at. Unix uses `dlopen`/`dlsym`;
 // Windows uses `LoadLibraryW`/`GetProcAddress`.
 mod dynload {
@@ -430,7 +429,7 @@ impl MpvStream {
     /// key. Empty when fully neutral (which clears mpv's chain). The chroma
     /// key ends the chain in `format=rgba` so SW render emits real alpha (the
     /// Phase 0 finding). Order: grade → denoise → deband → sharpen → grain →
-    /// key (clean the source before sharpening, exactly as the VLC chain did).
+    /// key (clean the source before sharpening).
     fn rebuild_vf(&self) {
         let mut f: Vec<String> = Vec::new();
         let a = self.adjust;
@@ -494,7 +493,7 @@ impl VideoStream for MpvStream {
     fn copy_frame(&mut self) -> Option<(u32, u32, Vec<u8>)> {
         self.pump_events();
         // Only render when mpv reports a fresh frame — so a poll between the
-        // video's own frames is a cheap no-op (matches the VLC seq dedup).
+        // video's own frames is a cheap no-op.
         if (self.lib.rc_update)(self.rctx) & RENDER_UPDATE_FRAME == 0 {
             return None;
         }
@@ -541,7 +540,7 @@ impl VideoStream for MpvStream {
             }
         } else if frames < 0 {
             for _ in 0..frames.unsigned_abs() {
-                self.command(&["frame-back-step"]); // real reverse step (libvlc had none)
+                self.command(&["frame-back-step"]); // real reverse step
             }
         }
     }

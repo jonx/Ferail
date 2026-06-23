@@ -7,11 +7,9 @@
 //! whole point is that the viewer no longer names these functions
 //! directly; an alternative provider (mpv) can take their place.
 //!
-//! NB: the optional provider is **mpv** (`feraille-video-mpv`), which replaced
-//! the libvlc one. The cargo feature and the persisted setting are still named
-//! `vlc`/`vlc_app_path` because Settings → Plugins (`settings.rs`) pins those
-//! identifiers; the cosmetic rename to `mpv` is a deferred follow-up (see
-//! docs/features/VIDEO-MPV.md / TODO).
+//! NB: the optional provider is **mpv** (`feraille-video-mpv`), gated behind
+//! the `mpv` cargo feature and selected via the `video_backend` = `"mpv"`
+//! setting, with its libmpv path in `mpv_path` (Settings → Plugins).
 
 use std::path::Path;
 
@@ -22,7 +20,7 @@ use feraille_core::video::{VideoBackend, VideoEnhance, VideoStream};
 /// libmpv shared library, a directory containing it, or `mpv.app`;
 /// [`feraille_video_mpv::backend`] resolves the actual dylib from there (and
 /// falls back to the platform's usual install paths).
-pub fn default_vlc_path() -> &'static str {
+pub fn default_mpv_path() -> &'static str {
     #[cfg(target_os = "macos")]
     {
         // Homebrew's libmpv; the resolver also probes Intel/`/usr/local`.
@@ -46,19 +44,18 @@ pub fn default_vlc_path() -> &'static str {
 
 /// Select the active video provider. `hint` is `Some(path)` when the user
 /// picked the mpv provider in Settings → Plugins (resolved once by the viewer,
-/// so no settings I/O happens on a hot path). In a build with the `vlc`
-/// feature (the optional-provider gate; now wired to mpv) this returns the mpv
-/// backend when libmpv loads; otherwise (or on any failure) it falls back to
-/// the native player.
+/// so no settings I/O happens on a hot path). In a build with the `mpv`
+/// feature this returns the mpv backend when libmpv loads; otherwise (or on
+/// any failure) it falls back to the native player.
 pub fn video_backend(hint: Option<&Path>) -> Box<dyn VideoBackend> {
-    #[cfg(feature = "vlc")]
+    #[cfg(feature = "mpv")]
     if let Some(path) = hint {
         if let Some(b) = feraille_video_mpv::backend(path) {
             return b;
         }
         // Selected but unavailable → fall through to the native player.
     }
-    #[cfg(not(feature = "vlc"))]
+    #[cfg(not(feature = "mpv"))]
     let _ = hint;
     Box::new(NativeBackend)
 }
