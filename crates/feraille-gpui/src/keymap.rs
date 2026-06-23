@@ -51,7 +51,7 @@ pub fn install(cx: &mut App) {
     // is a UI-layer Shell helper (replays UndoOp inverse from the
     // Shell::undo_stack), not a catalogued command in feraille-core.
     cx.bind_keys([KeyBinding::new(
-        "cmd-z",
+        "secondary-z",
         crate::shell::UndoLastAction,
         Some(shell::SHELL_CONTEXT),
     )]);
@@ -88,11 +88,13 @@ fn translate_shortcut(s: &Shortcut) -> Option<String> {
     let key = translate_key(s.key)?;
     let mut parts: Vec<&str> = Vec::with_capacity(4);
     if s.primary {
-        // On macOS the catalogue's `primary` means Cmd. gpui's
-        // platform layer maps "cmd-" to Cmd on macOS / Ctrl on
-        // Linux+Windows automatically (same convention as Zed),
-        // so this stays portable when we eventually ship on Linux.
-        parts.push("cmd");
+        // The catalogue's `primary` is Cmd on macOS, Ctrl on Windows/Linux.
+        // Use gpui's portable `secondary` token: it resolves to the platform
+        // key (Cmd) on macOS and to Control everywhere else. Plain `cmd` does
+        // NOT do this — gpui maps `cmd` to the *platform* modifier, which on
+        // Windows is the Windows logo key, so `cmd-shift-p` would demand
+        // Win+Shift+P instead of Ctrl+Shift+P (and Win+P is OS-reserved).
+        parts.push("secondary");
     }
     if s.shift {
         parts.push("shift");
@@ -190,7 +192,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
             // palette key in modern apps) to the same action.
             cx.bind_keys([
                 KeyBinding::new(kb_str, ShortcutsHelp, ctx),
-                KeyBinding::new("cmd-k", ShortcutsHelp, ctx),
+                KeyBinding::new("secondary-k", ShortcutsHelp, ctx),
             ])
         }
 
@@ -281,8 +283,8 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
 /// covers every shortcut the shell handles.
 pub(crate) fn install_extras(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-t", NewTab, Some(shell::SHELL_CONTEXT)),
-        KeyBinding::new("cmd-w", CloseTab, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("secondary-t", NewTab, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("secondary-w", CloseTab, Some(shell::SHELL_CONTEXT)),
         // Phase D `cmd-shift-t` (ReopenClosedTab) goes through the
         // command catalogue (`file.reopen_closed_tab`) so the menu
         // bar and command palette pick it up automatically. No need
@@ -297,7 +299,7 @@ pub(crate) fn install_extras(cx: &mut App) {
         // Finder's Empty Trash chord [mac]. Backspace = the Mac
         // Delete key in gpui's DSL.
         KeyBinding::new(
-            "cmd-shift-backspace",
+            "secondary-shift-backspace",
             EmptyTrash,
             Some(shell::SHELL_CONTEXT),
         ),
@@ -306,18 +308,18 @@ pub(crate) fn install_extras(cx: &mut App) {
         // "Add to Sidebar" muscle memory and avoids the Cmd+T
         // collision with NewTab.
         KeyBinding::new(
-            "cmd-d",
+            "secondary-d",
             crate::shell::ToggleFavoriteForTarget,
             Some(shell::SHELL_CONTEXT),
         ),
         // Keyboard reorder of the focused favorite (§4.4).
         KeyBinding::new(
-            "cmd-alt-up",
+            "secondary-alt-up",
             crate::shell::MoveFavoriteUp,
             Some(shell::SHELL_CONTEXT),
         ),
         KeyBinding::new(
-            "cmd-alt-down",
+            "secondary-alt-down",
             crate::shell::MoveFavoriteDown,
             Some(shell::SHELL_CONTEXT),
         ),
@@ -360,21 +362,21 @@ pub(crate) fn install_extras(cx: &mut App) {
         // variants; the extend variants are shell-local for now and
         // can move into the catalogue when other surfaces (menu
         // bar, command palette) need to enumerate them.
-        KeyBinding::new("cmd-a", SelectAll, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("secondary-a", SelectAll, Some(shell::SHELL_CONTEXT)),
         // Spec §2.5: Cmd+Up/Down → jump to first/last row (plain nav).
-        KeyBinding::new("cmd-up", CursorFirst, Some(shell::SHELL_CONTEXT)),
-        KeyBinding::new("cmd-down", CursorLast, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("secondary-up", CursorFirst, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("secondary-down", CursorLast, Some(shell::SHELL_CONTEXT)),
         // Shift-extend variants for arrow, Home/End, PgUp/PgDn,
         // and Cmd+Shift for first/last extend.
         KeyBinding::new("shift-up", CursorUpExtend, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new("shift-down", CursorDownExtend, Some(shell::SHELL_CONTEXT)),
         KeyBinding::new(
-            "cmd-shift-up",
+            "secondary-shift-up",
             CursorFirstExtend,
             Some(shell::SHELL_CONTEXT),
         ),
         KeyBinding::new(
-            "cmd-shift-down",
+            "secondary-shift-down",
             CursorLastExtend,
             Some(shell::SHELL_CONTEXT),
         ),
@@ -399,11 +401,11 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("escape", ViewerDismiss, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", EntryInfoDismiss, Some(ENTRY_INFO_CONTEXT)),
         KeyBinding::new("space", ViewerTogglePlay, Some(VIEWER_CONTEXT)),
-        KeyBinding::new("cmd-=", ViewerZoomIn, Some(VIEWER_CONTEXT)),
-        KeyBinding::new("cmd--", ViewerZoomOut, Some(VIEWER_CONTEXT)),
-        KeyBinding::new("cmd-0", ViewerZoomReset, Some(VIEWER_CONTEXT)),
-        KeyBinding::new("cmd-1", ViewerActualSize, Some(VIEWER_CONTEXT)),
-        KeyBinding::new("cmd-ctrl-f", ViewerToggleFullscreen, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("secondary-=", ViewerZoomIn, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("secondary--", ViewerZoomOut, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("secondary-0", ViewerZoomReset, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("secondary-1", ViewerActualSize, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("secondary-ctrl-f", ViewerToggleFullscreen, Some(VIEWER_CONTEXT)),
         // View-only per-item rotation (docs/features/VIEWER.md): R turns
         // clockwise, Shift-R counter-clockwise.
         KeyBinding::new("r", ViewerRotateCw, Some(VIEWER_CONTEXT)),
@@ -423,10 +425,10 @@ pub(crate) fn install_extras(cx: &mut App) {
         // `cmd-0` so the menu/settings still read "⌘0". `=`/`+` get the
         // same treatment for zoom-in; `-` is unshifted on these layouts
         // so it already works.
-        KeyBinding::new("cmd-shift-0", ZoomReset, Some(shell::SHELL_CONTEXT)),
-        KeyBinding::new("cmd-shift-=", ZoomIn, Some(shell::SHELL_CONTEXT)),
-        KeyBinding::new("cmd-shift-0", ViewerZoomReset, Some(VIEWER_CONTEXT)),
-        KeyBinding::new("cmd-shift-1", ViewerActualSize, Some(VIEWER_CONTEXT)),
-        KeyBinding::new("cmd-shift-=", ViewerZoomIn, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("secondary-shift-0", ZoomReset, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("secondary-shift-=", ZoomIn, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new("secondary-shift-0", ViewerZoomReset, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("secondary-shift-1", ViewerActualSize, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("secondary-shift-=", ViewerZoomIn, Some(VIEWER_CONTEXT)),
     ]);
 }

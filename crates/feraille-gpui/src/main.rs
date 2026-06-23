@@ -439,7 +439,7 @@ fn run_gui(args: screenshot::Args) {
         // shutdown rather than relying on the platform's default
         // (which still works, but having it as an Action means
         // the menu item below can advertise the shortcut hint).
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+        cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
         // Phase C: process stays resident at zero windows (Finder /
         // Safari model). Quit only via Cmd+Q or the app menu. A future
@@ -489,7 +489,7 @@ fn run_gui(args: screenshot::Args) {
         // binding works regardless of which window holds focus, and
         // works with zero windows (after the last window closes the
         // process stays resident, Cmd+N reopens).
-        cx.bind_keys([KeyBinding::new("cmd-n", NewWindow, None)]);
+        cx.bind_keys([KeyBinding::new("secondary-n", NewWindow, None)]);
         cx.on_action(|_: &NewWindow, cx| {
             open_shell_window(cx);
         });

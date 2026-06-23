@@ -11,9 +11,11 @@ use gpui::*;
 use gpui_component::{
     ActiveTheme, Sizable, h_flex,
     input::{Escape, Input},
-    kbd::Kbd,
     v_flex,
 };
+// gpui-component's `Kbd` renders macOS ⌘ glyphs; only the macOS badge uses it.
+#[cfg(target_os = "macos")]
+use gpui_component::kbd::Kbd;
 
 use crate::shell::Shell;
 
@@ -262,14 +264,14 @@ fn row(
     accent: gpui::Hsla,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    // Convert the catalogue's first shortcut to a gpui Keystroke via
-    // the same chord-string DSL keymap.rs uses, then hand it to
-    // gpui-component's `Kbd` for boxed-glyph styling matching
-    // Finder's menu-bar shortcuts.
-    let kbd: Option<Kbd> = spec.shortcuts.first().and_then(|s| {
-        let kb_str = keystroke_string(s)?;
-        gpui::Keystroke::parse(&kb_str).ok().map(Kbd::new)
-    });
+    // The trailing key-cap badge. On macOS this is gpui-component's `Kbd`
+    // (native ⌘ glyphs, matching Finder's menu-bar shortcuts); on
+    // Windows/Linux `Kbd` would still draw ⌘, so we render `Ctrl+…` text in a
+    // matching bordered box instead. See `shortcut_badge`.
+    let badge: Option<AnyElement> = spec
+        .shortcuts
+        .first()
+        .and_then(|s| shortcut_badge(s, muted));
     let id = spec.id;
     let dispatchable = action_for_command(id).is_some();
     let row_id = SharedString::from(format!("cmd-{}", id.0));
@@ -306,8 +308,8 @@ fn row(
         );
     }
     row = row.child(title);
-    if let Some(k) = kbd {
-        row = row.child(div().flex_shrink_0().child(k));
+    if let Some(b) = badge {
+        row = row.child(div().flex_shrink_0().child(b));
     }
     if dispatchable {
         // Clickable + hover-tinted when the command maps to a known
@@ -327,11 +329,40 @@ fn row(
     }
 }
 
+/// The trailing key-cap badge for a command row.
+///
+/// macOS hands the chord to gpui-component's `Kbd`, which renders native ⌘/⇧
+/// glyphs. `Kbd` only speaks macOS glyphs, so on Windows/Linux we instead draw
+/// `format_shortcut`'s `Ctrl+…` text in a bordered box that matches the row.
+#[cfg(target_os = "macos")]
+fn shortcut_badge(s: &Shortcut, _muted: gpui::Hsla) -> Option<AnyElement> {
+    let kb_str = keystroke_string(s)?;
+    gpui::Keystroke::parse(&kb_str)
+        .ok()
+        .map(|ks| Kbd::new(ks).into_any_element())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn shortcut_badge(s: &Shortcut, muted: gpui::Hsla) -> Option<AnyElement> {
+    Some(
+        div()
+            .px(px(5.0))
+            .py(px(1.0))
+            .rounded(px(4.0))
+            .border_1()
+            .border_color(muted)
+            .text_scale_xs()
+            .child(SharedString::from(format_shortcut(s)))
+            .into_any_element(),
+    )
+}
+
 /// Mirror of `keymap::translate_shortcut` — produces the same
 /// `cmd-shift-x` style chord string the keymap installer uses, so
 /// `Keystroke::parse` accepts it. Returns `None` for unsupported
 /// keys (e.g. the catalogue's `+` alternate, gpui's parser treats
-/// `-` as a separator).
+/// `-` as a separator). Only the macOS badge path needs it.
+#[cfg(target_os = "macos")]
 fn keystroke_string(s: &Shortcut) -> Option<String> {
     let key = match s.key {
         "Up" | "Down" | "Left" | "Right" | "Home" | "End" | "PageUp" | "PageDown" | "Escape"
@@ -355,19 +386,15 @@ fn keystroke_string(s: &Shortcut) -> Option<String> {
     Some(parts.join("-"))
 }
 
-/// Render a `Shortcut` as a human-readable chord like
-/// `\u{2318}\u{21E7}H` (Cmd+Shift+H).
+/// Render a `Shortcut` as a human-readable chord.
+///
+/// macOS uses the native modifier glyphs with no separators, exactly as Finder
+/// shows them in its menus: `\u{2318}\u{21E7}H` (Cmd+Shift+H). Windows and Linux
+/// use conventional `Ctrl+Shift+H` text — the catalogue's `primary` modifier
+/// binds to **Ctrl** there (gpui maps `cmd-` to Ctrl off macOS), and the Apple
+/// `\u{2318}`/`\u{2325}` glyphs would be both wrong and unreadable on those
+/// platforms. The key label (arrows, `\u{232B}`, …) is shared.
 pub fn format_shortcut(s: &Shortcut) -> String {
-    let mut out = String::new();
-    if s.alt {
-        out.push('\u{2325}');
-    }
-    if s.shift {
-        out.push('\u{21E7}');
-    }
-    if s.primary {
-        out.push('\u{2318}');
-    }
     let key_label = match s.key {
         "Up" => "\u{2191}".to_string(),
         "Down" => "\u{2193}".to_string(),
@@ -379,6 +406,37 @@ pub fn format_shortcut(s: &Shortcut) -> String {
         "Space" => "Space".to_string(),
         k => k.to_uppercase(),
     };
-    out.push_str(&key_label);
-    out
+
+    #[cfg(target_os = "macos")]
+    {
+        let mut out = String::new();
+        if s.alt {
+            out.push('\u{2325}'); // ⌥
+        }
+        if s.shift {
+            out.push('\u{21E7}'); // ⇧
+        }
+        if s.primary {
+            out.push('\u{2318}'); // ⌘
+        }
+        out.push_str(&key_label);
+        out
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Ctrl is the Windows/Linux stand-in for macOS ⌘ on these chords.
+        let mut out = String::new();
+        if s.primary {
+            out.push_str("Ctrl+");
+        }
+        if s.shift {
+            out.push_str("Shift+");
+        }
+        if s.alt {
+            out.push_str("Alt+");
+        }
+        out.push_str(&key_label);
+        out
+    }
 }
