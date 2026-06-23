@@ -242,10 +242,23 @@ fallback). Remaining is the UX the system explorers have and we don't:
   context-menu verbs (`IContextMenu`) and WSL integration. The near-term
   behavior-breaking stubs (CF_HDROP clipboard, `WM_DEVICECHANGE` volume
   observer, text-naming modal) all shipped.
-- Linux port follow-ups ([docs/features/linux-port.md](docs/features/linux-port.md)):
-  replace shell stubs with real XDG portal / freedesktop implementations for
-  clipboard, trash, reveal/open-with, volume watching, thumbnails/previews, and
-  power/session events.
+- Linux port ([docs/features/linux-port.md](docs/features/linux-port.md)):
+  `feraille-gpui` now **builds and runs** on Linux (verified on WSL2 / Ubuntu
+  24.04 under WSLg + lavapipe — launches a Wayland window, opens its XDG SQLite
+  metadata DB, enumerates folders, runs prefetch + folder-sizes). Done and
+  tested: volumes (`/proc/self/mountinfo` + `statvfs`), trash (freedesktop
+  spec), download-provenance / MoTW (`user.xdg.origin.url`), plain-text
+  clipboard (`arboard`), and Open With (freedesktop MIME + `.desktop` scan).
+  Remaining shell stubs to fill with real XDG portal / freedesktop work: the
+  file-URL clipboard (`text/uri-list`), file-type icons (icon-theme lookup),
+  thumbnails/previews (XDG thumbnail cache), and the dark/volume/power observers
+  (D-Bus / udisks2 / logind). These need a real desktop (icon themes, mounts,
+  session events) to verify meaningfully — best paired with the next item.
+- Linux headless screenshots: implement `render_to_image` in `gpui_wgpu`
+  (offscreen render target + `copy_texture_to_buffer` readback, BGRA/RGBA) and
+  wire it through both `gpui_linux` window backends (Wayland + X11), mirroring
+  the `gpui_windows` D3D11 patch. Unlocks `--screenshot` on Linux so the GUI can
+  be visually verified the same way as macOS/Windows.
 - Windows power follow-ups ([docs/features/POWER.md](docs/features/POWER.md)):
   display on/off events (`PBT_POWERSETTINGCHANGE` +
   `RegisterPowerSettingNotification` for `GUID_CONSOLE_DISPLAY_STATE`), and
