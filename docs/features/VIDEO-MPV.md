@@ -20,12 +20,16 @@ pixels arrive transparent and the stage background shows through. No new icon
 (the swatch is the eyedropper affordance), so `ICONS.md` is untouched. `cargo
 check -p feraille-gpui --features vlc` is green.
 
-> **Deferred verification:** the chroma UI is compile-green and logically
-> sound (the Phase 0 spike proved alpha survives SW render; gpui composites
-> the alpha'd frame over the stage bg like a transparent PNG), but a **runtime
-> screenshot of a keyed mpv video is still pending** — it needs a stable tree
-> + harness setup (mpv backend selected, a solid-colour test clip). To do once
-> the parallel work settles.
+> **Verified by screenshot + UI reworked.** The adjustments popup renders
+> correctly with the full mpv-video control set (a new screenshot-only
+> `--viewer-adjust-video` fixture forces the panel without a live stream, since
+> the real frame-pull poll never lets a headless render settle). The popup was
+> then **reworked to look more professional**: labeled **Colour** / **Enhance**
+> / **Transparent colour** sections (replacing bare separators), and the key
+> picker now shows a swatch + **hex readout** + a clear **Pick** button (arms
+> the eyedropper) instead of a tiny "click swatch" hint. Still pending: a
+> screenshot of a *live keyed video* (the keyed pixels actually transparent),
+> which needs the poll to run — a follow-up.
 
 Still open: the N-layer stack (Phase 4), docs/icons (Phase 5), and the cosmetic
 rename below. Phase 2 recap: removed the VLC-era seamless-reopen apparatus —

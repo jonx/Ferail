@@ -573,6 +573,10 @@ pub struct ViewerWindow {
     /// the eyedropper, so a stage click can sample the key colour without
     /// reading back the GPU `RenderImage`.
     video_frame_raw: Option<(u32, u32, Vec<u8>)>,
+    /// Screenshot-only: force the adjustments popup to render its full
+    /// mpv-video control set (and skip opening a real stream) so the headless
+    /// harness can capture the layout without a live frame-pull poll.
+    sim_video_panel: bool,
     /// Which slider the in-flight pointer drag is moving (`None` idle).
     slider_drag: Option<SliderId>,
     /// Track bounds for each popup slider, captured each render so a cursor
@@ -672,6 +676,7 @@ impl ViewerWindow {
             chroma_blend: 0.05,
             eyedrop_armed: false,
             video_frame_raw: None,
+            sim_video_panel: false,
             slider_drag: None,
             slider_bounds: [Bounds::default(); SLIDER_COUNT],
             processed: None,
@@ -842,6 +847,9 @@ impl ViewerWindow {
     /// frames are drawn as a gpui image in `stage_area`, so zoom / pan /
     /// fit / rotation are all the shared still-image path.
     fn sync_video(&mut self, cx: &mut Context<Self>) {
+        if self.sim_video_panel {
+            return; // screenshot fixture: no live stream
+        }
         let want = self
             .current()
             .map(|e| e.path.clone())
@@ -1569,6 +1577,17 @@ impl ViewerWindow {
         self.adjust_panel_open = true;
     }
 
+    /// Screenshot-only fixture: open the adjustments popup with the full
+    /// mpv-video control set (colour + enhance + transparent-colour) visible,
+    /// without opening a live video stream. Lets the headless harness capture
+    /// the panel layout (the real video poll would never let it settle).
+    pub fn sim_full_adjust_panel(&mut self) {
+        self.sim_video_panel = true;
+        self.video_adjust_native = true;
+        self.chroma_on = true;
+        self.adjust_panel_open = true;
+    }
+
     /// Current value of a popup slider (reads `adjust` or `enhance`).
     fn slider_value(&self, id: SliderId) -> f32 {
         match id {
@@ -2155,6 +2174,17 @@ impl ViewerWindow {
         self.set_slider(id, v, cx);
     }
 
+    /// A small muted group label inside the adjustments popup, separating the
+    /// Colour / Enhance / Transparent-colour sections.
+    fn section_header(&self, label: &'static str, cx: &mut Context<Self>) -> Div {
+        div()
+            .mt_1()
+            .text_scale_xs()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(cx.theme().muted_foreground)
+            .child(label)
+    }
+
     /// The adjustments popup: colour grade (Brightness / Contrast / Color)
     /// always, plus the still-only enhancement controls (Denoise, Sharpen,
     /// Upscale) and Reset, floating at the top-right of the stage. Pointer
@@ -2165,11 +2195,11 @@ impl ViewerWindow {
         let border = cx.theme().border;
         let foreground = cx.theme().foreground;
         let top = self.stage_origin_y + 12.0;
-        let is_video = self.current_is_video();
-        // Denoise/sharpen apply to stills (CPU) and to VLC video (libvlc
-        // filters); upscale stays stills-only. `video_adjust_native` marks
-        // a VLC stream — the native player has no filter chain.
-        let vlc_video = is_video && self.video_adjust_native;
+        let is_video = self.current_is_video() || self.sim_video_panel;
+        // Denoise/sharpen apply to stills (CPU) and to mpv video (filter
+        // chain); upscale stays stills-only. `video_adjust_native` marks an
+        // mpv stream — the native player has no filter chain.
+        let vlc_video = self.sim_video_panel || (is_video && self.video_adjust_native);
         let show_enhance = !is_video || vlc_video;
         // Chroma-key state read up front so the section's builder closure
         // doesn't re-borrow self for these.
@@ -2231,6 +2261,7 @@ impl ViewerWindow {
                 }),
             )
             .child(header)
+            .child(self.section_header("Colour", cx))
             .child(self.slider_row(SliderId::Brightness, cx))
             .child(self.slider_row(SliderId::Contrast, cx))
             .child(self.slider_row(SliderId::Saturation, cx))
@@ -2243,7 +2274,7 @@ impl ViewerWindow {
             })
             .when(show_enhance, |d| {
                 let d = d
-                    .child(div().h_px().my_1().bg(border))
+                    .child(self.section_header("Enhance", cx))
                     .child(self.slider_row(SliderId::Denoise, cx))
                     .child(self.slider_row(SliderId::Sharpen, cx));
                 // Debanding + film grain are VLC-only filters (gradfun /
@@ -2267,36 +2298,38 @@ impl ViewerWindow {
                 let col = chroma_color;
                 let swatch =
                     gpui::rgb(((col[0] as u32) << 16) | ((col[1] as u32) << 8) | col[2] as u32);
-                let d = d
-                    .child(div().h_px().my_1().bg(border))
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_scale_xs()
-                                    .text_color(foreground)
-                                    .child("Transparent colour"),
-                            )
-                            .child(
-                                Button::new("viewer-chroma-toggle")
-                                    .label(if chroma_on { "On" } else { "Off" })
-                                    .small()
-                                    .selected(chroma_on)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.chroma_on = !this.chroma_on;
-                                        if !this.chroma_on {
-                                            this.eyedrop_armed = false;
-                                        }
-                                        this.apply_video_chroma();
-                                        cx.notify();
-                                    })),
-                            ),
-                    );
+                let hex = format!("#{:02X}{:02X}{:02X}", col[0], col[1], col[2]);
+                let d = d.child(
+                    h_flex()
+                        .mt_1()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_scale_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Transparent colour"),
+                        )
+                        .child(
+                            Button::new("viewer-chroma-toggle")
+                                .label(if chroma_on { "On" } else { "Off" })
+                                .small()
+                                .selected(chroma_on)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.chroma_on = !this.chroma_on;
+                                    if !this.chroma_on {
+                                        this.eyedrop_armed = false;
+                                    }
+                                    this.apply_video_chroma();
+                                    cx.notify();
+                                })),
+                        ),
+                );
                 if !chroma_on {
                     return d;
                 }
+                // Swatch (also arms the eyedropper) · hex readout · Pick button.
                 d.child(
                     h_flex()
                         .gap_2()
@@ -2304,8 +2337,8 @@ impl ViewerWindow {
                         .child(
                             div()
                                 .id("viewer-chroma-swatch")
-                                .w(px(28.0))
-                                .h(px(16.0))
+                                .w(px(22.0))
+                                .h(px(18.0))
                                 .rounded(px(4.0))
                                 .border_1()
                                 .border_color(if chroma_armed {
@@ -2324,17 +2357,26 @@ impl ViewerWindow {
                                     }),
                                 ),
                         )
+                        .child(div().flex_1().text_scale_xs().text_color(foreground).child(hex))
                         .child(
-                            div()
-                                .text_scale_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(if chroma_armed {
-                                    "click the video to pick"
-                                } else {
-                                    "click swatch, then the video"
-                                }),
+                            Button::new("viewer-chroma-pick")
+                                .label(if chroma_armed { "Picking\u{2026}" } else { "Pick" })
+                                .small()
+                                .selected(chroma_armed)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.eyedrop_armed = !this.eyedrop_armed;
+                                    cx.notify();
+                                })),
                         ),
                 )
+                .when(chroma_armed, |d| {
+                    d.child(
+                        div()
+                            .text_scale_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Click the video to sample a colour."),
+                    )
+                })
                 .child(self.slider_row(SliderId::Similarity, cx))
                 .child(self.slider_row(SliderId::Blend, cx))
             })

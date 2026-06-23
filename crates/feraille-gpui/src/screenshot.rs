@@ -143,6 +143,10 @@ pub struct Args {
     pub viewer: Option<PathBuf>,
     /// Open the viewer's colour/enhance adjustments panel for the capture.
     pub viewer_adjust: bool,
+    /// Screenshot-only: render the viewer adjustments panel in full mpv-video
+    /// mode (all colour/enhance/transparent-colour controls) without opening a
+    /// live stream — for capturing the panel layout.
+    pub viewer_adjust_video: bool,
     /// Render the drag ghost ([`crate::file_list::DragBadge`]) for a
     /// drag of N items, in isolation, against a neutral backdrop —
     /// the only way to capture the cursor ghost headlessly (it never
@@ -259,6 +263,7 @@ pub fn parse_args() -> Args {
             }
             "--viewer" => args.viewer = iter.next().map(PathBuf::from),
             "--viewer-adjust" => args.viewer_adjust = true,
+            "--viewer-adjust-video" => args.viewer_adjust_video = true,
             "--icon-picker" => args.icon_picker = true,
             "--drag-ghost" => args.drag_ghost = iter.next().and_then(|s| s.parse().ok()),
             "--help" | "-h" => {
@@ -344,6 +349,7 @@ pub fn run(args: Args) -> Result<()> {
     let disk_usage_root = args.disk_usage.clone();
     let viewer_target = args.viewer.clone();
     let viewer_adjust = args.viewer_adjust;
+    let viewer_adjust_video = args.viewer_adjust_video;
     let drag_ghost = args.drag_ghost;
     let icon_picker = args.icon_picker;
 
@@ -456,6 +462,9 @@ pub fn run(args: Args) -> Result<()> {
                         });
                         if viewer_adjust {
                             view.update(cx, |w, _| w.open_adjust_panel());
+                        }
+                        if viewer_adjust_video {
+                            view.update(cx, |w, _| w.sim_full_adjust_panel());
                         }
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if icon_picker {
