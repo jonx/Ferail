@@ -399,10 +399,10 @@ impl Shell {
 
     // ===== Group actions =====
 
-    fn dupe_group_mut<'a>(
-        groups: &'a mut [DupeGroupView],
+    fn dupe_group_mut(
+        groups: &mut [DupeGroupView],
         group_no: usize,
-    ) -> Option<&'a mut DupeGroupView> {
+    ) -> Option<&mut DupeGroupView> {
         groups.iter_mut().find(|g| g.group_no == group_no)
     }
 

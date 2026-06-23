@@ -90,7 +90,7 @@ pub(super) fn run_search_load(
 fn run_walker(
     fs: &NativeFs,
     config: &SearchConfig,
-    root: &PathBuf,
+    root: &Path,
     needle: &str,
     cancel: &AtomicBool,
     tx: &async_channel::Sender<SearchMsg>,
@@ -125,14 +125,14 @@ fn run_walker(
 fn run_spotlight(
     fs: &NativeFs,
     config: &SearchConfig,
-    root: &PathBuf,
+    root: &Path,
     needle: &str,
     cancel: &AtomicBool,
     tx: &async_channel::Sender<SearchMsg>,
 ) -> Option<EnumerationError> {
     use feraille_shell_mac::{SpotlightScope, spotlight_search};
     let res = spotlight_search(
-        SpotlightScope::Subtree(root.clone()),
+        SpotlightScope::Subtree(root.to_path_buf()),
         needle,
         // name-only when the user isn't matching paths; otherwise let
         // Spotlight's natural-language query reach content + metadata.
@@ -175,7 +175,7 @@ fn run_spotlight(
 fn run_spotlight(
     fs: &NativeFs,
     config: &SearchConfig,
-    root: &PathBuf,
+    root: &Path,
     needle: &str,
     cancel: &AtomicBool,
     tx: &async_channel::Sender<SearchMsg>,
@@ -264,7 +264,7 @@ impl Shell {
                         if this.tabs[idx].load_generation != generation {
                             return true;
                         }
-                        this.apply_search_msg_in_tab(idx, msg, notify_window.clone(), cx);
+                        this.apply_search_msg_in_tab(idx, msg, notify_window, cx);
                         false
                     })
                     .unwrap_or(true);

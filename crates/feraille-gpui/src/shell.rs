@@ -59,6 +59,11 @@ use loading::{
 pub use path::{canonicalize_for_identity, parse_breadcrumb_path, path_segments};
 pub use tab::{ClosedTab, HistoryEntry, Tab, TabId, ToolResultSurface};
 
+/// Callback the disk-usage view invokes to re-root the dock owner at a
+/// new path. Boxed so the `Shell` can hand it out without naming itself.
+type DiskUsageDockOwner =
+    Rc<dyn Fn(PathBuf, Entity<crate::disk_usage::DiskUsageView>, &mut App)>;
+
 /// Classification produced by `Shell::resolve_favorite_target` so
 /// the toggle handler can show the appropriate toast for files.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -293,24 +298,85 @@ pub(crate) fn file_op_outcome_summary(
     msg
 }
 
-/// An error notification with a **Copy** action that puts the full message on
-/// the clipboard — handy for pasting a failure into a bug report. Setting an
-/// action also keeps the toast from auto-hiding, so the user has time to read
-/// and copy it.
+/// An error notification that shows a one-line headline by default and can be
+/// expanded to reveal the full message — so a long failure (a native error with
+/// a path and a sentence of detail) is legible, not clipped to "it failed". A
+/// **Copy** button always puts the *whole* message on the clipboard, handy for
+/// pasting into a bug report. Both controls also keep the toast from
+/// auto-hiding, so the user has time to read, expand, and copy.
 pub(crate) fn error_notification(message: String) -> gpui_component::notification::Notification {
     use gpui_component::Sizable as _;
     use gpui_component::button::{Button, ButtonVariants as _};
     use gpui_component::notification::Notification;
 
-    let for_copy = message.clone();
-    Notification::error(message).action(move |_, _, _| {
-        let m = for_copy.clone();
-        Button::new("copy-error-message")
-            .label("Copy")
-            .ghost()
-            .small()
-            .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&m))
-    })
+    let (summary, has_more) = collapse_error_summary(&message);
+    // Expand state shared between renders: the content builder runs on every
+    // render and reads it; the toggle's click flips it and re-renders.
+    let expanded = Rc::new(std::cell::Cell::new(false));
+
+    Notification::error(summary)
+        // No action button, so disable autohide explicitly (an action would
+        // have done it implicitly).
+        .autohide(false)
+        .content(move |_note, _window, cx| {
+            let is_expanded = expanded.get();
+            let mut col = v_flex().gap_1().pt_1();
+
+            // The full, untruncated message — only once the user expands it.
+            if has_more && is_expanded {
+                col = col.child(
+                    div()
+                        .id("error-detail")
+                        .max_h(px(240.))
+                        .overflow_y_scroll()
+                        .text_scale_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(SharedString::from(message.clone())),
+                );
+            }
+
+            let mut row = h_flex().gap_2();
+            if has_more {
+                let toggle = expanded.clone();
+                row = row.child(
+                    Button::new("toggle-error-details")
+                        .label(if is_expanded { "Hide details" } else { "Details" })
+                        .ghost()
+                        .small()
+                        .on_click(cx.listener(move |_note, _ev, _window, cx| {
+                            toggle.set(!toggle.get());
+                            cx.notify();
+                        })),
+                );
+            }
+            let for_copy = message.clone();
+            row = row.child(
+                Button::new("copy-error-message")
+                    .label("Copy")
+                    .ghost()
+                    .small()
+                    .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&for_copy)),
+            );
+
+            col.child(row).into_any_element()
+        })
+}
+
+/// Headline for an error toast: the first line, capped so a long path or
+/// sentence doesn't blow the toast up before the user chooses to expand it.
+/// Returns the summary and whether anything was hidden — i.e. whether to offer
+/// a **Details** toggle at all (short, single-line errors need none).
+fn collapse_error_summary(message: &str) -> (String, bool) {
+    const MAX: usize = 140;
+    let first_line = message.lines().next().unwrap_or("");
+    let multiline = message.lines().nth(1).is_some();
+    if !multiline && first_line.chars().count() <= MAX {
+        (message.to_string(), false)
+    } else {
+        let mut summary: String = first_line.chars().take(MAX).collect();
+        summary.push('\u{2026}');
+        (summary, true)
+    }
 }
 
 /// What a failure toast's Retry buttons need to re-run the failed items. The
@@ -347,13 +413,16 @@ pub(crate) fn transfer_failure_notification(
     // Primary action button (disables autohide): elevate when that can help,
     // otherwise a plain retry.
     let primary = retry.clone();
-    let note = Notification::error(summary.clone()).action(move |_, _, _| {
+    let note = Notification::error(summary.clone()).action(move |_, _, cx| {
         let r = primary.clone();
+        // Either button kicks off a fresh op that posts its own result toast,
+        // so this failure toast dismisses itself once acted on rather than
+        // lingering for the user to close.
         if offer_admin {
             Button::new("retry-elevated")
                 .label("Retry as administrator\u{2026}")
                 .small()
-                .on_click(move |_, window, cx| {
+                .on_click(cx.listener(move |note, _, window, cx| {
                     let _ = r.shell.update(cx, |shell, cx| {
                         shell.retry_transfer_elevated(
                             r.sources.clone(),
@@ -363,12 +432,13 @@ pub(crate) fn transfer_failure_notification(
                             cx,
                         );
                     });
-                })
+                    note.dismiss(window, cx);
+                }))
         } else {
             Button::new("retry-inproc")
                 .label("Retry")
                 .small()
-                .on_click(move |_, window, cx| {
+                .on_click(cx.listener(move |note, _, window, cx| {
                     let _ = r.shell.update(cx, |shell, cx| {
                         shell.spawn_transfer_op(
                             r.sources.clone(),
@@ -378,7 +448,8 @@ pub(crate) fn transfer_failure_notification(
                             cx,
                         );
                     });
-                })
+                    note.dismiss(window, cx);
+                }))
         }
     });
 
@@ -386,7 +457,7 @@ pub(crate) fn transfer_failure_notification(
     // elevated one (so the user can still try in-process without the prompt).
     let copy_msg = summary;
     let secondary = retry;
-    note.content(move |_, _, _| {
+    note.content(move |_, _, cx| {
         let copy_msg = copy_msg.clone();
         let mut row = h_flex().gap_2().pt_1();
         row = row.child(
@@ -403,7 +474,7 @@ pub(crate) fn transfer_failure_notification(
                     .label("Retry")
                     .ghost()
                     .small()
-                    .on_click(move |_, window, cx| {
+                    .on_click(cx.listener(move |note, _, window, cx| {
                         let _ = r.shell.update(cx, |shell, cx| {
                             shell.spawn_transfer_op(
                                 r.sources.clone(),
@@ -413,10 +484,82 @@ pub(crate) fn transfer_failure_notification(
                                 cx,
                             );
                         });
-                    }),
+                        note.dismiss(window, cx);
+                    })),
             );
         }
         row.into_any_element()
+    })
+}
+
+/// What a trash/delete failure toast's elevated retry needs. Like
+/// [`TransferRetry`] but for the destructive ops, which have no destination.
+/// Cloned per render (the action/content builders re-run).
+#[derive(Clone)]
+pub(crate) struct TrashRetry {
+    pub shell: WeakEntity<Shell>,
+    /// Just the *permission-denied* items — the only class elevation fixes.
+    /// Empty when nothing is elevation-recoverable (then no admin button).
+    pub sources: Vec<PathBuf>,
+    /// `false` = move to the user's Trash; `true` = delete permanently.
+    pub delete: bool,
+}
+
+/// A trash/delete failure toast. When at least one item failed on a bare
+/// permission denial and the platform can elevate, it offers a primary
+/// **"Move to Trash / Delete as administrator…"** button (re-runs just those
+/// items as root) plus a **Copy** of the full detail. Otherwise it falls back
+/// to the plain expandable/copyable [`error_notification`] — there's no
+/// elevated recourse for a locked file or a vanished path.
+pub(crate) fn trash_failure_notification(
+    headline: String,
+    copy_detail: String,
+    retry: TrashRetry,
+) -> gpui_component::notification::Notification {
+    use gpui_component::Sizable as _;
+    use gpui_component::button::{Button, ButtonVariants as _};
+    use gpui_component::notification::Notification;
+
+    let offer_admin = !retry.sources.is_empty() && crate::platform_shell::elevation_available();
+    if !offer_admin {
+        return error_notification(copy_detail);
+    }
+
+    let label = if retry.delete {
+        "Delete as administrator\u{2026}"
+    } else {
+        "Move to Trash as administrator\u{2026}"
+    };
+    let primary = retry.clone();
+    let note = Notification::error(headline).action(move |_, _, cx| {
+        let r = primary.clone();
+        Button::new("trash-elevated")
+            .label(label)
+            .small()
+            .on_click(cx.listener(move |note, _, window, cx| {
+                let _ = r.shell.update(cx, |shell, cx| {
+                    shell.retry_trash_elevated(r.sources.clone(), r.delete, window, cx);
+                });
+                // Retire this failure toast — the elevated retry posts its own
+                // result toast (success / partial / cancelled), so leaving this
+                // one up would just stack a stale dialog the user must close.
+                note.dismiss(window, cx);
+            }))
+    });
+
+    note.content(move |_, _, _| {
+        let copy_detail = copy_detail.clone();
+        h_flex()
+            .gap_2()
+            .pt_1()
+            .child(
+                Button::new("copy-trash-failure")
+                    .label("Copy")
+                    .ghost()
+                    .small()
+                    .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&copy_detail)),
+            )
+            .into_any_element()
     })
 }
 
@@ -1953,7 +2096,7 @@ impl Shell {
     fn disk_usage_dock_owner(
         &self,
         cx: &mut Context<Self>,
-    ) -> Rc<dyn Fn(PathBuf, Entity<crate::disk_usage::DiskUsageView>, &mut App)> {
+    ) -> DiskUsageDockOwner {
         let weak: WeakEntity<Self> = cx.weak_entity();
         Rc::new(move |root, view, cx| {
             if let Some(s) = weak.upgrade() {
@@ -3075,7 +3218,7 @@ impl Shell {
             cx.background_executor()
                 .timer(Duration::from_millis(16))
                 .await;
-            let _ = table.update(cx, |ts, cx| {
+            table.update(cx, |ts, cx| {
                 let mut range = ts.visible_range().rows().clone();
                 if range.len() <= 1 {
                     let n = ts.delegate().entries.len().min(48);
@@ -3361,6 +3504,8 @@ impl Shell {
             .detach();
     }
 
+    // The file-op spawner genuinely needs each of these inputs.
+    #[allow(clippy::too_many_arguments)]
     fn spawn_file_op(
         &mut self,
         reload_path: PathBuf,
@@ -4650,8 +4795,35 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{history_child_to_select, window_title_for};
+    use super::{collapse_error_summary, history_child_to_select, window_title_for};
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn short_single_line_error_is_shown_whole_with_no_details_toggle() {
+        let (summary, has_more) = collapse_error_summary("Move to Trash failed: nope");
+        assert_eq!(summary, "Move to Trash failed: nope");
+        assert!(!has_more, "a short, single-line error needs no Details toggle");
+    }
+
+    #[test]
+    fn long_error_is_truncated_and_offers_details() {
+        let long = format!("Move to Trash failed: {}", "x".repeat(300));
+        let (summary, has_more) = collapse_error_summary(&long);
+        assert!(has_more, "a long error hides detail behind Details");
+        assert!(summary.ends_with('\u{2026}'), "truncation is marked with an ellipsis");
+        assert!(
+            summary.chars().count() <= 141,
+            "headline stays one line: 140 chars + the ellipsis, got {}",
+            summary.chars().count()
+        );
+    }
+
+    #[test]
+    fn multiline_error_collapses_to_its_first_line() {
+        let (summary, has_more) = collapse_error_summary("Copy failed\n3 of 5 done\nretry?");
+        assert_eq!(summary, "Copy failed\u{2026}");
+        assert!(has_more, "later lines are hidden until expanded");
+    }
 
     #[test]
     fn window_title_includes_folder_and_app_name() {

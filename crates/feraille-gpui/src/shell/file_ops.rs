@@ -1416,23 +1416,28 @@ impl Shell {
         let weak = cx.weak_entity();
         let win = window.window_handle();
         cx.spawn(async move |_this, cx| {
+            // Don't bail on the first failure: trash every item we can, and
+            // collect the rest (with their error *kind*) so a permission
+            // denial on one protected app doesn't strand the others and so we
+            // can offer an elevated retry for just the recoverable ones.
             let result = cx
                 .background_executor()
                 .spawn(async move {
                     let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
+                    let mut failures: Vec<(PathBuf, std::io::ErrorKind, String)> = Vec::new();
                     for path in &paths {
                         match feraille_fs_native::move_to_trash(path) {
                             Ok(Some(trashed)) => pairs.push((path.clone(), trashed)),
                             Ok(None) => {}
-                            Err(e) => return (pairs, Some(e.to_string())),
+                            Err(e) => failures.push((path.clone(), e.kind(), e.to_string())),
                         }
                     }
-                    (pairs, None)
+                    (pairs, failures)
                 })
                 .await;
-            let (pairs, error) = result;
-            match &error {
-                Some(e) => process.tasks.borrow_mut().end_failed(task_id, e.clone()),
+            let (pairs, failures) = result;
+            match failures.first() {
+                Some((_, _, msg)) => process.tasks.borrow_mut().end_failed(task_id, msg.clone()),
                 None => process.tasks.borrow_mut().end(task_id),
             }
             if let Some(shell) = weak.upgrade() {
@@ -1444,15 +1449,266 @@ impl Shell {
                 });
             }
             Shell::broadcast_reload_for_process(&process, vec![cur], cx);
-            let _ = win.update(cx, |_, window, cx| match &error {
-                None => window.push_notification(
-                    Notification::info(format!("Moved \u{201C}{}\u{201D} to Trash", name)),
-                    cx,
-                ),
-                Some(e) => window.push_notification(
-                    Notification::error(format!("Move to Trash failed: {e}")),
-                    cx,
-                ),
+            let weak = weak.clone();
+            let _ = win.update(cx, move |_, window, cx| {
+                if failures.is_empty() {
+                    window.push_notification(
+                        Notification::info(format!("Moved \u{201C}{}\u{201D} to Trash", name)),
+                        cx,
+                    );
+                    return;
+                }
+                // The items elevation could still trash — bare permission
+                // denials (a root-owned app), not locked/missing ones.
+                let recoverable: Vec<PathBuf> = failures
+                    .iter()
+                    .filter(|(_, k, _)| *k == std::io::ErrorKind::PermissionDenied)
+                    .map(|(p, _, _)| p.clone())
+                    .collect();
+                let detail = failures
+                    .iter()
+                    .map(|(_, _, msg)| msg.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let headline = trash_failure_headline(&failures, !recoverable.is_empty());
+                let retry = crate::shell::TrashRetry {
+                    shell: weak,
+                    sources: recoverable,
+                    delete: false,
+                };
+                window
+                    .push_notification(crate::shell::trash_failure_notification(headline, detail, retry), cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Re-run the given items' trash (or permanent delete, when `delete`) with
+    /// administrator rights: serialise them, run the elevated worker (one OS
+    /// auth prompt — same osascript path copy/move uses), and report what
+    /// landed. Elevated trashes move into the user's `~/.Trash` as root, so the
+    /// item lands owned by root; we don't register Undo for them (restoring a
+    /// root-owned item to a root-owned location would itself need elevation).
+    pub(crate) fn retry_trash_elevated(
+        &mut self,
+        sources: Vec<PathBuf>,
+        delete: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let trash_dir = feraille_fs_native::home_trash_dir();
+        let op = crate::elevation::ElevatedTrashOp {
+            delete,
+            trash_dir: trash_dir.clone(),
+            sources: sources.clone(),
+        };
+        let process = self.process.clone();
+        let win = window.window_handle();
+        cx.spawn(async move |_this, cx| {
+            // Blocks on the OS auth dialog — keep it off the UI thread.
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::elevation::run_elevated_trash_op(&op) })
+                .await;
+
+            // Refresh the moved-from parents and, for a trash, the Trash itself.
+            let mut reload = Vec::new();
+            for s in &sources {
+                if let Some(p) = s.parent() {
+                    let p = p.to_path_buf();
+                    if !reload.contains(&p) {
+                        reload.push(p);
+                    }
+                }
+            }
+            if !delete && !reload.contains(&trash_dir) {
+                reload.push(trash_dir);
+            }
+            Shell::broadcast_reload_for_process(&process, reload, cx);
+
+            let total = sources.len();
+            let _ = win.update(cx, move |_, window, cx| match result {
+                Ok(r) if r.failed.is_empty() => {
+                    let n = if delete { total } else { r.trashed.len() };
+                    let items = if n == 1 { "item" } else { "items" };
+                    let note = if delete {
+                        format!("Deleted {n} {items} as administrator")
+                    } else {
+                        format!("Moved {n} {items} to Trash as administrator")
+                    };
+                    window.push_notification(Notification::success(note), cx);
+                }
+                Ok(r) => {
+                    let done = total.saturating_sub(r.failed.len());
+                    window.push_notification(
+                        super::error_notification(format!(
+                            "As administrator: {done} done \u{00b7} {} still failed",
+                            r.failed.len()
+                        )),
+                        cx,
+                    );
+                }
+                Err(e) if e == "cancelled" => {
+                    window.push_notification(Notification::info("Administrator action cancelled"), cx);
+                }
+                Err(e) => {
+                    window.push_notification(
+                        super::error_notification(format!("Elevated action failed: {e}")),
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Permanently delete the selected items (no Trash) after a counted
+    /// confirmation — a targeted Empty Trash. No undo. A permission denial on
+    /// a protected item offers an elevated retry, exactly like Move to Trash.
+    /// Bound to Option+Cmd+Delete [mac] / Shift+Delete [win/linux].
+    pub(super) fn on_delete_immediately(
+        &mut self,
+        _: &DeleteImmediately,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::trail::command("Delete Immediately");
+        use gpui_component::button::ButtonVariants as _;
+        use gpui_component::notification::Notification;
+
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let count = paths.len();
+        let name = if count == 1 {
+            paths[0]
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("item")
+                .to_string()
+        } else {
+            format!("{count} items")
+        };
+        let cur = self.active_tab().current_dir.clone();
+        let process = self.process.clone();
+        let win = window.window_handle();
+
+        cx.spawn(async move |this, cx| {
+            // Confirm first — this is the one delete with no undo.
+            let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
+            let opened = win.update(cx, |_, window, cx| {
+                let tx = go_tx.clone();
+                let name = name.clone();
+                window.open_dialog(cx, move |dialog, _window, _cx| {
+                    let tx_go = tx.clone();
+                    let tx_cancel = tx.clone();
+                    let plural = if count == 1 { "item" } else { "items" };
+                    let what = if count == 1 {
+                        format!("\u{201C}{name}\u{201D}")
+                    } else {
+                        format!("{count} {plural}")
+                    };
+                    let body = format!("Permanently delete {what}? This can\u{2019}t be undone.");
+                    dialog
+                        .title("Delete Immediately?")
+                        .child(div().text_scale_sm().child(body))
+                        .child(
+                            h_flex().pt_2().child(
+                                Button::new("delete-now-go")
+                                    .label("Delete")
+                                    .danger()
+                                    .small()
+                                    .on_click(move |_, window, cx| {
+                                        let _ = tx_go.try_send(true);
+                                        window.close_dialog(cx);
+                                    }),
+                            ),
+                        )
+                        .on_cancel(move |_, _, _| {
+                            let _ = tx_cancel.try_send(false);
+                            true
+                        })
+                });
+            });
+            if opened.is_err() || !matches!(go_rx.recv().await, Ok(true)) {
+                return;
+            }
+
+            let task_id = process.tasks.borrow_mut().begin(
+                crate::tasks::TaskKind::FileOp,
+                format!("Deleting {name}"),
+                false,
+            );
+            let to_delete = paths;
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut deleted = 0usize;
+                    let mut first_err: Option<String> = None;
+                    let mut failed_perm: Vec<PathBuf> = Vec::new();
+                    for p in &to_delete {
+                        let removed = match std::fs::symlink_metadata(p) {
+                            Ok(m) if m.is_dir() && !m.is_symlink() => std::fs::remove_dir_all(p),
+                            Ok(_) => std::fs::remove_file(p),
+                            Err(e) => Err(e),
+                        };
+                        match removed {
+                            Ok(()) => deleted += 1,
+                            Err(e) => {
+                                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                                    failed_perm.push(p.clone());
+                                }
+                                if first_err.is_none() {
+                                    first_err = Some(format!("{}: {e}", p.display()));
+                                }
+                            }
+                        }
+                    }
+                    (deleted, first_err, failed_perm)
+                })
+                .await;
+            let (deleted, first_err, failed_perm) = result;
+            match &first_err {
+                Some(e) => process.tasks.borrow_mut().end_failed(task_id, e.clone()),
+                None => process.tasks.borrow_mut().end(task_id),
+            }
+            Shell::broadcast_reload_for_process(&process, vec![cur], cx);
+            let _ = win.update(cx, move |_, window, cx| {
+                let plural = if deleted == 1 { "item" } else { "items" };
+                match first_err {
+                    None => window.push_notification(
+                        Notification::success(format!("Deleted {deleted} {plural}")),
+                        cx,
+                    ),
+                    Some(e) => {
+                        let detail = format!("Deleted {deleted} {plural} with errors: {e}");
+                        let headline = if failed_perm.is_empty() {
+                            detail.clone()
+                        } else if failed_perm.len() == 1 {
+                            "1 item needs administrator rights to delete.".to_string()
+                        } else {
+                            format!(
+                                "{} items need administrator rights to delete.",
+                                failed_perm.len()
+                            )
+                        };
+                        let retry = crate::shell::TrashRetry {
+                            shell: this,
+                            sources: failed_perm,
+                            delete: true,
+                        };
+                        window.push_notification(
+                            crate::shell::trash_failure_notification(headline, detail, retry),
+                            cx,
+                        )
+                    }
+                }
             });
         })
         .detach();
@@ -1473,7 +1729,7 @@ impl Shell {
         use gpui_component::notification::Notification;
         let process = self.process.clone();
         let win = window.window_handle();
-        cx.spawn(async move |_this, cx| {
+        cx.spawn(async move |this, cx| {
             // Count first (background) so the confirmation says what
             // it's about to destroy.
             let preview = cx
@@ -1552,6 +1808,10 @@ impl Shell {
                 .spawn(async move {
                     let mut deleted = 0usize;
                     let mut first_err: Option<String> = None;
+                    // Items a normal process can't remove (root-owned trash —
+                    // e.g. something elevated into the Trash earlier). These
+                    // are exactly what an elevated retry can finish.
+                    let mut failed_perm: Vec<PathBuf> = Vec::new();
                     for d in &dirs {
                         let Ok(rd) = std::fs::read_dir(d) else {
                             continue;
@@ -1567,24 +1827,28 @@ impl Shell {
                             };
                             match removed {
                                 Ok(()) => deleted += 1,
-                                Err(e) if first_err.is_none() => {
-                                    first_err = Some(format!("{}: {e}", p.display()));
+                                Err(e) => {
+                                    if e.kind() == std::io::ErrorKind::PermissionDenied {
+                                        failed_perm.push(p.clone());
+                                    }
+                                    if first_err.is_none() {
+                                        first_err = Some(format!("{}: {e}", p.display()));
+                                    }
                                 }
-                                Err(_) => {}
                             }
                         }
                     }
-                    (deleted, first_err, dirs)
+                    (deleted, first_err, failed_perm, dirs)
                 })
                 .await;
-            let (deleted, first_err, dirs) = result;
+            let (deleted, first_err, failed_perm, dirs) = result;
             match &first_err {
                 Some(e) => process.tasks.borrow_mut().end_failed(task_id, e.clone()),
                 None => process.tasks.borrow_mut().end(task_id),
             }
             // Trash contents changed under any tab browsing it.
             Shell::broadcast_reload_for_process(&process, dirs, cx);
-            let _ = win.update(cx, |_, window, cx| {
+            let _ = win.update(cx, move |_, window, cx| {
                 let plural = if deleted == 1 { "item" } else { "items" };
                 match first_err {
                     None if deleted == 0 && unreadable => window.push_notification(
@@ -1600,12 +1864,32 @@ impl Shell {
                         )),
                         cx,
                     ),
-                    Some(e) => window.push_notification(
-                        Notification::warning(format!(
-                            "Emptied Trash with errors ({deleted} {plural} deleted): {e}"
-                        )),
-                        cx,
-                    ),
+                    Some(e) => {
+                        let detail =
+                            format!("Emptied Trash with errors ({deleted} {plural} deleted): {e}");
+                        // Root-owned trash items can be finished as admin; the
+                        // rest (none, here) just report. Falls back to a plain
+                        // expandable error toast when nothing is recoverable.
+                        let headline = if failed_perm.is_empty() {
+                            detail.clone()
+                        } else if failed_perm.len() == 1 {
+                            "1 Trash item needs administrator rights to delete.".to_string()
+                        } else {
+                            format!(
+                                "{} Trash items need administrator rights to delete.",
+                                failed_perm.len()
+                            )
+                        };
+                        let retry = crate::shell::TrashRetry {
+                            shell: this,
+                            sources: failed_perm,
+                            delete: true,
+                        };
+                        window.push_notification(
+                            crate::shell::trash_failure_notification(headline, detail, retry),
+                            cx,
+                        );
+                    }
                 }
             });
         })
@@ -1621,6 +1905,8 @@ impl Shell {
     /// opening 200 things. Batch commands that collapse to one operation
     /// (Compress, Move to Trash, Tags) never route through here.
     /// (docs/features/CONTEXT_MENU.md)
+    // The fan-out confirmation dialog genuinely needs each of these inputs.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn confirm_fanout(
         &mut self,
         count: usize,
@@ -1639,7 +1925,7 @@ impl Shell {
         }
         let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
         let win = window.window_handle();
-        let _ = window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_dialog(cx, move |dialog, _window, _cx| {
             let tx_go = go_tx.clone();
             let tx_cancel = go_tx.clone();
             let body = body.clone();
@@ -2113,5 +2399,29 @@ impl Shell {
                 cx,
             );
         }
+    }
+}
+
+/// The one-line headline for a Move-to-Trash failure toast. When elevation is
+/// on offer it frames the failure as "needs administrator rights"; otherwise it
+/// states it plainly (the full per-item detail is one Copy/​Details away).
+fn trash_failure_headline(
+    failures: &[(PathBuf, std::io::ErrorKind, String)],
+    offer_admin: bool,
+) -> String {
+    let what = if failures.len() == 1 {
+        let name = failures[0]
+            .0
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("item");
+        format!("\u{201C}{name}\u{201D}")
+    } else {
+        format!("{} items", failures.len())
+    };
+    if offer_admin {
+        format!("{what} couldn\u{2019}t be moved to the Trash without administrator rights.")
+    } else {
+        format!("Move to Trash failed for {what}.")
     }
 }

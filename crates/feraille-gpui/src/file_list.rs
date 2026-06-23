@@ -108,7 +108,7 @@ impl Render for DragBadge {
             // plus the "which files" the user asked for.
             const ICON: f32 = 40.0;
             const SPREAD: f32 = 7.0;
-            let n = self.icons.len().min(GHOST_STACK_CAP).max(1);
+            let n = self.icons.len().clamp(1, GHOST_STACK_CAP);
             let span = ICON + (n as f32 - 1.0) * SPREAD;
             let mut stack = div().relative().flex_shrink_0().w(px(span)).h(px(span));
             for (i, image) in self.icons.iter().take(GHOST_STACK_CAP).enumerate().rev() {
@@ -1249,7 +1249,8 @@ impl TableDelegate for FileListDelegate {
         cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
         use crate::shell::{
-            ClearQuarantine, Compress, CopyPath, Duplicate, GetInfo, MakeAlias, MoveToTrash,
+            ClearQuarantine, Compress, CopyPath, DeleteImmediately, Duplicate, GetInfo, MakeAlias,
+            MoveToTrash,
             OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
             OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
             OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook,
@@ -1452,6 +1453,7 @@ impl TableDelegate for FileListDelegate {
 
         menu.separator()
             .menu(feraille_core::commands::TRASH_LABEL, Box::new(MoveToTrash))
+            .menu("Delete Immediately\u{2026}", Box::new(DeleteImmediately))
     }
 
     fn move_column(

@@ -49,8 +49,8 @@ fn open_viewer_inner(playlist: Vec<PlaylistEntry>, start: usize, autoplay: bool,
     // after a handful) so a fresh window doesn't land exactly atop the last.
     let step = (VIEWER_CASCADE.fetch_add(1, Ordering::Relaxed) % 6) as f32 * 28.0;
     let mut bounds = Bounds::centered(None, size(px(1100.0), px(760.0)), cx);
-    bounds.origin.x = bounds.origin.x + px(step);
-    bounds.origin.y = bounds.origin.y + px(step);
+    bounds.origin.x += px(step);
+    bounds.origin.y += px(step);
 
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),

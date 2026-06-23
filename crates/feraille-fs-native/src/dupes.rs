@@ -154,6 +154,8 @@ impl NativeFs {
     ///
     /// `cache`, when supplied, is consulted before full-hashing and
     /// written through on miss.
+    // The duplicate-finder funnel genuinely needs each of these inputs.
+    #[allow(clippy::too_many_arguments)]
     pub fn find_duplicates(
         &self,
         root: &Path,
@@ -546,21 +548,21 @@ mod clone_detect {
         // member that claimed it. A later member hitting the same key is
         // a clone of that one.
         let mut seen: HashMap<(u64, i64), usize> = HashMap::new();
-        for i in 0..members.len() {
+        for (i, member) in members.iter_mut().enumerate() {
             // Hard links are already collapsed by inode; their physical
             // offset would (correctly) collide with their inode-sibling
             // but we don't want to double-count them as clones.
-            if members[i].is_hardlink {
+            if member.is_hardlink {
                 continue;
             }
-            let Some((dev, _)) = members[i].file_id else {
+            let Some((dev, _)) = member.file_id else {
                 continue;
             };
-            let Some(phys) = first_block_phys(&members[i].path) else {
+            let Some(phys) = first_block_phys(&member.path) else {
                 continue;
             };
             match seen.entry((dev, phys)) {
-                Entry::Occupied(_) => members[i].is_clone = true,
+                Entry::Occupied(_) => member.is_clone = true,
                 Entry::Vacant(v) => {
                     v.insert(i);
                 }

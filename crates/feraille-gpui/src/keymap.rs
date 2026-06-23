@@ -20,7 +20,8 @@ use crate::entry_info::{ENTRY_INFO_CONTEXT, EntryInfoDismiss};
 use crate::shell::{
     self, ClearFilter, CloseTab, CloseToolResult, CloseWindow, CopyFiles, CopyPath, CursorDown,
     CursorDownExtend, CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp,
-    CursorUpExtend, CutFiles, EditBreadcrumb, EmptyTrash, FindDuplicates, FocusFilter, GetInfo,
+    CursorUpExtend, CutFiles, DeleteImmediately, EditBreadcrumb, EmptyTrash, FindDuplicates,
+    FocusFilter, GetInfo,
     GoHome, GridDown, GridDownExtend, GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp,
     GridUpExtend, MovePasteFiles, MoveToTrash, NavigateBack, NavigateForward, NavigateParent,
     NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings,
@@ -303,6 +304,18 @@ pub(crate) fn install_extras(cx: &mut App) {
             EmptyTrash,
             Some(shell::SHELL_CONTEXT),
         ),
+        // Permanent delete of the selection (no trash). Finder's
+        // Option+Cmd+Delete [mac]; Shift+Delete is the Windows/Linux
+        // convention. Like Empty Trash, the Delete key keeps these out of
+        // the Shortcut catalogue, so they're bound here.
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "secondary-alt-backspace",
+            DeleteImmediately,
+            Some(shell::SHELL_CONTEXT),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("shift-delete", DeleteImmediately, Some(shell::SHELL_CONTEXT)),
         // Favorites toggle on the currently-selected folder
         // (docs/features/FAVORITES.md). Cmd+D mirrors Finder's
         // "Add to Sidebar" muscle memory and avoids the Cmd+T

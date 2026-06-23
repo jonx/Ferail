@@ -85,5 +85,9 @@ opt-level = 1
 [profile.release]
 lto = true
 codegen-units = 1
-panic = "abort"
+# Unwind (not abort) so GPUI's per-frame `catch_unwind` can absorb a stray
+# paint/event panic and keep the window alive — the prime directive ("the UI
+# must never stop") outweighs the small size win of aborting. The obs panic
+# hook still prints a crash report either way.
+panic = "unwind"
 strip = true

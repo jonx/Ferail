@@ -1339,7 +1339,7 @@ mod tests {
         let plan = plan_transfer(std::slice::from_ref(&src), &dest, &prog, &cancel).unwrap();
         run_copy(&plan, &|_| CollisionPolicy::KeepBoth, &prog, &cancel).unwrap();
         // Mutate the source after the copy/clone.
-        fs::write(&src, &[2u8; 4096]).unwrap();
+        fs::write(&src, [2u8; 4096]).unwrap();
         let copied = fs::read(dest.join("data.bin")).unwrap();
         assert_eq!(copied, vec![1u8; 4096], "copy must not track source edits");
         let _ = fs::remove_dir_all(&root);

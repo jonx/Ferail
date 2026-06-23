@@ -31,6 +31,9 @@ use crate::app_state::{self, AppState};
 
 const SETTINGS_SWITCH_LANE: f32 = 36.0;
 const SETTINGS_DROPDOWN_LANE: f32 = 260.0;
+const SETTINGS_SHORTCUT_LANE: f32 = 180.0;
+const SETTINGS_CONTROL_GAP: f32 = 12.0;
+const SETTINGS_TOP_ROW_HEIGHT: f32 = 28.0;
 
 // =============================================================================
 // Categories — external API
@@ -263,6 +266,14 @@ fn persist_dupe_paranoid(value: bool) {
     });
 }
 
+fn persist_redact_diagnostics(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        redact_diagnostics: Some(value),
+        ..existing
+    });
+}
+
 // =============================================================================
 // SettingsView entity — external API
 // =============================================================================
@@ -415,11 +426,14 @@ pub fn open_settings_window(cx: &mut App) {
         ..Default::default()
     };
     cx.spawn(async move |cx| {
-        cx.open_window(opts, |window, cx| {
+        // A failed `open_window` (display reconfiguration, resource pressure)
+        // must not take the app down — log and leave the existing windows be.
+        if let Err(e) = cx.open_window(opts, |window, cx| {
             let view = cx.new(|cx| SettingsView::new(SettingsCategory::Appearance, window, cx));
             cx.new(|cx| Root::new(view, window, cx))
-        })
-        .expect("failed to open settings window");
+        }) {
+            crate::log_warn!(90, "could not open settings window: {e}");
+        }
     })
     .detach();
 }
@@ -497,31 +511,43 @@ fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
 
         gpui_component::v_flex()
             .w_full()
+            .min_w_0()
+            .overflow_hidden()
             .gap_1()
             .child(
-                gpui_component::h_flex()
+                div()
+                    .relative()
                     .w_full()
-                    .items_center()
-                    .gap_3()
+                    .min_h(px(SETTINGS_TOP_ROW_HEIGHT))
                     .child(
                         div()
-                            .flex_1()
+                            .w_full()
                             .min_w_0()
+                            .pr(px(SETTINGS_DROPDOWN_LANE + SETTINGS_CONTROL_GAP))
                             .text_scale_sm()
                             .text_color(fg)
                             .child(title),
                     )
                     .child(
-                        div().flex_none().w(px(SETTINGS_DROPDOWN_LANE)).flex().justify_end().child(
-                            Button::new(SharedString::from(format!("dd-{title}")))
-                                .label(current_label)
-                                .dropdown_caret(true)
-                                .outline()
-                                .small()
-                                .max_w(px(SETTINGS_DROPDOWN_LANE))
-                                .dropdown_menu_with_anchor(
-                                    gpui::Anchor::TopRight,
-                                    move |menu, _window, _cx| {
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .w(px(SETTINGS_DROPDOWN_LANE))
+                            .h(px(SETTINGS_TOP_ROW_HEIGHT))
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .child(
+                                Button::new(SharedString::from(format!("dd-{title}")))
+                                    .label(current_label)
+                                    .dropdown_caret(true)
+                                    .outline()
+                                    .small()
+                                    .max_w(px(SETTINGS_DROPDOWN_LANE))
+                                    .dropdown_menu_with_anchor(
+                                        gpui::Anchor::TopRight,
+                                        move |menu, _window, _cx| {
                                         options.iter().fold(menu, |menu, opt| {
                                             let (value, label) = *opt;
                                             let checked = value == current.as_str();
@@ -546,9 +572,9 @@ fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
                                                     }),
                                             )
                                         })
-                                    },
-                                ),
-                        ),
+                                        },
+                                    ),
+                            ),
                     ),
             )
             .child(
@@ -590,36 +616,48 @@ fn switch_setting(
 
         gpui_component::v_flex()
             .w_full()
+            .min_w_0()
+            .overflow_hidden()
             .gap_1()
             .child(
-                gpui_component::h_flex()
+                div()
+                    .relative()
                     .w_full()
-                    .items_center()
-                    .gap_3()
+                    .min_h(px(SETTINGS_TOP_ROW_HEIGHT))
                     .child(
                         div()
-                            .flex_1()
+                            .w_full()
                             .min_w_0()
+                            .pr(px(SETTINGS_SWITCH_LANE + SETTINGS_CONTROL_GAP))
                             .text_scale_sm()
                             .text_color(fg)
                             .child(title),
                     )
                     .child(
-                        div().flex_none().w(px(SETTINGS_SWITCH_LANE)).flex().justify_end().child(
-                            Switch::new(SharedString::from(format!("sw-{title}")))
-                                .checked(checked)
-                                .small()
-                                .on_click(move |checked: &bool, _window: &mut Window, cx: &mut App| {
-                                    set_value(*checked, cx);
-                                    // The Switch is controlled by `checked`, re-read
-                                    // from app state on the next render — so we must
-                                    // request one or the toggle never visibly moves.
-                                    // refresh_windows() is the same call the theme
-                                    // tiles use; it repaints every window. (macOS
-                                    // repaints eagerly per event; Windows does not.)
-                                    cx.refresh_windows();
-                                }),
-                        ),
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .w(px(SETTINGS_SWITCH_LANE))
+                            .h(px(SETTINGS_TOP_ROW_HEIGHT))
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .child(
+                                Switch::new(SharedString::from(format!("sw-{title}")))
+                                    .checked(checked)
+                                    .small()
+                                    .on_click(move |checked: &bool, _window: &mut Window, cx: &mut App| {
+                                        set_value(*checked, cx);
+                                        // The Switch is controlled by `checked`, re-read
+                                        // from app state on the next render — so we must
+                                        // request one or the toggle never visibly moves.
+                                        // refresh_windows() is the same call the theme
+                                        // tiles use; it repaints every window. (macOS
+                                        // repaints eagerly per event; Windows does not.)
+                                        cx.refresh_windows();
+                                    }),
+                            ),
                     ),
             )
             .child(
@@ -683,6 +721,26 @@ fn diagnostics_page(report: std::rc::Rc<crate::diagnostics::Report>) -> SettingP
         );
     }
 
+    // Privacy — the redaction toggle that makes "share your logs with us" safe.
+    // Placed up front (right under the summary) so it's the first thing a user
+    // sees before reading or sharing the report.
+    page = page.group(
+        SettingGroup::new().title("Privacy").item(switch_setting(
+            "Redact file names & paths",
+            "When on (the default), the report below, the bundle you can save, and the \
+             activity trail all replace every file and folder name with \u{201c}\u{2026}\u{201d}. \
+             We see only the shape of what you did \u{2014} how deep a folder was, what file \
+             type \u{2014} never the names. So you can share a report with us and we learn \
+             nothing about your files. Turn it off only if a maintainer asks for real paths \
+             to reproduce a bug.",
+            |_cx: &App| app_state::load().redact_diagnostics.unwrap_or(true),
+            |val: bool, _cx: &mut App| {
+                persist_redact_diagnostics(val);
+                crate::redact::set_enabled(val);
+            },
+        )),
+    );
+
     // One group per check group, one row per check.
     for (gi, group) in report.groups.iter().enumerate() {
         let mut sg = SettingGroup::new().title(group.title);
@@ -733,28 +791,41 @@ fn diagnostics_page(report: std::rc::Rc<crate::diagnostics::Report>) -> SettingP
         page = page.group(sg);
     }
 
-    // Recent activity trail (last ~20 events).
+    // Recent activity trail (last ~20 events) — rendered through the *same*
+    // redaction the bundle uses, so the user sees exactly what would be shared.
     page = page.group(
         SettingGroup::new()
             .title("Activity trail")
             .item(SettingItem::render(move |_o, _w, cx| {
                 let muted = cx.theme().muted_foreground;
-                let lines = crate::trail::render_lines();
+                let lines = crate::trail::render_lines_sanitized();
                 let body = if lines.is_empty() {
                     "No activity recorded yet.".to_string()
                 } else {
                     let start = lines.len().saturating_sub(20);
                     lines[start..].join("\n")
                 };
-                div()
+                let caption = if crate::redact::enabled() {
+                    "Names are redacted \u{2014} this is exactly what a shared report contains."
+                } else {
+                    "Redaction is off \u{2014} a shared report would include these real paths."
+                };
+                gpui_component::v_flex()
                     .w_full()
-                    .text_scale_xs()
-                    .text_color(muted)
-                    .child(SharedString::from(body))
+                    .gap_1()
+                    .child(
+                        div()
+                            .w_full()
+                            .text_scale_xs()
+                            .text_color(muted)
+                            .child(SharedString::from(body)),
+                    )
+                    .child(div().w_full().text_scale_xs().text_color(muted).child(caption))
             })),
     );
 
-    // Copy-report action.
+    // Copy-report / bundle actions — both honor the redaction toggle and scrub
+    // the account name out of the app-owned diagnostics paths.
     page = page.group(
         SettingGroup::new().item(SettingItem::render(move |_o, _w, _cx| {
             use gpui_component::{Sizable as _, button::Button};
@@ -768,12 +839,14 @@ fn diagnostics_page(report: std::rc::Rc<crate::diagnostics::Report>) -> SettingP
                         .outline()
                         .small()
                         .on_click(move |_, _w, _cx| {
-                            let mut text = crate::diagnostics::render_text(&report);
-                            let trail = crate::trail::render_lines();
+                            let mut text = crate::report::redact_username(
+                                &crate::diagnostics::render_text(&report),
+                            );
+                            let trail = crate::trail::render_lines_sanitized();
                             if !trail.is_empty() {
                                 text.push_str("\n[Activity trail]\n");
                                 for l in &trail {
-                                    text.push_str(l);
+                                    text.push_str(&crate::report::redact_username(l));
                                     text.push('\n');
                                 }
                             }
@@ -1193,33 +1266,46 @@ fn shortcuts_page() -> SettingPage {
             let theme = cx.theme();
             gpui_component::v_flex()
                 .w_full()
+                .min_w_0()
+                .overflow_hidden()
                 .gap_1()
                 .child(
-                    gpui_component::h_flex()
+                    div()
+                        .relative()
                         .w_full()
-                        .items_center()
-                        .gap_3()
+                        .min_h(px(SETTINGS_TOP_ROW_HEIGHT))
                         .child(
                             div()
-                                .flex_1()
+                                .w_full()
                                 .min_w_0()
+                                .pr(px(SETTINGS_SHORTCUT_LANE + SETTINGS_CONTROL_GAP))
                                 .text_scale_sm()
                                 .text_color(theme.foreground)
                                 .child(title_for_render.clone()),
                         )
                         .child(
-                            div().flex_none().flex().justify_end().child(
-                                div()
-                                    .px_2()
-                                    .py_0p5()
-                                    .rounded(theme.radius)
-                                    .bg(theme.muted.opacity(0.6))
-                                    .border_1()
-                                    .border_color(theme.border)
-                                    .text_scale_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(SharedString::from(chord_for_render.clone())),
-                            ),
+                            div()
+                                .absolute()
+                                .top_0()
+                                .right_0()
+                                .w(px(SETTINGS_SHORTCUT_LANE))
+                                .h(px(SETTINGS_TOP_ROW_HEIGHT))
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .child(
+                                    div()
+                                        .max_w(px(SETTINGS_SHORTCUT_LANE))
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded(theme.radius)
+                                        .bg(theme.muted.opacity(0.6))
+                                        .border_1()
+                                        .border_color(theme.border)
+                                        .text_scale_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(SharedString::from(chord_for_render.clone())),
+                                ),
                         ),
                 )
                 .child(

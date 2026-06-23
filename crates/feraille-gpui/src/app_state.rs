@@ -110,6 +110,13 @@ pub struct AppState {
     /// `mpv.app`). `None` == the platform default (Homebrew on macOS).
     pub mpv_path: Option<String>,
 
+    // ---- Diagnostics privacy (docs/features/DIAGNOSTICS.md) ----
+    /// When `true` (the default), the diagnostics bundle, "Copy report", and the
+    /// in-app activity trail replace every file/folder name with `…` so a shared
+    /// report reveals nothing about the user's files. `None` == never set
+    /// (defaults to `true`). See [`crate::redact`].
+    pub redact_diagnostics: Option<bool>,
+
     // ---- Sidebar Locations (Windows / OneDrive) ----
     /// Which root the sidebar's special folders resolve against when
     /// OneDrive has moved them: "auto" (shell default), "local"
@@ -289,10 +296,11 @@ pub fn load() -> AppState {
                     out.video_backend = Some(v);
                 }
             }
-            "mpv_path" => {
-                if !val.trim().is_empty() {
-                    out.mpv_path = Some(val.trim().to_string());
-                }
+            "mpv_path" if !val.trim().is_empty() => {
+                out.mpv_path = Some(val.trim().to_string());
+            }
+            "redact_diagnostics" => {
+                out.redact_diagnostics = parse_bool(val);
             }
             "special_folder_mode" => {
                 let v = val.trim().to_lowercase();
@@ -389,6 +397,9 @@ pub fn save(state: &AppState) {
     }
     if let Some(p) = &state.mpv_path {
         s.push_str(&format!("mpv_path={p}\n"));
+    }
+    if let Some(b) = state.redact_diagnostics {
+        s.push_str(&format!("redact_diagnostics={b}\n"));
     }
     if let Some(m) = &state.special_folder_mode {
         s.push_str(&format!("special_folder_mode={m}\n"));

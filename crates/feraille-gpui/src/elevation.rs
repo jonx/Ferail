@@ -42,6 +42,32 @@ pub struct ElevatedResult {
     pub failures: Vec<(FileOpErrorKind, PathBuf)>,
 }
 
+/// A privileged trash-or-delete of specific items, re-run elevated after the
+/// unprivileged process hit a permission denial (a root-owned app, a
+/// root-owned item in the Trash). Built from just the *permission-denied*
+/// failures — the only class elevation can fix.
+///
+/// `delete == false`: **move** each item into `trash_dir` (the user's `~/.Trash`)
+/// so it lands where they expect, recoverable. The worker runs as root, so this
+/// is an explicit move — root's own `trashItemAtURL` would target *root's*
+/// Trash. `delete == true`: **remove** each item permanently (Shift+Delete /
+/// Empty Trash on protected items); `trash_dir` is then unused.
+#[derive(Clone, Debug)]
+pub struct ElevatedTrashOp {
+    pub delete: bool,
+    pub trash_dir: PathBuf,
+    pub sources: Vec<PathBuf>,
+}
+
+/// What the elevated trash worker reported: the `(original, landed)` pairs it
+/// moved into the Trash (empty when `delete == true`) and the items that still
+/// failed even as root.
+#[derive(Clone, Debug, Default)]
+pub struct ElevatedTrashResult {
+    pub trashed: Vec<(PathBuf, PathBuf)>,
+    pub failed: Vec<PathBuf>,
+}
+
 // ---- path <-> bytes (lossless on unix; near-lossless on Windows) ----------
 
 #[cfg(unix)]
@@ -170,6 +196,95 @@ impl ElevatedResult {
     }
 }
 
+impl ElevatedTrashOp {
+    /// `<MODE>\0<TRASH_DIR>\0<SRC>\0<SRC>…` — MODE is `TRASH` or `DELETE`.
+    fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(if self.delete { b"DELETE" } else { b"TRASH" });
+        out.push(0);
+        out.extend_from_slice(&path_to_bytes(&self.trash_dir));
+        for s in &self.sources {
+            out.push(0);
+            out.extend_from_slice(&path_to_bytes(s));
+        }
+        out
+    }
+
+    fn decode(bytes: &[u8]) -> Result<ElevatedTrashOp, String> {
+        let mut parts = bytes.split(|b| *b == 0);
+        let mode = parts.next().ok_or("empty trash descriptor")?;
+        let delete = match mode {
+            b"TRASH" => false,
+            b"DELETE" => true,
+            _ => return Err("trash descriptor: unknown mode".into()),
+        };
+        let trash_dir = bytes_to_path(parts.next().ok_or("trash descriptor: missing dir")?);
+        let sources: Vec<PathBuf> = parts.filter(|p| !p.is_empty()).map(bytes_to_path).collect();
+        if sources.is_empty() {
+            return Err("trash descriptor: no sources".into());
+        }
+        Ok(ElevatedTrashOp {
+            delete,
+            trash_dir,
+            sources,
+        })
+    }
+}
+
+impl ElevatedTrashResult {
+    /// One record per line; fields NUL-separated. `trash\0<orig>\0<landed>` per
+    /// moved item, `fail\0<path>` per remaining failure.
+    fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut first = true;
+        let mut sep = |out: &mut Vec<u8>| {
+            if first {
+                first = false;
+            } else {
+                out.push(b'\n');
+            }
+        };
+        for (orig, landed) in &self.trashed {
+            sep(&mut out);
+            out.extend_from_slice(b"trash\0");
+            out.extend_from_slice(&path_to_bytes(orig));
+            out.push(0);
+            out.extend_from_slice(&path_to_bytes(landed));
+        }
+        for path in &self.failed {
+            sep(&mut out);
+            out.extend_from_slice(b"fail\0");
+            out.extend_from_slice(&path_to_bytes(path));
+        }
+        out
+    }
+
+    fn decode(bytes: &[u8]) -> Result<ElevatedTrashResult, String> {
+        let mut result = ElevatedTrashResult::default();
+        for line in bytes.split(|b| *b == b'\n') {
+            if line.is_empty() {
+                continue;
+            }
+            let mut f = line.split(|b| *b == 0);
+            match f.next() {
+                Some(b"trash") => {
+                    let orig = f.next().ok_or("result: trash missing original")?;
+                    let landed = f.next().ok_or("result: trash missing landed")?;
+                    result
+                        .trashed
+                        .push((bytes_to_path(orig), bytes_to_path(landed)));
+                }
+                Some(b"fail") => {
+                    let path = f.next().ok_or("result: fail missing path")?;
+                    result.failed.push(bytes_to_path(path));
+                }
+                _ => {}
+            }
+        }
+        Ok(result)
+    }
+}
+
 fn unique_temp(ext: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -262,6 +377,112 @@ pub fn run_elevated_op_worker(args: &[String]) -> i32 {
     0
 }
 
+/// Parent side: serialise a trash/delete `op`, run the elevated worker (blocks
+/// on the OS auth prompt — call from a background thread), and read back which
+/// items landed in the Trash and which still failed.
+pub fn run_elevated_trash_op(op: &ElevatedTrashOp) -> Result<ElevatedTrashResult, String> {
+    let desc = unique_temp("desc");
+    let res = unique_temp("result");
+    std::fs::write(&desc, op.encode()).map_err(|e| format!("write descriptor: {e}"))?;
+
+    let args = vec![
+        "--elevated-trash".to_string(),
+        desc.to_string_lossy().into_owned(),
+        "--elevated-result".to_string(),
+        res.to_string_lossy().into_owned(),
+    ];
+    let run = crate::platform_shell::run_elevated_self(&args);
+    let outcome = run.and_then(|_code| {
+        std::fs::read(&res)
+            .map_err(|e| format!("read result: {e}"))
+            .and_then(|b| ElevatedTrashResult::decode(&b))
+    });
+
+    let _ = std::fs::remove_file(&desc);
+    let _ = std::fs::remove_file(&res);
+    outcome
+}
+
+/// Worker side: `--elevated-trash <descriptor> --elevated-result <result>`.
+/// Runs as root: moves each item into the user's Trash (or removes it outright
+/// when `delete`), writes the per-item result, and returns a process exit code.
+/// Always exits 0 when it *ran* (item failures live in the result file), so the
+/// macOS osascript wrapper treats "ran" as success.
+pub fn run_elevated_trash_op_worker(args: &[String]) -> i32 {
+    let Some(desc_path) = flag_value(args, "--elevated-trash") else {
+        eprintln!("--elevated-trash: missing descriptor path");
+        return 2;
+    };
+    let Some(result_path) = flag_value(args, "--elevated-result") else {
+        eprintln!("--elevated-trash: missing --elevated-result path");
+        return 2;
+    };
+    let bytes = match std::fs::read(&desc_path) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("--elevated-trash: read descriptor: {e}");
+            return 2;
+        }
+    };
+    let op = match ElevatedTrashOp::decode(&bytes) {
+        Ok(op) => op,
+        Err(e) => {
+            eprintln!("--elevated-trash: {e}");
+            return 2;
+        }
+    };
+
+    let mut result = ElevatedTrashResult::default();
+    for src in &op.sources {
+        if op.delete {
+            match remove_recursively(src) {
+                Ok(()) => {}
+                Err(_) => result.failed.push(src.clone()),
+            }
+        } else {
+            match move_into_trash(src, &op.trash_dir) {
+                Ok(landed) => result.trashed.push((src.clone(), landed)),
+                Err(_) => result.failed.push(src.clone()),
+            }
+        }
+    }
+
+    if let Err(e) = std::fs::write(&result_path, result.encode()) {
+        eprintln!("--elevated-trash: write result: {e}");
+        return 1;
+    }
+    0
+}
+
+/// Remove a file or directory tree, mirroring Empty Trash's own loop.
+fn remove_recursively(p: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(p) {
+        Ok(m) if m.is_dir() && !m.is_symlink() => std::fs::remove_dir_all(p),
+        Ok(_) => std::fs::remove_file(p),
+        Err(e) => Err(e),
+    }
+}
+
+/// Move `src` into `trash_dir` under a collision-free name (`name`, `name 2`,
+/// `name 3`, …), returning where it landed. Same-volume → an instant rename;
+/// the user's Trash and a protected app under `/Applications` share the Data
+/// volume in practice, so a cross-device fallback isn't needed here (an EXDEV
+/// rename surfaces as a per-item failure rather than a silent half-copy).
+fn move_into_trash(src: &Path, trash_dir: &Path) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(trash_dir)?;
+    let name = src.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "source has no file name")
+    })?;
+    let mut dest = trash_dir.join(name);
+    let mut n = 2;
+    while dest.exists() {
+        dest = trash_dir.join(format!("{} {n}", name.to_string_lossy()));
+        n += 1;
+    }
+    std::fs::rename(src, &dest)?;
+    Ok(dest)
+}
+
 /// Turn a whole-op failure (planning failed) into per-source failures so the
 /// parent still gets a coherent "all still failed" report.
 fn fatal_result(op: &ElevatedOp, raw: &str) -> ElevatedResult {
@@ -326,5 +547,49 @@ mod tests {
         assert_eq!(decoded.failures.len(), 2);
         assert_eq!(decoded.failures[0].0, FileOpErrorKind::Locked);
         assert_eq!(decoded.failures[1].1, PathBuf::from("/y/root.cfg"));
+    }
+
+    #[test]
+    fn trash_op_descriptor_round_trips() {
+        let op = ElevatedTrashOp {
+            delete: false,
+            trash_dir: PathBuf::from("/Users/jk/.Trash"),
+            sources: vec![
+                PathBuf::from("/Applications/iMovie.app"),
+                PathBuf::from("/Applications/Some App.app"),
+            ],
+        };
+        let decoded = ElevatedTrashOp::decode(&op.encode()).unwrap();
+        assert!(!decoded.delete);
+        assert_eq!(decoded.trash_dir, op.trash_dir);
+        assert_eq!(decoded.sources, op.sources);
+
+        let del = ElevatedTrashOp {
+            delete: true,
+            trash_dir: PathBuf::from("/unused"),
+            sources: vec![PathBuf::from("/Volumes/x/.Trashes/501/old")],
+        };
+        assert!(ElevatedTrashOp::decode(&del.encode()).unwrap().delete);
+    }
+
+    #[test]
+    fn trash_result_round_trips() {
+        let r = ElevatedTrashResult {
+            trashed: vec![(
+                PathBuf::from("/Applications/iMovie.app"),
+                PathBuf::from("/Users/jk/.Trash/iMovie.app"),
+            )],
+            failed: vec![PathBuf::from("/Applications/Locked.app")],
+        };
+        let decoded = ElevatedTrashResult::decode(&r.encode()).unwrap();
+        assert_eq!(decoded.trashed.len(), 1);
+        assert_eq!(decoded.trashed[0].1, PathBuf::from("/Users/jk/.Trash/iMovie.app"));
+        assert_eq!(decoded.failed, vec![PathBuf::from("/Applications/Locked.app")]);
+
+        // An all-success delete result (no trashed pairs, no failures) must
+        // round-trip to an empty result, not a decode error.
+        let empty = ElevatedTrashResult::default();
+        let decoded = ElevatedTrashResult::decode(&empty.encode()).unwrap();
+        assert!(decoded.trashed.is_empty() && decoded.failed.is_empty());
     }
 }

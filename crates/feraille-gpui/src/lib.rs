@@ -38,6 +38,7 @@ pub mod prefetch;
 pub mod preview;
 pub mod process_state;
 pub mod recents_section;
+pub mod redact;
 pub mod report;
 pub mod reset_db;
 pub mod screenshot;

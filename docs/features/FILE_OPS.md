@@ -179,6 +179,38 @@ ships real osascript elevation; Windows/Linux elevation + lock detection are
 stubbed (`elevation_available()` = false) pending the native pass — see
 windows-port.md.
 
+### Elevated trash & delete (2026-06-24)
+
+The destructive ops now use the same elevate-on-permission-denial pattern as
+copy/move, so a root-owned app (e.g. `/Applications/iMovie.app`) is no longer a
+dead end — it pops an OS auth prompt instead, like Finder.
+
+- **`move_to_trash`** (`feraille-fs-native`) now types its failure: it keys off
+  the Cocoa error **code** `NSFileWriteNoPermissionError` (513), not the
+  localized text, and returns `io::ErrorKind::PermissionDenied`. `on_move_to_trash`
+  no longer bails on the first item — it trashes what it can and collects the
+  rest with their kind.
+- On a permission denial, the failure toast (`trash_failure_notification`)
+  offers **Move to Trash as administrator…** (plus **Copy** of the full
+  detail). It re-runs *just the permission-denied items* via a new
+  `ElevatedTrashOp` (`--elevated-trash` worker). Because the worker runs as
+  **root**, whose own `trashItemAtURL` would target *root's* Trash, it instead
+  **moves each item into the user's `~/.Trash`** (`feraille_fs_native::home_trash_dir`)
+  under a collision-free name. The landed item is root-owned, so **Undo is not
+  registered** for elevated trashes (restoring a root-owned item to a
+  root-owned location would itself need elevation).
+- **Delete Immediately** (new command — `DeleteImmediately`, Option+Cmd+Delete
+  [mac] / Shift+Delete [win/linux], also in the File menu and file-list context
+  menu) permanently deletes the selection with no Trash and no undo, after a
+  counted confirmation. Same elevated recourse on a permission denial, via
+  `ElevatedTrashOp { delete: true }`.
+- **Empty Trash** likewise collects the items it couldn't remove (root-owned
+  trash, e.g. something elevated *into* the Trash earlier) and offers **Empty
+  Trash as administrator…** over just those.
+
+All three share `Shell::retry_trash_elevated(sources, delete, …)` and run the
+auth-blocking osascript call off the UI thread (Prime Directive).
+
 ## Platform tags
 
 **[mac]** = macOS-only today; **[win-parity]** = named Windows

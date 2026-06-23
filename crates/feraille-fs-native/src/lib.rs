@@ -426,13 +426,36 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
             Ok(()) => Ok(resulting
                 .and_then(|u| u.path())
                 .map(|p| PathBuf::from(p.to_string()))),
-            Err(err) => Err(std::io::Error::other(format!(
-                "trashItemAtURL({}) failed: {}",
-                path.display(),
-                err.localizedDescription(),
-            ))),
+            Err(err) => {
+                let msg = format!(
+                    "trashItemAtURL({}) failed: {}",
+                    path.display(),
+                    err.localizedDescription(),
+                );
+                // NSFileWriteNoPermissionError (513): the item is owned by
+                // another user — e.g. a root-owned Apple app in /Applications.
+                // Surface it as a typed PermissionDenied (keyed off the Cocoa
+                // error *code*, not the localized text) so the shell can offer
+                // an elevated retry, exactly as copy/move already do.
+                const NS_FILE_WRITE_NO_PERMISSION_ERROR: isize = 513;
+                if err.code() == NS_FILE_WRITE_NO_PERMISSION_ERROR {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        msg,
+                    ))
+                } else {
+                    Err(std::io::Error::other(msg))
+                }
+            }
         }
     }
+}
+
+/// The user's primary Trash (`~/.Trash` [mac]). An elevated trash worker runs
+/// as root, whose own `trashItemAtURL` would target root's Trash — so it moves
+/// protected items into *this* path instead, where the user expects them.
+pub fn home_trash_dir() -> PathBuf {
+    paths::home_dir().join(".Trash")
 }
 
 /// Trash directories visible to this user: `~/.Trash` plus each

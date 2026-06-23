@@ -31,6 +31,12 @@ actions!(
         /// `OpenTerminalAtContext`, which reads `context_target`.
         OpenTerminalHere,
         MoveToTrash,
+        /// Permanently delete the selected items without trashing first
+        /// (Shift+Delete [win/linux], Option+Cmd+Delete [mac, Finder's
+        /// chord]), after a counted confirmation. No undo — like a targeted
+        /// Empty Trash. On a permission denial it offers an elevated retry
+        /// (docs/features/FILE_OPS.md).
+        DeleteImmediately,
         /// Cmd+Shift+Delete — permanently delete the contents of every
         /// reachable trash, after a counted confirmation dialog. The
         /// one file operation with no undo (docs/features/FILE_OPS.md).

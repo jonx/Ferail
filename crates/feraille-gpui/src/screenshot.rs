@@ -20,7 +20,7 @@ use crate::assets::FeraAssets;
 use anyhow::{Context as _, Result};
 use feraille_fs_native::home_dir;
 use gpui::*;
-use gpui_component::{Theme, ThemeMode, WindowExt as _, notification::Notification};
+use gpui_component::{Theme, ThemeMode, WindowExt as _};
 
 use crate::settings::{SettingsView, category_from_arg};
 use crate::shell::Shell;
@@ -992,7 +992,7 @@ impl ShellArgs {
         // The toast still surfaces correctly in the live window.
         if let Some(text) = self.simulate_toast.clone() {
             let _ = cx.update_window((*handle).into(), |_, window, cx| {
-                window.push_notification(Notification::error(text).autohide(false), cx);
+                window.push_notification(crate::shell::error_notification(text), cx);
             });
         }
         if self.splitter.is_some() {

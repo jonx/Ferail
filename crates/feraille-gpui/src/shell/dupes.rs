@@ -265,7 +265,7 @@ impl Shell {
                             this.apply_dupe_msg_in_tab(
                                 idx,
                                 DupeMsg::Done(error),
-                                notify_window.clone(),
+                                notify_window,
                                 cx,
                             );
                         }

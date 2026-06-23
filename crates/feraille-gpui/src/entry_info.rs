@@ -381,6 +381,8 @@ impl EntryInfoView {
         Self::build(path, name, target, known_size, shell, true, None, cx)
     }
 
+    // The info-row builder genuinely needs each of these inputs.
+    #[allow(clippy::too_many_arguments)]
     fn build(
         path: PathBuf,
         name: String,

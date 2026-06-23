@@ -90,7 +90,7 @@ pub fn fetch_thumbnail(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
     // boundary.
     let (tx, rx) = mpsc::channel::<Option<(Vec<u8>, u32, u32)>>();
 
-    let result = unsafe {
+    unsafe {
         let ns_path = NSString::from_str(path_str);
         let url: Id<NSURL> = msg_send_id![class!(NSURL), fileURLWithPath: &*ns_path];
 
@@ -136,8 +136,7 @@ pub fn fetch_thumbnail(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
         // Block on the async completion. `request`/`generator`/`block`
         // stay alive on the stack until we return.
         rx.recv_timeout(QL_TIMEOUT).ok().flatten()
-    };
-    result
+    }
 }
 
 /// Newtype over a `CGImageRef` whose Objective-C type encoding is

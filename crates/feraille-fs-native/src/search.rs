@@ -74,6 +74,8 @@ impl NativeFs {
     /// - symlinks are inspected via `symlink_metadata` and never
     ///   followed, keeping the walk cycle-safe;
     /// - per-directory read failures are absorbed (partial-but-complete).
+    // The subtree walker genuinely needs each of these inputs.
+    #[allow(clippy::too_many_arguments)]
     pub fn search_subtree(
         &self,
         root: &Path,
@@ -151,7 +153,7 @@ impl NativeFs {
                 let is_symlink = ft.is_symlink();
                 let mac_pkg = is_mac_package(&child_path);
                 let is_dir = ft.is_dir() && !is_symlink;
-                let descend = is_dir && !(mac_pkg && !descend_packages);
+                let descend = is_dir && (!mac_pkg || descend_packages);
 
                 // Test the match against name or relative path.
                 let haystack = if query.match_path {

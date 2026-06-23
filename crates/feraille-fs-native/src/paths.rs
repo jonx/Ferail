@@ -61,6 +61,8 @@ pub enum SpecialFolderMode {
 
 impl SpecialFolderMode {
     /// Parse the persisted `app_state` token. Unknown / missing → `Auto`.
+    // Intentional inherent method (infallible token parse), not `std::str::FromStr`.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "local" => SpecialFolderMode::Local,

@@ -54,9 +54,12 @@ for how this is enforced across the codebase.
   ([spec](docs/features/feraille-windows-instances-tabs-spec.md))
 - **Preview pane** — dense, async metadata surface for the current selection.
   ([spec](docs/features/PREVIEW.md))
-- **Media viewer** — built-in image and video viewer with live colour,
-  sharpen, denoise, and upscale adjustments; mpv-backed for any-format video.
-  ([spec](docs/features/VIEWER.md))
+- **Media viewer** — a built-in image *and* video viewer with **sticky zoom**
+  (your zoom and pan carry across files — neither Finder nor Preview does that),
+  per-file rotate, in/out loop cues, and a slideshow. With the optional mpv
+  backend it plays virtually *any* video container and grades it **live, no
+  re-encode**: brightness/contrast/colour, hue/gamma, denoise/deband/sharpen/film
+  grain, and 1×/2×/4× Lanczos upscale. ([spec](docs/features/VIEWER.md))
 - **Disk Usage window** — async scanning with squarified treemap and top-list
   views. ([spec](docs/features/DISK_USAGE.md))
 - **Persistent metadata** — SQLite-backed store for derived metadata, layout,
@@ -69,6 +72,32 @@ for how this is enforced across the codebase.
 | ![Preview pane](docs/images/readme-preview.png) | ![Disk Usage](docs/images/readme-disk-usage.png) | ![Settings](docs/images/readme-settings.png) |
 | **Icon view** | **Media viewer** | **Magic & mismatch** |
 | ![Icon view](docs/images/readme-icons.png) | ![Media viewer](docs/images/readme-viewer.png) | ![Magic detection](docs/images/magic-description.png) |
+
+## Signature features
+
+A few things Feraille does that the system file managers — and most standalone
+tools — simply don't:
+
+- **Chroma-keyed, stackable transparent video windows.** In the viewer, pick a
+  colour to key out (swatch + eyedropper, with similarity/blend control), flip
+  the window to transparent, and **stack several keyed videos across see-through,
+  always-on-top windows** that the OS composites together — inactive windows mute
+  themselves so a wall of clips doesn't all blast audio at once. It's the kind of
+  thing you'd normally build in OBS; here it's a couple of clicks. *(optional mpv
+  backend, macOS today)*
+- **Sticky zoom across a folder.** Zoom to 4× on one photo's corner and the next
+  file opens at 4× on the *same* corner — purpose-built for comparing scans,
+  frames, or renders.
+- **Magic-first Format column.** Every row is identified by its *bytes*, not its
+  extension, so a `.jpg` that's secretly a `.zip` is flagged inline.
+- **Predictive prewarming.** The Ant Trail learns the folders you visit and warms
+  them before you click, so your most-used paths feel instant.
+- **Power tools built in, not bolted on.** A duplicate finder (size→hash funnel,
+  clone/hard-link aware), a disk-usage treemap, and a Cmd+K command palette ship
+  inside the app — not three separate downloads.
+- **A UI that refuses to beachball.** Every paint, scroll, and keystroke reads
+  only cached state; all I/O is scheduled off the hot path and dropped if you've
+  already moved on (the prime directive above).
 
 ## How Feraille Compares
 
@@ -123,6 +152,17 @@ aren't there yet either.
 The pitch is simple: if you want a file manager that's **new, quick, and the
 same everywhere** — and that builds in the tools power users reach for — rather
 than whatever came with your OS, that's Feraille.
+
+## Platform status
+
+Feraille targets macOS, Windows, and Linux from one codebase, but they are at
+very different stages. An honest snapshot:
+
+| Platform | Status |
+|---|---|
+| **macOS** | **Primary, daily-driver.** Builds, runs, and is feature-complete for everyday use; the open gaps are packaging polish (notarization, app-icon art) and roadmap features. |
+| **Windows** | **Active port, broad parity.** Builds and runs natively with most shell integrations working — clipboard file copy, Recycle Bin, icons, thumbnails, Open With, Media Foundation video. Still stubbed: elevation / "what's locking this file", third-party shell-extension verbs, WSL, and Finder-style tags (no Windows equivalent). Verified on a real Windows 11 machine, not yet in CI. |
+| **Linux** | **Early port.** Builds and runs (verified under WSL2); volumes, freedesktop Trash, download provenance, and Open With are real, but the file-URL clipboard, per-file icons, thumbnails, video, and the D-Bus theme/volume/power observers are still stubbed — not yet a daily driver. |
 
 ## Quick Start
 
@@ -245,6 +285,10 @@ Dual-licensed under either of
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
 
 at your option.
+
+Third-party components incorporated into a built binary (GPUI, gpui-component,
+and the bundled Lucide / Bootstrap icon artwork) are credited in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 > **Note:** Feraille depends on `gpui` / `gpui-component` as git
 > dependencies (they are not published to crates.io), so the crates are not

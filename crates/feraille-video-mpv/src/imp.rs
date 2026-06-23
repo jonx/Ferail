@@ -138,14 +138,14 @@ struct LibMpv {
     rc_free: extern "C" fn(*mut c_void),
 }
 
-/// `dlsym` a symbol and transmute it to the bound function-pointer type.
+/// `dlsym` a symbol and transmute it to the named function-pointer type.
 macro_rules! sym {
-    ($h:expr, $name:literal) => {{
+    ($h:expr, $name:literal, $ty:ty) => {{
         let p = dynload::sym($h, $name);
         if p.is_null() {
             return Err(format!("libmpv: missing symbol {}", $name));
         }
-        std::mem::transmute(p)
+        std::mem::transmute::<*mut std::ffi::c_void, $ty>(p)
     }};
 }
 
@@ -214,18 +214,46 @@ impl LibMpv {
         }
         Ok(LibMpv {
             _lib: lib,
-            create: sym!(lib, "mpv_create"),
-            initialize: sym!(lib, "mpv_initialize"),
-            terminate_destroy: sym!(lib, "mpv_terminate_destroy"),
-            set_option_string: sym!(lib, "mpv_set_option_string"),
-            set_property_string: sym!(lib, "mpv_set_property_string"),
-            get_property: sym!(lib, "mpv_get_property"),
-            command: sym!(lib, "mpv_command"),
-            wait_event: sym!(lib, "mpv_wait_event"),
-            rc_create: sym!(lib, "mpv_render_context_create"),
-            rc_render: sym!(lib, "mpv_render_context_render"),
-            rc_update: sym!(lib, "mpv_render_context_update"),
-            rc_free: sym!(lib, "mpv_render_context_free"),
+            create: sym!(lib, "mpv_create", extern "C" fn() -> *mut c_void),
+            initialize: sym!(lib, "mpv_initialize", extern "C" fn(*mut c_void) -> c_int),
+            terminate_destroy: sym!(lib, "mpv_terminate_destroy", extern "C" fn(*mut c_void)),
+            set_option_string: sym!(
+                lib,
+                "mpv_set_option_string",
+                extern "C" fn(*mut c_void, *const c_char, *const c_char) -> c_int
+            ),
+            set_property_string: sym!(
+                lib,
+                "mpv_set_property_string",
+                extern "C" fn(*mut c_void, *const c_char, *const c_char) -> c_int
+            ),
+            get_property: sym!(
+                lib,
+                "mpv_get_property",
+                extern "C" fn(*mut c_void, *const c_char, c_int, *mut c_void) -> c_int
+            ),
+            command: sym!(
+                lib,
+                "mpv_command",
+                extern "C" fn(*mut c_void, *const *const c_char) -> c_int
+            ),
+            wait_event: sym!(
+                lib,
+                "mpv_wait_event",
+                extern "C" fn(*mut c_void, f64) -> *mut MpvEvent
+            ),
+            rc_create: sym!(
+                lib,
+                "mpv_render_context_create",
+                extern "C" fn(*mut *mut c_void, *mut c_void, *mut RenderParam) -> c_int
+            ),
+            rc_render: sym!(
+                lib,
+                "mpv_render_context_render",
+                extern "C" fn(*mut c_void, *mut RenderParam) -> c_int
+            ),
+            rc_update: sym!(lib, "mpv_render_context_update", extern "C" fn(*mut c_void) -> u64),
+            rc_free: sym!(lib, "mpv_render_context_free", extern "C" fn(*mut c_void)),
         })
     }
 }
