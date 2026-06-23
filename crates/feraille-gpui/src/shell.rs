@@ -1438,6 +1438,17 @@ impl Shell {
 
     fn on_focus_filter(&mut self, _: &FocusFilter, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_filter_input(window, cx);
+        // Re-assert the focus after the current update cycle. When this fires
+        // from the View > Find menu item (rather than the Ctrl+F key), the app
+        // menu bar restores focus to its previously-focused element as it
+        // closes — which would otherwise immediately steal focus straight back
+        // out of the filter, making the menu item look like it did nothing.
+        // Deferring lets our focus win the race; it's a harmless no-op repeat
+        // for the direct Ctrl+F path.
+        let filter = self.active_tab().filter_input.clone();
+        window.defer(cx, move |window, cx| {
+            filter.read(cx).focus_handle(cx).focus(window, cx);
+        });
     }
 
     /// Public-from-screenshot-CLI helper: focuses the filter input
