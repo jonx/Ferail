@@ -10,12 +10,15 @@ through — potentially other videos that are themselves keyed.
 
 ## Status
 
-**Phase 1 in progress (2026-06-23)** — Phase 0 spike green; Phase 1a (the
-`feraille-video-mpv` crate to parity) and Phase 1b (swap the optional provider
-to mpv, delete `feraille-video-vlc`) have landed. `cargo check -p
-feraille-gpui --features vlc` is green. Still open in Phase 1/2: removing the
-VLC-era seamless-reopen apparatus in favour of live `set_enhance`, and the
-cosmetic rename below. The decision log is in [NOTES.md](../../NOTES.md)
+**Phase 2 done (2026-06-23)** — Phase 0 spike green; Phase 1a (the
+`feraille-video-mpv` crate to parity), Phase 1b (swap the optional provider to
+mpv, delete `feraille-video-vlc`), and Phase 2 (remove the VLC-era
+seamless-reopen apparatus — `commit_video_enhance` now pushes filters through
+live `set_enhance`; the `video_pending_seek`/`video_repause` deferral and the
+poll's pre-seek-frame dance are gone, −67 lines in `window.rs`) have all
+landed. `cargo check -p feraille-gpui --features vlc` is green. Still open: the
+chroma-key UI (Phase 3), the N-layer stack (Phase 4), docs/icons (Phase 5), and
+the cosmetic rename below. The decision log is in [NOTES.md](../../NOTES.md)
 (2026-06-23 entry).
 
 ### Deferred cosmetic rename (pinned by hot `settings.rs`)

@@ -468,25 +468,13 @@ pub struct ViewerWindow {
     /// Whether the active video backend applied the colour grade itself
     /// (VLC does, natively on the GPU/decoder). When true the viewer skips
     /// its per-frame CPU grade for video — the frames already carry it.
-    /// Doubles as "the current video stream is VLC" (only VLC grades).
+    /// Doubles as "the current video stream grades natively" (mpv does).
     video_adjust_native: bool,
-    /// The denoise/sharpen filters the current VLC stream was opened with.
-    /// Compared against the live popup values to decide when a re-open is
-    /// needed (libvlc bakes these in at open; they can't change live).
+    /// The denoise/sharpen/deband/grain filters last pushed to the current
+    /// stream. Compared against the live popup values so a slider release only
+    /// re-pushes the filter chain when it actually changed (mpv applies it
+    /// live — no re-open).
     video_enhance_applied: VideoEnhance,
-    /// Set during a seamless filter re-open: the new stream is opened
-    /// *playing* (even if the user had it paused) so the new filter chain
-    /// decodes a frame immediately; the poll re-pauses once that first
-    /// frame lands, clearing this. Avoids the black flash + the old
-    /// "filters only show while playing" bug.
-    video_repause: bool,
-    /// A deferred seek for a seamless re-open: `Some(seconds)` until the
-    /// re-opened stream produces its first frame (proof the input is live —
-    /// a seek issued before then is silently dropped by libvlc). The poll
-    /// then seeks, optionally re-pauses, and *discards* that pre-seek frame
-    /// so the previous frame stays on screen until the correctly-positioned,
-    /// freshly-filtered one lands — no flash, no jump to the clip start.
-    video_pending_seek: Option<f64>,
     /// The latest decoded video frame (unrotated), uploaded as a
     /// `RenderImage` and drawn like any image. `None` until the first
     /// frame lands — the Quick Look poster stands in until then.
@@ -631,8 +619,6 @@ impl ViewerWindow {
             vlc_pref: resolve_vlc_pref(),
             video_adjust_native: false,
             video_enhance_applied: VideoEnhance::default(),
-            video_repause: false,
-            video_pending_seek: None,
             video_frame_image: None,
             video_frame_seq: 0,
             video_rotated: None,
@@ -838,7 +824,7 @@ impl ViewerWindow {
                 self.cue_out = 1.0;
                 self.seek_drag = None;
                 self.video_position = (0.0, 0.0);
-                self.open_video_stream(p.clone(), None, cx);
+                self.open_video_stream(p.clone(), cx);
             }
         }
     }
@@ -856,12 +842,10 @@ impl ViewerWindow {
     }
 
     /// Open a video stream for `path` via the active backend and start the
-    /// frame-pull loop. `restore` is `Some(position_secs)` when re-opening
-    /// in place (e.g. after an enhancement-filter change) — the clip seeks
-    /// back there and keeps its paused state; `None` is a fresh open that
-    /// auto-plays. The VLC backend bakes the denoise/sharpen filters in at
-    /// open (they can't be changed live).
-    fn open_video_stream(&mut self, path: PathBuf, restore: Option<f64>, cx: &mut Context<Self>) {
+    /// frame-pull loop. A fresh open auto-plays; the current enhancement
+    /// filters are baked in at open and then changed live as the user drags
+    /// the sliders (mpv swaps its filter chain at runtime — no re-open).
+    fn open_video_stream(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let tx = self.video_ended_tx.clone();
         let ended_path = path.clone();
         let enhance = self.video_enhance();
@@ -872,67 +856,43 @@ impl ViewerWindow {
             }),
             enhance,
         );
-        if let Some(mut stream) = stream {
+        if let Some(stream) = stream {
             self.video_epoch = self.video_epoch.wrapping_add(1);
             let epoch = self.video_epoch;
-            match restore {
-                Some(pos) => {
-                    // Seamless re-open in place (a filter change). Play even
-                    // if the user had it paused, but DON'T seek yet: a seek
-                    // before the input is live is silently dropped (verified),
-                    // which is what made the old code flash the clip start and
-                    // play briefly. Defer the seek to the poll, which fires it
-                    // on the first frame (input now live) and discards that
-                    // pre-seek frame so the previous one stays on screen until
-                    // the correctly-positioned, freshly-filtered frame lands.
-                    stream.set_paused(false);
-                    self.video_pending_seek = Some(pos);
-                    self.video_repause = self.video_paused;
-                    self.video_position.0 = pos;
-                }
-                None => {
-                    // Fresh open auto-plays.
-                    self.video_paused = false;
-                    self.video_dims = (0.0, 0.0);
-                }
-            }
+            // Fresh open auto-plays.
+            self.video_paused = false;
+            self.video_dims = (0.0, 0.0);
             self.video_overlay = Some((stream, path));
             self.video_enhance_applied = enhance;
-            // Push any live grade into the backend (VLC applies it natively;
-            // native player reports unsupported).
+            // Push any live grade into the backend (mpv applies it natively;
+            // the native player reports unsupported).
             self.apply_video_adjust();
             self.start_video_poll(epoch, cx);
         }
     }
 
-    /// Re-open the current VLC video so a changed denoise/sharpen filter
-    /// takes effect (libvlc can't swap the filter chain live), preserving
-    /// the playhead and paused state. No-op unless a VLC video is current
-    /// and its filters actually changed.
+    /// Push a changed denoise/sharpen/deband/grain filter set to the live
+    /// stream. mpv swaps its filter chain at runtime, so this is a cheap live
+    /// update — no re-open, no playhead/pause dance. No-op unless a
+    /// native-grading video (mpv) is current and its filters actually changed.
     fn commit_video_enhance(&mut self, cx: &mut Context<Self>) {
         if !self.video_adjust_native || !self.current_is_video() {
-            return; // not a VLC video
+            return; // not an mpv video
         }
-        if self.video_enhance() == self.video_enhance_applied {
+        let enhance = self.video_enhance();
+        if enhance == self.video_enhance_applied {
             return;
         }
-        let Some((_, path)) = &self.video_overlay else {
-            return;
-        };
-        let path = path.clone();
-        let pos = self.video_position.0;
-        // Seamless swap: drop ONLY the old stream (its `Drop` releases the
-        // libvlc instance). Keep the on-screen frame, the rotated cache and
-        // the known dims so nothing flashes — `open_video_stream` plays the
-        // new instance to its first frame, which then supersedes the old one.
-        drop(self.video_overlay.take());
-        self.open_video_stream(path, Some(pos), cx);
-        cx.notify();
+        if let Some((stream, _)) = &mut self.video_overlay {
+            stream.set_enhance(enhance);
+            self.video_enhance_applied = enhance;
+            cx.notify();
+        }
     }
 
     fn teardown_video(&mut self) {
         // Dropping the stream tears the underlying player down (the
-        // backend's `Drop` does the native remove / libvlc release).
+        // backend's `Drop` does the native remove / mpv teardown).
         drop(self.video_overlay.take());
         // Retire the on-screen frame + its rotated cache so their atlas
         // textures are evicted on the next render.
@@ -943,8 +903,6 @@ impl ViewerWindow {
             self.video_frames_to_drop.push(img);
         }
         self.video_dims = (0.0, 0.0);
-        self.video_repause = false;
-        self.video_pending_seek = None;
     }
 
     /// Toggle play/pause of the current video (our gpui control stands in
@@ -1060,38 +1018,13 @@ impl ViewerWindow {
         if dims.0 > 0.0 && dims.1 > 0.0 {
             self.video_dims = dims;
         }
-        if let Some(pending) = self.video_pending_seek {
-            // Seamless re-open in progress. The reported time is the pre-seek
-            // ~0, so keep the bar at the position we're seeking to.
-            self.video_position.0 = pending;
-            self.video_position.1 = pos.1;
-            if frame.is_some() {
-                // First frame from the new instance = input is now live, so
-                // the seek will take. Fire it (+ re-pause if the user had it
-                // paused) and DROP this pre-seek frame — the previous frame
-                // stays on screen until the correctly-positioned, freshly-
-                // filtered one lands, so there's no flash or jump to start.
-                if let Some((stream, _)) = &mut self.video_overlay {
-                    stream.seek(pending);
-                    if self.video_repause {
-                        stream.set_paused(true);
-                    }
+        self.video_position = pos;
+        if let Some((w, h, bytes)) = frame {
+            if let Some(img) = build_video_frame(bytes, w, h) {
+                if let Some(old) = self.video_frame_image.replace(img) {
+                    self.video_frames_to_drop.push(old);
                 }
-                self.video_pending_seek = None;
-                if self.video_repause {
-                    self.video_repause = false;
-                    self.video_paused = true;
-                }
-            }
-        } else {
-            self.video_position = pos;
-            if let Some((w, h, bytes)) = frame {
-                if let Some(img) = build_video_frame(bytes, w, h) {
-                    if let Some(old) = self.video_frame_image.replace(img) {
-                        self.video_frames_to_drop.push(old);
-                    }
-                    self.video_frame_seq = self.video_frame_seq.wrapping_add(1);
-                }
+                self.video_frame_seq = self.video_frame_seq.wrapping_add(1);
             }
         }
         // Enforce the Out cue. A full-length Out (1.0) is the clip's
