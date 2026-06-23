@@ -529,7 +529,11 @@ impl VideoBackend for VlcBackend {
             return None;
         }
 
-        let cpath = match CString::new(path.to_string_lossy().as_bytes().to_vec()) {
+        // Strip the Windows `\\?\` extended-length prefix the file list uses;
+        // libvlc's path parsing rejects it. No-op on macOS/Linux paths.
+        let path_str = path.to_string_lossy();
+        let path_str = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
+        let cpath = match CString::new(path_str.as_bytes().to_vec()) {
             Ok(c) => c,
             Err(_) => {
                 (lib.release)(inst);

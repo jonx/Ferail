@@ -31,6 +31,12 @@ mod capture;
 #[cfg(windows)]
 pub use capture::{capture_window_rgba, hide_window_for_capture};
 
+// Native video provider (Media Foundation IMFMediaEngine) behind the
+// windowless frame-pull contract. macOS uses AVFoundation; this is its
+// Windows analogue.
+#[cfg(windows)]
+mod video_mf;
+
 // =============================================================
 // Types — defined unconditionally so callers can name them on
 // either platform; the shell-mac equivalents have the same shape.
@@ -1900,11 +1906,17 @@ pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
     None
 }
 
-/// Video — Windows parity stubs. The mac implementation drives a
-/// windowless AVPlayer and hands the viewer BGRA frames it draws as an
-/// image (docs/features/VIEWER.md); the Windows equivalent is a Media
-/// Foundation source reader feeding the same frame path. Until that
-/// lands, the viewer shows the static poster (handle 0 = "no video").
+// Video — the macOS backend drives a windowless AVPlayer and hands the viewer
+// BGRA frames (docs/features/VIEWER.md). On Windows these delegate to the Media
+// Foundation `IMFMediaEngine` frame-server in `video_mf` (full A/V + sync); any
+// failure returns handle 0 / None so the viewer falls back to the poster. The
+// non-Windows arms are no-op stubs so the crate still compiles off Windows.
+
+#[cfg(windows)]
+pub fn video_overlay_show(path: &std::path::Path, on_ended: Box<dyn Fn() + 'static + Send>) -> u64 {
+    video_mf::video_overlay_show(path, on_ended)
+}
+#[cfg(not(windows))]
 pub fn video_overlay_show(
     _path: &std::path::Path,
     _on_ended: Box<dyn Fn() + 'static + Send>,
@@ -1912,26 +1924,66 @@ pub fn video_overlay_show(
     0
 }
 
+#[cfg(windows)]
+pub fn video_overlay_copy_frame(id: u64) -> Option<(u32, u32, Vec<u8>)> {
+    video_mf::video_overlay_copy_frame(id)
+}
+#[cfg(not(windows))]
 pub fn video_overlay_copy_frame(_id: u64) -> Option<(u32, u32, Vec<u8>)> {
     None
 }
 
+#[cfg(windows)]
+pub fn video_overlay_remove(id: u64) {
+    video_mf::video_overlay_remove(id)
+}
+#[cfg(not(windows))]
 pub fn video_overlay_remove(_id: u64) {}
 
+#[cfg(windows)]
+pub fn video_overlay_set_paused(id: u64, paused: bool) {
+    video_mf::video_overlay_set_paused(id, paused)
+}
+#[cfg(not(windows))]
 pub fn video_overlay_set_paused(_id: u64, _paused: bool) {}
 
+#[cfg(windows)]
+pub fn video_overlay_restart(id: u64) {
+    video_mf::video_overlay_restart(id)
+}
+#[cfg(not(windows))]
 pub fn video_overlay_restart(_id: u64) {}
 
+#[cfg(windows)]
+pub fn video_overlay_time(id: u64) -> (f64, f64) {
+    video_mf::video_overlay_time(id)
+}
+#[cfg(not(windows))]
 pub fn video_overlay_time(_id: u64) -> (f64, f64) {
     (0.0, 0.0)
 }
 
+#[cfg(windows)]
+pub fn video_overlay_natural_size(id: u64) -> (f64, f64) {
+    video_mf::video_overlay_natural_size(id)
+}
+#[cfg(not(windows))]
 pub fn video_overlay_natural_size(_id: u64) -> (f64, f64) {
     (0.0, 0.0)
 }
 
+#[cfg(windows)]
+pub fn video_overlay_seek(id: u64, seconds: f64) {
+    video_mf::video_overlay_seek(id, seconds)
+}
+#[cfg(not(windows))]
 pub fn video_overlay_seek(_id: u64, _seconds: f64) {}
 
+#[cfg(windows)]
+pub fn video_overlay_step(id: u64, frames: i64) {
+    video_mf::video_overlay_step(id, frames)
+}
+#[cfg(not(windows))]
 pub fn video_overlay_step(_id: u64, _frames: i64) {}
 
 pub fn set_window_floating(_ns_view: *mut std::ffi::c_void, _floating: bool) {}
