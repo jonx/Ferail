@@ -390,6 +390,13 @@ impl Render for SettingsView {
 pub fn open_settings_window(cx: &mut App) {
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(820.0), px(580.0)), cx)),
+        // Give the window a proper "Settings" title (it had none). A plain OS
+        // titlebar suits this dialog — the brand/custom titlebar is for the
+        // main browser window.
+        titlebar: Some(gpui::TitlebarOptions {
+            title: Some(SharedString::from("Settings")),
+            ..Default::default()
+        }),
         ..Default::default()
     };
     cx.spawn(async move |cx| {

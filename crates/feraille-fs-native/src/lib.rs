@@ -474,15 +474,27 @@ pub fn trash_dirs() -> Vec<PathBuf> {
 /// dialog. Errors come back through the `SHFileOperationW` return.
 #[cfg(windows)]
 pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
-    use std::os::windows::ffi::OsStrExt;
     use windows::Win32::UI::Shell::{
         SHFileOperationW, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FO_DELETE,
         SHFILEOPSTRUCTW,
     };
 
+    // SHFileOperationW (the legacy shell API) does NOT accept the `\\?\`
+    // extended-length prefix the file list uses internally — it just fails.
+    // Strip it (handling the `\\?\UNC\` form too) so trashing works for the
+    // common case; very-long paths (> MAX_PATH) would need IFileOperation.
+    let raw = path.to_string_lossy();
+    let cleaned: std::borrow::Cow<str> = if let Some(unc) = raw.strip_prefix(r"\\?\UNC\") {
+        std::borrow::Cow::Owned(format!(r"\\{unc}"))
+    } else if let Some(drive) = raw.strip_prefix(r"\\?\") {
+        std::borrow::Cow::Borrowed(drive)
+    } else {
+        std::borrow::Cow::Borrowed(raw.as_ref())
+    };
+
     // SHFileOperationW takes a double-null-terminated wide string
     // list. For a single path that's `<path>\0\0`.
-    let mut pfrom: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let mut pfrom: Vec<u16> = cleaned.encode_utf16().collect();
     pfrom.push(0); // path terminator
     pfrom.push(0); // list terminator
 
@@ -805,6 +817,28 @@ fn format_date(unix: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Trashing must work on the `\\?\`-prefixed paths the file list uses
+    /// (std::fs::canonicalize yields them on Windows). SHFileOperationW
+    /// rejects that prefix, so move_to_trash strips it. Regression test for
+    /// "move to trash failed when deleting duplicates".
+    #[cfg(windows)]
+    #[test]
+    fn move_to_trash_handles_verbatim_prefix() {
+        let dir = std::env::temp_dir().join(format!("feraille-trash-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("to-trash.txt");
+        std::fs::write(&f, b"bye").unwrap();
+        // canonicalize gives a `\\?\C:\...` path on Windows.
+        let canonical = std::fs::canonicalize(&f).unwrap();
+        assert!(
+            canonical.to_string_lossy().starts_with(r"\\?\"),
+            "precondition: canonical path is verbatim: {canonical:?}"
+        );
+        move_to_trash(&canonical).expect("trash a \\\\?\\ path");
+        assert!(!f.exists(), "file was removed from its folder");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn humanize_bytes_small() {

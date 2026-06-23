@@ -187,6 +187,14 @@ impl CommandSpec {
     }
 }
 
+/// Preview-pane toggle shortcut. Cmd+P on macOS (the established binding);
+/// Ctrl+Shift+P elsewhere, because plain Ctrl+P is the system Print accelerator
+/// on Windows/Linux and collides.
+#[cfg(target_os = "macos")]
+const TOGGLE_PREVIEW_SHORTCUT: Shortcut = Shortcut::primary("P");
+#[cfg(not(target_os = "macos"))]
+const TOGGLE_PREVIEW_SHORTCUT: Shortcut = Shortcut::primary_shift("P");
+
 const CATALOGUE: &[CommandSpec] = &[
     // App
     CommandSpec {
@@ -319,7 +327,7 @@ const CATALOGUE: &[CommandSpec] = &[
         id: CommandId("view.toggle_preview"),
         title: "Show Preview Pane",
         category: Category::View,
-        shortcuts: &[Shortcut::primary("P")],
+        shortcuts: &[TOGGLE_PREVIEW_SHORTCUT],
     },
     CommandSpec {
         id: CommandId("view.open_viewer"),

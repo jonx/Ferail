@@ -195,8 +195,6 @@ fn file_op_error_notification(
     operation: &str,
     err: &str,
 ) -> gpui_component::notification::Notification {
-    use gpui_component::notification::Notification;
-
     let lower = err.to_ascii_lowercase();
     let advice = if lower.contains("permission denied")
         || lower.contains("operation not permitted")
@@ -224,7 +222,29 @@ fn file_op_error_notification(
         "Refresh the folder and try again. If it keeps failing, check the item in Finder."
     };
 
-    Notification::error(format!("{operation} failed: {err}. {advice}"))
+    error_notification(format!("{operation} failed: {err}. {advice}"))
+}
+
+/// An error notification with a **Copy** action that puts the full message on
+/// the clipboard — handy for pasting a failure into a bug report. Setting an
+/// action also keeps the toast from auto-hiding, so the user has time to read
+/// and copy it.
+pub(crate) fn error_notification(
+    message: String,
+) -> gpui_component::notification::Notification {
+    use gpui_component::button::{Button, ButtonVariants as _};
+    use gpui_component::notification::Notification;
+    use gpui_component::Sizable as _;
+
+    let for_copy = message.clone();
+    Notification::error(message).action(move |_, _, _| {
+        let m = for_copy.clone();
+        Button::new("copy-error-message")
+            .label("Copy")
+            .ghost()
+            .small()
+            .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&m))
+    })
 }
 
 fn enumeration_error_message(operation: &str, err: &EnumerationError) -> String {
