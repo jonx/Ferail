@@ -54,6 +54,10 @@ are not published to crates.io). Reproducible builds come from the committed
 `Cargo.lock`. A normal `cargo build` / `cargo run --bin feraille-gpui` works
 on a recent stable toolchain (see `rust-toolchain.toml`).
 
+Setting up from a clean machine (prerequisites, per-platform system tools,
+first-build expectations, troubleshooting) is covered end-to-end in
+[GETTING_STARTED.md](GETTING_STARTED.md).
+
 ## License of contributions
 
 Unless you state otherwise, any contribution you submit is licensed under the

@@ -166,6 +166,10 @@ very different stages. An honest snapshot:
 
 ## Quick Start
 
+New to the project or starting from a clean machine?
+**[GETTING_STARTED.md](GETTING_STARTED.md)** walks you from installing Rust to a
+running app (and the per-platform prerequisites). The short version:
+
 ```sh
 # Run the app
 cargo run --bin feraille-gpui
@@ -258,6 +262,7 @@ The full crate-boundary rules are in
 
 | Document | Purpose |
 |---|---|
+| [GETTING_STARTED.md](GETTING_STARTED.md) | Zero-to-running setup guide — prerequisites, build, run, troubleshooting, per platform. |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **Source of truth** for crate boundaries, data model, scheduling, and UI structure. Read before changing those. |
 | [TODO.md](TODO.md) | Open work and roadmap. |
 | [docs/features/](docs/features/README.md) | Deeper design notes per feature — start at the [feature index](docs/features/README.md). |
