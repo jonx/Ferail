@@ -112,7 +112,26 @@ fn config_dir() -> Option<PathBuf> {
     Some(p)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn config_dir() -> Option<PathBuf> {
+    // Windows has no $HOME — per-user app config lives under %APPDATA%
+    // (Roaming). Without this the whole settings store silently no-ops:
+    // save() bails when config_dir() is None and load() returns defaults, so
+    // every toggle/dropdown "snaps back" because nothing is ever persisted.
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        let mut p = PathBuf::from(appdata);
+        p.push("Feraille");
+        return Some(p);
+    }
+    let profile = std::env::var_os("USERPROFILE")?;
+    let mut p = PathBuf::from(profile);
+    p.push("AppData");
+    p.push("Roaming");
+    p.push("Feraille");
+    Some(p)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn config_dir() -> Option<PathBuf> {
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
         let mut p = PathBuf::from(xdg);
