@@ -30,11 +30,13 @@
 //! to the freedesktop / D-Bus / XDG mechanism to reach for; run all blocking
 //! work off the UI thread.
 //!
-//! Implemented (pure `std` / process-based, no external deps yet):
-//! `duplicate_path`, `make_alias`, `make_alias_in`, `open_url`,
-//! `reveal_in_finder`, `open_terminal`, `system_is_dark`, `open_with_app`.
-//! Everything else is still a stub (clipboard, trash, thumbnails, observers,
-//! video — these need `ashpd`/`zbus`/`zip`/`gstreamer`).
+//! Implemented: `duplicate_path`, `make_alias`, `make_alias_in`, `open_url`,
+//! `reveal_in_finder`, `open_terminal`, `system_is_dark`, `open_with_app`,
+//! `open_with_candidates` (freedesktop MIME + `.desktop` scan), and
+//! `copy_to_clipboard` (plain text via `arboard`). Still stubbed: the file-URL
+//! clipboard, thumbnails, the dark/volume/power observers, and video — these
+//! need richer `ashpd`/`zbus`/`gstreamer` integration (linux-port.md §6).
+//! (Trash and download-provenance live in `feraille-fs-native`, not here.)
 
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -204,10 +206,183 @@ pub fn open_terminal(path: &Path) {
 #[cfg(not(target_os = "linux"))]
 pub fn open_terminal(_path: &Path) {}
 
-/// Enumerate apps that can open `path`. Real impl: resolve MIME, list handler
-/// `.desktop` files. Stub for now.
+/// Enumerate the applications that can open `path`, freedesktop-style: resolve
+/// the file's MIME type, find the registered default, then scan the XDG
+/// application directories for `.desktop` entries that declare that MIME in
+/// their `MimeType=` list. The candidate `path` is the `.desktop` file, which
+/// [`open_with_app`] launches via `gio launch`. This is the Linux analogue of
+/// macOS LaunchServices / Windows `SHAssocEnumHandlers`.
+///
+/// MIME resolution and the default handler shell out to `xdg-mime`; the scan
+/// itself is pure `std` (see [`candidates_for_mime`], which is unit-tested).
+#[cfg(target_os = "linux")]
+pub fn open_with_candidates(path: &Path) -> Vec<OpenWithCandidate> {
+    let mime = mime_type_for(path);
+    if mime.is_empty() {
+        return Vec::new();
+    }
+    let default_id = xdg_default_desktop(&mime);
+    candidates_for_mime(&mime, &default_id)
+}
+#[cfg(not(target_os = "linux"))]
 pub fn open_with_candidates(_path: &Path) -> Vec<OpenWithCandidate> {
     Vec::new()
+}
+
+/// The file's MIME type via `xdg-mime query filetype` (empty if unavailable).
+#[cfg(target_os = "linux")]
+fn mime_type_for(path: &Path) -> String {
+    std::process::Command::new("xdg-mime")
+        .arg("query")
+        .arg("filetype")
+        .arg(path)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// The default handler's `.desktop` id for `mime` via `xdg-mime query default`.
+#[cfg(target_os = "linux")]
+fn xdg_default_desktop(mime: &str) -> String {
+    std::process::Command::new("xdg-mime")
+        .arg("query")
+        .arg("default")
+        .arg(mime)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// XDG application directories in precedence order: `$XDG_DATA_HOME/applications`
+/// (or `~/.local/share/applications`) first, then each `$XDG_DATA_DIRS` entry
+/// (default `/usr/local/share:/usr/share`).
+#[cfg(target_os = "linux")]
+fn xdg_application_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let data_home = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    if let Some(dh) = data_home {
+        dirs.push(dh.join("applications"));
+    }
+    let data_dirs = std::env::var("XDG_DATA_DIRS")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/usr/local/share:/usr/share".to_string());
+    for d in data_dirs.split(':').filter(|s| !s.is_empty()) {
+        dirs.push(PathBuf::from(d).join("applications"));
+    }
+    dirs
+}
+
+/// The `[Desktop Entry]` fields we need to decide whether an entry is an
+/// offerable handler.
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct DesktopEntry {
+    entry_type: Option<String>,
+    name: Option<String>,
+    mimetypes: Vec<String>,
+    no_display: bool,
+    hidden: bool,
+}
+
+/// Parse the `[Desktop Entry]` group of a `.desktop` file (ignoring other
+/// groups like `[Desktop Action …]` and localized `Name[xx]=` keys).
+#[cfg(target_os = "linux")]
+fn parse_desktop_entry(content: &str) -> DesktopEntry {
+    let mut de = DesktopEntry::default();
+    let mut in_entry = false;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            in_entry = line == "[Desktop Entry]";
+            continue;
+        }
+        if !in_entry {
+            continue;
+        }
+        let Some((key, val)) = line.split_once('=') else {
+            continue;
+        };
+        match key.trim() {
+            "Type" => de.entry_type = Some(val.trim().to_string()),
+            // Unlocalized Name only — `Name[fr]` falls through to `_`.
+            "Name" => de.name = Some(val.trim().to_string()),
+            "MimeType" => {
+                de.mimetypes = val
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            }
+            "NoDisplay" => de.no_display = val.trim().eq_ignore_ascii_case("true"),
+            "Hidden" => de.hidden = val.trim().eq_ignore_ascii_case("true"),
+            _ => {}
+        }
+    }
+    de
+}
+
+/// Scan the XDG application directories for visible `Application` entries that
+/// declare `mime`, marking the one whose `.desktop` id equals `default_id`.
+/// Earlier directories win on duplicate ids (user overrides system). Sorted
+/// default-first, then by name. Pure `std` so it is unit-testable without a
+/// desktop environment.
+#[cfg(target_os = "linux")]
+fn candidates_for_mime(mime: &str, default_id: &str) -> Vec<OpenWithCandidate> {
+    use std::collections::HashSet;
+
+    let mut out: Vec<OpenWithCandidate> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    for dir in xdg_application_dirs() {
+        let Ok(read_dir) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in read_dir.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) != Some("desktop") {
+                continue;
+            }
+            let Some(id) = p.file_name().and_then(|s| s.to_str()).map(str::to_string) else {
+                continue;
+            };
+            if seen.contains(&id) {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            let de = parse_desktop_entry(&content);
+            if de.entry_type.as_deref() != Some("Application")
+                || de.no_display
+                || de.hidden
+                || !de.mimetypes.iter().any(|m| m == mime)
+            {
+                continue;
+            }
+            let Some(name) = de.name else {
+                continue;
+            };
+            let is_default = id == default_id;
+            seen.insert(id);
+            out.push(OpenWithCandidate { name, path: p, is_default });
+        }
+    }
+
+    out.sort_by(|a, b| {
+        b.is_default
+            .cmp(&a.is_default)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    out
 }
 
 /// Open `target` with a specific application. If `app_path` is a `.desktop`
@@ -794,6 +969,47 @@ mod tests {
         (0..ar.len())
             .map(|i| ar.by_index(i).unwrap().name().to_string())
             .collect()
+    }
+
+    /// The `.desktop` scan core: visible `Application` entries declaring the
+    /// MIME are offered (default first); hidden and non-matching entries are
+    /// not. Hermetic — points XDG at temp dirs, no desktop environment needed.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn open_with_candidates_scans_desktop_entries() {
+        let data_home = TmpDir::new("openwith-home");
+        let apps = data_home.join("applications");
+        std::fs::create_dir_all(&apps).unwrap();
+        std::fs::write(
+            apps.join("myeditor.desktop"),
+            "[Desktop Entry]\nType=Application\nName=My Editor\nName[fr]=Mon Éditeur\n\
+             MimeType=text/plain;text/x-rust;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            apps.join("hidden.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Hidden App\nMimeType=text/plain;\nNoDisplay=true\n",
+        )
+        .unwrap();
+        std::fs::write(
+            apps.join("imagetool.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Image Tool\nMimeType=image/png;\n",
+        )
+        .unwrap();
+
+        // An empty second data dir so the default /usr/share fallback isn't scanned.
+        let empty = TmpDir::new("openwith-empty");
+        std::env::set_var("XDG_DATA_HOME", &data_home.0);
+        std::env::set_var("XDG_DATA_DIRS", &empty.0);
+
+        let cands = candidates_for_mime("text/plain", "myeditor.desktop");
+        assert_eq!(cands.len(), 1, "expected just My Editor, got {cands:?}");
+        assert_eq!(cands[0].name, "My Editor"); // unlocalized Name, not Name[fr]
+        assert!(cands[0].is_default);
+        assert_eq!(cands[0].path, apps.join("myeditor.desktop"));
+
+        // A MIME no entry declares yields nothing.
+        assert!(candidates_for_mime("application/x-nonesuch", "").is_empty());
     }
 
     #[test]
