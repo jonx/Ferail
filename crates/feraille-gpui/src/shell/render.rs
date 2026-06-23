@@ -1,5 +1,5 @@
 use super::*;
-use crate::text::{IconScale as _, TextScale as _};
+use crate::text::IconScale as _;
 
 /// Minimum width for rendered-markdown preview content, so its prose
 /// reads as a column instead of folding to slivers in the narrow preview

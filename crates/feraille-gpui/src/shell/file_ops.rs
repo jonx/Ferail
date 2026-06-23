@@ -1,5 +1,4 @@
 use super::*;
-use crate::text::TextScale as _;
 
 /// Copy vs move for [`Shell::spawn_transfer_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
