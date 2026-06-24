@@ -238,6 +238,39 @@ impl CpuArch {
     }
 }
 
+/// Operating-system ABI recorded in an ELF header's `e_ident[EI_OSABI]`
+/// byte. Most GNU/Linux toolchains leave this `0` (System V / "none"),
+/// so a *named* OS here is a deliberate marker worth surfacing — AROS,
+/// for instance, stamps `ELFOSABI_AROS` (15) on every binary it builds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ElfOs {
+    /// System V / "none" (0) or any ABI we don't name — rendered as no tag.
+    #[default]
+    Unknown,
+    Linux,
+    FreeBsd,
+    NetBsd,
+    OpenBsd,
+    Solaris,
+    Aros,
+}
+
+impl ElfOs {
+    /// Display name for the description column, or `""` for the generic
+    /// System V ABI (so ordinary Linux binaries gain no OS suffix).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ElfOs::Unknown => "",
+            ElfOs::Linux => "Linux",
+            ElfOs::FreeBsd => "FreeBSD",
+            ElfOs::NetBsd => "NetBSD",
+            ElfOs::OpenBsd => "OpenBSD",
+            ElfOs::Solaris => "Solaris",
+            ElfOs::Aros => "AROS",
+        }
+    }
+}
+
 /// PE subsystem (Windows executable kind).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PeSubsystem {
@@ -273,6 +306,12 @@ pub struct MagicInfo {
     pub arch: CpuArch,
     pub subsystem: PeSubsystem,
     pub is_dotnet: bool,
+    /// Operating-system ABI from an ELF header (`EI_OSABI`). Default
+    /// `ElfOs::Unknown` for the generic System V ABI and all non-ELF types.
+    pub os: ElfOs,
+    /// ELF `e_type == ET_REL`: a relocatable object, not a runnable image.
+    /// AROS ships its libraries (e.g. `exec.library`) as relocatables.
+    pub is_relocatable: bool,
 
     // Office / archive
     pub has_macros: bool,
@@ -347,16 +386,21 @@ impl MagicInfo {
                 if let Some(is_64) = self.is_64bit {
                     parts.push(if is_64 { "64-bit".into() } else { "32-bit".into() });
                 }
-                parts.push(
-                    if matches!(self.magic_type, MagicType::SoLinux) {
-                        "shared object".into()
-                    } else {
-                        "executable".into()
-                    },
-                );
+                let kind = if self.is_relocatable {
+                    "relocatable"
+                } else if matches!(self.magic_type, MagicType::SoLinux) {
+                    "shared object"
+                } else {
+                    "executable"
+                };
+                parts.push(kind.into());
                 let arch = self.arch.as_str();
                 if !arch.is_empty() {
                     parts.push(arch.into());
+                }
+                let os = self.os.as_str();
+                if !os.is_empty() {
+                    parts.push(os.into());
                 }
             }
             MagicType::ExeMac | MagicType::DylibMac => {
@@ -582,6 +626,29 @@ mod tests {
         assert!(desc.contains("x86-64"));
         assert!(desc.contains("GUI"));
         assert!(desc.contains(".NET"));
+    }
+
+    #[test]
+    fn aros_elf_description_names_os_and_relocatable() {
+        let mut info = MagicInfo::new(MagicType::ExeLinux);
+        info.is_64bit = Some(true);
+        info.arch = CpuArch::Arm64;
+        info.os = ElfOs::Aros;
+        info.is_relocatable = true;
+        assert_eq!(
+            info.description(),
+            "ELF \u{b7} 64-bit \u{b7} relocatable \u{b7} ARM64 \u{b7} AROS"
+        );
+    }
+
+    #[test]
+    fn plain_linux_elf_has_no_os_suffix() {
+        // System V / "none" OSABI (the GNU/Linux default) → no OS tag,
+        // preserving the pre-AROS description shape.
+        let mut info = MagicInfo::new(MagicType::ExeLinux);
+        info.is_64bit = Some(true);
+        info.arch = CpuArch::X64;
+        assert_eq!(info.description(), "ELF \u{b7} 64-bit \u{b7} executable \u{b7} x86-64");
     }
 
     #[test]

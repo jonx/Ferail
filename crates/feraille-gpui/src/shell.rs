@@ -1839,6 +1839,16 @@ impl Shell {
     fn on_refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
         let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
+        // Re-read the directory *and* re-sniff magic/description from
+        // disk, bypassing the metadata-DB cache. `load_path_for_tab`
+        // just reset this to `false` and bumped the load generation, so
+        // arming it here scopes the forced re-sniff to exactly this
+        // load: a load superseded before it finishes is dropped by the
+        // generation guard, and the superseding load reset the flag.
+        let tab_id = self.active_tab().id;
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            tab.force_resniff = true;
+        }
     }
 
     /// Reveal the desktop via the Dock's private Show Desktop path. The
@@ -2632,6 +2642,9 @@ impl Shell {
         // commits a new path, clears selection itself BEFORE
         // delegating here.
         tab.last_error = None;
+        // Default every load to cache-first prefetch. `on_refresh`
+        // re-arms this for its own load after delegating here.
+        tab.force_resniff = false;
         tab.load_generation = tab.load_generation.wrapping_add(1);
         let generation = tab.load_generation;
         let filter = tab.filter_text.clone();
@@ -2995,6 +3008,9 @@ impl Shell {
 
         // Stage 4: kick off magic + quarantine prefetch after the
         // foreground table state has received the final snapshot.
+        // A Refresh-driven load re-sniffs from disk instead of trusting
+        // the cached magic/description (see `Tab::force_resniff`).
+        let force_resniff = self.tabs[idx].force_resniff;
         let table = self.tabs[idx].table.clone();
         let fs = self.process.fs.clone();
         let db = self.process.db_snapshot();
@@ -3006,6 +3022,7 @@ impl Shell {
             db.clone(),
             tasks.clone(),
             weak,
+            force_resniff,
             cx,
         );
         // Folder sizes for the directory rows: cache-validated

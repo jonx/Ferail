@@ -68,6 +68,11 @@ struct PrefetchSeed {
 /// `Shell::load_path` after the table refresh. Cheap: returns
 /// immediately; the worker runs on the background executor.
 ///
+/// `force` bypasses the metadata-DB read cache for magic/description
+/// so every row is re-sniffed from disk (Refresh). The fresh result
+/// is still written through, so the cache self-heals. Quarantine
+/// state stays cache-first either way.
+///
 /// Field references (table, fs, db, weak handle) come in by
 /// parameter rather than being looked up via `shell.read(cx)`,
 /// because `load_path` runs inside its own `&mut self` borrow —
@@ -80,6 +85,7 @@ pub fn start(
     db: Option<Arc<Mutex<MetadataDb>>>,
     tasks: Rc<RefCell<TaskRegistry>>,
     shell_weak: gpui::WeakEntity<Shell>,
+    force: bool,
     cx: &mut gpui::Context<Shell>,
 ) {
     // Snapshot the entries on the foreground executor. The worker
@@ -125,7 +131,7 @@ pub fn start(
     cx.spawn(async move |_this, cx| {
         let batch: Vec<PrefetchRow> = cx
             .background_executor()
-            .spawn(async move { run_worker(seeds, db) })
+            .spawn(async move { run_worker(seeds, db, force) })
             .await;
         let n = batch.len();
         crate::log_info!(90, "prefetch: worker returned {n} rows");
@@ -158,12 +164,20 @@ pub fn start(
 /// Body of the background pass. For each seed: cache lookup first
 /// (cheap, hits the SQLite WAL); on miss, sniff + xattr-read; write
 /// through to DB; produce a result row.
-fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> Vec<PrefetchRow> {
+///
+/// `force` skips the magic/description read cache so every row is
+/// re-sniffed from disk; the fresh values still write through.
+fn run_worker(
+    seeds: Vec<PrefetchSeed>,
+    db: Option<Arc<Mutex<MetadataDb>>>,
+    force: bool,
+) -> Vec<PrefetchRow> {
     let mut out = Vec::with_capacity(seeds.len());
     for seed in seeds {
         // If FileEntry already carries everything (rare — only when
-        // hydrate-from-DB on enumerate gets implemented), skip.
-        if seed.has_magic && seed.has_description && seed.has_quarantine {
+        // hydrate-from-DB on enumerate gets implemented), skip — unless
+        // a forced re-sniff is in effect.
+        if !force && seed.has_magic && seed.has_description && seed.has_quarantine {
             continue;
         }
         let path_str = seed.path.to_string_lossy().into_owned();
@@ -177,9 +191,14 @@ fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> V
         // Determine magic label + description in one shot. The new
         // detector reads 4 KB once and returns a structured info
         // struct; the label and description are derived from that
-        // same parse. Cached values short-circuit the I/O.
-        let cached_label = cached.as_ref().and_then(|r| r.magic_label.clone());
-        let cached_desc = cached.as_ref().and_then(|r| r.description.clone());
+        // same parse. Cached values short-circuit the I/O — but a
+        // forced re-sniff ignores them so stale derived data heals.
+        let cached_label = (!force)
+            .then(|| cached.as_ref().and_then(|r| r.magic_label.clone()))
+            .flatten();
+        let cached_desc = (!force)
+            .then(|| cached.as_ref().and_then(|r| r.description.clone()))
+            .flatten();
         let (magic_label, description) = match (cached_label, cached_desc) {
             (Some(l), Some(d)) => (l, d),
             (cached_l, cached_d) => {
@@ -360,4 +379,89 @@ fn epoch_days_to_ymd(days: i64) -> (i32, u32, u32) {
 
 fn is_leap(y: i32) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AROS `exec.library` ELF prefix (64-bit LSB relocatable, aarch64,
+    /// ELFOSABI_AROS) — enough bytes for the sniffer's header parse.
+    const AROS_ELF: &[u8] = &[
+        0x7f, b'E', b'L', b'F', 0x02, 0x01, 0x01, 0x0f, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0xb7, 0x00, 0x01, 0x00, 0x00, 0x00,
+    ];
+
+    fn write_temp(bytes: &[u8]) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("feraille-prefetch-test-{}.bin", std::process::id()));
+        std::fs::write(&p, bytes).unwrap();
+        p
+    }
+
+    fn seed_for(path: &std::path::Path) -> PrefetchSeed {
+        PrefetchSeed {
+            row_ix: 0,
+            path: path.to_path_buf(),
+            mtime_unix: 100,
+            size: AROS_ELF.len() as u64,
+            // Fresh enumeration: no derived data carried on the entry,
+            // so the worker always reaches the cache/sniff decision.
+            has_magic: false,
+            has_description: false,
+            has_quarantine: false,
+        }
+    }
+
+    fn stale_record(path: &str) -> FileMetaRecord {
+        FileMetaRecord {
+            path: path.to_string(),
+            mtime_unix: 100,
+            size: AROS_ELF.len() as u64,
+            magic_label: Some("STALE label".into()),
+            description: Some("STALE description".into()),
+            partial_hash: None,
+            full_hash: None,
+            mime: None,
+            quarantined: Some(false),
+            quarantine_agent: None,
+            quarantine_iso: None,
+            quarantine_where_from: None,
+            indexed_at_unix: 0,
+        }
+    }
+
+    #[test]
+    fn cache_first_returns_stale_force_resniffs_from_disk() {
+        let path = write_temp(AROS_ELF);
+        let path_str = path.to_string_lossy().into_owned();
+
+        let db = Arc::new(Mutex::new(MetadataDb::in_memory().unwrap()));
+        db.lock().unwrap().upsert_file(&stale_record(&path_str)).unwrap();
+        let db_opt = Some(db.clone());
+
+        // Cache-first (force = false): the stale DB row wins, no re-sniff.
+        let cached = run_worker(vec![seed_for(&path)], db_opt.clone(), false);
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].magic_label, "STALE label");
+        assert_eq!(cached[0].description, "STALE description");
+
+        // Forced (force = true): the file is re-sniffed from disk, so the
+        // real AROS facts replace the stale cache...
+        let forced = run_worker(vec![seed_for(&path)], db_opt.clone(), true);
+        assert_eq!(forced.len(), 1);
+        assert_eq!(forced[0].magic_label, "ELF executable");
+        assert_eq!(
+            forced[0].description,
+            "ELF \u{b7} 64-bit \u{b7} relocatable \u{b7} ARM64 \u{b7} AROS"
+        );
+
+        // ...and the write-through heals the cache, so a subsequent
+        // cache-first pass now serves the fresh values.
+        let healed = run_worker(vec![seed_for(&path)], db_opt, false);
+        assert_eq!(healed[0].magic_label, "ELF executable");
+        assert!(healed[0].description.ends_with("AROS"));
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

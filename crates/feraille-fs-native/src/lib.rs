@@ -32,7 +32,8 @@ pub use dupes::{
 };
 pub use icons::fetch_icon_rgba;
 pub use magic::{
-    detect_magic, detect_magic_info, sniff_bytes_info, CpuArch, MagicInfo, MagicType, PeSubsystem,
+    detect_magic, detect_magic_info, sniff_bytes_info, CpuArch, ElfOs, MagicInfo, MagicType,
+    PeSubsystem,
 };
 pub use paths::home_dir;
 pub use search::{SearchHit, SearchQuery, SearchStats, DEFAULT_SEARCH_BATCH};

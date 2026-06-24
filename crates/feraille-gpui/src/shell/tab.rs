@@ -345,6 +345,14 @@ pub struct Tab {
     /// lands for this tab. Keeps the old rows visible during the
     /// gap instead of flashing empty.
     pub load_pending_first_batch: bool,
+    /// When set, the magic/description prefetch that follows this
+    /// load ignores the metadata-DB cache and re-sniffs every row
+    /// from disk. Flipped on by the Refresh command so a user can
+    /// pick up content whose *derived* data went stale without the
+    /// file's mtime changing (e.g. after the sniffer's logic itself
+    /// changed). Reset to `false` at the start of every load and
+    /// consumed by `finish_directory_load_in_tab`.
+    pub force_resniff: bool,
     /// Off-screen accumulator for an *in-place reload* (Refresh, Esc
     /// clear-filter, show-hidden toggle, watcher reload — any load
     /// that re-reads the directory already on screen). `Some` for the
@@ -440,6 +448,7 @@ impl Tab {
             folder_size_cancel: None,
             load_task: None,
             load_pending_first_batch: false,
+            force_resniff: false,
             load_staging: None,
             tool_result: None,
             dupe_groups: Vec::new(),
