@@ -2,16 +2,18 @@
 //! synchronous, single-batch implementation; threading + change-watching
 //! land with the macOS shell crate in iter-3.
 //!
-//! Display strings (`display_size`, `display_mtime`) are pre-formatted at
-//! enumerate time per the no-alloc-on-paint contract. Time formatting is
-//! day-resolution only this iter — accurate hour-of-day requires local
-//! timezone, deferred until the macOS shell crate brings `NSDateFormatter`.
+//! `display_size` is pre-formatted at enumerate time per the no-alloc-on-paint
+//! contract. The modification time is intentionally *not* pre-formatted: the UI
+//! renders it live from `mtime_unix` via [`feraille_core::humanize_mtime`] so a
+//! relative label ("4 seconds ago") keeps counting instead of freezing. Only
+//! the relative form is timezone-free; an *absolute* hour-of-day still awaits
+//! the macOS shell crate's `NSDateFormatter`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use feraille_core::{EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId};
 
@@ -219,7 +221,6 @@ impl NativeFs {
         } else {
             humanize_bytes(size)
         };
-        let display_mtime = humanize_mtime(mtime_unix);
         let display_kind = describe_kind(kind, &name);
         let hidden = entry_is_hidden(&name, metadata);
         let id = self.id_for_path(path);
@@ -230,7 +231,6 @@ impl NativeFs {
             size,
             mtime_unix,
             display_size,
-            display_mtime,
             display_kind,
             display_magic: String::new(),
             display_description: String::new(),
@@ -335,7 +335,6 @@ impl FsBackend for NativeFs {
             } else {
                 humanize_bytes(size)
             };
-            let display_mtime = humanize_mtime(mtime_unix);
             let display_kind = describe_kind(kind, &name);
             let hidden = entry_is_hidden(&name, &metadata);
             let id = self.id_for_path(&child_path);
@@ -346,7 +345,6 @@ impl FsBackend for NativeFs {
                 size,
                 mtime_unix,
                 display_size,
-                display_mtime,
                 display_kind,
                 display_magic: String::new(),
                 display_description: String::new(),
@@ -872,60 +870,6 @@ pub fn humanize_bytes(bytes: u64) -> String {
     }
 }
 
-fn humanize_mtime(unix: i64) -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(unix);
-    let diff = now - unix;
-    const DAY: i64 = 86_400;
-    if diff < -DAY {
-        return format_date(unix);
-    }
-    if diff < DAY {
-        return "Today".to_string();
-    }
-    if diff < 2 * DAY {
-        return "Yesterday".to_string();
-    }
-    if diff < 7 * DAY {
-        return format!("{} days ago", diff / DAY);
-    }
-    if diff < 365 * DAY {
-        return format_month_day(unix);
-    }
-    format_date(unix)
-}
-
-/// Days-from-unix-epoch → (Y, M, D) via Howard Hinnant's `civil_from_days`.
-fn ymd(unix: i64) -> (i32, u32, u32) {
-    let days = unix.div_euclid(86_400);
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe as i32 + era as i32 * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
-
-fn format_month_day(unix: i64) -> String {
-    let (_, m, d) = ymd(unix);
-    const NAMES: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    format!("{} {}", NAMES[(m as usize - 1).min(11)], d)
-}
-
-fn format_date(unix: i64) -> String {
-    let (y, m, d) = ymd(unix);
-    format!("{:04}-{:02}-{:02}", y, m, d)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -967,14 +911,6 @@ mod tests {
     }
 
     #[test]
-    fn ymd_known_dates() {
-        // 2026-05-01 00:00:00 UTC = 1777_593_600
-        assert_eq!(ymd(1_777_593_600), (2026, 5, 1));
-        // 1970-01-01 epoch
-        assert_eq!(ymd(0), (1970, 1, 1));
-    }
-
-    #[test]
     fn enumeration_root_yields_entries() {
         let fs = NativeFs::new();
         let h = fs.enumerate(fs.root());
@@ -985,7 +921,6 @@ mod tests {
         for e in &h.initial {
             assert!(!e.name.is_empty());
             assert!(!e.name.contains('/'));
-            assert!(!e.display_mtime.is_empty());
         }
     }
 

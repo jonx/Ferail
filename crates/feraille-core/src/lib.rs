@@ -43,7 +43,11 @@ pub enum EntryKind {
 }
 
 /// One row in the file pane. Display strings are pre-formatted; paint never
-/// formats numbers or dates.
+/// formats numbers. The modification time is the deliberate exception: it is
+/// rendered *live* from [`mtime_unix`](Self::mtime_unix) via
+/// [`humanize_mtime`] so a relative label ("4 seconds ago") keeps counting up
+/// instead of freezing at enumerate time — see that function for why this is
+/// cheap and paint-safe.
 #[derive(Clone, Debug)]
 pub struct FileEntry {
     pub id: NodeId,
@@ -52,7 +56,6 @@ pub struct FileEntry {
     pub size: u64,
     pub mtime_unix: i64,
     pub display_size: String,
-    pub display_mtime: String,
     /// Friendly type label — "Folder", "Symlink", uppercased extension
     /// (e.g. "RS", "MD"), or "File" when there's no extension. macOS shell
     /// crate (iter-4) replaces this with `NSWorkspace.localizedDescription`.
@@ -426,6 +429,168 @@ fn normalize_format(s: &str) -> String {
     }
 }
 
+/// Current wall-clock time as whole seconds since the Unix epoch. Cheap
+/// (a vDSO-backed clock read on the platforms we target), so it is safe to
+/// call from the paint path — once per frame, or once per visible row.
+pub fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Human-readable *relative* modification time: "just now", "4 seconds ago",
+/// "3 min 30 sec ago", "2 hr 5 min ago", "3 days ago". Once a file is a week
+/// or more old — where second-level precision stops being useful — it falls
+/// back to an absolute date ("Mar 4", then "2026-05-01" past a year).
+///
+/// Computed against a caller-supplied `now_unix` rather than reading the clock
+/// itself, so the UI can recompute it every frame and let the label tick
+/// forward instead of freezing at enumerate time.
+///
+/// Why this is allowed on the paint path when sizes/dates are otherwise
+/// pre-formatted: a *relative* duration is timezone-independent (`now - mtime`
+/// is identical in every zone), so unlike absolute hour-of-day formatting it
+/// needs no local-timezone machinery — it is pure integer arithmetic plus one
+/// small allocation, bounded to the handful of on-screen rows.
+pub fn humanize_mtime(mtime_unix: i64, now_unix: i64) -> String {
+    const MIN: i64 = 60;
+    const HOUR: i64 = 3_600;
+    const DAY: i64 = 86_400;
+    const WEEK: i64 = 7 * DAY;
+    const YEAR: i64 = 365 * DAY;
+
+    let diff = now_unix - mtime_unix;
+
+    // Future-stamped files (clock skew, or mtimes copied from an archive):
+    // a tiny lead reads as "just now"; anything materially ahead shows its
+    // date rather than a nonsensical negative "ago".
+    if diff < 0 {
+        return if diff > -MIN {
+            "just now".to_string()
+        } else {
+            format_date(mtime_unix)
+        };
+    }
+    if diff == 0 {
+        return "just now".to_string();
+    }
+    if diff < MIN {
+        return format!("{diff} second{} ago", plural(diff));
+    }
+    if diff < HOUR {
+        let (m, s) = (diff / MIN, diff % MIN);
+        return if s == 0 {
+            format!("{m} min ago")
+        } else {
+            format!("{m} min {s} sec ago")
+        };
+    }
+    if diff < DAY {
+        let (h, m) = (diff / HOUR, (diff % HOUR) / MIN);
+        return if m == 0 {
+            format!("{h} hr ago")
+        } else {
+            format!("{h} hr {m} min ago")
+        };
+    }
+    if diff < WEEK {
+        let d = diff / DAY;
+        return format!("{d} day{} ago", plural(d));
+    }
+    if diff < YEAR {
+        return format_month_day(mtime_unix);
+    }
+    format_date(mtime_unix)
+}
+
+fn plural(n: i64) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
+/// Days-from-unix-epoch → (Y, M, D) via Howard Hinnant's `civil_from_days`.
+fn ymd(unix: i64) -> (i32, u32, u32) {
+    let days = unix.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i32 + era as i32 * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+fn format_month_day(unix: i64) -> String {
+    let (_, m, d) = ymd(unix);
+    const NAMES: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    format!("{} {}", NAMES[(m as usize - 1).min(11)], d)
+}
+
+fn format_date(unix: i64) -> String {
+    let (y, m, d) = ymd(unix);
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+#[cfg(test)]
+mod time_tests {
+    use super::*;
+
+    const MIN: i64 = 60;
+    const HOUR: i64 = 3_600;
+    const DAY: i64 = 86_400;
+
+    // Anchor "now" at a fixed instant so the relative labels are
+    // deterministic (the function never reads the clock itself).
+    const NOW: i64 = 1_777_593_600; // 2026-05-01 00:00:00 UTC
+
+    #[test]
+    fn relative_labels_near_now() {
+        assert_eq!(humanize_mtime(NOW, NOW), "just now");
+        assert_eq!(humanize_mtime(NOW - 1, NOW), "1 second ago");
+        assert_eq!(humanize_mtime(NOW - 4, NOW), "4 seconds ago");
+        assert_eq!(humanize_mtime(NOW - 59, NOW), "59 seconds ago");
+        // 3 min 30 sec — the user's example.
+        assert_eq!(humanize_mtime(NOW - (3 * MIN + 30), NOW), "3 min 30 sec ago");
+        // Whole minute drops the seconds component.
+        assert_eq!(humanize_mtime(NOW - 5 * MIN, NOW), "5 min ago");
+        assert_eq!(humanize_mtime(NOW - (2 * HOUR + 5 * MIN), NOW), "2 hr 5 min ago");
+        assert_eq!(humanize_mtime(NOW - 3 * HOUR, NOW), "3 hr ago");
+    }
+
+    #[test]
+    fn relative_labels_days_then_date_fallback() {
+        assert_eq!(humanize_mtime(NOW - DAY, NOW), "1 day ago");
+        assert_eq!(humanize_mtime(NOW - 3 * DAY, NOW), "3 days ago");
+        // A week or more old falls back to the month/day label.
+        assert_eq!(humanize_mtime(NOW - 8 * DAY, NOW), format_month_day(NOW - 8 * DAY));
+        // Over a year old uses the full ISO date.
+        assert_eq!(humanize_mtime(NOW - 400 * DAY, NOW), format_date(NOW - 400 * DAY));
+    }
+
+    #[test]
+    fn future_stamps_are_handled() {
+        // Small clock skew reads as "just now"; a real future date shows it.
+        assert_eq!(humanize_mtime(NOW + 10, NOW), "just now");
+        assert_eq!(humanize_mtime(NOW + 5 * DAY, NOW), format_date(NOW + 5 * DAY));
+    }
+
+    #[test]
+    fn ymd_known_dates() {
+        assert_eq!(ymd(1_777_593_600), (2026, 5, 1));
+        assert_eq!(ymd(0), (1970, 1, 1));
+    }
+}
+
 #[cfg(test)]
 mod format_label_tests {
     use super::*;
@@ -438,7 +603,6 @@ mod format_label_tests {
             size: 0,
             mtime_unix: 0,
             display_size: String::new(),
-            display_mtime: String::new(),
             display_kind: kind.into(),
             display_magic: magic.into(),
             display_description: String::new(),

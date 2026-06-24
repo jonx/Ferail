@@ -1217,6 +1217,56 @@ impl Shell {
         })
         .detach();
 
+        // Relative-time tick. The Modified column renders "4 seconds ago"
+        // style labels recomputed from `mtime_unix` each paint, so the
+        // column only counts forward if something repaints. This loop
+        // requests a repaint on an *adaptive* cadence driven by the
+        // freshest row in the active tab:
+        //   - newest file < 1 h old  → 1 s   (a seconds component is shown)
+        //   - otherwise              → 60 s  (minute/hour/day granularity)
+        // and it skips the repaint entirely once every visible row is a
+        // week or more old, where the label is a static date — so browsing
+        // an old folder costs nothing. A new file arriving re-enumerates
+        // and repaints through the watcher path, which re-arms fine ticking.
+        cx.spawn(async move |this, cx| {
+            let mut delay = std::time::Duration::from_secs(1);
+            loop {
+                cx.background_executor().timer(delay).await;
+                let next = this.update(cx, |this, cx| {
+                    let now = feraille_core::now_unix();
+                    let freshest_age = this
+                        .active_tab()
+                        .table
+                        .read(cx)
+                        .delegate()
+                        .entries
+                        .iter()
+                        .map(|e| e.mtime_unix)
+                        .max()
+                        .map(|newest| now - newest)
+                        .unwrap_or(i64::MAX);
+                    const HOUR: i64 = 3_600;
+                    const WEEK: i64 = 7 * 86_400;
+                    // Only labels younger than a week change over time;
+                    // older rows are static dates, so don't force a repaint.
+                    if freshest_age < WEEK {
+                        cx.notify();
+                    }
+                    if freshest_age < HOUR {
+                        std::time::Duration::from_secs(1)
+                    } else {
+                        std::time::Duration::from_secs(60)
+                    }
+                });
+                match next {
+                    Ok(d) => delay = d,
+                    // Shell entity dropped (window closed) — stop ticking.
+                    Err(_) => break,
+                }
+            }
+        })
+        .detach();
+
         let initial_tab = Shell::build_tab(
             process.clone(),
             start.clone(),

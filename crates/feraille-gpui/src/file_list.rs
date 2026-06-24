@@ -3,8 +3,10 @@
 //! Wraps `feraille-fs-native` enumeration in a `TableDelegate` so
 //! `gpui-component`'s virtualized `Table` renders the entries
 //! efficiently even for directories with thousands of files. Columns
-//! are Name / Size / Kind / Modified, pre-formatted on the domain
-//! side per the UI_NONBLOCKING contract.
+//! are Name / Size / Kind / Modified. Size/Kind are pre-formatted on the
+//! domain side per the UI_NONBLOCKING contract; Modified is the exception,
+//! rendered live from `mtime_unix` so its relative label keeps counting
+//! (pure arithmetic, bounded to visible rows — still nonblocking).
 
 use crate::text::{IconScale as _, TextScale as _};
 use std::cell::{Cell, RefCell};
@@ -1172,10 +1174,17 @@ impl TableDelegate for FileListDelegate {
                 }
                 row.into_any_element()
             }
+            // Relative time is recomputed from `mtime_unix` every paint so
+            // the label ("4 seconds ago") stays live; the shell's relative-
+            // time tick repaints on a cadence so it counts up even while the
+            // user is idle.
             "modified" => div()
                 .text_scale_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child(SharedString::from(entry.display_mtime.clone()))
+                .child(SharedString::from(feraille_core::humanize_mtime(
+                    entry.mtime_unix,
+                    feraille_core::now_unix(),
+                )))
                 .into_any_element(),
             // Description: rich facts from the magic-byte parse,
             // populated lazily by the prefetch worker. Empty string
@@ -1206,7 +1215,7 @@ impl TableDelegate for FileListDelegate {
             "name" => entry.name.clone(),
             "size" => entry.display_size.clone(),
             "format" => entry.format_label().0.to_string(),
-            "modified" => entry.display_mtime.clone(),
+            "modified" => feraille_core::humanize_mtime(entry.mtime_unix, feraille_core::now_unix()),
             "description" => entry.display_description.clone(),
             _ => String::new(),
         }
@@ -1759,7 +1768,6 @@ mod sort_tests {
             size,
             mtime_unix: mtime,
             display_size: String::new(),
-            display_mtime: String::new(),
             display_kind: String::new(),
             display_magic: String::new(),
             display_description: String::new(),
