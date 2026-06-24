@@ -139,7 +139,10 @@ fn display_name(path: &Path, target: InfoTarget, vol_name: Option<&str>) -> Stri
     }
     path.file_name()
         .and_then(|s| s.to_str())
-        .map(str::to_string)
+        // Same Finder-parity leaf swap the file list uses (macOS `:` → `/`),
+        // so Get Info's title and its deceptive-name analysis see the name the
+        // user actually reads.
+        .map(|n| feraille_fs_native::paths::display_leaf(n).into_owned())
         .unwrap_or_else(|| path.display().to_string())
 }
 
@@ -876,7 +879,8 @@ impl EntryInfoView {
 /// homoglyphs. Invisible characters are shown via a visible stand-in; each
 /// flagged span carries a tooltip naming the hazard. `id_prefix` keeps the
 /// per-span element ids unique when the name renders in more than one place.
-pub(crate) fn name_hazard_element(name: &str, id_prefix: &'static str) -> AnyElement {
+pub(crate) fn name_hazard_element(name: &str, id_prefix: impl Into<SharedString>) -> AnyElement {
+    let id_prefix = id_prefix.into();
     let segments = name_hazards::analyze(name);
     if segments.iter().all(|s| s.hazard.is_none()) {
         return div().child(name.to_string()).into_any_element();

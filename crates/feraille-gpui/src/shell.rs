@@ -877,7 +877,11 @@ impl Shell {
 fn window_title_for(dir: &Path) -> String {
     match dir.file_name() {
         Some(name) if !name.is_empty() => {
-            format!("{} \u{2014} Feraille", name.to_string_lossy())
+            // Finder-parity leaf: a folder stored with `:` titles as `/` on macOS.
+            let shown =
+                feraille_fs_native::paths::display_leaf(name.to_string_lossy().as_ref())
+                    .into_owned();
+            format!("{shown} \u{2014} Feraille")
         }
         _ => {
             let path = dir.to_string_lossy();
@@ -4824,10 +4828,14 @@ impl Shell {
                     .borrow_mut()
                     .get_or_create_path_with_id(p.clone(), node_id);
                 let has_subdirs = dir_has_subdir(&p);
+                // Tree label is the displayed leaf (macOS `:` → `/`); the raw
+                // `name` above already drove the hidden check and `path` drives
+                // navigation, so the swap is display-only.
+                let label = feraille_fs_native::paths::display_leaf(&name).into_owned();
                 children.push(TreeChild {
                     node_id,
                     path: p,
-                    label: name,
+                    label,
                     hidden,
                     has_subdirs,
                 });

@@ -100,10 +100,13 @@ pub(super) fn run_tree_children_load(fs: Arc<NativeFs>, path: PathBuf) -> Vec<Tr
                 .unwrap_or_else(|_| name.starts_with('.'));
             let node_id = fs.id_for_path(&p);
             let has_subdirs = dir_has_subdir(&p);
+            // Display leaf for the label (macOS `:` → `/`); `name` already
+            // drove the hidden check and `path` drives navigation.
+            let label = feraille_fs_native::paths::display_leaf(&name).into_owned();
             children.push(TreeChild {
                 node_id,
                 path: p,
-                label: name,
+                label,
                 hidden,
                 has_subdirs,
             });

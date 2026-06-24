@@ -77,6 +77,8 @@ because children are built from already-registered parent paths.
 fields:
 
 - `name`
+- `display_name`
+- `name_has_hazards`
 - `kind`
 - `size`
 - `mtime_unix`
@@ -90,6 +92,25 @@ fields:
 `FileEntry::format_label()` is the shared rule for the file list's
 `Format` column: prefer magic-detected content, fall back to
 extension-derived kind, and flag real mismatches.
+
+Raw name vs. display name: `name` is the on-disk leaf (the bytes `readdir`
+returned) and is the *only* value used to reconstruct a path — joins,
+renames, opens. `display_name` is what the user reads. They differ on macOS
+because of its two inherited path separators: HFS/classic Mac OS used the
+colon, Unix/NeXTSTEP the slash, so the POSIX layer stores a `:` *inside* a
+name component where Finder shows a `/` (a file `ls` reports as `a:b` is
+`a/b` in Finder). `feraille_fs_native::paths::display_leaf` performs the
+Finder-parity swap (`:` → `/`, macOS only; identity elsewhere) when the
+backend builds each `FileEntry`, and its inverse `on_disk_leaf` (`/` → `:`)
+runs on names typed into the rename / New-Folder fields. Every user-facing
+surface — list rows, grid cells, the preview header, Get Info, breadcrumb
+segments, the window title, sidebar-tree labels, drag-ghost chips, and the
+search/sort keys — renders `display_name` (or routes a path leaf through
+`display_leaf`); only path operations touch `name`. This is the seam where
+future per-platform display quirks plug in. `name_has_hazards` is
+precomputed (`name_hazards::has_hazards(&display_name)`) so the dense row
+paint decides on a bool whether to draw the deceptive-character highlight,
+never running the analysis itself (Prime Directive).
 
 Each tab owns its current directory, node id, history, filter, sort,
 selection, and scroll state. The shell owns cross-tab state such as the

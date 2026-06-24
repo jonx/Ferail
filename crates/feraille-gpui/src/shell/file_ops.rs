@@ -1987,8 +1987,12 @@ impl Shell {
             "Untitled folder",
             String::new(),
             move |this, name, window, cx| {
+                // A typed `/` is the Finder-displayed slash → store a `:` on
+                // disk (macOS). Also keeps the name a single leaf, so New
+                // Folder never silently descends into an existing subdir.
+                let disk = feraille_fs_native::paths::on_disk_leaf(&name).into_owned();
                 let mut path = parent.clone();
-                path.push(&name);
+                path.push(&disk);
                 let cur = parent.clone();
                 let op_path = path.clone();
                 let undo_path = path.clone();
@@ -2100,10 +2104,17 @@ impl Shell {
         self.open_text_prompt(
             "Rename",
             "New name",
-            entry.name.clone(),
+            // Pre-fill the name the user sees (display leaf, macOS `:` → `/`);
+            // `on_disk_leaf` below maps any edit back to on-disk bytes, so an
+            // unchanged value round-trips to a no-op.
+            entry.display_name.clone(),
             move |this, new_name, window, cx| {
+                // Finder parity: a typed `/` stores a `:` on disk (macOS), and
+                // the rename target stays a single leaf — no accidental move
+                // into a sibling directory from a `/` in the typed name.
+                let disk = feraille_fs_native::paths::on_disk_leaf(&new_name).into_owned();
                 let mut new_path = old_path.clone();
-                new_path.set_file_name(&new_name);
+                new_path.set_file_name(&disk);
                 let op_old_path = old_path.clone();
                 let op_new_path = new_path.clone();
                 this.spawn_file_op(

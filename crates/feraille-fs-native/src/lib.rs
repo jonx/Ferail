@@ -224,9 +224,16 @@ impl NativeFs {
         let display_kind = describe_kind(kind, &name);
         let hidden = entry_is_hidden(&name, metadata);
         let id = self.id_for_path(path);
+        // User-facing leaf (macOS shows an on-disk `:` as `/`, Finder-style),
+        // and a precomputed hazard flag so the dense row paint never runs the
+        // deceptive-character analysis itself.
+        let display_name = crate::paths::display_leaf(&name).into_owned();
+        let name_has_hazards = feraille_core::name_hazards::has_hazards(&display_name);
         FileEntry {
             id,
             name,
+            display_name,
+            name_has_hazards,
             kind,
             size,
             mtime_unix,
@@ -315,43 +322,10 @@ impl FsBackend for NativeFs {
                 Ok(m) => m,
                 Err(_) => continue,
             };
-            let ft = metadata.file_type();
-            let kind = if ft.is_dir() {
-                EntryKind::Directory
-            } else if ft.is_symlink() {
-                EntryKind::Symlink
-            } else {
-                EntryKind::File
-            };
-            let size = metadata.len();
-            let mtime_unix = metadata
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            let display_size = if matches!(kind, EntryKind::Directory) {
-                String::new()
-            } else {
-                humanize_bytes(size)
-            };
-            let display_kind = describe_kind(kind, &name);
-            let hidden = entry_is_hidden(&name, &metadata);
-            let id = self.id_for_path(&child_path);
-            entries.push(FileEntry {
-                id,
-                name,
-                kind,
-                size,
-                mtime_unix,
-                display_size,
-                display_kind,
-                display_magic: String::new(),
-                display_description: String::new(),
-                is_quarantined: false,
-                quarantine: None,
-                hidden,
-            });
+            // Shared with the lazy enumerate path: one constructor keeps the
+            // pre-formatted display strings (incl. `display_name`) and the
+            // hazard flag from drifting between the two listing routes.
+            entries.push(self.file_entry_from_metadata(&child_path, name, &metadata));
         }
         // Directories first, then case-insensitive name.
         entries.sort_by(|a, b| match (a.kind, b.kind) {
@@ -965,6 +939,33 @@ mod tests {
         let plain_meta = std::fs::symlink_metadata(&plain).unwrap();
         assert!(entry_is_hidden(".dotfile", &dot_meta));
         assert!(!entry_is_hidden("plain.txt", &plain_meta));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// macOS Finder parity: a filename whose on-disk POSIX byte is a colon
+    /// (what `ls` shows) must enumerate with a slash in `display_name` while
+    /// the raw `name` stays the colon for path operations. The reverse
+    /// (typed `/` → on-disk `:`) is covered by `paths::on_disk_leaf`.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn colon_name_enumerates_with_slash_display() {
+        let dir = std::env::temp_dir().join(format!("feraille-colon-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // The colon is the only separator a POSIX leaf can hold here; Finder
+        // shows it as `/`. (You cannot create a literal `/` leaf via POSIX.)
+        std::fs::write(dir.join("a:b"), b"x").unwrap();
+        let fs = NativeFs::new();
+        let handle = fs.enumerate(fs.id_for_path(&dir));
+        let entry = handle
+            .initial
+            .iter()
+            .find(|e| e.name == "a:b")
+            .expect("colon file enumerated by raw name");
+        assert_eq!(entry.display_name, "a/b", "on-disk ':' shows as '/'");
+        assert!(
+            !entry.name_has_hazards,
+            "a Finder-style slash name is not a deceptive-character hazard"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

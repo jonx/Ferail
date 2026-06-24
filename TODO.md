@@ -265,6 +265,22 @@ fallback). Remaining is the UX the system explorers have and we don't:
 
 ## Cross-Platform
 
+- **Filename display-convention parity.** macOS landed: a name's on-disk `:`
+  shows as `/` and a typed `/` stores `:`, matching Finder, via
+  `feraille_fs_native::paths::{display_leaf,on_disk_leaf}` (the seam for
+  per-platform name presentation; see ARCHITECTURE.md "Raw name vs. display
+  name"). Remaining per-platform quirks to consider on the same seam, none
+  implemented yet:
+  - Windows: reserved device names (`CON`, `PRN`, `NUL`, `COM1`…`LPT9`),
+    reserved characters (`<>:"|?*`), and trailing-dot/space stripping —
+    validate/transform typed names on the input side so a New Folder / rename
+    can't silently fail or produce an inaccessible name. (`\`↔`/` separators
+    are already handled by `std`; the JP/KO `\`-as-¥/₩ glyph is a font/code-page
+    matter, not an app concern.)
+  - macOS: HFS NFD normalization is cosmetic and renders fine today; revisit
+    only if a normalization-sensitive comparison surfaces.
+  - Optional: an informational (not red-hazard) note in Get Info when a name
+    contains a `/`-shown-as-`:`, so the on-disk reality is discoverable.
 - Windows deferred ports (windows-port.md §6b): third-party shell-extension
   context-menu verbs (`IContextMenu`) and WSL integration. The near-term
   behavior-breaking stubs (CF_HDROP clipboard, `WM_DEVICECHANGE` volume

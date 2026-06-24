@@ -566,7 +566,9 @@ impl FileListDelegate {
                     // unified Magic-or-Kind label the Format column
                     // shows), not just the raw kind.
                     let (format, _) = e.format_label();
-                    e.name.to_lowercase().contains(&needle)
+                    // Match the name the user sees (display leaf), so typing a
+                    // slash finds a macOS file Finder shows with one.
+                    e.display_name.to_lowercase().contains(&needle)
                         || format.to_lowercase().contains(&needle)
                 }
             })
@@ -945,7 +947,13 @@ impl TableDelegate for FileListDelegate {
                     .take(GHOST_STACK_CAP)
                     .map(|p| {
                         p.file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
+                            .map(|n| {
+                                // Display leaf on the drag chip (macOS `:` → `/`).
+                                feraille_fs_native::paths::display_leaf(
+                                    n.to_string_lossy().as_ref(),
+                                )
+                                .into_owned()
+                            })
                             .unwrap_or_default()
                             .into()
                     })
@@ -1049,8 +1057,26 @@ impl TableDelegate for FileListDelegate {
                             .into_any_element()
                     }
                 };
-                let full_name = entry.name.clone();
-                let tooltip_name = full_name.clone();
+                // Render the *display* leaf (macOS shows an on-disk `:` as
+                // `/`, Finder-style); when the name hides deceptive characters
+                // draw the same highlighted treatment the preview pane uses, so
+                // the list — scanned first — never shows an invisible-char name
+                // as innocuous. `name_has_hazards` is precomputed at enumerate
+                // time, so the row paint just reads a bool.
+                let display_name = entry.display_name.clone();
+                let tooltip_name = display_name.clone();
+                let name_child = if entry.name_has_hazards {
+                    div().flex_1().min_w_0().child(crate::entry_info::name_hazard_element(
+                        &display_name,
+                        SharedString::from(format!("file-row-name-{row_ix}")),
+                    ))
+                } else {
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .child(SharedString::from(display_name.clone()))
+                };
                 // Inline tag chips — 6-DIP coloured dots after the
                 // filename, one per applied Finder tag (max 7). Read
                 // synchronously at load() time and stored in the
@@ -1090,13 +1116,7 @@ impl TableDelegate for FileListDelegate {
                     .text_scale_sm()
                     .text_color(cx.theme().foreground)
                     .child(icon_wrapper)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .child(SharedString::from(full_name)),
-                    )
+                    .child(name_child)
                     .child(chips)
                     .child(star)
                     .tooltip(move |window, cx| Tooltip::new(tooltip_name.clone()).build(window, cx))
@@ -1212,7 +1232,8 @@ impl TableDelegate for FileListDelegate {
             .map(|col| col.key.as_ref())
             .unwrap_or("");
         match col_key {
-            "name" => entry.name.clone(),
+            // Mirror render_td: the Name cell shows the display leaf.
+            "name" => entry.display_name.clone(),
             "size" => entry.display_size.clone(),
             "format" => entry.format_label().0.to_string(),
             "modified" => feraille_core::humanize_mtime(entry.mtime_unix, feraille_core::now_unix()),
@@ -1701,7 +1722,9 @@ fn compare_entries(
     }
 
     let primary = match col {
-        SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        // Sort by the displayed name (display leaf), so ordering matches what
+        // the user reads on macOS where an on-disk `:` shows as `/`.
+        SortColumn::Name => a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()),
         SortColumn::Size => a.size.cmp(&b.size),
         SortColumn::Format => a
             .format_label()
@@ -1712,7 +1735,7 @@ fn compare_entries(
     };
     let primary = if asc { primary } else { primary.reverse() };
     primary
-        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
         .then_with(|| a.id.as_raw().cmp(&b.id.as_raw()))
 }
 
@@ -1764,6 +1787,8 @@ mod sort_tests {
         FileEntry {
             id: NodeId::from_raw(id).unwrap(),
             name: name.into(),
+            display_name: name.into(),
+            name_has_hazards: false,
             kind,
             size,
             mtime_unix: mtime,

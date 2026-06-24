@@ -377,7 +377,8 @@ fn render_tree_row(
     let drag_path = path.clone();
     let drag_label: SharedString = drag_path
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
+        // Display leaf on the drag chip (macOS `:` → `/`).
+        .map(|n| feraille_fs_native::paths::display_leaf(n.to_string_lossy().as_ref()).into_owned())
         .unwrap_or_else(|| drag_path.display().to_string())
         .into();
     let mut row = h_flex()

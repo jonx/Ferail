@@ -779,8 +779,19 @@ impl Shell {
                     let selected = del.selected_set.contains(&id);
                     let is_lead = del.lead == Some(id);
                     let quarantined = entry.is_quarantined;
-                    let name = entry.name.clone();
+                    // Display leaf (macOS `:` → `/`) for the grid label/tooltip;
+                    // deceptive names get the same highlighted treatment as the
+                    // list row so switching to grid view never hides a disguise.
+                    let name = entry.display_name.clone();
                     let tooltip_name: SharedString = name.clone().into();
+                    let grid_label: AnyElement = if entry.name_has_hazards {
+                        crate::entry_info::name_hazard_element(
+                            &name,
+                            SharedString::from(format!("grid-name-{i}")),
+                        )
+                    } else {
+                        SharedString::from(name.clone()).into_any_element()
+                    };
 
                     // Per-cell adornments, read from the same parallel
                     // delegate vecs the list row consumes (see
@@ -888,7 +899,13 @@ impl Shell {
                         .take(GHOST_STACK_CAP)
                         .map(|p| {
                             p.file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
+                                .map(|n| {
+                                    // Drag chip shows the display leaf (macOS `:` → `/`).
+                                    feraille_fs_native::paths::display_leaf(
+                                        n.to_string_lossy().as_ref(),
+                                    )
+                                    .into_owned()
+                                })
                                 .unwrap_or_default()
                                 .into()
                         })
@@ -989,7 +1006,7 @@ impl Shell {
                                 .truncate()
                                 .when(selected, |d| d.bg(label_pill).text_color(pill_fg))
                                 .when(!selected, |d| d.text_color(muted))
-                                .child(SharedString::from(name)),
+                                .child(grid_label),
                         )
                         // The label is `.truncate()`d, so surface the full
                         // name on hover (mirrors the list row's tooltip).
@@ -2155,16 +2172,16 @@ impl Shell {
                     .text_scale_lg()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(cx.theme().foreground);
-                let name_header = if feraille_core::name_hazards::has_hazards(&entry.name) {
+                let name_header = if entry.name_has_hazards {
                     name_header.child(crate::entry_info::name_hazard_element(
-                        &entry.name,
+                        &entry.display_name,
                         "preview-name",
                     ))
                 } else {
-                    let name_for_tooltip = entry.name.clone();
+                    let name_for_tooltip = entry.display_name.clone();
                     name_header
                         .truncate()
-                        .child(SharedString::from(entry.name.clone()))
+                        .child(SharedString::from(entry.display_name.clone()))
                         .tooltip(move |window, cx| {
                             Tooltip::new(SharedString::from(name_for_tooltip.clone()))
                                 .build(window, cx)

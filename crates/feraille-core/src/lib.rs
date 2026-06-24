@@ -51,7 +51,21 @@ pub enum EntryKind {
 #[derive(Clone, Debug)]
 pub struct FileEntry {
     pub id: NodeId,
+    /// The raw on-disk leaf name — the bytes `readdir` returned. This is the
+    /// *truth* used to reconstruct the file's path (joins, renames, opens);
+    /// never the user-facing string. On macOS a colon here is the HFS/Unix
+    /// separator that Finder shows as a slash — see [`display_name`](Self::display_name).
     pub name: String,
+    /// The user-facing leaf name, pre-computed at enumerate time. On macOS a
+    /// `:` in [`name`](Self::name) is shown as `/` to match Finder (see
+    /// `feraille_fs_native::paths::display_leaf`); elsewhere this equals
+    /// `name`. Every visible surface (list row, preview, Get Info, tooltips)
+    /// renders this, while path operations keep using `name`.
+    pub display_name: String,
+    /// Pre-computed `name_hazards::has_hazards(&display_name)`. Lets the dense
+    /// list row decide — with a cheap bool, no per-paint `analyze()` alloc —
+    /// whether to draw the deceptive-character highlight treatment.
+    pub name_has_hazards: bool,
     pub kind: EntryKind,
     pub size: u64,
     pub mtime_unix: i64,
@@ -599,6 +613,8 @@ mod format_label_tests {
         FileEntry {
             id: NodeId(std::num::NonZeroU64::new(1).unwrap()),
             name: String::new(),
+            display_name: String::new(),
+            name_has_hazards: false,
             kind: EntryKind::File,
             size: 0,
             mtime_unix: 0,
