@@ -307,6 +307,40 @@ fallback). Remaining is the UX the system explorers have and we don't:
   point the `[patch]` block at `git = "<fork-url>", rev = "..."` so the Windows
   screenshot harness builds identically to macOS (today a local-path override).
 
+## Open-Source Release
+
+The repo is prepared for a **source-first** public release (dual MIT/Apache;
+README, CONTRIBUTING, SECURITY, THIRD-PARTY-NOTICES in place; private checkout
+paths scrubbed). Source-first is unblocked. Remaining:
+
+- **Soften private-checkout references in the port/feature docs.**
+  `windows-port.md`, `linux-port.md`, and a few feature docs point readers at a
+  `../Ferail/` sibling checkout and `bfe-explorer` source that public cloners
+  won't have. Reframe as "private predecessor — design lineage only" so the
+  links don't read as dead local paths. Not a blocker (the one absolute `C:\`
+  path leak is already removed); doc hygiene for outside readers.
+- **`cargo-deny` for license / advisory drift.** No `deny.toml` today. Add one
+  so a future `gpui` rev bump that changes the transitive license surface is
+  caught mechanically (see the GPL note below).
+
+### Before distributing a prebuilt binary
+
+Publishing *source* is unaffected by the transitive GPL chain; a redistributable
+*binary* is not. Do these only when building a download:
+
+- **Sever the GPL-3.0 dependency edge.** A default build links GPL-3.0
+  `ztracing` / `zlog` / `ztracing_macro` through a single non-optional path
+  `gpui → sum_tree → ztracing` (they supply `#[instrument]` macros that no-op at
+  runtime in non-Zed builds). To keep a shipped binary MIT/Apache, patch
+  `sum_tree` to drop the `ztracing` dep plus its two `use ztracing::instrument;`
+  sites — verified trivial and fully severable (`sum_tree` is the sole consumer).
+  Upstream fix tracked at <https://github.com/zed-industries/zed/issues/55470>
+  (acknowledged but stuck in legal — do **not** assume it lands on a timeline).
+  Context in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+- Code signing / notarization / `.dmg` / release CI: tracked under
+  **Packaging & Polish** (Developer ID, hardened-runtime-without-sandbox
+  entitlements, notarization + stapling, versioning/tags, macOS release job).
+
 ## Cleanup
 
 - Keep `cargo clippy --workspace --all-targets` at zero warnings. `multi_table/`

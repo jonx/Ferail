@@ -1,9 +1,8 @@
 # Magic Description Column
 
 Rich content-derived facts about a file, rendered as a single string in a
-new **Description** column to the right of Format. Inspired by the bfe-explorer
-predecessor at `C:\Source\john-knipper-personal\bfe-explorer` (see
-[crates/ferail-ui/src/magic/types.rs](file:///C:/Source/john-knipper-personal/bfe-explorer/crates/ferail-ui/src/magic/types.rs)),
+new **Description** column to the right of Format. Inspired by the magic
+column in the `bfe-explorer` Windows predecessor (a private prior codebase),
 adapted to feraille's nonblocking contract and current single-`display_magic`
 shape.
 

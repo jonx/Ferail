@@ -32,6 +32,33 @@ Per Apache-2.0 §4(d), the upstream attribution notices are preserved below.
   bundled icon assets. <https://github.com/longbridge/gpui-component>
   Copyright © 2024–2025 Longbridge. Licensed under Apache-2.0.
 
+### Transitive GPL-3.0 components (via gpui → sum_tree)
+
+Although `gpui` itself is Apache-2.0, a default build currently links three
+small **GPL-3.0-or-later** crates from the Zed repository through a single
+non-optional dependency edge:
+
+```
+gpui → sum_tree → ztracing → { zlog, ztracing_macro }
+```
+
+These supply `#[instrument]` tracing macros that are compiled in but **no-op at
+runtime** in non-Zed builds (the `ztracing` cfg is never enabled). They are
+recorded here for completeness, because GPL-3.0 object code linked into a
+*redistributed binary* carries copyleft obligations on that binary.
+
+- **ztracing**, **zlog**, **ztracing_macro** — from the Zed editor project.
+  <https://github.com/zed-industries/zed> Licensed under GPL-3.0-or-later.
+
+Feraille does **not** currently distribute prebuilt binaries: the published
+source references these crates via pinned git dependencies but does not itself
+redistribute their code, so the MIT/Apache-2.0 grant on Feraille's own source is
+unaffected. The upstream license inconsistency (Apache-2.0 `sum_tree` depending
+on GPL-3.0 `ztracing`) is tracked at
+<https://github.com/zed-industries/zed/issues/55470>. If a redistributable
+binary is shipped before that is resolved upstream, this single dependency edge
+is severed by a local patch so the binary remains MIT/Apache.
+
 ---
 
 ## Icon artwork
