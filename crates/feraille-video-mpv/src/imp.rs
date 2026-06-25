@@ -9,7 +9,7 @@
 //! (`rebuild_vf`) — no per-change stream re-open.
 
 use std::cell::RefCell;
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -28,6 +28,7 @@ const PARAM_SW_STRIDE: c_int = 19;
 const PARAM_SW_POINTER: c_int = 20;
 // mpv_event_id
 const EVENT_NONE: c_int = 0;
+const EVENT_LOG_MESSAGE: c_int = 2;
 const EVENT_END_FILE: c_int = 7;
 // mpv_end_file_reason
 const END_FILE_REASON_EOF: c_int = 0;
@@ -52,6 +53,15 @@ struct MpvEvent {
 struct MpvEventEndFile {
     reason: c_int,
     error: c_int,
+}
+
+#[repr(C)]
+#[allow(dead_code)] // `level`/`log_level` exist for C layout fidelity; we read prefix+text.
+struct MpvEventLogMessage {
+    prefix: *const c_char,
+    level: *const c_char,
+    text: *const c_char,
+    log_level: c_int,
 }
 
 // ---- cross-platform dynamic loader -----------------------------------------
@@ -129,6 +139,7 @@ struct LibMpv {
     terminate_destroy: extern "C" fn(*mut c_void),
     set_option_string: extern "C" fn(*mut c_void, *const c_char, *const c_char) -> c_int,
     set_property_string: extern "C" fn(*mut c_void, *const c_char, *const c_char) -> c_int,
+    request_log_messages: extern "C" fn(*mut c_void, *const c_char) -> c_int,
     get_property: extern "C" fn(*mut c_void, *const c_char, c_int, *mut c_void) -> c_int,
     command: extern "C" fn(*mut c_void, *const *const c_char) -> c_int,
     wait_event: extern "C" fn(*mut c_void, f64) -> *mut MpvEvent,
@@ -227,6 +238,11 @@ impl LibMpv {
                 "mpv_set_property_string",
                 extern "C" fn(*mut c_void, *const c_char, *const c_char) -> c_int
             ),
+            request_log_messages: sym!(
+                lib,
+                "mpv_request_log_messages",
+                extern "C" fn(*mut c_void, *const c_char) -> c_int
+            ),
             get_property: sym!(
                 lib,
                 "mpv_get_property",
@@ -296,6 +312,32 @@ fn cstr(s: &str) -> CString {
     CString::new(s).unwrap_or_default()
 }
 
+/// Rotate a tightly-packed BGRA buffer (`w`×`h`, stride `w*4`) clockwise by
+/// `deg` ∈ {90, 180, 270}, returning the new `(width, height, buffer)`. 90/270
+/// swap the dimensions. Any other `deg` returns a straight copy. Per-frame and
+/// bounds-checked, but a portrait preview is small enough that this is cheap;
+/// optimise (SIMD / tiled transpose) only if a hot path needs it.
+fn rotate_bgra(src: &[u8], w: u32, h: u32, deg: u32) -> (u32, u32, Vec<u8>) {
+    let (w, h) = (w as usize, h as usize);
+    // For 90/270 the output is h×w; for 180 it stays w×h.
+    let (nw, nh) = if deg == 180 { (w, h) } else { (h, w) };
+    let mut dst = vec![0u8; nw * nh * 4];
+    for sy in 0..h {
+        for sx in 0..w {
+            // Destination pixel for a clockwise rotation.
+            let (dx, dy) = match deg {
+                90 => (h - 1 - sy, sx),
+                270 => (sy, w - 1 - sx),
+                _ => (w - 1 - sx, h - 1 - sy), // 180
+            };
+            let si = (sy * w + sx) * 4;
+            let di = (dy * nw + dx) * 4;
+            dst[di..di + 4].copy_from_slice(&src[si..si + 4]);
+        }
+    }
+    (nw as u32, nh as u32, dst)
+}
+
 impl VideoBackend for MpvBackend {
     fn open(
         &self,
@@ -328,6 +370,12 @@ impl VideoBackend for MpvBackend {
             ("ytdl", "no"),
             ("hwdec", "auto-copy"),
             ("keep-open", "yes"),
+            // The libmpv *software* render path asserts (mp_image_crop) on
+            // rotated video: it computes the crop in rotated space and applies
+            // it to the un-rotated source. So we tell mpv never to rotate, read
+            // the intended rotation off `video-params/rotate`, and rotate the
+            // BGRA buffer ourselves in `copy_frame`.
+            ("video-rotate", "no"),
             ("msg-level", "all=error"),
         ] {
             (lib.set_option_string)(h, cstr(k).as_ptr(), cstr(v).as_ptr());
@@ -336,6 +384,14 @@ impl VideoBackend for MpvBackend {
             (lib.terminate_destroy)(h);
             return None;
         }
+
+        // Route mpv's own log stream to stderr so a crash (e.g. an assert deep
+        // in libmpv's render path) leaves a breadcrumb — the lines just before
+        // the abort name the file, decoder, hwdec, and frame geometry. Quiet by
+        // default (`error`); set `FERAILLE_MPV_LOG=v` (or `debug`) to see the
+        // decode/VO setup. Requested before `loadfile` so setup logs are caught.
+        let log_level = std::env::var("FERAILLE_MPV_LOG").unwrap_or_else(|_| "error".into());
+        (lib.request_log_messages)(h, cstr(&log_level).as_ptr());
 
         // Software render context.
         let api = cstr("sw");
@@ -403,6 +459,15 @@ impl MpvStream {
             let e = unsafe { &*ev };
             if e.event_id == EVENT_NONE {
                 break;
+            }
+            if e.event_id == EVENT_LOG_MESSAGE && !e.data.is_null() {
+                let m = unsafe { &*(e.data as *const MpvEventLogMessage) };
+                // `text` already carries its trailing newline; `prefix` is the
+                // emitting module (e.g. `vd`, `vo/libmpv`, `ffmpeg`).
+                let prefix = unsafe { CStr::from_ptr(m.prefix) }.to_string_lossy();
+                let text = unsafe { CStr::from_ptr(m.text) }.to_string_lossy();
+                eprint!("[mpv/{prefix}] {text}");
+                continue;
             }
             if e.event_id == EVENT_END_FILE && !e.data.is_null() {
                 let ef = unsafe { &*(e.data as *const MpvEventEndFile) };
@@ -546,8 +611,21 @@ impl VideoStream for MpvStream {
         if (self.lib.rc_render)(self.rctx, params.as_mut_ptr()) != 0 {
             return None;
         }
-        self.dims = (w, h);
-        Some((w, h, self.buf.clone()))
+        // mpv rendered the native-orientation frame (we set `video-rotate=no`).
+        // Apply the file's intended rotation ourselves. Read it from
+        // `video-dec-params/rotate` (the decoder-level params), NOT
+        // `video-params/rotate`: the latter is the *post-rotation* value and
+        // `video-rotate=no` zeroes it, whereas the decoder params keep the
+        // intended clockwise rotation in degrees regardless.
+        let rot = self.prop_i64("video-dec-params/rotate");
+        if matches!(rot, 90 | 180 | 270) {
+            let (rw, rh, rbuf) = rotate_bgra(&self.buf, w, h, rot);
+            self.dims = (rw, rh);
+            Some((rw, rh, rbuf))
+        } else {
+            self.dims = (w, h);
+            Some((w, h, self.buf.clone()))
+        }
     }
 
     fn set_paused(&mut self, paused: bool) {
@@ -621,6 +699,41 @@ impl Drop for MpvStream {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    // Pixel n is the BGRA quad [n, n, n, n]; a buffer is built row-major.
+    fn px(n: u8) -> [u8; 4] {
+        [n, n, n, n]
+    }
+
+    #[test]
+    fn rotate_bgra_clockwise_geometry() {
+        // 2×2: P0 P1 / P2 P3 (row-major).
+        let src: Vec<u8> = [0u8, 1, 2, 3].iter().flat_map(|&n| px(n)).collect();
+        let grid = |bytes: &[u8]| bytes.iter().step_by(4).copied().collect::<Vec<u8>>();
+
+        // 90° CW: bottom-left rotates up to top-left → P2 P0 / P3 P1.
+        let (w, h, out) = rotate_bgra(&src, 2, 2, 90);
+        assert_eq!((w, h), (2, 2));
+        assert_eq!(grid(&out), vec![2, 0, 3, 1]);
+
+        // 180°: P3 P2 / P1 P0.
+        let (_, _, out) = rotate_bgra(&src, 2, 2, 180);
+        assert_eq!(grid(&out), vec![3, 2, 1, 0]);
+
+        // 270° CW: P1 P3 / P0 P2.
+        let (_, _, out) = rotate_bgra(&src, 2, 2, 270);
+        assert_eq!(grid(&out), vec![1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn rotate_bgra_swaps_non_square_dims() {
+        // 3 wide × 1 tall → 90/270 give 1 wide × 3 tall.
+        let src: Vec<u8> = [10u8, 20, 30].iter().flat_map(|&n| px(n)).collect();
+        let (w, h, out) = rotate_bgra(&src, 3, 1, 90);
+        assert_eq!((w, h), (1, 3));
+        // Row [10 20 30] stood up clockwise → column 10/20/30 top-to-bottom.
+        assert_eq!(out.iter().step_by(4).copied().collect::<Vec<u8>>(), vec![10, 20, 30]);
+    }
 
     /// End-to-end against the real crate code (load libmpv, SW render pull,
     /// live grade via lavfi). Skips when libmpv or the probe clip aren't

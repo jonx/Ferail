@@ -142,6 +142,51 @@ Two scope decisions taken up front (user, 2026-06-23):
   the *performant ceiling* of the CPU-buffer-pull path is a handful of layers
   at ≤1080p — see [Performance](#performance-the-honest-ceiling).
 
+## Frame orientation (rotated video) — fixed 2026-06-25
+
+Portrait phone clips (e.g. iPhone `.MOV`, `rot=90`) **crashed** libmpv's
+software render: `Assertion failed: (x1 <= img->w && y1 <= img->h)` in
+`mp_image_crop`. The libmpv VO advertises rotation support, so mpv's
+`autorotate` filter steps aside and leaves rotation to the VO — but the *SW*
+render path then computes the crop in rotated space (height 1280) and applies
+it to the un-rotated 1280×720 source, overflowing `img->h`. (It's an upstream
+mpv bug; not patchable here — libmpv is a runtime `dlopen`.)
+
+Fix, entirely in `feraille-video-mpv/src/imp.rs`:
+
+- Set **`video-rotate=no`** so mpv never rotates — it hands us the native frame.
+- Read the intended rotation from **`video-dec-params/rotate`**, *not*
+  `video-params/rotate`. The latter is the post-rotation value and
+  `video-rotate=no` zeroes it; the decoder params keep the clockwise rotation
+  regardless. (Verified: with `video-rotate=no`, `video-params/rotate`=0 but
+  `video-dec-params/rotate`=90.)
+- Rotate the BGRA buffer ourselves (`rotate_bgra`, clockwise, dims swapped for
+  90/270). Direction matches mpv/ffmpeg (validated pixel-wise — see below).
+
+`rotate_bgra` is per-frame and bounds-checked; cheap for a portrait preview,
+optimise only if a hot path needs it. Unit-tested for 90/180/270 geometry.
+
+## Diagnosing decode/render crashes (no GUI needed)
+
+This class of bug lives in the frame-pull path (`copy_frame`), so it reproduces
+**headlessly** — no clicking required:
+
+- **mpv's own log** → stderr, opt-in: `FERAILLE_MPV_LOG=v` (or `debug`). Off by
+  default (`error`). The decoder/VO setup lines name the geometry, hwdec, and
+  rotation — this is what revealed the rotation crash. (`mpv_request_log_messages`
+  wired in `imp.rs`; a crash deep in libmpv leaves a breadcrumb either way.)
+- **Headless probe** drives the real backend against any file:
+  `cargo run -p feraille-video-mpv --example probe -- <video> [frames]`
+  (`--raw out.bgra` dumps the first frame for a visual/diff check).
+- **Capture a crash backtrace non-interactively** under lldb batch mode:
+  `lldb --batch -o run -k 'bt' -k 'quit' -- target/debug/examples/probe <video>`
+- **Rotated fixtures** with ffmpeg 8 (the `rotate=` *metadata* tag is ignored;
+  use the `-display_rotation` *input* option + stream copy):
+  `ffmpeg -f lavfi -i testsrc=d=1:s=1280x720 -pix_fmt yuv420p base.mp4`
+  then `ffmpeg -display_rotation 270 -i base.mp4 -c copy rot90.mp4` (mpv then
+  reads `rot=90`). Diff our rotation against ffmpeg's own auto-rotate
+  (`ffmpeg -i rot90.mp4 -frames:v 1 ref.png`) to confirm direction.
+
 ## Platform tagging convention
 
 Same as [VIEWER.md](VIEWER.md#platform-tagging-convention): **[mac]** =
