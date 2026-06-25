@@ -42,6 +42,12 @@ smallvec = "1"
 # loader (docs/features/VIEWER.md); non-raster formats fall back to
 # Quick Look thumbnails.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+# SIMD-accelerated resampler for the viewer's still upscale (x2/x4). The
+# `image` crate's `imageops::resize` is single-threaded with no SIMD, so a
+# Lanczos3 enlargement to the 8192 px cap stalled the UI for seconds; this
+# does the same Lanczos3 convolution with SSE4.1/AVX2/NEON. MIT OR Apache-2.0,
+# minimal deps — clean for the dual-licensed release.
+fast_image_resize = "5"
 # The issue reporter bundles the diagnostics report + activity trail + a
 # (redacted) screenshot into a `.zip`. Same major/features as the shell crates'
 # compress_paths so the graph holds a single zip.

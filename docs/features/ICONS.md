@@ -227,6 +227,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Zoom out / in | `icons/minus.svg` / `plus.svg` ↑ | Lucide |
 | Rotate | `icons/redo.svg` ↑ | Lucide |
 | Color adjust | `icons/palette.svg` ↑ | Lucide |
+| Auto-enhance ("magic") | `icons/wand-sparkles.svg` | **In-house** Lucide `wand-sparkles` (house style, stroke 1.75). Spare pool has no wand/sparkles glyph. Adjustments-panel header, beside Reset. |
 | Fullscreen | `icons/maximize.svg` ↑ | Lucide |
 
 ### Disk Usage window ([disk_usage.rs](../../crates/feraille-gpui/src/disk_usage.rs))

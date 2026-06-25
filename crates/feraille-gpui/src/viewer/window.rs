@@ -298,14 +298,36 @@ impl EnhanceParams {
     }
 }
 
+/// SIMD Lanczos3 resample of a packed 4-byte-per-pixel buffer (BGRA in our
+/// `RenderImage` storage order). The convolution is channel-agnostic; the
+/// only channel-aware step is the alpha premultiply, which keys off the 4th
+/// byte (`A`) and so is correct for BGRA too. `None` on a degenerate size.
+/// This is the hot path that used to be a single-threaded `imageops::resize`
+/// — the `fast_image_resize` crate does it with SSE4.1/AVX2/NEON instead.
+fn resize_lanczos3(buf: Vec<u8>, w: u32, h: u32, nw: u32, nh: u32) -> Option<Vec<u8>> {
+    use fast_image_resize::images::Image;
+    use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
+
+    let src = Image::from_vec_u8(w, h, buf, PixelType::U8x4).ok()?;
+    let mut dst = Image::new(nw, nh, PixelType::U8x4);
+    let opts = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3));
+    Resizer::new().resize(&src, &mut dst, &opts).ok()?;
+    Some(dst.into_vec())
+}
+
 /// The full off-thread still pipeline: colour grade → denoise → upscale →
 /// sharpen → rotate, over a packed BGRA buffer. Returns the final
 /// `(width, height, BGRA bytes)`. Heavy (convolutions + resampling), so it
 /// only ever runs on the background executor — never the render path.
 ///
-/// `image`'s blur / resize / unsharpen act per channel (or purely
-/// spatially), so the BGRA byte order is irrelevant and round-trips; only
-/// the colour grade and the eventual display care about channel identity.
+/// `preview` skips the one genuinely expensive step — the multi-megapixel
+/// upscale resample — so a live slider drag previews the colour/denoise/
+/// sharpen change instantly; the enlargement (invisible at fit-to-window)
+/// is filled in by a single full-quality pass once the drag releases.
+///
+/// `image`'s blur / unsharpen act per channel (or purely spatially) and the
+/// resample premultiplies on the alpha byte, so the BGRA order is irrelevant
+/// and round-trips; only the colour grade and the display care about identity.
 fn process_still_pixels(
     bgra: &[u8],
     w: u32,
@@ -313,6 +335,7 @@ fn process_still_pixels(
     rot: u8,
     grade: ColorAdjust,
     enh: EnhanceParams,
+    preview: bool,
 ) -> Option<(u32, u32, Vec<u8>)> {
     use image::imageops;
 
@@ -326,16 +349,22 @@ fn process_still_pixels(
         // 0..1 → a gentle 0..3 px Gaussian radius.
         img = imageops::fast_blur(&img, enh.denoise * 3.0);
     }
-    if enh.upscale > 1 {
+    if enh.upscale > 1 && !preview {
         let f = enh.upscale as u32;
-        let (mut nw, mut nh) = (w.saturating_mul(f), h.saturating_mul(f));
+        let (cw, ch) = img.dimensions();
+        let (mut nw, mut nh) = (cw.saturating_mul(f), ch.saturating_mul(f));
         let longest = nw.max(nh);
         if longest > UPSCALE_MAX_EDGE {
             let s = UPSCALE_MAX_EDGE as f64 / longest as f64;
             nw = ((nw as f64 * s).round() as u32).max(1);
             nh = ((nh as f64 * s).round() as u32).max(1);
         }
-        img = imageops::resize(&img, nw, nh, imageops::FilterType::Lanczos3);
+        // Only ever enlarge — never let the cap shrink an already-huge
+        // original below its native size.
+        if nw > cw || nh > ch {
+            let out = resize_lanczos3(img.into_raw(), cw, ch, nw, nh)?;
+            img = image::RgbaImage::from_raw(nw, nh, out)?;
+        }
     }
     if enh.sharpen > 0.0 {
         // Sharpen *after* any upscale so it crisps the enlarged result.
@@ -349,6 +378,68 @@ fn process_still_pixels(
         _ => img,
     };
     Some((img.width(), img.height(), img.into_raw()))
+}
+
+/// Analyse a packed BGRA buffer and return a colour grade that auto-levels
+/// it: a percentile-clipped luma histogram stretch (folded into brightness +
+/// contrast against [`grade_bgra`]'s curve) plus a gentle saturation lift
+/// that's skipped for a near-monochrome image so a black-and-white photo
+/// isn't tinted. Hue/gamma stay neutral (the still pipeline ignores them).
+/// Pure and cheap-but-O(pixels), so the caller runs it off the UI thread.
+fn compute_auto_grade(bgra: &[u8]) -> ColorAdjust {
+    let n = bgra.len() / 4;
+    if n == 0 {
+        return ColorAdjust::default();
+    }
+    let mut hist = [0u32; 256];
+    let mut chroma_sum: u64 = 0;
+    for px in bgra.chunks_exact(4) {
+        // Stored BGRA: px[0]=B, px[1]=G, px[2]=R.
+        let luma = (0.299 * px[2] as f32 + 0.587 * px[1] as f32 + 0.114 * px[0] as f32) as usize;
+        hist[luma.min(255)] += 1;
+        let mx = px[0].max(px[1]).max(px[2]);
+        let mn = px[0].min(px[1]).min(px[2]);
+        chroma_sum += (mx - mn) as u64;
+    }
+    // Clip 0.5% off each tail so a few outliers don't anchor the range.
+    let clip = (n as f32 * 0.005) as u32;
+    let (mut lo, mut hi, mut acc) = (0usize, 255usize, 0u32);
+    for (i, &count) in hist.iter().enumerate() {
+        acc += count;
+        if acc > clip {
+            lo = i;
+            break;
+        }
+    }
+    acc = 0;
+    for (i, &count) in hist.iter().enumerate().rev() {
+        acc += count;
+        if acc > clip {
+            hi = i;
+            break;
+        }
+    }
+
+    let mut adj = ColorAdjust::default();
+    if hi > lo + 1 {
+        // Factor that maps [lo, hi] → [0, 255], capped so we only ever
+        // stretch (≥1) and never blow out a flat low-key image.
+        let cf = (255.0 / (hi - lo) as f32).clamp(1.0, 2.5);
+        // Invert grade_bgra's contrast curve to recover the slider value,
+        // then re-derive the *actual* factor for the clamped value so the
+        // shadow point still lands on black.
+        let c = 255.0 * 259.0 * (cf - 1.0) / (259.0 + 255.0 * cf);
+        adj.contrast = (c / 128.0).clamp(-1.0, 1.0);
+        let c_act = adj.contrast * 128.0;
+        let cf_act = (259.0 * (c_act + 255.0)) / (255.0 * (259.0 - c_act));
+        let b = cf_act * (128.0 - lo as f32) - 128.0;
+        adj.brightness = (b / 255.0).clamp(-1.0, 1.0);
+    }
+    // Gentle saturation lift, but leave a near-monochrome image alone.
+    if chroma_sum as f32 / (n as f32 * 255.0) > 0.04 {
+        adj.saturation = 0.15;
+    }
+    adj
 }
 
 /// Apply a [`ColorAdjust`] to a bitmap, returning a fresh `RenderImage`.
@@ -595,7 +686,10 @@ pub struct ViewerWindow {
     /// produced off-thread (grade + denoise + upscale + sharpen + rotate)
     /// since enhancement is far too heavy for the render path. While a
     /// non-matching result is pending the plain rotated original stands in.
-    processed: Option<(usize, u8, ColorAdjust, EnhanceParams, Arc<RenderImage>)>,
+    /// The `bool` is `preview`: a fast drag-time pass that skipped the heavy
+    /// upscale — it satisfies further drag frames but is recomputed at full
+    /// size once the drag releases.
+    processed: Option<(usize, u8, ColorAdjust, EnhanceParams, bool, Arc<RenderImage>)>,
     /// Monotonic token: a background process result is only accepted if its
     /// token still matches, so superseded runs (params changed mid-flight)
     /// are dropped instead of flashing a stale grade.
@@ -1686,6 +1780,44 @@ impl ViewerWindow {
         self.after_adjust_change(cx);
     }
 
+    /// "Magic" auto-enhance: analyse the current item's pixels off-thread and
+    /// set brightness/contrast/saturation to an auto-levelled grade (see
+    /// [`compute_auto_grade`]). Works on the decoded still bytes, or — for a
+    /// video — the last raw frame pulled from the player, in which case the
+    /// computed grade is pushed live through [`Self::after_adjust_change`].
+    /// Leaves enhancement (denoise/sharpen/upscale) untouched. No-op if no
+    /// source pixels are available yet.
+    fn auto_enhance(&mut self, cx: &mut Context<Self>) {
+        let src = if self.current_is_video() {
+            self.video_frame_raw.clone()
+        } else {
+            let path = self.current().map(|e| e.path.clone());
+            path.and_then(|p| match self.cache.get(&p) {
+                Some(FrameState::Loaded(f)) => {
+                    f.image.as_bytes(0).map(|b| (f.w, f.h, b.to_vec()))
+                }
+                _ => None,
+            })
+        };
+        let Some((_, _, bytes)) = src else { return };
+        let weak = cx.weak_entity();
+        cx.spawn(async move |_this, cx| {
+            let grade = cx
+                .background_executor()
+                .spawn(async move { compute_auto_grade(&bytes) })
+                .await;
+            let Some(this) = weak.upgrade() else { return };
+            this.update(cx, |this, cx| {
+                // Only the still-applicable colour fields; hue/gamma stay put.
+                this.adjust.brightness = grade.brightness;
+                this.adjust.contrast = grade.contrast;
+                this.adjust.saturation = grade.saturation;
+                this.after_adjust_change(cx);
+            });
+        })
+        .detach();
+    }
+
     /// Shared tail for any grade/enhance change: drop the now-stale video
     /// grade (stills go through `processed`), kick off a fresh background
     /// process, and repaint.
@@ -1732,10 +1864,17 @@ impl ViewerWindow {
         };
         let rot = self.current_rotation();
         let (idx, grade, enh) = (self.index, self.adjust, self.enhance);
-        // Already have (or are about to show) the exact result?
+        // A live slider drag wants a fast preview (skips the heavy upscale);
+        // anything else wants the full-quality result.
+        let preview = self.slider_drag.is_some();
+        // Already have (or are about to show) a usable result? A cached
+        // full-quality pass (`!prev`) satisfies any request; a cached preview
+        // only satisfies another preview, so a drag *release* (preview ==
+        // false) falls through here and recomputes at full size.
         if matches!(
             &self.processed,
-            Some((i, r, g, e, _)) if *i == idx && *r == rot && *g == grade && *e == enh
+            Some((i, r, g, e, prev, _))
+                if *i == idx && *r == rot && *g == grade && *e == enh && (!*prev || preview)
         ) {
             return;
         }
@@ -1755,7 +1894,7 @@ impl ViewerWindow {
         cx.spawn(async move |_this, cx| {
             let out = cx
                 .background_executor()
-                .spawn(async move { process_still_pixels(&src, w, h, rot, grade, enh) })
+                .spawn(async move { process_still_pixels(&src, w, h, rot, grade, enh, preview) })
                 .await;
             let Some(this) = weak.upgrade() else { return };
             this.update(cx, |this, cx| {
@@ -1766,7 +1905,8 @@ impl ViewerWindow {
                 let Some((rw, rh, buf)) = out else { return };
                 if this.process_gen == token {
                     if let Some(img) = build_video_frame(buf, rw, rh) {
-                        if let Some((.., old)) = this.processed.replace((idx, rot, grade, enh, img))
+                        if let Some((.., old)) =
+                            this.processed.replace((idx, rot, grade, enh, preview, img))
                         {
                             this.video_frames_to_drop.push(old);
                         }
@@ -1786,7 +1926,7 @@ impl ViewerWindow {
     /// while a fresh result is still computing (caller shows the original).
     fn processed_still(&self, rot: u8) -> Option<Arc<RenderImage>> {
         match &self.processed {
-            Some((i, r, g, e, img))
+            Some((i, r, g, e, _prev, img))
                 if *i == self.index && *r == rot && *g == self.adjust && *e == self.enhance =>
             {
                 Some(img.clone())
@@ -2275,10 +2415,23 @@ impl ViewerWindow {
                     .child("Adjustments"),
             )
             .child(
-                Button::new("viewer-adjust-reset")
-                    .label("Reset")
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| this.reset_adjust(cx))),
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    // "Magic" auto-enhance: one click picks an auto-levelled
+                    // grade from the image's own histogram.
+                    .child(
+                        Button::new("viewer-adjust-auto")
+                            .icon(gpui_component::Icon::empty().path("icons/wand-sparkles.svg"))
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.auto_enhance(cx))),
+                    )
+                    .child(
+                        Button::new("viewer-adjust-reset")
+                            .label("Reset")
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.reset_adjust(cx))),
+                    ),
             );
 
         div()
@@ -2307,6 +2460,9 @@ impl ViewerWindow {
                     // so a changed value re-opens the stream on release
                     // (kept off the live drag — re-opening per move thrashes).
                     this.commit_video_enhance(cx);
+                    // Upgrade the still's drag preview (upscale skipped) to a
+                    // full-quality pass now the drag is over.
+                    this.schedule_process(cx);
                     cx.notify();
                 }),
             )
@@ -2315,6 +2471,7 @@ impl ViewerWindow {
                 cx.listener(|this, _, _, cx| {
                     this.slider_drag = None;
                     this.commit_video_enhance(cx);
+                    this.schedule_process(cx);
                 }),
             )
             .child(header)
@@ -2922,8 +3079,8 @@ impl Render for ViewerWindow {
 #[cfg(test)]
 mod grade_tests {
     use super::{
-        ColorAdjust, EnhanceParams, apply_color_adjust, grade_bgra, process_still_pixels,
-        rotate_render_image,
+        ColorAdjust, EnhanceParams, apply_color_adjust, compute_auto_grade, grade_bgra,
+        process_still_pixels, rotate_render_image,
     };
     use gpui::RenderImage;
 
@@ -3001,10 +3158,24 @@ mod grade_tests {
             upscale: 2,
             ..EnhanceParams::default()
         };
-        let (w, h, out) =
-            process_still_pixels(&bgra, 4, 3, 0, ColorAdjust::default(), enh).expect("processed");
+        let (w, h, out) = process_still_pixels(&bgra, 4, 3, 0, ColorAdjust::default(), enh, false)
+            .expect("processed");
         assert_eq!((w, h), (8, 6), "2× upscale doubles each dimension");
         assert_eq!(out.len(), (8 * 6 * 4) as usize, "buffer matches new dims");
+    }
+
+    #[test]
+    fn preview_skips_the_upscale() {
+        // A drag-time preview keeps native size — the heavy resample is the
+        // step we defer to the full-quality pass on release.
+        let bgra = vec![128u8; 4 * 3 * 4];
+        let enh = EnhanceParams {
+            upscale: 4,
+            ..EnhanceParams::default()
+        };
+        let (w, h, _) = process_still_pixels(&bgra, 4, 3, 0, ColorAdjust::default(), enh, true)
+            .expect("processed");
+        assert_eq!((w, h), (4, 3), "preview leaves dimensions at native size");
     }
 
     #[test]
@@ -3015,8 +3186,40 @@ mod grade_tests {
             upscale: 2,
             ..EnhanceParams::default()
         };
-        let (w, h, _) =
-            process_still_pixels(&bgra, 4, 3, 1, ColorAdjust::default(), enh).expect("processed");
+        let (w, h, _) = process_still_pixels(&bgra, 4, 3, 1, ColorAdjust::default(), enh, false)
+            .expect("processed");
         assert_eq!((w, h), (6, 8), "90° turn swaps the upscaled dims");
+    }
+
+    #[test]
+    fn auto_grade_stretches_low_contrast() {
+        // A grey image whose luma sits in a narrow [96, 160]-ish band should
+        // get a positive contrast push to fill the range.
+        let mut bgra = Vec::new();
+        for i in 0..4096u32 {
+            let v = (96 + (i % 64)) as u8; // values 96..159
+            bgra.extend_from_slice(&[v, v, v, 255]);
+        }
+        let g = compute_auto_grade(&bgra);
+        assert!(g.contrast > 0.1, "low-contrast input gets a contrast push");
+        // Pure grey → no saturation tint.
+        assert_eq!(g.saturation, 0.0, "monochrome input is left un-saturated");
+    }
+
+    #[test]
+    fn auto_grade_leaves_full_range_neutral() {
+        // A full 0..255 luma ramp is already auto-levelled — barely touched.
+        let mut bgra = Vec::new();
+        for v in 0..=255u8 {
+            for _ in 0..16 {
+                bgra.extend_from_slice(&[v, v, v, 255]);
+            }
+        }
+        let g = compute_auto_grade(&bgra);
+        assert!(g.contrast.abs() < 0.1, "full-range input stays near-neutral");
+        assert!(
+            g.brightness.abs() < 0.1,
+            "full-range input keeps brightness"
+        );
     }
 }

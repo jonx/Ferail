@@ -246,10 +246,19 @@ another entry keeps `{mode, center}` verbatim:
     For an **mpv video** two more bipolar sliders appear — **Hue** and
     **Gamma** — applied live in mpv's filter chain. They're hidden for stills
     and the built-in player, which have no equivalent stage.
+  - **Auto-enhance** (the **magic-wand** button in the panel header, beside
+    Reset): one click derives an auto-levelled grade from the item's own
+    pixels — a 0.5 %-clipped luma-histogram stretch folded into the
+    Brightness/Contrast sliders, plus a gentle saturation lift skipped for
+    near-monochrome images so a B&W photo isn't tinted (`compute_auto_grade`,
+    run off-thread). It only writes the colour fields, so enhancement
+    (denoise/sharpen/upscale) is left as the user set it; for a video it reads
+    the last pulled frame and pushes the grade live like any other slider.
   - **Enhancement** — Denoise + Sharpen, plus an Upscale `1× / 2× / 4×`
-    (Lanczos, capped at `UPSCALE_MAX_EDGE`). For **stills** these run the CPU
-    pipeline below; Upscale feeds a higher-res bitmap into the *same* layout
-    rect, so the win shows when zoomed past 100 %. For an **mpv video**,
+    (SIMD Lanczos3 via `fast_image_resize`, capped at `UPSCALE_MAX_EDGE` and
+    never shrinking an already-larger original). For **stills** these run the
+    CPU pipeline below; Upscale feeds a higher-res bitmap into the *same*
+    layout rect, so the win shows when zoomed past 100 %. For an **mpv video**,
     Denoise/Sharpen are shown too — plus **Debanding** and **Film grain** —
     and apply **live** through mpv's `vf` filter chain (order **denoise →
     deband → sharpen → grain**, so `sharpen` enhances real detail rather than
@@ -271,6 +280,13 @@ another entry keeps `{mode, center}` verbatim:
     computes, the plain rotated original stands in (UI never stalls — the
     prime directive). Video grading stays inline (`graded_video`, per frame
     seq) since it can't be pre-baked off-thread.
+  - **Drag responsiveness**: while a slider is being dragged the pipeline
+    runs a `preview` pass that **skips the upscale resample** — the one
+    genuinely expensive step, and invisible at fit-to-window anyway — so the
+    colour/denoise/sharpen change tracks the cursor instantly. The cache
+    records whether an entry is a preview; the full-size pass runs once on
+    drag release (the `processed` entry's `bool`). The Upscale buttons
+    themselves aren't a drag, so they go straight to full quality.
 - **Video provider is pluggable** (`feraille_core::video::VideoBackend`,
   see NOTES.md 2026-06-19): the built-in AVFoundation player or, in a
   `--features mpv` build with mpv selected in Settings → Plugins, a libmpv
