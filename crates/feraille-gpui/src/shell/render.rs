@@ -346,7 +346,9 @@ impl Shell {
             let favorited = favs.contains_path(&path);
             // In-memory lookup only — the iCloud probe ran off-thread at
             // startup / volume refresh (ProcessState::cloud_locations).
-            let in_cloud = self.process.cloud_locations.borrow().contains(&path);
+            // `None` = not an iCloud Location; `Some(Downloaded/Placeholder)`
+            // drives the solid-vs-outline trailing cloud badge.
+            let cloud_state = self.process.cloud_locations.borrow().get(&path).copied();
             let weak_for_click = weak.clone();
             let weak_for_menu = weak.clone();
             let path_for_menu = path.clone();
@@ -391,22 +393,33 @@ impl Shell {
                         )
                         .menu("Copy Path", Box::new(CopyContextPath))
                 });
-            // Trailing badges: a cloud for iCloud-synced Locations
-            // (Desktop / Documents under "Desktop & Documents Folders"),
-            // plus the §5 accent star when the entry is also a user
-            // Favorite. Cloud sits left of the star so the star stays
-            // the rightmost "favorited" marker, consistent with the file
-            // list, tree, and breadcrumb.
-            let item = if in_cloud || favorited {
+            // Trailing badges: a cloud for iCloud Locations (Desktop /
+            // Documents under "Desktop & Documents Folders") — solid when the
+            // folder is downloaded locally, outline when it's a not-downloaded
+            // placeholder (Finder's downloaded-vs-evicted distinction) — plus
+            // the §5 accent star when the entry is also a user Favorite. Cloud
+            // sits left of the star so the star stays the rightmost
+            // "favorited" marker, consistent with the file list, tree, and
+            // breadcrumb.
+            let item = if cloud_state.is_some() || favorited {
                 item.suffix(move |_, cx| {
+                    use feraille_fs_native::CloudState;
                     use gpui::svg;
                     let mut badges = h_flex().items_center().gap_1();
-                    if in_cloud {
+                    if let Some(state) = cloud_state {
+                        // Solid `cloud-fill` = downloaded/"enabled"; outline
+                        // `cloud` = set up for cloud but not downloaded.
+                        let icon = match state {
+                            CloudState::Downloaded => "icons/nav/cloud-fill.svg",
+                            CloudState::Placeholder => "icons/nav/cloud.svg",
+                        };
                         badges = badges.child(
                             svg()
-                                .path("icons/nav/cloud.svg")
-                                .icon_px(13.0)
-                                .text_color(cx.theme().muted_foreground)
+                                .path(icon)
+                                .icon_px(14.0)
+                                // Match the black Locations row icons rather
+                                // than washed-out muted grey.
+                                .text_color(cx.theme().sidebar_foreground)
                                 .flex_shrink_0(),
                         );
                     }
@@ -1217,8 +1230,9 @@ impl Shell {
 
     /// Tabstrip above the toolbar. Each tab is a clickable pill
     /// labelled with the directory's basename; the active tab has
-    /// a filled background. A trailing "+" opens a new tab; each
-    /// non-active tab has a small "x" hover-affordance to close.
+    /// a filled background. A trailing "+" opens a new tab; when more
+    /// than one tab is open each carries a trailing close affordance —
+    /// the shared `close.svg` glyph in a rounded hover highlight.
     fn tabstrip(&self, cx: &mut Context<Self>) -> Div {
         use gpui_component::Sizable as _;
         use gpui_component::button::{Button, ButtonVariants as _};
@@ -1259,7 +1273,7 @@ impl Shell {
                 .items_center()
                 .gap_1()
                 .px_3()
-                .py_1()
+                .py_0p5()
                 .rounded(theme.radius)
                 .cursor_pointer()
                 .text_scale_sm()
@@ -1349,12 +1363,23 @@ impl Shell {
             if multi {
                 let close = div()
                     .id(("tab-close", idx))
-                    .ml_1()
-                    .px_1()
-                    .text_scale_xs()
+                    .ml_0p5()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(14.0))
+                    .rounded(theme.radius)
+                    // Subtle close affordance: muted grey by default, darkening
+                    // to foreground on hover (plus a rounded highlight) — the
+                    // common tab-close convention. The svg has no explicit
+                    // color, so it inherits the div's cascaded text color (gpui
+                    // paints svg with `style.text.color`); `.hover` retints both.
                     .text_color(theme.muted_foreground)
-                    .hover(|this| this.text_color(theme.foreground))
-                    .child("x")
+                    .hover(|this| {
+                        this.text_color(theme.foreground)
+                            .bg(theme.accent.opacity(0.15))
+                    })
+                    .child(svg().path("icons/close.svg").icon_px(11.0))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         // Phase A+B+C: tabs own their own TableState,
                         // and closing the last tab closes the window
@@ -1419,7 +1444,7 @@ impl Shell {
             .items_center()
             .gap_1()
             .px_2()
-            .py_1()
+            .py_0p5()
             .border_b_1()
             .border_color(theme.border)
             .bg(theme.secondary);
@@ -1456,18 +1481,29 @@ impl Shell {
         }
 
         // Trailing "+" — new tab. Pinned outside the scroll viewport.
+        // House-style `nav/plus.svg` (Lucide outline, stroke 1.75) so the
+        // affordance matches the sidebar icon family instead of a thin font
+        // glyph; sized through IconScale to zoom with the UI.
         outer = outer.child(
             div()
                 .id("tab-new")
+                .flex()
+                .items_center()
+                .justify_center()
                 .ml_1()
                 .px_2()
-                .py_1()
+                .py_0p5()
                 .rounded(theme.radius)
                 .cursor_pointer()
-                .text_scale_sm()
-                .text_color(theme.muted_foreground)
                 .hover(|this| this.bg(theme.accent.opacity(0.10)))
-                .child("+")
+                .child(
+                    svg()
+                        .path("icons/nav/plus.svg")
+                        .icon_px(14.0)
+                        // Solid foreground (the active-tab label colour), not
+                        // muted grey, so the new-tab affordance reads clearly.
+                        .text_color(theme.foreground),
+                )
                 .on_click(cx.listener(|this, _, window, cx| {
                     // Spec §4.3: new tab opens beside the active tab,
                     // at the active tab's directory.
@@ -2417,7 +2453,7 @@ impl Shell {
                 .items_center()
                 .gap_1()
                 .px_4()
-                .py_2()
+                .py_1()
                 .border_b_1()
                 .border_color(cx.theme().border)
                 .on_action(move |a: &gpui_component::input::MoveUp, window, cx| {
@@ -2450,7 +2486,7 @@ impl Shell {
             .items_center()
             .gap_1()
             .px_4()
-            .py_2()
+            .py_1()
             .border_b_1()
             .border_color(cx.theme().border);
 

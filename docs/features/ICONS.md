@@ -39,10 +39,12 @@ file. **Consequence worth remembering:** a path like `icons/folder.svg` (no
   ~28 of them.
 - **Apple system icons** via `NSWorkspace iconForFile:` — Apple artwork,
   fetched at runtime, never redistributed. Folders/volumes only.
-- **[Bootstrap Icons](https://icons.getbootstrap.com)** — MIT License. One
-  glyph so far: `nav/cloud.svg` (filled-outline `cloud`), used because its cloud
-  reads more clearly than Lucide's lopsided one. Filled style (`fill="currentColor"`),
-  native `0 0 16 16` viewBox kept so the path scales correctly.
+- **[Bootstrap Icons](https://icons.getbootstrap.com)** — MIT License. Two
+  glyphs, a matched pair for the iCloud badge's two states: `nav/cloud-fill.svg`
+  (solid `cloud-fill`) = downloaded, `nav/cloud.svg` (outline `cloud`) =
+  not-downloaded placeholder. The pair is intentionally one family so fill vs.
+  outline reads as the state axis. Native `0 0 16 16` viewBox +
+  `fill="currentColor"` kept so they scale and inherit the icon colour.
 
 If we ever ship a `LICENSE`/attribution bundle, Lucide's ISC notice covers both
 SVG bundles; Apache-2.0 covers the upstream crate.
@@ -163,15 +165,20 @@ rows (`is_removable`, i.e. the boot disk never) also draw a **trailing**
 `nav/eject.svg` button (Lucide `eject`, local 1.75): clicking it unmounts the
 drive (`Shell::eject_path`) without opening the context menu, matching Finder.
 
-iCloud-synced Locations draw a **trailing** `nav/cloud.svg` badge (Bootstrap
-Icons filled `cloud`, `muted_foreground` — chosen over Lucide's lopsided cloud
-for a clearer read) — e.g. Desktop / Documents under
-"Desktop & Documents Folders" (render.rs `build_locations_menu`). Sync status is
-detected off-thread by `feraille_fs_native::path_is_cloud_synced`
-(`~/Library/Mobile Documents/` prefix **or** `NSURLIsUbiquitousItemKey`) and
-cached in `ProcessState::cloud_locations`, so render never touches the
-filesystem. When an entry is both synced and a Favorite, the cloud sits left of
-the trailing star.
+iCloud Locations draw a **trailing** cloud badge at `icon_px(14)` in
+`sidebar_foreground` (matching the black Locations leading icons, not muted
+grey) — e.g. Desktop / Documents under "Desktop & Documents Folders"
+(render.rs `build_locations_menu`). The glyph encodes Finder's
+downloaded-vs-evicted distinction: **solid `nav/cloud-fill.svg`** = downloaded
+locally, **outline `nav/cloud.svg`** = a not-downloaded placeholder ("set up for
+cloud but not enabled"). State is computed off-thread by
+`feraille_fs_native::cloud_state` — `path_is_cloud_synced`
+(`~/Library/Mobile Documents/` prefix **or** `NSURLIsUbiquitousItemKey`) gates
+membership, then the `SF_DATALESS` stat flag picks downloaded vs. placeholder
+(both read via `lstat`, never materializing the file) — and cached in
+`ProcessState::cloud_locations` (`PathBuf → CloudState`), so render never
+touches the filesystem. When an entry is both synced and a Favorite, the cloud
+sits left of the trailing star.
 
 ## Toolbar / chrome / commands
 
@@ -184,6 +191,8 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Back | `icons/nav/chevron-left.svg` | Lucide `chevron-left` (local 1.75) | render.rs:1464 |
 | Forward | `icons/nav/chevron-right.svg` | Lucide `chevron-right` (local 1.75) | render.rs:1476 |
 | Scroll tabs left / right | `icons/nav/chevrons-left.svg` / `chevrons-right.svg` | In-house, Lucide `chevrons-left` / `-right` (local 1.75) | render.rs `tabstrip` |
+| New tab | `icons/nav/plus.svg` | In-house Lucide `plus` (local 1.75; matches the sidebar family — distinct from the upstream stroke-2 `icons/plus.svg` used by the zoom controls) | render.rs `tabstrip` |
+| Add favorite (Favorites section +) | `icons/nav/plus.svg` ↑ | In-house Lucide `plus` (local 1.75) | favorites_section.rs header |
 | Sort (asc/desc) | `icons/sort-ascending.svg` / `sort-descending.svg` ↑ | Lucide | render.rs:1407 |
 | Show Desktop | `icons/nav/show-desktop.svg` | In-house (corner-arrows) | render.rs:1562 |
 | New Folder | `icons/nav/folder.svg` | Lucide `folder` (1.75) | render.rs:1575 |
@@ -199,6 +208,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Tool-result pop-out | `icons/maximize.svg` ↑ | Lucide | render.rs:2458 |
 | Tool-result close | `icons/close.svg` ↑ | Lucide | render.rs:2468 |
 | Task-panel dismiss | `icons/close.svg` ↑ | Lucide | task_panel.rs:101 |
+| Tab close | `icons/close.svg` ↑ | Lucide — shared "close" chrome glyph (replaced a literal `"x"` text char) | render.rs `tabstrip` |
 
 ### Preview-pane actions ([render.rs](../../crates/feraille-gpui/src/shell/render.rs))
 

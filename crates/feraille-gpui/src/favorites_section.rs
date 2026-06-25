@@ -151,15 +151,23 @@ impl SidebarItem for FavoritesSection {
         // flip the section's disclosure-triangle collapse.
         let plus_button = div()
             .id(ElementId::Name(plus_key))
+            .flex()
             .flex_shrink_0()
             .w(px(16.0))
             .h(px(16.0))
             .items_center()
             .justify_center()
-            .text_size(px(13.0))
-            .text_color(theme.muted_foreground)
             .cursor_pointer()
-            .child("+")
+            // House-style `nav/plus.svg` (Lucide outline, stroke 1.75) so it
+            // matches the sidebar icon family rather than a thin font "+".
+            .child(
+                gpui::svg()
+                    .path("icons/nav/plus.svg")
+                    .icon_px(13.0)
+                    // Match the black Locations/Favorites row icons, not the
+                    // muted grey of secondary text.
+                    .text_color(theme.sidebar_foreground),
+            )
             .on_click(move |_, _window, cx| {
                 cx.stop_propagation();
                 let Some(shell) = shell_for_plus.upgrade() else {

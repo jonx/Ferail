@@ -805,16 +805,61 @@ fn url_is_ubiquitous(path: &Path) -> Option<bool> {
     }
 }
 
-/// The subset of the sidebar's well-known Locations that macOS reports
-/// as iCloud-synced, as an owned set the UI can probe per render
-/// without touching the filesystem. Computed off the render thread
-/// (startup + volume/wake refresh); empty off macOS. The result feeds
-/// the trailing cloud badge in the Locations section.
-pub fn cloud_synced_locations() -> std::collections::HashSet<PathBuf> {
+/// iCloud state of a path, mirroring Finder's stable downloaded-vs-placeholder
+/// distinction. `None` (no badge) is the implicit third state: not an iCloud
+/// item at all.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudState {
+    /// In iCloud and materialized on this Mac (Finder shows no badge; we draw
+    /// a solid cloud). The common case for synced Desktop/Documents.
+    Downloaded,
+    /// In iCloud but a not-downloaded placeholder — APFS dataless, evicted by
+    /// "Optimize Mac Storage" (Finder shows its download cloud; we draw an
+    /// outline cloud). "Set up for cloud but the local copy isn't here."
+    Placeholder,
+}
+
+/// The iCloud [`CloudState`] of `path`, or `None` when it isn't an iCloud item.
+///
+/// Reads cached resource values plus the stat flags only — never reads file
+/// data, so it never downloads a placeholder or spins a sleeping disk (the
+/// `SF_DATALESS` flag is visible to `lstat` without materializing the file).
+/// Always `None` off macOS. Per the prime directive, callers must not invoke
+/// this from the paint path.
+#[cfg(target_os = "macos")]
+pub fn cloud_state(path: &Path) -> Option<CloudState> {
+    use std::os::macos::fs::MetadataExt;
+    if !path_is_cloud_synced(path) {
+        return None;
+    }
+    // <sys/stat.h>: SF_DATALESS — "file is dataless object" (the placeholder
+    // for a not-yet-materialized iCloud / FileProvider item). `lstat` reading
+    // st_flags does not trigger a download.
+    const SF_DATALESS: u32 = 0x4000_0000;
+    let dataless = std::fs::symlink_metadata(path)
+        .map(|m| (m.st_flags() & SF_DATALESS) != 0)
+        .unwrap_or(false);
+    Some(if dataless {
+        CloudState::Placeholder
+    } else {
+        CloudState::Downloaded
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn cloud_state(_path: &Path) -> Option<CloudState> {
+    None
+}
+
+/// The sidebar's well-known Locations that macOS reports as iCloud items,
+/// mapped to their [`CloudState`], as an owned map the UI can probe per render
+/// without touching the filesystem. Computed off the render thread (startup +
+/// volume/wake refresh); empty off macOS. Feeds the trailing cloud badge in
+/// the Locations section.
+pub fn cloud_synced_locations() -> std::collections::HashMap<PathBuf, CloudState> {
     paths::well_known_locations()
         .into_iter()
-        .map(|loc| loc.path)
-        .filter(|p| path_is_cloud_synced(p))
+        .filter_map(|loc| cloud_state(&loc.path).map(|state| (loc.path, state)))
         .collect()
 }
 

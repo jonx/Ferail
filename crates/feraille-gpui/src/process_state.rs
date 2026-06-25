@@ -24,7 +24,7 @@
 //! the `Rc<ProcessState>` itself never crosses thread boundaries.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -128,12 +128,13 @@ pub struct ProcessState {
     /// Disk Arbitration listener can refresh it from any window.
     pub volumes: RefCell<Vec<VolumeInfo>>,
 
-    /// Well-known Location paths macOS reports as iCloud-synced (e.g.
-    /// Desktop/Documents under "Desktop & Documents Folders"). Computed
-    /// off-thread at startup and refreshed alongside `volumes`; the
-    /// sidebar reads it to draw a trailing cloud badge without ever
+    /// Well-known Location paths macOS reports as iCloud items, mapped to
+    /// their `CloudState` (downloaded vs not-downloaded placeholder) — e.g.
+    /// Desktop/Documents under "Desktop & Documents Folders". Computed
+    /// off-thread at startup and refreshed alongside `volumes`; the sidebar
+    /// reads it to draw a trailing solid/outline cloud badge without ever
     /// touching the filesystem on the render path.
-    pub cloud_locations: RefCell<HashSet<PathBuf>>,
+    pub cloud_locations: RefCell<HashMap<PathBuf, feraille_fs_native::CloudState>>,
 
     /// Monotonic counter for minting process-local `TabId`s. Stable
     /// for the tab's lifetime; survives tab reorder and (Phase F)
