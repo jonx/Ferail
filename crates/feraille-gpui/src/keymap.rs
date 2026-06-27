@@ -411,6 +411,13 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("right", ViewerRight, Some(VIEWER_CONTEXT)),
         KeyBinding::new("up", ViewerPrev, Some(VIEWER_CONTEXT)),
         KeyBinding::new("down", ViewerNext, Some(VIEWER_CONTEXT)),
+        // Ctrl+Left/Right always navigate entries — the horizontal twin of
+        // Up/Down, so on a video (where plain Left/Right frame-step) you can
+        // still flip to the previous/next clip without reaching for the
+        // arrows' vertical pair. (On macOS these may be claimed by Mission
+        // Control's "move a space" shortcut; Up/Down remain as a fallback.)
+        KeyBinding::new("ctrl-left", ViewerPrev, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("ctrl-right", ViewerNext, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", ViewerDismiss, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", EntryInfoDismiss, Some(ENTRY_INFO_CONTEXT)),
         KeyBinding::new("space", ViewerTogglePlay, Some(VIEWER_CONTEXT)),

@@ -77,8 +77,13 @@ const SEEK_GRAB_PX: f32 = 16.0;
 /// Per-step zoom factor for the toolbar buttons / Cmd+= / Cmd+-.
 const ZOOM_STEP: f32 = 1.25;
 /// Fullscreen: hovering within this many px of the window top reveals
-/// the hidden toolbar.
+/// the hidden toolbar; within this many px of the bottom reveals the
+/// status/seek bar.
 const CHROME_REVEAL_STRIP: f32 = 56.0;
+/// Fullscreen: once revealed, the toolbar / status bar auto-hide this
+/// long after the pointer was last near them — unless the pointer is
+/// hovering the bar itself (or a seek drag is live).
+const CHROME_AUTOHIDE: Duration = Duration::from_millis(2500);
 
 /// Extensions the built-in (AVFoundation) player reliably plays. Routed to
 /// the video path for *any* backend. Everything else stays a Quick Look
@@ -548,9 +553,27 @@ pub struct ViewerWindow {
     stage_origin_y: f32,
     /// Slideshow state (docs/features/VIEWER.md §playback).
     playback: Playback,
-    /// In fullscreen the chrome hides; hovering the top strip brings
-    /// the toolbar back. Pure mouse-position state — no timers.
+    /// In fullscreen the chrome hides; hovering the top strip reveals the
+    /// toolbar, then it auto-hides after `CHROME_AUTOHIDE` unless the
+    /// pointer is over it (see `over_chrome`).
     chrome_hover: bool,
+    /// As `chrome_hover`, for the bottom status/seek bar revealed by the
+    /// bottom strip.
+    status_hover: bool,
+    /// Pointer is currently over the revealed toolbar — pins it open so
+    /// the auto-hide tick leaves it alone.
+    over_chrome: bool,
+    /// Pointer is currently over the revealed status/seek bar.
+    over_status: bool,
+    /// Was the pointer within the top / bottom reveal strip on the last
+    /// move? Reveal fires on the rising edge only, so a bar that auto-hid
+    /// while the pointer lingers in the strip doesn't blink straight back.
+    near_top_prev: bool,
+    near_bottom_prev: bool,
+    /// Epoch guarding the auto-hide one-shot, mirroring the slideshow
+    /// timer's idiom: a newer countdown bumps this, making older ticks
+    /// inert.
+    autohide_epoch: u64,
     /// Title last pushed to the platform window, so render-time title
     /// sync only crosses into AppKit when the text actually changed.
     last_title: String,
@@ -759,6 +782,12 @@ impl ViewerWindow {
             stage_origin_y: TOOLBAR_H,
             playback: Playback::new(interval),
             chrome_hover: false,
+            status_hover: false,
+            over_chrome: false,
+            over_status: false,
+            near_top_prev: false,
+            near_bottom_prev: false,
+            autohide_epoch: 0,
             last_title: String::new(),
             video_overlay: None,
             video_epoch: 0,
@@ -1113,6 +1142,11 @@ impl ViewerWindow {
     /// Stepping pauses playback.
     fn step_video(&mut self, frames: i64, cx: &mut Context<Self>) {
         if let Some((stream, _)) = &mut self.video_overlay {
+            // Stepping only behaves as a frame step on a *paused* player
+            // (AVFoundation's `stepByCount:` needs rate 0; mpv's `frame-step`
+            // pauses anyway). A still-playing clip would otherwise swallow the
+            // step, which read as "Left/Right does nothing". Pause first.
+            stream.set_paused(true);
             stream.step(frames);
             self.video_paused = true;
             cx.notify();
@@ -1499,11 +1533,33 @@ impl ViewerWindow {
         cx: &mut Context<Self>,
     ) {
         // Fullscreen chrome reveal: hovering the top strip shows the
-        // toolbar. Pure position state — only notify on transitions.
+        // toolbar, the bottom strip the status/seek bar. Reveal fires on
+        // the rising edge of entering a strip (so a bar that auto-hid while
+        // the pointer lingers there doesn't blink straight back); each
+        // reveal arms the auto-hide countdown.
         if window.is_fullscreen() {
-            let want = e.position.y.as_f32() < CHROME_REVEAL_STRIP;
-            if want != self.chrome_hover {
-                self.chrome_hover = want;
+            let y = e.position.y.as_f32();
+            let h = window.viewport_size().height.as_f32();
+            let near_top = y < CHROME_REVEAL_STRIP;
+            let near_bottom = y > h - CHROME_REVEAL_STRIP;
+            let mut newly_shown = false;
+            let mut arm = false;
+            if near_top && !self.near_top_prev {
+                newly_shown |= !self.chrome_hover;
+                self.chrome_hover = true;
+                arm = true;
+            }
+            if near_bottom && !self.near_bottom_prev {
+                newly_shown |= !self.status_hover;
+                self.status_hover = true;
+                arm = true;
+            }
+            self.near_top_prev = near_top;
+            self.near_bottom_prev = near_bottom;
+            if arm {
+                self.arm_autohide(cx);
+            }
+            if newly_shown {
                 cx.notify();
             }
         }
@@ -1523,6 +1579,42 @@ impl ViewerWindow {
 
     fn end_drag(&mut self) {
         self.drag_last = None;
+    }
+
+    /// Fullscreen: (re)start the countdown that hides the revealed
+    /// toolbar / status bar. Epoch-guarded like the slideshow timer
+    /// (`arm_timer`), so an earlier countdown goes inert when a newer one
+    /// is armed — no task handles to track.
+    fn arm_autohide(&mut self, cx: &mut Context<Self>) {
+        let epoch = self.autohide_epoch.wrapping_add(1);
+        self.autohide_epoch = epoch;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(CHROME_AUTOHIDE).await;
+            let Some(this) = this.upgrade() else { return };
+            this.update(cx, |this, cx| this.autohide_fire(epoch, cx));
+        })
+        .detach();
+    }
+
+    /// One-shot auto-hide tick: hide whichever revealed bar the pointer
+    /// isn't over (a live seek drag also keeps the status bar up). Stale
+    /// ticks — a newer countdown armed since — are inert.
+    fn autohide_fire(&mut self, epoch: u64, cx: &mut Context<Self>) {
+        if self.autohide_epoch != epoch {
+            return;
+        }
+        let mut changed = false;
+        if self.chrome_hover && !self.over_chrome {
+            self.chrome_hover = false;
+            changed = true;
+        }
+        if self.status_hover && !self.over_status && self.seek_drag.is_none() {
+            self.status_hover = false;
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
     }
 
     /// Double-click: fit ↔ 1:1. Going to 1:1 centers the viewport on
@@ -2992,8 +3084,23 @@ impl Render for ViewerWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_title(window);
         let fullscreen = window.is_fullscreen();
-        if !fullscreen {
+        if !fullscreen
+            && (self.chrome_hover
+                || self.status_hover
+                || self.over_chrome
+                || self.over_status
+                || self.near_top_prev
+                || self.near_bottom_prev)
+        {
+            // Out of fullscreen the chrome is always shown inline; drop all
+            // reveal/auto-hide state and stale any pending hide tick.
             self.chrome_hover = false;
+            self.status_hover = false;
+            self.over_chrome = false;
+            self.over_status = false;
+            self.near_top_prev = false;
+            self.near_bottom_prev = false;
+            self.autohide_epoch = self.autohide_epoch.wrapping_add(1);
         }
         let viewport = window.viewport_size();
         let chrome_h = if fullscreen {
@@ -3046,19 +3153,48 @@ impl Render for ViewerWindow {
         };
 
         if fullscreen {
-            // Image edge to edge; toolbar only as a hover overlay at
-            // the top (no timers — pure mouse-position state).
+            // Image edge to edge; the toolbar and status/seek bar ride as
+            // hover overlays at the top and bottom. Each is revealed by the
+            // reveal strip, pinned open while the pointer is over it
+            // (`on_hover`), and auto-hidden by the `arm_autohide` countdown.
             let chrome = self.chrome_hover.then(|| {
                 div()
+                    .id("viewer-chrome-overlay")
                     .absolute()
                     .top_0()
                     .left_0()
                     .right_0()
                     .bg(cx.theme().background.opacity(0.92))
+                    .on_hover(cx.listener(|this, over: &bool, _, cx| {
+                        this.over_chrome = *over;
+                        if !*over {
+                            this.arm_autohide(cx);
+                        }
+                    }))
                     .child(self.toolbar(cx))
+            });
+            // Keep the status bar up through an active seek drag too, so it
+            // can't vanish mid-scrub.
+            let show_status = self.status_hover || self.seek_drag.is_some();
+            let status = show_status.then(|| {
+                div()
+                    .id("viewer-status-overlay")
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .bg(cx.theme().background.opacity(0.92))
+                    .on_hover(cx.listener(|this, over: &bool, _, cx| {
+                        this.over_status = *over;
+                        if !*over {
+                            this.arm_autohide(cx);
+                        }
+                    }))
+                    .child(self.status_strip(cx))
             });
             root.child(stage_area)
                 .when_some(chrome, Div::child)
+                .when_some(status, Div::child)
                 .when_some(panel, Div::child)
         } else {
             let toolbar = self.toolbar(cx);

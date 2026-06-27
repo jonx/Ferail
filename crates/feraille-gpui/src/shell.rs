@@ -31,7 +31,7 @@ use gpui_component::{
 
 use crate::app_state;
 use crate::file_list::FileListDelegate;
-use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
+use crate::fs_watcher::{FsWatcher, POLL_INTERVAL, RELOAD_DEBOUNCE};
 use crate::multi_table::{DataTable, TableEvent, TableState};
 use crate::tasks::TaskKind;
 use crate::tool_results::{ToolHostContext, ToolHostEvent};
@@ -1211,19 +1211,51 @@ impl Shell {
         let poll_watcher = process.watcher.clone();
         let poll_process = process.clone();
         cx.spawn(async move |this, cx| {
+            // Per-directory reload throttle (leading edge). Pending dirty
+            // paths carry across polls; a directory reloads at once on its
+            // first event, then at most once per RELOAD_DEBOUNCE while events
+            // keep arriving — coalescing FSEvents bursts without ever dropping
+            // a change (see `RELOAD_DEBOUNCE`).
+            let mut last_reload: std::collections::HashMap<PathBuf, std::time::Instant> =
+                std::collections::HashMap::new();
+            let mut pending: std::collections::HashSet<PathBuf> =
+                std::collections::HashSet::new();
             loop {
                 cx.background_executor().timer(POLL_INTERVAL).await;
-                let dirty_paths = poll_watcher
-                    .borrow()
-                    .as_ref()
-                    .map(|w| w.drain_reload_relevant_paths())
-                    .unwrap_or_default();
-                if !dirty_paths.is_empty() {
-                    if this.update(cx, |_, _| {}).is_err() {
-                        break;
-                    }
-                    Shell::broadcast_reload_for_process(&poll_process, dirty_paths, cx);
+                if let Some(w) = poll_watcher.borrow().as_ref() {
+                    pending.extend(w.drain_reload_relevant_paths());
                 }
+                if pending.is_empty() {
+                    continue;
+                }
+                let now = std::time::Instant::now();
+                // Surface only the paths whose throttle window has elapsed;
+                // the rest stay pending for a later poll (no change is lost).
+                let mut due: Vec<PathBuf> = Vec::new();
+                pending.retain(|p| {
+                    let ready = last_reload
+                        .get(p)
+                        .map_or(true, |t| now.duration_since(*t) >= RELOAD_DEBOUNCE);
+                    if ready {
+                        due.push(p.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+                if due.is_empty() {
+                    continue;
+                }
+                for p in &due {
+                    last_reload.insert(p.clone(), now);
+                }
+                // Drop throttle entries for directories quiet for a while so
+                // the map can't grow unbounded over a long session.
+                last_reload.retain(|_, t| now.duration_since(*t) < RELOAD_DEBOUNCE * 8);
+                if this.update(cx, |_, _| {}).is_err() {
+                    break;
+                }
+                Shell::broadcast_reload_for_process(&poll_process, due, cx);
             }
         })
         .detach();
@@ -2332,7 +2364,7 @@ impl Shell {
             window.push_notification(Notification::info("No files to view in this folder"), cx);
             return;
         }
-        crate::viewer::open_viewer(playlist, start, cx);
+        crate::viewer::open_viewer(playlist, start, window, cx);
     }
 
     /// File-list context action — open the viewer anchored to the
@@ -2371,7 +2403,7 @@ impl Shell {
             window.push_notification(Notification::info("No files to view in this folder"), cx);
             return;
         }
-        crate::viewer::open_viewer_playing(playlist, start, cx);
+        crate::viewer::open_viewer_playing(playlist, start, window, cx);
     }
 
     /// Cmd+P — toggle preview-pane visibility. The pane defaults to

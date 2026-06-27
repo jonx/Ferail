@@ -99,3 +99,15 @@ impl FsWatcher {
 /// Recommended poll interval for the foreground-executor polling
 /// task. 250 ms gives near-immediate response without spinning.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Minimum interval between reloads of the *same* directory. The poll
+/// already coalesces all events within one 250 ms window into a single
+/// reload; this throttles *across* windows, so a burst — a multi-file
+/// paste, a download landing, an editor's create+rename+modify save —
+/// collapses into far fewer re-enumerate + prefetch passes instead of one
+/// per window. Leading-edge: the first event reloads immediately; only
+/// repeats inside the window are deferred, and a still-changing directory
+/// keeps reloading once per window — so a real change is never dropped,
+/// only rate-limited. This is throttling, not suppression: it does not
+/// compare contents or skip work that would surface a change.
+pub const RELOAD_DEBOUNCE: Duration = Duration::from_millis(750);
