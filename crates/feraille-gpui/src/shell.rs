@@ -947,8 +947,11 @@ fn hydrate_ant_trail(
     };
     // Recents = the same visit log ordered by last access (the heat
     // map ignores time, so derive it separately from the same rows).
+    // `last_access_unix == 0` is the cleared sentinel — those rows may
+    // still carry heat (`hits`) but are no longer recent, so skip them.
     let mut by_recency: Vec<(PathBuf, i64)> = entries
         .iter()
+        .filter(|e| e.last_access_unix > 0)
         .map(|e| (PathBuf::from(&e.folder_path), e.last_access_unix))
         .collect();
     by_recency.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
@@ -1120,6 +1123,10 @@ impl Shell {
         // Seed the favorites-tracking policy. Default true (exclude).
         cx.set_global(crate::ant_trail::ExcludeFavoritesFromTracking(
             persisted.exclude_favorites_from_tracking.unwrap_or(true),
+        ));
+        // Seed the Recents master switch. Default true (on).
+        cx.set_global(crate::recents_section::RecentsEnabled(
+            persisted.recents_enabled.unwrap_or(true),
         ));
         // FERAILLE_UI_SCALE env var (regression tool / screenshots)
         // wins over the persisted value when set. Both are clamped.
@@ -4669,7 +4676,12 @@ impl Shell {
             return;
         };
         self.process.record_ant_visit(path.clone());
-        self.process.push_recent(path.clone());
+        // Recents is a separate, user-toggleable view over the same
+        // visit log: only feed it when the feature is on. The DB write
+        // below still runs so the Ant Trail (its own switch) keeps heat.
+        if crate::recents_section::recents_enabled(cx) {
+            self.process.push_recent(path.clone());
+        }
         let heat = self.ant_heat(node_id);
         self.process.node_store.borrow_mut().set_heat(node_id, heat);
         if let Some(db) = self.process.db_snapshot() {

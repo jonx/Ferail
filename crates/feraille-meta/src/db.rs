@@ -461,21 +461,41 @@ impl MetadataDb {
         Ok(())
     }
 
-    /// Forget a single folder's visit record. Backs "Remove from
-    /// Recents" — since Recents and the Ant Trail heat tint are the
-    /// same `folder_usage` signal, this also drops that folder's heat
-    /// (documented in docs/features — Recents).
-    pub fn forget_folder_visit(&self, path: &str) -> Result<()> {
+    /// Drop a single folder from Recents *without* forgetting its Ant
+    /// Trail heat. Recents (recency) and heat (frequency) are two
+    /// columns of the same `folder_usage` row, so this zeroes only the
+    /// recency signal (`last_access_unix`) and leaves `hits` — and thus
+    /// the heat tint — untouched. A `last_access_unix` of 0 is the
+    /// "cleared" sentinel `load_recent_folders` filters out (real visits
+    /// always stamp a positive epoch). Backs "Remove from Recents".
+    pub fn forget_recent_access(&self, path: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE folder_usage SET last_access_unix = 0 WHERE folder_path = ?1",
+            params![path],
+        )?;
+        Ok(())
+    }
+
+    /// Clear the whole Recents list without touching Ant Trail heat:
+    /// zero every row's `last_access_unix` (the recency signal) while
+    /// keeping `hits` (the frequency signal). Backs "Clear Recents".
+    /// See [`Self::forget_recent_access`] for the column split.
+    pub fn clear_recent_access(&self) -> Result<()> {
         self.conn
-            .execute("DELETE FROM folder_usage WHERE folder_path = ?1", params![path])?;
+            .execute("UPDATE folder_usage SET last_access_unix = 0", [])?;
         Ok(())
     }
 
     /// Folder paths ordered most-recently-visited first, capped at
     /// `limit`. Drives the Recents sidebar section's startup hydration.
+    /// Rows whose recency was cleared (`last_access_unix == 0`, the
+    /// sentinel set by [`Self::clear_recent_access`] /
+    /// [`Self::forget_recent_access`]) are excluded — they may still
+    /// carry heat via `hits`, but they're no longer "recent".
     pub fn load_recent_folders(&self, limit: usize) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT folder_path FROM folder_usage \
+             WHERE last_access_unix > 0 \
              ORDER BY last_access_unix DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| row.get::<_, String>(0))?;
@@ -1014,6 +1034,47 @@ mod tests {
         assert_eq!(rows[0].last_access_unix, 200);
         assert_eq!(rows[1].folder_path, "/b");
         assert_eq!(rows[1].hits, 1);
+    }
+
+    #[test]
+    fn clear_recent_access_keeps_heat() {
+        // Clearing Recents must zero recency but preserve hits (heat),
+        // since the two are independent columns of one row.
+        let db = MetadataDb::in_memory().unwrap();
+        db.record_folder_visit("/a", 100).unwrap();
+        db.record_folder_visit("/a", 200).unwrap();
+        db.record_folder_visit("/b", 150).unwrap();
+        assert_eq!(db.load_recent_folders(10).unwrap().len(), 2);
+
+        db.clear_recent_access().unwrap();
+
+        // Recents is empty...
+        assert!(db.load_recent_folders(10).unwrap().is_empty());
+        // ...but the heat (hits) survives for every folder.
+        let rows = db.load_ant_trail().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].folder_path, "/a");
+        assert_eq!(rows[0].hits, 2);
+        assert_eq!(rows[0].last_access_unix, 0);
+
+        // A fresh visit re-enters Recents and bumps heat from where it was.
+        db.record_folder_visit("/a", 300).unwrap();
+        assert_eq!(db.load_recent_folders(10).unwrap(), vec!["/a".to_string()]);
+        assert_eq!(db.load_ant_trail().unwrap()[0].hits, 3);
+    }
+
+    #[test]
+    fn forget_recent_access_keeps_heat_for_one_folder() {
+        let db = MetadataDb::in_memory().unwrap();
+        db.record_folder_visit("/a", 100).unwrap();
+        db.record_folder_visit("/b", 150).unwrap();
+
+        db.forget_recent_access("/a").unwrap();
+
+        // /a drops off Recents; /b stays.
+        assert_eq!(db.load_recent_folders(10).unwrap(), vec!["/b".to_string()]);
+        // Both keep their heat row.
+        assert_eq!(db.load_ant_trail().unwrap().len(), 2);
     }
 
     #[test]

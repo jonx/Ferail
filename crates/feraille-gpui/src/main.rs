@@ -15,10 +15,10 @@ use feraille_gpui::{
     screenshot,
     settings::{SettingsView, category_from_arg},
     shell::{
-        CloseTab, CloseWindow, CopyPath, DeleteImmediately, EmptyTrash, FindDuplicates, FocusFilter,
-        GoHome, MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
-        OpenDiskUsage, OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell,
-        ShowDesktop, ToggleHidden, TogglePreview,
+        ClearRecents, CloseTab, CloseWindow, CopyPath, DeleteImmediately, EmptyTrash,
+        FindDuplicates, FocusFilter, GoHome, MoveToTrash, NavigateBack, NavigateForward,
+        NavigateParent, NewFolder, NewTab, OpenDiskUsage, OpenSelected, OpenSettings, Refresh,
+        RenameSelected, RevealInFinder, Shell, ShowDesktop, ToggleHidden, TogglePreview,
     },
 };
 use gpui::*;
@@ -736,6 +736,12 @@ fn install_app_menus(cx: &mut App) {
                 MenuItem::action(title("go.parent", "Enclosing Folder"), NavigateParent),
                 MenuItem::separator(),
                 MenuItem::action(title("go.home", "Home"), GoHome),
+                MenuItem::separator(),
+                // Ellipsis: opens a confirmation dialog (macOS HIG).
+                MenuItem::action(
+                    title("go.clear_recents", "Clear Recents\u{2026}"),
+                    ClearRecents,
+                ),
             ],
             disabled: false,
         },

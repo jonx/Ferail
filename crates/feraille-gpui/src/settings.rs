@@ -393,6 +393,14 @@ fn persist_exclude_favorites_from_tracking(value: bool) {
     });
 }
 
+fn persist_recents_enabled(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        recents_enabled: Some(value),
+        ..existing
+    });
+}
+
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Settings::new("feraille-settings")
@@ -1057,6 +1065,24 @@ fn appearance_page(
                     |val: bool, cx: &mut App| {
                         persist_exclude_favorites_from_tracking(val);
                         cx.set_global(crate::ant_trail::ExcludeFavoritesFromTracking(val));
+                    },
+                )),
+        )
+        .group(
+            SettingGroup::new()
+                .title("Recents")
+                // Master switch. Persists *and* updates the live global so the
+                // sidebar section appears/vanishes without a relaunch. Use
+                // "Clear Recents\u{2026}" (Go menu / \u{2318}K) to wipe the list.
+                .item(switch_setting(
+                    "Show Recents",
+                    "List the folders you've opened recently in the sidebar, most \
+                     recent first. Off hides the section and stops adding to it \
+                     \u{2014} your Ant Trail heat is unaffected.",
+                    |cx: &App| crate::recents_section::recents_enabled(cx),
+                    |val: bool, cx: &mut App| {
+                        persist_recents_enabled(val);
+                        cx.set_global(crate::recents_section::RecentsEnabled(val));
                     },
                 )),
         )

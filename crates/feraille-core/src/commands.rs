@@ -528,6 +528,16 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::Go,
         shortcuts: &[Shortcut::primary_shift("H")],
     },
+    CommandSpec {
+        // Forget every folder in Recents. The trailing ellipsis flags
+        // the confirmation dialog (it also resets Ant Trail heat — the
+        // two share one visit log). No default shortcut: destructive and
+        // rarely needed, so it lives in the Go menu / command palette.
+        id: CommandId("go.clear_recents"),
+        title: "Clear Recents\u{2026}",
+        category: Category::Go,
+        shortcuts: &[],
+    },
     // Selection — pane-aware. The dispatch handler routes to whichever
     // pane currently owns focus (Tree or List). Bare arrow keys /
     // Home / End / PageUp / PageDown / Enter / F2 / Escape only reach

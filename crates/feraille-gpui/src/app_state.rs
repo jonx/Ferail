@@ -55,6 +55,12 @@ pub struct AppState {
     /// Viewer slideshow auto-advance interval in seconds
     /// (docs/features/VIEWER.md). Clamped at load to [1, 60].
     pub viewer_slideshow_interval: Option<u64>,
+    /// Whether the Recents feature is on at all. `None` == never set
+    /// (defaults to `true`). Off hides the sidebar section and stops
+    /// pushing folders into the recents cache; the Ant Trail keeps its
+    /// own visit log either way (they share `folder_usage`). See
+    /// [`crate::recents_section`].
+    pub recents_enabled: Option<bool>,
     /// Recents sidebar section disclosure state. None == never set
     /// (defaults to expanded).
     pub recents_collapsed: Option<bool>,
@@ -242,6 +248,9 @@ pub fn load() -> AppState {
                 out.viewer_slideshow_interval =
                     val.trim().parse::<u64>().ok().map(|n| n.clamp(1, 60));
             }
+            "recents_enabled" => {
+                out.recents_enabled = parse_bool(val);
+            }
             "recents_collapsed" => {
                 out.recents_collapsed = parse_bool(val);
             }
@@ -355,6 +364,9 @@ pub fn save(state: &AppState) {
     }
     if let Some(n) = state.viewer_slideshow_interval {
         s.push_str(&format!("viewer_slideshow_interval={n}\n"));
+    }
+    if let Some(b) = state.recents_enabled {
+        s.push_str(&format!("recents_enabled={b}\n"));
     }
     if let Some(b) = state.recents_collapsed {
         s.push_str(&format!("recents_collapsed={b}\n"));

@@ -225,10 +225,17 @@ impl Shell {
     }
 
     /// Build the **Recents** section from the in-memory recents cache
-    /// (most-recent-first folders). Returns `None` when empty so the
-    /// section stays hidden until the user has navigated somewhere —
-    /// no clutter for a brand-new profile.
-    fn build_recents_section(&self, weak: WeakEntity<Self>) -> Option<ShellSidebarItem> {
+    /// (most-recent-first folders). Returns `None` when the feature is
+    /// switched off or the cache is empty, so the section stays hidden
+    /// for a disabled user or a brand-new profile — no clutter.
+    fn build_recents_section(
+        &self,
+        weak: WeakEntity<Self>,
+        cx: &App,
+    ) -> Option<ShellSidebarItem> {
+        if !crate::recents_section::recents_enabled(cx) {
+            return None;
+        }
         let recents = self.process.recents.borrow();
         if recents.is_empty() {
             return None;
@@ -281,9 +288,11 @@ impl Shell {
         self.toggle_recents_section_collapsed(cx);
     }
 
-    /// Remove the right-clicked folder from Recents and forget its
-    /// visit record (which also clears its Ant Trail heat — the two
-    /// share the `folder_usage` log).
+    /// Drop the right-clicked folder from Recents only. Recency and Ant
+    /// Trail heat are separate columns of the same `folder_usage` row,
+    /// so this clears the recency (DB + in-memory list) and deliberately
+    /// leaves the heat (`ant_visits`) alone — taking a folder off the
+    /// recent list shouldn't erase how often you go there.
     pub fn on_remove_from_recents(
         &mut self,
         _: &RemoveFromRecents,
@@ -294,12 +303,11 @@ impl Shell {
             return;
         };
         self.process.recents.borrow_mut().retain(|p| p != &path);
-        self.process.ant_visits.borrow_mut().remove(&path);
         if let Some(db) = self.process.db_snapshot() {
             let path_str = path.to_string_lossy().into_owned();
             cx.background_spawn(async move {
                 if let Ok(g) = db.lock() {
-                    let _ = g.forget_folder_visit(&path_str);
+                    let _ = g.forget_recent_access(&path_str);
                 }
             })
             .detach();
@@ -307,22 +315,73 @@ impl Shell {
         cx.notify();
     }
 
-    /// Clear Recents — forget the entire visit log (also resets the
-    /// Ant Trail heat tints, by design).
-    pub fn on_clear_recents(&mut self, _: &ClearRecents, _: &mut Window, cx: &mut Context<Self>) {
-        self.process.recents.borrow_mut().clear();
-        self.process.ant_visits.borrow_mut().clear();
-        self.process.ant_max.set(0);
-        if let Some(db) = self.process.db_snapshot() {
-            cx.background_spawn(async move {
-                if let Ok(g) = db.lock() {
-                    let _ = g.reset(feraille_meta::ResetScope::AntTrail);
+    /// Clear Recents — confirm, then empty the recents list. Recency and
+    /// Ant Trail heat are separate columns of the same `folder_usage`
+    /// row, so this clears only the recency (`last_access_unix`) and
+    /// keeps the heat (`hits`): the most-visited tint survives. The
+    /// trailing ellipsis on every surface that fires it flags the
+    /// confirmation.
+    pub fn on_clear_recents(
+        &mut self,
+        _: &ClearRecents,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::trail::command("Clear Recents");
+        use gpui_component::button::{Button, ButtonVariants as _};
+        let win = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
+            let opened = win.update(cx, |_, window, cx| {
+                let tx = go_tx.clone();
+                window.open_dialog(cx, move |dialog, _window, _cx| {
+                    let tx_go = tx.clone();
+                    let tx_cancel = tx.clone();
+                    dialog
+                        .title("Clear Recents?")
+                        .child(div().text_scale_sm().child(
+                            "Forget every folder in Recents? Your Ant Trail heat is \
+                             kept \u{2014} only the recent list is emptied. This can't \
+                             be undone.",
+                        ))
+                        .child(
+                            h_flex().pt_2().child(
+                                Button::new("clear-recents-go")
+                                    .label("Clear Recents")
+                                    .danger()
+                                    .small()
+                                    .on_click(move |_, window, cx| {
+                                        let _ = tx_go.try_send(true);
+                                        window.close_dialog(cx);
+                                    }),
+                            ),
+                        )
+                        .on_cancel(move |_, _, _| {
+                            let _ = tx_cancel.try_send(false);
+                            true
+                        })
+                });
+            });
+            if opened.is_err() || !matches!(go_rx.recv().await, Ok(true)) {
+                return;
+            }
+            let _ = this.update(cx, |this, cx| {
+                // Recents only: empty the in-memory list and zero the DB
+                // recency column. `ant_visits` / `ant_max` (the heat
+                // signal) are left untouched, so the tint stays put.
+                this.process.recents.borrow_mut().clear();
+                if let Some(db) = this.process.db_snapshot() {
+                    cx.background_spawn(async move {
+                        if let Ok(g) = db.lock() {
+                            let _ = g.clear_recent_access();
+                        }
+                    })
+                    .detach();
                 }
-            })
-            .detach();
-        }
-        self.refresh_active_tab_heats(cx);
-        cx.notify();
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Build the **Locations** section: a flat `SidebarMenu` of icon-
@@ -2690,7 +2749,7 @@ impl Render for Shell {
         let weak = cx.weak_entity();
         let locations_menu = self.build_locations_menu(weak.clone(), cx);
         let favorites_section = self.build_user_favorites_section(weak.clone(), cx);
-        let recents_section = self.build_recents_section(weak.clone());
+        let recents_section = self.build_recents_section(weak.clone(), cx);
         let browse_rows = self.build_browse_rows(cx);
         let volumes_rows = self.build_volumes_rows(cx);
         let has_volumes = !self.process.volumes.borrow().is_empty();

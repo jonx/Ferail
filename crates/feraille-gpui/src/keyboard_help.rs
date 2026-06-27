@@ -69,6 +69,7 @@ fn action_for_command(id: feraille_core::commands::CommandId) -> Option<Box<dyn 
         "go.forward" => Box::new(NavigateForward),
         "go.parent" => Box::new(NavigateParent),
         "go.home" => Box::new(GoHome),
+        "go.clear_recents" => Box::new(ClearRecents),
         "help.shortcuts" => Box::new(ShortcutsHelp),
         "selection.cursor_up" => Box::new(CursorUp),
         "selection.cursor_down" => Box::new(CursorDown),
