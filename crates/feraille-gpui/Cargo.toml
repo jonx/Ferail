@@ -61,6 +61,8 @@ raw-window-handle = "0.6"
 # lsp-types. Same version as gpui-component's so the trait's types
 # unify (it only re-exports Position).
 lsp-types = "0.97.0"
+# Bulk-rename find/replace rules (docs/features/BULK_RENAME.md).
+regex.workspace = true
 
 # Domain wiring. feraille-gpui consumes the domain layer through the
 # domain crates' trait surface; they link directly.

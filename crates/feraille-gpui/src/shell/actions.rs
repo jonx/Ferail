@@ -57,6 +57,13 @@ actions!(
         ClearFilter,
         NewFolder,
         RenameSelected,
+        /// Pattern-rule rename over the whole multi-selection —
+        /// find/replace (literal or regex with $1..$9), case
+        /// transforms, and a {name}/{ext}/{n}/{date} template, with a
+        /// live before→after preview (docs/features/BULK_RENAME.md).
+        /// With fewer than two resolved targets it degrades to the
+        /// single-rename prompt (one) or a no-op (none).
+        BulkRenameSelected,
         NewTab,
         CloseTab,
         /// Cmd+Shift+W — close the entire window regardless of tab

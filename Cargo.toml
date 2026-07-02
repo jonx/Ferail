@@ -50,6 +50,11 @@ uuid        = { version = "1", features = ["v4"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 blake3      = "1"
 
+# Bulk-rename pattern rules (docs/features/BULK_RENAME.md): user-supplied
+# find/replace patterns with $1..$9 capture refs. MIT/Apache-2.0 — clean
+# for the dual-licensed release.
+regex       = "1"
+
 # External — new stack (feraille-gpui).
 #
 # Pinning strategy: `gpui-component` is pinned to a specific rev (it

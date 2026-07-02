@@ -15,6 +15,7 @@ pub mod ant_trail;
 pub mod app_icon;
 pub mod app_state;
 pub mod assets;
+pub mod bulk_rename;
 pub mod diagnostics;
 pub mod disk_usage;
 pub mod dupe_cache;

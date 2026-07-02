@@ -110,6 +110,10 @@ pub struct Args {
     pub inline_rename: bool,
     /// Open the new-folder dialog.
     pub new_folder: bool,
+    /// Open the bulk-rename dialog (docs/features/BULK_RENAME.md) over
+    /// the current selection, seeding the first four rows when no
+    /// `--select-rows` provided one.
+    pub bulk_rename: bool,
     /// Push a fake toast with the given message. Lands in Stage 5.
     pub simulate_toast: Option<String>,
     /// Show the footer progress strip: <0 → indeterminate, ≥0 →
@@ -235,6 +239,7 @@ pub fn parse_args() -> Args {
             "--rename" => args.rename = true,
             "--inline-rename" => args.inline_rename = true,
             "--new-folder" => args.new_folder = true,
+            "--bulk-rename" => args.bulk_rename = true,
             "--simulate-toast" => args.simulate_toast = iter.next(),
             "--simulate-progress" => {
                 args.simulate_progress = Some(
@@ -307,6 +312,8 @@ OPTIONS
   --rename                 Open the rename dialog for the selected row.
   --inline-rename          Start inline rename. Falls back to modal in the GPUI shell.
   --new-folder             Open the new-folder dialog.
+  --bulk-rename            Open the bulk-rename dialog over the selection
+                           (seeds rows 0-3 when --select-rows is absent).
   --edit-mode              Open breadcrumb edit mode. Lands in Stage 9.
   --mac-chrome             N/A in the GPUI shell (native chrome already).
   --simulate-toast <text>  Push an error toast. Lands in Stage 5.
@@ -602,6 +609,7 @@ struct ShellArgs {
     sort: Option<(String, bool)>,
     rename: bool,
     new_folder: bool,
+    bulk_rename: bool,
     expand: Vec<PathBuf>,
     // Stage-deferred flags. Recorded so the apply step can emit a
     // single "stage X not yet wired" log warning per use, rather
@@ -639,6 +647,7 @@ impl From<&Args> for ShellArgs {
             sort: a.sort.clone(),
             rename: a.rename || a.inline_rename,
             new_folder: a.new_folder,
+            bulk_rename: a.bulk_rename,
             expand: a.expand.clone(),
             properties: a.properties,
             edit_mode: a.edit_mode,
@@ -842,7 +851,11 @@ impl ShellArgs {
                     );
             }
         }
-        if self.select_row.is_some() || self.select_name.is_some() || !self.select_rows.is_empty() {
+        if self.select_row.is_some()
+            || self.select_name.is_some()
+            || !self.select_rows.is_empty()
+            || self.bulk_rename
+        {
             // Selection flags resolve against the loaded entry list,
             // but `navigate` streams its enumeration — give the
             // batches (and the magic/quarantine prefetch they kick
@@ -905,6 +918,20 @@ impl ShellArgs {
             let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
                     s.trigger_new_folder(window, cx);
+                });
+            });
+        }
+        if self.bulk_rename {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    // The handler needs a 2+ selection; seed the first
+                    // four rows unless --select-rows provided one. (The
+                    // enumeration settle wait above already ran — the
+                    // flag is included in its condition.)
+                    if self.select_rows.is_empty() {
+                        s.select_row_indices(&[0, 1, 2, 3], cx);
+                    }
+                    s.trigger_bulk_rename(window, cx);
                 });
             });
         }

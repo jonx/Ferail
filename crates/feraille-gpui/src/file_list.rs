@@ -1262,8 +1262,8 @@ impl TableDelegate for FileListDelegate {
         cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
         use crate::shell::{
-            ClearQuarantine, Compress, CopyPath, DeleteImmediately, Duplicate, GetInfo, MakeAlias,
-            MoveToTrash,
+            BulkRenameSelected, ClearQuarantine, Compress, CopyPath, DeleteImmediately, Duplicate,
+            GetInfo, MakeAlias, MoveToTrash,
             OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
             OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
             OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook,
@@ -1332,6 +1332,9 @@ impl TableDelegate for FileListDelegate {
         let show_favorites = Availability::When(avail_anchor_dir).allows(t);
         let show_clear_quarantine = Availability::When(avail_any_quarantined).allows(t);
         let show_single_only = Availability::SingleOnly.allows(t);
+        // Bulk complement of the SingleOnly Rename: pattern rename over
+        // the whole resolved set (docs/features/BULK_RENAME.md).
+        let bulk_rename_count = t.len();
 
         let already_favorited = self.is_favorited.get(row_ix).copied().unwrap_or(false);
         let favorite_label = if already_favorited {
@@ -1372,6 +1375,14 @@ impl TableDelegate for FileListDelegate {
             // SingleOnly: Rename targets one file (single-target, like
             // Finder's inline rename); hidden on a multi-selection.
             menu = menu.menu("Rename\u{2026}", Box::new(RenameSelected));
+        }
+        if bulk_rename_count >= 2 {
+            // Multi-selection twin of Rename: the pattern-rule modal
+            // over every resolved target (docs/features/BULK_RENAME.md).
+            menu = menu.menu(
+                format!("Rename {bulk_rename_count} Items\u{2026}"),
+                Box::new(BulkRenameSelected),
+            );
         }
         let mut menu = menu
             .menu("Duplicate", Box::new(Duplicate))

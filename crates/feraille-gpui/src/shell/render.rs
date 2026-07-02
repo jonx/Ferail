@@ -3115,6 +3115,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_clear_filter))
             .on_action(cx.listener(Self::on_new_folder))
             .on_action(cx.listener(Self::on_rename_selected))
+            .on_action(cx.listener(Self::on_bulk_rename_selected))
             .on_action(cx.listener(Self::on_new_tab))
             .on_action(cx.listener(Self::on_close_tab))
             .on_action(cx.listener(Self::on_close_window))

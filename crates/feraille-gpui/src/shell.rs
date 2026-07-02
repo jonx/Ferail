@@ -139,6 +139,11 @@ pub enum UndoOp {
     /// `trashItemAtURL`'s resulting URL [mac]; ops whose resulting
     /// URL wasn't reported (Windows Recycle Bin) don't register.
     TrashRestore(Vec<(PathBuf, PathBuf)>),
+    /// Undo a bulk rename: rename each `(original, renamed)` pair's
+    /// renamed location back to its original
+    /// (docs/features/BULK_RENAME.md). Only pairs that actually renamed
+    /// register — failed items never enter the record.
+    RenameBatch(Vec<(PathBuf, PathBuf)>),
 }
 
 impl UndoOp {
@@ -188,6 +193,24 @@ impl UndoOp {
                 }
                 Ok(())
             }
+            UndoOp::RenameBatch(pairs) => {
+                // Reverse through the same chain/cycle-aware worker the
+                // forward pass used — renumbering batches rename through
+                // each other's names, so a naive in-order loop would trip
+                // its own exists-guard. `rename_guarded` inside keeps
+                // MoveBack's "don't clobber something new" contract per
+                // item; failures collect instead of aborting the rest.
+                let back: Vec<(PathBuf, PathBuf)> = pairs
+                    .iter()
+                    .map(|(original, renamed)| (renamed.clone(), original.clone()))
+                    .collect();
+                let (_, errors) = crate::bulk_rename::run_renames(back);
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors.join("; "))
+                }
+            }
             UndoOp::AddFavorite(_) | UndoOp::RemoveFavorite(_) => {
                 Err("favorite undo handled by Shell".into())
             }
@@ -203,6 +226,7 @@ impl UndoOp {
             UndoOp::MoveBack(_) => "Moved items back",
             UndoOp::RemoveCreated(_) => "Removed pasted items",
             UndoOp::TrashRestore(_) => "Restored from Trash",
+            UndoOp::RenameBatch(_) => "Undid bulk rename",
         }
     }
 
@@ -239,6 +263,12 @@ impl UndoOp {
                 for (original, trashed) in pairs {
                     push(Some(original));
                     push(Some(trashed));
+                }
+            }
+            UndoOp::RenameBatch(pairs) => {
+                for (original, renamed) in pairs {
+                    push(Some(original));
+                    push(Some(renamed));
                 }
             }
             UndoOp::AddFavorite(_) | UndoOp::RemoveFavorite(_) => {}
@@ -3977,7 +4007,7 @@ impl Shell {
         }
     }
 
-    fn broadcast_reload_for_process(
+    pub(crate) fn broadcast_reload_for_process(
         process: &Rc<crate::process_state::ProcessState>,
         paths: Vec<PathBuf>,
         cx: &mut AsyncApp,

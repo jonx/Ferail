@@ -17,6 +17,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | Feature note | Status | Public-ready summary |
 | --- | --- | --- |
 | [ANT_TRAIL.md](ANT_TRAIL.md) | Shipped with follow-ups | Folder visit counts, sidebar heat, recents hydration, and DB persistence ship; prediction and decay remain open. |
+| [BULK_RENAME.md](BULK_RENAME.md) | Shipped with follow-ups | Pattern-rule bulk rename modal: literal/regex find-replace, case transforms, {name}/{ext}/{n}/{date} template, live preview, chain-aware apply, and batch undo ship; dimensions token, presets, and a keybinding remain open. |
 | [CONTEXT_MENU.md](CONTEXT_MENU.md) | Shipped with follow-ups | Mac-native context menus, Open With, Services, Share, tags, Quick Look, Duplicate, Compress, and Trash ship; compact tag row and async Open With prewarm remain open. |
 | [DISK_USAGE.md](DISK_USAGE.md) | Shipped with follow-ups | Disk Usage window, scanner, treemap/top list, package handling, category filters, and CLI basics ship; APFS clone-aware sizing and richer views remain open. |
 | [DOCK.md](DOCK.md) | Shipped with follow-ups (macOS) | Dock the whole window to the left or right screen edge as an auto-hiding, always-on-top drawer revealed by an edge-slam, with a thin grab handle; core slide/float/all-Spaces ship. Persistence/auto-restore, borderless drawer chrome, and multi-display polish remain open. |
@@ -98,6 +99,8 @@ keep the UI off the I/O path.
   and the N-layer transparent-colour (chroma-key) compositor it enables.
 - [FILE_OPS.md](FILE_OPS.md) — copy/paste/move engine: progress,
   cancellation, collision policy, clipboard verbs.
+- [BULK_RENAME.md](BULK_RENAME.md) — pattern-rule bulk rename modal with
+  live before→after preview and batch undo.
 - [DISK_USAGE.md](DISK_USAGE.md) — disk-usage window: scanning, treemap, and
   top-list views.
 

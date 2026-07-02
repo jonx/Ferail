@@ -2048,6 +2048,10 @@ impl Shell {
         self.on_rename_selected(&RenameSelected, window, cx);
     }
 
+    pub fn trigger_bulk_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_bulk_rename_selected(&BulkRenameSelected, window, cx);
+    }
+
     pub fn trigger_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.on_new_folder(&NewFolder, window, cx);
     }
@@ -2219,6 +2223,36 @@ impl Shell {
             window,
             cx,
         );
+    }
+
+    /// Bulk rename over the resolved multi-selection
+    /// (docs/features/BULK_RENAME.md). Snapshots the selection once —
+    /// `(path, display name, mtime)` triples, model/cache-only — and
+    /// opens the pattern-rule dialog over it. With fewer than two
+    /// targets this degrades to the single-rename prompt (one) or a
+    /// no-op (none), so palette/menu dispatch is always sensible.
+    pub(super) fn on_bulk_rename_selected(
+        &mut self,
+        _: &BulkRenameSelected,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::trail::command("Bulk Rename");
+        // Peek the target count without consuming `context_row`: the
+        // single-rename fallback below resolves its own target from it.
+        let count = self.resolve_targets(self.context_row, cx).len();
+        if count < 2 {
+            if count == 1 {
+                self.on_rename_selected(&RenameSelected, window, cx);
+            }
+            return;
+        }
+        let items: Vec<(PathBuf, String, i64)> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, entry, path)| (path, entry.display_name, entry.mtime_unix))
+            .collect();
+        crate::bulk_rename::open(self, items, window, cx);
     }
 
     pub(super) fn on_quick_look(

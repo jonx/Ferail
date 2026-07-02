@@ -46,12 +46,6 @@ and let git history plus release notes carry the record.
 Net-new, but each sits on plumbing that already exists, so the build is small
 relative to the daily value. Ordered by bang-for-buck.
 
-- **Bulk rename with regex / pattern rules.** A self-contained modal over the
-  current selection: literal + regex find/replace, sequence numbering, case
-  transforms, and metadata tokens (date / dimensions / counter), with a live
-  before→after preview. Reuses the unified `open_text_prompt` naming modal and
-  the existing bulk file-op engine — no new subsystem. Highest daily value; the
-  system explorers and power tools all have it and we don't.
 - **Smart Folders / Saved Searches.** Wire the reserved
   `FavoriteTarget::SavedSearch` (favorites.rs) into a real feature: pin a search
   as a favorite that re-runs live on click — Spotlight-backed where available,

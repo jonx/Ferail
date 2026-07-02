@@ -2025,6 +2025,7 @@ dependencies = [
  "lsp-types",
  "notify",
  "raw-window-handle",
+ "regex",
  "rust-embed",
  "smallvec",
  "winresource",
