@@ -1654,6 +1654,10 @@ impl Shell {
         // first frame or two after the menu opened).
         let sort_menu_focus = self.focus_handle.clone();
         let overflow_menu_focus = self.focus_handle.clone();
+        let dock_menu_focus = self.focus_handle.clone();
+        // Active dock edge (if any), captured for the toolbar dock menu's
+        // checkmarks and pressed state.
+        let dock_edge = self.dock.as_ref().map(|d| d.edge);
         TitleBar::new().child(
             h_flex()
                 .w_full()
@@ -1823,6 +1827,46 @@ impl Shell {
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.on_refresh(&Refresh, window, cx);
                         })),
+                )
+                // Dock menu — park the whole window against a screen edge as
+                // an auto-hiding drawer (docs/features/DOCK.md). Pressed look
+                // while docked; the active edge carries a checkmark. Wrapped
+                // in a mouse-down-stopping div for the Win32 title-bar-drag
+                // gotcha, like the other dropdowns.
+                .child(
+                    div()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .child(
+                            Button::new("toolbar-dock")
+                                .small()
+                                .ghost()
+                                .selected(dock_edge.is_some())
+                                .icon(gpui_component::Icon::empty().path("icons/dock.svg"))
+                                .tooltip("Dock window to a screen edge")
+                                .dropdown_menu(move |menu, _window, _cx| {
+                                    menu.action_context(dock_menu_focus.clone())
+                                        .menu_with_icon(
+                                            "Dock Left",
+                                            gpui_component::Icon::empty()
+                                                .path("icons/dock-left.svg"),
+                                            Box::new(DockLeft),
+                                        )
+                                        .menu_with_icon(
+                                            "Dock Right",
+                                            gpui_component::Icon::empty()
+                                                .path("icons/dock-right.svg"),
+                                            Box::new(DockRight),
+                                        )
+                                        .separator()
+                                        .menu_with_icon(
+                                            "Undock",
+                                            gpui_component::Icon::empty().path("icons/undock.svg"),
+                                            Box::new(Undock),
+                                        )
+                                }),
+                        ),
                 )
                 // View switcher: list ⇄ icon grid (per-tab). The active
                 // mode's button is highlighted.
@@ -2722,6 +2766,43 @@ impl Shell {
         }
         row
     }
+
+    /// The grab handle drawn at the window's inner edge while docked and not
+    /// fully revealed (docs/features/DOCK.md). Purely a visual hint — the
+    /// reveal trigger is the screen edge itself, driven by the poll loop. It
+    /// anchors opposite the dock edge because the drawer hides toward its dock
+    /// edge, leaving that side on-screen as the strip.
+    fn dock_handle(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let dock = self.dock.as_ref()?;
+        if dock.progress >= 0.999 {
+            return None; // fully revealed: nothing to point at
+        }
+        let thickness = px(super::dock::STRIP_PX as f32);
+        // Left/Right docking → always a tall, thin vertical grip pill.
+        let pill = div()
+            .w(px(3.))
+            .h(px(40.))
+            .rounded_full()
+            .bg(cx.theme().muted_foreground);
+
+        let strip = div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .w(thickness)
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().secondary)
+            .child(pill);
+        // The handle sits on the window edge opposite the dock edge — the side
+        // left on-screen as the strip when the drawer hides toward its edge.
+        let strip = match dock.edge {
+            DockEdge::Left => strip.right_0(),
+            DockEdge::Right => strip.left_0(),
+        };
+        Some(strip)
+    }
 }
 
 impl Render for Shell {
@@ -2857,16 +2938,12 @@ impl Render for Shell {
             .filter(|e| selection.contains(&e.id))
             .map(|e| e.size)
             .sum();
-        // Free-space query — sync, very cheap on macOS (statvfs).
-        // Returns None on non-macOS or for paths we can't reach.
-        let volume_info = feraille_fs_native::volume_info_for_path(&self.active_tab().current_dir);
-        let (free_bytes, volume_name): (Option<u64>, Option<&'static str>) = match volume_info {
-            Some(v) => {
-                let name: Option<&'static str> = Some(Box::leak(v.name.into_boxed_str()));
-                (v.available_bytes, name)
-            }
-            None => (None, None),
-        };
+        // Free-space label — reads the per-tab cache maintained by
+        // `refresh_volume_info_in_tab` (load completion + volume
+        // watch). The underlying NSURL/statfs query can round-trip to
+        // a network mount, so it never runs on the paint path.
+        let free_bytes = self.active_tab().volume_free_bytes;
+        let volume_name = self.active_tab().volume_name.clone();
         let metrics = crate::status_bar::StatusMetrics {
             entries: entry_count,
             selected_count,
@@ -2955,6 +3032,9 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_selected))
             .on_action(cx.listener(Self::on_refresh))
             .on_action(cx.listener(Self::on_show_desktop))
+            .on_action(cx.listener(Self::on_dock_left))
+            .on_action(cx.listener(Self::on_dock_right))
+            .on_action(cx.listener(Self::on_undock))
             .on_action(cx.listener(Self::on_toggle_hidden))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_copy_path))
@@ -3255,6 +3335,7 @@ impl Render for Shell {
                 };
                 let title_bar = self.title_bar(cx);
                 let menu_bar = self.menu_bar.clone();
+                let dock_handle = self.dock_handle(cx);
                 v_flex()
                     .relative()
                     .size_full()
@@ -3285,6 +3366,10 @@ impl Render for Shell {
                     // column, above the status bar. Only rendered
                     // when task_panel_open == true.
                     .when_some(task_panel, |this, panel| this.child(panel))
+                    // Docked-drawer grab handle (docs/features/DOCK.md) —
+                    // absolute, on the inner edge, above the column content.
+                    // `None` unless docked-and-not-fully-revealed.
+                    .children(dock_handle)
             })
             // Dialog overlay layer — rendered last so dialogs draw
             // above the shell content. Needed for the New Folder /

@@ -201,6 +201,15 @@ pub struct TabState {
     pub sort_ascending: bool,
 }
 
+/// Append `suffix` to the *full* file name (`metadata.db` +
+/// `"-journal"` → `metadata.db-journal`), matching SQLite's sibling
+/// naming — `Path::with_extension` would replace `.db` instead.
+fn sibling_path(path: &Path, suffix: &str) -> std::path::PathBuf {
+    let mut s = path.as_os_str().to_os_string();
+    s.push(suffix);
+    std::path::PathBuf::from(s)
+}
+
 /// SQLite-backed metadata store. Single connection — wrap in a
 /// `Mutex` at the call site if cross-thread access is needed.
 pub struct MetadataDb {
@@ -209,9 +218,11 @@ pub struct MetadataDb {
 
 impl MetadataDb {
     /// Open or create the database at `path`. If the on-disk schema
-    /// version doesn't match [`DB_VERSION`], the file is deleted
-    /// and recreated. Caller is responsible for ensuring the parent
-    /// directory exists ([`crate::ensure_parent_dir`]).
+    /// version doesn't match [`DB_VERSION`], the file is set aside as
+    /// `<name>.bak` and recreated — never silently destroyed, because
+    /// user-curated rows (favorites) live here alongside cache data.
+    /// Caller is responsible for ensuring the parent directory exists
+    /// ([`crate::ensure_parent_dir`]).
     pub fn open(path: &Path) -> Result<Self> {
         let mut wipe = false;
         if path.exists() {
@@ -234,7 +245,7 @@ impl MetadataDb {
                         // idempotent, so v1 → v2 just adds the new table.
                         Some(v) if v < DB_VERSION => {}
                         // Future version we don't understand, or no row at
-                        // all → wipe and start over.
+                        // all → set aside and start over.
                         _ => wipe = true,
                     }
                     drop(conn);
@@ -242,10 +253,39 @@ impl MetadataDb {
                 Err(_) => wipe = true,
             }
             if wipe {
-                let _ = std::fs::remove_file(path);
+                // Rename to .bak (one-deep) instead of deleting: a
+                // downgrade to an older build or a corrupt header must
+                // not cost the user their favorites. The journal/WAL
+                // siblings go with the main file — a stale `-journal`
+                // next to a freshly created same-name DB is a
+                // documented SQLite corruption vector.
+                let bak = sibling_path(path, ".bak");
+                let _ = std::fs::remove_file(&bak);
+                if std::fs::rename(path, &bak).is_err() {
+                    let _ = std::fs::remove_file(path);
+                }
+                for suffix in ["-journal", "-wal", "-shm"] {
+                    let _ = std::fs::remove_file(sibling_path(path, suffix));
+                }
             }
         }
         let conn = Connection::open(path)?;
+        // A second Feraille process (or `--reset-db` racing a live app)
+        // holds the write lock briefly; without a timeout every busy
+        // conflict surfaces as an instant SQLITE_BUSY error, and a
+        // failed favorites load is what the wipe-on-save hazard feeds
+        // on. 250ms rides out lock handoffs without wedging workers.
+        conn.busy_timeout(std::time::Duration::from_millis(250))?;
+        // WAL + NORMAL: the hot write paths (prefetch upserts, dupe
+        // hash cache) are many small autocommit statements — under the
+        // default DELETE journal each costs ~2 fsyncs. WAL brings that
+        // to one WAL append, and readers stop blocking on writers.
+        // journal_mode returns the resulting mode as a row, so it
+        // can't go through pragma_update.
+        let _mode: String = conn
+            .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
+            .unwrap_or_else(|_| "delete".into());
+        let _ = conn.pragma_update(None, "synchronous", "NORMAL");
         let db = Self { conn };
         db.init_schema()?;
         db.set_preference("db_version", &DB_VERSION.to_string())?;
@@ -256,6 +296,7 @@ impl MetadataDb {
     /// screenshot harness when `$HOME` is unset.
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
+        conn.busy_timeout(std::time::Duration::from_millis(250))?;
         let db = Self { conn };
         db.init_schema()?;
         Ok(db)

@@ -394,7 +394,13 @@ pub fn start_volume_watch(cx: &mut App) {
                     .update(cx, |favs, cx| favs.refresh_mount_states(cx));
                 for weak in process.live_shells() {
                     if let Some(shell) = weak.upgrade() {
-                        shell.update(cx, |_, cx| cx.notify());
+                        shell.update(cx, |this, cx| {
+                            // A mount/unmount/rename may change the volume
+                            // behind any tab's directory — re-query each
+                            // tab's cached free-space/name off-thread.
+                            this.refresh_volume_info_all_tabs(cx);
+                            cx.notify();
+                        });
                     }
                 }
             });

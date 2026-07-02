@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, atomic::AtomicBool};
 
 use feraille_core::{EnumerationError, FileEntry, NodeId, navigation::NavigationState};
-use gpui::{AppContext, Entity, FocusHandle, Pixels, Subscription, UniformListScrollHandle, px};
+use gpui::{
+    AppContext, Entity, FocusHandle, Pixels, SharedString, Subscription, UniformListScrollHandle,
+    px,
+};
 use gpui_component::input::InputState;
 
 use crate::file_list::FileListDelegate;
@@ -339,6 +342,12 @@ pub struct Tab {
     /// stops at its next dirent instead of finishing for a listing
     /// the user already left.
     pub folder_size_cancel: Option<Arc<AtomicBool>>,
+    /// Cooperative cancel flag for this tab's in-flight magic /
+    /// quarantine prefetch (`prefetch::start`). Same lifecycle as
+    /// `folder_size_cancel` — flipped on navigation/reload so a
+    /// superseded pass stops sniffing instead of finishing a listing
+    /// the user already left.
+    pub prefetch_cancel: Option<Arc<AtomicBool>>,
     /// Task-registry row for this tab's in-flight enumeration.
     pub load_task: Option<TaskId>,
     /// True after a navigation starts and before the first batch
@@ -384,6 +393,14 @@ pub struct Tab {
     /// error (most commonly macOS TCC denial). Drives an empty-
     /// state in the file pane when the tab is active.
     pub last_error: Option<EnumerationError>,
+    /// Cached free-space for this tab's volume, refreshed off-thread
+    /// on load completion and on volume-watch events. Render reads
+    /// this cache only — the underlying NSURL/statfs query can do a
+    /// remote round-trip on network mounts (Prime Directive).
+    pub volume_free_bytes: Option<u64>,
+    /// Cached display name of this tab's volume; same lifecycle as
+    /// `volume_free_bytes`.
+    pub volume_name: Option<SharedString>,
     /// Screenshot-driver row index queued for selection once a
     /// streaming batch lands for this tab. Cleared on apply or on
     /// navigation. Internal/CLI use only.
@@ -446,6 +463,7 @@ impl Tab {
             load_generation: 0,
             load_cancel: None,
             folder_size_cancel: None,
+            prefetch_cancel: None,
             load_task: None,
             load_pending_first_batch: false,
             force_resniff: false,
@@ -454,6 +472,8 @@ impl Tab {
             dupe_groups: Vec::new(),
             dupe_panel_scroll: VirtualListScrollHandle::new(),
             last_error: None,
+            volume_free_bytes: None,
+            volume_name: None,
             pending_select_row: None,
             pending_select_rows: Vec::new(),
             filter_text: String::new(),

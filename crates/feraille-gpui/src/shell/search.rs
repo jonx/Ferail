@@ -221,6 +221,9 @@ impl Shell {
         if let Some(cancel) = self.tabs[idx].folder_size_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
+        if let Some(cancel) = self.tabs[idx].prefetch_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
         self.tabs[idx].load_staging = None;
         self.tabs[idx].tool_result = Some(ToolResultSurface::search(
             needle.clone(),

@@ -2423,14 +2423,17 @@ where
                                             cx,
                                         );
 
-                                        if visible_range.end > rows_count {
-                                            table.scroll_to_row(
-                                                std::cmp::min(
-                                                    visible_range.start,
-                                                    rows_count.saturating_sub(1),
-                                                ),
-                                                cx,
-                                            );
+                                        // Recover the scroll offset after the row list
+                                        // shrank under it. With stripe filler the
+                                        // visible range's END legitimately extends past
+                                        // `rows_count` whenever the rows don't fill the
+                                        // viewport — testing `end` here made this branch
+                                        // scroll_to_row + notify on every frame, keeping
+                                        // the table repainting forever on short folders.
+                                        // Only a range that *starts* past the last real
+                                        // row means the viewport is actually stranded.
+                                        if rows_count > 0 && visible_range.start >= rows_count {
+                                            table.scroll_to_row(rows_count - 1, cx);
                                         }
 
                                         let mut items = Vec::with_capacity(

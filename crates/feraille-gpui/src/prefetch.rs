@@ -17,24 +17,25 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use feraille_core::FileEntry;
+use feraille_core::{FileEntry, NodeId};
 use feraille_fs_native::{NativeFs, detect_magic_info, fetch_quarantine_info};
 use feraille_meta::{FileMetaRecord, MetadataDb};
 use gpui::Entity;
 
 use crate::file_list::FileListDelegate;
 use crate::multi_table::TableState;
-use crate::shell::Shell;
+use crate::shell::{Shell, TabId};
 use crate::tasks::{TaskKind, TaskRegistry};
 
 /// One row's worth of prefetched data, returned by the worker.
-/// The index points into the snapshot the worker started with;
-/// the foreground applier checks bounds in case the directory
-/// changed under us before the batch arrived.
+/// Keyed by `NodeId` — stable across re-sorts and re-enumerations —
+/// so a batch can never land on the wrong row (raw indices shift
+/// whenever the model changes under an in-flight pass).
 struct PrefetchRow {
-    row_ix: usize,
+    node: NodeId,
     /// Same-or-newer snapshot of `display_magic`. Empty string when
     /// we couldn't determine.
     magic_label: String,
@@ -55,7 +56,7 @@ struct PrefetchRow {
 /// Snapshot used to seed the worker. We can't capture `&FileEntry`
 /// (not Send + lifetime); copy the bits the worker needs.
 struct PrefetchSeed {
-    row_ix: usize,
+    node: NodeId,
     path: PathBuf,
     mtime_unix: i64,
     size: u64,
@@ -85,6 +86,9 @@ pub fn start(
     db: Option<Arc<Mutex<MetadataDb>>>,
     tasks: Rc<RefCell<TaskRegistry>>,
     shell_weak: gpui::WeakEntity<Shell>,
+    tab_id: TabId,
+    generation: u64,
+    cancel: Arc<AtomicBool>,
     force: bool,
     cx: &mut gpui::Context<Shell>,
 ) {
@@ -95,11 +99,10 @@ pub fn start(
         .delegate()
         .entries
         .iter()
-        .enumerate()
-        .filter_map(|(row_ix, e)| {
+        .filter_map(|e| {
             let path = fs.path_for(e.id)?;
             Some(PrefetchSeed {
-                row_ix,
+                node: e.id,
                 path,
                 mtime_unix: e.mtime_unix,
                 size: e.size,
@@ -128,16 +131,26 @@ pub fn start(
 
     let table_for_apply = table.clone();
     let tasks_for_end = tasks.clone();
+    let worker_cancel = cancel.clone();
     cx.spawn(async move |_this, cx| {
         let batch: Vec<PrefetchRow> = cx
             .background_executor()
-            .spawn(async move { run_worker(seeds, db, force) })
+            .spawn(async move { run_worker(seeds, db, force, worker_cancel) })
             .await;
         let n = batch.len();
         crate::log_info!(90, "prefetch: worker returned {n} rows");
         if let Some(shell) = shell_weak.upgrade() {
-            shell.update(cx, |_, cx| {
-                if !batch.is_empty() {
+            shell.update(cx, |shell, cx| {
+                // Staleness rule shared with folder_sizes/search/dupes:
+                // the tab may have closed or navigated on. Without this
+                // guard a slow pass for the previous directory would
+                // stamp its magic/quarantine data onto the new one
+                // (quarantine badges on the wrong files).
+                let fresh = shell
+                    .tabs
+                    .iter()
+                    .any(|t| t.id == tab_id && t.load_generation == generation);
+                if fresh && !batch.is_empty() {
                     table_for_apply.update(cx, |state, cx| {
                         apply_batch(state.delegate_mut(), batch);
                         state.refresh(cx);
@@ -171,9 +184,17 @@ fn run_worker(
     seeds: Vec<PrefetchSeed>,
     db: Option<Arc<Mutex<MetadataDb>>>,
     force: bool,
+    cancel: Arc<AtomicBool>,
 ) -> Vec<PrefetchRow> {
     let mut out = Vec::with_capacity(seeds.len());
     for seed in seeds {
+        // Navigation flipped the flag: the listing this pass was
+        // sniffing for is gone, stop burning 4 KB reads per file.
+        // The partial batch is still returned — rows are keyed by
+        // NodeId and write-through already happened per row.
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
         // If FileEntry already carries everything (rare — only when
         // hydrate-from-DB on enumerate gets implemented), skip — unless
         // a forced re-sniff is in effect.
@@ -268,7 +289,7 @@ fn run_worker(
         }
 
         out.push(PrefetchRow {
-            row_ix: seed.row_ix,
+            node: seed.node,
             magic_label,
             description,
             is_quarantined: quarantined,
@@ -281,34 +302,38 @@ fn run_worker(
 }
 
 /// Apply the worker's batch back to the live `FileEntry` slice.
-/// Bounds-checked per-row: if the directory was re-enumerated and
-/// the row count shrank, stale indices skip silently.
+/// Keyed by `NodeId`: a row whose id no longer exists in the model
+/// (deleted, filtered, re-enumerated away) skips silently, and a
+/// re-sort between snapshot and apply can't misdeliver a result.
 fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<PrefetchRow>) {
+    let mut by_node: std::collections::HashMap<NodeId, PrefetchRow> =
+        batch.into_iter().map(|row| (row.node, row)).collect();
     let entries: &mut [FileEntry] = &mut delegate.entries;
-    for row in batch {
-        if let Some(e) = entries.get_mut(row.row_ix) {
-            if !row.magic_label.is_empty() {
-                e.display_magic = row.magic_label;
-            }
-            if !row.description.is_empty() {
-                e.display_description = row.description;
-            }
-            e.is_quarantined = row.is_quarantined;
-            // Provenance rides along so the preview pane can show
-            // where a marked file came from without touching xattrs.
-            e.quarantine = if row.is_quarantined {
-                Some(feraille_core::QuarantineDetails {
-                    agent: row.quarantine_agent,
-                    downloaded_iso: row.quarantine_iso,
-                    where_from: row
-                        .quarantine_where_from
-                        .map(|s| s.lines().map(str::to_owned).collect())
-                        .unwrap_or_default(),
-                })
-            } else {
-                None
-            };
+    for e in entries.iter_mut() {
+        let Some(row) = by_node.remove(&e.id) else {
+            continue;
+        };
+        if !row.magic_label.is_empty() {
+            e.display_magic = row.magic_label;
         }
+        if !row.description.is_empty() {
+            e.display_description = row.description;
+        }
+        e.is_quarantined = row.is_quarantined;
+        // Provenance rides along so the preview pane can show
+        // where a marked file came from without touching xattrs.
+        e.quarantine = if row.is_quarantined {
+            Some(feraille_core::QuarantineDetails {
+                agent: row.quarantine_agent,
+                downloaded_iso: row.quarantine_iso,
+                where_from: row
+                    .quarantine_where_from
+                    .map(|s| s.lines().map(str::to_owned).collect())
+                    .unwrap_or_default(),
+            })
+        } else {
+            None
+        };
     }
 }
 
@@ -401,7 +426,7 @@ mod tests {
 
     fn seed_for(path: &std::path::Path) -> PrefetchSeed {
         PrefetchSeed {
-            row_ix: 0,
+            node: NodeId::from(7u64),
             path: path.to_path_buf(),
             mtime_unix: 100,
             size: AROS_ELF.len() as u64,
@@ -441,14 +466,24 @@ mod tests {
         let db_opt = Some(db.clone());
 
         // Cache-first (force = false): the stale DB row wins, no re-sniff.
-        let cached = run_worker(vec![seed_for(&path)], db_opt.clone(), false);
+        let cached = run_worker(
+            vec![seed_for(&path)],
+            db_opt.clone(),
+            false,
+            Arc::new(AtomicBool::new(false)),
+        );
         assert_eq!(cached.len(), 1);
         assert_eq!(cached[0].magic_label, "STALE label");
         assert_eq!(cached[0].description, "STALE description");
 
         // Forced (force = true): the file is re-sniffed from disk, so the
         // real AROS facts replace the stale cache...
-        let forced = run_worker(vec![seed_for(&path)], db_opt.clone(), true);
+        let forced = run_worker(
+            vec![seed_for(&path)],
+            db_opt.clone(),
+            true,
+            Arc::new(AtomicBool::new(false)),
+        );
         assert_eq!(forced.len(), 1);
         assert_eq!(forced[0].magic_label, "ELF executable");
         assert_eq!(
@@ -458,7 +493,12 @@ mod tests {
 
         // ...and the write-through heals the cache, so a subsequent
         // cache-first pass now serves the fresh values.
-        let healed = run_worker(vec![seed_for(&path)], db_opt, false);
+        let healed = run_worker(
+            vec![seed_for(&path)],
+            db_opt,
+            false,
+            Arc::new(AtomicBool::new(false)),
+        );
         assert_eq!(healed[0].magic_label, "ELF executable");
         assert!(healed[0].description.ends_with("AROS"));
 
