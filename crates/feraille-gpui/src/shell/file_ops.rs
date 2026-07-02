@@ -698,6 +698,17 @@ impl Shell {
                                 TransferMode::Move if *all_same_volume => {
                                     this.push_undo(UndoOp::MoveBack(outcome.created.clone()));
                                 }
+                                // Cross-volume (or mixed-volume) move:
+                                // undo copies each item back and then
+                                // deletes the moved copy. Only when the
+                                // move replaced nothing — copy-back-
+                                // undoing a replace would erase the sole
+                                // remaining version's provenance.
+                                TransferMode::Move if outcome.replaced == 0 => {
+                                    this.push_undo(UndoOp::MoveBackCross(
+                                        outcome.created.clone(),
+                                    ));
+                                }
                                 TransferMode::Copy if outcome.replaced == 0 => {
                                     this.push_undo(UndoOp::RemoveCreated(
                                         outcome.created.iter().map(|(_, d)| d.clone()).collect(),
@@ -1176,6 +1187,7 @@ impl Shell {
     fn toggle_tag_on_target(
         &mut self,
         color: feraille_core::commands::TagColor,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // Tag xattrs are filesystem I/O — a large selection means one
@@ -1194,21 +1206,38 @@ impl Shell {
             return;
         }
         let active = self.active;
+        let win = window.window_handle();
         cx.spawn(async move |this, cx| {
-            let failures = cx
+            let (done, failures) = cx
                 .background_executor()
                 .spawn(async move {
-                    let mut failed = 0usize;
+                    let mut done = 0usize;
+                    let mut failures: Vec<feraille_fs_native::file_ops::FileOpError> = Vec::new();
                     for path in &paths {
-                        if crate::platform_shell::toggle_tag(path, color).is_err() {
-                            failed += 1;
+                        match crate::platform_shell::toggle_tag(path, color) {
+                            Ok(()) => done += 1,
+                            // Stringly-typed platform error — classify it
+                            // so the report shares the one advice table.
+                            Err(e) => failures.push(
+                                feraille_fs_native::file_ops::FileOpError::other(
+                                    path,
+                                    super::classify_error_text(&e),
+                                    e,
+                                ),
+                            ),
                         }
                     }
-                    failed
+                    (done, failures)
                 })
                 .await;
-            if failures > 0 {
-                crate::log_warn!(90, "tag toggle: {failures} item(s) failed");
+            if !failures.is_empty() {
+                crate::log_warn!(90, "tag toggle: {} item(s) failed", failures.len());
+                // Quiet on success; failures surface through the same
+                // structured "N of M · why" report as the other mutations.
+                let summary = crate::shell::file_op_failure_report("Tag", done, 0, &failures);
+                let _ = win.update(cx, |_, window, cx| {
+                    window.push_notification(super::error_notification(summary), cx);
+                });
             }
             let _ = this.update(cx, |this, cx| {
                 let tab = if this.tabs.get(active).is_some() {
@@ -1225,64 +1254,64 @@ impl Shell {
     pub(super) fn on_toggle_tag_red(
         &mut self,
         _: &ToggleTagRed,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Red, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Red, window, cx);
     }
 
     pub(super) fn on_toggle_tag_orange(
         &mut self,
         _: &ToggleTagOrange,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Orange, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Orange, window, cx);
     }
 
     pub(super) fn on_toggle_tag_yellow(
         &mut self,
         _: &ToggleTagYellow,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Yellow, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Yellow, window, cx);
     }
 
     pub(super) fn on_toggle_tag_green(
         &mut self,
         _: &ToggleTagGreen,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Green, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Green, window, cx);
     }
 
     pub(super) fn on_toggle_tag_blue(
         &mut self,
         _: &ToggleTagBlue,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Blue, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Blue, window, cx);
     }
 
     pub(super) fn on_toggle_tag_purple(
         &mut self,
         _: &ToggleTagPurple,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Purple, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Purple, window, cx);
     }
 
     pub(super) fn on_toggle_tag_gray(
         &mut self,
         _: &ToggleTagGray,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Gray, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Gray, window, cx);
     }
 
     fn open_with_slot(&mut self, slot: usize, cx: &mut Context<Self>) {
@@ -1499,27 +1528,35 @@ impl Shell {
         let win = window.window_handle();
         cx.spawn(async move |_this, cx| {
             // Don't bail on the first failure: trash every item we can, and
-            // collect the rest (with their error *kind*) so a permission
+            // collect the rest as classified `FileOpError`s so a permission
             // denial on one protected app doesn't strand the others and so we
             // can offer an elevated retry for just the recoverable ones.
             let result = cx
                 .background_executor()
                 .spawn(async move {
                     let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
-                    let mut failures: Vec<(PathBuf, std::io::ErrorKind, String)> = Vec::new();
+                    let mut done = 0usize;
+                    let mut failures: Vec<feraille_fs_native::file_ops::FileOpError> = Vec::new();
                     for path in &paths {
                         match feraille_fs_native::move_to_trash(path) {
-                            Ok(Some(trashed)) => pairs.push((path.clone(), trashed)),
-                            Ok(None) => {}
-                            Err(e) => failures.push((path.clone(), e.kind(), e.to_string())),
+                            Ok(Some(trashed)) => {
+                                done += 1;
+                                pairs.push((path.clone(), trashed));
+                            }
+                            // Trashed, but the resulting URL wasn't
+                            // reported — done, just not undoable.
+                            Ok(None) => done += 1,
+                            Err(e) => failures.push(
+                                feraille_fs_native::file_ops::FileOpError::from_io(&e, path),
+                            ),
                         }
                     }
-                    (pairs, failures)
+                    (pairs, done, failures)
                 })
                 .await;
-            let (pairs, failures) = result;
+            let (pairs, done, failures) = result;
             match failures.first() {
-                Some((_, _, msg)) => process.tasks.borrow_mut().end_failed(task_id, msg.clone()),
+                Some(f) => process.tasks.borrow_mut().end_failed(task_id, f.to_string()),
                 None => process.tasks.borrow_mut().end(task_id),
             }
             if let Some(shell) = weak.upgrade() {
@@ -1540,26 +1577,36 @@ impl Shell {
                     );
                     return;
                 }
+                // The structured "N of M · why" report shared with the
+                // copy/move path; the raw OS detail rides along for the
+                // Copy action.
+                let summary =
+                    crate::shell::file_op_failure_report("Move to Trash", done, 0, &failures);
+                let detail = failures
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 // The items elevation could still trash — bare permission
                 // denials (a root-owned app), not locked/missing ones.
                 let recoverable: Vec<PathBuf> = failures
                     .iter()
-                    .filter(|(_, k, _)| *k == std::io::ErrorKind::PermissionDenied)
-                    .map(|(p, _, _)| p.clone())
+                    .filter(|f| f.kind.is_elevation_recoverable())
+                    .map(|f| f.path.clone())
                     .collect();
-                let detail = failures
-                    .iter()
-                    .map(|(_, _, msg)| msg.clone())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let headline = trash_failure_headline(&failures, !recoverable.is_empty());
                 let retry = crate::shell::TrashRetry {
                     shell: weak,
                     sources: recoverable,
                     delete: false,
                 };
-                window
-                    .push_notification(crate::shell::trash_failure_notification(headline, detail, retry), cx);
+                window.push_notification(
+                    crate::shell::trash_failure_notification(
+                        summary.clone(),
+                        format!("{summary}\n\n{detail}"),
+                        retry,
+                    ),
+                    cx,
+                );
             });
         })
         .detach();
@@ -1889,11 +1936,11 @@ impl Shell {
                 .background_executor()
                 .spawn(async move {
                     let mut deleted = 0usize;
-                    let mut first_err: Option<String> = None;
-                    // Items a normal process can't remove (root-owned trash —
-                    // e.g. something elevated into the Trash earlier). These
-                    // are exactly what an elevated retry can finish.
-                    let mut failed_perm: Vec<PathBuf> = Vec::new();
+                    // Every item that couldn't be removed, classified —
+                    // feeds the shared "N of M · why" report, and its
+                    // permission-denied subset is exactly what an
+                    // elevated retry can finish (root-owned trash).
+                    let mut failures: Vec<feraille_fs_native::file_ops::FileOpError> = Vec::new();
                     for d in &dirs {
                         let Ok(rd) = std::fs::read_dir(d) else {
                             continue;
@@ -1909,70 +1956,72 @@ impl Shell {
                             };
                             match removed {
                                 Ok(()) => deleted += 1,
-                                Err(e) => {
-                                    if e.kind() == std::io::ErrorKind::PermissionDenied {
-                                        failed_perm.push(p.clone());
-                                    }
-                                    if first_err.is_none() {
-                                        first_err = Some(format!("{}: {e}", p.display()));
-                                    }
-                                }
+                                Err(e) => failures.push(
+                                    feraille_fs_native::file_ops::FileOpError::from_io(&e, &p),
+                                ),
                             }
                         }
                     }
-                    (deleted, first_err, failed_perm, dirs)
+                    (deleted, failures, dirs)
                 })
                 .await;
-            let (deleted, first_err, failed_perm, dirs) = result;
-            match &first_err {
-                Some(e) => process.tasks.borrow_mut().end_failed(task_id, e.clone()),
+            let (deleted, failures, dirs) = result;
+            match failures.first() {
+                Some(f) => process.tasks.borrow_mut().end_failed(task_id, f.to_string()),
                 None => process.tasks.borrow_mut().end(task_id),
             }
             // Trash contents changed under any tab browsing it.
             Shell::broadcast_reload_for_process(&process, dirs, cx);
             let _ = win.update(cx, move |_, window, cx| {
                 let plural = if deleted == 1 { "item" } else { "items" };
-                match first_err {
-                    None if deleted == 0 && unreadable => window.push_notification(
-                        Notification::error(
-                            "Couldn't read the Trash (permission denied). Grant Feraille \
-                             Files & Folders access and try again.",
-                        ),
-                        cx,
-                    ),
-                    None => window.push_notification(
-                        Notification::success(format!(
-                            "Emptied Trash \u{2014} {deleted} {plural} deleted"
-                        )),
-                        cx,
-                    ),
-                    Some(e) => {
-                        let detail =
-                            format!("Emptied Trash with errors ({deleted} {plural} deleted): {e}");
-                        // Root-owned trash items can be finished as admin; the
-                        // rest (none, here) just report. Falls back to a plain
-                        // expandable error toast when nothing is recoverable.
-                        let headline = if failed_perm.is_empty() {
-                            detail.clone()
-                        } else if failed_perm.len() == 1 {
-                            "1 Trash item needs administrator rights to delete.".to_string()
-                        } else {
-                            format!(
-                                "{} Trash items need administrator rights to delete.",
-                                failed_perm.len()
-                            )
-                        };
-                        let retry = crate::shell::TrashRetry {
-                            shell: this,
-                            sources: failed_perm,
-                            delete: true,
-                        };
+                if failures.is_empty() {
+                    if deleted == 0 && unreadable {
                         window.push_notification(
-                            crate::shell::trash_failure_notification(headline, detail, retry),
+                            Notification::error(
+                                "Couldn't read the Trash (permission denied). Grant Feraille \
+                                 Files & Folders access and try again.",
+                            ),
+                            cx,
+                        );
+                    } else {
+                        window.push_notification(
+                            Notification::success(format!(
+                                "Emptied Trash \u{2014} {deleted} {plural} deleted"
+                            )),
                             cx,
                         );
                     }
+                    return;
                 }
+                // Partial result through the same structured report the
+                // copy/move path uses. Root-owned trash items can be
+                // finished as admin; when nothing is recoverable this
+                // falls back to the plain expandable/copyable toast.
+                let summary =
+                    crate::shell::file_op_failure_report("Empty Trash", deleted, 0, &failures);
+                let detail = failures
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let failed_perm: Vec<PathBuf> = failures
+                    .iter()
+                    .filter(|f| f.kind.is_elevation_recoverable())
+                    .map(|f| f.path.clone())
+                    .collect();
+                let retry = crate::shell::TrashRetry {
+                    shell: this,
+                    sources: failed_perm,
+                    delete: true,
+                };
+                window.push_notification(
+                    crate::shell::trash_failure_notification(
+                        summary.clone(),
+                        format!("{summary}\n\n{detail}"),
+                        retry,
+                    ),
+                    cx,
+                );
             });
         })
         .detach();
@@ -2441,11 +2490,11 @@ impl Shell {
         }
         let db = self.process.db_snapshot();
         cx.spawn_in(window, async move |this, cx| {
-            let (cleared, failed) = cx
+            let (cleared, failures) = cx
                 .background_executor()
                 .spawn(async move {
                     let mut cleared: Vec<feraille_core::NodeId> = Vec::new();
-                    let mut failed = 0usize;
+                    let mut failures: Vec<feraille_fs_native::file_ops::FileOpError> = Vec::new();
                     for (id, path) in targets {
                         match feraille_fs_native::clear_quarantine(&path) {
                             Ok(()) => {
@@ -2469,15 +2518,17 @@ impl Shell {
                                     "clear_quarantine failed for {}: {e}",
                                     path.display()
                                 );
-                                failed += 1;
+                                failures.push(feraille_fs_native::file_ops::FileOpError::from_io(
+                                    &e, &path,
+                                ));
                             }
                         }
                     }
-                    (cleared, failed)
+                    (cleared, failures)
                 })
                 .await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.apply_quarantine_cleared(&cleared, failed, window, cx);
+                this.apply_quarantine_cleared(&cleared, &failures, window, cx);
             });
         })
         .detach();
@@ -2489,7 +2540,7 @@ impl Shell {
     fn apply_quarantine_cleared(
         &mut self,
         cleared: &[feraille_core::NodeId],
-        failed: usize,
+        failures: &[feraille_fs_native::file_ops::FileOpError],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2518,37 +2569,19 @@ impl Shell {
             };
             window.push_notification(Notification::success(msg), cx);
         }
-        if failed > 0 {
+        if !failures.is_empty() {
+            // Per-item failures through the same structured report the
+            // copy/move path uses (Copy button + expandable detail via
+            // the shared error toast).
             window.push_notification(
-                Notification::warning(format!(
-                    "Couldn't clear the mark on {failed} file(s) — see log"
+                super::error_notification(crate::shell::file_op_failure_report(
+                    "Clear quarantine",
+                    cleared.len(),
+                    0,
+                    failures,
                 )),
                 cx,
             );
         }
-    }
-}
-
-/// The one-line headline for a Move-to-Trash failure toast. When elevation is
-/// on offer it frames the failure as "needs administrator rights"; otherwise it
-/// states it plainly (the full per-item detail is one Copy/​Details away).
-fn trash_failure_headline(
-    failures: &[(PathBuf, std::io::ErrorKind, String)],
-    offer_admin: bool,
-) -> String {
-    let what = if failures.len() == 1 {
-        let name = failures[0]
-            .0
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("item");
-        format!("\u{201C}{name}\u{201D}")
-    } else {
-        format!("{} items", failures.len())
-    };
-    if offer_admin {
-        format!("{what} couldn\u{2019}t be moved to the Trash without administrator rights.")
-    } else {
-        format!("Move to Trash failed for {what}.")
     }
 }

@@ -22,21 +22,6 @@ and let git history plus release notes carry the record.
     covered by **Smart Folders / Saved Searches** under High-Value Features.)
   - Tear-off / collapse **remove** animation (add fade-in + dedup pulse shipped;
     the §3.2 collapse-on-remove still pops rather than animating).
-- **Notifications & undo coverage for mutations.** Success feedback is now
-  intentionally quiet for immediate visible work: rename/new-folder stay silent
-  on success, and task-backed copy/move/duplicate/compress only toast after the
-  task surfaced. Remaining gaps:
-  - **Cross-volume move undo** — `UndoOp::MoveBack` is registered only for
-    same-volume moves; cross-volume moves fall back to copy-undo or none.
-  - Resilient file-op failures shipped on the copy/move/paste/drag path
-    (docs/features/FILE_OPS.md → "Resilient failures"): structured per-item
-    `FileOpError`, batch continues past a failure, a transparent "N of M · why"
-    toast with Copy / Retry / **Retry as administrator…** (macOS osascript real;
-    Windows/Linux elevation stubbed). Remaining: extend the structured report to
-    the surfaces that still swallow or first-error their failures — the trash
-    worker and Empty Trash (show partial + per-item), Clear Quarantine (count
-    only today), and the **silent** context-menu tag-toggle (logs, never
-    notifies).
 - **Grid marquee / rubber-band selection** — the last grid-parity gap now that
   per-cell adornments (tag dots, star, heat tint, cut dimming, tooltip) are
   painted. No list equivalent to copy; new background drag-rect gesture.
@@ -333,12 +318,6 @@ The repo is prepared for a **source-first** public release (dual MIT/Apache;
 README, CONTRIBUTING, SECURITY, THIRD-PARTY-NOTICES in place; private checkout
 paths scrubbed). Source-first is unblocked. Remaining:
 
-- **Soften private-checkout references in the port/feature docs.**
-  `windows-port.md`, `linux-port.md`, and a few feature docs point readers at a
-  `../Ferail/` sibling checkout and `bfe-explorer` source that public cloners
-  won't have. Reframe as "private predecessor — design lineage only" so the
-  links don't read as dead local paths. Not a blocker (the one absolute `C:\`
-  path leak is already removed); doc hygiene for outside readers.
 - **`cargo-deny` for license / advisory drift.** No `deny.toml` today. Add one
   so a future `gpui` rev bump that changes the transitive license surface is
   caught mechanically (see the GPL note below).

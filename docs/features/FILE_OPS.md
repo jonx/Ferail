@@ -167,6 +167,23 @@ always appears (even sub-150 ms ops) and carries actions to **cope**:
   See `crate::elevation` + `platform_shell::{elevation_available,
   run_elevated_self}`.
 
+**Covered surfaces (2026-07-02):** the report itself is one shared builder —
+`file_op_failure_report(operation, done, skipped, failed)` in
+`shell.rs` (`file_op_outcome_summary` is now a thin wrapper over it for
+`OpOutcome`) — and beyond copy/move/paste/drag it backs:
+
+- **Move to Trash** — the worker already continued past failures; it now
+  collects classified `FileOpError`s and toasts the structured "Move to
+  Trash: N of M done · why" report (raw OS detail rides the Copy action;
+  elevated retry over the permission-denied subset, as before).
+- **Empty Trash** — partial results per item ("Empty Trash: N of M done ·
+  why") instead of first-error-only, with the same elevated retry over
+  root-owned leftovers.
+- **Clear Quarantine** — was a count-only warning; per-item failures now
+  surface through the shared expandable/copyable error toast.
+- **Tag toggle** (context-menu tags) — was log-only; failures now toast as
+  "Tag: N of M done · why". Successes stay silent (quiet-on-success policy).
+
 `FileOpErrorKind::is_lock()` + `platform_shell::{processes_using,
 force_close_processes}` back a future "the file is open in X — close it and
 retry / force-close" affordance. The lock primitives are **Windows-native
@@ -363,8 +380,16 @@ Finder semantics, not Windows cut:
 
 ### Undo
 
-- Move → `UndoOp::MoveBack(Vec<(from, to)>)` — renames each item back
-  (cross-volume undo re-runs the engine in reverse, still as one op).
+- Move, same volume → `UndoOp::MoveBack(Vec<(from, to)>)` — renames each
+  item back; a reoccupied origin refuses rather than clobber.
+- Move, cross/mixed volume → `UndoOp::MoveBackCross(Vec<(original, moved)>)`
+  — registered **only when nothing was replaced** (same spirit as copy-undo).
+  Its apply copies each `moved` back through the same engine
+  (`plan_transfer` + `run_copy`, Skip-on-collision — never clobbers), restores
+  a Keep-Both-renamed leaf to its original name, and deletes the moved copy
+  only once its copy-back fully landed. A reoccupied original fails just that
+  pair ("exists again; not overwriting it") and keeps the moved copy; the
+  rest of the batch continues, failures joined into one report.
 - Copy → `UndoOp::RemoveCreated(Vec<PathBuf>)`, registered **only when
   nothing was replaced** (undoing a replace would delete the only
   remaining version — unrecoverable, so we don't offer it; parity

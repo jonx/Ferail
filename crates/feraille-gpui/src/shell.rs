@@ -127,9 +127,16 @@ pub enum UndoOp {
     RemoveFavorite(feraille_core::favorites::Favorite),
     /// Undo a move: rename each `(from, to)` pair's `to` back to
     /// `from`. Only registered when every item took the same-volume
-    /// rename path (docs/features/FILE_OPS.md) — cross-volume undo
-    /// is deferred.
+    /// rename path (docs/features/FILE_OPS.md); cross-volume moves
+    /// register [`UndoOp::MoveBackCross`] instead.
     MoveBack(Vec<(PathBuf, PathBuf)>),
+    /// Undo a cross-volume move: copy each `(original, moved)` pair's
+    /// `moved` back to `original` (engine copy — same fidelity as the
+    /// forward path), then delete `moved` only once its copy-back fully
+    /// landed. Registered when the move replaced nothing (same
+    /// eligibility spirit as `MoveBack`); a reoccupied `original`
+    /// refuses per pair and keeps `moved` intact.
+    MoveBackCross(Vec<(PathBuf, PathBuf)>),
     /// Undo a copy: delete the items it created. Only registered when
     /// the copy replaced nothing — undoing a replace would delete the
     /// sole remaining version.
@@ -169,6 +176,22 @@ impl UndoOp {
                     std::fs::rename(to, from).map_err(|e| e.to_string())?;
                 }
                 Ok(())
+            }
+            UndoOp::MoveBackCross(pairs) => {
+                // Per-pair copy-back; failures collect and the rest of
+                // the batch continues (a reoccupied original must not
+                // strand the other items' undo).
+                let mut errors: Vec<String> = Vec::new();
+                for (original, moved) in pairs {
+                    if let Err(e) = copy_back_moved_item(original, moved) {
+                        errors.push(e);
+                    }
+                }
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors.join("; "))
+                }
             }
             UndoOp::RemoveCreated(paths) => {
                 for p in paths {
@@ -223,7 +246,7 @@ impl UndoOp {
             UndoOp::DeleteFolder(_) => "Removed new folder",
             UndoOp::AddFavorite(_) => "Removed Favorite",
             UndoOp::RemoveFavorite(_) => "Restored Favorite",
-            UndoOp::MoveBack(_) => "Moved items back",
+            UndoOp::MoveBack(_) | UndoOp::MoveBackCross(_) => "Moved items back",
             UndoOp::RemoveCreated(_) => "Removed pasted items",
             UndoOp::TrashRestore(_) => "Restored from Trash",
             UndoOp::RenameBatch(_) => "Undid bulk rename",
@@ -248,7 +271,7 @@ impl UndoOp {
                 push(Some(original));
             }
             UndoOp::DeleteFolder(p) => push(Some(p)),
-            UndoOp::MoveBack(pairs) => {
+            UndoOp::MoveBack(pairs) | UndoOp::MoveBackCross(pairs) => {
                 for (from, to) in pairs {
                     push(Some(from));
                     push(Some(to));
@@ -275,6 +298,81 @@ impl UndoOp {
         }
         out
     }
+}
+
+/// Undo one cross-volume moved item: copy `moved` back so it lands at
+/// `original`, then — only once the copy-back fully succeeded — delete
+/// `moved`. Synchronous filesystem work; runs inside `apply_fs`'s
+/// background context, never the UI thread.
+///
+/// Never clobbers: a reoccupied `original` (or an occupied copy-back
+/// name) refuses and leaves `moved` untouched. The copy rides the same
+/// fs-native engine as the forward path (`plan_transfer` + `run_copy`),
+/// so xattrs/sparseness/symlink stance survive the round trip.
+fn copy_back_moved_item(original: &Path, moved: &Path) -> Result<(), String> {
+    use feraille_fs_native::file_ops::{self as engine, CollisionPolicy, TransferProgress};
+
+    // Same guard as MoveBack/TrashRestore: if something new appeared at
+    // the origin since the move, undoing must not clobber it.
+    if original.exists() {
+        return Err(format!(
+            "{} exists again; not overwriting it",
+            original.display()
+        ));
+    }
+    let Some(dest_dir) = original.parent() else {
+        return Err(format!(
+            "{}: no parent folder to restore into",
+            original.display()
+        ));
+    };
+    let prog = TransferProgress::new();
+    let cancel = AtomicBool::new(false);
+    let sources = [moved.to_path_buf()];
+    let plan = engine::plan_transfer(&sources, dest_dir, &prog, &cancel)
+        .map_err(|e| format!("{}: {e}", moved.display()))?;
+    // Skip-on-collision: the engine must never replace anything during
+    // an undo. `original` was just checked free; a Skip can still fire
+    // when the forward move Keep-Both-renamed the item and something
+    // unrelated now occupies the copy-back name.
+    let out = engine::run_copy(&plan, &|_| CollisionPolicy::Skip, &prog, &cancel)
+        .map_err(|e| format!("{}: {e}", moved.display()))?;
+    if let Some(f) = out.failed.first() {
+        return Err(f.to_string());
+    }
+    let Some((_, landed)) = out.created.first() else {
+        // Skip policy fired — the copy-back destination is occupied.
+        let occupied = dest_dir.join(moved.file_name().unwrap_or_default());
+        return Err(format!(
+            "{} exists again; not overwriting it",
+            occupied.display()
+        ));
+    };
+    if landed != original {
+        // The forward move Keep-Both-renamed the item; restore the
+        // original leaf name. On failure, drop the copy we just made
+        // (it's a duplicate) and keep `moved` as the surviving version.
+        if let Err(e) = std::fs::rename(landed, original) {
+            let _ = remove_file_or_tree(landed);
+            return Err(format!("{}: {e}", landed.display()));
+        }
+    }
+    // Copy-back landed — delete the moved copy (symlink-safe, same
+    // removal the forward cross-volume move uses).
+    remove_file_or_tree(moved)
+}
+
+/// Symlink-safe removal of one path: a real directory removes
+/// recursively, anything else (file or symlink — never followed)
+/// removes as a file. Mirrors the forward move's source deletion.
+fn remove_file_or_tree(path: &Path) -> Result<(), String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let removed = if meta.is_dir() && !meta.is_symlink() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    };
+    removed.map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn file_op_error_notification(
@@ -359,23 +457,43 @@ pub(crate) fn file_op_outcome_summary(
     operation: &str,
     outcome: &feraille_fs_native::file_ops::OpOutcome,
 ) -> String {
+    file_op_failure_report(
+        operation,
+        outcome.created.len(),
+        outcome.skipped,
+        &outcome.failed,
+    )
+}
+
+/// The one structured "N of M · why" report every partly-failed mutation
+/// surface shares (docs/features/FILE_OPS.md → "Resilient failures"):
+/// the transfer path via [`file_op_outcome_summary`], and the trash /
+/// Empty Trash / Clear Quarantine / tag-toggle workers directly, so they
+/// all read identically and evolve in one place.
+pub(crate) fn file_op_failure_report(
+    operation: &str,
+    done: usize,
+    skipped: u64,
+    failed: &[feraille_fs_native::file_ops::FileOpError],
+) -> String {
     const SHOW: usize = 4;
-    let done = outcome.created.len();
-    let failed = outcome.failed.len();
-    let total = done + failed + outcome.skipped as usize;
-    let mut msg = format!("{operation}: {done} of {total} done \u{00b7} {failed} failed");
-    for e in outcome.failed.iter().take(SHOW) {
+    let total = done + failed.len() + skipped as usize;
+    let mut msg = format!(
+        "{operation}: {done} of {total} done \u{00b7} {} failed",
+        failed.len()
+    );
+    for e in failed.iter().take(SHOW) {
         msg.push_str(&format!(
             "\n\u{2022} {} \u{2014} {}",
             e.item_label(),
             e.kind.summary()
         ));
     }
-    if failed > SHOW {
-        msg.push_str(&format!("\n\u{2022} \u{2026}and {} more", failed - SHOW));
+    if failed.len() > SHOW {
+        msg.push_str(&format!("\n\u{2022} \u{2026}and {} more", failed.len() - SHOW));
     }
     msg.push('\n');
-    msg.push_str(dominant_failure_kind(&outcome.failed).advice());
+    msg.push_str(dominant_failure_kind(failed).advice());
     msg
 }
 
@@ -5422,8 +5540,163 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{collapse_error_summary, history_child_to_select, window_title_for};
+    use super::{
+        UndoOp, collapse_error_summary, copy_back_moved_item, file_op_failure_report,
+        history_child_to_select, window_title_for,
+    };
     use std::path::{Path, PathBuf};
+
+    /// Fresh per-test scratch dir (same pattern as feraille-fs-native's
+    /// file-op tests).
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "feraille-shell-undo-{}-{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(p: &Path, contents: &[u8]) {
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(p, contents).unwrap();
+    }
+
+    // ---- MoveBackCross (cross-volume move undo) apply semantics ----
+    //
+    // `copy_back_moved_item` is volume-agnostic (engine copy + delete),
+    // so a same-volume tempdir exercises the exact code path the
+    // cross-volume undo runs.
+
+    #[test]
+    fn move_back_cross_restores_tree_and_removes_moved_copy() {
+        let root = scratch("moveback-tree");
+        // Forward move happened earlier: home/proj → elsewhere/proj.
+        let original = root.join("home/proj");
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        let moved = root.join("elsewhere/proj");
+        write(&moved.join("a.txt"), b"hello");
+        write(&moved.join("sub/b.bin"), &[7u8; 512]);
+
+        copy_back_moved_item(&original, &moved).unwrap();
+
+        assert_eq!(std::fs::read(original.join("a.txt")).unwrap(), b"hello");
+        assert_eq!(
+            std::fs::read(original.join("sub/b.bin")).unwrap().len(),
+            512
+        );
+        assert!(!moved.exists(), "moved copy must be deleted after copy-back");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn move_back_cross_restores_keep_both_renamed_leaf() {
+        let root = scratch("moveback-keepboth");
+        // The forward move collided and Keep-Both landed as "a 2.txt";
+        // undo must restore the *original* name, not "a 2.txt".
+        let original = root.join("home/a.txt");
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        let moved = root.join("elsewhere/a 2.txt");
+        write(&moved, b"payload");
+
+        copy_back_moved_item(&original, &moved).unwrap();
+
+        assert_eq!(std::fs::read(&original).unwrap(), b"payload");
+        assert!(!root.join("home/a 2.txt").exists());
+        assert!(!moved.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn move_back_cross_refuses_reoccupied_original_and_keeps_moved() {
+        let root = scratch("moveback-occupied");
+        let original = root.join("home/a.txt");
+        write(&original, b"newcomer"); // something new appeared at the origin
+        let moved = root.join("elsewhere/a.txt");
+        write(&moved, b"payload");
+
+        let err = copy_back_moved_item(&original, &moved).unwrap_err();
+        assert!(err.contains("exists again"), "{err}");
+        assert_eq!(
+            std::fs::read(&original).unwrap(),
+            b"newcomer",
+            "the newcomer must not be clobbered"
+        );
+        assert_eq!(
+            std::fs::read(&moved).unwrap(),
+            b"payload",
+            "the moved copy must survive a refused undo"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn move_back_cross_batch_continues_past_a_failed_pair() {
+        let root = scratch("moveback-batch");
+        let occupied_original = root.join("home/busy.txt");
+        write(&occupied_original, b"newcomer");
+        let occupied_moved = root.join("elsewhere/busy.txt");
+        write(&occupied_moved, b"stuck");
+        let free_original = root.join("home/free.txt");
+        let free_moved = root.join("elsewhere/free.txt");
+        write(&free_moved, b"comes home");
+
+        let op = UndoOp::MoveBackCross(vec![
+            (occupied_original.clone(), occupied_moved.clone()),
+            (free_original.clone(), free_moved.clone()),
+        ]);
+        let err = op.apply_fs().unwrap_err();
+        assert!(err.contains("exists again"), "{err}");
+        // The failed pair kept both sides; the good pair still applied.
+        assert_eq!(std::fs::read(&occupied_moved).unwrap(), b"stuck");
+        assert_eq!(std::fs::read(&free_original).unwrap(), b"comes home");
+        assert!(!free_moved.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- Shared partial-failure report ----
+
+    #[test]
+    fn failure_report_counts_lists_items_and_advises() {
+        use feraille_fs_native::file_ops::{FileOpError, FileOpErrorKind};
+        let failed = vec![
+            FileOpError::other(
+                Path::new("/x/Report.pdf"),
+                FileOpErrorKind::PermissionDenied,
+                "raw os text",
+            ),
+            FileOpError::other(Path::new("/x/notes.txt"), FileOpErrorKind::Locked, "raw"),
+        ];
+        let s = file_op_failure_report("Move to Trash", 3, 0, &failed);
+        assert!(
+            s.starts_with("Move to Trash: 3 of 5 done \u{00b7} 2 failed"),
+            "{s}"
+        );
+        assert!(s.contains("Report.pdf \u{2014} permission denied"), "{s}");
+        assert!(s.contains("notes.txt \u{2014} in use by another program"), "{s}");
+        // Permission denied dominates → elevation advice.
+        assert!(s.contains("administrator"), "{s}");
+    }
+
+    #[test]
+    fn failure_report_elides_a_long_tail_and_counts_skips() {
+        use feraille_fs_native::file_ops::{FileOpError, FileOpErrorKind};
+        let failed: Vec<FileOpError> = (0..6)
+            .map(|i| {
+                FileOpError::other(
+                    Path::new("/x").join(format!("f{i}.txt")).as_path(),
+                    FileOpErrorKind::Other,
+                    "raw",
+                )
+            })
+            .collect();
+        let s = file_op_failure_report("Empty Trash", 2, 1, &failed);
+        assert!(s.starts_with("Empty Trash: 2 of 9 done \u{00b7} 6 failed"), "{s}");
+        assert!(s.contains("\u{2026}and 2 more"), "{s}");
+    }
 
     #[test]
     fn short_single_line_error_is_shown_whole_with_no_details_toggle() {
