@@ -74,8 +74,12 @@ open — see "Still open" below.
 Selection (shipped): plain click replaces, `Cmd+Click` toggles; the
 footer shows the single item's name+size or "N selected · total".
 Clicking a Top-N row selects the matching file in the treemap, and
-vice versa. `Escape`-clears and the Enter/Backspace zoom keys remain
-keyboard follow-ups (their command ids are still keymap placeholders).
+vice versa. Keyboard (shipped, `DiskUsage` context, claimed by clicking
+the treemap): `Enter` zooms into the selected folder, `Backspace` zooms
+out, `Escape` clears the selection, and `Cmd+C` / `Cmd+I` /
+`Cmd+Backspace` mirror Copy / Get Info / Move to Trash on the treemap
+selection. (User-remappable command ids for these are a follow-up —
+the `disk_usage.*` ids in keymap.rs are still placeholders.)
 
 ## Architecture
 

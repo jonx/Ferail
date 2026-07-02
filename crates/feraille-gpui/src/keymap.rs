@@ -57,6 +57,21 @@ pub fn install(cx: &mut App) {
         Some(shell::SHELL_CONTEXT),
     )]);
 
+    // Disk Usage treemap keys — DiskUsage context only, so they never
+    // shadow the file list. Enter zooms into the selected folder,
+    // Backspace zooms out, Escape clears the selection; Cmd+C / Cmd+I /
+    // Cmd+Backspace mirror the file-list verbs on the treemap
+    // selection.
+    let du_ctx = Some(crate::disk_usage::DISK_USAGE_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("enter", crate::disk_usage::DuZoomIn, du_ctx),
+        KeyBinding::new("backspace", crate::disk_usage::DuZoomOut, du_ctx),
+        KeyBinding::new("escape", crate::disk_usage::DuClearSelection, du_ctx),
+        KeyBinding::new("secondary-c", crate::disk_usage::DuCopyFiles, du_ctx),
+        KeyBinding::new("secondary-i", crate::disk_usage::DuGetInfo, du_ctx),
+        KeyBinding::new("secondary-backspace", crate::disk_usage::DuTrash, du_ctx),
+    ]);
+
     // Icon-grid 2-D navigation. Bound in the FerailleGrid context,
     // which is more specific than SHELL_CONTEXT, so these win over the
     // table's 1-D Cursor* arrow bindings whenever the grid is focused.

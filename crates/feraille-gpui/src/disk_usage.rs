@@ -24,9 +24,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Key context for the Disk Usage pane — keymap.rs binds the treemap
+/// keys (Enter/Backspace/Escape, Cmd+C/I/Backspace) against it.
+pub const DISK_USAGE_CONTEXT: &str = "DiskUsage";
+
 gpui::actions!(
     disk_usage,
     [
+        DuClearSelection,
         DuOpen,
         DuReveal,
         DuGetInfo,
@@ -1327,10 +1332,14 @@ impl DiskUsageView {
             // parity); double click on a container zooms in. Right
             // click opens the context menu below (zoom-out moved to
             // the background menu / the menu itself).
-            rect = rect.on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+            rect = rect.on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 if event.is_right_click() {
                     return; // handled by the context menu
                 }
+                // Clicking the treemap claims keyboard focus so the
+                // DiskUsage key context (Enter/Backspace/Escape/...)
+                // applies immediately.
+                this.focus_handle.focus(window, cx);
                 if event.click_count() >= 2 && has_children {
                     this.select_only(node_id, cx);
                     this.zoom_into(node_id, cx);
@@ -1590,6 +1599,19 @@ impl DiskUsageView {
         self.zoom_out(cx);
     }
 
+    fn on_du_clear_selection(
+        &mut self,
+        _: &DuClearSelection,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.selected.is_empty() || self.lead.is_some() {
+            self.selected.clear();
+            self.lead = None;
+            cx.notify();
+        }
+    }
+
     /// The single selected container, when the selection is exactly one
     /// folder — the target rule for Zoom In and the subtree HTML export.
     fn single_selected_container(&self) -> Option<NodeId> {
@@ -1809,9 +1831,10 @@ impl Render for DiskUsageView {
         let view = cx.entity().clone();
         v_flex()
             .track_focus(&self.focus_handle)
-            .key_context("DiskUsage")
+            .key_context(DISK_USAGE_CONTEXT)
             // Context-menu verbs (rect + background menus dispatch
             // these through the view's focus context).
+            .on_action(cx.listener(Self::on_du_clear_selection))
             .on_action(cx.listener(Self::on_du_open))
             .on_action(cx.listener(Self::on_du_reveal))
             .on_action(cx.listener(Self::on_du_get_info))
