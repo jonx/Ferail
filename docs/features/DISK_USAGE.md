@@ -48,14 +48,20 @@ open — see "Still open" below.
   are treated as opaque leaves, matching Finder. Toggling re-scans.
 - **Right-click a rect** (shipped): the file-list verbs on the resolved
   selection — Open, Reveal in Finder, Get Info (when opened from a
-  shell), Copy (real file URLs), Copy Path(s), Copy/Save as HTML
-  (single folder target), Zoom In/Out, Move to Trash. Finder targeting
+  shell), Copy (real file URLs), Copy Path(s), an **Export as HTML**
+  submenu (Copy/Save This Folder for a single folder target,
+  Copy/Save Whole View), Zoom In/Out, Move to Trash. Finder targeting
   rule: right-clicking a rect outside the selection retargets to just
   it; right-clicking a member acts on the whole set. A successful
   trash re-scans the root (honest totals) and reloads any shell tabs
   showing the affected directories.
-- **Right-click the background**: Zoom Out, plus Copy/Save **View** as
+- **Right-click the background**: Zoom Out, plus Copy/Save View as
   HTML for the whole current focus.
+- **One menu layer by design**: rects record themselves as the target
+  on right-mouse-down and the treemap's single context menu routes on
+  it — per-rect ContextMenu layers stacked (their overlay hitboxes
+  paint above the rects and don't stop propagation), opening two
+  colliding menus and wiping the selection.
 - **HTML export** (shipped): `feraille_disk_usage::treemap_html_*`
   renders the same tree through the same layout pipeline into
   self-contained HTML (inline styles, no JS) — "Copy as HTML" puts a

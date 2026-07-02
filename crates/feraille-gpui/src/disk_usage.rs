@@ -142,6 +142,14 @@ pub struct DiskUsageView {
     /// context menu open Get Info windows and reload affected tabs
     /// after a trash.
     pub(crate) shell: Option<gpui::WeakEntity<crate::shell::Shell>>,
+    /// `(node, is_container)` recorded by a rect's right-mouse-down,
+    /// consumed by the treemap's ONE context-menu builder to route
+    /// between the rect menu and the background menu. One menu layer
+    /// by design: gpui-component's ContextMenu overlay hitbox paints
+    /// above the rects, so stacking a menu per rect made the
+    /// container's menu open too (and its background handling wiped
+    /// the selection).
+    menu_rect_target: Option<(NodeId, bool)>,
 
     size_mode: SizeMode,
     descend_packages: bool,
@@ -245,6 +253,7 @@ impl DiskUsageView {
             lead: None,
             category_filter: None,
             shell: None,
+            menu_rect_target: None,
             size_mode: SizeMode::Apparent,
             descend_packages: false,
             volume,
@@ -1164,26 +1173,86 @@ impl DiskUsageView {
                     );
                 });
             })
-            // Background (empty space / whole view) menu. Right-click
-            // used to zoom out directly; that quick-nav now lives here
-            // alongside the whole-view HTML export the rects can't
-            // express.
-            .context_menu(move |menu, _window, cx| {
-                // Clicking the background retargets "the view", not a
-                // rect — drop any rect selection so the status line and
-                // the menu agree on the target.
-                if let Some(v) = weak_bg_menu.upgrade() {
-                    v.update(cx, |this, cx| {
+            // THE one context menu for the whole treemap, routed by
+            // what the right-click landed on. Each rect records itself
+            // in `menu_rect_target` on right-mouse-down (which runs
+            // before the deferred menu build); no per-rect ContextMenu
+            // layers — the overlay hitboxes paint above the rects, so
+            // stacked layers all fired at once (two menus colliding on
+            // screen, and the background arm wiping the selection).
+            .context_menu(move |menu, window, cx| {
+                let Some(v) = weak_bg_menu.upgrade() else {
+                    return menu;
+                };
+                let (target, count, has_shell) = v.update(cx, |this, cx| {
+                    let target = this.menu_rect_target.take();
+                    if target.is_none() {
+                        // True background click: the view is the
+                        // target — drop the rect selection so the
+                        // status line and the menu agree.
                         this.selected.clear();
                         this.lead = None;
                         cx.notify();
-                    });
+                    }
+                    (target, this.selected.len(), this.shell.is_some())
+                });
+                let menu = menu.action_context(bg_focus.clone());
+                match target {
+                    None => menu
+                        .menu_with_disabled("Zoom Out", Box::new(DuZoomOut), !zoomed)
+                        .separator()
+                        .menu("Copy View as HTML", Box::new(DuCopyViewHtml))
+                        .menu("Save View as HTML\u{2026}", Box::new(DuSaveViewHtml)),
+                    Some((_node, is_container)) => {
+                        let single = count == 1;
+                        let mut menu = menu
+                            .menu("Open", Box::new(DuOpen))
+                            .menu(
+                                if cfg!(target_os = "macos") {
+                                    "Reveal in Finder"
+                                } else {
+                                    "Reveal in File Manager"
+                                },
+                                Box::new(DuReveal),
+                            );
+                        if has_shell {
+                            menu = menu.menu("Get Info", Box::new(DuGetInfo));
+                        }
+                        menu = menu
+                            .separator()
+                            .menu("Copy", Box::new(DuCopyFiles))
+                            .menu(
+                                if single { "Copy Path" } else { "Copy Paths" },
+                                Box::new(DuCopyPaths),
+                            )
+                            .separator()
+                            .submenu("Export as HTML", window, cx, move |menu, _, _| {
+                                menu.menu_with_disabled(
+                                    "Copy This Folder",
+                                    Box::new(DuCopyHtml),
+                                    !(single && is_container),
+                                )
+                                .menu_with_disabled(
+                                    "Save This Folder\u{2026}",
+                                    Box::new(DuSaveHtml),
+                                    !(single && is_container),
+                                )
+                                .separator()
+                                .menu("Copy Whole View", Box::new(DuCopyViewHtml))
+                                .menu("Save Whole View\u{2026}", Box::new(DuSaveViewHtml))
+                            })
+                            .separator()
+                            .menu_with_disabled(
+                                "Zoom In",
+                                Box::new(DuZoomIn),
+                                !(single && is_container),
+                            )
+                            .menu_with_disabled("Zoom Out", Box::new(DuZoomOut), !zoomed)
+                            .separator()
+                            .menu("Move to Trash", Box::new(DuTrash));
+                        menu
+                    }
                 }
-                menu.action_context(bg_focus.clone())
-                    .menu_with_disabled("Zoom Out", Box::new(DuZoomOut), !zoomed)
-                    .separator()
-                    .menu("Copy View as HTML", Box::new(DuCopyViewHtml))
-                    .menu("Save View as HTML\u{2026}", Box::new(DuSaveViewHtml))
             });
         for (ix, r) in self.rects_cache.iter().enumerate() {
             if r.width < 1.0 || r.height < 1.0 {
@@ -1212,11 +1281,15 @@ impl DiskUsageView {
                 .w(px(r.width))
                 .h(px(r.height))
                 .bg(color)
-                .border_1()
-                .border_color(if selected {
-                    cx.theme().selection
-                } else {
-                    rgba(0x00000033).into()
+                // Selected: a fat near-black border reads on every
+                // category color (the old 1px theme-blue vanished on
+                // saturated tiles).
+                .map(|this| {
+                    if selected {
+                        this.border_2().border_color(rgba(0x000000E0))
+                    } else {
+                        this.border_1().border_color(rgba(0x00000033))
+                    }
                 })
                 .id(("du-rect", ix))
                 .cursor_pointer()
@@ -1267,74 +1340,25 @@ impl DiskUsageView {
                     this.select_only(node_id, cx);
                 }
             }));
-            {
-                use gpui_component::menu::ContextMenuExt as _;
-                let weak = cx.weak_entity();
-                let rect_focus = self.focus_handle.clone();
-                let is_container = has_children
-                    || self
-                        .tree
-                        .nodes
-                        .get(&node_id)
-                        .map(|n| matches!(n.kind, feraille_disk_usage::NodeKind::Container))
-                        .unwrap_or(false);
-                let zoomed = !self.zoom_path.is_empty();
-                let rect = rect.context_menu(move |menu, _window, cx| {
-                    // Retarget the selection Finder-style before the
-                    // menu builds, then gate items on the resolved set.
-                    let (count, has_shell) = match weak.upgrade() {
-                        Some(v) => v.update(cx, |this, cx| {
-                            this.ensure_selected_for_menu(node_id, cx);
-                            (this.selected.len(), this.shell.is_some())
-                        }),
-                        None => (1, false),
-                    };
-                    let single = count == 1;
-                    let mut menu = menu
-                        .action_context(rect_focus.clone())
-                        .menu("Open", Box::new(DuOpen))
-                        .menu(
-                            if cfg!(target_os = "macos") {
-                                "Reveal in Finder"
-                            } else {
-                                "Reveal in File Manager"
-                            },
-                            Box::new(DuReveal),
-                        );
-                    if has_shell {
-                        menu = menu.menu("Get Info", Box::new(DuGetInfo));
-                    }
-                    menu = menu
-                        .separator()
-                        .menu("Copy", Box::new(DuCopyFiles))
-                        .menu(
-                            if single { "Copy Path" } else { "Copy Paths" },
-                            Box::new(DuCopyPaths),
-                        )
-                        .separator()
-                        .menu_with_disabled(
-                            "Copy as HTML",
-                            Box::new(DuCopyHtml),
-                            !(single && is_container),
-                        )
-                        .menu_with_disabled(
-                            "Save as HTML\u{2026}",
-                            Box::new(DuSaveHtml),
-                            !(single && is_container),
-                        )
-                        .separator()
-                        .menu_with_disabled(
-                            "Zoom In",
-                            Box::new(DuZoomIn),
-                            !(single && is_container),
-                        )
-                        .menu_with_disabled("Zoom Out", Box::new(DuZoomOut), !zoomed)
-                        .separator()
-                        .menu("Move to Trash", Box::new(DuTrash));
-                    menu
-                });
-                container = container.child(rect);
-            }
+            // Route the container's single context menu to this rect:
+            // record the target and apply the Finder rule (a member
+            // keeps the whole selection, an outsider retargets to just
+            // itself) BEFORE the deferred menu build reads the state.
+            let is_container_node = has_children
+                || self
+                    .tree
+                    .nodes
+                    .get(&node_id)
+                    .map(|n| matches!(n.kind, feraille_disk_usage::NodeKind::Container))
+                    .unwrap_or(false);
+            rect = rect.on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, _, cx| {
+                    this.ensure_selected_for_menu(node_id, cx);
+                    this.menu_rect_target = Some((node_id, is_container_node));
+                }),
+            );
+            container = container.child(rect);
         }
         container
     }
