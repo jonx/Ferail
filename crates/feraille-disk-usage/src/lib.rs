@@ -11,11 +11,15 @@
 pub mod aggregate;
 pub mod facts;
 pub mod file_category;
+pub mod html_export;
 pub mod layout;
 pub mod model;
 
 pub use aggregate::build_layout_node;
 pub use facts::DiskUsageFact;
+pub use html_export::{
+    category_color_rgba, category_label, treemap_html_document, treemap_html_fragment,
+};
 pub use file_category::{classify_extension, classify_path, FileCategory};
 pub use layout::{compute_treemap, hit_test, TreemapRect};
 pub use aggregate::build_layout_node_with_mode;

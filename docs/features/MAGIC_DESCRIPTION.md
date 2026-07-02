@@ -1,15 +1,39 @@
 # Magic Description Column
 
 Rich content-derived facts about a file, rendered as a single string in a
-new **Description** column to the right of Format. Inspired by the bfe-explorer
-predecessor at `C:\Source\john-knipper-personal\bfe-explorer` (see
-[crates/ferail-ui/src/magic/types.rs](file:///C:/Source/john-knipper-personal/bfe-explorer/crates/ferail-ui/src/magic/types.rs)),
+new **Description** column to the right of Format. Inspired by the magic
+column in the `bfe-explorer` Windows predecessor (a private prior codebase),
 adapted to feraille's nonblocking contract and current single-`display_magic`
 shape.
 
 ## Status
 
 **Shipped (2026-05-15).**
+
+**ELF OS-ABI + relocatable (2026-06-24).** The ELF parser now reads
+`e_ident[EI_OSABI]` (byte 7) into `MagicInfo::os: ElfOs` and flags
+`e_type == ET_REL` as `is_relocatable`. Named OSes (AROS, the BSDs,
+Solaris, explicit GNU/Linux) get an OS suffix in the description; the
+System V default (used by ordinary Linux toolchains) adds none, so the
+pre-existing description shape is preserved. AROS ships its libraries as
+aarch64 relocatables — `exec.library` now reads as
+`ELF · 64-bit · relocatable · ARM64 · AROS`. The Format column label is
+unchanged (`ELF executable`), keeping the icon classifier's `executable`
+tint.
+
+**Refresh forces a re-sniff (2026-06-24).** Because the cache is keyed by
+`(path, mtime, size)`, a row whose *derived* data went stale without the
+file changing — e.g. after the sniffer's own logic changed — would keep
+serving the old label/description. The Refresh command (F5 / toolbar)
+now arms `Tab::force_resniff`, which the prefetch worker honors by
+ignoring the magic/description read cache and re-sniffing every visible
+row from disk. The fresh result writes through, so the cache self-heals
+and the next ordinary load is a hit again. Quarantine state stays
+cache-first; the broad `--reset-db magic` CLI path remains for clearing
+the whole cache at once. (Edge case: if a forced re-sniff now yields an
+*empty* description for a row that previously had one, the in-memory cell
+updates but `upsert_file`'s COALESCE keeps the old DB value — harmless
+for the enrichment case that motivated this.)
 
 - `feraille-fs-native::magic` module ported in full from bfe-explorer
   (8 files, ~1500 lines): structured `MagicInfo` / `MagicType` /

@@ -80,10 +80,24 @@ fn encode_png(img: &RgbaImage) -> Result<Vec<u8>> {
 pub fn build_bundle(screenshot: Option<&RgbaImage>, note: &str) -> Result<Vec<u8>> {
     use zip::write::SimpleFileOptions;
 
+    // Diagnostics carry only app-owned paths (config dir, DB) — username-scrub
+    // is enough. The trail carries the user's *own* folders, so it is path-
+    // redacted at the source via `render_lines_sanitized`. The note is free
+    // text, so it gets the best-effort path scrub on top.
     let report =
         redact_username(&crate::diagnostics::render_text(&crate::diagnostics::run_checks()));
-    let trail = redact_username(&crate::trail::render_lines().join("\n"));
-    let note = redact_username(note);
+    let trail = redact_username(&crate::trail::render_lines_sanitized().join("\n"));
+    let note = crate::redact::scrub_text(&redact_username(note));
+
+    let privacy = if crate::redact::enabled() {
+        "Privacy: file and folder names have been replaced with \u{2026} \u{2014} this report \
+         reveals nothing about your files, so it is safe to share. (Toggle under \
+         Settings \u{203a} Diagnostics.)\n"
+    } else {
+        "Privacy: path redaction is OFF \u{2014} this report contains real file and folder \
+         names. Turn on \u{201c}Redact file names & paths\u{201d} under Settings \u{203a} \
+         Diagnostics to hide them.\n"
+    };
 
     let readme = format!(
         "Feraille issue report\n\n\
@@ -91,6 +105,7 @@ pub fn build_bundle(screenshot: Option<&RgbaImage>, note: &str) -> Result<Vec<u8
          \x20 diagnostics.txt     health check (storage, deps, environment)\n\
          \x20 activity-trail.txt  the most recent actions before the report\n\
          \x20 note.txt            your description of the problem\n{}\n\
+         {privacy}\
          Account names in paths are replaced with ~ / %USERPROFILE%.\n\
          If the screenshot shows anything sensitive, black it out before sending.\n",
         if screenshot.is_some() {
@@ -164,9 +179,18 @@ pub fn finish_bundle(screenshot: Option<&RgbaImage>, note: &str) -> Result<PathB
 /// before sending.
 pub fn open_reporter(window: &mut gpui::Window) {
     let shot = window.render_to_image().ok();
-    match finish_bundle(shot.as_ref(), "") {
-        Ok(path) => crate::log_info!(90, "issue report ready: {}", path.display()),
-        Err(e) => crate::log_warn!(90, "issue report failed: {e}"),
+    // Only the capture needs the window/UI thread. Bundle assembly is
+    // zip + disk I/O and the reveal can block on a D-Bus round-trip
+    // (Linux) — run them on their own thread (Prime Directive).
+    let spawned = std::thread::Builder::new()
+        .name("issue-report".into())
+        .spawn(move || match finish_bundle(shot.as_ref(), "") {
+            Ok(path) => crate::log_info!(90, "issue report ready: {}", path.display()),
+            Err(e) => crate::log_warn!(90, "issue report failed: {e}"),
+        })
+        .is_ok();
+    if !spawned {
+        crate::log_warn!(90, "issue report: worker spawn failed");
     }
 }
 

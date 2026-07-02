@@ -18,8 +18,8 @@ pub mod window;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use gpui::{
-    App, AppContext as _, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, px,
-    size,
+    App, AppContext as _, Bounds, SharedString, Styled, TitlebarOptions, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowOptions, px, size,
 };
 use gpui_component::Root;
 
@@ -31,26 +31,41 @@ static VIEWER_CASCADE: AtomicU32 = AtomicU32::new(0);
 
 /// Open the viewer on `playlist`, starting at `start`. Each call opens a
 /// *new* window (cascaded from the previous one), so several files can be
-/// viewed side by side; closing a window just drops its entity.
-pub fn open_viewer(playlist: Vec<PlaylistEntry>, start: usize, cx: &mut App) {
-    open_viewer_inner(playlist, start, false, cx);
+/// viewed side by side; closing a window just drops its entity. `window` is
+/// the window the viewer is opened from — the new window lands on its display.
+pub fn open_viewer(playlist: Vec<PlaylistEntry>, start: usize, window: &Window, cx: &mut App) {
+    open_viewer_inner(playlist, start, false, window, cx);
 }
 
 /// Like [`open_viewer`] but begins the slideshow immediately — used by
 /// the "Slideshow from Here" context action (docs/features/VIEWER.md).
-pub fn open_viewer_playing(playlist: Vec<PlaylistEntry>, start: usize, cx: &mut App) {
-    open_viewer_inner(playlist, start, true, cx);
+pub fn open_viewer_playing(
+    playlist: Vec<PlaylistEntry>,
+    start: usize,
+    window: &Window,
+    cx: &mut App,
+) {
+    open_viewer_inner(playlist, start, true, window, cx);
 }
 
-fn open_viewer_inner(playlist: Vec<PlaylistEntry>, start: usize, autoplay: bool, cx: &mut App) {
+fn open_viewer_inner(
+    playlist: Vec<PlaylistEntry>,
+    start: usize,
+    autoplay: bool,
+    window: &Window,
+    cx: &mut App,
+) {
     let process = crate::process_state::process_state(cx);
 
-    // Centre on the active display, then cascade by a fixed step (wrapping
-    // after a handful) so a fresh window doesn't land exactly atop the last.
+    // Centre on the display that hosts the invoking window so a viewer opened
+    // from a window on a secondary monitor appears there rather than jumping
+    // to the primary display. Then cascade by a fixed step (wrapping after a
+    // handful) so a fresh window doesn't land exactly atop the last.
+    let display_id = window.display(cx).map(|d| d.id());
     let step = (VIEWER_CASCADE.fetch_add(1, Ordering::Relaxed) % 6) as f32 * 28.0;
-    let mut bounds = Bounds::centered(None, size(px(1100.0), px(760.0)), cx);
-    bounds.origin.x = bounds.origin.x + px(step);
-    bounds.origin.y = bounds.origin.y + px(step);
+    let mut bounds = Bounds::centered(display_id, size(px(1100.0), px(760.0)), cx);
+    bounds.origin.x += px(step);
+    bounds.origin.y += px(step);
 
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -58,6 +73,12 @@ fn open_viewer_inner(playlist: Vec<PlaylistEntry>, start: usize, autoplay: bool,
             title: Some(SharedString::from("Viewer")),
             ..Default::default()
         }),
+        // Create the window transparency-capable so the in-viewer "Transparent"
+        // toggle actually shows through (the macOS CAMetalLayer's transparency
+        // is fixed at creation; flipping it at runtime on an opaque window only
+        // changes the NSWindow, not the drawable). Normal mode keeps an opaque
+        // content background, so it looks identical until the toggle is on.
+        window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
     };
     let mut weak_view = None;
@@ -65,7 +86,11 @@ fn open_viewer_inner(playlist: Vec<PlaylistEntry>, start: usize, autoplay: bool,
         let view =
             cx.new(|cx| ViewerWindow::new(playlist, start, autoplay, process.clone(), window, cx));
         weak_view = Some(view.downgrade());
-        cx.new(|cx| Root::new(view, window, cx))
+        // gpui_component's Root paints an opaque theme background; override it
+        // to transparent so the viewer's own (toggle-controlled) background is
+        // what determines see-through. Normal mode still looks opaque because
+        // the viewer fills the window with an opaque background of its own.
+        cx.new(|cx| Root::new(view, window, cx).bg(gpui::transparent_black()))
     });
     match (handle, weak_view) {
         (Ok(handle), Some(weak)) => {

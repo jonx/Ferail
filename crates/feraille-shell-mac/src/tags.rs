@@ -20,11 +20,14 @@ use feraille_core::commands::TagColor;
 #[cfg(target_os = "macos")]
 pub fn read_tags(path: &Path) -> Vec<String> {
     use objc2::msg_send;
-    use objc2::rc::Retained;
+    use objc2::rc::{autoreleasepool, Retained};
     use objc2::runtime::AnyObject;
     use objc2_foundation::{NSArray, NSError, NSString, NSURL};
 
-    unsafe {
+    // Worker-callable: drain the autoreleased Cocoa objects (NSError,
+    // the returned tag array) per call — a large tag sweep otherwise
+    // accumulates them until the worker queue idles.
+    autoreleasepool(|_| unsafe {
         let path_ns = NSString::from_str(&path.to_string_lossy());
         let url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&path_ns, path.is_dir());
 
@@ -53,7 +56,7 @@ pub fn read_tags(path: &Path) -> Vec<String> {
             out.push(s.to_string());
         }
         out
-    }
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -77,10 +80,11 @@ pub fn read_canonical_tags(path: &Path) -> Vec<TagColor> {
 #[cfg(target_os = "macos")]
 pub fn write_tags(path: &Path, names: &[&str]) -> Result<(), String> {
     use objc2::msg_send;
-    use objc2::rc::Retained;
+    use objc2::rc::{autoreleasepool, Retained};
     use objc2_foundation::{NSArray, NSError, NSString, NSURL};
 
-    unsafe {
+    // Worker-callable: see read_tags.
+    autoreleasepool(|_| unsafe {
         let path_ns = NSString::from_str(&path.to_string_lossy());
         let url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&path_ns, path.is_dir());
 
@@ -105,8 +109,8 @@ pub fn write_tags(path: &Path, names: &[&str]) -> Result<(), String> {
                 "setResourceValue failed",
             ));
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 #[cfg(not(target_os = "macos"))]

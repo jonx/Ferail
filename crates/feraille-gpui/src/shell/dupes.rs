@@ -193,7 +193,20 @@ impl Shell {
         if let Some(cancel) = self.tabs[idx].folder_size_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
+        if let Some(cancel) = self.tabs[idx].prefetch_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
         self.tabs[idx].load_staging = None;
+        // The directory listing's selection must not survive into the
+        // result surface: the dupe panel reuses `tab.selection` as its
+        // marked-for-trash set, so rows selected in the folder would
+        // arrive pre-checked — one click on "Trash N marked" could
+        // trash a file the user never marked in the panel.
+        self.tabs[idx].selection.clear();
+        self.tabs[idx].anchor = None;
+        self.tabs[idx].lead = None;
+        self.tabs[idx].range_live = false;
+        self.tabs[idx].filtered_out.clear();
         self.tabs[idx].tool_result =
             Some(ToolResultSurface::duplicates(root.clone(), presentation));
         self.tabs[idx].dupe_groups.clear();
@@ -265,7 +278,7 @@ impl Shell {
                             this.apply_dupe_msg_in_tab(
                                 idx,
                                 DupeMsg::Done(error),
-                                notify_window.clone(),
+                                notify_window,
                                 cx,
                             );
                         }

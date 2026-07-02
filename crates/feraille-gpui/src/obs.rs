@@ -53,7 +53,9 @@ pub fn line(level: &str, args: std::fmt::Arguments) {
 
 pub fn breadcrumb(args: std::fmt::Arguments) {
     let entry = format!("[+{:7.3}s] {}", elapsed_secs(), args);
-    let mut guard = breadcrumbs().lock().expect("breadcrumb mutex poisoned");
+    // Poison-tolerant: a panic in another thread must not turn the crash
+    // reporter itself into a second, report-less abort.
+    let mut guard = breadcrumbs().lock().unwrap_or_else(|e| e.into_inner());
     if guard.len() == BREADCRUMB_CAP {
         guard.pop_front();
     }
@@ -185,7 +187,7 @@ fn print_compact_backtrace(backtrace: &str) {
 }
 
 fn dump_breadcrumbs_for_panic() {
-    let guard = breadcrumbs().lock().expect("breadcrumb mutex poisoned");
+    let guard = breadcrumbs().lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_empty() {
         eprintln!("breadcrumbs:");
         eprintln!("    <none>");

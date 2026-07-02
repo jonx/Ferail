@@ -99,9 +99,23 @@ pub fn note(msg: impl Into<String>) {
     push(TrailEvent::Note(msg.into()));
 }
 
-/// Render the trail oldest → newest as plain-text lines, for the diagnostics
-/// report and the in-app view. Empty when nothing has been recorded yet.
+/// Render the trail oldest → newest as plain-text lines, with raw paths. For
+/// internal use; every *user-facing* surface (the diagnostics page, "Copy
+/// report", the issue bundle) must use [`render_lines_sanitized`] so the
+/// privacy toggle is honored.
 pub fn render_lines() -> Vec<String> {
+    render(false)
+}
+
+/// Like [`render_lines`], but redacts every navigated path to a name-free shape
+/// when [`crate::redact::enabled`] is set (the default). This is what gets
+/// shown, copied, and bundled — so a shared report leaks no file or folder
+/// names.
+pub fn render_lines_sanitized() -> Vec<String> {
+    render(crate::redact::enabled())
+}
+
+fn render(redact_paths: bool) -> Vec<String> {
     let Ok(guard) = trail().lock() else {
         return Vec::new();
     };
@@ -110,10 +124,22 @@ pub fn render_lines() -> Vec<String> {
         .map(|e| {
             let body = match &e.event {
                 TrailEvent::Navigate { kind, path } => {
-                    format!("nav/{}: {}", kind.label(), path.display())
+                    let shown = if redact_paths {
+                        crate::redact::redact_path(path)
+                    } else {
+                        path.display().to_string()
+                    };
+                    format!("nav/{}: {}", kind.label(), shown)
                 }
                 TrailEvent::Command { label } => format!("cmd: {label}"),
-                TrailEvent::Note(m) => format!("note: {m}"),
+                TrailEvent::Note(m) => {
+                    let shown = if redact_paths {
+                        crate::redact::scrub_text(m)
+                    } else {
+                        m.clone()
+                    };
+                    format!("note: {shown}")
+                }
             };
             format!("[+{:8.3}s] {body}", e.at)
         })

@@ -144,6 +144,90 @@ Do not hide technical details. Feraille users are expected to be comfortable
 with OS/tool errors; the app adds context and advice instead of replacing the
 real cause with vague friendly copy.
 
+### Resilient failures — per-item reporting + coping (2026-06-23)
+
+A copy/move no longer aborts the whole batch on the first item's failure, and
+no longer flattens the cause into a bare string. The engine
+(`feraille-fs-native/src/file_ops.rs`) classifies each per-item `io::Error`
+into a **`FileOpError { kind, path, raw, os_code }`** (`FileOpErrorKind` =
+`PermissionDenied | Locked | NotFound | NoSpace | ReadOnly | NameTooLong |
+AlreadyExists | Other`), records it in **`OpOutcome.failed`**, and **keeps
+going**. So a 10-item paste that trips on item 3 still attempts 4–10.
+
+`spawn_transfer_op` surfaces a transparent toast — *"Move: 7 of 10 done · 3
+failed"* with the first few items and their plain-language reasons — that
+always appears (even sub-150 ms ops) and carries actions to **cope**:
+
+- **Copy** — the raw detail to the clipboard for a bug report.
+- **Retry** — re-run just the failed top-level items in-process.
+- **Retry as administrator…** — shown when a failure is a bare permission
+  denial and the platform can elevate. It re-runs the failed items elevated by
+  re-launching this binary with `--elevated-op <descriptor>` (one OS auth
+  prompt; the worker performs the op as root/admin and writes a result file).
+  See `crate::elevation` + `platform_shell::{elevation_available,
+  run_elevated_self}`.
+
+**Covered surfaces (2026-07-02):** the report itself is one shared builder —
+`file_op_failure_report(operation, done, skipped, failed)` in
+`shell.rs` (`file_op_outcome_summary` is now a thin wrapper over it for
+`OpOutcome`) — and beyond copy/move/paste/drag it backs:
+
+- **Move to Trash** — the worker already continued past failures; it now
+  collects classified `FileOpError`s and toasts the structured "Move to
+  Trash: N of M done · why" report (raw OS detail rides the Copy action;
+  elevated retry over the permission-denied subset, as before).
+- **Empty Trash** — partial results per item ("Empty Trash: N of M done ·
+  why") instead of first-error-only, with the same elevated retry over
+  root-owned leftovers.
+- **Clear Quarantine** — was a count-only warning; per-item failures now
+  surface through the shared expandable/copyable error toast.
+- **Tag toggle** (context-menu tags) — was log-only; failures now toast as
+  "Tag: N of M done · why". Successes stay silent (quiet-on-success policy).
+
+`FileOpErrorKind::is_lock()` + `platform_shell::{processes_using,
+force_close_processes}` back a future "the file is open in X — close it and
+retry / force-close" affordance. The lock primitives are **Windows-native
+(Restart Manager) and deferred** to the on-device session; macOS/Linux return
+empty for now. The string-error surfaces (rename, duplicate, compress, alias)
+share the one advice table via `classify_error_text`.
+
+**Platform status:** transparency + classification are cross-platform; macOS
+ships real osascript elevation; Windows/Linux elevation + lock detection are
+stubbed (`elevation_available()` = false) pending the native pass — see
+windows-port.md.
+
+### Elevated trash & delete (2026-06-24)
+
+The destructive ops now use the same elevate-on-permission-denial pattern as
+copy/move, so a root-owned app (e.g. `/Applications/iMovie.app`) is no longer a
+dead end — it pops an OS auth prompt instead, like Finder.
+
+- **`move_to_trash`** (`feraille-fs-native`) now types its failure: it keys off
+  the Cocoa error **code** `NSFileWriteNoPermissionError` (513), not the
+  localized text, and returns `io::ErrorKind::PermissionDenied`. `on_move_to_trash`
+  no longer bails on the first item — it trashes what it can and collects the
+  rest with their kind.
+- On a permission denial, the failure toast (`trash_failure_notification`)
+  offers **Move to Trash as administrator…** (plus **Copy** of the full
+  detail). It re-runs *just the permission-denied items* via a new
+  `ElevatedTrashOp` (`--elevated-trash` worker). Because the worker runs as
+  **root**, whose own `trashItemAtURL` would target *root's* Trash, it instead
+  **moves each item into the user's `~/.Trash`** (`feraille_fs_native::home_trash_dir`)
+  under a collision-free name. The landed item is root-owned, so **Undo is not
+  registered** for elevated trashes (restoring a root-owned item to a
+  root-owned location would itself need elevation).
+- **Delete Immediately** (new command — `DeleteImmediately`, Option+Cmd+Delete
+  [mac] / Shift+Delete [win/linux], also in the File menu and file-list context
+  menu) permanently deletes the selection with no Trash and no undo, after a
+  counted confirmation. Same elevated recourse on a permission denial, via
+  `ElevatedTrashOp { delete: true }`.
+- **Empty Trash** likewise collects the items it couldn't remove (root-owned
+  trash, e.g. something elevated *into* the Trash earlier) and offers **Empty
+  Trash as administrator…** over just those.
+
+All three share `Shell::retry_trash_elevated(sources, delete, …)` and run the
+auth-blocking osascript call off the UI thread (Prime Directive).
+
 ## Platform tags
 
 **[mac]** = macOS-only today; **[win-parity]** = named Windows
@@ -296,8 +380,16 @@ Finder semantics, not Windows cut:
 
 ### Undo
 
-- Move → `UndoOp::MoveBack(Vec<(from, to)>)` — renames each item back
-  (cross-volume undo re-runs the engine in reverse, still as one op).
+- Move, same volume → `UndoOp::MoveBack(Vec<(from, to)>)` — renames each
+  item back; a reoccupied origin refuses rather than clobber.
+- Move, cross/mixed volume → `UndoOp::MoveBackCross(Vec<(original, moved)>)`
+  — registered **only when nothing was replaced** (same spirit as copy-undo).
+  Its apply copies each `moved` back through the same engine
+  (`plan_transfer` + `run_copy`, Skip-on-collision — never clobbers), restores
+  a Keep-Both-renamed leaf to its original name, and deletes the moved copy
+  only once its copy-back fully landed. A reoccupied original fails just that
+  pair ("exists again; not overwriting it") and keeps the moved copy; the
+  rest of the batch continues, failures joined into one report.
 - Copy → `UndoOp::RemoveCreated(Vec<PathBuf>)`, registered **only when
   nothing was replaced** (undoing a replace would delete the only
   remaining version — unrecoverable, so we don't offer it; parity

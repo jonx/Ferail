@@ -13,7 +13,7 @@
 //! Ported from bfe-explorer's `sniff_executable_info`,
 //! `sniff_elf_info`, `sniff_macho_info`, `sniff_pe_info`.
 
-use super::types::{CpuArch, MagicInfo, MagicType, PeSubsystem};
+use super::types::{CpuArch, ElfOs, MagicInfo, MagicType, PeSubsystem};
 
 /// Dispatch into PE / ELF / Mach-O if the buffer's prefix matches.
 pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
@@ -46,7 +46,8 @@ pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
 ///
 /// - 4: e_ident[EI_CLASS] (1 = 32-bit, 2 = 64-bit)
 /// - 5: e_ident[EI_DATA]  (1 = little-endian, 2 = big-endian)
-/// - 16-17: e_type (executable / shared object)
+/// - 7: e_ident[EI_OSABI] (0 = System V, 15 = AROS, …)
+/// - 16-17: e_type (relocatable / executable / shared object)
 /// - 18-19: e_machine (architecture)
 fn sniff_elf(buf: &[u8]) -> MagicInfo {
     let mut info = MagicInfo::new(MagicType::ExeLinux);
@@ -57,6 +58,18 @@ fn sniff_elf(buf: &[u8]) -> MagicInfo {
     info.is_64bit = Some(buf[4] == 2);
     let is_le = buf[5] == 1;
 
+    // EI_OSABI — most GNU/Linux binaries leave this 0 (System V); a named
+    // OS here is a deliberate marker. AROS stamps ELFOSABI_AROS (15).
+    info.os = match buf[7] {
+        2 => ElfOs::NetBsd,
+        3 => ElfOs::Linux,
+        6 => ElfOs::Solaris,
+        9 => ElfOs::FreeBsd,
+        12 => ElfOs::OpenBsd,
+        15 => ElfOs::Aros,
+        _ => ElfOs::Unknown,
+    };
+
     let read_u16 = |offset: usize| -> u16 {
         if is_le {
             u16::from_le_bytes([buf[offset], buf[offset + 1]])
@@ -65,10 +78,14 @@ fn sniff_elf(buf: &[u8]) -> MagicInfo {
         }
     };
 
+    // e_type: ET_REL (1) is a relocatable object — not a runnable image,
+    // but the form AROS uses to ship its libraries. Keep the ExeLinux
+    // family label (so the icon classifier still tints it as an
+    // executable) and flag the kind for the description.
     let e_type = read_u16(16);
+    info.is_relocatable = e_type == 1;
     info.magic_type = match e_type {
-        2 => MagicType::ExeLinux, // ET_EXEC
-        3 => MagicType::SoLinux,  // ET_DYN
+        3 => MagicType::SoLinux, // ET_DYN
         _ => MagicType::ExeLinux,
     };
 

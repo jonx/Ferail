@@ -1,9 +1,9 @@
 [package]
-name = "feraille-video-vlc"
+name = "feraille-video-mpv"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "VLC (libvlc) video provider for Feraille's viewer — any format + native adjustments."
+description = "mpv (libmpv) video provider for Feraille's viewer — any format, live filters, alpha keying."
 
 [dependencies]
 feraille-core = { workspace = true }

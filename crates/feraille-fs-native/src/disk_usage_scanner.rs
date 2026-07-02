@@ -8,6 +8,7 @@
 //! flag, same batching cadence, same callback model. The host
 //! application owns the thread spawn + event-loop dispatch.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,6 +45,22 @@ impl NativeFs {
     ///
     /// Symlinks: walked via `symlink_metadata`, never followed; counted
     /// as 0-byte leaves to keep the walk cycle-safe.
+    ///
+    /// Counting correctness (Unix):
+    /// - **Filesystem boundaries** are not crossed — a directory whose
+    ///   `st_dev` differs from its parent's is a mount point and is
+    ///   emitted as a 0-byte stub instead of walked (`du -x`
+    ///   semantics). Without this, scanning `/` rolled every disk
+    ///   under `/Volumes` (and network mounts — hang-prone) into the
+    ///   boot-disk number. macOS **firmlinks** (`/Users`,
+    ///   `/Applications`, … per `/usr/share/firmlinks`) are the one
+    ///   sanctioned crossing: they're how the merged system/data view
+    ///   works, and users expect them counted. Their
+    ///   `/System/Volumes/Data/...` twins then land on the boundary
+    ///   rule, so nothing is walked twice.
+    /// - **Hardlinks** (`st_nlink > 1`) are counted once via a
+    ///   `(dev, ino)` set — `cp -al` backups and Homebrew Cellars
+    ///   otherwise report N× their real size.
     pub fn scan_disk_usage(
         &self,
         root: &Path,
@@ -75,9 +92,12 @@ impl NativeFs {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_owned();
-        let root_mtime = fs::symlink_metadata(&canonical_root)
-            .ok()
-            .and_then(|m| m.modified().ok());
+        let root_meta = fs::symlink_metadata(&canonical_root).ok();
+        let root_mtime = root_meta.as_ref().and_then(|m| m.modified().ok());
+        let root_dev = root_meta
+            .as_ref()
+            .and_then(file_identity)
+            .map(|(dev, _, _)| dev);
         let root_is_cloud = is_icloud_path(&canonical_root);
         buffer.push(DiskUsageFact::NodeDiscovered {
             node: root_id,
@@ -88,10 +108,21 @@ impl NativeFs {
             is_cloud: root_is_cloud,
         });
 
-        // DFS stack of (container path, container node id).
-        let mut stack: Vec<(PathBuf, feraille_core::NodeId)> = vec![(canonical_root, root_id)];
+        // Firmlink targets are the one sanctioned device crossing (see
+        // the method docs). Read once per scan; empty off macOS.
+        let firmlinks = firmlink_targets();
+        // Directories already walked, keyed (dev, ino) — insurance
+        // against any remaining aliased-directory path (firmlink twins
+        // are normally stopped by the boundary rule first).
+        let mut seen_dirs: HashSet<(u64, u64)> = HashSet::new();
+        // Hardlinked files already counted, keyed (dev, ino).
+        let mut seen_links: HashSet<(u64, u64)> = HashSet::new();
 
-        while let Some((dir_path, dir_id)) = stack.pop() {
+        // DFS stack of (container path, container node id, container dev).
+        let mut stack: Vec<(PathBuf, feraille_core::NodeId, Option<u64>)> =
+            vec![(canonical_root, root_id, root_dev)];
+
+        while let Some((dir_path, dir_id, dir_dev)) = stack.pop() {
             if cancel.load(Ordering::Relaxed) {
                 if !buffer.is_empty() {
                     on_batch(std::mem::take(&mut buffer));
@@ -134,7 +165,12 @@ impl NativeFs {
                     continue;
                 };
 
-                let metadata = match fs::symlink_metadata(&child_path) {
+                // `DirEntry::metadata()` over `symlink_metadata(path)`:
+                // no per-file handle open — on Windows a path-stat
+                // would hydrate OneDrive placeholders (see the
+                // matching note in `recursive_size`). Does not follow
+                // symlinks, same as before.
+                let metadata = match dirent.metadata() {
                     Ok(m) => m,
                     Err(_) => continue,
                 };
@@ -142,30 +178,75 @@ impl NativeFs {
                 let is_dir = ft.is_dir() && !ft.is_symlink();
                 let mtime = metadata.modified().ok();
                 let child_id = self.id_for_path(&child_path);
+                let identity = file_identity(&metadata);
+
+                // Filesystem-boundary rule (see method docs): a child
+                // dir on a different device is a mount point — emit a
+                // 0-byte stub instead of walking it, unless it's a
+                // macOS firmlink. The (dev, ino) set catches any
+                // remaining aliased directory.
+                let mut boundary_stub = false;
+                if is_dir {
+                    if let (Some((dev, ino, _)), Some(parent_dev)) = (identity, dir_dev) {
+                        let crosses = dev != parent_dev;
+                        let sanctioned = !crosses || firmlinks.iter().any(|f| f == &child_path);
+                        if !sanctioned || !seen_dirs.insert((dev, ino)) {
+                            boundary_stub = true;
+                        }
+                    }
+                }
 
                 let mac_pkg = is_mac_package(&child_path);
-                let treat_as_leaf = !is_dir || (mac_pkg && !descend_packages);
+                let treat_as_leaf = !is_dir || boundary_stub || (mac_pkg && !descend_packages);
 
-                let (kind, file_category, size) = if treat_as_leaf {
-                    let fc = if mac_pkg {
+                // Hardlinked file already counted under another name?
+                // The node still appears in the tree; its bytes don't
+                // count twice.
+                let already_counted = if is_dir {
+                    false
+                } else {
+                    match identity {
+                        Some((dev, ino, nlink)) if nlink > 1 => !seen_links.insert((dev, ino)),
+                        _ => false,
+                    }
+                };
+
+                let (kind, file_category, size, allocated) = if treat_as_leaf {
+                    let fc = if boundary_stub {
+                        FileCategory::Other
+                    } else if mac_pkg {
                         FileCategory::Executable
                     } else {
                         classify_path(&child_path)
                     };
-                    let size = if ft.is_symlink() {
-                        0
-                    } else if mac_pkg && !descend_packages {
+                    let (size, allocated) = if ft.is_symlink() || boundary_stub || already_counted
+                    {
+                        (0, 0)
+                    } else if mac_pkg && !descend_packages && is_dir {
                         // Bundle as opaque leaf — but we still want a
                         // Finder-style rolled-up total, not the
                         // useless inode-stat size. Walk the package
-                        // contents and sum them.
-                        recursive_size(&child_path, cancel)
+                        // contents and sum BOTH size axes: crediting
+                        // only the directory inode's blocks made a
+                        // 12 GB Xcode.app render as a kilobyte tile
+                        // in allocated mode.
+                        recursive_sizes(&child_path, cancel)
                     } else {
-                        metadata.len()
+                        (metadata.len(), allocated_size(&metadata))
                     };
-                    (NodeKind::File, fc, size)
+                    (NodeKind::File, fc, size, allocated)
                 } else {
-                    (NodeKind::Container, FileCategory::Other, 0u64)
+                    // Allocated size on macOS comes from the block
+                    // count. A symlink reports 0; a tiny file reports
+                    // the 4 KB block tax; a sparse file reports much
+                    // less than its apparent size. Falls back to 0 on
+                    // platforms that don't expose block counts.
+                    (
+                        NodeKind::Container,
+                        FileCategory::Other,
+                        0u64,
+                        allocated_size(&metadata),
+                    )
                 };
 
                 let child_is_cloud = root_is_cloud || is_icloud_path(&child_path);
@@ -187,12 +268,6 @@ impl NativeFs {
                         size_bytes: size,
                     });
                 }
-                // Allocated size on macOS comes from the block count.
-                // A symlink reports 0; a tiny file reports the 4 KB
-                // block tax; a sparse file reports much less than its
-                // apparent size. Falls back to apparent on platforms
-                // that don't expose block counts.
-                let allocated = allocated_size(&metadata);
                 if allocated > 0 {
                     buffer.push(DiskUsageFact::NodeAllocatedAdded {
                         node: child_id,
@@ -205,7 +280,7 @@ impl NativeFs {
                     stats.bytes_scanned = stats.bytes_scanned.saturating_add(size);
                 } else {
                     // Will be popped off the stack and entered later.
-                    stack.push((child_path, child_id));
+                    stack.push((child_path, child_id, identity.map(|(dev, _, _)| dev)));
                 }
 
                 if buffer.len() >= batch_size {
@@ -244,11 +319,27 @@ impl NativeFs {
 /// failure). `cancel` is checked between dirents; on cancel returns
 /// the partial sum, which callers must treat as invalid (don't cache).
 pub fn recursive_size(root: &Path, cancel: &AtomicBool) -> u64 {
-    let mut total: u64 = 0;
+    recursive_sizes(root, cancel).0
+}
+
+/// [`recursive_size`]'s two-axis twin: returns
+/// `(apparent_bytes, allocated_bytes)` in one walk. Same cancel and
+/// error-absorption contract. Hardlinked files (`st_nlink > 1`) count
+/// once; directories on a different device than `root` (mount points)
+/// are not entered.
+pub fn recursive_sizes(root: &Path, cancel: &AtomicBool) -> (u64, u64) {
+    let mut apparent: u64 = 0;
+    let mut allocated: u64 = 0;
+    let root_dev = fs::symlink_metadata(root)
+        .ok()
+        .as_ref()
+        .and_then(file_identity)
+        .map(|(dev, _, _)| dev);
+    let mut seen_links: HashSet<(u64, u64)> = HashSet::new();
     let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         if cancel.load(Ordering::Relaxed) {
-            return total;
+            return (apparent, allocated);
         }
         let read_dir = match fs::read_dir(&dir) {
             Ok(rd) => rd,
@@ -256,7 +347,7 @@ pub fn recursive_size(root: &Path, cancel: &AtomicBool) -> u64 {
         };
         for dirent in read_dir.flatten() {
             if cancel.load(Ordering::Relaxed) {
-                return total;
+                return (apparent, allocated);
             }
             // Read the metadata captured during directory enumeration instead of
             // re-`stat`ing each path. This is not just faster: on Windows
@@ -278,13 +369,66 @@ pub fn recursive_size(root: &Path, cancel: &AtomicBool) -> u64 {
                 continue;
             }
             if ft.is_dir() {
+                // Don't cross onto another filesystem (a mount point
+                // inside the walk would roll a whole other volume
+                // into this folder's number).
+                if let (Some((dev, _, _)), Some(root_dev)) = (file_identity(&meta), root_dev) {
+                    if dev != root_dev {
+                        continue;
+                    }
+                }
                 stack.push(dirent.path());
             } else {
-                total = total.saturating_add(meta.len());
+                // Hardlinks count once (cp -al trees, Homebrew Cellar).
+                if let Some((dev, ino, nlink)) = file_identity(&meta) {
+                    if nlink > 1 && !seen_links.insert((dev, ino)) {
+                        continue;
+                    }
+                }
+                apparent = apparent.saturating_add(meta.len());
+                allocated = allocated.saturating_add(allocated_size(&meta));
             }
         }
     }
-    total
+    (apparent, allocated)
+}
+
+/// `(st_dev, st_ino, st_nlink)` on Unix; `None` where the identity
+/// triple isn't exposed (Windows would need `BY_HANDLE_FILE_INFORMATION`
+/// — opening a handle per file, which the OneDrive-hydration rule
+/// forbids on the scan path).
+#[cfg(unix)]
+fn file_identity(meta: &fs::Metadata) -> Option<(u64, u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    Some((meta.dev(), meta.ino(), meta.nlink()))
+}
+#[cfg(not(unix))]
+fn file_identity(_meta: &fs::Metadata) -> Option<(u64, u64, u64)> {
+    None
+}
+
+/// The system→data crossings macOS sanctions for its merged volume
+/// view, read from `/usr/share/firmlinks` (tab-separated, left column
+/// is the system-volume path, e.g. `/Users`). Empty off macOS or if
+/// the file is unreadable — the scan then simply refuses all device
+/// crossings.
+fn firmlink_targets() -> Vec<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        fs::read_to_string("/usr/share/firmlinks")
+            .map(|s| {
+                s.lines()
+                    .filter_map(|line| line.split('\t').next())
+                    .filter(|p| !p.is_empty())
+                    .map(PathBuf::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Vec::new()
+    }
 }
 
 /// On-disk allocated size for a regular file. macOS / Unix exposes
@@ -400,6 +544,36 @@ mod tests {
         let tmp = fixture();
         let cancel = AtomicBool::new(false);
         assert_eq!(recursive_size(tmp.path(), &cancel), 60);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hardlinked_files_count_once() {
+        let tmp = fixture();
+        let root = tmp.path();
+        // a.txt (10 B) gains a second name — the bytes must not
+        // count twice, in either the plain sum or the fact stream.
+        fs::hard_link(root.join("a.txt"), root.join("a-link.txt")).unwrap();
+        let cancel = AtomicBool::new(false);
+        assert_eq!(recursive_size(root, &cancel), 60);
+
+        let fs_native = NativeFs::new();
+        let mut all = Vec::new();
+        let err = fs_native.scan_disk_usage(
+            root,
+            DEFAULT_DU_BATCH,
+            &cancel,
+            false,
+            |batch| all.extend(batch),
+            |_| {},
+        );
+        assert!(err.is_none());
+        let canonical = fs::canonicalize(root).unwrap();
+        let root_id = fs_native.id_for_path(&canonical);
+        let mut tree = feraille_disk_usage::DiskUsageTree::new(root_id);
+        tree.apply_facts(&all);
+        let layout = feraille_disk_usage::build_layout_node(&tree, root_id, 4);
+        assert_eq!(layout.size_bytes, 60);
     }
 
     #[test]

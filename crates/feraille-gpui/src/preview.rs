@@ -155,7 +155,7 @@ pub fn warm<T: 'static>(
         };
         process.preview_cache.borrow_mut().insert(path, state);
         if let Some(this) = weak.upgrade() {
-            let _ = this.update(cx, |_, cx| cx.notify());
+            this.update(cx, |_, cx| cx.notify());
         }
     })
     .detach();

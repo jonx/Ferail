@@ -161,8 +161,10 @@ mod tests {
 
     #[test]
     fn search_include_hidden_falls_back_to_show_hidden() {
-        let mut s = AppState::default();
-        s.show_hidden = Some(true);
+        let mut s = AppState {
+            show_hidden: Some(true),
+            ..AppState::default()
+        };
         assert!(SearchConfig::from_state(&s).include_hidden);
         s.search_include_hidden = Some(false);
         assert!(
@@ -173,8 +175,10 @@ mod tests {
 
     #[test]
     fn min_size_mb_converts_to_bytes() {
-        let mut s = AppState::default();
-        s.dupe_min_size_mb = Some(5);
+        let s = AppState {
+            dupe_min_size_mb: Some(5),
+            ..AppState::default()
+        };
         assert_eq!(DupeConfig::from_state(&s).opts().min_size, 5 * 1024 * 1024);
     }
 }

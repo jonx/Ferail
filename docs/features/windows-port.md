@@ -19,7 +19,7 @@ This doc covers:
 
 A fast file manager written in Rust, originally for macOS, built on Zed's [GPUI](https://github.com/zed-industries/zed) plus [longbridge/gpui-component](https://github.com/longbridge/gpui-component) for higher-level primitives (sidebar, title bar, settings, virtualized table, context menu). Today's macOS app ships with virtualized file listings, magic-first format detection, Finder tags, Quick Look previews, an async disk-usage window, multi-window + tabs, favorites with persistence, drag-and-drop, and a command catalogue surfaced through keyboard, menu, and Cmd+K palette.
 
-It started as a port of a Windows project that still lives at `../Ferail/` — that repo is the porting *source* for native Win32 patterns (COM drag-drop, IContextMenu, IShellLink, shell pump, change notifications). Translate by intent, not by copy: `../Ferail/` is D2D/GDI + the Windows-Rust old idioms; Feraille's renderer is GPUI's D3D11 backend on Windows. Architectural lessons port; literal code mostly doesn't.
+It started as a port of Ferail, a **private predecessor project** (not part of this repo — if you don't have a checkout, treat every Ferail mention as design lineage only). That codebase is the porting *source* for native Win32 patterns (COM drag-drop, IContextMenu, IShellLink, shell pump, change notifications). Translate by intent, not by copy: Ferail is D2D/GDI + old Windows-Rust idioms; Feraille's renderer is GPUI's D3D11 backend on Windows. Architectural lessons port; literal code mostly doesn't.
 
 The **prime directive** from [ARCHITECTURE.md](../ARCHITECTURE.md): the UI must never stop. Rendering, hover, hit-testing, scroll, resize, keyboard, text input, and modal drawing are read-only and non-blocking. Anything blocking (filesystem, SQLite, AppKit/Win32 shell calls, magic, previews) runs off the UI thread and reports back through GPUI's entity-update boundaries. This applies on Windows just as strictly.
 
@@ -36,12 +36,11 @@ own commit on the `windows-parity` branch:
   into `feraille-gpui` (direct `feraille_shell_mac::` calls in `entry_info.rs`;
   `show_desktop` / `show_desktop_available` missing from win32/linux). Routed
   through `platform_shell`; added the missing surface to both shell crates.
-- **VLC video is cross-platform.** `feraille-video-vlc` was macOS-only; its
-  decode/vmem model is platform-neutral — only the `dlopen` loader + `.app`
-  layout were Mac-shaped. Generalised to a `dynload` shim (dlopen on unix,
-  `LoadLibraryW` on Windows) + per-OS path resolution. `--features vlc` now
-  works on Windows/Linux; point Settings → Plugins at the VLC **install dir**
-  (`C:\Program Files\VideoLAN\VLC`).
+- **mpv video is cross-platform.** Its SW-render frame-pull model is
+  platform-neutral — only the `dlopen` loader + dylib layout are Mac-shaped.
+  A `dynload` shim (dlopen on unix, `LoadLibraryW` on Windows) + per-OS path
+  resolution generalise it. `--features mpv` works on Windows/Linux; point
+  Settings → Plugins at the libmpv library (e.g. `libmpv-2.dll` on Windows).
 - **Headless `--screenshot` works** (it had regressed — gpui_windows has no
   `render_to_image`). Restored via `PrintWindow(PW_RENDERFULLCONTENT)`, with the
   window placed off-screen + `WS_EX_TOOLWINDOW` so it's invisible to the user.
@@ -67,7 +66,7 @@ own commit on the `windows-parity` branch:
 1. **Native-default video** — *done.* `video_overlay_*` is implemented natively
    via Media Foundation's `IMFMediaEngine` frame-server (D3D11 device +
    `TransferVideoFrame` readback + automatic audio/sync), the analogue of macOS
-   AVFoundation. Verified decoding + displaying real frames. VLC remains the
+   AVFoundation. Verified decoding + displaying real frames. mpv remains the
    optional cross-platform plugin. See `crates/feraille-shell-win32/src/video_mf.rs`.
 2. **Truly-headless screenshot** — *done.* `render_to_image` is implemented in
    `gpui_windows` (D3D11 staging-texture readback); the harness captures with
@@ -81,7 +80,7 @@ own commit on the `windows-parity` branch:
 **Still genuinely remaining:**
 
 - A handful of interaction/UX items surfaced by on-device testing (e.g. the
-  Settings → Plugins VLC dropdown selection — logic verified, but needs an
+  Settings → Plugins mpv dropdown selection — logic verified, but needs an
   interactive repro).
 - Linux parity (the sister [linux-port.md](linux-port.md)).
 
@@ -151,7 +150,7 @@ crates/
 
 **Reference repos to read alongside:**
 
-- `../Ferail/crates/ferail-win32/src/`: working Win32 implementations of drag-drop (`drag_drop.rs`), context menus (`popup_menu.rs`), shell namespace (`shell.rs`), change notifications (`shell_pump.rs`). The COM dance is the part to port.
+- Ferail's `ferail-win32` crate (private predecessor): working Win32 implementations of drag-drop (`drag_drop.rs`), context menus (`popup_menu.rs`), shell namespace (`shell.rs`), change notifications (`shell_pump.rs`). The COM dance is the part to port.
 - `crates/feraille-shell-mac/src/`: per-feature module structure; mirror it in shell-win32 once individual surfaces grow beyond a single function.
 
 ---
@@ -262,7 +261,7 @@ These shell-mac functions take `&winit::window::Window` and aren't reachable thr
 
 ## 6b. Parity with Ferail — capability diff
 
-This is the honest reckoning of where the GPUI rewrite stands against the predecessor's Win32 crate (`../Ferail/crates/ferail-win32/`, ~3,700 lines). **Read it by intent, not by line count** — Feraille is *ahead* of Ferail in feature breadth and architecture on both platforms, but Ferail still does a handful of Windows-native things the port hasn't reimplemented yet. Three buckets:
+This is the honest reckoning of where the GPUI rewrite stands against the private predecessor's Win32 crate (Ferail's `ferail-win32`, ~3,700 lines). **Read it by intent, not by line count** — Feraille is *ahead* of Ferail in feature breadth and architecture on both platforms, but Ferail still does a handful of Windows-native things the port hasn't reimplemented yet. Three buckets:
 
 ### A. Already at parity — covered by GPUI or fs-native, do **not** re-port
 
@@ -402,5 +401,5 @@ macOS is the established platform — `feraille-shell-mac` is a much bigger, mor
 
 **Reference repos:**
 
-- `../Ferail/crates/ferail-win32/src/` — working Win32 patterns from the predecessor project. `drag_drop.rs`, `popup_menu.rs`, `shell.rs`, `shell_pump.rs` are the high-value reads. Don't paste-port; the renderer model is different.
+- Ferail's `ferail-win32` sources (private predecessor; maintainer-only) — working Win32 patterns. `drag_drop.rs`, `popup_menu.rs`, `shell.rs`, `shell_pump.rs` are the high-value reads. Don't paste-port; the renderer model is different.
 - [Zed's `gpui_windows`](https://github.com/zed-industries/zed/tree/main/crates/gpui_platform/src/platform/windows) — the platform backend gpui uses on Windows. When in doubt about how gpui interacts with HWNDs, read here.

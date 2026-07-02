@@ -154,6 +154,8 @@ impl NativeFs {
     ///
     /// `cache`, when supplied, is consulted before full-hashing and
     /// written through on miss.
+    // The duplicate-finder funnel genuinely needs each of these inputs.
+    #[allow(clippy::too_many_arguments)]
     pub fn find_duplicates(
         &self,
         root: &Path,
@@ -432,23 +434,59 @@ pub fn clone_dedup(_keeper: &Path, _victim: &Path) -> Result<(), String> {
 }
 
 /// Paranoid mode: split a same-hash group into byte-equal clusters,
-/// guarding against the (astronomically unlikely) hash collision. Reads
-/// each member fully and compares against the first of each cluster.
+/// guarding against the (astronomically unlikely) hash collision.
+/// Streams each comparison in fixed 256 KB chunks against each
+/// cluster's representative — `fs::read`-ing whole members held one
+/// full copy per cluster simultaneously, which OOM'd on groups of
+/// multi-GB videos.
 fn byte_verify_split(members: Vec<Candidate>) -> Vec<Vec<Candidate>> {
-    let mut clusters: Vec<(Vec<u8>, Vec<Candidate>)> = Vec::new();
+    let mut clusters: Vec<Vec<Candidate>> = Vec::new();
     'outer: for c in members {
-        let Ok(bytes) = fs::read(&c.path) else {
-            continue;
-        };
-        for (rep, group) in clusters.iter_mut() {
-            if *rep == bytes {
+        for group in clusters.iter_mut() {
+            let rep = &group[0];
+            if matches!(files_equal_streaming(&rep.path, &c.path), Ok(true)) {
                 group.push(c);
                 continue 'outer;
             }
         }
-        clusters.push((bytes, vec![c]));
+        clusters.push(vec![c]);
     }
-    clusters.into_iter().map(|(_, g)| g).collect()
+    clusters
+}
+
+/// Byte-equality of two files via two 256 KB buffers — constant
+/// memory regardless of file size. `Err` on any read failure (the
+/// caller treats the pair as unequal).
+fn files_equal_streaming(a: &Path, b: &Path) -> std::io::Result<bool> {
+    const CHUNK: usize = 256 * 1024;
+    let mut fa = fs::File::open(a)?;
+    let mut fb = fs::File::open(b)?;
+    let mut ba = vec![0u8; CHUNK];
+    let mut bb = vec![0u8; CHUNK];
+    loop {
+        let na = read_full(&mut fa, &mut ba)?;
+        let nb = read_full(&mut fb, &mut bb)?;
+        if na != nb || ba[..na] != bb[..nb] {
+            return Ok(false);
+        }
+        if na == 0 {
+            return Ok(true);
+        }
+    }
+}
+
+/// Fill `buf` as far as the stream allows; returns bytes read (0 at
+/// EOF). Plain `read` may return short counts mid-file, which would
+/// desync the two streams' chunk boundaries.
+fn read_full(file: &mut fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match file.read(&mut buf[filled..])? {
+            0 => break,
+            n => filled += n,
+        }
+    }
+    Ok(filled)
 }
 
 /// xxh3 of the first [`PARTIAL_HASH_BYTES`] of the file. `None` on read
@@ -546,21 +584,21 @@ mod clone_detect {
         // member that claimed it. A later member hitting the same key is
         // a clone of that one.
         let mut seen: HashMap<(u64, i64), usize> = HashMap::new();
-        for i in 0..members.len() {
+        for (i, member) in members.iter_mut().enumerate() {
             // Hard links are already collapsed by inode; their physical
             // offset would (correctly) collide with their inode-sibling
             // but we don't want to double-count them as clones.
-            if members[i].is_hardlink {
+            if member.is_hardlink {
                 continue;
             }
-            let Some((dev, _)) = members[i].file_id else {
+            let Some((dev, _)) = member.file_id else {
                 continue;
             };
-            let Some(phys) = first_block_phys(&members[i].path) else {
+            let Some(phys) = first_block_phys(&member.path) else {
                 continue;
             };
             match seen.entry((dev, phys)) {
-                Entry::Occupied(_) => members[i].is_clone = true,
+                Entry::Occupied(_) => member.is_clone = true,
                 Entry::Vacant(v) => {
                     v.insert(i);
                 }

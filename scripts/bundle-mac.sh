@@ -32,7 +32,7 @@ BIN_NAME="feraille-gpui"
 APP_NAME="Feraille"
 IDENTITY="${CODESIGN_IDENTITY:--}" # "-" == ad-hoc
 
-# Pass extra cargo flags through, e.g. FEATURES="--features vlc".
+# Pass extra cargo flags through, e.g. FEATURES="--features mpv".
 FEATURES="${FEATURES:-}"
 
 echo "==> Building ${BIN_NAME} (${PROFILE})"

@@ -1,5 +1,6 @@
 //! Settings — Phase 3 of the next-level plan adopts gpui-component's
-//! [`gpui_component::setting::Settings`] primitive. The library ships
+//! setting primitive (now vendored as [`crate::setting_panel::Settings`]
+//! to fix a resize flicker; see that module's header). The library ships
 //! a hierarchical Settings (pages → groups → items → fields) with
 //! a sidebar, **built-in search**, optional reset, and the same field
 //! types we used to hand-roll (switch / dropdown / number-input /
@@ -22,12 +23,21 @@ use gpui::{Axis, *};
 use gpui_component::{
     ActiveTheme, Icon, Root, Theme, ThemeMode,
     color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
-    setting::{SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
+};
+
+use crate::setting_panel::{
+    SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
 };
 
 use feraille_core::commands::{Category, all_commands};
 
 use crate::app_state::{self, AppState};
+
+const SETTINGS_SWITCH_LANE: f32 = 36.0;
+const SETTINGS_DROPDOWN_LANE: f32 = 260.0;
+const SETTINGS_SHORTCUT_LANE: f32 = 180.0;
+const SETTINGS_CONTROL_GAP: f32 = 12.0;
+const SETTINGS_TOP_ROW_HEIGHT: f32 = 28.0;
 
 // =============================================================================
 // Categories — external API
@@ -260,6 +270,14 @@ fn persist_dupe_paranoid(value: bool) {
     });
 }
 
+fn persist_redact_diagnostics(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        redact_diagnostics: Some(value),
+        ..existing
+    });
+}
+
 // =============================================================================
 // SettingsView entity — external API
 // =============================================================================
@@ -379,6 +397,14 @@ fn persist_exclude_favorites_from_tracking(value: bool) {
     });
 }
 
+fn persist_recents_enabled(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        recents_enabled: Some(value),
+        ..existing
+    });
+}
+
 impl Render for SettingsView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Settings::new("feraille-settings")
@@ -412,11 +438,14 @@ pub fn open_settings_window(cx: &mut App) {
         ..Default::default()
     };
     cx.spawn(async move |cx| {
-        cx.open_window(opts, |window, cx| {
+        // A failed `open_window` (display reconfiguration, resource pressure)
+        // must not take the app down — log and leave the existing windows be.
+        if let Err(e) = cx.open_window(opts, |window, cx| {
             let view = cx.new(|cx| SettingsView::new(SettingsCategory::Appearance, window, cx));
             cx.new(|cx| Root::new(view, window, cx))
-        })
-        .expect("failed to open settings window");
+        }) {
+            crate::log_warn!(90, "could not open settings window: {e}");
+        }
     })
     .detach();
 }
@@ -452,10 +481,17 @@ fn dropdown_setting(
 ) -> SettingItem {
     // Persist, then repaint so the button reflects the pick. Live settings
     // skip this wrapper and pass their own `on_pick` to recompute a global.
-    dropdown_setting_with(title, description, options, disabled, get, move |value, cx| {
-        persist(value);
-        cx.refresh_windows();
-    })
+    dropdown_setting_with(
+        title,
+        description,
+        options,
+        disabled,
+        get,
+        move |value, cx| {
+            persist(value);
+            cx.refresh_windows();
+        },
+    )
 }
 
 /// The shared dropdown rendering behind [`dropdown_setting`], parameterised by
@@ -487,49 +523,69 @@ fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
 
         gpui_component::v_flex()
             .w_full()
+            .min_w_0()
+            .overflow_hidden()
             .gap_1()
             .child(
-                gpui_component::h_flex()
+                div()
+                    .relative()
                     .w_full()
-                    .justify_between()
-                    .items_center()
-                    .gap_3()
-                    .child(div().flex_shrink_0().text_scale_sm().text_color(fg).child(title))
+                    .min_h(px(SETTINGS_TOP_ROW_HEIGHT))
                     .child(
-                        Button::new(SharedString::from(format!("dd-{title}")))
-                            .label(current_label)
-                            .dropdown_caret(true)
-                            .outline()
-                            .small()
-                            .max_w(px(260.0))
-                            .dropdown_menu_with_anchor(
-                                gpui::Anchor::TopRight,
-                                move |menu, _window, _cx| {
-                                    options.iter().fold(menu, |menu, opt| {
-                                        let (value, label) = *opt;
-                                        let checked = value == current.as_str();
-                                        // A disabled item is greyed and its
-                                        // click handler is dropped by the menu
-                                        // (see PopupMenuItem render), so it
-                                        // can't be selected.
-                                        menu.item(
-                                            PopupMenuItem::new(label)
-                                                .checked(checked)
-                                                .disabled(disabled.contains(&value))
-                                                .on_click(move |_, _window: &mut Window, cx: &mut App| {
-                                                    // `on_pick` persists and repaints
-                                                    // (and, for a live setting, also
-                                                    // recomputes its global). The
-                                                    // refresh inside must hit every
-                                                    // window — this fires in the popup,
-                                                    // so a window-local refresh would
-                                                    // repaint the popup, not the page
-                                                    // behind it.
-                                                    on_pick(value, cx);
-                                                }),
-                                        )
-                                    })
-                                },
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .pr(px(SETTINGS_DROPDOWN_LANE + SETTINGS_CONTROL_GAP))
+                            .text_scale_sm()
+                            .text_color(fg)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .w(px(SETTINGS_DROPDOWN_LANE))
+                            .h(px(SETTINGS_TOP_ROW_HEIGHT))
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .child(
+                                Button::new(SharedString::from(format!("dd-{title}")))
+                                    .label(current_label)
+                                    .dropdown_caret(true)
+                                    .outline()
+                                    .small()
+                                    .max_w(px(SETTINGS_DROPDOWN_LANE))
+                                    .dropdown_menu_with_anchor(
+                                        gpui::Anchor::TopRight,
+                                        move |menu, _window, _cx| {
+                                        options.iter().fold(menu, |menu, opt| {
+                                            let (value, label) = *opt;
+                                            let checked = value == current.as_str();
+                                            // A disabled item is greyed and its
+                                            // click handler is dropped by the menu
+                                            // (see PopupMenuItem render), so it
+                                            // can't be selected.
+                                            menu.item(
+                                                PopupMenuItem::new(label)
+                                                    .checked(checked)
+                                                    .disabled(disabled.contains(&value))
+                                                    .on_click(move |_, _window: &mut Window, cx: &mut App| {
+                                                        // `on_pick` persists and repaints
+                                                        // (and, for a live setting, also
+                                                        // recomputes its global). The
+                                                        // refresh inside must hit every
+                                                        // window — this fires in the popup,
+                                                        // so a window-local refresh would
+                                                        // repaint the popup, not the page
+                                                        // behind it.
+                                                        on_pick(value, cx);
+                                                    }),
+                                            )
+                                        })
+                                        },
+                                    ),
                             ),
                     ),
             )
@@ -541,6 +597,7 @@ fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
                     .child(description),
             )
     })
+    .keywords([title, description])
 }
 
 /// A boolean setting laid out like [`dropdown_setting`]: the title and the
@@ -555,6 +612,7 @@ fn switch_setting(
     set_value: impl Fn(bool, &mut App) + 'static,
 ) -> SettingItem {
     let description = description.into();
+    let keyword_description = description.clone();
     // The SettingItem render closure is `Fn` (re-invoked each frame), so the
     // setter (moved into the switch's `on_click`) must be shareable: `Rc` it
     // and hand each render a clone.
@@ -570,28 +628,48 @@ fn switch_setting(
 
         gpui_component::v_flex()
             .w_full()
+            .min_w_0()
+            .overflow_hidden()
             .gap_1()
             .child(
-                gpui_component::h_flex()
+                div()
+                    .relative()
                     .w_full()
-                    .justify_between()
-                    .items_center()
-                    .gap_3()
-                    .child(div().flex_shrink_0().text_scale_sm().text_color(fg).child(title))
+                    .min_h(px(SETTINGS_TOP_ROW_HEIGHT))
                     .child(
-                        Switch::new(SharedString::from(format!("sw-{title}")))
-                            .checked(checked)
-                            .small()
-                            .on_click(move |checked: &bool, _window: &mut Window, cx: &mut App| {
-                                set_value(*checked, cx);
-                                // The Switch is controlled by `checked`, re-read
-                                // from app state on the next render — so we must
-                                // request one or the toggle never visibly moves.
-                                // refresh_windows() is the same call the theme
-                                // tiles use; it repaints every window. (macOS
-                                // repaints eagerly per event; Windows does not.)
-                                cx.refresh_windows();
-                            }),
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .pr(px(SETTINGS_SWITCH_LANE + SETTINGS_CONTROL_GAP))
+                            .text_scale_sm()
+                            .text_color(fg)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .w(px(SETTINGS_SWITCH_LANE))
+                            .h(px(SETTINGS_TOP_ROW_HEIGHT))
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .child(
+                                Switch::new(SharedString::from(format!("sw-{title}")))
+                                    .checked(checked)
+                                    .small()
+                                    .on_click(move |checked: &bool, _window: &mut Window, cx: &mut App| {
+                                        set_value(*checked, cx);
+                                        // The Switch is controlled by `checked`, re-read
+                                        // from app state on the next render — so we must
+                                        // request one or the toggle never visibly moves.
+                                        // refresh_windows() is the same call the theme
+                                        // tiles use; it repaints every window. (macOS
+                                        // repaints eagerly per event; Windows does not.)
+                                        cx.refresh_windows();
+                                    }),
+                            ),
                     ),
             )
             .child(
@@ -602,6 +680,7 @@ fn switch_setting(
                     .child(description),
             )
     })
+    .keywords([SharedString::from(title), keyword_description])
 }
 
 fn build_pages(
@@ -629,29 +708,50 @@ fn build_pages(
 fn diagnostics_page(report: std::rc::Rc<crate::diagnostics::Report>) -> SettingPage {
     use crate::diagnostics::Status;
 
-    let mut page =
-        SettingPage::new("Diagnostics").icon(Icon::empty().path("icons/activity.svg"));
+    let mut page = SettingPage::new("Diagnostics").icon(Icon::empty().path("icons/activity.svg"));
 
     // Summary header.
     {
         let report = report.clone();
-        page = page.group(SettingGroup::new().item(SettingItem::render(move |_o, _w, cx| {
-            let (ok, warn, fail) = report.tally();
-            let fg = cx.theme().foreground;
-            let muted = cx.theme().muted_foreground;
-            gpui_component::v_flex()
-                .w_full()
-                .gap_1()
-                .child(div().text_scale_sm().text_color(fg).child(format!(
-                    "Feraille v{} · {}/{} · {ok} OK, {warn} WARN, {fail} FAIL",
-                    report.app_version, report.os, report.arch
-                )))
-                .child(div().w_full().text_scale_xs().text_color(muted).child(
-                    "Health check of the app's storage and environment. \
+        page = page.group(
+            SettingGroup::new().item(SettingItem::render(move |_o, _w, cx| {
+                let (ok, warn, fail) = report.tally();
+                let fg = cx.theme().foreground;
+                let muted = cx.theme().muted_foreground;
+                gpui_component::v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(div().text_scale_sm().text_color(fg).child(format!(
+                        "Feraille v{} · {}/{} · {ok} OK, {warn} WARN, {fail} FAIL",
+                        report.app_version, report.os, report.arch
+                    )))
+                    .child(div().w_full().text_scale_xs().text_color(muted).child(
+                        "Health check of the app's storage and environment. \
                      Run `feraille --doctor` for the same report from a terminal.",
-                ))
-        })));
+                    ))
+            })),
+        );
     }
+
+    // Privacy — the redaction toggle that makes "share your logs with us" safe.
+    // Placed up front (right under the summary) so it's the first thing a user
+    // sees before reading or sharing the report.
+    page = page.group(
+        SettingGroup::new().title("Privacy").item(switch_setting(
+            "Redact file names & paths",
+            "When on (the default), the report below, the bundle you can save, and the \
+             activity trail all replace every file and folder name with \u{201c}\u{2026}\u{201d}. \
+             We see only the shape of what you did \u{2014} how deep a folder was, what file \
+             type \u{2014} never the names. So you can share a report with us and we learn \
+             nothing about your files. Turn it off only if a maintainer asks for real paths \
+             to reproduce a bug.",
+            |_cx: &App| app_state::load().redact_diagnostics.unwrap_or(true),
+            |val: bool, _cx: &mut App| {
+                persist_redact_diagnostics(val);
+                crate::redact::set_enabled(val);
+            },
+        )),
+    );
 
     // One group per check group, one row per check.
     for (gi, group) in report.groups.iter().enumerate() {
@@ -703,57 +803,77 @@ fn diagnostics_page(report: std::rc::Rc<crate::diagnostics::Report>) -> SettingP
         page = page.group(sg);
     }
 
-    // Recent activity trail (last ~20 events).
+    // Recent activity trail (last ~20 events) — rendered through the *same*
+    // redaction the bundle uses, so the user sees exactly what would be shared.
     page = page.group(
         SettingGroup::new()
             .title("Activity trail")
             .item(SettingItem::render(move |_o, _w, cx| {
                 let muted = cx.theme().muted_foreground;
-                let lines = crate::trail::render_lines();
+                let lines = crate::trail::render_lines_sanitized();
                 let body = if lines.is_empty() {
                     "No activity recorded yet.".to_string()
                 } else {
                     let start = lines.len().saturating_sub(20);
                     lines[start..].join("\n")
                 };
-                div()
+                let caption = if crate::redact::enabled() {
+                    "Names are redacted \u{2014} this is exactly what a shared report contains."
+                } else {
+                    "Redaction is off \u{2014} a shared report would include these real paths."
+                };
+                gpui_component::v_flex()
                     .w_full()
-                    .text_scale_xs()
-                    .text_color(muted)
-                    .child(SharedString::from(body))
+                    .gap_1()
+                    .child(
+                        div()
+                            .w_full()
+                            .text_scale_xs()
+                            .text_color(muted)
+                            .child(SharedString::from(body)),
+                    )
+                    .child(div().w_full().text_scale_xs().text_color(muted).child(caption))
             })),
     );
 
-    // Copy-report action.
-    page = page.group(SettingGroup::new().item(SettingItem::render(move |_o, _w, _cx| {
-        use gpui_component::{Sizable as _, button::Button};
-        let report = report.clone();
-        gpui_component::h_flex().w_full().gap_2().child(
-            Button::new("diag-copy")
-                .label("Copy report")
-                .outline()
-                .small()
-                .on_click(move |_, _w, _cx| {
-                    let mut text = crate::diagnostics::render_text(&report);
-                    let trail = crate::trail::render_lines();
-                    if !trail.is_empty() {
-                        text.push_str("\n[Activity trail]\n");
-                        for l in &trail {
-                            text.push_str(l);
-                            text.push('\n');
-                        }
-                    }
-                    crate::platform_shell::copy_to_clipboard(&text);
-                }),
-        )
-        .child(
-            Button::new("diag-report")
-                .label("Create report bundle\u{2026}")
-                .outline()
-                .small()
-                .on_click(|_, window, _cx| crate::report::open_reporter(window)),
-        )
-    })));
+    // Copy-report / bundle actions — both honor the redaction toggle and scrub
+    // the account name out of the app-owned diagnostics paths.
+    page = page.group(
+        SettingGroup::new().item(SettingItem::render(move |_o, _w, _cx| {
+            use gpui_component::{Sizable as _, button::Button};
+            let report = report.clone();
+            gpui_component::h_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    Button::new("diag-copy")
+                        .label("Copy report")
+                        .outline()
+                        .small()
+                        .on_click(move |_, _w, _cx| {
+                            let mut text = crate::report::redact_username(
+                                &crate::diagnostics::render_text(&report),
+                            );
+                            let trail = crate::trail::render_lines_sanitized();
+                            if !trail.is_empty() {
+                                text.push_str("\n[Activity trail]\n");
+                                for l in &trail {
+                                    text.push_str(&crate::report::redact_username(l));
+                                    text.push('\n');
+                                }
+                            }
+                            crate::platform_shell::copy_to_clipboard(&text);
+                        }),
+                )
+                .child(
+                    Button::new("diag-report")
+                        .label("Create report bundle\u{2026}")
+                        .outline()
+                        .small()
+                        .on_click(|_, window, _cx| crate::report::open_reporter(window)),
+                )
+        })),
+    );
 
     page
 }
@@ -893,6 +1013,7 @@ fn appearance_page(
                         ColorPicker::new(&selection_picker).into_any_element()
                     }),
                 )
+                .layout(Axis::Vertical)
                 .description(
                     "The highlight behind selected files in the list and grid. \
                      Clear it to follow the theme's blue.",
@@ -926,6 +1047,7 @@ fn appearance_page(
                             ColorPicker::new(&ant_trail_picker).into_any_element()
                         }),
                     )
+                    .layout(Axis::Vertical)
                     .description(
                         "The tint behind your most-visited folders in the list and grid. \
                          Brightness still tracks visit frequency. Clear it for the stock orange.",
@@ -947,6 +1069,24 @@ fn appearance_page(
                     |val: bool, cx: &mut App| {
                         persist_exclude_favorites_from_tracking(val);
                         cx.set_global(crate::ant_trail::ExcludeFavoritesFromTracking(val));
+                    },
+                )),
+        )
+        .group(
+            SettingGroup::new()
+                .title("Recents")
+                // Master switch. Persists *and* updates the live global so the
+                // sidebar section appears/vanishes without a relaunch. Use
+                // "Clear Recents\u{2026}" (Go menu / \u{2318}K) to wipe the list.
+                .item(switch_setting(
+                    "Show Recents",
+                    "List the folders you've opened recently in the sidebar, most \
+                     recent first. Off hides the section and stops adding to it \
+                     \u{2014} your Ant Trail heat is unaffected.",
+                    |cx: &App| crate::recents_section::recents_enabled(cx),
+                    |val: bool, cx: &mut App| {
+                        persist_recents_enabled(val);
+                        cx.set_global(crate::recents_section::RecentsEnabled(val));
                     },
                 )),
         )
@@ -994,8 +1134,11 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
     // Known-Folder-Move can split a folder between local and cloud, i.e.
     // Windows. Omitted elsewhere.
     #[cfg(target_os = "windows")]
-    let page =
-        page.group(SettingGroup::new().title("Locations").item(locations_mode_setting()));
+    let page = page.group(
+        SettingGroup::new()
+            .title("Locations")
+            .item(locations_mode_setting()),
+    );
     page
 }
 
@@ -1058,36 +1201,37 @@ fn persist_video_backend(value: &str) {
     });
 }
 
-fn persist_vlc_app_path(value: &str) {
+fn persist_mpv_path(value: &str) {
     let existing = app_state::load();
     let v = value.trim();
     app_state::save(&AppState {
-        vlc_app_path: (!v.is_empty()).then(|| v.to_string()),
+        mpv_path: (!v.is_empty()).then(|| v.to_string()),
         ..existing
     });
 }
 
 fn plugins_page() -> SettingPage {
-    // The VLC provider is only compiled in with the `vlc` feature. In a stock
-    // build, grey the "VLC" option out (unselectable) and say why in the
+    // The mpv provider is only compiled in with the `mpv` feature. In a stock
+    // build, grey the "mpv" option out (unselectable) and say why in the
     // description, so it's discoverable but can't be picked into a no-op.
     let (player_desc, player_disabled): (&'static str, &'static [&'static str]) =
-        if cfg!(feature = "vlc") {
+        if cfg!(feature = "mpv") {
             (
                 "The built-in player uses the platform's native media frameworks \
-                 (AVFoundation on macOS, Media Foundation on Windows). VLC plays virtually \
-                 any container/codec and applies colour adjustments to the video itself. \
-                 VLC must be installed; a change takes effect on the next viewer window.",
+                 (AVFoundation on macOS, Media Foundation on Windows). mpv plays virtually \
+                 any container/codec and applies colour adjustments and a transparent-colour \
+                 key to the video itself. libmpv must be installed; a change takes effect on \
+                 the next viewer window.",
                 &[],
             )
         } else {
             (
                 "The built-in player uses the platform's native media frameworks. \
-                 VLC plays virtually any container/codec, but this build was compiled \
-                 without the `vlc` feature, so VLC is unavailable \u{2014} rebuild with \
-                 `cargo run --bin feraille-gpui --features vlc` (with VLC installed) \
+                 mpv plays virtually any container/codec, but this build was compiled \
+                 without the `mpv` feature, so mpv is unavailable \u{2014} rebuild with \
+                 `cargo run --bin feraille-gpui --features mpv` (with libmpv installed) \
                  to enable it.",
-                &["vlc"],
+                &["mpv"],
             )
         };
     SettingPage::new("Plugins")
@@ -1098,7 +1242,7 @@ fn plugins_page() -> SettingPage {
                 .item(dropdown_setting(
                     "Player",
                     player_desc,
-                    &[("builtin", "Built-in"), ("vlc", "VLC")],
+                    &[("builtin", "Built-in"), ("mpv", "mpv")],
                     player_disabled,
                     || {
                         app_state::load()
@@ -1109,21 +1253,20 @@ fn plugins_page() -> SettingPage {
                 ))
                 .item(
                     SettingItem::new(
-                        "VLC location",
+                        "mpv library",
                         SettingField::input(
                             |_cx: &App| {
-                                SharedString::from(
-                                    app_state::load().vlc_app_path.unwrap_or_else(|| {
-                                        crate::viewer::backend_native::default_vlc_path().into()
-                                    }),
-                                )
+                                SharedString::from(app_state::load().mpv_path.unwrap_or_else(
+                                    || crate::viewer::backend_native::default_mpv_path().into(),
+                                ))
                             },
-                            |val: SharedString, _cx: &mut App| persist_vlc_app_path(val.as_ref()),
+                            |val: SharedString, _cx: &mut App| persist_mpv_path(val.as_ref()),
                         ),
                     )
+                    .layout(Axis::Vertical)
                     .description(
-                        "Where libvlc is loaded from — a VLC.app bundle on macOS, the VLC \
-                         install folder on Windows/Linux (e.g. C:\\Program Files\\VideoLAN\\VLC).",
+                        "Where libmpv is loaded from — the dylib, a directory containing it, \
+                         or mpv.app on macOS. Blank uses the platform default (Homebrew).",
                     ),
                 ),
         )
@@ -1147,28 +1290,69 @@ fn shortcuts_page() -> SettingPage {
         let title = SharedString::from(spec.title);
         let cat_name = SharedString::from(category_name(spec.category));
         let chord_for_render = chord.clone();
-        let item = SettingItem::new(
+        let title_for_render = title.clone();
+        let cat_for_render = cat_name.clone();
+        let item = SettingItem::render(move |_options, _window, cx| {
+            let theme = cx.theme();
+            gpui_component::v_flex()
+                .w_full()
+                .min_w_0()
+                .overflow_hidden()
+                .gap_1()
+                .child(
+                    div()
+                        .relative()
+                        .w_full()
+                        .min_h(px(SETTINGS_TOP_ROW_HEIGHT))
+                        .child(
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .pr(px(SETTINGS_SHORTCUT_LANE + SETTINGS_CONTROL_GAP))
+                                .text_scale_sm()
+                                .text_color(theme.foreground)
+                                .child(title_for_render.clone()),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .right_0()
+                                .w(px(SETTINGS_SHORTCUT_LANE))
+                                .h(px(SETTINGS_TOP_ROW_HEIGHT))
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .child(
+                                    div()
+                                        .max_w(px(SETTINGS_SHORTCUT_LANE))
+                                        .px_2()
+                                        .py_0p5()
+                                        .rounded(theme.radius)
+                                        .bg(theme.muted.opacity(0.6))
+                                        .border_1()
+                                        .border_color(theme.border)
+                                        .text_scale_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(SharedString::from(chord_for_render.clone())),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .text_scale_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(format!("{cat_for_render} \u{00B7} {chord_for_render}")),
+                )
+                .into_any_element()
+        })
+        .keywords([
             title,
-            SettingField::render(move |_options, _window, cx| {
-                let theme = cx.theme();
-                gpui_component::h_flex()
-                    .justify_end()
-                    .child(
-                        div()
-                            .px_2()
-                            .py_0p5()
-                            .rounded(theme.radius)
-                            .bg(theme.muted.opacity(0.6))
-                            .border_1()
-                            .border_color(theme.border)
-                            .text_scale_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(SharedString::from(chord_for_render.clone())),
-                    )
-                    .into_any_element()
-            }),
-        )
-        .description(format!("{cat_name} \u{00B7} {chord}"));
+            cat_name.clone(),
+            SharedString::from(chord.clone()),
+            SharedString::from(format!("{cat_name} \u{00B7} {chord}")),
+        ]);
         if let Some((_, items)) = groups_by_cat.iter_mut().find(|(c, _)| *c == spec.category) {
             items.push(item);
         } else {
@@ -1206,9 +1390,15 @@ fn about_page() -> SettingPage {
                             .text_color(theme.foreground)
                             .child("Feraille"),
                     )
-                    .child(div().text_scale_xs().text_color(theme.muted_foreground).child(
-                        SharedString::from(concat!("Version ", env!("CARGO_PKG_VERSION"))),
-                    ))
+                    .child(
+                        div()
+                            .text_scale_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(SharedString::from(concat!(
+                                "Version ",
+                                env!("CARGO_PKG_VERSION")
+                            ))),
+                    )
                     .child(
                         div()
                             .mt_2()

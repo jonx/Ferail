@@ -15,10 +15,10 @@ use feraille_gpui::{
     screenshot,
     settings::{SettingsView, category_from_arg},
     shell::{
-        CloseTab, CloseWindow, CopyPath, EmptyTrash, FindDuplicates, FocusFilter, GoHome,
-        MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
-        OpenDiskUsage, OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell,
-        ShowDesktop, ToggleHidden, TogglePreview,
+        ClearRecents, CloseTab, CloseWindow, CopyPath, DeleteImmediately, EmptyTrash,
+        FindDuplicates, FocusFilter, GoHome, MoveToTrash, NavigateBack, NavigateForward,
+        NavigateParent, NewFolder, NewTab, OpenDiskUsage, OpenSelected, OpenSettings, Refresh,
+        RenameSelected, RevealInFinder, Shell, ShowDesktop, ToggleHidden, TogglePreview,
     },
 };
 use gpui::*;
@@ -43,6 +43,13 @@ fn main() -> Result<()> {
         std::process::exit(code);
     }
     feraille_gpui::obs::init();
+    // Honor the persisted diagnostics-privacy preference (defaults to on) before
+    // anything can record a report-bound trail.
+    feraille_gpui::redact::set_enabled(
+        feraille_gpui::app_state::load()
+            .redact_diagnostics
+            .unwrap_or(true),
+    );
     let args = screenshot::parse_args();
     if args.screenshot.is_some() {
         feraille_gpui::log_info!(90, "headless screenshot path");
@@ -66,6 +73,17 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
         // Health check. `--doctor` is also accepted (it would otherwise fall
         // through to the GUI as an unknown flag).
         "doctor" | "--doctor" => Ok(Some(run_doctor_cli())),
+        // Privileged file-op worker: a re-launch of this binary (usually
+        // elevated) that performs one copy/move descriptor headlessly and
+        // writes a result file, then exits. Never opens a window. Runs before
+        // any GUI init so it works as root with no window-server access.
+        "--elevated-op" => Ok(Some(feraille_gpui::elevation::run_elevated_op_worker(&args))),
+        // Privileged trash/delete worker: same re-launch-as-root contract as
+        // `--elevated-op`, but moves protected items into the user's Trash (or
+        // removes them outright for permanent-delete / Empty Trash).
+        "--elevated-trash" => Ok(Some(
+            feraille_gpui::elevation::run_elevated_trash_op_worker(&args),
+        )),
         "help" | "-h" | "--help" => {
             print_cli_help();
             Ok(Some(0))
@@ -542,7 +560,7 @@ fn run_gui(args: screenshot::Args) {
             // Direct-into-settings boot path (CLI). Skips the shell.
             let opts = settings_window_opts(width, height);
             cx.spawn(async move |cx| {
-                cx.open_window(opts, |window, cx| {
+                if let Err(e) = cx.open_window(opts, |window, cx| {
                     let cat = category_from_arg(if page.is_empty() {
                         None
                     } else {
@@ -550,8 +568,9 @@ fn run_gui(args: screenshot::Args) {
                     });
                     let view = cx.new(|cx| SettingsView::new(cat, window, cx));
                     cx.new(|cx| gpui_component::Root::new(view, window, cx))
-                })
-                .expect("failed to open feraille settings window");
+                }) {
+                    feraille_gpui::log_error!(90, "could not open settings window: {e}");
+                }
             })
             .detach();
         } else {
@@ -601,12 +620,16 @@ fn open_shell_window_sized(cx: &mut App, size_hint: Option<(f32, f32)>) {
         ..Default::default()
     };
     cx.spawn(async move |cx| {
-        cx.open_window(opts, |window, cx| {
+        // The main window failing to open is fatal to a useful session, but a
+        // logged error beats an abort — the panic hook would have nothing more
+        // to add than this line.
+        if let Err(e) = cx.open_window(opts, |window, cx| {
             let process = feraille_gpui::process_state::process_state(cx);
             let view = cx.new(|cx| Shell::new(process, window, cx));
             cx.new(|cx| gpui_component::Root::new(view, window, cx))
-        })
-        .expect("failed to open feraille-gpui window");
+        }) {
+            feraille_gpui::log_error!(90, "could not open main window: {e}");
+        }
     })
     .detach();
 }
@@ -689,8 +712,10 @@ fn install_app_menus(cx: &mut App) {
                     title("file.move_to_trash", feraille_core::commands::TRASH_LABEL),
                     MoveToTrash,
                 ),
-                // Ellipsis: opens a confirmation dialog (macOS HIG), matching
-                // the pane context menu's wording.
+                // Ellipsis: each opens a confirmation dialog (macOS HIG).
+                // Delete Immediately is Finder's "Delete Immediately…" — a
+                // targeted permanent delete with no undo.
+                MenuItem::action("Delete Immediately\u{2026}", DeleteImmediately),
                 MenuItem::action("Empty Trash\u{2026}", EmptyTrash),
             ],
             disabled: false,
@@ -711,6 +736,12 @@ fn install_app_menus(cx: &mut App) {
                 MenuItem::action(title("go.parent", "Enclosing Folder"), NavigateParent),
                 MenuItem::separator(),
                 MenuItem::action(title("go.home", "Home"), GoHome),
+                MenuItem::separator(),
+                // Ellipsis: opens a confirmation dialog (macOS HIG).
+                MenuItem::action(
+                    title("go.clear_recents", "Clear Recents\u{2026}"),
+                    ClearRecents,
+                ),
             ],
             disabled: false,
         },

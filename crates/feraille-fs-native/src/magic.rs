@@ -30,7 +30,7 @@ pub mod types;
 mod video;
 mod zip;
 
-pub use types::{CpuArch, MagicInfo, MagicType, PeSubsystem};
+pub use types::{CpuArch, ElfOs, MagicInfo, MagicType, PeSubsystem};
 
 const HEADER_BYTES: usize = 4096;
 
@@ -339,6 +339,34 @@ mod tests {
         assert_eq!(info.magic_type, MagicType::ExeLinux);
         assert_eq!(info.is_64bit, Some(true));
         assert_eq!(info.arch, CpuArch::X64);
+        assert_eq!(info.os, ElfOs::Unknown);
+        assert!(!info.is_relocatable);
+    }
+
+    #[test]
+    fn elf_aros_aarch64_relocatable() {
+        // Real e_ident + e_type + e_machine of an AROS `exec.library`
+        // (ELF 64-bit LSB relocatable, ARM aarch64, AROS Research OS):
+        //   7f 45 4c 46 02 01 01 0f  01 00 00 00 00 00 00 00
+        //   01 00 b7 00 ...
+        let mut buf = vec![0u8; 24];
+        buf[..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
+        buf[4] = 2; // EI_CLASS = 64-bit
+        buf[5] = 1; // EI_DATA = LE
+        buf[6] = 1; // EI_VERSION
+        buf[7] = 0x0f; // EI_OSABI = ELFOSABI_AROS
+        buf[16] = 1; // ET_REL (relocatable, LE)
+        buf[18] = 0xb7; // EM_AARCH64 (LE)
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::ExeLinux);
+        assert_eq!(info.is_64bit, Some(true));
+        assert_eq!(info.arch, CpuArch::Arm64);
+        assert_eq!(info.os, ElfOs::Aros);
+        assert!(info.is_relocatable);
+        assert_eq!(
+            info.description(),
+            "ELF \u{b7} 64-bit \u{b7} relocatable \u{b7} ARM64 \u{b7} AROS"
+        );
     }
 
     #[test]

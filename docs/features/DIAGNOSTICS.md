@@ -45,11 +45,11 @@ Not yet surfaced in the UI — Phase 2's Diagnostics page renders it.
 `crates/feraille-gpui/src/diagnostics.rs` — `run_checks()` produces a
 `DiagnosticsReport` of `Check { name, status: Ok|Warn|Fail, detail }`, grouped
 App / Storage / Dependencies / Environment. Checks:
-- App: version, debug/release, features (`vlc`), commit.
+- App: version, debug/release, features (`mpv`), commit.
 - **Storage** (bug-catcher): config dir path/exists/**writable** (temp-file
   probe); settings file exists/parseable; metadata DB path/openable/writable;
   cache/thumbnail dirs.
-- Dependencies: VLC path valid + libvlc loadable (when selected).
+- Dependencies: mpv path valid + libmpv loadable (when selected).
 - Environment: OS/version/arch, env-var **presence** only (APPDATA/HOME/XDG —
   privacy), free space on the config volume, platform capabilities.
 
@@ -75,3 +75,35 @@ Needs `app_state::config_dir()` made `pub` (or a diagnostics accessor).
   (`C:\Users\<you>` → `%USERPROFILE%`).
 - Deliver: save the zip + reveal it; optionally open a prefilled mail/issue
   draft.
+
+## Phase 4 — Privacy redaction  ✅ implemented
+
+`crates/feraille-gpui/src/redact.rs` — so a user can share a report and we
+**learn nothing about their files**. Two layers compose:
+
+- **Account scrub** ([`report::redact_username`]) is *always* applied: the home
+  prefix becomes `~` / `%USERPROFILE%`. This now also covers "Copy report",
+  which previously pasted the raw account name (fixed).
+- **Path redaction** (a user toggle, **default on**) reduces every filesystem
+  path to its *shape*: the root anchor, one `…` per segment, and the final file
+  extension. `/Users/ada/Taxes/2025/return.pdf` → `/…/…/…/…/….pdf`. Enough to
+  reproduce a bug ("five deep, opening a PDF"), nothing that identifies the user.
+
+Where it applies:
+
+- The **activity trail** is the real leaker (it records the folders you browse),
+  so it is redacted *structurally* at the source — `trail::render_lines_sanitized`
+  reshapes each `Navigate` path via `redact::redact_path`, so no guessing.
+- The **issue bundle** and **"Copy report"** both render the sanitized trail and
+  scrub the account name; the bundle README states whether redaction was on.
+- The **Settings → Diagnostics page** shows the *redacted* trail live, so the
+  user literally sees what a shared report contains ("what you see is what we
+  get"), with a caption confirming the state.
+- The **diagnostics report itself** carries only app-owned paths (config dir, DB)
+  and gets the account scrub; those paths stay readable because they're useful
+  for storage bugs and reveal nothing about user content.
+
+The toggle is a process-global `AtomicBool` (mirroring the `obs` log threshold),
+seeded at startup from the persisted `redact_diagnostics` preference (`app_state`)
+and flipped live by the **Settings → Diagnostics → Privacy** switch. It starts on
+so a fresh install never emits a file name in a report until the user opts out.

@@ -17,11 +17,14 @@ the primary user-facing feature exists and the remaining work is tracked in
 | Feature note | Status | Public-ready summary |
 | --- | --- | --- |
 | [ANT_TRAIL.md](ANT_TRAIL.md) | Shipped with follow-ups | Folder visit counts, sidebar heat, recents hydration, and DB persistence ship; prediction and decay remain open. |
+| [BULK_RENAME.md](BULK_RENAME.md) | Shipped with follow-ups | Pattern-rule bulk rename modal: literal/regex find-replace, case transforms, {name}/{ext}/{n}/{date} template, live preview, chain-aware apply, and batch undo ship; dimensions token, presets, and a keybinding remain open. |
 | [CONTEXT_MENU.md](CONTEXT_MENU.md) | Shipped with follow-ups | Mac-native context menus, Open With, Services, Share, tags, Quick Look, Duplicate, Compress, and Trash ship; compact tag row and async Open With prewarm remain open. |
 | [DISK_USAGE.md](DISK_USAGE.md) | Shipped with follow-ups | Disk Usage window, scanner, treemap/top list, package handling, category filters, and CLI basics ship; APFS clone-aware sizing and richer views remain open. |
+| [DOCK.md](DOCK.md) | Shipped with follow-ups (macOS) | Dock the whole window to the left or right screen edge as an auto-hiding, always-on-top drawer revealed by an edge-slam, with a thin grab handle; core slide/float/all-Spaces ship. Persistence/auto-restore, borderless drawer chrome, and multi-display polish remain open. |
 | [DUPLICATES.md](DUPLICATES.md) | Shipped with follow-ups | Size/partial/full-hash duplicate finder, clone/hard-link awareness, card panel, virtualization, and cleanup actions ship; faster enumeration and more benchmarks remain open. |
 | [FAVORITES.md](FAVORITES.md) | Shipped with follow-ups | Favorites persistence, sidebar, drag/drop, locate, rename, remove, keyboard actions, and cross-platform modal flow ship; tag favorites and file-watch missing transitions remain open. |
 | [FILE_OPS.md](FILE_OPS.md) | Shipped with follow-ups | Copy, cut, paste, move, trash, collision policy, progress, cancellation, undo, and platform integration ship; mutation toast/undo gaps remain open. |
+| [FRESHNESS.md](FRESHNESS.md) | Shipped with follow-ups | Keeps subtree-derived caches (folder sizes, Get Info "Calculate") honest via mtime + TTL validity, exact ancestor invalidation on in-app mutations, and a forced refresh when the window returns to the foreground; multi-parent moves and a live-watch upgrade path remain open. |
 | [ICONS.md](ICONS.md) | Reference | Complete icon inventory: source (NSWorkspace / local Lucide bundle / upstream), attribution, command→icon map, and the rules for adding new icons. Flags missing/weak/reused glyphs. |
 | [LAZY_METADATA.md](LAZY_METADATA.md) | Shipped with follow-ups | Shared NodeStore, path guard, cached row metadata, background prefetch, metadata DB, and process-owned caches ship; rename/move identity completion remains open. |
 | [MAGIC_DESCRIPTION.md](MAGIC_DESCRIPTION.md) | Shipped | Format/Description columns, mismatch cues, quarantine badges, and structured descriptions ship. |
@@ -37,8 +40,8 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md) | Future | Debug-overlay design remains unimplemented beyond screenshot simulation hooks. |
 | [THEMES.md](THEMES.md) | Planned (Phase 0 shipped) | User-facing theming plan: the selection-accent override + color picker ship; bundled themes, a theme picker, a drop-in user themes folder, and a generalized override layer are scoped but unbuilt. |
 | [TOOL_RESULTS.md](TOOL_RESULTS.md) | Shipped with follow-ups | Shared tab-local result surface for Search, Duplicate Finder, and docked Disk Usage ships; pop-out/state migration remains open. |
-| [VIDEO_MPV.md](VIDEO_MPV.md) | Planned | Plan to replace the VLC video provider with a libmpv backend (live filters via `vf set`, SW render into the BGRA pull seam), retire VLC once proven, and add color-key transparency on the resulting alpha-aware frame path. macOS first. |
-| [VIEWER.md](VIEWER.md) | Shipped with follow-ups | Viewer window, playlist navigation, images, Quick Look fallback, VLC-backed video, slideshow, zoom, and controls ship; richer playback/playlist polish remains open. |
+| [VIDEO-MPV.md](VIDEO-MPV.md) | Planned | Replace the mpv video backend with libmpv (live filters, alpha) and build an N-layer transparent-colour (chroma-key) compositor on top. Phase 0 spike gates it; nothing shipped yet. |
+| [VIEWER.md](VIEWER.md) | Shipped with follow-ups | Viewer window, playlist navigation, images, Quick Look fallback, mpv-backed video, slideshow, zoom, and controls ship; richer playback/playlist polish remains open. |
 | [feraille-selection-dnd-spec.md](feraille-selection-dnd-spec.md) | Partial | Selection, row drag, external file drops, and many acceptance points ship; edge auto-scroll and favorite-row drops remain open. |
 | [feraille-windows-instances-tabs-spec.md](feraille-windows-instances-tabs-spec.md) | Partial | Process/window state split, tabs, closed-tab undo, and shared caches are in place; full multi-window/tear-off completion remains open. |
 | [linux-port.md](linux-port.md) | Partial port | The Linux shell crate compiles behind stubs; real clipboard/trash/open-with/volume/power/preview integrations remain open. |
@@ -54,6 +57,9 @@ keep the UI off the I/O path.
   contents so large folders stay responsive.
 - [LAZY_METADATA.md](LAZY_METADATA.md) — defer expensive metadata out of the
   render path.
+- [FRESHNESS.md](FRESHNESS.md) — keep subtree-derived caches (folder sizes, Get
+  Info size) fresh through mtime + TTL, ancestor invalidation, and an
+  activation refresh, without a recursive watcher.
 - [MOUSE_PREDICTOR.md](MOUSE_PREDICTOR.md) — prewarm metadata ahead of hover.
 - [STATUS_PROGRESS.md](STATUS_PROGRESS.md) — status bar and task progress with
   cancellation.
@@ -89,10 +95,12 @@ keep the UI off the I/O path.
   Search, Duplicate Finder, and docked Disk Usage.
 - [VIEWER.md](VIEWER.md) — viewer window: big preview, slideshow, sticky
   zoom across entries.
-- [VIDEO_MPV.md](VIDEO_MPV.md) — planned libmpv video backend (live filters),
-  VLC retirement, and color-key transparency.
+- [VIDEO-MPV.md](VIDEO-MPV.md) — replacing the mpv video backend with libmpv,
+  and the N-layer transparent-colour (chroma-key) compositor it enables.
 - [FILE_OPS.md](FILE_OPS.md) — copy/paste/move engine: progress,
   cancellation, collision policy, clipboard verbs.
+- [BULK_RENAME.md](BULK_RENAME.md) — pattern-rule bulk rename modal with
+  live before→after preview and batch undo.
 - [DISK_USAGE.md](DISK_USAGE.md) — disk-usage window: scanning, treemap, and
   top-list views.
 

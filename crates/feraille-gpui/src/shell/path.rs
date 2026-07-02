@@ -68,7 +68,13 @@ pub fn path_segments(path: &Path) -> Vec<(String, PathBuf)> {
             }
             Component::Normal(s) => {
                 accum.push(s);
-                out.push((s.to_string_lossy().into_owned(), accum.clone()));
+                // The label is what the user reads; the accumulated path is
+                // what we navigate to. On macOS a folder stored with a `:`
+                // shows as `/` (Finder parity) without changing the real path.
+                let label =
+                    feraille_fs_native::paths::display_leaf(s.to_string_lossy().as_ref())
+                        .into_owned();
+                out.push((label, accum.clone()));
             }
             Component::CurDir => {}
             Component::ParentDir => {

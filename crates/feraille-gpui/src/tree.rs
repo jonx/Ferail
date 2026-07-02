@@ -377,7 +377,8 @@ fn render_tree_row(
     let drag_path = path.clone();
     let drag_label: SharedString = drag_path
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
+        // Display leaf on the drag chip (macOS `:` → `/`).
+        .map(|n| feraille_fs_native::paths::display_leaf(n.to_string_lossy().as_ref()).into_owned())
         .unwrap_or_else(|| drag_path.display().to_string())
         .into();
     let mut row = h_flex()
@@ -705,8 +706,14 @@ fn render_tree_row(
             // Indent the bar so it sits under the label, skipping
             // caret + icon columns (16 + 4 + 16 + 4 = ~40 DIPs).
             let bar_indent = px(8.0 + 14.0 * depth as f32 + 40.0);
-            let bar_w = px(140.0);
-            let fill_w = bar_w * used_fraction;
+            // Finder draws this bar ~140 DIPs wide. Rather than pin a
+            // fixed width that gets clipped when the user drags the
+            // sidebar narrow, let the track flex to fill whatever room is
+            // left after the indent — capped at 140 so it doesn't sprawl
+            // on a wide sidebar, and `min_w_0` so it shrinks instead of
+            // overflowing when the panel is tight. The used portion is a
+            // `relative` fraction of the track, so it stays correct at any
+            // track width.
             let track_bg = theme.muted_foreground.opacity(0.25);
             let fill_bg = theme.muted_foreground.opacity(0.85);
             let bar = div()
@@ -717,11 +724,19 @@ fn render_tree_row(
                 .pb_1()
                 .child(
                     div()
-                        .w(bar_w)
+                        .flex_1()
+                        .min_w_0()
+                        .max_w(px(140.0))
                         .h(px(4.0))
                         .rounded(px(2.0))
                         .bg(track_bg)
-                        .child(div().h_full().w(fill_w).rounded(px(2.0)).bg(fill_bg)),
+                        .child(
+                            div()
+                                .h_full()
+                                .w(relative(used_fraction))
+                                .rounded(px(2.0))
+                                .bg(fill_bg),
+                        ),
                 );
             return v_flex()
                 .id(("tree-row-capacity", node_id.as_raw() as usize))

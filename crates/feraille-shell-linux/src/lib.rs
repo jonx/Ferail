@@ -139,12 +139,21 @@ pub fn open_url(_url: &str) {}
 /// `org.freedesktop.FileManager1.ShowItems` (Nautilus/Dolphin/Nemo/Files all
 /// implement it, and it highlights the item in its parent), falling back to
 /// opening the parent directory with `xdg-open`.
+///
+/// Blocks for the D-Bus method REPLY (`--print-reply`) — without it,
+/// `dbus-send` exits 0 the moment the message is *sent*, so on
+/// desktops with no FileManager1 implementation (i3/sway/minimal) the
+/// "success" was a lie and the xdg-open fallback was dead code.
+/// Because it waits (session-bus round-trip; cold D-Bus activation of
+/// the file manager can take seconds), callers must run this on a
+/// worker, never the UI thread.
 #[cfg(target_os = "linux")]
 pub fn reveal_in_finder(path: &Path) {
     let uri = file_uri(path);
     let shown = std::process::Command::new("dbus-send")
         .args([
             "--session",
+            "--print-reply",
             "--dest=org.freedesktop.FileManager1",
             "--type=method_call",
             "/org/freedesktop/FileManager1",
@@ -407,6 +416,22 @@ pub fn open_with_app(_target: &Path, _app_path: &Path) -> Result<(), String> {
     Err("open_with_app: not implemented on this platform".into())
 }
 
+/// Open every `target` with the app at `app_path`. One detached spawn
+/// per file; the batch form exists for parity with shell-mac's
+/// single-invocation `open -a`.
+pub fn open_with_app_many(targets: &[std::path::PathBuf], app_path: &Path) -> Result<(), String> {
+    let mut last_err = None;
+    for target in targets {
+        if let Err(e) = open_with_app(target, app_path) {
+            last_err = Some(e);
+        }
+    }
+    match last_err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
 // =============================================================
 // Clipboard
 // =============================================================
@@ -430,8 +455,12 @@ pub fn copy_to_clipboard(_text: &str) {}
 /// Copy file paths to the clipboard as `text/uri-list` `file://` URIs (plus
 /// the GNOME `x-special/gnome-copied-files` target for Nautilus interop).
 /// Stub — needs Wayland/X11 selection access (`wl-clipboard` / `xclip` / a
-/// native protocol client).
-pub fn clipboard_copy_file_urls(_paths: &[&Path]) {}
+/// native protocol client). Returns `false` so callers surface "not
+/// available" instead of a lying success toast (the `is_dir` half of
+/// each item is a mac-pasteboard need).
+pub fn clipboard_copy_file_urls(_items: &[(&Path, bool)]) -> bool {
+    false
+}
 
 /// Read file paths previously placed on the clipboard. Empty if none. Stub.
 pub fn clipboard_read_file_urls() -> Vec<PathBuf> {
@@ -824,6 +853,25 @@ pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
 /// impl will key off the gpui/compositor handle instead. No-op for now.
 pub fn set_window_floating(_handle: *mut c_void, _floating: bool) {}
 
+/// Window docking primitives (docs/features/DOCK.md). macOS-only feature; the
+/// `*mut c_void` handle is meaningless on Linux, so these are no-op stubs that
+/// keep the shared `platform_shell::*` surface compiling. A real impl would
+/// key off the Wayland/X11 compositor handle.
+pub fn current_mouse_location() -> (f64, f64) {
+    (0.0, 0.0)
+}
+pub fn screen_visible_frame_for_window(_handle: *mut c_void) -> Option<(f64, f64, f64, f64)> {
+    None
+}
+pub fn set_window_frame(_handle: *mut c_void, _x: f64, _y: f64, _w: f64, _h: f64) {}
+pub fn set_window_all_spaces(_handle: *mut c_void, _all_spaces: bool) {}
+pub fn window_frame(_handle: *mut c_void) -> Option<(f64, f64, f64, f64)> {
+    None
+}
+pub fn window_is_fullscreen(_handle: *mut c_void) -> bool {
+    false
+}
+
 // =============================================================
 // Video overlay (windowless player feeding the viewer BGRA frames).
 // Real impl: GStreamer / libmpv. Handle 0 = "no video" (matches win32).
@@ -870,16 +918,26 @@ pub fn video_overlay_step(_id: u64, _frames: i64) {}
 // =============================================================
 
 /// Spawn a child process fully detached from Feraille: no inherited stdio, and
-/// we do not wait on it. Used for launchers (`xdg-open`, terminals, apps) so a
-/// slow or chatty child never blocks the calling worker. Returns `Ok` once the
-/// child is spawned (we deliberately don't await its exit).
+/// the caller does not wait on it. Used for launchers (`xdg-open`, terminals,
+/// apps) so a slow or chatty child never blocks the calling worker. Returns
+/// `Ok` once the child is spawned. A small named thread `wait()`s the child in
+/// the background so it doesn't linger as a zombie until app exit — launchers
+/// like `xdg-open` exit quickly, so the reaper threads are short-lived.
 #[cfg(target_os = "linux")]
 fn spawn_detached(cmd: &mut std::process::Command) -> std::io::Result<()> {
-    cmd.stdin(std::process::Stdio::null())
+    let mut child = cmd
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn()
-        .map(|_child| ())
+        .spawn()?;
+    // Best-effort: if the reaper thread can't start, the child still ran —
+    // it just won't be reaped until process exit (the old behavior).
+    let _ = std::thread::Builder::new()
+        .name("child-reaper".into())
+        .spawn(move || {
+            let _ = child.wait();
+        });
+    Ok(())
 }
 
 /// Build a `file://` URI for an absolute path. Minimal percent-encoding of the
@@ -888,15 +946,29 @@ fn spawn_detached(cmd: &mut std::process::Command) -> std::io::Result<()> {
 /// when more shell surfaces need URIs.
 #[cfg(target_os = "linux")]
 fn file_uri(path: &Path) -> String {
-    let s = path.to_string_lossy();
+    // Percent-encode from the RAW path bytes. The previous version
+    // pushed each byte ≥ 0x80 as a `char` — mapping UTF-8 bytes to
+    // Latin-1 codepoints that were then re-encoded as UTF-8, so
+    // "Résumé.pdf" produced a double-encoded mojibake URI the file
+    // manager couldn't resolve. Per RFC 3986, everything outside the
+    // unreserved set is encoded; `/` stays as the path separator.
+    #[cfg(unix)]
+    let bytes: &[u8] = {
+        use std::os::unix::ffi::OsStrExt;
+        path.as_os_str().as_bytes()
+    };
+    #[cfg(not(unix))]
+    let owned = path.to_string_lossy().into_owned();
+    #[cfg(not(unix))]
+    let bytes: &[u8] = owned.as_bytes();
+
     let mut out = String::from("file://");
-    for b in s.bytes() {
+    for &b in bytes {
         match b {
-            b'%' => out.push_str("%25"),
-            b' ' => out.push_str("%20"),
-            b'#' => out.push_str("%23"),
-            b'?' => out.push_str("%3F"),
-            _ => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
         }
     }
     out
@@ -1100,4 +1172,49 @@ mod tests {
     fn file_uri_percent_encodes_spaces() {
         assert_eq!(file_uri(Path::new("/a b/c#d")), "file:///a%20b/c%23d");
     }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn file_uri_encodes_non_ascii_from_raw_bytes() {
+        // Each UTF-8 byte of 'é' (0xC3 0xA9) is percent-encoded; the
+        // old byte→char push produced a double-encoded mojibake URI.
+        assert_eq!(
+            file_uri(Path::new("/tmp/Résumé.pdf")),
+            "file:///tmp/R%C3%A9sum%C3%A9.pdf"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Privilege escalation + locked-file diagnostics (resilient file operations).
+//
+// STUBS for now. Linux follow-up: pkexec/sudo re-exec for run_elevated_self;
+// /proc/*/fd scan for processes_using; SIGTERM for force_close_processes.
+// ---------------------------------------------------------------------------
+
+/// A process holding a file open. Identical shape in every shell crate.
+#[derive(Clone, Debug)]
+pub struct LockingProcess {
+    pub pid: u32,
+    pub name: String,
+}
+
+pub fn elevation_available() -> bool {
+    false
+}
+
+pub fn run_elevated_self(_args: &[String]) -> Result<i32, String> {
+    Err("elevation not implemented on Linux yet (pkexec re-exec)".into())
+}
+
+pub fn lock_diagnostics_available() -> bool {
+    false
+}
+
+pub fn processes_using(_path: &std::path::Path) -> Vec<LockingProcess> {
+    Vec::new()
+}
+
+pub fn force_close_processes(_pids: &[u32]) -> Result<(), String> {
+    Err("force-close not implemented on Linux yet".into())
 }

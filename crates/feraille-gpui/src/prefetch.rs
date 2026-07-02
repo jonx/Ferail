@@ -17,24 +17,25 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use feraille_core::FileEntry;
+use feraille_core::{FileEntry, NodeId};
 use feraille_fs_native::{NativeFs, detect_magic_info, fetch_quarantine_info};
 use feraille_meta::{FileMetaRecord, MetadataDb};
 use gpui::Entity;
 
 use crate::file_list::FileListDelegate;
 use crate::multi_table::TableState;
-use crate::shell::Shell;
+use crate::shell::{Shell, TabId};
 use crate::tasks::{TaskKind, TaskRegistry};
 
 /// One row's worth of prefetched data, returned by the worker.
-/// The index points into the snapshot the worker started with;
-/// the foreground applier checks bounds in case the directory
-/// changed under us before the batch arrived.
+/// Keyed by `NodeId` — stable across re-sorts and re-enumerations —
+/// so a batch can never land on the wrong row (raw indices shift
+/// whenever the model changes under an in-flight pass).
 struct PrefetchRow {
-    row_ix: usize,
+    node: NodeId,
     /// Same-or-newer snapshot of `display_magic`. Empty string when
     /// we couldn't determine.
     magic_label: String,
@@ -55,7 +56,7 @@ struct PrefetchRow {
 /// Snapshot used to seed the worker. We can't capture `&FileEntry`
 /// (not Send + lifetime); copy the bits the worker needs.
 struct PrefetchSeed {
-    row_ix: usize,
+    node: NodeId,
     path: PathBuf,
     mtime_unix: i64,
     size: u64,
@@ -67,6 +68,11 @@ struct PrefetchSeed {
 /// Spawn a prefetch pass over the current entries. Called from
 /// `Shell::load_path` after the table refresh. Cheap: returns
 /// immediately; the worker runs on the background executor.
+///
+/// `force` bypasses the metadata-DB read cache for magic/description
+/// so every row is re-sniffed from disk (Refresh). The fresh result
+/// is still written through, so the cache self-heals. Quarantine
+/// state stays cache-first either way.
 ///
 /// Field references (table, fs, db, weak handle) come in by
 /// parameter rather than being looked up via `shell.read(cx)`,
@@ -80,6 +86,10 @@ pub fn start(
     db: Option<Arc<Mutex<MetadataDb>>>,
     tasks: Rc<RefCell<TaskRegistry>>,
     shell_weak: gpui::WeakEntity<Shell>,
+    tab_id: TabId,
+    generation: u64,
+    cancel: Arc<AtomicBool>,
+    force: bool,
     cx: &mut gpui::Context<Shell>,
 ) {
     // Snapshot the entries on the foreground executor. The worker
@@ -89,11 +99,10 @@ pub fn start(
         .delegate()
         .entries
         .iter()
-        .enumerate()
-        .filter_map(|(row_ix, e)| {
+        .filter_map(|e| {
             let path = fs.path_for(e.id)?;
             Some(PrefetchSeed {
-                row_ix,
+                node: e.id,
                 path,
                 mtime_unix: e.mtime_unix,
                 size: e.size,
@@ -122,16 +131,26 @@ pub fn start(
 
     let table_for_apply = table.clone();
     let tasks_for_end = tasks.clone();
+    let worker_cancel = cancel.clone();
     cx.spawn(async move |_this, cx| {
         let batch: Vec<PrefetchRow> = cx
             .background_executor()
-            .spawn(async move { run_worker(seeds, db) })
+            .spawn(async move { run_worker(seeds, db, force, worker_cancel) })
             .await;
         let n = batch.len();
         crate::log_info!(90, "prefetch: worker returned {n} rows");
         if let Some(shell) = shell_weak.upgrade() {
-            shell.update(cx, |_, cx| {
-                if !batch.is_empty() {
+            shell.update(cx, |shell, cx| {
+                // Staleness rule shared with folder_sizes/search/dupes:
+                // the tab may have closed or navigated on. Without this
+                // guard a slow pass for the previous directory would
+                // stamp its magic/quarantine data onto the new one
+                // (quarantine badges on the wrong files).
+                let fresh = shell
+                    .tabs
+                    .iter()
+                    .any(|t| t.id == tab_id && t.load_generation == generation);
+                if fresh && !batch.is_empty() {
                     table_for_apply.update(cx, |state, cx| {
                         apply_batch(state.delegate_mut(), batch);
                         state.refresh(cx);
@@ -158,12 +177,32 @@ pub fn start(
 /// Body of the background pass. For each seed: cache lookup first
 /// (cheap, hits the SQLite WAL); on miss, sniff + xattr-read; write
 /// through to DB; produce a result row.
-fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> Vec<PrefetchRow> {
+///
+/// `force` skips the magic/description read cache so every row is
+/// re-sniffed from disk; the fresh values still write through.
+fn run_worker(
+    seeds: Vec<PrefetchSeed>,
+    db: Option<Arc<Mutex<MetadataDb>>>,
+    force: bool,
+    cancel: Arc<AtomicBool>,
+) -> Vec<PrefetchRow> {
     let mut out = Vec::with_capacity(seeds.len());
+    // Write-through accumulates here and lands as ONE transaction at
+    // the end (`upsert_files`) — per-row autocommit upserts serialized
+    // a directory's worth of fsyncs behind the connection mutex.
+    let mut pending_writes: Vec<FileMetaRecord> = Vec::new();
     for seed in seeds {
+        // Navigation flipped the flag: the listing this pass was
+        // sniffing for is gone, stop burning 4 KB reads per file.
+        // The partial batch is still returned — rows are keyed by
+        // NodeId and write-through already happened per row.
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
         // If FileEntry already carries everything (rare — only when
-        // hydrate-from-DB on enumerate gets implemented), skip.
-        if seed.has_magic && seed.has_description && seed.has_quarantine {
+        // hydrate-from-DB on enumerate gets implemented), skip — unless
+        // a forced re-sniff is in effect.
+        if !force && seed.has_magic && seed.has_description && seed.has_quarantine {
             continue;
         }
         let path_str = seed.path.to_string_lossy().into_owned();
@@ -177,9 +216,14 @@ fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> V
         // Determine magic label + description in one shot. The new
         // detector reads 4 KB once and returns a structured info
         // struct; the label and description are derived from that
-        // same parse. Cached values short-circuit the I/O.
-        let cached_label = cached.as_ref().and_then(|r| r.magic_label.clone());
-        let cached_desc = cached.as_ref().and_then(|r| r.description.clone());
+        // same parse. Cached values short-circuit the I/O — but a
+        // forced re-sniff ignores them so stale derived data heals.
+        let cached_label = (!force)
+            .then(|| cached.as_ref().and_then(|r| r.magic_label.clone()))
+            .flatten();
+        let cached_desc = (!force)
+            .then(|| cached.as_ref().and_then(|r| r.description.clone()))
+            .flatten();
         let (magic_label, description) = match (cached_label, cached_desc) {
             (Some(l), Some(d)) => (l, d),
             (cached_l, cached_d) => {
@@ -218,38 +262,35 @@ fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> V
                 }
             };
 
-        // Write through to DB.
-        if let Some(db) = db.as_ref() {
-            if let Ok(guard) = db.lock() {
-                let rec = FileMetaRecord {
-                    path: path_str.clone(),
-                    mtime_unix: seed.mtime_unix,
-                    size: seed.size,
-                    magic_label: if magic_label.is_empty() {
-                        None
-                    } else {
-                        Some(magic_label.clone())
-                    },
-                    description: if description.is_empty() {
-                        None
-                    } else {
-                        Some(description.clone())
-                    },
-                    partial_hash: cached.as_ref().and_then(|r| r.partial_hash.clone()),
-                    full_hash: cached.as_ref().and_then(|r| r.full_hash.clone()),
-                    mime: cached.as_ref().and_then(|r| r.mime.clone()),
-                    quarantined: Some(quarantined),
-                    quarantine_agent: agent.clone(),
-                    quarantine_iso: iso.clone(),
-                    quarantine_where_from: where_from.clone(),
-                    indexed_at_unix: now_unix(),
-                };
-                let _ = guard.upsert_file(&rec);
-            }
+        // Stage the write-through; flushed in one transaction below.
+        if db.is_some() {
+            pending_writes.push(FileMetaRecord {
+                path: path_str.clone(),
+                mtime_unix: seed.mtime_unix,
+                size: seed.size,
+                magic_label: if magic_label.is_empty() {
+                    None
+                } else {
+                    Some(magic_label.clone())
+                },
+                description: if description.is_empty() {
+                    None
+                } else {
+                    Some(description.clone())
+                },
+                partial_hash: cached.as_ref().and_then(|r| r.partial_hash.clone()),
+                full_hash: cached.as_ref().and_then(|r| r.full_hash.clone()),
+                mime: cached.as_ref().and_then(|r| r.mime.clone()),
+                quarantined: Some(quarantined),
+                quarantine_agent: agent.clone(),
+                quarantine_iso: iso.clone(),
+                quarantine_where_from: where_from.clone(),
+                indexed_at_unix: now_unix(),
+            });
         }
 
         out.push(PrefetchRow {
-            row_ix: seed.row_ix,
+            node: seed.node,
             magic_label,
             description,
             is_quarantined: quarantined,
@@ -258,38 +299,51 @@ fn run_worker(seeds: Vec<PrefetchSeed>, db: Option<Arc<Mutex<MetadataDb>>>) -> V
             quarantine_where_from: where_from,
         });
     }
+    // One transaction for the whole pass (cancel included — whatever
+    // was derived is still valid per-row data worth keeping).
+    if let Some(db) = db.as_ref() {
+        if let Ok(guard) = db.lock() {
+            if let Err(e) = guard.upsert_files(&pending_writes) {
+                crate::log_warn!(90, "prefetch: write-through failed: {e}");
+            }
+        }
+    }
     out
 }
 
 /// Apply the worker's batch back to the live `FileEntry` slice.
-/// Bounds-checked per-row: if the directory was re-enumerated and
-/// the row count shrank, stale indices skip silently.
+/// Keyed by `NodeId`: a row whose id no longer exists in the model
+/// (deleted, filtered, re-enumerated away) skips silently, and a
+/// re-sort between snapshot and apply can't misdeliver a result.
 fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<PrefetchRow>) {
+    let mut by_node: std::collections::HashMap<NodeId, PrefetchRow> =
+        batch.into_iter().map(|row| (row.node, row)).collect();
     let entries: &mut [FileEntry] = &mut delegate.entries;
-    for row in batch {
-        if let Some(e) = entries.get_mut(row.row_ix) {
-            if !row.magic_label.is_empty() {
-                e.display_magic = row.magic_label;
-            }
-            if !row.description.is_empty() {
-                e.display_description = row.description;
-            }
-            e.is_quarantined = row.is_quarantined;
-            // Provenance rides along so the preview pane can show
-            // where a marked file came from without touching xattrs.
-            e.quarantine = if row.is_quarantined {
-                Some(feraille_core::QuarantineDetails {
-                    agent: row.quarantine_agent,
-                    downloaded_iso: row.quarantine_iso,
-                    where_from: row
-                        .quarantine_where_from
-                        .map(|s| s.lines().map(str::to_owned).collect())
-                        .unwrap_or_default(),
-                })
-            } else {
-                None
-            };
+    for e in entries.iter_mut() {
+        let Some(row) = by_node.remove(&e.id) else {
+            continue;
+        };
+        if !row.magic_label.is_empty() {
+            e.display_magic = row.magic_label;
         }
+        if !row.description.is_empty() {
+            e.display_description = row.description;
+        }
+        e.is_quarantined = row.is_quarantined;
+        // Provenance rides along so the preview pane can show
+        // where a marked file came from without touching xattrs.
+        e.quarantine = if row.is_quarantined {
+            Some(feraille_core::QuarantineDetails {
+                agent: row.quarantine_agent,
+                downloaded_iso: row.quarantine_iso,
+                where_from: row
+                    .quarantine_where_from
+                    .map(|s| s.lines().map(str::to_owned).collect())
+                    .unwrap_or_default(),
+            })
+        } else {
+            None
+        };
     }
 }
 
@@ -360,4 +414,104 @@ fn epoch_days_to_ymd(days: i64) -> (i32, u32, u32) {
 
 fn is_leap(y: i32) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AROS `exec.library` ELF prefix (64-bit LSB relocatable, aarch64,
+    /// ELFOSABI_AROS) — enough bytes for the sniffer's header parse.
+    const AROS_ELF: &[u8] = &[
+        0x7f, b'E', b'L', b'F', 0x02, 0x01, 0x01, 0x0f, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0xb7, 0x00, 0x01, 0x00, 0x00, 0x00,
+    ];
+
+    fn write_temp(bytes: &[u8]) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("feraille-prefetch-test-{}.bin", std::process::id()));
+        std::fs::write(&p, bytes).unwrap();
+        p
+    }
+
+    fn seed_for(path: &std::path::Path) -> PrefetchSeed {
+        PrefetchSeed {
+            node: NodeId::from(7u64),
+            path: path.to_path_buf(),
+            mtime_unix: 100,
+            size: AROS_ELF.len() as u64,
+            // Fresh enumeration: no derived data carried on the entry,
+            // so the worker always reaches the cache/sniff decision.
+            has_magic: false,
+            has_description: false,
+            has_quarantine: false,
+        }
+    }
+
+    fn stale_record(path: &str) -> FileMetaRecord {
+        FileMetaRecord {
+            path: path.to_string(),
+            mtime_unix: 100,
+            size: AROS_ELF.len() as u64,
+            magic_label: Some("STALE label".into()),
+            description: Some("STALE description".into()),
+            partial_hash: None,
+            full_hash: None,
+            mime: None,
+            quarantined: Some(false),
+            quarantine_agent: None,
+            quarantine_iso: None,
+            quarantine_where_from: None,
+            indexed_at_unix: 0,
+        }
+    }
+
+    #[test]
+    fn cache_first_returns_stale_force_resniffs_from_disk() {
+        let path = write_temp(AROS_ELF);
+        let path_str = path.to_string_lossy().into_owned();
+
+        let db = Arc::new(Mutex::new(MetadataDb::in_memory().unwrap()));
+        db.lock().unwrap().upsert_file(&stale_record(&path_str)).unwrap();
+        let db_opt = Some(db.clone());
+
+        // Cache-first (force = false): the stale DB row wins, no re-sniff.
+        let cached = run_worker(
+            vec![seed_for(&path)],
+            db_opt.clone(),
+            false,
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].magic_label, "STALE label");
+        assert_eq!(cached[0].description, "STALE description");
+
+        // Forced (force = true): the file is re-sniffed from disk, so the
+        // real AROS facts replace the stale cache...
+        let forced = run_worker(
+            vec![seed_for(&path)],
+            db_opt.clone(),
+            true,
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert_eq!(forced.len(), 1);
+        assert_eq!(forced[0].magic_label, "ELF executable");
+        assert_eq!(
+            forced[0].description,
+            "ELF \u{b7} 64-bit \u{b7} relocatable \u{b7} ARM64 \u{b7} AROS"
+        );
+
+        // ...and the write-through heals the cache, so a subsequent
+        // cache-first pass now serves the fresh values.
+        let healed = run_worker(
+            vec![seed_for(&path)],
+            db_opt,
+            false,
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert_eq!(healed[0].magic_label, "ELF executable");
+        assert!(healed[0].description.ends_with("AROS"));
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

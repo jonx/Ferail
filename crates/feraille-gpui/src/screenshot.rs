@@ -20,7 +20,7 @@ use crate::assets::FeraAssets;
 use anyhow::{Context as _, Result};
 use feraille_fs_native::home_dir;
 use gpui::*;
-use gpui_component::{Theme, ThemeMode, WindowExt as _, notification::Notification};
+use gpui_component::{Theme, ThemeMode, WindowExt as _};
 
 use crate::settings::{SettingsView, category_from_arg};
 use crate::shell::Shell;
@@ -110,6 +110,10 @@ pub struct Args {
     pub inline_rename: bool,
     /// Open the new-folder dialog.
     pub new_folder: bool,
+    /// Open the bulk-rename dialog (docs/features/BULK_RENAME.md) over
+    /// the current selection, seeding the first four rows when no
+    /// `--select-rows` provided one.
+    pub bulk_rename: bool,
     /// Push a fake toast with the given message. Lands in Stage 5.
     pub simulate_toast: Option<String>,
     /// Show the footer progress strip: <0 → indeterminate, ≥0 →
@@ -143,6 +147,10 @@ pub struct Args {
     pub viewer: Option<PathBuf>,
     /// Open the viewer's colour/enhance adjustments panel for the capture.
     pub viewer_adjust: bool,
+    /// Screenshot-only: render the viewer adjustments panel in full mpv-video
+    /// mode (all colour/enhance/transparent-colour controls) without opening a
+    /// live stream — for capturing the panel layout.
+    pub viewer_adjust_video: bool,
     /// Render the drag ghost ([`crate::file_list::DragBadge`]) for a
     /// drag of N items, in isolation, against a neutral backdrop —
     /// the only way to capture the cursor ghost headlessly (it never
@@ -231,6 +239,7 @@ pub fn parse_args() -> Args {
             "--rename" => args.rename = true,
             "--inline-rename" => args.inline_rename = true,
             "--new-folder" => args.new_folder = true,
+            "--bulk-rename" => args.bulk_rename = true,
             "--simulate-toast" => args.simulate_toast = iter.next(),
             "--simulate-progress" => {
                 args.simulate_progress = Some(
@@ -259,6 +268,7 @@ pub fn parse_args() -> Args {
             }
             "--viewer" => args.viewer = iter.next().map(PathBuf::from),
             "--viewer-adjust" => args.viewer_adjust = true,
+            "--viewer-adjust-video" => args.viewer_adjust_video = true,
             "--icon-picker" => args.icon_picker = true,
             "--drag-ghost" => args.drag_ghost = iter.next().and_then(|s| s.parse().ok()),
             "--help" | "-h" => {
@@ -302,6 +312,8 @@ OPTIONS
   --rename                 Open the rename dialog for the selected row.
   --inline-rename          Start inline rename. Falls back to modal in the GPUI shell.
   --new-folder             Open the new-folder dialog.
+  --bulk-rename            Open the bulk-rename dialog over the selection
+                           (seeds rows 0-3 when --select-rows is absent).
   --edit-mode              Open breadcrumb edit mode. Lands in Stage 9.
   --mac-chrome             N/A in the GPUI shell (native chrome already).
   --simulate-toast <text>  Push an error toast. Lands in Stage 5.
@@ -344,6 +356,7 @@ pub fn run(args: Args) -> Result<()> {
     let disk_usage_root = args.disk_usage.clone();
     let viewer_target = args.viewer.clone();
     let viewer_adjust = args.viewer_adjust;
+    let viewer_adjust_video = args.viewer_adjust_video;
     let drag_ghost = args.drag_ghost;
     let icon_picker = args.icon_picker;
 
@@ -364,6 +377,10 @@ pub fn run(args: Args) -> Result<()> {
         // subsequent Shell::new) can read it back.
         let process = Shell::build_process_state(cx);
         cx.set_global(crate::process_state::ProcessStateGlobal(process));
+        // Volumes are seeded empty and filled asynchronously; the fill
+        // lands well within the pre-capture settle delay, so the
+        // sidebar's Volumes section renders in screenshots.
+        crate::process_state::fill_volumes_once(cx);
 
         let path = path.clone();
         let settings_page = settings_page.clone();
@@ -456,6 +473,9 @@ pub fn run(args: Args) -> Result<()> {
                         });
                         if viewer_adjust {
                             view.update(cx, |w, _| w.open_adjust_panel());
+                        }
+                        if viewer_adjust_video {
+                            view.update(cx, |w, _| w.sim_full_adjust_panel());
                         }
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if icon_picker {
@@ -589,6 +609,7 @@ struct ShellArgs {
     sort: Option<(String, bool)>,
     rename: bool,
     new_folder: bool,
+    bulk_rename: bool,
     expand: Vec<PathBuf>,
     // Stage-deferred flags. Recorded so the apply step can emit a
     // single "stage X not yet wired" log warning per use, rather
@@ -626,6 +647,7 @@ impl From<&Args> for ShellArgs {
             sort: a.sort.clone(),
             rename: a.rename || a.inline_rename,
             new_folder: a.new_folder,
+            bulk_rename: a.bulk_rename,
             expand: a.expand.clone(),
             properties: a.properties,
             edit_mode: a.edit_mode,
@@ -829,7 +851,11 @@ impl ShellArgs {
                     );
             }
         }
-        if self.select_row.is_some() || self.select_name.is_some() || !self.select_rows.is_empty() {
+        if self.select_row.is_some()
+            || self.select_name.is_some()
+            || !self.select_rows.is_empty()
+            || self.bulk_rename
+        {
             // Selection flags resolve against the loaded entry list,
             // but `navigate` streams its enumeration — give the
             // batches (and the magic/quarantine prefetch they kick
@@ -892,6 +918,20 @@ impl ShellArgs {
             let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
                     s.trigger_new_folder(window, cx);
+                });
+            });
+        }
+        if self.bulk_rename {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    // The handler needs a 2+ selection; seed the first
+                    // four rows unless --select-rows provided one. (The
+                    // enumeration settle wait above already ran — the
+                    // flag is included in its condition.)
+                    if self.select_rows.is_empty() {
+                        s.select_row_indices(&[0, 1, 2, 3], cx);
+                    }
+                    s.trigger_bulk_rename(window, cx);
                 });
             });
         }
@@ -983,7 +1023,7 @@ impl ShellArgs {
         // The toast still surfaces correctly in the live window.
         if let Some(text) = self.simulate_toast.clone() {
             let _ = cx.update_window((*handle).into(), |_, window, cx| {
-                window.push_notification(Notification::error(text).autohide(false), cx);
+                window.push_notification(crate::shell::error_notification(text), cx);
             });
         }
         if self.splitter.is_some() {

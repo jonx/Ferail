@@ -20,7 +20,8 @@ use crate::entry_info::{ENTRY_INFO_CONTEXT, EntryInfoDismiss};
 use crate::shell::{
     self, ClearFilter, CloseTab, CloseToolResult, CloseWindow, CopyFiles, CopyPath, CursorDown,
     CursorDownExtend, CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp,
-    CursorUpExtend, CutFiles, EditBreadcrumb, EmptyTrash, FindDuplicates, FocusFilter, GetInfo,
+    CursorUpExtend, CutFiles, DeleteImmediately, EditBreadcrumb, EmptyTrash, FindDuplicates,
+    FocusFilter, GetInfo,
     GoHome, GridDown, GridDownExtend, GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp,
     GridUpExtend, MovePasteFiles, MoveToTrash, NavigateBack, NavigateForward, NavigateParent,
     NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings,
@@ -55,6 +56,21 @@ pub fn install(cx: &mut App) {
         crate::shell::UndoLastAction,
         Some(shell::SHELL_CONTEXT),
     )]);
+
+    // Disk Usage treemap keys — DiskUsage context only, so they never
+    // shadow the file list. Enter zooms into the selected folder,
+    // Backspace zooms out, Escape clears the selection; Cmd+C / Cmd+I /
+    // Cmd+Backspace mirror the file-list verbs on the treemap
+    // selection.
+    let du_ctx = Some(crate::disk_usage::DISK_USAGE_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("enter", crate::disk_usage::DuZoomIn, du_ctx),
+        KeyBinding::new("backspace", crate::disk_usage::DuZoomOut, du_ctx),
+        KeyBinding::new("escape", crate::disk_usage::DuClearSelection, du_ctx),
+        KeyBinding::new("secondary-c", crate::disk_usage::DuCopyFiles, du_ctx),
+        KeyBinding::new("secondary-i", crate::disk_usage::DuGetInfo, du_ctx),
+        KeyBinding::new("secondary-backspace", crate::disk_usage::DuTrash, du_ctx),
+    ]);
 
     // Icon-grid 2-D navigation. Bound in the FerailleGrid context,
     // which is more specific than SHELL_CONTEXT, so these win over the
@@ -303,6 +319,18 @@ pub(crate) fn install_extras(cx: &mut App) {
             EmptyTrash,
             Some(shell::SHELL_CONTEXT),
         ),
+        // Permanent delete of the selection (no trash). Finder's
+        // Option+Cmd+Delete [mac]; Shift+Delete is the Windows/Linux
+        // convention. Like Empty Trash, the Delete key keeps these out of
+        // the Shortcut catalogue, so they're bound here.
+        #[cfg(target_os = "macos")]
+        KeyBinding::new(
+            "secondary-alt-backspace",
+            DeleteImmediately,
+            Some(shell::SHELL_CONTEXT),
+        ),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("shift-delete", DeleteImmediately, Some(shell::SHELL_CONTEXT)),
         // Favorites toggle on the currently-selected folder
         // (docs/features/FAVORITES.md). Cmd+D mirrors Finder's
         // "Add to Sidebar" muscle memory and avoids the Cmd+T
@@ -398,6 +426,13 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("right", ViewerRight, Some(VIEWER_CONTEXT)),
         KeyBinding::new("up", ViewerPrev, Some(VIEWER_CONTEXT)),
         KeyBinding::new("down", ViewerNext, Some(VIEWER_CONTEXT)),
+        // Ctrl+Left/Right always navigate entries — the horizontal twin of
+        // Up/Down, so on a video (where plain Left/Right frame-step) you can
+        // still flip to the previous/next clip without reaching for the
+        // arrows' vertical pair. (On macOS these may be claimed by Mission
+        // Control's "move a space" shortcut; Up/Down remain as a fallback.)
+        KeyBinding::new("ctrl-left", ViewerPrev, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("ctrl-right", ViewerNext, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", ViewerDismiss, Some(VIEWER_CONTEXT)),
         KeyBinding::new("escape", EntryInfoDismiss, Some(ENTRY_INFO_CONTEXT)),
         KeyBinding::new("space", ViewerTogglePlay, Some(VIEWER_CONTEXT)),

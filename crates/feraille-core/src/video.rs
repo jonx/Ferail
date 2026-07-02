@@ -8,7 +8,7 @@
 //!
 //! Providers are selected at runtime (a "Plugins" settings section, not a
 //! cargo cfg) and compiled in: the platform-native player is one, an
-//! optional VLC backend is another. The trait is deliberately
+//! optional mpv backend is another. The trait is deliberately
 //! object-shaped (`open` → boxed stream, `Drop` tears the player down) so
 //! the viewer holds one `Box<dyn VideoStream>` and ownership maps cleanly.
 //!
@@ -59,11 +59,26 @@ impl VideoEnhance {
     }
 }
 
+/// A transparent-colour key applied to a layer: pixels within `similarity` of
+/// `color` go transparent and `blend` feathers the edge. A backend that can
+/// key live (mpv, via a `colorkey` filter) makes the keyed pixels arrive with
+/// alpha = 0 so the layer(s) beneath show through. See
+/// [docs/features/VIDEO-MPV.md](../../../docs/features/VIDEO-MPV.md).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct ChromaKey {
+    /// Target colour as `[r, g, b]`, 0..=255.
+    pub color: [u8; 3],
+    /// How close a pixel must be to `color` to count, `0..1`.
+    pub similarity: f32,
+    /// Edge feather, `0..1` (0 = hard cut).
+    pub blend: f32,
+}
+
 /// Opens video streams. The "plugin" that a provider implements to become
 /// the viewer's video player.
 pub trait VideoBackend {
     /// Open `path` for playback. `on_ended` fires when the clip reaches its
-    /// natural end. It may fire on a non-main thread (libvlc raises it from
+    /// natural end. It may fire on a non-main thread (libmpv raises it from
     /// a decoder thread), so it must be `Send`; the viewer forwards it
     /// through a channel and must not re-enter the backend synchronously.
     ///
@@ -113,4 +128,27 @@ pub trait VideoStream {
     fn set_adjust(&mut self, _adjust: VideoAdjust) -> bool {
         false
     }
+
+    /// Change enhancement filters *live*. Returns `true` if the backend
+    /// applied them without a re-open (mpv, via its runtime filter chain), or
+    /// `false` (the default) — meaning the caller must re-open the stream to
+    /// change `VideoEnhance` (the old libmpv path). `VideoEnhance::default()`
+    /// clears them.
+    fn set_enhance(&mut self, _enhance: VideoEnhance) -> bool {
+        false
+    }
+
+    /// Apply or clear a transparent-colour key *live*. Returns `true` if the
+    /// backend keyed natively so the keyed pixels carry alpha = 0 (mpv, via a
+    /// `colorkey` filter), letting the viewer composite layers beneath; or
+    /// `false` (the default) — the viewer keys on the CPU itself. `None`
+    /// clears the key.
+    fn set_chroma_key(&mut self, _key: Option<ChromaKey>) -> bool {
+        false
+    }
+
+    /// Mute or unmute this stream's audio. Used to silence composited
+    /// background layers so only the focused (top) video is heard. Default
+    /// no-op for backends without audio control.
+    fn set_muted(&mut self, _muted: bool) {}
 }

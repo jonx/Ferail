@@ -201,6 +201,15 @@ pub struct TabState {
     pub sort_ascending: bool,
 }
 
+/// Append `suffix` to the *full* file name (`metadata.db` +
+/// `"-journal"` → `metadata.db-journal`), matching SQLite's sibling
+/// naming — `Path::with_extension` would replace `.db` instead.
+fn sibling_path(path: &Path, suffix: &str) -> std::path::PathBuf {
+    let mut s = path.as_os_str().to_os_string();
+    s.push(suffix);
+    std::path::PathBuf::from(s)
+}
+
 /// SQLite-backed metadata store. Single connection — wrap in a
 /// `Mutex` at the call site if cross-thread access is needed.
 pub struct MetadataDb {
@@ -209,9 +218,11 @@ pub struct MetadataDb {
 
 impl MetadataDb {
     /// Open or create the database at `path`. If the on-disk schema
-    /// version doesn't match [`DB_VERSION`], the file is deleted
-    /// and recreated. Caller is responsible for ensuring the parent
-    /// directory exists ([`crate::ensure_parent_dir`]).
+    /// version doesn't match [`DB_VERSION`], the file is set aside as
+    /// `<name>.bak` and recreated — never silently destroyed, because
+    /// user-curated rows (favorites) live here alongside cache data.
+    /// Caller is responsible for ensuring the parent directory exists
+    /// ([`crate::ensure_parent_dir`]).
     pub fn open(path: &Path) -> Result<Self> {
         let mut wipe = false;
         if path.exists() {
@@ -234,7 +245,7 @@ impl MetadataDb {
                         // idempotent, so v1 → v2 just adds the new table.
                         Some(v) if v < DB_VERSION => {}
                         // Future version we don't understand, or no row at
-                        // all → wipe and start over.
+                        // all → set aside and start over.
                         _ => wipe = true,
                     }
                     drop(conn);
@@ -242,10 +253,39 @@ impl MetadataDb {
                 Err(_) => wipe = true,
             }
             if wipe {
-                let _ = std::fs::remove_file(path);
+                // Rename to .bak (one-deep) instead of deleting: a
+                // downgrade to an older build or a corrupt header must
+                // not cost the user their favorites. The journal/WAL
+                // siblings go with the main file — a stale `-journal`
+                // next to a freshly created same-name DB is a
+                // documented SQLite corruption vector.
+                let bak = sibling_path(path, ".bak");
+                let _ = std::fs::remove_file(&bak);
+                if std::fs::rename(path, &bak).is_err() {
+                    let _ = std::fs::remove_file(path);
+                }
+                for suffix in ["-journal", "-wal", "-shm"] {
+                    let _ = std::fs::remove_file(sibling_path(path, suffix));
+                }
             }
         }
         let conn = Connection::open(path)?;
+        // A second Feraille process (or `--reset-db` racing a live app)
+        // holds the write lock briefly; without a timeout every busy
+        // conflict surfaces as an instant SQLITE_BUSY error, and a
+        // failed favorites load is what the wipe-on-save hazard feeds
+        // on. 250ms rides out lock handoffs without wedging workers.
+        conn.busy_timeout(std::time::Duration::from_millis(250))?;
+        // WAL + NORMAL: the hot write paths (prefetch upserts, dupe
+        // hash cache) are many small autocommit statements — under the
+        // default DELETE journal each costs ~2 fsyncs. WAL brings that
+        // to one WAL append, and readers stop blocking on writers.
+        // journal_mode returns the resulting mode as a row, so it
+        // can't go through pragma_update.
+        let _mode: String = conn
+            .query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))
+            .unwrap_or_else(|_| "delete".into());
+        let _ = conn.pragma_update(None, "synchronous", "NORMAL");
         let db = Self { conn };
         db.init_schema()?;
         db.set_preference("db_version", &DB_VERSION.to_string())?;
@@ -256,6 +296,7 @@ impl MetadataDb {
     /// screenshot harness when `$HOME` is unset.
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
+        conn.busy_timeout(std::time::Duration::from_millis(250))?;
         let db = Self { conn };
         db.init_schema()?;
         Ok(db)
@@ -461,21 +502,41 @@ impl MetadataDb {
         Ok(())
     }
 
-    /// Forget a single folder's visit record. Backs "Remove from
-    /// Recents" — since Recents and the Ant Trail heat tint are the
-    /// same `folder_usage` signal, this also drops that folder's heat
-    /// (documented in docs/features — Recents).
-    pub fn forget_folder_visit(&self, path: &str) -> Result<()> {
+    /// Drop a single folder from Recents *without* forgetting its Ant
+    /// Trail heat. Recents (recency) and heat (frequency) are two
+    /// columns of the same `folder_usage` row, so this zeroes only the
+    /// recency signal (`last_access_unix`) and leaves `hits` — and thus
+    /// the heat tint — untouched. A `last_access_unix` of 0 is the
+    /// "cleared" sentinel `load_recent_folders` filters out (real visits
+    /// always stamp a positive epoch). Backs "Remove from Recents".
+    pub fn forget_recent_access(&self, path: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE folder_usage SET last_access_unix = 0 WHERE folder_path = ?1",
+            params![path],
+        )?;
+        Ok(())
+    }
+
+    /// Clear the whole Recents list without touching Ant Trail heat:
+    /// zero every row's `last_access_unix` (the recency signal) while
+    /// keeping `hits` (the frequency signal). Backs "Clear Recents".
+    /// See [`Self::forget_recent_access`] for the column split.
+    pub fn clear_recent_access(&self) -> Result<()> {
         self.conn
-            .execute("DELETE FROM folder_usage WHERE folder_path = ?1", params![path])?;
+            .execute("UPDATE folder_usage SET last_access_unix = 0", [])?;
         Ok(())
     }
 
     /// Folder paths ordered most-recently-visited first, capped at
     /// `limit`. Drives the Recents sidebar section's startup hydration.
+    /// Rows whose recency was cleared (`last_access_unix == 0`, the
+    /// sentinel set by [`Self::clear_recent_access`] /
+    /// [`Self::forget_recent_access`]) are excluded — they may still
+    /// carry heat via `hits`, but they're no longer "recent".
     pub fn load_recent_folders(&self, limit: usize) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT folder_path FROM folder_usage \
+             WHERE last_access_unix > 0 \
              ORDER BY last_access_unix DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| row.get::<_, String>(0))?;
@@ -523,40 +584,39 @@ impl MetadataDb {
     /// have their derived columns reset (the caller passes whatever
     /// fields it has; the rest stay NULL until next probe).
     pub fn upsert_file(&self, rec: &FileMetaRecord) -> Result<()> {
-        // If the path exists with a different mtime, clear stale
-        // derived data first so the new rec doesn't ride alongside
-        // outdated hashes/magic/quarantine.
-        let stale_mtime = self
-            .conn
-            .query_row(
-                "SELECT mtime_unix FROM files WHERE path = ?1",
-                params![rec.path],
-                |row| row.get::<_, i64>(0),
-            )
-            .ok();
-        if let Some(prev) = stale_mtime {
-            if prev != rec.mtime_unix {
-                self.conn
-                    .execute("DELETE FROM files WHERE path = ?1", params![rec.path])?;
-            }
-        }
+        // ONE statement, atomic: when the stored mtime differs the row
+        // is effectively replaced (stale derived data must not ride
+        // alongside a changed file), otherwise incoming NULLs preserve
+        // existing derived fields. The previous SELECT + DELETE +
+        // INSERT shape cost three autocommit statements per row —
+        // ~6 fsyncs pre-WAL — and wasn't atomic (a crash between
+        // DELETE and INSERT dropped the row).
         self.conn.execute(
             "INSERT INTO files (path, mtime_unix, size, magic_label, description, partial_hash, \
                                 full_hash, mime, quarantined, quarantine_agent, \
                                 quarantine_iso, quarantine_where_from, indexed_at_unix) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
              ON CONFLICT(path) DO UPDATE SET \
-               mtime_unix = excluded.mtime_unix, \
                size = excluded.size, \
-               magic_label = COALESCE(excluded.magic_label, files.magic_label), \
-               description = COALESCE(excluded.description, files.description), \
-               partial_hash = COALESCE(excluded.partial_hash, files.partial_hash), \
-               full_hash = COALESCE(excluded.full_hash, files.full_hash), \
-               mime = COALESCE(excluded.mime, files.mime), \
-               quarantined = COALESCE(excluded.quarantined, files.quarantined), \
-               quarantine_agent = COALESCE(excluded.quarantine_agent, files.quarantine_agent), \
-               quarantine_iso = COALESCE(excluded.quarantine_iso, files.quarantine_iso), \
-               quarantine_where_from = COALESCE(excluded.quarantine_where_from, files.quarantine_where_from), \
+               magic_label = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.magic_label, files.magic_label) ELSE excluded.magic_label END, \
+               description = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.description, files.description) ELSE excluded.description END, \
+               partial_hash = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.partial_hash, files.partial_hash) ELSE excluded.partial_hash END, \
+               full_hash = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.full_hash, files.full_hash) ELSE excluded.full_hash END, \
+               mime = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.mime, files.mime) ELSE excluded.mime END, \
+               quarantined = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.quarantined, files.quarantined) ELSE excluded.quarantined END, \
+               quarantine_agent = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.quarantine_agent, files.quarantine_agent) ELSE excluded.quarantine_agent END, \
+               quarantine_iso = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.quarantine_iso, files.quarantine_iso) ELSE excluded.quarantine_iso END, \
+               quarantine_where_from = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.quarantine_where_from, files.quarantine_where_from) ELSE excluded.quarantine_where_from END, \
+               mtime_unix = excluded.mtime_unix, \
                indexed_at_unix = excluded.indexed_at_unix",
             params![
                 rec.path,
@@ -573,6 +633,54 @@ impl MetadataDb {
                 rec.quarantine_where_from,
                 rec.indexed_at_unix,
             ],
+        )?;
+        Ok(())
+    }
+
+    /// Upsert a batch of file records in ONE transaction. The hot
+    /// writers (magic/quarantine prefetch over a whole directory, the
+    /// dupe hash cache) call this instead of per-row [`Self::upsert_file`]
+    /// autocommits — a 5,000-entry folder was ~10k autocommit
+    /// statements serialized behind the connection mutex.
+    pub fn upsert_files(&self, recs: &[FileMetaRecord]) -> Result<()> {
+        if recs.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        for rec in recs {
+            if let Err(e) = self.upsert_file(rec) {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                return Err(e);
+            }
+        }
+        self.conn.execute_batch("COMMIT")?;
+        Ok(())
+    }
+
+    /// Age out cache rows so the store stops growing without bound:
+    /// `files` and `folder_sizes` entries not refreshed in 90 days are
+    /// dead weight (their mtime checks would re-derive anyway), and
+    /// `folder_usage` — loaded wholesale into memory at startup — is
+    /// capped to its most recent 4,096 rows. User-curated tables
+    /// (favorites, pinned items) are never touched. Run once per
+    /// launch on the background executor.
+    pub fn prune_stale(&self, now_unix: i64) -> Result<()> {
+        const MAX_AGE_SECS: i64 = 90 * 86_400;
+        const FOLDER_USAGE_CAP: i64 = 4096;
+        let cutoff = now_unix.saturating_sub(MAX_AGE_SECS);
+        self.conn.execute(
+            "DELETE FROM files WHERE indexed_at_unix < ?1",
+            params![cutoff],
+        )?;
+        self.conn.execute(
+            "DELETE FROM folder_sizes WHERE computed_at_unix < ?1",
+            params![cutoff],
+        )?;
+        self.conn.execute(
+            "DELETE FROM folder_usage WHERE folder_path NOT IN ( \
+               SELECT folder_path FROM folder_usage \
+               ORDER BY last_access_unix DESC LIMIT ?1)",
+            params![FOLDER_USAGE_CAP],
         )?;
         Ok(())
     }
@@ -615,6 +723,18 @@ impl MetadataDb {
                 rec.computed_at_unix,
             ],
         )?;
+        Ok(())
+    }
+
+    /// Drop the cached size for exactly `path`. Used to invalidate
+    /// after an in-app mutation: a change deep inside a subtree
+    /// leaves the folder's own `mtime` untouched, so the mtime
+    /// fast-path can't tell the cached size is now wrong. The caller
+    /// invalidates the mutated path *and its ancestors*; the next
+    /// size pass recomputes them. Deleting an absent row is a no-op.
+    pub fn delete_folder_size(&self, path: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM folder_sizes WHERE path = ?1", params![path])?;
         Ok(())
     }
 
@@ -1005,6 +1125,47 @@ mod tests {
     }
 
     #[test]
+    fn clear_recent_access_keeps_heat() {
+        // Clearing Recents must zero recency but preserve hits (heat),
+        // since the two are independent columns of one row.
+        let db = MetadataDb::in_memory().unwrap();
+        db.record_folder_visit("/a", 100).unwrap();
+        db.record_folder_visit("/a", 200).unwrap();
+        db.record_folder_visit("/b", 150).unwrap();
+        assert_eq!(db.load_recent_folders(10).unwrap().len(), 2);
+
+        db.clear_recent_access().unwrap();
+
+        // Recents is empty...
+        assert!(db.load_recent_folders(10).unwrap().is_empty());
+        // ...but the heat (hits) survives for every folder.
+        let rows = db.load_ant_trail().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].folder_path, "/a");
+        assert_eq!(rows[0].hits, 2);
+        assert_eq!(rows[0].last_access_unix, 0);
+
+        // A fresh visit re-enters Recents and bumps heat from where it was.
+        db.record_folder_visit("/a", 300).unwrap();
+        assert_eq!(db.load_recent_folders(10).unwrap(), vec!["/a".to_string()]);
+        assert_eq!(db.load_ant_trail().unwrap()[0].hits, 3);
+    }
+
+    #[test]
+    fn forget_recent_access_keeps_heat_for_one_folder() {
+        let db = MetadataDb::in_memory().unwrap();
+        db.record_folder_visit("/a", 100).unwrap();
+        db.record_folder_visit("/b", 150).unwrap();
+
+        db.forget_recent_access("/a").unwrap();
+
+        // /a drops off Recents; /b stays.
+        assert_eq!(db.load_recent_folders(10).unwrap(), vec!["/b".to_string()]);
+        // Both keep their heat row.
+        assert_eq!(db.load_ant_trail().unwrap().len(), 2);
+    }
+
+    #[test]
     fn ant_trail_save_replaces_table() {
         let db = MetadataDb::in_memory().unwrap();
         db.record_folder_visit("/a", 100).unwrap();
@@ -1046,6 +1207,23 @@ mod tests {
         let r = db.get_folder_size("/dir").unwrap().unwrap();
         assert_eq!(r.mtime_unix, 200);
         assert_eq!(r.size, 99);
+    }
+
+    #[test]
+    fn folder_size_delete_invalidates() {
+        let db = MetadataDb::in_memory().unwrap();
+        db.upsert_folder_size(&FolderSizeRecord {
+            path: "/dir".into(),
+            mtime_unix: 100,
+            size: 42,
+            computed_at_unix: 100,
+        })
+        .unwrap();
+        assert!(db.get_folder_size("/dir").unwrap().is_some());
+        db.delete_folder_size("/dir").unwrap();
+        assert!(db.get_folder_size("/dir").unwrap().is_none());
+        // Deleting an absent row is a no-op, not an error.
+        db.delete_folder_size("/dir").unwrap();
     }
 
     #[test]

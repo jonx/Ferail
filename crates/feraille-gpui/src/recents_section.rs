@@ -24,6 +24,25 @@ use gpui_component::{
 use crate::icons::IconCache;
 use crate::shell::Shell;
 
+/// Master switch for the Recents feature. Default `true`. When off, the
+/// sidebar section is hidden and navigation stops pushing folders into
+/// [`crate::process_state::ProcessState::recents`]. The Ant Trail is
+/// unaffected — the two share the `folder_usage` visit log but each has
+/// its own switch ([`crate::ant_trail::AntTrailEnabled`]). Seeded from
+/// persisted settings at startup and set live by the settings toggle;
+/// reading [`recents_enabled`] during render subscribes the window so
+/// flipping it shows/hides the section without a relaunch.
+#[derive(Clone, Copy)]
+pub struct RecentsEnabled(pub bool);
+
+impl gpui::Global for RecentsEnabled {}
+
+/// Whether the Recents feature is on. Defaults to `true` when the global
+/// hasn't been seeded yet.
+pub fn recents_enabled(cx: &App) -> bool {
+    cx.try_global::<RecentsEnabled>().map(|g| g.0).unwrap_or(true)
+}
+
 /// Section payload for the Recents group. Cloned per frame; the
 /// `Vec<PathBuf>` is a bounded snapshot (`RECENTS_CAP`).
 #[derive(Clone)]
@@ -120,7 +139,10 @@ impl SidebarItem for RecentsSection {
                 }
             })
             .context_menu(move |menu, _window, _cx| {
-                menu.menu("Clear Recents", Box::new(crate::shell::ClearRecents))
+                menu.menu(
+                    "Clear Recents\u{2026}",
+                    Box::new(crate::shell::ClearRecents),
+                )
             });
 
         if section_collapsed || self.icon_only {
@@ -242,7 +264,7 @@ fn render_recent_row(
         )
         .separator()
         .menu("Remove from Recents", Box::new(RemoveFromRecents))
-        .menu("Clear Recents", Box::new(ClearRecents))
+        .menu("Clear Recents\u{2026}", Box::new(ClearRecents))
     })
     .into_any_element()
 }

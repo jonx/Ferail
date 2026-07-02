@@ -64,27 +64,37 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
         };
 
         // Volume label. Buffer sized per MSDN (MAX_PATH+1 for the
-        // volume name; we don't read the FS name or serial).
-        let mut name_buf = [0u16; 261];
-        let name = unsafe {
-            match GetVolumeInformationW(
-                root_pcwstr,
-                Some(&mut name_buf),
-                None,
-                None,
-                None,
-                None,
-            ) {
-                Ok(()) => {
-                    let len = name_buf.iter().position(|&c| c == 0).unwrap_or(name_buf.len());
-                    let label = String::from_utf16_lossy(&name_buf[..len]);
-                    if label.is_empty() {
-                        format!("{letter}:")
-                    } else {
-                        format!("{label} ({letter}:)")
+        // volume name; we don't read the FS name or serial). Skipped
+        // for network drives: GetVolumeInformationW on a mapped drive
+        // whose server is unreachable blocks for the full SMB/DFS
+        // timeout (tens of seconds) — the bare letter is an honest
+        // label, and the sidebar refresh picks up a nicer one when the
+        // share is actually reachable via the capacity-free path.
+        let name = if kind == DRIVE_REMOTE {
+            format!("{letter}:")
+        } else {
+            let mut name_buf = [0u16; 261];
+            unsafe {
+                match GetVolumeInformationW(
+                    root_pcwstr,
+                    Some(&mut name_buf),
+                    None,
+                    None,
+                    None,
+                    None,
+                ) {
+                    Ok(()) => {
+                        let len =
+                            name_buf.iter().position(|&c| c == 0).unwrap_or(name_buf.len());
+                        let label = String::from_utf16_lossy(&name_buf[..len]);
+                        if label.is_empty() {
+                            format!("{letter}:")
+                        } else {
+                            format!("{label} ({letter}:)")
+                        }
                     }
+                    Err(_) => format!("{letter}:"),
                 }
-                Err(_) => format!("{letter}:"),
             }
         };
 

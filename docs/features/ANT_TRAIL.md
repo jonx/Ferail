@@ -18,9 +18,14 @@ Feraille currently has:
 - Heat tinting in the file list/grid for visited directories, with a master
   on/off switch and a customizable base color (Settings → Appearance → Ant
   Trail).
-- Recents sidebar section backed by the same visit log.
-- Remove-from-Recents and Clear-Recents actions; these intentionally clear the
-  matching Ant Trail heat because the signal is shared.
+- Recents sidebar section backed by the same visit log, with its own master
+  on/off switch (Settings → Appearance → Recents).
+- Remove-from-Recents and Clear-Recents actions. Recency (`last_access_unix`)
+  and heat (`hits`) are independent columns of the same `folder_usage` row, so
+  these clear *only* the recency and keep the heat tint — taking folders off the
+  recent list doesn't erase how often you visit them. Clear Recents is a
+  catalogued command (Go menu / ⌘K palette) and confirms first, since it can't
+  be undone.
 - A default-on "Don't track favorites" option that skips visit recording when a
   folder is reached via its favorite (see [Customization](#customization)).
 
@@ -98,6 +103,18 @@ as the selection accent):
   on, `Shell::navigate_from_favorite` skips `record_ant_visit`, which means the
   folder neither gains Ant Trail heat nor enters Recents. Toggling it takes
   effect on the next favorite click without a relaunch.
+
+A separate **Settings → Appearance → Recents** group carries the Recents
+feature's own switch, backed by [`crate::recents_section`] the same way:
+
+- **Show Recents** (default on) — the master switch, `recents_enabled` in
+  `app_state`, surfaced live as `recents_section::RecentsEnabled`. When off,
+  `build_recents_section` returns `None` (the sidebar section disappears) and
+  `record_ant_visit` skips `push_recent`, so navigation stops feeding the list.
+  Visits are still written to `folder_usage`, so the Ant Trail — its own
+  switch — keeps its heat. Flipping it shows/hides the section without a
+  relaunch (`recents_section::recents_enabled(cx)` is read during render).
+  **Clear Recents…** (Go menu / ⌘K) wipes the list for those who keep it.
 
 ## Future Prediction
 

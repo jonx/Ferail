@@ -31,7 +31,7 @@ use gpui_component::{
 
 use crate::app_state;
 use crate::file_list::FileListDelegate;
-use crate::fs_watcher::{FsWatcher, POLL_INTERVAL};
+use crate::fs_watcher::{FsWatcher, POLL_INTERVAL, RELOAD_DEBOUNCE};
 use crate::multi_table::{DataTable, TableEvent, TableState};
 use crate::tasks::TaskKind;
 use crate::tool_results::{ToolHostContext, ToolHostEvent};
@@ -41,6 +41,7 @@ use crate::tree::{
 use gpui::prelude::FluentBuilder as _;
 
 mod actions;
+mod dock;
 mod dupe_panel;
 mod dupes;
 mod file_ops;
@@ -52,12 +53,18 @@ mod selection;
 mod tab;
 
 pub use actions::*;
+pub use dock::{DockEdge, DockState, ScreenFrame};
 use loading::{
     LoadBatch, LoadMsg, dir_has_subdir, error_copy, middle_truncate_path,
     run_directory_load_streaming, run_tree_children_load,
 };
 pub use path::{canonicalize_for_identity, parse_breadcrumb_path, path_segments};
 pub use tab::{ClosedTab, HistoryEntry, Tab, TabId, ToolResultSurface};
+
+/// Callback the disk-usage view invokes to re-root the dock owner at a
+/// new path. Boxed so the `Shell` can hand it out without naming itself.
+type DiskUsageDockOwner =
+    Rc<dyn Fn(PathBuf, Entity<crate::disk_usage::DiskUsageView>, &mut App)>;
 
 /// Classification produced by `Shell::resolve_favorite_target` so
 /// the toggle handler can show the appropriate toast for files.
@@ -120,9 +127,16 @@ pub enum UndoOp {
     RemoveFavorite(feraille_core::favorites::Favorite),
     /// Undo a move: rename each `(from, to)` pair's `to` back to
     /// `from`. Only registered when every item took the same-volume
-    /// rename path (docs/features/FILE_OPS.md) — cross-volume undo
-    /// is deferred.
+    /// rename path (docs/features/FILE_OPS.md); cross-volume moves
+    /// register [`UndoOp::MoveBackCross`] instead.
     MoveBack(Vec<(PathBuf, PathBuf)>),
+    /// Undo a cross-volume move: copy each `(original, moved)` pair's
+    /// `moved` back to `original` (engine copy — same fidelity as the
+    /// forward path), then delete `moved` only once its copy-back fully
+    /// landed. Registered when the move replaced nothing (same
+    /// eligibility spirit as `MoveBack`); a reoccupied `original`
+    /// refuses per pair and keeps `moved` intact.
+    MoveBackCross(Vec<(PathBuf, PathBuf)>),
     /// Undo a copy: delete the items it created. Only registered when
     /// the copy replaced nothing — undoing a replace would delete the
     /// sole remaining version.
@@ -132,6 +146,11 @@ pub enum UndoOp {
     /// `trashItemAtURL`'s resulting URL [mac]; ops whose resulting
     /// URL wasn't reported (Windows Recycle Bin) don't register.
     TrashRestore(Vec<(PathBuf, PathBuf)>),
+    /// Undo a bulk rename: rename each `(original, renamed)` pair's
+    /// renamed location back to its original
+    /// (docs/features/BULK_RENAME.md). Only pairs that actually renamed
+    /// register — failed items never enter the record.
+    RenameBatch(Vec<(PathBuf, PathBuf)>),
 }
 
 impl UndoOp {
@@ -145,9 +164,34 @@ impl UndoOp {
             UndoOp::DeleteFolder(p) => std::fs::remove_dir(p).map_err(|e| e.to_string()),
             UndoOp::MoveBack(pairs) => {
                 for (from, to) in pairs {
+                    // Same guard as TrashRestore: if something new
+                    // appeared at the origin since the move, undoing
+                    // must not clobber it.
+                    if from.exists() {
+                        return Err(format!(
+                            "{} exists again; not overwriting it",
+                            from.display()
+                        ));
+                    }
                     std::fs::rename(to, from).map_err(|e| e.to_string())?;
                 }
                 Ok(())
+            }
+            UndoOp::MoveBackCross(pairs) => {
+                // Per-pair copy-back; failures collect and the rest of
+                // the batch continues (a reoccupied original must not
+                // strand the other items' undo).
+                let mut errors: Vec<String> = Vec::new();
+                for (original, moved) in pairs {
+                    if let Err(e) = copy_back_moved_item(original, moved) {
+                        errors.push(e);
+                    }
+                }
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors.join("; "))
+                }
             }
             UndoOp::RemoveCreated(paths) => {
                 for p in paths {
@@ -172,6 +216,24 @@ impl UndoOp {
                 }
                 Ok(())
             }
+            UndoOp::RenameBatch(pairs) => {
+                // Reverse through the same chain/cycle-aware worker the
+                // forward pass used — renumbering batches rename through
+                // each other's names, so a naive in-order loop would trip
+                // its own exists-guard. `rename_guarded` inside keeps
+                // MoveBack's "don't clobber something new" contract per
+                // item; failures collect instead of aborting the rest.
+                let back: Vec<(PathBuf, PathBuf)> = pairs
+                    .iter()
+                    .map(|(original, renamed)| (renamed.clone(), original.clone()))
+                    .collect();
+                let (_, errors) = crate::bulk_rename::run_renames(back);
+                if errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(errors.join("; "))
+                }
+            }
             UndoOp::AddFavorite(_) | UndoOp::RemoveFavorite(_) => {
                 Err("favorite undo handled by Shell".into())
             }
@@ -184,66 +246,519 @@ impl UndoOp {
             UndoOp::DeleteFolder(_) => "Removed new folder",
             UndoOp::AddFavorite(_) => "Removed Favorite",
             UndoOp::RemoveFavorite(_) => "Restored Favorite",
-            UndoOp::MoveBack(_) => "Moved items back",
+            UndoOp::MoveBack(_) | UndoOp::MoveBackCross(_) => "Moved items back",
             UndoOp::RemoveCreated(_) => "Removed pasted items",
             UndoOp::TrashRestore(_) => "Restored from Trash",
+            UndoOp::RenameBatch(_) => "Undid bulk rename",
         }
     }
+
+    /// Parent directories whose listings change when this op applies —
+    /// the reload set after a successful undo.
+    fn affected_parents(&self) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = Vec::new();
+        let mut push = |p: Option<&std::path::Path>| {
+            if let Some(p) = p.and_then(|p| p.parent()) {
+                let p = p.to_path_buf();
+                if !out.contains(&p) {
+                    out.push(p);
+                }
+            }
+        };
+        match self {
+            UndoOp::Rename { current, original } => {
+                push(Some(current));
+                push(Some(original));
+            }
+            UndoOp::DeleteFolder(p) => push(Some(p)),
+            UndoOp::MoveBack(pairs) | UndoOp::MoveBackCross(pairs) => {
+                for (from, to) in pairs {
+                    push(Some(from));
+                    push(Some(to));
+                }
+            }
+            UndoOp::RemoveCreated(paths) => {
+                for p in paths {
+                    push(Some(p));
+                }
+            }
+            UndoOp::TrashRestore(pairs) => {
+                for (original, trashed) in pairs {
+                    push(Some(original));
+                    push(Some(trashed));
+                }
+            }
+            UndoOp::RenameBatch(pairs) => {
+                for (original, renamed) in pairs {
+                    push(Some(original));
+                    push(Some(renamed));
+                }
+            }
+            UndoOp::AddFavorite(_) | UndoOp::RemoveFavorite(_) => {}
+        }
+        out
+    }
+}
+
+/// Undo one cross-volume moved item: copy `moved` back so it lands at
+/// `original`, then — only once the copy-back fully succeeded — delete
+/// `moved`. Synchronous filesystem work; runs inside `apply_fs`'s
+/// background context, never the UI thread.
+///
+/// Never clobbers: a reoccupied `original` (or an occupied copy-back
+/// name) refuses and leaves `moved` untouched. The copy rides the same
+/// fs-native engine as the forward path (`plan_transfer` + `run_copy`),
+/// so xattrs/sparseness/symlink stance survive the round trip.
+fn copy_back_moved_item(original: &Path, moved: &Path) -> Result<(), String> {
+    use feraille_fs_native::file_ops::{self as engine, CollisionPolicy, TransferProgress};
+
+    // Same guard as MoveBack/TrashRestore: if something new appeared at
+    // the origin since the move, undoing must not clobber it.
+    if original.exists() {
+        return Err(format!(
+            "{} exists again; not overwriting it",
+            original.display()
+        ));
+    }
+    let Some(dest_dir) = original.parent() else {
+        return Err(format!(
+            "{}: no parent folder to restore into",
+            original.display()
+        ));
+    };
+    let prog = TransferProgress::new();
+    let cancel = AtomicBool::new(false);
+    let sources = [moved.to_path_buf()];
+    let plan = engine::plan_transfer(&sources, dest_dir, &prog, &cancel)
+        .map_err(|e| format!("{}: {e}", moved.display()))?;
+    // Skip-on-collision: the engine must never replace anything during
+    // an undo. `original` was just checked free; a Skip can still fire
+    // when the forward move Keep-Both-renamed the item and something
+    // unrelated now occupies the copy-back name.
+    let out = engine::run_copy(&plan, &|_| CollisionPolicy::Skip, &prog, &cancel)
+        .map_err(|e| format!("{}: {e}", moved.display()))?;
+    if let Some(f) = out.failed.first() {
+        return Err(f.to_string());
+    }
+    let Some((_, landed)) = out.created.first() else {
+        // Skip policy fired — the copy-back destination is occupied.
+        let occupied = dest_dir.join(moved.file_name().unwrap_or_default());
+        return Err(format!(
+            "{} exists again; not overwriting it",
+            occupied.display()
+        ));
+    };
+    if landed != original {
+        // The forward move Keep-Both-renamed the item; restore the
+        // original leaf name. On failure, drop the copy we just made
+        // (it's a duplicate) and keep `moved` as the surviving version.
+        if let Err(e) = std::fs::rename(landed, original) {
+            let _ = remove_file_or_tree(landed);
+            return Err(format!("{}: {e}", landed.display()));
+        }
+    }
+    // Copy-back landed — delete the moved copy (symlink-safe, same
+    // removal the forward cross-volume move uses).
+    remove_file_or_tree(moved)
+}
+
+/// Symlink-safe removal of one path: a real directory removes
+/// recursively, anything else (file or symlink — never followed)
+/// removes as a file. Mirrors the forward move's source deletion.
+fn remove_file_or_tree(path: &Path) -> Result<(), String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let removed = if meta.is_dir() && !meta.is_symlink() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    };
+    removed.map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn file_op_error_notification(
     operation: &str,
     err: &str,
 ) -> gpui_component::notification::Notification {
+    let advice = classify_error_text(err).advice();
+    error_notification(format!("{operation} failed: {err}. {advice}"))
+}
+
+/// Best-effort classification of a stringly-typed error message (the mutation
+/// surfaces that still return `Result<_, String>` — duplicate, compress,
+/// alias, rename) into a [`FileOpErrorKind`], so every surface shares the one
+/// advice table the structured engine path uses.
+fn classify_error_text(err: &str) -> feraille_fs_native::file_ops::FileOpErrorKind {
+    use feraille_fs_native::file_ops::FileOpErrorKind as K;
     let lower = err.to_ascii_lowercase();
-    let advice = if lower.contains("permission denied")
+    if lower.contains("permission denied")
         || lower.contains("operation not permitted")
         || lower.contains("os error 1")
         || lower.contains("os error 13")
+        || lower.contains("access is denied")
     {
-        "Check permissions for the item or grant Feraille access in System Settings."
+        K::PermissionDenied
+    } else if lower.contains("being used by another")
+        || lower.contains("in use by")
+        || lower.contains("sharing violation")
+        || lower.contains("text file busy")
+        || lower.contains("resource busy")
+    {
+        K::Locked
     } else if lower.contains("no such file or directory")
         || lower.contains("not found")
         || lower.contains("os error 2")
     {
-        "The item may have moved or been deleted. Refresh the folder and try again."
+        K::NotFound
     } else if lower.contains("file exists") || lower.contains("already exists") {
-        "Choose a different name or remove the existing item, then try again."
+        K::AlreadyExists
     } else if lower.contains("no space left")
         || lower.contains("not enough space")
         || lower.contains("os error 28")
     {
-        "Free space on the destination volume or choose another destination."
+        K::NoSpace
     } else if lower.contains("read-only file system") || lower.contains("read only") {
-        "The destination is read-only. Choose a writable folder or change the volume permissions."
+        K::ReadOnly
     } else if lower.contains("too long") || lower.contains("name too long") {
-        "Use a shorter name or move the item to a path with fewer nested folders."
+        K::NameTooLong
     } else {
-        "Refresh the folder and try again. If it keeps failing, check the item in Finder."
-    };
-
-    error_notification(format!("{operation} failed: {err}. {advice}"))
+        K::Other
+    }
 }
 
-/// An error notification with a **Copy** action that puts the full message on
-/// the clipboard — handy for pasting a failure into a bug report. Setting an
-/// action also keeps the toast from auto-hiding, so the user has time to read
-/// and copy it.
-pub(crate) fn error_notification(
-    message: String,
-) -> gpui_component::notification::Notification {
+/// The most actionable failure kind in a batch — the one whose advice we show
+/// and whose retry affordance (elevation / who's-locking) we offer. Permission
+/// and lock failures win because the user can do something about them.
+fn dominant_failure_kind(
+    failed: &[feraille_fs_native::file_ops::FileOpError],
+) -> feraille_fs_native::file_ops::FileOpErrorKind {
+    use feraille_fs_native::file_ops::FileOpErrorKind as K;
+    let priority = |k: K| match k {
+        K::PermissionDenied => 0,
+        K::Locked => 1,
+        K::NoSpace => 2,
+        K::ReadOnly => 3,
+        K::NameTooLong => 4,
+        K::AlreadyExists => 5,
+        K::NotFound => 6,
+        K::Other => 9,
+    };
+    failed
+        .iter()
+        .map(|e| e.kind)
+        .min_by_key(|k| priority(*k))
+        .unwrap_or(K::Other)
+}
+
+/// A transparent, per-item summary for a file op that partly failed:
+/// "Move: 7 of 10 done · 3 failed", the first few items with their
+/// plain-language reasons, then one piece of advice for the most actionable
+/// failure. The raw OS detail rides along (it's what the Copy action carries).
+pub(crate) fn file_op_outcome_summary(
+    operation: &str,
+    outcome: &feraille_fs_native::file_ops::OpOutcome,
+) -> String {
+    file_op_failure_report(
+        operation,
+        outcome.created.len(),
+        outcome.skipped,
+        &outcome.failed,
+    )
+}
+
+/// The one structured "N of M · why" report every partly-failed mutation
+/// surface shares (docs/features/FILE_OPS.md → "Resilient failures"):
+/// the transfer path via [`file_op_outcome_summary`], and the trash /
+/// Empty Trash / Clear Quarantine / tag-toggle workers directly, so they
+/// all read identically and evolve in one place.
+pub(crate) fn file_op_failure_report(
+    operation: &str,
+    done: usize,
+    skipped: u64,
+    failed: &[feraille_fs_native::file_ops::FileOpError],
+) -> String {
+    const SHOW: usize = 4;
+    let total = done + failed.len() + skipped as usize;
+    let mut msg = format!(
+        "{operation}: {done} of {total} done \u{00b7} {} failed",
+        failed.len()
+    );
+    for e in failed.iter().take(SHOW) {
+        msg.push_str(&format!(
+            "\n\u{2022} {} \u{2014} {}",
+            e.item_label(),
+            e.kind.summary()
+        ));
+    }
+    if failed.len() > SHOW {
+        msg.push_str(&format!("\n\u{2022} \u{2026}and {} more", failed.len() - SHOW));
+    }
+    msg.push('\n');
+    msg.push_str(dominant_failure_kind(failed).advice());
+    msg
+}
+
+/// An error notification that shows a one-line headline by default and can be
+/// expanded to reveal the full message — so a long failure (a native error with
+/// a path and a sentence of detail) is legible, not clipped to "it failed". A
+/// **Copy** button always puts the *whole* message on the clipboard, handy for
+/// pasting into a bug report. Both controls also keep the toast from
+/// auto-hiding, so the user has time to read, expand, and copy.
+pub(crate) fn error_notification(message: String) -> gpui_component::notification::Notification {
+    use gpui_component::Sizable as _;
     use gpui_component::button::{Button, ButtonVariants as _};
     use gpui_component::notification::Notification;
-    use gpui_component::Sizable as _;
 
-    let for_copy = message.clone();
-    Notification::error(message).action(move |_, _, _| {
-        let m = for_copy.clone();
-        Button::new("copy-error-message")
-            .label("Copy")
-            .ghost()
+    let (summary, has_more) = collapse_error_summary(&message);
+    // Expand state shared between renders: the content builder runs on every
+    // render and reads it; the toggle's click flips it and re-renders.
+    let expanded = Rc::new(std::cell::Cell::new(false));
+
+    Notification::error(summary)
+        // No action button, so disable autohide explicitly (an action would
+        // have done it implicitly).
+        .autohide(false)
+        .content(move |_note, _window, cx| {
+            let is_expanded = expanded.get();
+            let mut col = v_flex().gap_1().pt_1();
+
+            // The full, untruncated message — only once the user expands it.
+            if has_more && is_expanded {
+                col = col.child(
+                    div()
+                        .id("error-detail")
+                        .max_h(px(240.))
+                        .overflow_y_scroll()
+                        .text_scale_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(SharedString::from(message.clone())),
+                );
+            }
+
+            let mut row = h_flex().gap_2();
+            if has_more {
+                let toggle = expanded.clone();
+                row = row.child(
+                    Button::new("toggle-error-details")
+                        .label(if is_expanded { "Hide details" } else { "Details" })
+                        .ghost()
+                        .small()
+                        .on_click(cx.listener(move |_note, _ev, _window, cx| {
+                            toggle.set(!toggle.get());
+                            cx.notify();
+                        })),
+                );
+            }
+            let for_copy = message.clone();
+            row = row.child(
+                Button::new("copy-error-message")
+                    .label("Copy")
+                    .ghost()
+                    .small()
+                    .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&for_copy)),
+            );
+
+            col.child(row).into_any_element()
+        })
+}
+
+/// Headline for an error toast: the first line, capped so a long path or
+/// sentence doesn't blow the toast up before the user chooses to expand it.
+/// Returns the summary and whether anything was hidden — i.e. whether to offer
+/// a **Details** toggle at all (short, single-line errors need none).
+fn collapse_error_summary(message: &str) -> (String, bool) {
+    const MAX: usize = 140;
+    let first_line = message.lines().next().unwrap_or("");
+    let multiline = message.lines().nth(1).is_some();
+    if !multiline && first_line.chars().count() <= MAX {
+        (message.to_string(), false)
+    } else {
+        let mut summary: String = first_line.chars().take(MAX).collect();
+        summary.push('\u{2026}');
+        (summary, true)
+    }
+}
+
+/// What a failure toast's Retry buttons need to re-run the failed items. The
+/// notification's action/content builders run on every render, so this is
+/// cloned per build (hence `Clone`).
+#[derive(Clone)]
+pub(crate) struct TransferRetry {
+    pub shell: WeakEntity<Shell>,
+    /// The failed top-level sources to re-attempt (not the ones that succeeded
+    /// or were skipped).
+    pub sources: Vec<PathBuf>,
+    pub dest: PathBuf,
+    /// The *resolved* mode (never `Auto`), so the retry behaves identically.
+    pub mode: file_ops::TransferMode,
+    /// At least one failure is a bare permission denial — elevation may help.
+    pub elevation_recoverable: bool,
+}
+
+/// The transparent failure toast: the per-item "N of M · why" summary plus
+/// actions to cope — **Copy** (raw detail → clipboard for a bug report),
+/// in-process **Retry** of the failed items, and, when a permission failure
+/// could be fixed by elevating and the platform supports it, **Retry as
+/// administrator…**. Setting `.action` also keeps the toast from auto-hiding.
+pub(crate) fn transfer_failure_notification(
+    summary: String,
+    retry: TransferRetry,
+) -> gpui_component::notification::Notification {
+    use gpui_component::Sizable as _;
+    use gpui_component::button::{Button, ButtonVariants as _};
+    use gpui_component::notification::Notification;
+
+    let offer_admin = retry.elevation_recoverable && crate::platform_shell::elevation_available();
+
+    // Primary action button (disables autohide): elevate when that can help,
+    // otherwise a plain retry.
+    let primary = retry.clone();
+    let note = Notification::error(summary.clone()).action(move |_, _, cx| {
+        let r = primary.clone();
+        // Either button kicks off a fresh op that posts its own result toast,
+        // so this failure toast dismisses itself once acted on rather than
+        // lingering for the user to close.
+        if offer_admin {
+            Button::new("retry-elevated")
+                .label("Retry as administrator\u{2026}")
+                .small()
+                .on_click(cx.listener(move |note, _, window, cx| {
+                    let _ = r.shell.update(cx, |shell, cx| {
+                        shell.retry_transfer_elevated(
+                            r.sources.clone(),
+                            r.dest.clone(),
+                            r.mode,
+                            window,
+                            cx,
+                        );
+                    });
+                    note.dismiss(window, cx);
+                }))
+        } else {
+            Button::new("retry-inproc")
+                .label("Retry")
+                .small()
+                .on_click(cx.listener(move |note, _, window, cx| {
+                    let _ = r.shell.update(cx, |shell, cx| {
+                        shell.spawn_transfer_op(
+                            r.sources.clone(),
+                            r.dest.clone(),
+                            r.mode,
+                            window,
+                            cx,
+                        );
+                    });
+                    note.dismiss(window, cx);
+                }))
+        }
+    });
+
+    // Secondary row: Copy always; a plain Retry too when the primary was the
+    // elevated one (so the user can still try in-process without the prompt).
+    let copy_msg = summary;
+    let secondary = retry;
+    note.content(move |_, _, cx| {
+        let copy_msg = copy_msg.clone();
+        let mut row = h_flex().gap_2().pt_1();
+        row = row.child(
+            Button::new("copy-failure")
+                .label("Copy")
+                .ghost()
+                .small()
+                .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&copy_msg)),
+        );
+        if offer_admin {
+            let r = secondary.clone();
+            row = row.child(
+                Button::new("retry-inproc-2")
+                    .label("Retry")
+                    .ghost()
+                    .small()
+                    .on_click(cx.listener(move |note, _, window, cx| {
+                        let _ = r.shell.update(cx, |shell, cx| {
+                            shell.spawn_transfer_op(
+                                r.sources.clone(),
+                                r.dest.clone(),
+                                r.mode,
+                                window,
+                                cx,
+                            );
+                        });
+                        note.dismiss(window, cx);
+                    })),
+            );
+        }
+        row.into_any_element()
+    })
+}
+
+/// What a trash/delete failure toast's elevated retry needs. Like
+/// [`TransferRetry`] but for the destructive ops, which have no destination.
+/// Cloned per render (the action/content builders re-run).
+#[derive(Clone)]
+pub(crate) struct TrashRetry {
+    pub shell: WeakEntity<Shell>,
+    /// Just the *permission-denied* items — the only class elevation fixes.
+    /// Empty when nothing is elevation-recoverable (then no admin button).
+    pub sources: Vec<PathBuf>,
+    /// `false` = move to the user's Trash; `true` = delete permanently.
+    pub delete: bool,
+}
+
+/// A trash/delete failure toast. When at least one item failed on a bare
+/// permission denial and the platform can elevate, it offers a primary
+/// **"Move to Trash / Delete as administrator…"** button (re-runs just those
+/// items as root) plus a **Copy** of the full detail. Otherwise it falls back
+/// to the plain expandable/copyable [`error_notification`] — there's no
+/// elevated recourse for a locked file or a vanished path.
+pub(crate) fn trash_failure_notification(
+    headline: String,
+    copy_detail: String,
+    retry: TrashRetry,
+) -> gpui_component::notification::Notification {
+    use gpui_component::Sizable as _;
+    use gpui_component::button::{Button, ButtonVariants as _};
+    use gpui_component::notification::Notification;
+
+    let offer_admin = !retry.sources.is_empty() && crate::platform_shell::elevation_available();
+    if !offer_admin {
+        return error_notification(copy_detail);
+    }
+
+    let label = if retry.delete {
+        "Delete as administrator\u{2026}"
+    } else {
+        "Move to Trash as administrator\u{2026}"
+    };
+    let primary = retry.clone();
+    let note = Notification::error(headline).action(move |_, _, cx| {
+        let r = primary.clone();
+        Button::new("trash-elevated")
+            .label(label)
             .small()
-            .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&m))
+            .on_click(cx.listener(move |note, _, window, cx| {
+                let _ = r.shell.update(cx, |shell, cx| {
+                    shell.retry_trash_elevated(r.sources.clone(), r.delete, window, cx);
+                });
+                // Retire this failure toast — the elevated retry posts its own
+                // result toast (success / partial / cancelled), so leaving this
+                // one up would just stack a stale dialog the user must close.
+                note.dismiss(window, cx);
+            }))
+    });
+
+    note.content(move |_, _, _| {
+        let copy_detail = copy_detail.clone();
+        h_flex()
+            .gap_2()
+            .pt_1()
+            .child(
+                Button::new("copy-trash-failure")
+                    .label("Copy")
+                    .ghost()
+                    .small()
+                    .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&copy_detail)),
+            )
+            .into_any_element()
     })
 }
 
@@ -402,6 +917,13 @@ pub struct Shell {
     /// `preview_scroll` (see `Shell::preview`). Reset to top on selection
     /// change alongside `preview_scroll`.
     pub preview_text_scroll: ScrollHandle,
+    /// Scroll position of the tab strip, so the row of tabs can scroll
+    /// horizontally when there are more open tabs than fit the window.
+    /// The chevron arrows in `Shell::tabstrip` page it; trackpad /
+    /// shift-wheel scrolling rides `overflow_x_scroll` directly.
+    /// Persistent across renders so the position — and the measured
+    /// `max_offset` the arrows read — survive frame to frame.
+    pub tab_scroll: ScrollHandle,
     /// Path the preview pane showed last frame — the selection-change
     /// edge detector for the scroll reset above.
     pub preview_scroll_path: Option<PathBuf>,
@@ -420,7 +942,7 @@ pub struct Shell {
     /// Resizable-splitter state for the sidebar / center / preview
     /// columns. Persists across renders so the drag handles work as
     /// expected; sizes survive theme changes etc.
-    pub splitter_state: Entity<gpui_component::resizable::ResizableState>,
+    pub splitter_state: Entity<crate::splitter::ResizableState>,
     /// Current sidebar width in DIPs (next-level Phase 5). Read from
     /// `app_state::sidebar_width` at construction (or the default
     /// 220), threaded into `resizable_panel().size(...)` on every
@@ -485,6 +1007,19 @@ pub struct Shell {
     /// main pane). Once cached, re-expand is instant; collapsing a
     /// folder doesn't evict its cache.
     pub tree_children: HashMap<PathBuf, Vec<TreeChild>>,
+    /// Window-docking state (docs/features/DOCK.md). `Some` while the window
+    /// is docked to a screen edge as an auto-hiding drawer; `None` when it's a
+    /// normal window. Session-only — docking does not persist across launches
+    /// (see the doc's deferral note). The geometry math lives in `dock.rs`.
+    pub dock: Option<DockState>,
+    /// The docked window's content `NSView`, captured (as a `usize`, since raw
+    /// pointers aren't `Send`) when docking so the reveal poller — an async
+    /// task with no `Window` handle — can move the window. `0` when undocked.
+    pub dock_ns_view: usize,
+    /// Generation guard for the reveal poll loop: docking bumps it and spawns a
+    /// fresh loop; superseded loops see the mismatch and exit (same pattern as
+    /// the viewer's auto-hide epoch).
+    pub dock_poll_epoch: u64,
     /// Last OS-level window title pushed via `set_window_title`. The
     /// app's custom titlebar hides the native caption, but Windows
     /// Alt+Tab / the taskbar (and the macOS Window menu) still read it,
@@ -493,6 +1028,13 @@ pub struct Shell {
     /// only fires when the text actually changed (one string compare
     /// per frame — see `sync_window_title`).
     last_window_title: String,
+    /// Tracks the window's OS activation so the activation observer
+    /// only force-refreshes folder sizes on a genuine background→
+    /// foreground return (where a 3rd-party tool may have changed
+    /// things the non-recursive watcher never saw), not on the initial
+    /// launch activation or a same-state re-fire. Seeded `true`: the
+    /// window starts active, so launch doesn't trigger a re-walk.
+    was_window_active: bool,
     /// Live subscription handles (Input change, future watchers).
     /// Dropping them tears down the listeners — keep alongside the
     /// Shell so they outlive any frame.
@@ -547,7 +1089,11 @@ impl Shell {
 fn window_title_for(dir: &Path) -> String {
     match dir.file_name() {
         Some(name) if !name.is_empty() => {
-            format!("{} \u{2014} Feraille", name.to_string_lossy())
+            // Finder-parity leaf: a folder stored with `:` titles as `/` on macOS.
+            let shown =
+                feraille_fs_native::paths::display_leaf(name.to_string_lossy().as_ref())
+                    .into_owned();
+            format!("{shown} \u{2014} Feraille")
         }
         _ => {
             let path = dir.to_string_lossy();
@@ -558,6 +1104,23 @@ fn window_title_for(dir: &Path) -> String {
             }
         }
     }
+}
+
+/// When Back lands on an ancestor of the folder we just left, select the
+/// immediate child folder under that destination. Examples:
+/// `/A/B` -> `/A` selects `/A/B`; `/A/B/C` -> `/A` selects `/A/B`.
+fn history_child_to_select(from: &Path, destination: &Path) -> Option<PathBuf> {
+    if from == destination {
+        return None;
+    }
+    let relative = from.strip_prefix(destination).ok()?;
+    relative.components().find_map(|component| {
+        if let std::path::Component::Normal(name) = component {
+            Some(destination.join(name))
+        } else {
+            None
+        }
+    })
 }
 
 #[derive(Copy, Clone)]
@@ -596,8 +1159,11 @@ fn hydrate_ant_trail(
     };
     // Recents = the same visit log ordered by last access (the heat
     // map ignores time, so derive it separately from the same rows).
+    // `last_access_unix == 0` is the cleared sentinel — those rows may
+    // still carry heat (`hits`) but are no longer recent, so skip them.
     let mut by_recency: Vec<(PathBuf, i64)> = entries
         .iter()
+        .filter(|e| e.last_access_unix > 0)
         .map(|e| (PathBuf::from(&e.folder_path), e.last_access_unix))
         .collect();
     by_recency.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
@@ -719,7 +1285,19 @@ impl Shell {
         process
             .recents_section_collapsed
             .set(persisted.recents_collapsed.unwrap_or(false));
-        let start = persisted.last_dir.clone().unwrap_or_else(home_dir);
+        // Persisted state is an external boundary for the path-identity
+        // contract: validate + re-canonicalize the raw stored path here
+        // (the one-time startup consumer) so a symlinked spelling saved
+        // last session can't mint a second NodeId, and a vanished
+        // directory falls back to home. `app_state::load()` itself no
+        // longer stats — it's called from click handlers and render
+        // getters.
+        let start = persisted
+            .last_dir
+            .clone()
+            .filter(|p| p.is_dir())
+            .map(path::canonicalize_for_identity)
+            .unwrap_or_else(home_dir);
         let start_id = process.fs.id_for_path(&start);
         // Seed the NodeStore with the start path so the very first
         // navigate doesn't re-mint a different NodeId. Idempotent —
@@ -769,6 +1347,10 @@ impl Shell {
         // Seed the favorites-tracking policy. Default true (exclude).
         cx.set_global(crate::ant_trail::ExcludeFavoritesFromTracking(
             persisted.exclude_favorites_from_tracking.unwrap_or(true),
+        ));
+        // Seed the Recents master switch. Default true (on).
+        cx.set_global(crate::recents_section::RecentsEnabled(
+            persisted.recents_enabled.unwrap_or(true),
         ));
         // FERAILLE_UI_SCALE env var (regression tool / screenshots)
         // wins over the persisted value when set. Both are clamped.
@@ -853,18 +1435,100 @@ impl Shell {
         let poll_watcher = process.watcher.clone();
         let poll_process = process.clone();
         cx.spawn(async move |this, cx| {
+            // Per-directory reload throttle (leading edge). Pending dirty
+            // paths carry across polls; a directory reloads at once on its
+            // first event, then at most once per RELOAD_DEBOUNCE while events
+            // keep arriving — coalescing FSEvents bursts without ever dropping
+            // a change (see `RELOAD_DEBOUNCE`).
+            let mut last_reload: std::collections::HashMap<PathBuf, std::time::Instant> =
+                std::collections::HashMap::new();
+            let mut pending: std::collections::HashSet<PathBuf> =
+                std::collections::HashSet::new();
             loop {
                 cx.background_executor().timer(POLL_INTERVAL).await;
-                let dirty_paths = poll_watcher
-                    .borrow()
-                    .as_ref()
-                    .map(|w| w.drain_reload_relevant_paths())
-                    .unwrap_or_default();
-                if !dirty_paths.is_empty() {
-                    if this.update(cx, |_, _| {}).is_err() {
-                        break;
+                if let Some(w) = poll_watcher.borrow().as_ref() {
+                    pending.extend(w.drain_reload_relevant_paths());
+                }
+                if pending.is_empty() {
+                    continue;
+                }
+                let now = std::time::Instant::now();
+                // Surface only the paths whose throttle window has elapsed;
+                // the rest stay pending for a later poll (no change is lost).
+                let mut due: Vec<PathBuf> = Vec::new();
+                pending.retain(|p| {
+                    let ready = last_reload
+                        .get(p)
+                        .map_or(true, |t| now.duration_since(*t) >= RELOAD_DEBOUNCE);
+                    if ready {
+                        due.push(p.clone());
+                        false
+                    } else {
+                        true
                     }
-                    Shell::broadcast_reload_for_process(&poll_process, dirty_paths, cx);
+                });
+                if due.is_empty() {
+                    continue;
+                }
+                for p in &due {
+                    last_reload.insert(p.clone(), now);
+                }
+                // Drop throttle entries for directories quiet for a while so
+                // the map can't grow unbounded over a long session.
+                last_reload.retain(|_, t| now.duration_since(*t) < RELOAD_DEBOUNCE * 8);
+                if this.update(cx, |_, _| {}).is_err() {
+                    break;
+                }
+                Shell::broadcast_reload_for_process(&poll_process, due, cx);
+            }
+        })
+        .detach();
+
+        // Relative-time tick. The Modified column renders "4 seconds ago"
+        // style labels recomputed from `mtime_unix` each paint, so the
+        // column only counts forward if something repaints. This loop
+        // requests a repaint on an *adaptive* cadence driven by the
+        // freshest row in the active tab:
+        //   - newest file < 1 h old  → 1 s   (a seconds component is shown)
+        //   - otherwise              → 60 s  (minute/hour/day granularity)
+        // and it skips the repaint entirely once every visible row is a
+        // week or more old, where the label is a static date — so browsing
+        // an old folder costs nothing. A new file arriving re-enumerates
+        // and repaints through the watcher path, which re-arms fine ticking.
+        cx.spawn(async move |this, cx| {
+            let mut delay = std::time::Duration::from_secs(1);
+            loop {
+                cx.background_executor().timer(delay).await;
+                let next = this.update(cx, |this, cx| {
+                    let now = feraille_core::now_unix();
+                    let freshest_age = this
+                        .active_tab()
+                        .table
+                        .read(cx)
+                        .delegate()
+                        .entries
+                        .iter()
+                        .map(|e| e.mtime_unix)
+                        .max()
+                        .map(|newest| now - newest)
+                        .unwrap_or(i64::MAX);
+                    const HOUR: i64 = 3_600;
+                    const WEEK: i64 = 7 * 86_400;
+                    // Only labels younger than a week change over time;
+                    // older rows are static dates, so don't force a repaint.
+                    if freshest_age < WEEK {
+                        cx.notify();
+                    }
+                    if freshest_age < HOUR {
+                        std::time::Duration::from_secs(1)
+                    } else {
+                        std::time::Duration::from_secs(60)
+                    }
+                });
+                match next {
+                    Ok(d) => delay = d,
+                    // Shell entity dropped (window closed) — stop ticking.
+                    Err(_) => break,
                 }
             }
         })
@@ -918,9 +1582,10 @@ impl Shell {
             preview_info: None,
             preview_scroll: ScrollHandle::new(),
             preview_text_scroll: ScrollHandle::new(),
+            tab_scroll: ScrollHandle::new(),
             preview_scroll_path: None,
             ui_scale,
-            splitter_state: cx.new(|_| gpui_component::resizable::ResizableState::default()),
+            splitter_state: cx.new(|_| crate::splitter::ResizableState::default()),
             sidebar_width: persisted
                 .sidebar_width
                 .unwrap_or(220.0)
@@ -939,7 +1604,11 @@ impl Shell {
             menu_bar,
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
+            dock: None,
+            dock_ns_view: 0,
+            dock_poll_epoch: 0,
             last_window_title: String::new(),
+            was_window_active: true,
             _subscriptions: vec![breadcrumb_subscription, shortcuts_help_subscription],
         };
         shell.process.register_shell(cx.weak_entity());
@@ -1041,6 +1710,25 @@ impl Shell {
         });
         shell._subscriptions.push(drag_esc_subscription);
 
+        // Activation refresh (docs/features/FRESHNESS.md): when the
+        // window returns from the background, a 3rd-party tool may have
+        // changed content the non-recursive watcher never saw — and a
+        // deep change leaves folder mtimes untouched, so the size cache
+        // still reads valid. On a genuine inactive→active transition,
+        // re-walk visible folder sizes with the cache bypassed. The
+        // initial launch activation is skipped (`was_window_active`
+        // starts `true`), and a same-state re-fire can't pass the
+        // transition guard, so app-switch thrash is bounded.
+        let activation_subscription = cx.observe_window_activation(window, |this, window, cx| {
+            let active = window.is_window_active();
+            let returned = active && !this.was_window_active;
+            this.was_window_active = active;
+            if returned {
+                this.restart_folder_size_passes(true, cx);
+            }
+        });
+        shell._subscriptions.push(activation_subscription);
+
         shell.start_metadata_load(cx);
         shell.load_path(start, cx);
         shell
@@ -1070,6 +1758,7 @@ impl Shell {
             process.thumbnails.clone(),
             process.tasks.clone(),
             process.cut_marker.clone(),
+            process.list_sort.clone(),
             shell_focus,
         );
         let table = cx.new(|cx| {
@@ -1085,7 +1774,7 @@ impl Shell {
         let subscription = cx.subscribe_in(
             &table,
             window,
-            move |this, _table, event: &TableEvent, window, cx| {
+            move |this, table, event: &TableEvent, window, cx| {
                 if this.active_tab().id != tab_id {
                     return;
                 }
@@ -1094,6 +1783,23 @@ impl Shell {
                         row_ix, modifiers, ..
                     } => {
                         this.apply_row_click_gesture(*row_ix, *modifiers, cx);
+                    }
+                    // Column layout is a process-wide preference: a
+                    // reorder or resize on any tab writes through and
+                    // seeds every NEW tab/window (existing tabs keep
+                    // their live state). app_state::save is cached +
+                    // write-behind — no I/O on this thread.
+                    TableEvent::MoveColumn(..) | TableEvent::ColumnWidthsChanged(..) => {
+                        let spec = {
+                            let state = table.read(cx);
+                            crate::file_list::columns_spec(
+                                &state.delegate().columns,
+                                Some(&state.col_widths()),
+                            )
+                        };
+                        let mut s = app_state::load();
+                        s.list_columns = Some(spec);
+                        app_state::save(&s);
                     }
                     TableEvent::ExternalDrop { row_ix, paths } => {
                         // Dropped onto a folder row — transfer into
@@ -1470,6 +2176,16 @@ impl Shell {
     fn on_refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
         let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
+        // Re-read the directory *and* re-sniff magic/description from
+        // disk, bypassing the metadata-DB cache. `load_path_for_tab`
+        // just reset this to `false` and bumped the load generation, so
+        // arming it here scopes the forced re-sniff to exactly this
+        // load: a load superseded before it finishes is dropped by the
+        // generation guard, and the superseding load reset the flag.
+        let tab_id = self.active_tab().id;
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+            tab.force_resniff = true;
+        }
     }
 
     /// Reveal the desktop via the Dock's private Show Desktop path. The
@@ -1478,6 +2194,210 @@ impl Shell {
     /// no-op so nothing can crash the UI.
     fn on_show_desktop(&mut self, _: &ShowDesktop, _: &mut Window, _cx: &mut Context<Self>) {
         let _ = crate::platform_shell::show_desktop();
+    }
+
+    // -----------------------------------------------------------------
+    // Window docking (docs/features/DOCK.md).
+    //
+    // Dock the whole window to a screen edge as an auto-hiding drawer: it
+    // floats over everything (NSFloatingWindowLevel + join-all-spaces) and
+    // slides off-screen leaving a thin handle; slamming the cursor into that
+    // screen edge slides it back. All the geometry is pure in `dock.rs`; this
+    // is the GPUI glue — capture the window/screen frames once at dock time,
+    // then drive a self-re-arming poll that reads the cursor and moves the
+    // window each tick.
+    // -----------------------------------------------------------------
+
+    /// gpui's window content `NSView`, the handle the native docking calls
+    /// reach the `NSWindow` through. `None` off AppKit (the non-mac shell
+    /// stubs no-op regardless, so docking is a macOS feature in practice).
+    fn window_ns_view(window: &Window) -> Option<*mut std::ffi::c_void> {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        // UFCS: gpui::Window has an inherent `window_handle()` (the entity
+        // handle) that shadows the raw-window-handle trait method.
+        match HasWindowHandle::window_handle(window).ok()?.as_raw() {
+            RawWindowHandle::AppKit(h) => Some(h.ns_view.as_ptr()),
+            _ => None,
+        }
+    }
+
+    fn on_dock_left(&mut self, _: &DockLeft, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_dock(Some(DockEdge::Left), window, cx);
+    }
+    fn on_dock_right(&mut self, _: &DockRight, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_dock(Some(DockEdge::Right), window, cx);
+    }
+    fn on_undock(&mut self, _: &Undock, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_dock(None, window, cx);
+    }
+
+    /// Enter, switch, or leave the docked drawer. `None` undocks (restoring the
+    /// pre-dock frame and dropping the floating / all-spaces behaviors);
+    /// `Some(edge)` docks to that edge, snapping into the docked position fully
+    /// shown so the following slide reads as "snap to edge → tuck away".
+    pub fn set_dock(
+        &mut self,
+        edge: Option<DockEdge>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ns_view) = Self::window_ns_view(window) else {
+            return; // non-AppKit: docking is a macOS feature
+        };
+
+        match edge {
+            None => {
+                if let Some(d) = self.dock.take() {
+                    // The display may have changed while docked — clamp
+                    // the remembered frame onto the CURRENT screen so
+                    // undock can't strand the window off every display.
+                    let mut r = d.restore;
+                    if let Some((sx, sy, sw, sh)) =
+                        crate::platform_shell::screen_visible_frame_for_window(ns_view)
+                    {
+                        r.w = r.w.min(sw);
+                        r.h = r.h.min(sh);
+                        r.x = r.x.clamp(sx, sx + sw - r.w);
+                        r.y = r.y.clamp(sy, sy + sh - r.h);
+                    }
+                    crate::platform_shell::set_window_frame(ns_view, r.x, r.y, r.w, r.h);
+                    crate::platform_shell::set_window_all_spaces(ns_view, false);
+                    crate::platform_shell::set_window_floating(ns_view, false);
+                    // Bumping the epoch makes the running poll exit next tick.
+                    self.dock_poll_epoch = self.dock_poll_epoch.wrapping_add(1);
+                    self.dock_ns_view = 0;
+                    cx.notify();
+                }
+            }
+            Some(e) => {
+                // AppKit handles setFrame: on a native-fullscreen window
+                // poorly (Space bookkeeping); refuse instead of glitching.
+                if crate::platform_shell::window_is_fullscreen(ns_view) {
+                    window.push_notification(
+                        gpui_component::notification::Notification::info(
+                            "Exit full screen before docking the window.",
+                        ),
+                        cx,
+                    );
+                    return;
+                }
+                let Some(screen) =
+                    crate::platform_shell::screen_visible_frame_for_window(ns_view)
+                        .map(|(x, y, w, h)| ScreenFrame::new(x, y, w, h))
+                else {
+                    return;
+                };
+                // Keep the original pre-dock frame across edge switches.
+                let restore = self
+                    .dock
+                    .as_ref()
+                    .map(|d| d.restore)
+                    .or_else(|| {
+                        crate::platform_shell::window_frame(ns_view)
+                            .map(|(x, y, w, h)| ScreenFrame::new(x, y, w, h))
+                    })
+                    .unwrap_or(screen);
+                // The drawer keeps the window's OWN size and vertical
+                // position — docking is a pure horizontal translation.
+                // (gpui's drawable doesn't follow an out-of-band AppKit
+                // resize; stretching the window to the screen height
+                // left the extra area black.)
+                let win = crate::platform_shell::window_frame(ns_view)
+                    .map(|(x, y, w, h)| ScreenFrame::new(x, y, w, h))
+                    .unwrap_or(restore);
+                let mut state = DockState::new(e, screen, win, restore);
+                // Start fully shown, then let the poll tuck it away unless the
+                // cursor is already at the edge.
+                state.revealed = false;
+                state.progress = 1.0;
+                let shown = dock::revealed_frame(e, screen, win);
+
+                crate::platform_shell::set_window_floating(ns_view, true);
+                crate::platform_shell::set_window_all_spaces(ns_view, true);
+                crate::platform_shell::set_window_frame(
+                    ns_view, shown.x, shown.y, shown.w, shown.h,
+                );
+
+                self.dock = Some(state);
+                self.dock_ns_view = ns_view as usize;
+                self.start_dock_poll(cx);
+                cx.notify();
+            }
+        }
+    }
+
+    /// (Re)start the reveal poll: bump the epoch (retiring any prior loop) and
+    /// arm the first tick.
+    fn start_dock_poll(&mut self, cx: &mut Context<Self>) {
+        let epoch = self.dock_poll_epoch.wrapping_add(1);
+        self.dock_poll_epoch = epoch;
+        Self::schedule_dock_poll(epoch, Duration::from_millis(16), cx);
+    }
+
+    /// Arm a single poll tick after `interval`. Re-armed by `dock_poll_tick`
+    /// itself (self-re-arming one-shot, like the viewer's slideshow timer) so
+    /// no long-lived task handle has to be tracked.
+    fn schedule_dock_poll(epoch: u64, interval: Duration, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(interval).await;
+            let Some(this) = this.upgrade() else { return };
+            this.update(cx, |this, cx| this.dock_poll_tick(epoch, cx));
+        })
+        .detach();
+    }
+
+    /// One reveal-poll tick. Reads the global cursor, flips the drawer's
+    /// revealed target on an edge-slam (or while the pointer is still over it),
+    /// steps the slide, and moves the window only if it actually advanced — so
+    /// a settled drawer touches AppKit zero times per tick. Re-arms itself
+    /// unless the loop was superseded (epoch bumped) or the window undocked.
+    fn dock_poll_tick(&mut self, epoch: u64, cx: &mut Context<Self>) {
+        if self.dock_poll_epoch != epoch {
+            return; // superseded by a re-dock / undock
+        }
+        if self.dock.is_none() {
+            return; // undocked
+        }
+        let ptr = self.dock_ns_view as *mut std::ffi::c_void;
+        // Liveness probe for the cached raw pointer: `window_frame`
+        // returning None means there's no NSWindow behind the view any
+        // more (teardown) — stop the loop instead of msg_send'ing into
+        // a dead view.
+        let Some(live_frame) = crate::platform_shell::window_frame(ptr) else {
+            self.dock = None;
+            self.dock_ns_view = 0;
+            return;
+        };
+        let mouse = crate::platform_shell::current_mouse_location();
+        let Some(dock) = self.dock.as_mut() else {
+            return;
+        };
+        let wants = dock.wants_reveal(mouse);
+        if wants && !dock.revealed {
+            // Transitioning hidden → revealing: the display arrangement
+            // or the drawer's user-dragged size may have changed while
+            // tucked away. Re-query the screen and adopt the actual
+            // window frame so the slide targets live geometry instead
+            // of the dock-time snapshot (which could be a disconnected
+            // display). Size passes through untouched — docking never
+            // resizes the window.
+            if let Some((sx, sy, sw, sh)) =
+                crate::platform_shell::screen_visible_frame_for_window(ptr)
+            {
+                dock.screen = ScreenFrame::new(sx, sy, sw, sh);
+            }
+            dock.win = ScreenFrame::new(live_frame.0, live_frame.1, live_frame.2, live_frame.3);
+        }
+        dock.revealed = wants;
+        let frame = dock.step().then(|| dock.current_frame());
+        let animating = dock.is_animating();
+        if let Some(f) = frame {
+            crate::platform_shell::set_window_frame(ptr, f.x, f.y, f.w, f.h);
+            // The handle overlay shows/hides as the drawer slides; repaint.
+            cx.notify();
+        }
+        let interval = Duration::from_millis(if animating { 16 } else { 33 });
+        Self::schedule_dock_poll(epoch, interval, cx);
     }
 
     fn on_toggle_hidden(&mut self, _: &ToggleHidden, _: &mut Window, cx: &mut Context<Self>) {
@@ -1663,15 +2583,20 @@ impl Shell {
         let fs = self.process.fs.clone();
         let tasks = self.process.tasks.clone();
         let notify_owner = self.disk_usage_notify_owner(cx);
+        let shell_weak = cx.weak_entity();
         let view = cx.new(|cx| {
-            crate::disk_usage::DiskUsageView::new(
+            let mut view = crate::disk_usage::DiskUsageView::new(
                 root.clone(),
                 fs.clone(),
                 tasks.clone(),
                 Some(notify_owner.clone()),
                 None,
                 cx,
-            )
+            );
+            // Lets the DU context menu open Get Info windows and
+            // reload affected tabs after a trash.
+            view.shell = Some(shell_weak);
+            view
         });
         self.dock_disk_usage_view(root, view, cx);
     }
@@ -1695,6 +2620,9 @@ impl Shell {
             cancel.store(true, Ordering::Relaxed);
         }
         if let Some(cancel) = self.tabs[idx].folder_size_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(cancel) = self.tabs[idx].prefetch_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
         if let Some(previous) = self.tabs[idx].load_task.take() {
@@ -1727,7 +2655,7 @@ impl Shell {
     fn disk_usage_dock_owner(
         &self,
         cx: &mut Context<Self>,
-    ) -> Rc<dyn Fn(PathBuf, Entity<crate::disk_usage::DiskUsageView>, &mut App)> {
+    ) -> DiskUsageDockOwner {
         let weak: WeakEntity<Self> = cx.weak_entity();
         Rc::new(move |root, view, cx| {
             if let Some(s) = weak.upgrade() {
@@ -1825,9 +2753,13 @@ impl Shell {
     fn set_sort_column(&mut self, col: crate::file_list::SortColumn, cx: &mut Context<Self>) {
         use crate::file_list::SortColumn;
         let table = self.active_tab().table.clone();
-        let current = table.read(cx).delegate().current_sort;
+        let current = self
+            .process
+            .list_sort
+            .get()
+            .unwrap_or((SortColumn::Name, true));
         let ascending = match current {
-            Some((c, a)) if c == col => !a,
+            (c, a) if c == col => !a,
             _ => matches!(col, SortColumn::Name | SortColumn::Format),
         };
         crate::file_list::apply_sort_column(&table, col, ascending, cx);
@@ -1888,7 +2820,7 @@ impl Shell {
             window.push_notification(Notification::info("No files to view in this folder"), cx);
             return;
         }
-        crate::viewer::open_viewer(playlist, start, cx);
+        crate::viewer::open_viewer(playlist, start, window, cx);
     }
 
     /// File-list context action — open the viewer anchored to the
@@ -1927,7 +2859,7 @@ impl Shell {
             window.push_notification(Notification::info("No files to view in this folder"), cx);
             return;
         }
-        crate::viewer::open_viewer_playing(playlist, start, cx);
+        crate::viewer::open_viewer_playing(playlist, start, window, cx);
     }
 
     /// Cmd+P — toggle preview-pane visibility. The pane defaults to
@@ -1953,12 +2885,7 @@ impl Shell {
     /// Cmd+I — open the Get Info popup for the target row (the right-click
     /// row, else the lead selection). With nothing selected, gets info on
     /// the tab's current folder, matching Finder.
-    pub(crate) fn on_get_info(
-        &mut self,
-        _: &GetInfo,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn on_get_info(&mut self, _: &GetInfo, window: &mut Window, cx: &mut Context<Self>) {
         use feraille_core::entry_info::InfoTarget;
         let targets = self.action_entries_visible_order(cx);
         // Nothing targeted → info on the current folder (Finder parity).
@@ -2123,11 +3050,12 @@ impl Shell {
     }
 
     pub fn navigate_back(&mut self, cx: &mut Context<Self>) {
-        let (path, snapshot) = {
+        let (path, mut snapshot, came_from_path) = {
             let tab = self.active_tab_mut();
             if tab.history_index == 0 {
                 return;
             }
+            let came_from_path = tab.current_dir.clone();
             // Save the current entry's selection before stepping
             // back, so a subsequent Forward restores it.
             if let Some(cur) = tab.history.get_mut(tab.history_index) {
@@ -2137,8 +3065,15 @@ impl Shell {
             }
             tab.history_index -= 1;
             let entry = tab.history[tab.history_index].clone();
-            (entry.path.clone(), entry)
+            (entry.path.clone(), entry, came_from_path)
         };
+        if let Some(child_path) = history_child_to_select(&came_from_path, &path) {
+            let child_id = self.process.fs.id_for_path(&child_path);
+            snapshot.selection.clear();
+            snapshot.selection.insert(child_id);
+            snapshot.anchor = Some(child_id);
+            snapshot.lead = Some(child_id);
+        }
         crate::trail::navigate(crate::trail::NavKind::Back, &path);
         self.restore_from_history(snapshot, path, cx);
     }
@@ -2256,6 +3191,9 @@ impl Shell {
         // commits a new path, clears selection itself BEFORE
         // delegating here.
         tab.last_error = None;
+        // Default every load to cache-first prefetch. `on_refresh`
+        // re-arms this for its own load after delegating here.
+        tab.force_resniff = false;
         tab.load_generation = tab.load_generation.wrapping_add(1);
         let generation = tab.load_generation;
         let filter = tab.filter_text.clone();
@@ -2264,10 +3202,13 @@ impl Shell {
         if let Some(cancel) = self.tabs[tab_index].load_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
-        // The folder-size pass for the previous listing is also
-        // obsolete — stop its walk before the new enumeration starts
-        // competing for disk I/O.
+        // The folder-size and prefetch passes for the previous listing
+        // are also obsolete — stop their walks before the new
+        // enumeration starts competing for disk I/O.
         if let Some(cancel) = self.tabs[tab_index].folder_size_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(cancel) = self.tabs[tab_index].prefetch_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
         let task = self.process.tasks.borrow_mut().begin(
@@ -2293,6 +3234,10 @@ impl Shell {
         if let Some(w) = self.process.watcher.borrow_mut().as_mut() {
             let _ = w.watch(&path);
         }
+        // Drop watches no live tab shows anymore (this navigation may
+        // have been the last reference to the previous directory).
+        let own_dirs: Vec<PathBuf> = self.tabs.iter().map(|t| t.current_dir.clone()).collect();
+        self.process.prune_watches(cx.entity_id(), own_dirs, cx);
         self.save_state_async(cx);
 
         let fs = self.process.fs.clone();
@@ -2393,7 +3338,7 @@ impl Shell {
             }
             state
                 .delegate_mut()
-                .append_entries(batch.entries, batch.paths, heats);
+                .append_entries_sorted(batch.entries, batch.paths, heats);
             state.refresh(cx);
         });
         // Repaint the §5 star badge on each row whose path is now in
@@ -2559,29 +3504,16 @@ impl Shell {
             self.process.tasks.borrow_mut().end(id);
         }
         self.tabs[idx].load_cancel = None;
-        if let Some(mut staged) = self.tabs[idx].load_staging.take() {
+        if let Some(staged) = self.tabs[idx].load_staging.take() {
             // In-place reload finished: swap the complete listing in
             // atomically over the still-visible old rows. One rebuild,
             // no intermediate empty/partial state — the refresh is
             // flicker-free. Reconcile passes run once against the final
             // model, mirroring the streaming path's per-batch passes.
             self.tabs[idx].load_pending_first_batch = false;
-            // Reapply the user's active column sort. A re-enumeration
-            // arrives in raw readdir order, so without this an in-place
-            // reload (FS-watcher external change, Refresh, show-hidden
-            // toggle) would silently revert a sorted view to readdir
-            // order. That order change also scrambles the selection: a
-            // live Shift-range is recomputed by position just below
-            // (`recompute_live_range_in_tab`), so reordered endpoints
-            // capture a different span of rows. Reapplying the sort
-            // keeps the order stable, which makes the range recompute a
-            // no-op and preserves the selection. Sort the staged model
-            // *before* heats are gathered so the parallel heat vec stays
-            // row-aligned. `current_sort == None` keeps natural (readdir)
-            // order, matching the streaming first-load path.
-            if let Some((col, asc)) = self.tabs[idx].table.read(cx).delegate().current_sort {
-                crate::file_list::sort_in_place(&mut staged.entries, col, asc);
-            }
+            // `replace_entries` reapplies the delegate's effective sort while
+            // keeping row-parallel vectors aligned. Re-enumeration arrives in
+            // raw readdir order, so the swap must not inherit that order.
             let heats: Vec<f32> = staged
                 .entries
                 .iter()
@@ -2632,17 +3564,28 @@ impl Shell {
 
         // Stage 4: kick off magic + quarantine prefetch after the
         // foreground table state has received the final snapshot.
+        // A Refresh-driven load re-sniffs from disk instead of trusting
+        // the cached magic/description (see `Tab::force_resniff`).
+        let force_resniff = self.tabs[idx].force_resniff;
         let table = self.tabs[idx].table.clone();
         let fs = self.process.fs.clone();
         let db = self.process.db_snapshot();
         let tasks = self.process.tasks.clone();
         let weak = cx.weak_entity();
+        let prefetch_cancel = Arc::new(AtomicBool::new(false));
+        let prefetch_tab_id = self.tabs[idx].id;
+        let prefetch_generation = self.tabs[idx].load_generation;
+        self.tabs[idx].prefetch_cancel = Some(prefetch_cancel.clone());
         crate::prefetch::start(
             table.clone(),
             fs.clone(),
             db.clone(),
             tasks.clone(),
             weak,
+            prefetch_tab_id,
+            prefetch_generation,
+            prefetch_cancel,
+            force_resniff,
             cx,
         );
         // Folder sizes for the directory rows: cache-validated
@@ -2660,6 +3603,7 @@ impl Shell {
             size_tab_id,
             size_generation,
             size_cancel,
+            false,
             cx,
         );
         let icon_seeds = self.icon_seeds_from_table_in_tab(idx, cx);
@@ -2668,7 +3612,58 @@ impl Shell {
         // only appear after the first scroll on a folder whose visible
         // range matches the previous one's.
         self.warm_loaded_viewport_in_tab(idx, cx);
+        self.refresh_volume_info_in_tab(idx, cx);
         cx.notify();
+    }
+
+    /// Refresh the cached free-space / volume-name pair for one tab,
+    /// off-thread. The underlying `volume_info_for_path` is an NSURL
+    /// `resourceValuesForKeys:` round-trip (plus a statfs) that can
+    /// stall on network mounts, so render must never call it — it
+    /// reads the `Tab::volume_free_bytes` / `Tab::volume_name` cache
+    /// this method maintains. Guarded by tab id + load generation so
+    /// a slow result for a departed directory is dropped.
+    fn refresh_volume_info_in_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(idx) else {
+            return;
+        };
+        let tab_id = tab.id;
+        let generation = tab.load_generation;
+        let dir = tab.current_dir.clone();
+        cx.spawn(async move |this, cx| {
+            let info = cx
+                .background_executor()
+                .spawn(async move { feraille_fs_native::volume_info_for_path(&dir) })
+                .await;
+            this.update(cx, |this, cx| {
+                let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) else {
+                    return;
+                };
+                if this.tabs[idx].load_generation != generation {
+                    return;
+                }
+                let (free, name) = match info {
+                    Some(v) => (v.available_bytes, Some(SharedString::from(v.name))),
+                    None => (None, None),
+                };
+                if this.tabs[idx].volume_free_bytes != free || this.tabs[idx].volume_name != name {
+                    this.tabs[idx].volume_free_bytes = free;
+                    this.tabs[idx].volume_name = name;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Re-query the cached volume info of every tab. Driven by the
+    /// volume watch (mount/unmount/rename) so the status bar's
+    /// free-space line tracks live volume changes.
+    pub fn refresh_volume_info_all_tabs(&mut self, cx: &mut Context<Self>) {
+        for idx in 0..self.tabs.len() {
+            self.refresh_volume_info_in_tab(idx, cx);
+        }
     }
 
     fn icon_seeds_from_table_in_tab(&self, idx: usize, cx: &App) -> Vec<(FileEntry, PathBuf)> {
@@ -2854,7 +3849,7 @@ impl Shell {
             cx.background_executor()
                 .timer(Duration::from_millis(16))
                 .await;
-            let _ = table.update(cx, |ts, cx| {
+            table.update(cx, |ts, cx| {
                 let mut range = ts.visible_range().rows().clone();
                 if range.len() <= 1 {
                     let n = ts.delegate().entries.len().min(48);
@@ -2949,30 +3944,60 @@ impl Shell {
                 .background_executor()
                 .spawn(async move {
                     let db = open_metadata_db();
+                    // Once-per-launch cache pruning: the files /
+                    // folder_sizes / folder_usage tables otherwise grow
+                    // without bound (dead paths kept forever;
+                    // folder_usage is loaded wholesale into RAM below).
+                    if let Some(d) = db.as_ref() {
+                        if let Ok(g) = d.lock() {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs() as i64)
+                                .unwrap_or(0);
+                            if let Err(e) = g.prune_stale(now) {
+                                crate::log_warn!(90, "metadata prune failed: {e}");
+                            }
+                        }
+                    }
                     let (ant_visits, ant_max, recents) = hydrate_ant_trail(db.as_ref());
                     let favs_collapsed = db
                         .as_ref()
                         .and_then(|d| d.lock().ok().map(|g| g.favorites_section_collapsed()))
                         .unwrap_or(false);
-                    let favorites: Vec<feraille_core::favorites::Favorite> = db
+                    // `None` = the DB exists but the favorites load
+                    // FAILED (busy, poisoned lock, corrupt row) —
+                    // which is a different thing from "the user has no
+                    // favorites". Conflating them is a data-loss
+                    // hazard: hydrating empty with a writable DB
+                    // attached lets the first reorder replace_all the
+                    // real on-disk list with nothing.
+                    let favorites: Option<Vec<feraille_core::favorites::Favorite>> = match db
                         .as_ref()
-                        .and_then(|d| d.lock().ok().and_then(|g| g.load_favorites().ok()))
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|mut fav| {
-                            // Path-identity contract: persisted paths
-                            // re-enter the app here, so re-canonicalize
-                            // (already on the background executor; a
-                            // missing target falls through unchanged
-                            // and keeps its Missing-state handling).
-                            if let feraille_core::favorites::FavoriteTarget::Path(p) = fav.target {
-                                fav.target = feraille_core::favorites::FavoriteTarget::Path(
-                                    path::canonicalize_for_identity(p),
-                                );
-                            }
-                            fav
-                        })
-                        .collect();
+                    {
+                        // No DB at all (e.g. no $HOME): an empty
+                        // in-memory list is honest.
+                        None => Some(Vec::new()),
+                        Some(d) => d.lock().ok().and_then(|g| g.load_favorites().ok()),
+                    }
+                    .map(|favs| {
+                        favs.into_iter()
+                            .map(|mut fav| {
+                                // Path-identity contract: persisted paths
+                                // re-enter the app here, so re-canonicalize
+                                // (already on the background executor; a
+                                // missing target falls through unchanged
+                                // and keeps its Missing-state handling).
+                                if let feraille_core::favorites::FavoriteTarget::Path(p) =
+                                    fav.target
+                                {
+                                    fav.target = feraille_core::favorites::FavoriteTarget::Path(
+                                        path::canonicalize_for_identity(p),
+                                    );
+                                }
+                                fav
+                            })
+                            .collect()
+                    });
                     (db, ant_visits, ant_max, favs_collapsed, favorites, recents)
                 })
                 .await;
@@ -3001,29 +4026,45 @@ impl Shell {
                 // is empty AND `FERAILLE_DEV_SEED_FAVORITES=1` — see
                 // `crate::favorites::maybe_seed_dev_favorites`.
                 let fav_entity = this.process.favorites.clone();
-                fav_entity.update(cx, |f, cx| {
-                    if let Some(d) = db.clone() {
-                        f.attach_db(d);
+                fav_entity.update(cx, |f, cx| match favorites {
+                    Some(favorites) => {
+                        if let Some(d) = db.clone() {
+                            f.attach_db(d);
+                        }
+                        f.hydrate(favorites, cx);
+                        crate::favorites::maybe_seed_dev_favorites(f, cx);
                     }
-                    f.hydrate(favorites, cx);
-                    crate::favorites::maybe_seed_dev_favorites(f, cx);
+                    None => {
+                        // Load failed: run this session's favorites
+                        // in-memory only. Without an attached DB every
+                        // persist helper no-ops, so the unreadable
+                        // on-disk list can't be clobbered by an empty
+                        // replace_all; the next launch retries.
+                        crate::log_warn!(
+                            90,
+                            "favorites load failed; running detached (no persistence this session)"
+                        );
+                        f.hydrate(Vec::new(), cx);
+                    }
                 });
                 this.refresh_active_tab_heats(cx);
                 // Folder-size passes kicked before this point ran
                 // cache-blind (metadata_db was still None) and
                 // couldn't persist what they computed. One re-kick
                 // with the DB attached makes the cache durable.
-                this.restart_folder_size_passes(cx);
+                this.restart_folder_size_passes(false, cx);
                 cx.notify();
             });
         })
         .detach();
     }
 
-    /// Re-run the folder-size pass for every tab against the (now
-    /// attached) metadata DB. Cancels any cache-blind pass still in
-    /// flight first.
-    fn restart_folder_size_passes(&mut self, cx: &mut Context<Self>) {
+    /// Re-run the folder-size pass for every tab. Cancels any pass
+    /// still in flight first. Called when the metadata DB attaches
+    /// (`force = false`: the cache is authoritative, just re-seed it)
+    /// and on app activation (`force = true`: bypass the cache so a
+    /// deep external change made while we were away is re-walked).
+    fn restart_folder_size_passes(&mut self, force: bool, cx: &mut Context<Self>) {
         let db = self.process.db_snapshot();
         if db.is_none() {
             return;
@@ -3044,6 +4085,7 @@ impl Shell {
                 self.tabs[idx].id,
                 self.tabs[idx].load_generation,
                 cancel,
+                force,
                 cx,
             );
         }
@@ -3083,7 +4125,7 @@ impl Shell {
         }
     }
 
-    fn broadcast_reload_for_process(
+    pub(crate) fn broadcast_reload_for_process(
         process: &Rc<crate::process_state::ProcessState>,
         paths: Vec<PathBuf>,
         cx: &mut AsyncApp,
@@ -3091,6 +4133,7 @@ impl Shell {
         if paths.is_empty() {
             return;
         }
+        Self::invalidate_folder_size_ancestors(process, &paths, cx);
         for weak in process.live_shells() {
             if let Some(shell) = weak.upgrade() {
                 let paths = paths.clone();
@@ -3101,6 +4144,43 @@ impl Shell {
         }
     }
 
+    /// Drop cached folder sizes for each changed directory and all of
+    /// its ancestors. A change at `P` alters the recursive size of `P`
+    /// and every directory above it (each contains the change), yet
+    /// only `P`'s own mtime moves — the ancestors' rows would read
+    /// stale until their TTL lapses (see folder_sizes.rs). This is the
+    /// exact, immediate path for *in-app* work and for external
+    /// shallow changes the watcher catches; the deletes run off the UI
+    /// thread and are single-row primary-key hits.
+    fn invalidate_folder_size_ancestors(
+        process: &Rc<crate::process_state::ProcessState>,
+        paths: &[PathBuf],
+        cx: &mut AsyncApp,
+    ) {
+        let Some(db) = process.db_snapshot() else {
+            return;
+        };
+        // Normalize to the same key shape the cache stores
+        // (`normalize_path_key`, matching folder_sizes seeds).
+        let keys: Vec<PathBuf> = paths
+            .iter()
+            .map(|p| feraille_core::node_store::normalize_path_key(p))
+            .collect();
+        cx.background_executor()
+            .spawn(async move {
+                if let Ok(guard) = db.lock() {
+                    for key in &keys {
+                        for ancestor in key.ancestors() {
+                            let _ = guard.delete_folder_size(&ancestor.to_string_lossy());
+                        }
+                    }
+                }
+            })
+            .detach();
+    }
+
+    // The file-op spawner genuinely needs each of these inputs.
+    #[allow(clippy::too_many_arguments)]
     fn spawn_file_op(
         &mut self,
         reload_path: PathBuf,
@@ -3205,16 +4285,58 @@ impl Shell {
                 });
                 window.push_notification(Notification::success(label.to_string()), cx);
             }
-            fs_op => match fs_op.apply_fs() {
-                Ok(()) => {
-                    window.push_notification(Notification::success(label.to_string()), cx);
-                    let path = self.active_tab().current_dir.clone();
-                    self.load_path(path, cx);
+            fs_op => {
+                // Prime Directive: `apply_fs` is an arbitrary-size
+                // filesystem mutation (RemoveCreated of a whole pasted
+                // tree is a recursive delete). Run it on the background
+                // executor behind a task-registry row; the handler
+                // returns immediately and the toast lands on
+                // completion.
+                let process = self.process.clone();
+                let mut reload = fs_op.affected_parents();
+                if reload.is_empty() {
+                    reload.push(self.active_tab().current_dir.clone());
                 }
-                Err(e) => {
-                    window.push_notification(Notification::error(format!("Undo failed: {e}")), cx);
-                }
-            },
+                let win = window.window_handle();
+                let task_id = self.process.tasks.borrow_mut().begin(
+                    crate::tasks::TaskKind::FileOp,
+                    label.to_string(),
+                    false,
+                );
+                cx.spawn(async move |_this, cx| {
+                    let result = cx
+                        .background_executor()
+                        .spawn(async move { fs_op.apply_fs() })
+                        .await;
+                    let _ = cx.update(|_| {
+                        let mut tasks = process.tasks.borrow_mut();
+                        match &result {
+                            Ok(()) => tasks.end(task_id),
+                            Err(e) => tasks.end_failed(task_id, e.clone()),
+                        }
+                    });
+                    match result {
+                        Ok(()) => {
+                            Shell::broadcast_reload_for_process(&process, reload, cx);
+                            let _ = win.update(cx, |_, window, cx| {
+                                window.push_notification(
+                                    Notification::success(label.to_string()),
+                                    cx,
+                                );
+                            });
+                        }
+                        Err(e) => {
+                            let _ = win.update(cx, |_, window, cx| {
+                                window.push_notification(
+                                    Notification::error(format!("Undo failed: {e}")),
+                                    cx,
+                                );
+                            });
+                        }
+                    }
+                })
+                .detach();
+            }
         }
     }
 
@@ -3806,16 +4928,28 @@ impl Shell {
         let already_favorite =
             |path: &Path, this: &Self| this.process.favorites.read(cx).contains_path(path);
         if let Some(p) = self.favorites_context_path.take() {
-            let kind = if already_favorite(&p, self) || p.is_dir() {
-                FavoriteResolved::Folder
-            } else {
-                FavoriteResolved::NotAFolder
-            };
-            return Some((p, kind));
+            // Every surface that sets `favorites_context_path` is
+            // folder-only by construction (favorites rows, sidebar
+            // tree rows, breadcrumb segments, the active tab's
+            // current_dir) — classify as Folder without a stat. An
+            // `is_dir()` here hung Cmd+D on dead network mounts
+            // (Prime Directive). Keep that invariant when adding
+            // setters.
+            return Some((p, FavoriteResolved::Folder));
         }
         if let Some(row) = self.target_row(cx) {
             if let Some(path) = self.path_for_row(row, cx) {
-                let kind = if already_favorite(&path, self) || path.is_dir() {
+                // Classify from the cached FileEntry, not a fresh stat.
+                let is_dir = self
+                    .active_tab()
+                    .table
+                    .read(cx)
+                    .delegate()
+                    .entries
+                    .get(row)
+                    .map(|e| matches!(e.kind, feraille_core::EntryKind::Directory))
+                    .unwrap_or(false);
+                let kind = if already_favorite(&path, self) || is_dir {
                     FavoriteResolved::Folder
                 } else {
                     FavoriteResolved::NotAFolder
@@ -3868,6 +5002,9 @@ impl Shell {
         if let Some(cancel) = &tab.folder_size_cancel {
             cancel.store(true, Ordering::Relaxed);
         }
+        if let Some(cancel) = &tab.prefetch_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
         if let Some(id) = tab.load_task {
             self.process.tasks.borrow_mut().end(id);
         }
@@ -3888,6 +5025,10 @@ impl Shell {
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len() - 1;
         }
+        // The closed tab may have been the last reference to its
+        // directory's file watch.
+        let own_dirs: Vec<PathBuf> = self.tabs.iter().map(|t| t.current_dir.clone()).collect();
+        self.process.prune_watches(cx.entity_id(), own_dirs, cx);
         // No re-load — the now-active tab already has its own
         // TableState populated from its earlier load (Phase A+B).
         cx.notify();
@@ -4180,9 +5321,9 @@ impl Shell {
 
     /// Bump the Ant Trail visit count for `path` in the in-memory
     /// map and persist asynchronously through `metadata_db`. Cheap
-    /// on the foreground executor — the DB write is a single
-    /// upsert and `feraille_meta::MetadataDb` does its own
-    /// connection pooling internally.
+    /// on the foreground executor — the DB write is a single upsert
+    /// dispatched to the background executor (one shared connection
+    /// behind a mutex; there is no pooling).
     pub fn record_ant_visit(&mut self, node_id: NodeId, cx: &mut Context<Self>) {
         let Some(path) = self
             .process
@@ -4193,7 +5334,12 @@ impl Shell {
             return;
         };
         self.process.record_ant_visit(path.clone());
-        self.process.push_recent(path.clone());
+        // Recents is a separate, user-toggleable view over the same
+        // visit log: only feed it when the feature is on. The DB write
+        // below still runs so the Ant Trail (its own switch) keeps heat.
+        if crate::recents_section::recents_enabled(cx) {
+            self.process.push_recent(path.clone());
+        }
         let heat = self.ant_heat(node_id);
         self.process.node_store.borrow_mut().set_heat(node_id, heat);
         if let Some(db) = self.process.db_snapshot() {
@@ -4352,10 +5498,14 @@ impl Shell {
                     .borrow_mut()
                     .get_or_create_path_with_id(p.clone(), node_id);
                 let has_subdirs = dir_has_subdir(&p);
+                // Tree label is the displayed leaf (macOS `:` → `/`); the raw
+                // `name` above already drove the hidden check and `path` drives
+                // navigation, so the swap is display-only.
+                let label = feraille_fs_native::paths::display_leaf(&name).into_owned();
                 children.push(TreeChild {
                     node_id,
                     path: p,
-                    label: name,
+                    label,
                     hidden,
                     has_subdirs,
                 });
@@ -4390,8 +5540,190 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::window_title_for;
-    use std::path::Path;
+    use super::{
+        UndoOp, collapse_error_summary, copy_back_moved_item, file_op_failure_report,
+        history_child_to_select, window_title_for,
+    };
+    use std::path::{Path, PathBuf};
+
+    /// Fresh per-test scratch dir (same pattern as feraille-fs-native's
+    /// file-op tests).
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "feraille-shell-undo-{}-{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(p: &Path, contents: &[u8]) {
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(p, contents).unwrap();
+    }
+
+    // ---- MoveBackCross (cross-volume move undo) apply semantics ----
+    //
+    // `copy_back_moved_item` is volume-agnostic (engine copy + delete),
+    // so a same-volume tempdir exercises the exact code path the
+    // cross-volume undo runs.
+
+    #[test]
+    fn move_back_cross_restores_tree_and_removes_moved_copy() {
+        let root = scratch("moveback-tree");
+        // Forward move happened earlier: home/proj → elsewhere/proj.
+        let original = root.join("home/proj");
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        let moved = root.join("elsewhere/proj");
+        write(&moved.join("a.txt"), b"hello");
+        write(&moved.join("sub/b.bin"), &[7u8; 512]);
+
+        copy_back_moved_item(&original, &moved).unwrap();
+
+        assert_eq!(std::fs::read(original.join("a.txt")).unwrap(), b"hello");
+        assert_eq!(
+            std::fs::read(original.join("sub/b.bin")).unwrap().len(),
+            512
+        );
+        assert!(!moved.exists(), "moved copy must be deleted after copy-back");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn move_back_cross_restores_keep_both_renamed_leaf() {
+        let root = scratch("moveback-keepboth");
+        // The forward move collided and Keep-Both landed as "a 2.txt";
+        // undo must restore the *original* name, not "a 2.txt".
+        let original = root.join("home/a.txt");
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        let moved = root.join("elsewhere/a 2.txt");
+        write(&moved, b"payload");
+
+        copy_back_moved_item(&original, &moved).unwrap();
+
+        assert_eq!(std::fs::read(&original).unwrap(), b"payload");
+        assert!(!root.join("home/a 2.txt").exists());
+        assert!(!moved.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn move_back_cross_refuses_reoccupied_original_and_keeps_moved() {
+        let root = scratch("moveback-occupied");
+        let original = root.join("home/a.txt");
+        write(&original, b"newcomer"); // something new appeared at the origin
+        let moved = root.join("elsewhere/a.txt");
+        write(&moved, b"payload");
+
+        let err = copy_back_moved_item(&original, &moved).unwrap_err();
+        assert!(err.contains("exists again"), "{err}");
+        assert_eq!(
+            std::fs::read(&original).unwrap(),
+            b"newcomer",
+            "the newcomer must not be clobbered"
+        );
+        assert_eq!(
+            std::fs::read(&moved).unwrap(),
+            b"payload",
+            "the moved copy must survive a refused undo"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn move_back_cross_batch_continues_past_a_failed_pair() {
+        let root = scratch("moveback-batch");
+        let occupied_original = root.join("home/busy.txt");
+        write(&occupied_original, b"newcomer");
+        let occupied_moved = root.join("elsewhere/busy.txt");
+        write(&occupied_moved, b"stuck");
+        let free_original = root.join("home/free.txt");
+        let free_moved = root.join("elsewhere/free.txt");
+        write(&free_moved, b"comes home");
+
+        let op = UndoOp::MoveBackCross(vec![
+            (occupied_original.clone(), occupied_moved.clone()),
+            (free_original.clone(), free_moved.clone()),
+        ]);
+        let err = op.apply_fs().unwrap_err();
+        assert!(err.contains("exists again"), "{err}");
+        // The failed pair kept both sides; the good pair still applied.
+        assert_eq!(std::fs::read(&occupied_moved).unwrap(), b"stuck");
+        assert_eq!(std::fs::read(&free_original).unwrap(), b"comes home");
+        assert!(!free_moved.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- Shared partial-failure report ----
+
+    #[test]
+    fn failure_report_counts_lists_items_and_advises() {
+        use feraille_fs_native::file_ops::{FileOpError, FileOpErrorKind};
+        let failed = vec![
+            FileOpError::other(
+                Path::new("/x/Report.pdf"),
+                FileOpErrorKind::PermissionDenied,
+                "raw os text",
+            ),
+            FileOpError::other(Path::new("/x/notes.txt"), FileOpErrorKind::Locked, "raw"),
+        ];
+        let s = file_op_failure_report("Move to Trash", 3, 0, &failed);
+        assert!(
+            s.starts_with("Move to Trash: 3 of 5 done \u{00b7} 2 failed"),
+            "{s}"
+        );
+        assert!(s.contains("Report.pdf \u{2014} permission denied"), "{s}");
+        assert!(s.contains("notes.txt \u{2014} in use by another program"), "{s}");
+        // Permission denied dominates → elevation advice.
+        assert!(s.contains("administrator"), "{s}");
+    }
+
+    #[test]
+    fn failure_report_elides_a_long_tail_and_counts_skips() {
+        use feraille_fs_native::file_ops::{FileOpError, FileOpErrorKind};
+        let failed: Vec<FileOpError> = (0..6)
+            .map(|i| {
+                FileOpError::other(
+                    Path::new("/x").join(format!("f{i}.txt")).as_path(),
+                    FileOpErrorKind::Other,
+                    "raw",
+                )
+            })
+            .collect();
+        let s = file_op_failure_report("Empty Trash", 2, 1, &failed);
+        assert!(s.starts_with("Empty Trash: 2 of 9 done \u{00b7} 6 failed"), "{s}");
+        assert!(s.contains("\u{2026}and 2 more"), "{s}");
+    }
+
+    #[test]
+    fn short_single_line_error_is_shown_whole_with_no_details_toggle() {
+        let (summary, has_more) = collapse_error_summary("Move to Trash failed: nope");
+        assert_eq!(summary, "Move to Trash failed: nope");
+        assert!(!has_more, "a short, single-line error needs no Details toggle");
+    }
+
+    #[test]
+    fn long_error_is_truncated_and_offers_details() {
+        let long = format!("Move to Trash failed: {}", "x".repeat(300));
+        let (summary, has_more) = collapse_error_summary(&long);
+        assert!(has_more, "a long error hides detail behind Details");
+        assert!(summary.ends_with('\u{2026}'), "truncation is marked with an ellipsis");
+        assert!(
+            summary.chars().count() <= 141,
+            "headline stays one line: 140 chars + the ellipsis, got {}",
+            summary.chars().count()
+        );
+    }
+
+    #[test]
+    fn multiline_error_collapses_to_its_first_line() {
+        let (summary, has_more) = collapse_error_summary("Copy failed\n3 of 5 done\nretry?");
+        assert_eq!(summary, "Copy failed\u{2026}");
+        assert!(has_more, "later lines are hidden until expanded");
+    }
 
     #[test]
     fn window_title_includes_folder_and_app_name() {
@@ -4414,5 +5746,36 @@ mod tests {
     fn window_title_is_never_blank() {
         // Empty path → the switcher entry still reads the app name.
         assert_eq!(window_title_for(Path::new("")), "Feraille");
+    }
+
+    #[test]
+    fn history_child_selects_direct_child_when_back_lands_on_parent() {
+        assert_eq!(
+            history_child_to_select(Path::new("/Users/jk/Projects"), Path::new("/Users/jk")),
+            Some(PathBuf::from("/Users/jk/Projects"))
+        );
+    }
+
+    #[test]
+    fn history_child_selects_first_child_when_back_lands_on_ancestor() {
+        assert_eq!(
+            history_child_to_select(
+                Path::new("/Users/jk/Projects/Feraille"),
+                Path::new("/Users/jk")
+            ),
+            Some(PathBuf::from("/Users/jk/Projects"))
+        );
+    }
+
+    #[test]
+    fn history_child_ignores_same_or_unrelated_paths() {
+        assert_eq!(
+            history_child_to_select(Path::new("/Users/jk"), Path::new("/Users/jk")),
+            None
+        );
+        assert_eq!(
+            history_child_to_select(Path::new("/Users/jk/Projects"), Path::new("/tmp")),
+            None
+        );
     }
 }

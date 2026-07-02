@@ -5,10 +5,73 @@
 //! on macOS, `$XDG_CONFIG_HOME/feraille/gpui-state.txt` elsewhere.
 //! Unknown keys are ignored so future additions don't break older
 //! builds.
+//!
+//! ## Caching contract (Prime Directive)
+//!
+//! [`load`] serves from an in-memory cache after the first disk read,
+//! and [`save`] updates the cache synchronously then hands the disk
+//! write to a coalescing writer thread. Callers may therefore use
+//! `load()`/`save()` freely from click handlers and render-time value
+//! getters — the previous implementation re-read the file (and
+//! stat'ed `last_dir`, hanging on dead network mounts) on every call,
+//! which turned sidebar clicks, splitter drags, new tabs, and the
+//! settings window's getters into filesystem I/O on the UI thread.
+//! The on-disk file is written atomically (temp + rename) so a crash
+//! mid-write can't destroy all settings.
 
 use std::path::PathBuf;
+use std::sync::mpsc::{Sender, channel};
+use std::sync::{Mutex, OnceLock};
 
 const FILENAME: &str = "gpui-state.txt";
+
+/// Process-wide cache of the last loaded/saved state. `None` until
+/// the first [`load`].
+fn cache() -> &'static Mutex<Option<AppState>> {
+    static CACHE: OnceLock<Mutex<Option<AppState>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Lazily-spawned writer thread. Bursts of saves (splitter drags)
+/// coalesce: the thread drains the queue and writes only the newest
+/// serialization.
+fn writer() -> &'static Sender<String> {
+    static WRITER: OnceLock<Sender<String>> = OnceLock::new();
+    WRITER.get_or_init(|| {
+        let (tx, rx) = channel::<String>();
+        let spawned = std::thread::Builder::new()
+            .name("app-state-writer".into())
+            .spawn(move || {
+                while let Ok(mut latest) = rx.recv() {
+                    while let Ok(newer) = rx.try_recv() {
+                        latest = newer;
+                    }
+                    write_atomic(&latest);
+                }
+            })
+            .is_ok();
+        if !spawned {
+            // Writer thread failed to spawn (resource exhaustion):
+            // fall back to synchronous writes by keeping a detached
+            // receiver-less channel — sends fail, and save() writes
+            // inline below via the send error path.
+        }
+        tx
+    })
+}
+
+fn write_atomic(contents: &str) {
+    let Some(dir) = config_dir() else { return };
+    if !dir.exists() && std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    // Temp + rename: a crash mid-write leaves either the old file or
+    // the new one, never a truncated half.
+    let tmp = dir.join(format!("{FILENAME}.tmp"));
+    if std::fs::write(&tmp, contents).is_ok() {
+        let _ = std::fs::rename(&tmp, dir.join(FILENAME));
+    }
+}
 
 /// Full path to the settings file (config dir + filename), or `None` when the
 /// platform's config directory can't be resolved. Exposed for the diagnostics
@@ -32,6 +95,13 @@ pub struct AppState {
     /// Grid icon display size in logical px (longest edge). `None` ==
     /// never set (defaults to [`crate::grid::DEFAULT_ICON_SIZE`]).
     pub icon_size: Option<u32>,
+    /// File-table column order + widths, as `key:width` pairs in
+    /// display order (e.g. `name:360,size:100,...`). One key covers
+    /// both drag-reorder and drag-resize. `None` == defaults.
+    /// Unknown/missing column keys are reconciled at load by
+    /// [`crate::file_list::apply_persisted_columns`], so schema drift
+    /// can't wedge the table.
+    pub list_columns: Option<String>,
     /// "light", "dark", or "system". `None` = follow the system
     /// detection done at startup (Stage 9.a default).
     pub theme_pref: Option<String>,
@@ -55,6 +125,12 @@ pub struct AppState {
     /// Viewer slideshow auto-advance interval in seconds
     /// (docs/features/VIEWER.md). Clamped at load to [1, 60].
     pub viewer_slideshow_interval: Option<u64>,
+    /// Whether the Recents feature is on at all. `None` == never set
+    /// (defaults to `true`). Off hides the sidebar section and stops
+    /// pushing folders into the recents cache; the Ant Trail keeps its
+    /// own visit log either way (they share `folder_usage`). See
+    /// [`crate::recents_section`].
+    pub recents_enabled: Option<bool>,
     /// Recents sidebar section disclosure state. None == never set
     /// (defaults to expanded).
     pub recents_collapsed: Option<bool>,
@@ -103,12 +179,19 @@ pub struct AppState {
     pub dupe_paranoid: Option<bool>,
 
     // ---- Plugins (docs/features/VIEWER.md) ----
-    /// Video player provider: "builtin" (AVFoundation) or "vlc". `None` ==
-    /// builtin. VLC only takes effect in a build with the `vlc` feature.
+    /// Video player provider: "builtin" (AVFoundation) or "mpv". `None` ==
+    /// builtin. mpv only takes effect in a build with the `mpv` feature.
     pub video_backend: Option<String>,
-    /// Path to the VLC.app bundle the VLC provider loads libvlc from.
-    /// `None` == the default `/Applications/VLC.app`.
-    pub vlc_app_path: Option<String>,
+    /// Path the mpv provider loads libmpv from (the dylib, a directory, or
+    /// `mpv.app`). `None` == the platform default (Homebrew on macOS).
+    pub mpv_path: Option<String>,
+
+    // ---- Diagnostics privacy (docs/features/DIAGNOSTICS.md) ----
+    /// When `true` (the default), the diagnostics bundle, "Copy report", and the
+    /// in-app activity trail replace every file/folder name with `…` so a shared
+    /// report reveals nothing about the user's files. `None` == never set
+    /// (defaults to `true`). See [`crate::redact`].
+    pub redact_diagnostics: Option<bool>,
 
     // ---- Sidebar Locations (Windows / OneDrive) ----
     /// Which root the sidebar's special folders resolve against when
@@ -158,7 +241,21 @@ pub fn config_dir() -> Option<PathBuf> {
     Some(p)
 }
 
+/// Current state — from the in-memory cache after the first call
+/// (see the module docs' caching contract). Cheap enough for click
+/// handlers and render-time getters.
 pub fn load() -> AppState {
+    if let Some(cached) = cache().lock().ok().and_then(|guard| guard.clone()) {
+        return cached;
+    }
+    let loaded = load_from_disk();
+    if let Ok(mut guard) = cache().lock() {
+        *guard = Some(loaded.clone());
+    }
+    loaded
+}
+
+fn load_from_disk() -> AppState {
     let Some(dir) = config_dir() else {
         return AppState::default();
     };
@@ -174,15 +271,12 @@ pub fn load() -> AppState {
         let val = v.trim();
         match key {
             "last_dir" => {
-                let path = PathBuf::from(val);
-                if path.is_dir() {
-                    // Persisted state is an external boundary for the
-                    // path-identity contract: re-canonicalize so a
-                    // symlinked spelling saved last session can't
-                    // mint a second NodeId. `load()` runs at init
-                    // (it already stats via `is_dir` above).
-                    out.last_dir = Some(crate::shell::canonicalize_for_identity(path));
-                }
+                // Stored raw. Validation (is_dir) + canonicalization
+                // happen at the single startup consumer (Shell::new) —
+                // stat'ing here made EVERY load() a filesystem touch,
+                // and a dead network mount in last_dir hung the UI on
+                // each one.
+                out.last_dir = Some(PathBuf::from(val));
             }
             "show_hidden" => {
                 out.show_hidden = parse_bool(val);
@@ -195,6 +289,9 @@ pub fn load() -> AppState {
             }
             "icon_size" => {
                 out.icon_size = val.trim().parse::<u32>().ok();
+            }
+            "list_columns" if !val.trim().is_empty() => {
+                out.list_columns = Some(val.trim().to_string());
             }
             "theme_pref" => {
                 let v = val.trim().to_lowercase();
@@ -234,6 +331,9 @@ pub fn load() -> AppState {
             "viewer_slideshow_interval" => {
                 out.viewer_slideshow_interval =
                     val.trim().parse::<u64>().ok().map(|n| n.clamp(1, 60));
+            }
+            "recents_enabled" => {
+                out.recents_enabled = parse_bool(val);
             }
             "recents_collapsed" => {
                 out.recents_collapsed = parse_bool(val);
@@ -285,14 +385,15 @@ pub fn load() -> AppState {
             }
             "video_backend" => {
                 let v = val.trim().to_lowercase();
-                if matches!(v.as_str(), "builtin" | "vlc") {
+                if matches!(v.as_str(), "builtin" | "mpv") {
                     out.video_backend = Some(v);
                 }
             }
-            "vlc_app_path" => {
-                if !val.trim().is_empty() {
-                    out.vlc_app_path = Some(val.trim().to_string());
-                }
+            "mpv_path" if !val.trim().is_empty() => {
+                out.mpv_path = Some(val.trim().to_string());
+            }
+            "redact_diagnostics" => {
+                out.redact_diagnostics = parse_bool(val);
             }
             "special_folder_mode" => {
                 let v = val.trim().to_lowercase();
@@ -306,11 +407,21 @@ pub fn load() -> AppState {
     out
 }
 
+/// Update the cache immediately and queue an atomic disk write on
+/// the coalescing writer thread (see the module docs).
 pub fn save(state: &AppState) {
-    let Some(dir) = config_dir() else { return };
-    if !dir.exists() && std::fs::create_dir_all(&dir).is_err() {
-        return;
+    if let Ok(mut guard) = cache().lock() {
+        *guard = Some(state.clone());
     }
+    let serialized = serialize(state);
+    if writer().send(serialized.clone()).is_err() {
+        // Writer thread unavailable — degrade to a synchronous
+        // atomic write rather than dropping the save.
+        write_atomic(&serialized);
+    }
+}
+
+fn serialize(state: &AppState) -> String {
     let mut s = String::new();
     if let Some(p) = &state.last_dir {
         s.push_str(&format!("last_dir={}\n", p.display()));
@@ -326,6 +437,9 @@ pub fn save(state: &AppState) {
     }
     if let Some(n) = state.icon_size {
         s.push_str(&format!("icon_size={n}\n"));
+    }
+    if let Some(c) = &state.list_columns {
+        s.push_str(&format!("list_columns={c}\n"));
     }
     if let Some(p) = &state.theme_pref {
         s.push_str(&format!("theme_pref={p}\n"));
@@ -347,6 +461,9 @@ pub fn save(state: &AppState) {
     }
     if let Some(n) = state.viewer_slideshow_interval {
         s.push_str(&format!("viewer_slideshow_interval={n}\n"));
+    }
+    if let Some(b) = state.recents_enabled {
+        s.push_str(&format!("recents_enabled={b}\n"));
     }
     if let Some(b) = state.recents_collapsed {
         s.push_str(&format!("recents_collapsed={b}\n"));
@@ -387,13 +504,16 @@ pub fn save(state: &AppState) {
     if let Some(v) = &state.video_backend {
         s.push_str(&format!("video_backend={v}\n"));
     }
-    if let Some(p) = &state.vlc_app_path {
-        s.push_str(&format!("vlc_app_path={p}\n"));
+    if let Some(p) = &state.mpv_path {
+        s.push_str(&format!("mpv_path={p}\n"));
+    }
+    if let Some(b) = state.redact_diagnostics {
+        s.push_str(&format!("redact_diagnostics={b}\n"));
     }
     if let Some(m) = &state.special_folder_mode {
         s.push_str(&format!("special_folder_mode={m}\n"));
     }
-    let _ = std::fs::write(dir.join(FILENAME), s);
+    s
 }
 
 fn parse_bool(s: &str) -> Option<bool> {

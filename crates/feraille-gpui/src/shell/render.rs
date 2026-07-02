@@ -1,5 +1,5 @@
-use crate::text::{IconScale as _, TextScale as _};
 use super::*;
+use crate::text::IconScale as _;
 
 /// Minimum width for rendered-markdown preview content, so its prose
 /// reads as a column instead of folding to slivers in the narrow preview
@@ -225,10 +225,17 @@ impl Shell {
     }
 
     /// Build the **Recents** section from the in-memory recents cache
-    /// (most-recent-first folders). Returns `None` when empty so the
-    /// section stays hidden until the user has navigated somewhere —
-    /// no clutter for a brand-new profile.
-    fn build_recents_section(&self, weak: WeakEntity<Self>) -> Option<ShellSidebarItem> {
+    /// (most-recent-first folders). Returns `None` when the feature is
+    /// switched off or the cache is empty, so the section stays hidden
+    /// for a disabled user or a brand-new profile — no clutter.
+    fn build_recents_section(
+        &self,
+        weak: WeakEntity<Self>,
+        cx: &App,
+    ) -> Option<ShellSidebarItem> {
+        if !crate::recents_section::recents_enabled(cx) {
+            return None;
+        }
         let recents = self.process.recents.borrow();
         if recents.is_empty() {
             return None;
@@ -281,9 +288,11 @@ impl Shell {
         self.toggle_recents_section_collapsed(cx);
     }
 
-    /// Remove the right-clicked folder from Recents and forget its
-    /// visit record (which also clears its Ant Trail heat — the two
-    /// share the `folder_usage` log).
+    /// Drop the right-clicked folder from Recents only. Recency and Ant
+    /// Trail heat are separate columns of the same `folder_usage` row,
+    /// so this clears the recency (DB + in-memory list) and deliberately
+    /// leaves the heat (`ant_visits`) alone — taking a folder off the
+    /// recent list shouldn't erase how often you go there.
     pub fn on_remove_from_recents(
         &mut self,
         _: &RemoveFromRecents,
@@ -294,12 +303,11 @@ impl Shell {
             return;
         };
         self.process.recents.borrow_mut().retain(|p| p != &path);
-        self.process.ant_visits.borrow_mut().remove(&path);
         if let Some(db) = self.process.db_snapshot() {
             let path_str = path.to_string_lossy().into_owned();
             cx.background_spawn(async move {
                 if let Ok(g) = db.lock() {
-                    let _ = g.forget_folder_visit(&path_str);
+                    let _ = g.forget_recent_access(&path_str);
                 }
             })
             .detach();
@@ -307,22 +315,73 @@ impl Shell {
         cx.notify();
     }
 
-    /// Clear Recents — forget the entire visit log (also resets the
-    /// Ant Trail heat tints, by design).
-    pub fn on_clear_recents(&mut self, _: &ClearRecents, _: &mut Window, cx: &mut Context<Self>) {
-        self.process.recents.borrow_mut().clear();
-        self.process.ant_visits.borrow_mut().clear();
-        self.process.ant_max.set(0);
-        if let Some(db) = self.process.db_snapshot() {
-            cx.background_spawn(async move {
-                if let Ok(g) = db.lock() {
-                    let _ = g.reset(feraille_meta::ResetScope::AntTrail);
+    /// Clear Recents — confirm, then empty the recents list. Recency and
+    /// Ant Trail heat are separate columns of the same `folder_usage`
+    /// row, so this clears only the recency (`last_access_unix`) and
+    /// keeps the heat (`hits`): the most-visited tint survives. The
+    /// trailing ellipsis on every surface that fires it flags the
+    /// confirmation.
+    pub fn on_clear_recents(
+        &mut self,
+        _: &ClearRecents,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::trail::command("Clear Recents");
+        use gpui_component::button::{Button, ButtonVariants as _};
+        let win = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
+            let opened = win.update(cx, |_, window, cx| {
+                let tx = go_tx.clone();
+                window.open_dialog(cx, move |dialog, _window, _cx| {
+                    let tx_go = tx.clone();
+                    let tx_cancel = tx.clone();
+                    dialog
+                        .title("Clear Recents?")
+                        .child(div().text_scale_sm().child(
+                            "Forget every folder in Recents? Your Ant Trail heat is \
+                             kept \u{2014} only the recent list is emptied. This can't \
+                             be undone.",
+                        ))
+                        .child(
+                            h_flex().pt_2().child(
+                                Button::new("clear-recents-go")
+                                    .label("Clear Recents")
+                                    .danger()
+                                    .small()
+                                    .on_click(move |_, window, cx| {
+                                        let _ = tx_go.try_send(true);
+                                        window.close_dialog(cx);
+                                    }),
+                            ),
+                        )
+                        .on_cancel(move |_, _, _| {
+                            let _ = tx_cancel.try_send(false);
+                            true
+                        })
+                });
+            });
+            if opened.is_err() || !matches!(go_rx.recv().await, Ok(true)) {
+                return;
+            }
+            let _ = this.update(cx, |this, cx| {
+                // Recents only: empty the in-memory list and zero the DB
+                // recency column. `ant_visits` / `ant_max` (the heat
+                // signal) are left untouched, so the tint stays put.
+                this.process.recents.borrow_mut().clear();
+                if let Some(db) = this.process.db_snapshot() {
+                    cx.background_spawn(async move {
+                        if let Ok(g) = db.lock() {
+                            let _ = g.clear_recent_access();
+                        }
+                    })
+                    .detach();
                 }
-            })
-            .detach();
-        }
-        self.refresh_active_tab_heats(cx);
-        cx.notify();
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Build the **Locations** section: a flat `SidebarMenu` of icon-
@@ -346,7 +405,9 @@ impl Shell {
             let favorited = favs.contains_path(&path);
             // In-memory lookup only — the iCloud probe ran off-thread at
             // startup / volume refresh (ProcessState::cloud_locations).
-            let in_cloud = self.process.cloud_locations.borrow().contains(&path);
+            // `None` = not an iCloud Location; `Some(Downloaded/Placeholder)`
+            // drives the solid-vs-outline trailing cloud badge.
+            let cloud_state = self.process.cloud_locations.borrow().get(&path).copied();
             let weak_for_click = weak.clone();
             let weak_for_menu = weak.clone();
             let path_for_menu = path.clone();
@@ -391,22 +452,33 @@ impl Shell {
                         )
                         .menu("Copy Path", Box::new(CopyContextPath))
                 });
-            // Trailing badges: a cloud for iCloud-synced Locations
-            // (Desktop / Documents under "Desktop & Documents Folders"),
-            // plus the §5 accent star when the entry is also a user
-            // Favorite. Cloud sits left of the star so the star stays
-            // the rightmost "favorited" marker, consistent with the file
-            // list, tree, and breadcrumb.
-            let item = if in_cloud || favorited {
+            // Trailing badges: a cloud for iCloud Locations (Desktop /
+            // Documents under "Desktop & Documents Folders") — solid when the
+            // folder is downloaded locally, outline when it's a not-downloaded
+            // placeholder (Finder's downloaded-vs-evicted distinction) — plus
+            // the §5 accent star when the entry is also a user Favorite. Cloud
+            // sits left of the star so the star stays the rightmost
+            // "favorited" marker, consistent with the file list, tree, and
+            // breadcrumb.
+            let item = if cloud_state.is_some() || favorited {
                 item.suffix(move |_, cx| {
+                    use feraille_fs_native::CloudState;
                     use gpui::svg;
                     let mut badges = h_flex().items_center().gap_1();
-                    if in_cloud {
+                    if let Some(state) = cloud_state {
+                        // Solid `cloud-fill` = downloaded/"enabled"; outline
+                        // `cloud` = set up for cloud but not downloaded.
+                        let icon = match state {
+                            CloudState::Downloaded => "icons/nav/cloud-fill.svg",
+                            CloudState::Placeholder => "icons/nav/cloud.svg",
+                        };
                         badges = badges.child(
                             svg()
-                                .path("icons/nav/cloud.svg")
-                                .icon_px(13.0)
-                                .text_color(cx.theme().muted_foreground)
+                                .path(icon)
+                                .icon_px(14.0)
+                                // Match the black Locations row icons rather
+                                // than washed-out muted grey.
+                                .text_color(cx.theme().sidebar_foreground)
                                 .flex_shrink_0(),
                         );
                     }
@@ -763,6 +835,61 @@ impl Shell {
             let thumbs = shell.process.thumbnails.clone();
             let icons = shell.process.icons.clone();
 
+            // Selection drag payload, built ONCE per visible-range
+            // render and shared by every selected cell — the previous
+            // per-cell walk over ALL entries made a large selection
+            // quadratic per pass. (List rows use the delegate's cached
+            // DragSnapshot; this closure only holds a read borrow, so
+            // it hoists instead.)
+            let show_thumbs_for_drag = show_thumbs;
+            let sel_drag: Option<(
+                Rc<Vec<PathBuf>>,
+                SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]>,
+                SmallVec<[SharedString; GHOST_STACK_CAP]>,
+            )> = if del.selected_set.is_empty() {
+                None
+            } else {
+                let mut paths: Vec<PathBuf> = Vec::with_capacity(del.selected_set.len());
+                let mut gicons: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
+                    SmallVec::new();
+                for e in entries.iter() {
+                    if !del.selected_set.contains(&e.id) {
+                        continue;
+                    }
+                    let Some(p) = del.path_for_entry(e.id) else {
+                        continue;
+                    };
+                    if gicons.len() < GHOST_STACK_CAP {
+                        let thumb = if show_thumbs_for_drag {
+                            thumbs.borrow().get(&p, THUMB_PX)
+                        } else {
+                            None
+                        };
+                        match thumb {
+                            Some(t) => gicons.push(t),
+                            None => gicons.push(icons.borrow_mut().icon_for(e, &p)),
+                        }
+                    }
+                    paths.push(p);
+                }
+                let names: SmallVec<[SharedString; GHOST_STACK_CAP]> = paths
+                    .iter()
+                    .take(GHOST_STACK_CAP)
+                    .map(|p| {
+                        p.file_name()
+                            .map(|n| {
+                                feraille_fs_native::paths::display_leaf(
+                                    n.to_string_lossy().as_ref(),
+                                )
+                                .into_owned()
+                            })
+                            .unwrap_or_default()
+                            .into()
+                    })
+                    .collect();
+                Some((Rc::new(paths), gicons, names))
+            };
+
             let (row_lo, row_hi) = (row_range.start, row_range.end);
             let mut out: Vec<gpui::AnyElement> = Vec::with_capacity(row_range.len());
             for grid_row in row_range {
@@ -779,8 +906,19 @@ impl Shell {
                     let selected = del.selected_set.contains(&id);
                     let is_lead = del.lead == Some(id);
                     let quarantined = entry.is_quarantined;
-                    let name = entry.name.clone();
+                    // Display leaf (macOS `:` → `/`) for the grid label/tooltip;
+                    // deceptive names get the same highlighted treatment as the
+                    // list row so switching to grid view never hides a disguise.
+                    let name = entry.display_name.clone();
                     let tooltip_name: SharedString = name.clone().into();
+                    let grid_label: AnyElement = if entry.name_has_hazards {
+                        crate::entry_info::name_hazard_element(
+                            &name,
+                            SharedString::from(format!("grid-name-{i}")),
+                        )
+                    } else {
+                        SharedString::from(name.clone()).into_any_element()
+                    };
 
                     // Per-cell adornments, read from the same parallel
                     // delegate vecs the list row consumes (see
@@ -847,52 +985,53 @@ impl Shell {
 
                     // OS drag-out ghost (dnd-spec §3.1, mirrors the list
                     // row): pressing a selected cell drags the whole
-                    // selection; an unselected cell drags just itself.
-                    // Ghost images come only from already-warm caches, so
-                    // building them never touches the filesystem.
+                    // selection (shared payload hoisted above); an
+                    // unselected cell drags just itself. Ghost images
+                    // come only from already-warm caches, so building
+                    // them never touches the filesystem.
                     let is_dir = matches!(entry.kind, EntryKind::Directory);
-                    let mut drag_paths: SmallVec<[PathBuf; 2]> = SmallVec::new();
-                    let mut ghost_icons: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
-                        SmallVec::new();
-                    {
-                        let mut push_ghost = |e: &FileEntry, p: &PathBuf| {
-                            if ghost_icons.len() >= GHOST_STACK_CAP {
-                                return;
+                    let (drag_paths, ghost_icons, ghost_names): (
+                        SmallVec<[PathBuf; 2]>,
+                        SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]>,
+                        SmallVec<[SharedString; GHOST_STACK_CAP]>,
+                    ) = if selected {
+                        match &sel_drag {
+                            Some((paths, gi, gn)) => {
+                                (SmallVec::from_vec((**paths).clone()), gi.clone(), gn.clone())
                             }
-                            if show_thumbs {
-                                if let Some(t) = thumbs.borrow().get(p, THUMB_PX) {
-                                    ghost_icons.push(t);
-                                    return;
-                                }
-                            }
-                            ghost_icons.push(icons.borrow_mut().icon_for(e, p));
-                        };
-                        if selected {
-                            for e in entries.iter() {
-                                if del.selected_set.contains(&e.id) {
-                                    if let Some(p) = del.path_for_entry(e.id) {
-                                        push_ghost(e, &p);
-                                        drag_paths.push(p);
-                                    }
-                                }
-                            }
-                        } else {
-                            push_ghost(entry, &path);
-                            drag_paths.push(path.clone());
+                            None => (SmallVec::new(), SmallVec::new(), SmallVec::new()),
                         }
-                    }
+                    } else {
+                        let mut gi: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
+                            SmallVec::new();
+                        let thumb = if show_thumbs {
+                            thumbs.borrow().get(&path, THUMB_PX)
+                        } else {
+                            None
+                        };
+                        match thumb {
+                            Some(t) => gi.push(t),
+                            None => gi.push(icons.borrow_mut().icon_for(entry, &path)),
+                        }
+                        let name: SharedString = path
+                            .file_name()
+                            .map(|n| {
+                                // Drag chip shows the display leaf (macOS `:` → `/`).
+                                feraille_fs_native::paths::display_leaf(
+                                    n.to_string_lossy().as_ref(),
+                                )
+                                .into_owned()
+                            })
+                            .unwrap_or_default()
+                            .into();
+                        (
+                            SmallVec::from_vec(vec![path.clone()]),
+                            gi,
+                            SmallVec::from_vec(vec![name]),
+                        )
+                    };
                     let drag_count = drag_paths.len();
                     let can_drag = !drag_paths.is_empty();
-                    let ghost_names: SmallVec<[SharedString; GHOST_STACK_CAP]> = drag_paths
-                        .iter()
-                        .take(GHOST_STACK_CAP)
-                        .map(|p| {
-                            p.file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_default()
-                                .into()
-                        })
-                        .collect();
                     // Finder-style selection pill behind the label: full
                     // accent on the focused (lead) cell, slightly muted
                     // for other members of a multi-selection.
@@ -989,7 +1128,7 @@ impl Shell {
                                 .truncate()
                                 .when(selected, |d| d.bg(label_pill).text_color(pill_fg))
                                 .when(!selected, |d| d.text_color(muted))
-                                .child(SharedString::from(name)),
+                                .child(grid_label),
                         )
                         // The label is `.truncate()`d, so surface the full
                         // name on hover (mirrors the list row's tooltip).
@@ -1200,20 +1339,31 @@ impl Shell {
 
     /// Tabstrip above the toolbar. Each tab is a clickable pill
     /// labelled with the directory's basename; the active tab has
-    /// a filled background. A trailing "+" opens a new tab; each
-    /// non-active tab has a small "x" hover-affordance to close.
+    /// a filled background. A trailing "+" opens a new tab; when more
+    /// than one tab is open each carries a trailing close affordance —
+    /// the shared `close.svg` glyph in a rounded hover highlight.
     fn tabstrip(&self, cx: &mut Context<Self>) -> Div {
+        use gpui_component::Sizable as _;
+        use gpui_component::button::{Button, ButtonVariants as _};
+
+        // One arrow click pages the strip by ~one-and-a-half tab widths.
+        const TAB_SCROLL_STEP: Pixels = px(200.0);
+
         let active = self.active;
         let multi = self.tabs.len() > 1;
+        // The chips live in a horizontally scrollable strip so the tab
+        // row can hold more tabs than fit the window. Trackpad / shift-
+        // wheel scrolling rides `overflow_x_scroll` directly; the chevron
+        // arrows added below page it for mouse-only users. A `flex_1`
+        // viewport (assembled after the loop) clips the strip so the
+        // arrows and trailing "+" stay pinned while the chips scroll
+        // under them. See `Shell::scroll_tabs`.
         let mut row = h_flex()
-            .w_full()
+            .id("tabstrip-scroll")
             .items_center()
             .gap_1()
-            .px_2()
-            .py_1()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().secondary);
+            .overflow_x_scroll()
+            .track_scroll(&self.tab_scroll);
 
         for (idx, tab) in self.tabs.iter().enumerate() {
             // Phase D: drop gap *before* this tab. Catches a drag
@@ -1232,7 +1382,7 @@ impl Shell {
                 .items_center()
                 .gap_1()
                 .px_3()
-                .py_1()
+                .py_0p5()
                 .rounded(theme.radius)
                 .cursor_pointer()
                 .text_scale_sm()
@@ -1322,12 +1472,23 @@ impl Shell {
             if multi {
                 let close = div()
                     .id(("tab-close", idx))
-                    .ml_1()
-                    .px_1()
-                    .text_scale_xs()
+                    .ml_0p5()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(14.0))
+                    .rounded(theme.radius)
+                    // Subtle close affordance: muted grey by default, darkening
+                    // to foreground on hover (plus a rounded highlight) — the
+                    // common tab-close convention. The svg has no explicit
+                    // color, so it inherits the div's cascaded text color (gpui
+                    // paints svg with `style.text.color`); `.hover` retints both.
                     .text_color(theme.muted_foreground)
-                    .hover(|this| this.text_color(theme.foreground))
-                    .child("x")
+                    .hover(|this| {
+                        this.text_color(theme.foreground)
+                            .bg(theme.accent.opacity(0.15))
+                    })
+                    .child(svg().path("icons/close.svg").icon_px(11.0))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         // Phase A+B+C: tabs own their own TableState,
                         // and closing the last tab closes the window
@@ -1370,21 +1531,88 @@ impl Shell {
             }
             row = row.child(chip);
         }
-        // Phase D: trailing drop gap after the last tab.
+        // Phase D: trailing drop gap after the last tab. Stays inside
+        // the scrollable strip so a drop past the last chip still lands.
         row = row.child(tab_drop_gap(self.tabs.len(), cx));
-        // Trailing "+" — new tab.
-        row = row.child(
+
+        // Scroll state measured last frame, used to drive the arrows.
+        // `max_offset().x > 0` means the chips overflow the viewport, so
+        // the arrows are worth showing; `offset().x` runs from 0 (start)
+        // down to `-max` (end), the same convention as the preview scroll
+        // (see `on_preview_text_scroll`). A small epsilon absorbs float
+        // fuzz when deciding whether either end is reachable.
+        let off = self.tab_scroll.offset().x;
+        let max = self.tab_scroll.max_offset().x;
+        let overflow = max > px(0.5);
+        let can_left = off < px(-0.5);
+        let can_right = off > -max + px(0.5);
+
+        let theme = cx.theme();
+        let mut outer = h_flex()
+            .w_full()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_0p5()
+            .border_b_1()
+            .border_color(theme.border)
+            .bg(theme.secondary);
+
+        // Left arrow — only while the strip overflows; dimmed once
+        // scrolled fully to the start.
+        if overflow {
+            outer = outer.child(
+                Button::new("tab-scroll-left")
+                    .xsmall()
+                    .ghost()
+                    .icon(gpui_component::Icon::empty().path("icons/nav/chevrons-left.svg"))
+                    .tooltip("Scroll tabs left")
+                    .disabled(!can_left)
+                    .on_click(cx.listener(|this, _, _, cx| this.scroll_tabs(TAB_SCROLL_STEP, cx))),
+            );
+        }
+
+        // The scrollable strip, clipped to the remaining width so the
+        // arrows + "+" stay pinned to the row's right edge.
+        outer = outer.child(h_flex().flex_1().overflow_x_hidden().child(row));
+
+        // Right arrow — mirror of the left; dimmed once at the end.
+        if overflow {
+            outer = outer.child(
+                Button::new("tab-scroll-right")
+                    .xsmall()
+                    .ghost()
+                    .icon(gpui_component::Icon::empty().path("icons/nav/chevrons-right.svg"))
+                    .tooltip("Scroll tabs right")
+                    .disabled(!can_right)
+                    .on_click(cx.listener(|this, _, _, cx| this.scroll_tabs(-TAB_SCROLL_STEP, cx))),
+            );
+        }
+
+        // Trailing "+" — new tab. Pinned outside the scroll viewport.
+        // House-style `nav/plus.svg` (Lucide outline, stroke 1.75) so the
+        // affordance matches the sidebar icon family instead of a thin font
+        // glyph; sized through IconScale to zoom with the UI.
+        outer = outer.child(
             div()
                 .id("tab-new")
+                .flex()
+                .items_center()
+                .justify_center()
                 .ml_1()
                 .px_2()
-                .py_1()
-                .rounded(cx.theme().radius)
+                .py_0p5()
+                .rounded(theme.radius)
                 .cursor_pointer()
-                .text_scale_sm()
-                .text_color(cx.theme().muted_foreground)
-                .hover(|this| this.bg(cx.theme().accent.opacity(0.10)))
-                .child("+")
+                .hover(|this| this.bg(theme.accent.opacity(0.10)))
+                .child(
+                    svg()
+                        .path("icons/nav/plus.svg")
+                        .icon_px(14.0)
+                        // Solid foreground (the active-tab label colour), not
+                        // muted grey, so the new-tab affordance reads clearly.
+                        .text_color(theme.foreground),
+                )
                 .on_click(cx.listener(|this, _, window, cx| {
                     // Spec §4.3: new tab opens beside the active tab,
                     // at the active tab's directory.
@@ -1401,7 +1629,22 @@ impl Shell {
                     this.load_path(path, cx);
                 })),
         );
-        row
+        outer
+    }
+
+    /// Page the tab strip horizontally by `dx` DIPs — positive reveals
+    /// tabs toward the start (scroll left), negative toward the end
+    /// (scroll right) — clamped to the scrollable range. Drives the
+    /// tab-strip chevron arrows; trackpad / shift-wheel scrolling goes
+    /// straight through `overflow_x_scroll` and never reaches here. The
+    /// offset convention matches the preview scroll: `0` at the start,
+    /// `-max_offset().x` at the end.
+    fn scroll_tabs(&mut self, dx: Pixels, cx: &mut Context<Self>) {
+        let max = self.tab_scroll.max_offset().x;
+        let cur = self.tab_scroll.offset();
+        let x = (cur.x + dx).clamp(-max, px(0.0));
+        self.tab_scroll.set_offset(point(x, cur.y));
+        cx.notify();
     }
 
     // Toolbar removed in Phase 7. Back / forward / filter went into
@@ -1433,9 +1676,13 @@ impl Shell {
         // Active sort drives the sort button's glyph (asc/descending)
         // and the checkmark in its menu. Read once here — render-time
         // cache read, no I/O.
-        let current_sort = self.active_tab().table.read(cx).delegate().current_sort;
-        let sort_col = current_sort.map(|(c, _)| c);
-        let sort_asc = current_sort.map(|(_, a)| a).unwrap_or(true);
+        let current_sort = self
+            .process
+            .list_sort
+            .get()
+            .unwrap_or((SortColumn::Name, true));
+        let sort_col = current_sort.0;
+        let sort_asc = current_sort.1;
         let sort_icon = if sort_asc {
             "icons/sort-ascending.svg"
         } else {
@@ -1457,6 +1704,10 @@ impl Shell {
         // first frame or two after the menu opened).
         let sort_menu_focus = self.focus_handle.clone();
         let overflow_menu_focus = self.focus_handle.clone();
+        let dock_menu_focus = self.focus_handle.clone();
+        // Active dock edge (if any), captured for the toolbar dock menu's
+        // checkmarks and pressed state.
+        let dock_edge = self.dock.as_ref().map(|d| d.edge);
         TitleBar::new().child(
             h_flex()
                 .w_full()
@@ -1564,22 +1815,22 @@ impl Shell {
                                     menu.action_context(sort_menu_focus.clone())
                                         .menu_with_check(
                                             "Name",
-                                            sort_col == Some(SortColumn::Name),
+                                            sort_col == SortColumn::Name,
                                             Box::new(SortByName),
                                         )
                                         .menu_with_check(
                                             "Size",
-                                            sort_col == Some(SortColumn::Size),
+                                            sort_col == SortColumn::Size,
                                             Box::new(SortBySize),
                                         )
                                         .menu_with_check(
                                             "Kind",
-                                            sort_col == Some(SortColumn::Format),
+                                            sort_col == SortColumn::Format,
                                             Box::new(SortByKind),
                                         )
                                         .menu_with_check(
                                             "Date Modified",
-                                            sort_col == Some(SortColumn::Modified),
+                                            sort_col == SortColumn::Modified,
                                             Box::new(SortByModified),
                                         )
                                 }),
@@ -1627,6 +1878,48 @@ impl Shell {
                             this.on_refresh(&Refresh, window, cx);
                         })),
                 )
+                // Dock menu — park the whole window against a screen edge as
+                // an auto-hiding drawer (docs/features/DOCK.md). Pressed look
+                // while docked; the active edge carries a checkmark. Wrapped
+                // in a mouse-down-stopping div for the Win32 title-bar-drag
+                // gotcha, like the other dropdowns. macOS-only for now (the
+                // win32/linux window primitives are stubs) — hidden elsewhere
+                // so the menu isn't three silent no-ops.
+                .when(cfg!(target_os = "macos"), |bar| bar.child(
+                    div()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .child(
+                            Button::new("toolbar-dock")
+                                .small()
+                                .ghost()
+                                .selected(dock_edge.is_some())
+                                .icon(gpui_component::Icon::empty().path("icons/dock.svg"))
+                                .tooltip("Dock window to a screen edge")
+                                .dropdown_menu(move |menu, _window, _cx| {
+                                    menu.action_context(dock_menu_focus.clone())
+                                        .menu_with_icon(
+                                            "Dock Left",
+                                            gpui_component::Icon::empty()
+                                                .path("icons/dock-left.svg"),
+                                            Box::new(DockLeft),
+                                        )
+                                        .menu_with_icon(
+                                            "Dock Right",
+                                            gpui_component::Icon::empty()
+                                                .path("icons/dock-right.svg"),
+                                            Box::new(DockRight),
+                                        )
+                                        .separator()
+                                        .menu_with_icon(
+                                            "Undock",
+                                            gpui_component::Icon::empty().path("icons/undock.svg"),
+                                            Box::new(Undock),
+                                        )
+                                }),
+                        ),
+                ))
                 // View switcher: list ⇄ icon grid (per-tab). The active
                 // mode's button is highlighted.
                 .child(
@@ -2070,16 +2363,16 @@ impl Shell {
                     .text_scale_lg()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(cx.theme().foreground);
-                let name_header = if feraille_core::name_hazards::has_hazards(&entry.name) {
+                let name_header = if entry.name_has_hazards {
                     name_header.child(crate::entry_info::name_hazard_element(
-                        &entry.name,
+                        &entry.display_name,
                         "preview-name",
                     ))
                 } else {
-                    let name_for_tooltip = entry.name.clone();
+                    let name_for_tooltip = entry.display_name.clone();
                     name_header
                         .truncate()
-                        .child(SharedString::from(entry.name.clone()))
+                        .child(SharedString::from(entry.display_name.clone()))
                         .tooltip(move |window, cx| {
                             Tooltip::new(SharedString::from(name_for_tooltip.clone()))
                                 .build(window, cx)
@@ -2315,7 +2608,7 @@ impl Shell {
                 .items_center()
                 .gap_1()
                 .px_4()
-                .py_2()
+                .py_1()
                 .border_b_1()
                 .border_color(cx.theme().border)
                 .on_action(move |a: &gpui_component::input::MoveUp, window, cx| {
@@ -2348,7 +2641,7 @@ impl Shell {
             .items_center()
             .gap_1()
             .px_4()
-            .py_2()
+            .py_1()
             .border_b_1()
             .border_color(cx.theme().border);
 
@@ -2525,6 +2818,43 @@ impl Shell {
         }
         row
     }
+
+    /// The grab handle drawn at the window's inner edge while docked and not
+    /// fully revealed (docs/features/DOCK.md). Purely a visual hint — the
+    /// reveal trigger is the screen edge itself, driven by the poll loop. It
+    /// anchors opposite the dock edge because the drawer hides toward its dock
+    /// edge, leaving that side on-screen as the strip.
+    fn dock_handle(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let dock = self.dock.as_ref()?;
+        if dock.progress >= 0.999 {
+            return None; // fully revealed: nothing to point at
+        }
+        let thickness = px(super::dock::STRIP_PX as f32);
+        // Left/Right docking → always a tall, thin vertical grip pill.
+        let pill = div()
+            .w(px(3.))
+            .h(px(40.))
+            .rounded_full()
+            .bg(cx.theme().muted_foreground);
+
+        let strip = div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .w(thickness)
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().secondary)
+            .child(pill);
+        // The handle sits on the window edge opposite the dock edge — the side
+        // left on-screen as the strip when the drawer hides toward its edge.
+        let strip = match dock.edge {
+            DockEdge::Left => strip.right_0(),
+            DockEdge::Right => strip.left_0(),
+        };
+        Some(strip)
+    }
 }
 
 impl Render for Shell {
@@ -2552,7 +2882,7 @@ impl Render for Shell {
         let weak = cx.weak_entity();
         let locations_menu = self.build_locations_menu(weak.clone(), cx);
         let favorites_section = self.build_user_favorites_section(weak.clone(), cx);
-        let recents_section = self.build_recents_section(weak.clone());
+        let recents_section = self.build_recents_section(weak.clone(), cx);
         let browse_rows = self.build_browse_rows(cx);
         let volumes_rows = self.build_volumes_rows(cx);
         let has_volumes = !self.process.volumes.borrow().is_empty();
@@ -2648,28 +2978,35 @@ impl Render for Shell {
         let delegate = self.active_tab().table.read(cx).delegate();
         let entries = &delegate.entries;
         let entry_count = entries.len();
-        let total_size: u64 = entries.iter().map(|e| e.size).sum();
-        // Multi-select stats: count the whole selection set and sum
-        // the visible entries' sizes for the rows that are members.
-        // Iterating `entries` once is O(N) and the membership check
-        // is an O(1) HashSet hit per row.
+        // Totals come from the delegate's lazy caches — recomputed
+        // once per model/selection change, not O(N) per render pass
+        // (a 100k-entry folder added hundreds of µs to every repaint).
+        let total_size: u64 = delegate.cached_total_size.get().unwrap_or_else(|| {
+            let t = entries.iter().map(|e| e.size).sum();
+            delegate.cached_total_size.set(Some(t));
+            t
+        });
         let selection = &self.active_tab().selection;
         let selected_count = selection.len();
-        let selected_size: u64 = entries
-            .iter()
-            .filter(|e| selection.contains(&e.id))
-            .map(|e| e.size)
-            .sum();
-        // Free-space query — sync, very cheap on macOS (statvfs).
-        // Returns None on non-macOS or for paths we can't reach.
-        let volume_info = feraille_fs_native::volume_info_for_path(&self.active_tab().current_dir);
-        let (free_bytes, volume_name): (Option<u64>, Option<&'static str>) = match volume_info {
-            Some(v) => {
-                let name: Option<&'static str> = Some(Box::leak(v.name.into_boxed_str()));
-                (v.available_bytes, name)
-            }
-            None => (None, None),
+        let selected_size: u64 = if selected_count == 0 {
+            0
+        } else {
+            delegate.cached_selected_size.get().unwrap_or_else(|| {
+                let s = entries
+                    .iter()
+                    .filter(|e| delegate.selected_set.contains(&e.id))
+                    .map(|e| e.size)
+                    .sum();
+                delegate.cached_selected_size.set(Some(s));
+                s
+            })
         };
+        // Free-space label — reads the per-tab cache maintained by
+        // `refresh_volume_info_in_tab` (load completion + volume
+        // watch). The underlying NSURL/statfs query can round-trip to
+        // a network mount, so it never runs on the paint path.
+        let free_bytes = self.active_tab().volume_free_bytes;
+        let volume_name = self.active_tab().volume_name.clone();
         let metrics = crate::status_bar::StatusMetrics {
             entries: entry_count,
             selected_count,
@@ -2758,6 +3095,9 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_selected))
             .on_action(cx.listener(Self::on_refresh))
             .on_action(cx.listener(Self::on_show_desktop))
+            .on_action(cx.listener(Self::on_dock_left))
+            .on_action(cx.listener(Self::on_dock_right))
+            .on_action(cx.listener(Self::on_undock))
             .on_action(cx.listener(Self::on_toggle_hidden))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_copy_path))
@@ -2769,11 +3109,13 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_terminal_here))
             .on_action(cx.listener(Self::on_reveal_in_finder))
             .on_action(cx.listener(Self::on_move_to_trash))
+            .on_action(cx.listener(Self::on_delete_immediately))
             .on_action(cx.listener(Self::on_empty_trash))
             .on_action(cx.listener(Self::on_focus_filter))
             .on_action(cx.listener(Self::on_clear_filter))
             .on_action(cx.listener(Self::on_new_folder))
             .on_action(cx.listener(Self::on_rename_selected))
+            .on_action(cx.listener(Self::on_bulk_rename_selected))
             .on_action(cx.listener(Self::on_new_tab))
             .on_action(cx.listener(Self::on_close_tab))
             .on_action(cx.listener(Self::on_close_window))
@@ -2904,7 +3246,7 @@ impl Render for Shell {
                 // Three-column resizable layout: sidebar | center | preview.
                 // The status bar runs full-width across the bottom so its
                 // task summary + progress strip is always visible.
-                use gpui_component::resizable::{h_resizable, resizable_panel};
+                use crate::splitter::{h_resizable, resizable_panel};
                 let file_body = self.file_pane_body(cx);
                 // Phase 6 review fix: an outer .context_menu on the
                 // file body wrapper consumed the click events bound
@@ -3057,6 +3399,7 @@ impl Render for Shell {
                 };
                 let title_bar = self.title_bar(cx);
                 let menu_bar = self.menu_bar.clone();
+                let dock_handle = self.dock_handle(cx);
                 v_flex()
                     .relative()
                     .size_full()
@@ -3087,6 +3430,10 @@ impl Render for Shell {
                     // column, above the status bar. Only rendered
                     // when task_panel_open == true.
                     .when_some(task_panel, |this, panel| this.child(panel))
+                    // Docked-drawer grab handle (docs/features/DOCK.md) —
+                    // absolute, on the inner edge, above the column content.
+                    // `None` unless docked-and-not-fully-revealed.
+                    .children(dock_handle)
             })
             // Dialog overlay layer — rendered last so dialogs draw
             // above the shell content. Needed for the New Folder /

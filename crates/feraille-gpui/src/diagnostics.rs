@@ -113,17 +113,17 @@ fn app_group() -> Group {
     } else {
         "release"
     };
-    let vlc = if cfg!(feature = "vlc") {
+    let mpv = if cfg!(feature = "mpv") {
         Check::new(
-            "VLC support",
+            "mpv support",
             Status::Ok,
-            "compiled in (built with --features vlc)",
+            "compiled in (built with --features mpv)",
         )
     } else {
         Check::new(
-            "VLC support",
+            "mpv support",
             Status::Warn,
-            "not compiled in — rebuild with --features vlc to use the VLC player",
+            "not compiled in — rebuild with --features mpv to use the mpv player",
         )
     };
     Group {
@@ -131,7 +131,7 @@ fn app_group() -> Group {
         checks: vec![
             Check::new("Version", Status::Ok, env!("CARGO_PKG_VERSION")),
             Check::new("Build", Status::Ok, build),
-            vlc,
+            mpv,
         ],
     }
 }
@@ -146,16 +146,16 @@ fn storage_group() -> Group {
 fn dependencies_group() -> Group {
     let state = app_state::load();
     let backend = state.video_backend.as_deref().unwrap_or("builtin");
-    let check = if backend == "vlc" {
+    let check = if backend == "mpv" {
         let path = state
-            .vlc_app_path
+            .mpv_path
             .clone()
-            .unwrap_or_else(|| crate::viewer::backend_native::default_vlc_path().to_string());
+            .unwrap_or_else(|| crate::viewer::backend_native::default_mpv_path().to_string());
         if Path::new(&path).exists() {
-            Check::new("VLC install", Status::Ok, format!("{path} (found)"))
+            Check::new("mpv install", Status::Ok, format!("{path} (found)"))
         } else {
             Check::new(
-                "VLC install",
+                "mpv install",
                 Status::Fail,
                 format!("{path} — not found; video will fall back to the built-in player"),
             )
@@ -329,7 +329,7 @@ mod tests {
     #[test]
     fn report_runs_and_renders() {
         let report = run_checks();
-        // App group always has Version/Build/VLC; total groups are fixed.
+        // App group always has Version/Build/mpv; total groups are fixed.
         assert_eq!(report.groups.len(), 4);
         assert!(report.groups.iter().any(|g| g.title == "Storage"));
         let text = render_text(&report);

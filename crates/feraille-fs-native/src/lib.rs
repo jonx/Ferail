@@ -2,16 +2,18 @@
 //! synchronous, single-batch implementation; threading + change-watching
 //! land with the macOS shell crate in iter-3.
 //!
-//! Display strings (`display_size`, `display_mtime`) are pre-formatted at
-//! enumerate time per the no-alloc-on-paint contract. Time formatting is
-//! day-resolution only this iter — accurate hour-of-day requires local
-//! timezone, deferred until the macOS shell crate brings `NSDateFormatter`.
+//! `display_size` is pre-formatted at enumerate time per the no-alloc-on-paint
+//! contract. The modification time is intentionally *not* pre-formatted: the UI
+//! renders it live from `mtime_unix` via [`feraille_core::humanize_mtime`] so a
+//! relative label ("4 seconds ago") keeps counting instead of freezing. Only
+//! the relative form is timezone-free; an *absolute* hour-of-day still awaits
+//! the macOS shell crate's `NSDateFormatter`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use feraille_core::{EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId};
 
@@ -32,7 +34,8 @@ pub use dupes::{
 };
 pub use icons::fetch_icon_rgba;
 pub use magic::{
-    detect_magic, detect_magic_info, sniff_bytes_info, CpuArch, MagicInfo, MagicType, PeSubsystem,
+    detect_magic, detect_magic_info, sniff_bytes_info, CpuArch, ElfOs, MagicInfo, MagicType,
+    PeSubsystem,
 };
 pub use paths::home_dir;
 pub use search::{SearchHit, SearchQuery, SearchStats, DEFAULT_SEARCH_BATCH};
@@ -218,18 +221,23 @@ impl NativeFs {
         } else {
             humanize_bytes(size)
         };
-        let display_mtime = humanize_mtime(mtime_unix);
         let display_kind = describe_kind(kind, &name);
         let hidden = entry_is_hidden(&name, metadata);
         let id = self.id_for_path(path);
+        // User-facing leaf (macOS shows an on-disk `:` as `/`, Finder-style),
+        // and a precomputed hazard flag so the dense row paint never runs the
+        // deceptive-character analysis itself.
+        let display_name = crate::paths::display_leaf(&name).into_owned();
+        let name_has_hazards = feraille_core::name_hazards::has_hazards(&display_name);
         FileEntry {
             id,
             name,
+            display_name,
+            name_has_hazards,
             kind,
             size,
             mtime_unix,
             display_size,
-            display_mtime,
             display_kind,
             display_magic: String::new(),
             display_description: String::new(),
@@ -314,54 +322,18 @@ impl FsBackend for NativeFs {
                 Ok(m) => m,
                 Err(_) => continue,
             };
-            let ft = metadata.file_type();
-            let kind = if ft.is_dir() {
-                EntryKind::Directory
-            } else if ft.is_symlink() {
-                EntryKind::Symlink
-            } else {
-                EntryKind::File
-            };
-            let size = metadata.len();
-            let mtime_unix = metadata
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            let display_size = if matches!(kind, EntryKind::Directory) {
-                String::new()
-            } else {
-                humanize_bytes(size)
-            };
-            let display_mtime = humanize_mtime(mtime_unix);
-            let display_kind = describe_kind(kind, &name);
-            let hidden = entry_is_hidden(&name, &metadata);
-            let id = self.id_for_path(&child_path);
-            entries.push(FileEntry {
-                id,
-                name,
-                kind,
-                size,
-                mtime_unix,
-                display_size,
-                display_mtime,
-                display_kind,
-                display_magic: String::new(),
-                display_description: String::new(),
-                is_quarantined: false,
-                quarantine: None,
-                hidden,
-            });
+            // Shared with the lazy enumerate path: one constructor keeps the
+            // pre-formatted display strings (incl. `display_name`) and the
+            // hazard flag from drifting between the two listing routes.
+            entries.push(self.file_entry_from_metadata(&child_path, name, &metadata));
         }
-        // Directories first, then case-insensitive name.
-        entries.sort_by(|a, b| match (a.kind, b.kind) {
-            (EntryKind::Directory, EntryKind::Directory) => {
-                a.name.to_lowercase().cmp(&b.name.to_lowercase())
-            }
-            (EntryKind::Directory, _) => std::cmp::Ordering::Less,
-            (_, EntryKind::Directory) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        // Directories first, then case-insensitive name. Cached keys:
+        // one lowercase per entry, not two per comparison.
+        entries.sort_by_cached_key(|e| {
+            (
+                !matches!(e.kind, EntryKind::Directory),
+                e.name.to_lowercase(),
+            )
         });
         EnumerationHandle {
             initial: entries,
@@ -392,10 +364,22 @@ pub fn open_with_default(path: &Path) -> std::io::Result<()> {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn open_with_default(path: &Path) -> std::io::Result<()> {
-    std::process::Command::new("xdg-open")
+    use std::process::Stdio;
+    // Null stdio so the child can't block on inherited pipes, and reap it
+    // from a short-lived thread so it doesn't linger as a zombie
+    // (`xdg-open` hands off and exits quickly).
+    let mut child = std::process::Command::new("xdg-open")
         .arg(path)
-        .spawn()
-        .map(|_| ())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let _ = std::thread::Builder::new()
+        .name("child-reaper".into())
+        .spawn(move || {
+            let _ = child.wait();
+        });
+    Ok(())
 }
 
 /// Move `path` into the user's Trash, with the OS's full Trash
@@ -426,13 +410,36 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
             Ok(()) => Ok(resulting
                 .and_then(|u| u.path())
                 .map(|p| PathBuf::from(p.to_string()))),
-            Err(err) => Err(std::io::Error::other(format!(
-                "trashItemAtURL({}) failed: {}",
-                path.display(),
-                err.localizedDescription(),
-            ))),
+            Err(err) => {
+                let msg = format!(
+                    "trashItemAtURL({}) failed: {}",
+                    path.display(),
+                    err.localizedDescription(),
+                );
+                // NSFileWriteNoPermissionError (513): the item is owned by
+                // another user — e.g. a root-owned Apple app in /Applications.
+                // Surface it as a typed PermissionDenied (keyed off the Cocoa
+                // error *code*, not the localized text) so the shell can offer
+                // an elevated retry, exactly as copy/move already do.
+                const NS_FILE_WRITE_NO_PERMISSION_ERROR: isize = 513;
+                if err.code() == NS_FILE_WRITE_NO_PERMISSION_ERROR {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        msg,
+                    ))
+                } else {
+                    Err(std::io::Error::other(msg))
+                }
+            }
         }
     }
+}
+
+/// The user's primary Trash (`~/.Trash` [mac]). An elevated trash worker runs
+/// as root, whose own `trashItemAtURL` would target root's Trash — so it moves
+/// protected items into *this* path instead, where the user expects them.
+pub fn home_trash_dir() -> PathBuf {
+    paths::home_dir().join(".Trash")
 }
 
 /// Trash directories visible to this user: `~/.Trash` plus each
@@ -809,16 +816,61 @@ fn url_is_ubiquitous(path: &Path) -> Option<bool> {
     }
 }
 
-/// The subset of the sidebar's well-known Locations that macOS reports
-/// as iCloud-synced, as an owned set the UI can probe per render
-/// without touching the filesystem. Computed off the render thread
-/// (startup + volume/wake refresh); empty off macOS. The result feeds
-/// the trailing cloud badge in the Locations section.
-pub fn cloud_synced_locations() -> std::collections::HashSet<PathBuf> {
+/// iCloud state of a path, mirroring Finder's stable downloaded-vs-placeholder
+/// distinction. `None` (no badge) is the implicit third state: not an iCloud
+/// item at all.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CloudState {
+    /// In iCloud and materialized on this Mac (Finder shows no badge; we draw
+    /// a solid cloud). The common case for synced Desktop/Documents.
+    Downloaded,
+    /// In iCloud but a not-downloaded placeholder — APFS dataless, evicted by
+    /// "Optimize Mac Storage" (Finder shows its download cloud; we draw an
+    /// outline cloud). "Set up for cloud but the local copy isn't here."
+    Placeholder,
+}
+
+/// The iCloud [`CloudState`] of `path`, or `None` when it isn't an iCloud item.
+///
+/// Reads cached resource values plus the stat flags only — never reads file
+/// data, so it never downloads a placeholder or spins a sleeping disk (the
+/// `SF_DATALESS` flag is visible to `lstat` without materializing the file).
+/// Always `None` off macOS. Per the prime directive, callers must not invoke
+/// this from the paint path.
+#[cfg(target_os = "macos")]
+pub fn cloud_state(path: &Path) -> Option<CloudState> {
+    use std::os::macos::fs::MetadataExt;
+    if !path_is_cloud_synced(path) {
+        return None;
+    }
+    // <sys/stat.h>: SF_DATALESS — "file is dataless object" (the placeholder
+    // for a not-yet-materialized iCloud / FileProvider item). `lstat` reading
+    // st_flags does not trigger a download.
+    const SF_DATALESS: u32 = 0x4000_0000;
+    let dataless = std::fs::symlink_metadata(path)
+        .map(|m| (m.st_flags() & SF_DATALESS) != 0)
+        .unwrap_or(false);
+    Some(if dataless {
+        CloudState::Placeholder
+    } else {
+        CloudState::Downloaded
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn cloud_state(_path: &Path) -> Option<CloudState> {
+    None
+}
+
+/// The sidebar's well-known Locations that macOS reports as iCloud items,
+/// mapped to their [`CloudState`], as an owned map the UI can probe per render
+/// without touching the filesystem. Computed off the render thread (startup +
+/// volume/wake refresh); empty off macOS. Feeds the trailing cloud badge in
+/// the Locations section.
+pub fn cloud_synced_locations() -> std::collections::HashMap<PathBuf, CloudState> {
     paths::well_known_locations()
         .into_iter()
-        .map(|loc| loc.path)
-        .filter(|p| path_is_cloud_synced(p))
+        .filter_map(|loc| cloud_state(&loc.path).map(|state| (loc.path, state)))
         .collect()
 }
 
@@ -846,60 +898,6 @@ pub fn humanize_bytes(bytes: u64) -> String {
     } else {
         format!("{:.1} {}", v, UNITS[i])
     }
-}
-
-fn humanize_mtime(unix: i64) -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(unix);
-    let diff = now - unix;
-    const DAY: i64 = 86_400;
-    if diff < -DAY {
-        return format_date(unix);
-    }
-    if diff < DAY {
-        return "Today".to_string();
-    }
-    if diff < 2 * DAY {
-        return "Yesterday".to_string();
-    }
-    if diff < 7 * DAY {
-        return format!("{} days ago", diff / DAY);
-    }
-    if diff < 365 * DAY {
-        return format_month_day(unix);
-    }
-    format_date(unix)
-}
-
-/// Days-from-unix-epoch → (Y, M, D) via Howard Hinnant's `civil_from_days`.
-fn ymd(unix: i64) -> (i32, u32, u32) {
-    let days = unix.div_euclid(86_400);
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe as i32 + era as i32 * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
-
-fn format_month_day(unix: i64) -> String {
-    let (_, m, d) = ymd(unix);
-    const NAMES: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    format!("{} {}", NAMES[(m as usize - 1).min(11)], d)
-}
-
-fn format_date(unix: i64) -> String {
-    let (y, m, d) = ymd(unix);
-    format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
 #[cfg(test)]
@@ -943,14 +941,6 @@ mod tests {
     }
 
     #[test]
-    fn ymd_known_dates() {
-        // 2026-05-01 00:00:00 UTC = 1777_593_600
-        assert_eq!(ymd(1_777_593_600), (2026, 5, 1));
-        // 1970-01-01 epoch
-        assert_eq!(ymd(0), (1970, 1, 1));
-    }
-
-    #[test]
     fn enumeration_root_yields_entries() {
         let fs = NativeFs::new();
         let h = fs.enumerate(fs.root());
@@ -961,7 +951,6 @@ mod tests {
         for e in &h.initial {
             assert!(!e.name.is_empty());
             assert!(!e.name.contains('/'));
-            assert!(!e.display_mtime.is_empty());
         }
     }
 
@@ -1006,6 +995,33 @@ mod tests {
         let plain_meta = std::fs::symlink_metadata(&plain).unwrap();
         assert!(entry_is_hidden(".dotfile", &dot_meta));
         assert!(!entry_is_hidden("plain.txt", &plain_meta));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// macOS Finder parity: a filename whose on-disk POSIX byte is a colon
+    /// (what `ls` shows) must enumerate with a slash in `display_name` while
+    /// the raw `name` stays the colon for path operations. The reverse
+    /// (typed `/` → on-disk `:`) is covered by `paths::on_disk_leaf`.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn colon_name_enumerates_with_slash_display() {
+        let dir = std::env::temp_dir().join(format!("feraille-colon-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // The colon is the only separator a POSIX leaf can hold here; Finder
+        // shows it as `/`. (You cannot create a literal `/` leaf via POSIX.)
+        std::fs::write(dir.join("a:b"), b"x").unwrap();
+        let fs = NativeFs::new();
+        let handle = fs.enumerate(fs.id_for_path(&dir));
+        let entry = handle
+            .initial
+            .iter()
+            .find(|e| e.name == "a:b")
+            .expect("colon file enumerated by raw name");
+        assert_eq!(entry.display_name, "a/b", "on-disk ':' shows as '/'");
+        assert!(
+            !entry.name_has_hazards,
+            "a Finder-style slash name is not a deceptive-character hazard"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

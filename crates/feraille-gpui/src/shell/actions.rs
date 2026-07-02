@@ -31,6 +31,12 @@ actions!(
         /// `OpenTerminalAtContext`, which reads `context_target`.
         OpenTerminalHere,
         MoveToTrash,
+        /// Permanently delete the selected items without trashing first
+        /// (Shift+Delete [win/linux], Option+Cmd+Delete [mac, Finder's
+        /// chord]), after a counted confirmation. No undo — like a targeted
+        /// Empty Trash. On a permission denial it offers an elevated retry
+        /// (docs/features/FILE_OPS.md).
+        DeleteImmediately,
         /// Cmd+Shift+Delete — permanently delete the contents of every
         /// reachable trash, after a counted confirmation dialog. The
         /// one file operation with no undo (docs/features/FILE_OPS.md).
@@ -51,6 +57,13 @@ actions!(
         ClearFilter,
         NewFolder,
         RenameSelected,
+        /// Pattern-rule rename over the whole multi-selection —
+        /// find/replace (literal or regex with $1..$9), case
+        /// transforms, and a {name}/{ext}/{n}/{date} template, with a
+        /// live before→after preview (docs/features/BULK_RENAME.md).
+        /// With fewer than two resolved targets it degrades to the
+        /// single-rename prompt (one) or a no-op (none).
+        BulkRenameSelected,
         NewTab,
         CloseTab,
         /// Cmd+Shift+W — close the entire window regardless of tab
@@ -279,5 +292,13 @@ actions!(
         /// Header/row context menu — forget the whole visit log
         /// (clears Recents and the Ant Trail heat).
         ClearRecents,
+        // Window docking (docs/features/DOCK.md). Dock the whole window to the
+        // left or right screen edge as an auto-hiding drawer that floats over
+        // everything and reveals on an edge-slam; `Undock` restores it to a
+        // normal window. macOS-only in practice — the other platforms' shell
+        // stubs no-op, so these silently do nothing there.
+        DockLeft,
+        DockRight,
+        Undock,
     ]
 );

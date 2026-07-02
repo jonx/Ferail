@@ -20,7 +20,7 @@ use gpui_component::{
 
 use std::time::Duration;
 
-use feraille_core::video::{VideoAdjust, VideoEnhance, VideoStream};
+use feraille_core::video::{ChromaKey, VideoAdjust, VideoEnhance, VideoStream};
 
 use super::backend_native::video_backend;
 use super::loader::{self, FrameState, ViewerFrame};
@@ -77,19 +77,24 @@ const SEEK_GRAB_PX: f32 = 16.0;
 /// Per-step zoom factor for the toolbar buttons / Cmd+= / Cmd+-.
 const ZOOM_STEP: f32 = 1.25;
 /// Fullscreen: hovering within this many px of the window top reveals
-/// the hidden toolbar.
+/// the hidden toolbar; within this many px of the bottom reveals the
+/// status/seek bar.
 const CHROME_REVEAL_STRIP: f32 = 56.0;
+/// Fullscreen: once revealed, the toolbar / status bar auto-hide this
+/// long after the pointer was last near them — unless the pointer is
+/// hovering the bar itself (or a seek drag is live).
+const CHROME_AUTOHIDE: Duration = Duration::from_millis(2500);
 
 /// Extensions the built-in (AVFoundation) player reliably plays. Routed to
 /// the video path for *any* backend. Everything else stays a Quick Look
-/// poster unless the VLC backend (broad set below) is active. [mac]
+/// poster unless the mpv backend (broad set below) is active. [mac]
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov"];
 
-/// Containers VLC plays that the built-in player can't — only treated as
-/// video when the VLC backend is selected (otherwise they'd open as a
+/// Containers mpv plays that the built-in player can't — only treated as
+/// video when the mpv backend is selected (otherwise they'd open as a
 /// Quick Look poster image, e.g. a 3GP showing as a still). Not exhaustive
-/// — libvlc handles more — but covers the common cases.
-const VLC_VIDEO_EXTS: &[&str] = &[
+/// — libmpv handles more — but covers the common cases.
+const MPV_VIDEO_EXTS: &[&str] = &[
     "mkv", "webm", "avi", "flv", "wmv", "asf", "mpg", "mpeg", "mpe", "m2v", "mpv", "3gp", "3g2",
     "ts", "mts", "m2ts", "vob", "ogv", "ogm", "divx", "rm", "rmvb", "f4v", "mxf", "dv", "qt",
     "amv", "nsv", "y4m", "h264", "hevc", "av1",
@@ -138,10 +143,11 @@ fn build_video_frame(bgra: Vec<u8>, w: u32, h: u32) -> Option<Arc<RenderImage>> 
 }
 
 /// Number of draggable sliders in the adjustments popup. The colour group
-/// (brightness/contrast/color, plus hue/gamma for VLC video) and the
-/// enhancement group (denoise/sharpen, plus debanding/grain for VLC video).
-/// Upscale is buttons, not a slider.
-const SLIDER_COUNT: usize = 9;
+/// (brightness/contrast/color, plus hue/gamma for mpv video) and the
+/// enhancement group (denoise/sharpen, plus debanding/grain for mpv video).
+/// Upscale is buttons, not a slider. The two chroma-key sliders (similarity /
+/// blend) bring the mpv-video total to 11.
+const SLIDER_COUNT: usize = 11;
 /// Longest-edge cap (px) for an upscale, matching the loader's decode cap
 /// so a 4× enlargement of a large image can't blow past texture limits.
 const UPSCALE_MAX_EDGE: u32 = 8192;
@@ -155,16 +161,20 @@ enum SliderId {
     Contrast,
     /// "Color" in the UI — chroma intensity.
     Saturation,
-    /// Hue rotation — VLC video only.
+    /// Hue rotation — mpv video only.
     Hue,
-    /// Gamma — VLC video only.
+    /// Gamma — mpv video only.
     Gamma,
     Denoise,
     Sharpen,
-    /// Gradient debanding (`gradfun`) — VLC video only.
+    /// Gradient debanding (`gradfun`) — mpv video only.
     Banding,
-    /// Film grain (`grain`) — VLC video only.
+    /// Film grain (`grain`) — mpv video only.
     Grain,
+    /// Chroma-key range width (`colorkey` similarity) — mpv video only.
+    Similarity,
+    /// Chroma-key edge feather (`colorkey` blend) — mpv video only.
+    Blend,
 }
 
 impl SliderId {
@@ -180,6 +190,8 @@ impl SliderId {
             SliderId::Sharpen => 6,
             SliderId::Banding => 7,
             SliderId::Grain => 8,
+            SliderId::Similarity => 9,
+            SliderId::Blend => 10,
         }
     }
     fn label(self) -> &'static str {
@@ -193,15 +205,20 @@ impl SliderId {
             SliderId::Sharpen => "Sharpen",
             SliderId::Banding => "Debanding",
             SliderId::Grain => "Film grain",
+            SliderId::Similarity => "Similarity",
+            SliderId::Blend => "Blend",
         }
     }
     /// `(min, max)` of the value, and whether it detents to zero at centre.
     /// Colour controls are bipolar; enhancement controls are one-sided.
     fn range(self) -> (f32, f32) {
         match self {
-            SliderId::Denoise | SliderId::Sharpen | SliderId::Banding | SliderId::Grain => {
-                (0.0, 1.0)
-            }
+            SliderId::Denoise
+            | SliderId::Sharpen
+            | SliderId::Banding
+            | SliderId::Grain
+            | SliderId::Similarity
+            | SliderId::Blend => (0.0, 1.0),
             _ => (-1.0, 1.0),
         }
     }
@@ -228,7 +245,7 @@ struct ColorAdjust {
     brightness: f32,
     contrast: f32,
     saturation: f32,
-    /// Hue / gamma are VLC-video-only (the still CPU grade ignores them);
+    /// Hue / gamma are mpv-video-only (the still CPU grade ignores them);
     /// they ride here so the shared colour sliders can write them. Both
     /// `[-1, 1]`, 0 = neutral.
     hue: f32,
@@ -262,7 +279,7 @@ struct EnhanceParams {
     denoise: f32,
     sharpen: f32,
     upscale: u8,
-    /// Debanding (`gradfun`) and film grain (`grain`) are VLC-video-only
+    /// Debanding (`gradfun`) and film grain (`grain`) are mpv-video-only
     /// filters; the still CPU pipeline ignores them. Both `0..1`, 0 = off.
     banding: f32,
     grain: f32,
@@ -286,14 +303,36 @@ impl EnhanceParams {
     }
 }
 
+/// SIMD Lanczos3 resample of a packed 4-byte-per-pixel buffer (BGRA in our
+/// `RenderImage` storage order). The convolution is channel-agnostic; the
+/// only channel-aware step is the alpha premultiply, which keys off the 4th
+/// byte (`A`) and so is correct for BGRA too. `None` on a degenerate size.
+/// This is the hot path that used to be a single-threaded `imageops::resize`
+/// — the `fast_image_resize` crate does it with SSE4.1/AVX2/NEON instead.
+fn resize_lanczos3(buf: Vec<u8>, w: u32, h: u32, nw: u32, nh: u32) -> Option<Vec<u8>> {
+    use fast_image_resize::images::Image;
+    use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
+
+    let src = Image::from_vec_u8(w, h, buf, PixelType::U8x4).ok()?;
+    let mut dst = Image::new(nw, nh, PixelType::U8x4);
+    let opts = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3));
+    Resizer::new().resize(&src, &mut dst, &opts).ok()?;
+    Some(dst.into_vec())
+}
+
 /// The full off-thread still pipeline: colour grade → denoise → upscale →
 /// sharpen → rotate, over a packed BGRA buffer. Returns the final
 /// `(width, height, BGRA bytes)`. Heavy (convolutions + resampling), so it
 /// only ever runs on the background executor — never the render path.
 ///
-/// `image`'s blur / resize / unsharpen act per channel (or purely
-/// spatially), so the BGRA byte order is irrelevant and round-trips; only
-/// the colour grade and the eventual display care about channel identity.
+/// `preview` skips the one genuinely expensive step — the multi-megapixel
+/// upscale resample — so a live slider drag previews the colour/denoise/
+/// sharpen change instantly; the enlargement (invisible at fit-to-window)
+/// is filled in by a single full-quality pass once the drag releases.
+///
+/// `image`'s blur / unsharpen act per channel (or purely spatially) and the
+/// resample premultiplies on the alpha byte, so the BGRA order is irrelevant
+/// and round-trips; only the colour grade and the display care about identity.
 fn process_still_pixels(
     bgra: &[u8],
     w: u32,
@@ -301,6 +340,7 @@ fn process_still_pixels(
     rot: u8,
     grade: ColorAdjust,
     enh: EnhanceParams,
+    preview: bool,
 ) -> Option<(u32, u32, Vec<u8>)> {
     use image::imageops;
 
@@ -314,16 +354,22 @@ fn process_still_pixels(
         // 0..1 → a gentle 0..3 px Gaussian radius.
         img = imageops::fast_blur(&img, enh.denoise * 3.0);
     }
-    if enh.upscale > 1 {
+    if enh.upscale > 1 && !preview {
         let f = enh.upscale as u32;
-        let (mut nw, mut nh) = (w.saturating_mul(f), h.saturating_mul(f));
+        let (cw, ch) = img.dimensions();
+        let (mut nw, mut nh) = (cw.saturating_mul(f), ch.saturating_mul(f));
         let longest = nw.max(nh);
         if longest > UPSCALE_MAX_EDGE {
             let s = UPSCALE_MAX_EDGE as f64 / longest as f64;
             nw = ((nw as f64 * s).round() as u32).max(1);
             nh = ((nh as f64 * s).round() as u32).max(1);
         }
-        img = imageops::resize(&img, nw, nh, imageops::FilterType::Lanczos3);
+        // Only ever enlarge — never let the cap shrink an already-huge
+        // original below its native size.
+        if nw > cw || nh > ch {
+            let out = resize_lanczos3(img.into_raw(), cw, ch, nw, nh)?;
+            img = image::RgbaImage::from_raw(nw, nh, out)?;
+        }
     }
     if enh.sharpen > 0.0 {
         // Sharpen *after* any upscale so it crisps the enlarged result.
@@ -337,6 +383,68 @@ fn process_still_pixels(
         _ => img,
     };
     Some((img.width(), img.height(), img.into_raw()))
+}
+
+/// Analyse a packed BGRA buffer and return a colour grade that auto-levels
+/// it: a percentile-clipped luma histogram stretch (folded into brightness +
+/// contrast against [`grade_bgra`]'s curve) plus a gentle saturation lift
+/// that's skipped for a near-monochrome image so a black-and-white photo
+/// isn't tinted. Hue/gamma stay neutral (the still pipeline ignores them).
+/// Pure and cheap-but-O(pixels), so the caller runs it off the UI thread.
+fn compute_auto_grade(bgra: &[u8]) -> ColorAdjust {
+    let n = bgra.len() / 4;
+    if n == 0 {
+        return ColorAdjust::default();
+    }
+    let mut hist = [0u32; 256];
+    let mut chroma_sum: u64 = 0;
+    for px in bgra.chunks_exact(4) {
+        // Stored BGRA: px[0]=B, px[1]=G, px[2]=R.
+        let luma = (0.299 * px[2] as f32 + 0.587 * px[1] as f32 + 0.114 * px[0] as f32) as usize;
+        hist[luma.min(255)] += 1;
+        let mx = px[0].max(px[1]).max(px[2]);
+        let mn = px[0].min(px[1]).min(px[2]);
+        chroma_sum += (mx - mn) as u64;
+    }
+    // Clip 0.5% off each tail so a few outliers don't anchor the range.
+    let clip = (n as f32 * 0.005) as u32;
+    let (mut lo, mut hi, mut acc) = (0usize, 255usize, 0u32);
+    for (i, &count) in hist.iter().enumerate() {
+        acc += count;
+        if acc > clip {
+            lo = i;
+            break;
+        }
+    }
+    acc = 0;
+    for (i, &count) in hist.iter().enumerate().rev() {
+        acc += count;
+        if acc > clip {
+            hi = i;
+            break;
+        }
+    }
+
+    let mut adj = ColorAdjust::default();
+    if hi > lo + 1 {
+        // Factor that maps [lo, hi] → [0, 255], capped so we only ever
+        // stretch (≥1) and never blow out a flat low-key image.
+        let cf = (255.0 / (hi - lo) as f32).clamp(1.0, 2.5);
+        // Invert grade_bgra's contrast curve to recover the slider value,
+        // then re-derive the *actual* factor for the clamped value so the
+        // shadow point still lands on black.
+        let c = 255.0 * 259.0 * (cf - 1.0) / (259.0 + 255.0 * cf);
+        adj.contrast = (c / 128.0).clamp(-1.0, 1.0);
+        let c_act = adj.contrast * 128.0;
+        let cf_act = (259.0 * (c_act + 255.0)) / (255.0 * (259.0 - c_act));
+        let b = cf_act * (128.0 - lo as f32) - 128.0;
+        adj.brightness = (b / 255.0).clamp(-1.0, 1.0);
+    }
+    // Gentle saturation lift, but leave a near-monochrome image alone.
+    if chroma_sum as f32 / (n as f32 * 255.0) > 0.04 {
+        adj.saturation = 0.15;
+    }
+    adj
 }
 
 /// Apply a [`ColorAdjust`] to a bitmap, returning a fresh `RenderImage`.
@@ -401,21 +509,21 @@ enum SeekTarget {
 
 /// Read the persisted video-provider choice once at viewer construction —
 /// settings I/O must never touch the render path. `Some(path)` selects the
-/// VLC provider (effective only in a `vlc`-feature build); `None` keeps the
+/// mpv provider (effective only in an `mpv`-feature build); `None` keeps the
 /// built-in player.
-fn resolve_vlc_pref() -> Option<PathBuf> {
-    // The VLC provider only exists in a `vlc`-feature build. Without it the
+fn resolve_mpv_pref() -> Option<PathBuf> {
+    // The mpv provider only exists in an `mpv`-feature build. Without it the
     // saved preference is unhonourable, so refuse it here — otherwise the
-    // broad VLC container set (MKV/AVI/3GP…) would be treated as displayable
+    // broad mpv container set (MKV/AVI/3GP…) would be treated as displayable
     // video and mis-routed to the native player, which can't decode it.
-    if !cfg!(feature = "vlc") {
+    if !cfg!(feature = "mpv") {
         return None;
     }
     let st = crate::app_state::load();
-    (st.video_backend.as_deref() == Some("vlc")).then(|| {
+    (st.video_backend.as_deref() == Some("mpv")).then(|| {
         PathBuf::from(
-            st.vlc_app_path
-                .unwrap_or_else(|| super::backend_native::default_vlc_path().to_string()),
+            st.mpv_path
+                .unwrap_or_else(|| super::backend_native::default_mpv_path().to_string()),
         )
     })
 }
@@ -445,15 +553,33 @@ pub struct ViewerWindow {
     stage_origin_y: f32,
     /// Slideshow state (docs/features/VIEWER.md §playback).
     playback: Playback,
-    /// In fullscreen the chrome hides; hovering the top strip brings
-    /// the toolbar back. Pure mouse-position state — no timers.
+    /// In fullscreen the chrome hides; hovering the top strip reveals the
+    /// toolbar, then it auto-hides after `CHROME_AUTOHIDE` unless the
+    /// pointer is over it (see `over_chrome`).
     chrome_hover: bool,
+    /// As `chrome_hover`, for the bottom status/seek bar revealed by the
+    /// bottom strip.
+    status_hover: bool,
+    /// Pointer is currently over the revealed toolbar — pins it open so
+    /// the auto-hide tick leaves it alone.
+    over_chrome: bool,
+    /// Pointer is currently over the revealed status/seek bar.
+    over_status: bool,
+    /// Was the pointer within the top / bottom reveal strip on the last
+    /// move? Reveal fires on the rising edge only, so a bar that auto-hid
+    /// while the pointer lingers in the strip doesn't blink straight back.
+    near_top_prev: bool,
+    near_bottom_prev: bool,
+    /// Epoch guarding the auto-hide one-shot, mirroring the slideshow
+    /// timer's idiom: a newer countdown bumps this, making older ticks
+    /// inert.
+    autohide_epoch: u64,
     /// Title last pushed to the platform window, so render-time title
     /// sync only crosses into AppKit when the text actually changed.
     last_title: String,
     /// Live windowless video player: (the open stream, the entry path it
     /// plays). `None` when the current entry isn't a video. The concrete
-    /// player is chosen behind the [`VideoBackend`] seam (native or VLC);
+    /// player is chosen behind the [`VideoBackend`] seam (native or mpv);
     /// frames are pulled out and drawn through the same stage path as
     /// stills, so the video is a real gpui element (docs/features/VIEWER.md).
     video_overlay: Option<(Box<dyn VideoStream>, PathBuf)>,
@@ -461,32 +587,20 @@ pub struct ViewerWindow {
     /// once it no longer matches (a newer clip opened, or playback ended).
     /// Replaces the old player-handle-as-key now that the handle is boxed.
     video_epoch: u64,
-    /// `Some(VLC.app path)` when the user selected the VLC provider in
+    /// `Some(mpv.app path)` when the user selected the mpv provider in
     /// Settings → Plugins. Resolved once at construction (no settings I/O
     /// on the render path); `None` keeps the native player.
-    vlc_pref: Option<PathBuf>,
+    mpv_pref: Option<PathBuf>,
     /// Whether the active video backend applied the colour grade itself
-    /// (VLC does, natively on the GPU/decoder). When true the viewer skips
+    /// (mpv does, natively on the GPU/decoder). When true the viewer skips
     /// its per-frame CPU grade for video — the frames already carry it.
-    /// Doubles as "the current video stream is VLC" (only VLC grades).
+    /// Doubles as "the current video stream grades natively" (mpv does).
     video_adjust_native: bool,
-    /// The denoise/sharpen filters the current VLC stream was opened with.
-    /// Compared against the live popup values to decide when a re-open is
-    /// needed (libvlc bakes these in at open; they can't change live).
+    /// The denoise/sharpen/deband/grain filters last pushed to the current
+    /// stream. Compared against the live popup values so a slider release only
+    /// re-pushes the filter chain when it actually changed (mpv applies it
+    /// live — no re-open).
     video_enhance_applied: VideoEnhance,
-    /// Set during a seamless filter re-open: the new stream is opened
-    /// *playing* (even if the user had it paused) so the new filter chain
-    /// decodes a frame immediately; the poll re-pauses once that first
-    /// frame lands, clearing this. Avoids the black flash + the old
-    /// "filters only show while playing" bug.
-    video_repause: bool,
-    /// A deferred seek for a seamless re-open: `Some(seconds)` until the
-    /// re-opened stream produces its first frame (proof the input is live —
-    /// a seek issued before then is silently dropped by libvlc). The poll
-    /// then seeks, optionally re-pauses, and *discards* that pre-seek frame
-    /// so the previous frame stays on screen until the correctly-positioned,
-    /// freshly-filtered one lands — no flash, no jump to the clip start.
-    video_pending_seek: Option<f64>,
     /// The latest decoded video frame (unrotated), uploaded as a
     /// `RenderImage` and drawn like any image. `None` until the first
     /// frame lands — the Quick Look poster stands in until then.
@@ -516,6 +630,15 @@ pub struct ViewerWindow {
     /// Keep the viewer window above other windows (the stay-on-top
     /// checkbox). Applied to the native window level.
     stay_on_top: bool,
+    /// Transparent-window mode: the window background + stage canvas go fully
+    /// see-through so a chroma-keyed video stacks over other viewer windows /
+    /// the desktop, composited by the OS window server on the GPU
+    /// (docs/features/VIDEO-MPV.md).
+    transparent: bool,
+    /// Whether this viewer window is the active (focused) one. Background
+    /// windows mute their video so stacked transparent viewers don't all play
+    /// audio at once — only the focused window is audible.
+    window_active: bool,
     /// Current video `(position, duration)` in seconds, refreshed by a
     /// poll while a video overlay is live. Drives the seek bar + time.
     video_position: (f64, f64),
@@ -558,6 +681,25 @@ pub struct ViewerWindow {
     /// Whether the adjustments popup is open (toggled by `E`, a right-click
     /// on the stage, or the toolbar button).
     adjust_panel_open: bool,
+    /// Transparent-colour (chroma-key) state for mpv video — keyed pixels go
+    /// transparent so the stage background (or, later, a lower layer) shows
+    /// through. Window-level and view-only, carried across navigation like
+    /// the grade. `chroma_color` is RGB.
+    chroma_on: bool,
+    chroma_color: [u8; 3],
+    chroma_similarity: f32,
+    chroma_blend: f32,
+    /// While true, the next stage click samples a pixel as the key colour
+    /// (the swatch arms it); reads from `video_frame_raw`.
+    eyedrop_armed: bool,
+    /// The latest decoded frame's raw BGRA, kept only while keying or arming
+    /// the eyedropper, so a stage click can sample the key colour without
+    /// reading back the GPU `RenderImage`.
+    video_frame_raw: Option<(u32, u32, Vec<u8>)>,
+    /// Screenshot-only: force the adjustments popup to render its full
+    /// mpv-video control set (and skip opening a real stream) so the headless
+    /// harness can capture the layout without a live frame-pull poll.
+    sim_video_panel: bool,
     /// Which slider the in-flight pointer drag is moving (`None` idle).
     slider_drag: Option<SliderId>,
     /// Track bounds for each popup slider, captured each render so a cursor
@@ -567,7 +709,10 @@ pub struct ViewerWindow {
     /// produced off-thread (grade + denoise + upscale + sharpen + rotate)
     /// since enhancement is far too heavy for the render path. While a
     /// non-matching result is pending the plain rotated original stands in.
-    processed: Option<(usize, u8, ColorAdjust, EnhanceParams, Arc<RenderImage>)>,
+    /// The `bool` is `preview`: a fast drag-time pass that skipped the heavy
+    /// upscale — it satisfies further drag frames but is recomputed at full
+    /// size once the drag releases.
+    processed: Option<(usize, u8, ColorAdjust, EnhanceParams, bool, Arc<RenderImage>)>,
     /// Monotonic token: a background process result is only accepted if its
     /// token still matches, so superseded runs (params changed mid-flight)
     /// are dropped instead of flashing a stale grade.
@@ -600,6 +745,18 @@ impl ViewerWindow {
         // repositions to the new stage.
         cx.observe_window_bounds(window, |_, _, cx| cx.notify())
             .detach();
+        // Mute the video while this window isn't focused, so stacked
+        // transparent viewer windows don't all play audio at once — only the
+        // active one is audible. `set_muted` no-ops on the built-in player.
+        cx.observe_window_activation(window, |this, window, cx| {
+            let active = window.is_window_active();
+            this.window_active = active;
+            if let Some((stream, _)) = &mut this.video_overlay {
+                stream.set_muted(!active);
+            }
+            cx.notify();
+        })
+        .detach();
         let interval = crate::app_state::load()
             .viewer_slideshow_interval
             .unwrap_or(super::playback::DEFAULT_INTERVAL_SECS);
@@ -625,14 +782,18 @@ impl ViewerWindow {
             stage_origin_y: TOOLBAR_H,
             playback: Playback::new(interval),
             chrome_hover: false,
+            status_hover: false,
+            over_chrome: false,
+            over_status: false,
+            near_top_prev: false,
+            near_bottom_prev: false,
+            autohide_epoch: 0,
             last_title: String::new(),
             video_overlay: None,
             video_epoch: 0,
-            vlc_pref: resolve_vlc_pref(),
+            mpv_pref: resolve_mpv_pref(),
             video_adjust_native: false,
             video_enhance_applied: VideoEnhance::default(),
-            video_repause: false,
-            video_pending_seek: None,
             video_frame_image: None,
             video_frame_seq: 0,
             video_rotated: None,
@@ -641,6 +802,8 @@ impl ViewerWindow {
             video_paused: false,
             video_loop: false,
             stay_on_top: false,
+            transparent: false,
+            window_active: true,
             video_position: (0.0, 0.0),
             cue_in: 0.0,
             cue_out: 1.0,
@@ -653,6 +816,13 @@ impl ViewerWindow {
             adjust: ColorAdjust::default(),
             enhance: EnhanceParams::default(),
             adjust_panel_open: false,
+            chroma_on: false,
+            chroma_color: [0, 255, 0],
+            chroma_similarity: 0.30,
+            chroma_blend: 0.05,
+            eyedrop_armed: false,
+            video_frame_raw: None,
+            sim_video_panel: false,
             slider_drag: None,
             slider_bounds: [Bounds::default(); SLIDER_COUNT],
             processed: None,
@@ -789,8 +959,8 @@ impl ViewerWindow {
     // -- video overlay [mac] ---------------------------------------
 
     /// Whether `path` should open as video for the *active* backend: the
-    /// built-in formats always, plus the broad VLC container set when the
-    /// VLC backend is selected (so a 3GP/MKV/AVI plays instead of showing a
+    /// built-in formats always, plus the broad mpv container set when the
+    /// mpv backend is selected (so a 3GP/MKV/AVI plays instead of showing a
     /// Quick Look poster).
     fn is_video_path(&self, path: &std::path::Path) -> bool {
         let Some(ext) = path
@@ -801,7 +971,7 @@ impl ViewerWindow {
             return false;
         };
         VIDEO_EXTS.contains(&ext.as_str())
-            || (self.vlc_pref.is_some() && VLC_VIDEO_EXTS.contains(&ext.as_str()))
+            || (self.mpv_pref.is_some() && MPV_VIDEO_EXTS.contains(&ext.as_str()))
     }
 
     /// True when the *current* entry plays as video (slideshow advance is
@@ -823,6 +993,9 @@ impl ViewerWindow {
     /// frames are drawn as a gpui image in `stage_area`, so zoom / pan /
     /// fit / rotation are all the shared still-image path.
     fn sync_video(&mut self, cx: &mut Context<Self>) {
+        if self.sim_video_panel {
+            return; // screenshot fixture: no live stream
+        }
         let want = self
             .current()
             .map(|e| e.path.clone())
@@ -838,13 +1011,13 @@ impl ViewerWindow {
                 self.cue_out = 1.0;
                 self.seek_drag = None;
                 self.video_position = (0.0, 0.0);
-                self.open_video_stream(p.clone(), None, cx);
+                self.open_video_stream(p.clone(), cx);
             }
         }
     }
 
     /// The current enhancement filters (denoise / sharpen / debanding /
-    /// film grain) a VLC stream would be opened with. Upscale is still-only,
+    /// film grain) a mpv stream would be opened with. Upscale is still-only,
     /// so it's excluded.
     fn video_enhance(&self) -> VideoEnhance {
         VideoEnhance {
@@ -856,83 +1029,64 @@ impl ViewerWindow {
     }
 
     /// Open a video stream for `path` via the active backend and start the
-    /// frame-pull loop. `restore` is `Some(position_secs)` when re-opening
-    /// in place (e.g. after an enhancement-filter change) — the clip seeks
-    /// back there and keeps its paused state; `None` is a fresh open that
-    /// auto-plays. The VLC backend bakes the denoise/sharpen filters in at
-    /// open (they can't be changed live).
-    fn open_video_stream(&mut self, path: PathBuf, restore: Option<f64>, cx: &mut Context<Self>) {
+    /// frame-pull loop. A fresh open auto-plays; the current enhancement
+    /// filters are baked in at open and then changed live as the user drags
+    /// the sliders (mpv swaps its filter chain at runtime — no re-open).
+    fn open_video_stream(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let tx = self.video_ended_tx.clone();
         let ended_path = path.clone();
         let enhance = self.video_enhance();
-        let stream = video_backend(self.vlc_pref.as_deref()).open(
+        let stream = video_backend(self.mpv_pref.as_deref()).open(
             &path,
             Box::new(move || {
                 let _ = tx.try_send(ended_path.clone());
             }),
             enhance,
         );
-        if let Some(mut stream) = stream {
+        if let Some(stream) = stream {
             self.video_epoch = self.video_epoch.wrapping_add(1);
             let epoch = self.video_epoch;
-            match restore {
-                Some(pos) => {
-                    // Seamless re-open in place (a filter change). Play even
-                    // if the user had it paused, but DON'T seek yet: a seek
-                    // before the input is live is silently dropped (verified),
-                    // which is what made the old code flash the clip start and
-                    // play briefly. Defer the seek to the poll, which fires it
-                    // on the first frame (input now live) and discards that
-                    // pre-seek frame so the previous one stays on screen until
-                    // the correctly-positioned, freshly-filtered frame lands.
-                    stream.set_paused(false);
-                    self.video_pending_seek = Some(pos);
-                    self.video_repause = self.video_paused;
-                    self.video_position.0 = pos;
-                }
-                None => {
-                    // Fresh open auto-plays.
-                    self.video_paused = false;
-                    self.video_dims = (0.0, 0.0);
-                }
-            }
+            // Fresh open auto-plays.
+            self.video_paused = false;
+            self.video_dims = (0.0, 0.0);
             self.video_overlay = Some((stream, path));
             self.video_enhance_applied = enhance;
-            // Push any live grade into the backend (VLC applies it natively;
-            // native player reports unsupported).
+            // A freshly opened stream is unmuted; mute it if this window isn't
+            // the focused one (the activation observer handles later changes).
+            if !self.window_active {
+                if let Some((stream, _)) = &mut self.video_overlay {
+                    stream.set_muted(true);
+                }
+            }
+            // Push any live grade into the backend (mpv applies it natively;
+            // the native player reports unsupported).
             self.apply_video_adjust();
             self.start_video_poll(epoch, cx);
         }
     }
 
-    /// Re-open the current VLC video so a changed denoise/sharpen filter
-    /// takes effect (libvlc can't swap the filter chain live), preserving
-    /// the playhead and paused state. No-op unless a VLC video is current
-    /// and its filters actually changed.
+    /// Push a changed denoise/sharpen/deband/grain filter set to the live
+    /// stream. mpv swaps its filter chain at runtime, so this is a cheap live
+    /// update — no re-open, no playhead/pause dance. No-op unless a
+    /// native-grading video (mpv) is current and its filters actually changed.
     fn commit_video_enhance(&mut self, cx: &mut Context<Self>) {
         if !self.video_adjust_native || !self.current_is_video() {
-            return; // not a VLC video
+            return; // not an mpv video
         }
-        if self.video_enhance() == self.video_enhance_applied {
+        let enhance = self.video_enhance();
+        if enhance == self.video_enhance_applied {
             return;
         }
-        let Some((_, path)) = &self.video_overlay else {
-            return;
-        };
-        let path = path.clone();
-        let pos = self.video_position.0;
-        // Seamless swap: drop ONLY the old stream (its `Drop` releases the
-        // libvlc instance). Keep the on-screen frame, the rotated cache and
-        // the known dims so nothing flashes — `open_video_stream` plays the
-        // new instance to its first frame, which then supersedes the old one.
-        drop(self.video_overlay.take());
-        self.open_video_stream(path, Some(pos), cx);
-        cx.notify();
+        if let Some((stream, _)) = &mut self.video_overlay {
+            stream.set_enhance(enhance);
+            self.video_enhance_applied = enhance;
+            cx.notify();
+        }
     }
 
     fn teardown_video(&mut self) {
         // Dropping the stream tears the underlying player down (the
-        // backend's `Drop` does the native remove / libvlc release).
+        // backend's `Drop` does the native remove / mpv teardown).
         drop(self.video_overlay.take());
         // Retire the on-screen frame + its rotated cache so their atlas
         // textures are evicted on the next render.
@@ -943,8 +1097,6 @@ impl ViewerWindow {
             self.video_frames_to_drop.push(img);
         }
         self.video_dims = (0.0, 0.0);
-        self.video_repause = false;
-        self.video_pending_seek = None;
     }
 
     /// Toggle play/pause of the current video (our gpui control stands in
@@ -990,6 +1142,11 @@ impl ViewerWindow {
     /// Stepping pauses playback.
     fn step_video(&mut self, frames: i64, cx: &mut Context<Self>) {
         if let Some((stream, _)) = &mut self.video_overlay {
+            // Stepping only behaves as a frame step on a *paused* player
+            // (AVFoundation's `stepByCount:` needs rate 0; mpv's `frame-step`
+            // pauses anyway). A still-playing clip would otherwise swallow the
+            // step, which read as "Left/Right does nothing". Pause first.
+            stream.set_paused(true);
             stream.step(frames);
             self.video_paused = true;
             cx.notify();
@@ -997,7 +1154,7 @@ impl ViewerWindow {
     }
 
     /// Hand the current colour grade to the video backend. A backend that
-    /// applies it natively (VLC) returns true, and the viewer then skips
+    /// applies it natively (mpv) returns true, and the viewer then skips
     /// its per-frame CPU grade for video; the native player returns false,
     /// leaving the CPU path in charge. No-op when no video is open.
     fn apply_video_adjust(&mut self) {
@@ -1012,6 +1169,52 @@ impl ViewerWindow {
             Some((stream, _)) => stream.set_adjust(a),
             None => false,
         };
+    }
+
+    /// The active transparent-colour key, or `None` when the toggle is off.
+    fn chroma_key(&self) -> Option<ChromaKey> {
+        self.chroma_on.then_some(ChromaKey {
+            color: self.chroma_color,
+            similarity: self.chroma_similarity,
+            blend: self.chroma_blend,
+        })
+    }
+
+    /// Push the transparent-colour key to the live video stream. mpv keys it
+    /// in its filter chain so the keyed pixels arrive with alpha = 0 (the
+    /// stage background, or a lower layer, shows through); the native player
+    /// reports it unsupported. No-op when no video is open.
+    fn apply_video_chroma(&mut self) {
+        let key = self.chroma_key();
+        if let Some((stream, _)) = &mut self.video_overlay {
+            stream.set_chroma_key(key);
+        }
+    }
+
+    /// Eyedropper: sample the key colour from the live frame at a stage-local
+    /// cursor, turn keying on, and disarm. Reads the kept raw BGRA frame
+    /// (`video_frame_raw`) through the same stage layout the frame is drawn
+    /// with. Rotation isn't accounted for (keying a rotated video is rare —
+    /// a follow-up).
+    fn pick_chroma_at(&mut self, cursor: (f32, f32), cx: &mut Context<Self>) {
+        self.eyedrop_armed = false;
+        let Some((w, h, bytes)) = self.video_frame_raw.clone() else {
+            cx.notify();
+            return;
+        };
+        let img = self.to_logical((w as f32, h as f32));
+        let r = stage::layout(img, self.last_stage_size, self.stage);
+        let fx = ((cursor.0 - r.x) / r.w).clamp(0.0, 1.0);
+        let fy = ((cursor.1 - r.y) / r.h).clamp(0.0, 1.0);
+        let px = ((fx * w as f32) as u32).min(w.saturating_sub(1));
+        let py = ((fy * h as f32) as u32).min(h.saturating_sub(1));
+        let i = (py as usize * w as usize + px as usize) * 4;
+        if i + 2 < bytes.len() {
+            self.chroma_color = [bytes[i + 2], bytes[i + 1], bytes[i]]; // BGRA → RGB
+            self.chroma_on = true;
+            self.apply_video_chroma();
+        }
+        cx.notify();
     }
 
     /// Drive the live video at ~display rate while player `id` is the
@@ -1060,38 +1263,23 @@ impl ViewerWindow {
         if dims.0 > 0.0 && dims.1 > 0.0 {
             self.video_dims = dims;
         }
-        if let Some(pending) = self.video_pending_seek {
-            // Seamless re-open in progress. The reported time is the pre-seek
-            // ~0, so keep the bar at the position we're seeking to.
-            self.video_position.0 = pending;
-            self.video_position.1 = pos.1;
-            if frame.is_some() {
-                // First frame from the new instance = input is now live, so
-                // the seek will take. Fire it (+ re-pause if the user had it
-                // paused) and DROP this pre-seek frame — the previous frame
-                // stays on screen until the correctly-positioned, freshly-
-                // filtered one lands, so there's no flash or jump to start.
-                if let Some((stream, _)) = &mut self.video_overlay {
-                    stream.seek(pending);
-                    if self.video_repause {
-                        stream.set_paused(true);
-                    }
-                }
-                self.video_pending_seek = None;
-                if self.video_repause {
-                    self.video_repause = false;
-                    self.video_paused = true;
-                }
+        self.video_position = pos;
+        if let Some((w, h, bytes)) = frame {
+            // Keep the raw BGRA for the eyedropper while the adjustments popup
+            // is open on an mpv video (or while keying/arming) — so the last
+            // frame is held even after a pause (videos auto-play on open, so a
+            // frame is captured during playback before the user pauses to
+            // pick). Cheap no-op otherwise.
+            if self.video_adjust_native
+                && (self.adjust_panel_open || self.chroma_on || self.eyedrop_armed)
+            {
+                self.video_frame_raw = Some((w, h, bytes.clone()));
             }
-        } else {
-            self.video_position = pos;
-            if let Some((w, h, bytes)) = frame {
-                if let Some(img) = build_video_frame(bytes, w, h) {
-                    if let Some(old) = self.video_frame_image.replace(img) {
-                        self.video_frames_to_drop.push(old);
-                    }
-                    self.video_frame_seq = self.video_frame_seq.wrapping_add(1);
+            if let Some(img) = build_video_frame(bytes, w, h) {
+                if let Some(old) = self.video_frame_image.replace(img) {
+                    self.video_frames_to_drop.push(old);
                 }
+                self.video_frame_seq = self.video_frame_seq.wrapping_add(1);
             }
         }
         // Enforce the Out cue. A full-length Out (1.0) is the clip's
@@ -1318,6 +1506,12 @@ impl ViewerWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Eyedropper: while armed, a stage click samples the key colour from
+        // the live frame instead of dismissing the popup or starting a pan.
+        if self.eyedrop_armed {
+            self.pick_chroma_at(self.stage_local(e.position), cx);
+            return;
+        }
         // A click on the stage (i.e. outside the popup, which swallows its
         // own clicks) dismisses the adjustments popup.
         if self.adjust_panel_open {
@@ -1339,11 +1533,33 @@ impl ViewerWindow {
         cx: &mut Context<Self>,
     ) {
         // Fullscreen chrome reveal: hovering the top strip shows the
-        // toolbar. Pure position state — only notify on transitions.
+        // toolbar, the bottom strip the status/seek bar. Reveal fires on
+        // the rising edge of entering a strip (so a bar that auto-hid while
+        // the pointer lingers there doesn't blink straight back); each
+        // reveal arms the auto-hide countdown.
         if window.is_fullscreen() {
-            let want = e.position.y.as_f32() < CHROME_REVEAL_STRIP;
-            if want != self.chrome_hover {
-                self.chrome_hover = want;
+            let y = e.position.y.as_f32();
+            let h = window.viewport_size().height.as_f32();
+            let near_top = y < CHROME_REVEAL_STRIP;
+            let near_bottom = y > h - CHROME_REVEAL_STRIP;
+            let mut newly_shown = false;
+            let mut arm = false;
+            if near_top && !self.near_top_prev {
+                newly_shown |= !self.chrome_hover;
+                self.chrome_hover = true;
+                arm = true;
+            }
+            if near_bottom && !self.near_bottom_prev {
+                newly_shown |= !self.status_hover;
+                self.status_hover = true;
+                arm = true;
+            }
+            self.near_top_prev = near_top;
+            self.near_bottom_prev = near_bottom;
+            if arm {
+                self.arm_autohide(cx);
+            }
+            if newly_shown {
                 cx.notify();
             }
         }
@@ -1363,6 +1579,42 @@ impl ViewerWindow {
 
     fn end_drag(&mut self) {
         self.drag_last = None;
+    }
+
+    /// Fullscreen: (re)start the countdown that hides the revealed
+    /// toolbar / status bar. Epoch-guarded like the slideshow timer
+    /// (`arm_timer`), so an earlier countdown goes inert when a newer one
+    /// is armed — no task handles to track.
+    fn arm_autohide(&mut self, cx: &mut Context<Self>) {
+        let epoch = self.autohide_epoch.wrapping_add(1);
+        self.autohide_epoch = epoch;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(CHROME_AUTOHIDE).await;
+            let Some(this) = this.upgrade() else { return };
+            this.update(cx, |this, cx| this.autohide_fire(epoch, cx));
+        })
+        .detach();
+    }
+
+    /// One-shot auto-hide tick: hide whichever revealed bar the pointer
+    /// isn't over (a live seek drag also keeps the status bar up). Stale
+    /// ticks — a newer countdown armed since — are inert.
+    fn autohide_fire(&mut self, epoch: u64, cx: &mut Context<Self>) {
+        if self.autohide_epoch != epoch {
+            return;
+        }
+        let mut changed = false;
+        if self.chrome_hover && !self.over_chrome {
+            self.chrome_hover = false;
+            changed = true;
+        }
+        if self.status_hover && !self.over_status && self.seek_drag.is_none() {
+            self.status_hover = false;
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
     }
 
     /// Double-click: fit ↔ 1:1. Going to 1:1 centers the viewport on
@@ -1541,6 +1793,17 @@ impl ViewerWindow {
         self.adjust_panel_open = true;
     }
 
+    /// Screenshot-only fixture: open the adjustments popup with the full
+    /// mpv-video control set (colour + enhance + transparent-colour) visible,
+    /// without opening a live video stream. Lets the headless harness capture
+    /// the panel layout (the real video poll would never let it settle).
+    pub fn sim_full_adjust_panel(&mut self) {
+        self.sim_video_panel = true;
+        self.video_adjust_native = true;
+        self.chroma_on = true;
+        self.adjust_panel_open = true;
+    }
+
     /// Current value of a popup slider (reads `adjust` or `enhance`).
     fn slider_value(&self, id: SliderId) -> f32 {
         match id {
@@ -1553,6 +1816,8 @@ impl ViewerWindow {
             SliderId::Sharpen => self.enhance.sharpen,
             SliderId::Banding => self.enhance.banding,
             SliderId::Grain => self.enhance.grain,
+            SliderId::Similarity => self.chroma_similarity,
+            SliderId::Blend => self.chroma_blend,
         }
     }
 
@@ -1588,6 +1853,8 @@ impl ViewerWindow {
             SliderId::Sharpen => self.enhance.sharpen = v,
             SliderId::Banding => self.enhance.banding = v,
             SliderId::Grain => self.enhance.grain = v,
+            SliderId::Similarity => self.chroma_similarity = v,
+            SliderId::Blend => self.chroma_blend = v,
         }
         self.after_adjust_change(cx);
     }
@@ -1605,6 +1872,58 @@ impl ViewerWindow {
         self.after_adjust_change(cx);
     }
 
+    /// "Magic" auto-enhance: analyse the current item's pixels off-thread and
+    /// set brightness/contrast/saturation to an auto-levelled grade (see
+    /// [`compute_auto_grade`]). Works on the decoded still bytes, or — for a
+    /// video — the last raw frame pulled from the player, in which case the
+    /// computed grade is pushed live through [`Self::after_adjust_change`].
+    /// Leaves enhancement (denoise/sharpen/upscale) untouched. No-op if no
+    /// source pixels are available yet.
+    fn auto_enhance(&mut self, cx: &mut Context<Self>) {
+        // Stills: hand the worker the Arc'd RenderImage and read the
+        // pixels there (a to_vec here was a huge UI-thread memcpy).
+        // Videos: the raw frame is already an owned buffer clone.
+        enum AutoSrc {
+            Video(Vec<u8>),
+            Still(Arc<RenderImage>),
+        }
+        let src = if self.current_is_video() {
+            self.video_frame_raw
+                .clone()
+                .map(|(_, _, bytes)| AutoSrc::Video(bytes))
+        } else {
+            let path = self.current().map(|e| e.path.clone());
+            path.and_then(|p| match self.cache.get(&p) {
+                Some(FrameState::Loaded(f)) => Some(AutoSrc::Still(f.image.clone())),
+                _ => None,
+            })
+        };
+        let Some(src) = src else { return };
+        let weak = cx.weak_entity();
+        cx.spawn(async move |_this, cx| {
+            let grade = cx
+                .background_executor()
+                .spawn(async move {
+                    match &src {
+                        AutoSrc::Video(bytes) => compute_auto_grade(bytes),
+                        AutoSrc::Still(image) => {
+                            compute_auto_grade(image.as_bytes(0).unwrap_or(&[]))
+                        }
+                    }
+                })
+                .await;
+            let Some(this) = weak.upgrade() else { return };
+            this.update(cx, |this, cx| {
+                // Only the still-applicable colour fields; hue/gamma stay put.
+                this.adjust.brightness = grade.brightness;
+                this.adjust.contrast = grade.contrast;
+                this.adjust.saturation = grade.saturation;
+                this.after_adjust_change(cx);
+            });
+        })
+        .detach();
+    }
+
     /// Shared tail for any grade/enhance change: drop the now-stale video
     /// grade (stills go through `processed`), kick off a fresh background
     /// process, and repaint.
@@ -1612,10 +1931,13 @@ impl ViewerWindow {
         if let Some((.., old)) = self.video_adjusted.take() {
             self.video_frames_to_drop.push(old);
         }
-        // A live video gets the colour grade pushed to its backend (VLC
+        // A live video gets the colour grade pushed to its backend (mpv
         // applies it natively; native player keeps the CPU path).
         if self.current_is_video() {
             self.apply_video_adjust();
+            if self.chroma_on {
+                self.apply_video_chroma();
+            }
         }
         self.schedule_process(cx);
         cx.notify();
@@ -1648,10 +1970,17 @@ impl ViewerWindow {
         };
         let rot = self.current_rotation();
         let (idx, grade, enh) = (self.index, self.adjust, self.enhance);
-        // Already have (or are about to show) the exact result?
+        // A live slider drag wants a fast preview (skips the heavy upscale);
+        // anything else wants the full-quality result.
+        let preview = self.slider_drag.is_some();
+        // Already have (or are about to show) a usable result? A cached
+        // full-quality pass (`!prev`) satisfies any request; a cached preview
+        // only satisfies another preview, so a drag *release* (preview ==
+        // false) falls through here and recomputes at full size.
         if matches!(
             &self.processed,
-            Some((i, r, g, e, _)) if *i == idx && *r == rot && *g == grade && *e == enh
+            Some((i, r, g, e, prev, _))
+                if *i == idx && *r == rot && *g == grade && *e == enh && (!*prev || preview)
         ) {
             return;
         }
@@ -1660,9 +1989,11 @@ impl ViewerWindow {
         if self.process_inflight {
             return;
         }
-        let Some(src) = frame.image.as_bytes(0).map(|b| b.to_vec()) else {
-            return;
-        };
+        // Hand the worker the frame's Arc'd RenderImage and read the
+        // pixels THERE — copying `as_bytes` into a Vec here put an
+        // up-to-268 MB memcpy on the UI thread every process kick
+        // (~10 Hz during a slider drag).
+        let image = frame.image.clone();
         let (w, h) = (frame.w, frame.h);
         self.process_gen += 1;
         let token = self.process_gen;
@@ -1671,7 +2002,11 @@ impl ViewerWindow {
         cx.spawn(async move |_this, cx| {
             let out = cx
                 .background_executor()
-                .spawn(async move { process_still_pixels(&src, w, h, rot, grade, enh) })
+                .spawn(async move {
+                    image
+                        .as_bytes(0)
+                        .and_then(|src| process_still_pixels(src, w, h, rot, grade, enh, preview))
+                })
                 .await;
             let Some(this) = weak.upgrade() else { return };
             this.update(cx, |this, cx| {
@@ -1682,7 +2017,8 @@ impl ViewerWindow {
                 let Some((rw, rh, buf)) = out else { return };
                 if this.process_gen == token {
                     if let Some(img) = build_video_frame(buf, rw, rh) {
-                        if let Some((.., old)) = this.processed.replace((idx, rot, grade, enh, img))
+                        if let Some((.., old)) =
+                            this.processed.replace((idx, rot, grade, enh, preview, img))
                         {
                             this.video_frames_to_drop.push(old);
                         }
@@ -1702,7 +2038,7 @@ impl ViewerWindow {
     /// while a fresh result is still computing (caller shows the original).
     fn processed_still(&self, rot: u8) -> Option<Arc<RenderImage>> {
         match &self.processed {
-            Some((i, r, g, e, img))
+            Some((i, r, g, e, _prev, img))
                 if *i == self.index && *r == rot && *g == self.adjust && *e == self.enhance =>
             {
                 Some(img.clone())
@@ -1756,7 +2092,9 @@ impl ViewerWindow {
         let video_paused = self.video_paused;
         let video_loop = self.video_loop;
         let stay_on_top = self.stay_on_top;
+        let transparent = self.transparent;
         let entity = cx.entity().clone();
+        let t_entity = cx.entity().clone();
 
         h_flex()
             .h(px(TOOLBAR_H))
@@ -1916,6 +2254,27 @@ impl ViewerWindow {
                         });
                     }),
             )
+            // Transparent-window mode: see through the keyed video AND the
+            // window background, so stacked viewer windows composite via the
+            // OS window server (GPU). Pair with "Stay on top" to layer them.
+            .child(
+                Checkbox::new("viewer-transparent")
+                    .small()
+                    .label("Transparent")
+                    .checked(transparent)
+                    .on_click(move |checked, window, app| {
+                        let on = *checked;
+                        window.set_background_appearance(if on {
+                            gpui::WindowBackgroundAppearance::Transparent
+                        } else {
+                            gpui::WindowBackgroundAppearance::Opaque
+                        });
+                        t_entity.update(app, |this, cx| {
+                            this.transparent = on;
+                            cx.notify();
+                        });
+                    }),
+            )
             .child(
                 div()
                     .flex_1()
@@ -1967,7 +2326,7 @@ impl ViewerWindow {
             }
         };
         // Skip the per-frame CPU grade when the backend already graded the
-        // pixels (VLC). Otherwise apply it on the CPU (native player).
+        // pixels (mpv). Otherwise apply it on the CPU (native player).
         let image = if self.video_adjust_native {
             image
         } else {
@@ -1996,7 +2355,11 @@ impl ViewerWindow {
             .overflow_hidden()
             .w_full()
             .h(px(stage_h))
-            .bg(cx.theme().secondary.opacity(0.35))
+            .bg(if self.transparent {
+                cx.theme().secondary.opacity(0.0)
+            } else {
+                cx.theme().secondary.opacity(0.35)
+            })
             .on_scroll_wheel(cx.listener(Self::on_stage_scroll))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_stage_mouse_down))
             // Right-click anywhere on the stage opens (toggles) the
@@ -2120,6 +2483,17 @@ impl ViewerWindow {
         self.set_slider(id, v, cx);
     }
 
+    /// A small muted group label inside the adjustments popup, separating the
+    /// Colour / Enhance / Transparent-colour sections.
+    fn section_header(&self, label: &'static str, cx: &mut Context<Self>) -> Div {
+        div()
+            .mt_1()
+            .text_scale_xs()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(cx.theme().muted_foreground)
+            .child(label)
+    }
+
     /// The adjustments popup: colour grade (Brightness / Contrast / Color)
     /// always, plus the still-only enhancement controls (Denoise, Sharpen,
     /// Upscale) and Reset, floating at the top-right of the stage. Pointer
@@ -2130,12 +2504,17 @@ impl ViewerWindow {
         let border = cx.theme().border;
         let foreground = cx.theme().foreground;
         let top = self.stage_origin_y + 12.0;
-        let is_video = self.current_is_video();
-        // Denoise/sharpen apply to stills (CPU) and to VLC video (libvlc
-        // filters); upscale stays stills-only. `video_adjust_native` marks
-        // a VLC stream — the native player has no filter chain.
-        let vlc_video = is_video && self.video_adjust_native;
-        let show_enhance = !is_video || vlc_video;
+        let is_video = self.current_is_video() || self.sim_video_panel;
+        // Denoise/sharpen apply to stills (CPU) and to mpv video (filter
+        // chain); upscale stays stills-only. `video_adjust_native` marks an
+        // mpv stream — the native player has no filter chain.
+        let mpv_video = self.sim_video_panel || (is_video && self.video_adjust_native);
+        let show_enhance = !is_video || mpv_video;
+        // Chroma-key state read up front so the section's builder closure
+        // doesn't re-borrow self for these.
+        let chroma_on = self.chroma_on;
+        let chroma_armed = self.eyedrop_armed;
+        let chroma_color = self.chroma_color;
 
         let header = h_flex()
             .justify_between()
@@ -2148,10 +2527,23 @@ impl ViewerWindow {
                     .child("Adjustments"),
             )
             .child(
-                Button::new("viewer-adjust-reset")
-                    .label("Reset")
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| this.reset_adjust(cx))),
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    // "Magic" auto-enhance: one click picks an auto-levelled
+                    // grade from the image's own histogram.
+                    .child(
+                        Button::new("viewer-adjust-auto")
+                            .icon(gpui_component::Icon::empty().path("icons/wand-sparkles.svg"))
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.auto_enhance(cx))),
+                    )
+                    .child(
+                        Button::new("viewer-adjust-reset")
+                            .label("Reset")
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.reset_adjust(cx))),
+                    ),
             );
 
         div()
@@ -2176,10 +2568,13 @@ impl ViewerWindow {
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
                     this.slider_drag = None;
-                    // Denoise/sharpen for a VLC video are baked in at open,
+                    // Denoise/sharpen for a mpv video are baked in at open,
                     // so a changed value re-opens the stream on release
                     // (kept off the live drag — re-opening per move thrashes).
                     this.commit_video_enhance(cx);
+                    // Upgrade the still's drag preview (upscale skipped) to a
+                    // full-quality pass now the drag is over.
+                    this.schedule_process(cx);
                     cx.notify();
                 }),
             )
@@ -2188,27 +2583,29 @@ impl ViewerWindow {
                 cx.listener(|this, _, _, cx| {
                     this.slider_drag = None;
                     this.commit_video_enhance(cx);
+                    this.schedule_process(cx);
                 }),
             )
             .child(header)
+            .child(self.section_header("Colour", cx))
             .child(self.slider_row(SliderId::Brightness, cx))
             .child(self.slider_row(SliderId::Contrast, cx))
             .child(self.slider_row(SliderId::Saturation, cx))
-            // Hue + gamma are live libvlc colour-adjust controls — only the
-            // VLC backend applies them, so they're hidden for stills and the
+            // Hue + gamma are live libmpv colour-adjust controls — only the
+            // mpv backend applies them, so they're hidden for stills and the
             // built-in player.
-            .when(vlc_video, |d| {
+            .when(mpv_video, |d| {
                 d.child(self.slider_row(SliderId::Hue, cx))
                     .child(self.slider_row(SliderId::Gamma, cx))
             })
             .when(show_enhance, |d| {
                 let d = d
-                    .child(div().h_px().my_1().bg(border))
+                    .child(self.section_header("Enhance", cx))
                     .child(self.slider_row(SliderId::Denoise, cx))
                     .child(self.slider_row(SliderId::Sharpen, cx));
-                // Debanding + film grain are VLC-only filters (gradfun /
+                // Debanding + film grain are mpv-only filters (gradfun /
                 // grain), baked into the decode like denoise/sharpen.
-                let d = d.when(vlc_video, |d| {
+                let d = d.when(mpv_video, |d| {
                     d.child(self.slider_row(SliderId::Banding, cx))
                         .child(self.slider_row(SliderId::Grain, cx))
                 });
@@ -2219,6 +2616,95 @@ impl ViewerWindow {
                 } else {
                     d.child(self.upscale_row(cx))
                 }
+            })
+            // Transparent colour (chroma key) — mpv video only. Keyed pixels
+            // go transparent so the stage background (later: a lower layer)
+            // shows through. Pick the colour with the eyedropper swatch.
+            .when(mpv_video, |d| {
+                let col = chroma_color;
+                let swatch =
+                    gpui::rgb(((col[0] as u32) << 16) | ((col[1] as u32) << 8) | col[2] as u32);
+                let hex = format!("#{:02X}{:02X}{:02X}", col[0], col[1], col[2]);
+                let d = d.child(
+                    h_flex()
+                        .mt_1()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_scale_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Transparent colour"),
+                        )
+                        .child(
+                            Button::new("viewer-chroma-toggle")
+                                .label(if chroma_on { "On" } else { "Off" })
+                                .small()
+                                .selected(chroma_on)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.chroma_on = !this.chroma_on;
+                                    if !this.chroma_on {
+                                        this.eyedrop_armed = false;
+                                    }
+                                    this.apply_video_chroma();
+                                    cx.notify();
+                                })),
+                        ),
+                );
+                if !chroma_on {
+                    return d;
+                }
+                // Swatch (also arms the eyedropper) · hex readout · Pick button.
+                d.child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            div()
+                                .id("viewer-chroma-swatch")
+                                .w(px(22.0))
+                                .h(px(18.0))
+                                .rounded(px(4.0))
+                                .border_1()
+                                .border_color(if chroma_armed {
+                                    cx.theme().primary
+                                } else {
+                                    border
+                                })
+                                .bg(swatch)
+                                .cursor_pointer()
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.eyedrop_armed = !this.eyedrop_armed;
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                        .child(div().flex_1().text_scale_xs().text_color(foreground).child(hex))
+                        .child(
+                            Button::new("viewer-chroma-pick")
+                                .label(if chroma_armed { "Picking\u{2026}" } else { "Pick" })
+                                .small()
+                                .selected(chroma_armed)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.eyedrop_armed = !this.eyedrop_armed;
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .when(chroma_armed, |d| {
+                    d.child(
+                        div()
+                            .text_scale_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Click the video to sample a colour."),
+                    )
+                })
+                .child(self.slider_row(SliderId::Similarity, cx))
+                .child(self.slider_row(SliderId::Blend, cx))
             })
     }
 
@@ -2618,8 +3104,23 @@ impl Render for ViewerWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_title(window);
         let fullscreen = window.is_fullscreen();
-        if !fullscreen {
+        if !fullscreen
+            && (self.chrome_hover
+                || self.status_hover
+                || self.over_chrome
+                || self.over_status
+                || self.near_top_prev
+                || self.near_bottom_prev)
+        {
+            // Out of fullscreen the chrome is always shown inline; drop all
+            // reveal/auto-hide state and stale any pending hide tick.
             self.chrome_hover = false;
+            self.status_hover = false;
+            self.over_chrome = false;
+            self.over_status = false;
+            self.near_top_prev = false;
+            self.near_bottom_prev = false;
+            self.autohide_epoch = self.autohide_epoch.wrapping_add(1);
         }
         let viewport = window.viewport_size();
         let chrome_h = if fullscreen {
@@ -2659,7 +3160,11 @@ impl Render for ViewerWindow {
             .on_action(cx.listener(Self::on_dismiss))
             .relative()
             .size_full()
-            .bg(cx.theme().background);
+            .bg(if self.transparent {
+                cx.theme().background.opacity(0.0)
+            } else {
+                cx.theme().background
+            });
 
         let panel = if self.adjust_panel_open {
             Some(self.adjust_panel(cx))
@@ -2668,19 +3173,48 @@ impl Render for ViewerWindow {
         };
 
         if fullscreen {
-            // Image edge to edge; toolbar only as a hover overlay at
-            // the top (no timers — pure mouse-position state).
+            // Image edge to edge; the toolbar and status/seek bar ride as
+            // hover overlays at the top and bottom. Each is revealed by the
+            // reveal strip, pinned open while the pointer is over it
+            // (`on_hover`), and auto-hidden by the `arm_autohide` countdown.
             let chrome = self.chrome_hover.then(|| {
                 div()
+                    .id("viewer-chrome-overlay")
                     .absolute()
                     .top_0()
                     .left_0()
                     .right_0()
                     .bg(cx.theme().background.opacity(0.92))
+                    .on_hover(cx.listener(|this, over: &bool, _, cx| {
+                        this.over_chrome = *over;
+                        if !*over {
+                            this.arm_autohide(cx);
+                        }
+                    }))
                     .child(self.toolbar(cx))
+            });
+            // Keep the status bar up through an active seek drag too, so it
+            // can't vanish mid-scrub.
+            let show_status = self.status_hover || self.seek_drag.is_some();
+            let status = show_status.then(|| {
+                div()
+                    .id("viewer-status-overlay")
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .bg(cx.theme().background.opacity(0.92))
+                    .on_hover(cx.listener(|this, over: &bool, _, cx| {
+                        this.over_status = *over;
+                        if !*over {
+                            this.arm_autohide(cx);
+                        }
+                    }))
+                    .child(self.status_strip(cx))
             });
             root.child(stage_area)
                 .when_some(chrome, Div::child)
+                .when_some(status, Div::child)
                 .when_some(panel, Div::child)
         } else {
             let toolbar = self.toolbar(cx);
@@ -2701,8 +3235,8 @@ impl Render for ViewerWindow {
 #[cfg(test)]
 mod grade_tests {
     use super::{
-        ColorAdjust, EnhanceParams, apply_color_adjust, grade_bgra, process_still_pixels,
-        rotate_render_image,
+        ColorAdjust, EnhanceParams, apply_color_adjust, compute_auto_grade, grade_bgra,
+        process_still_pixels, rotate_render_image,
     };
     use gpui::RenderImage;
 
@@ -2780,10 +3314,24 @@ mod grade_tests {
             upscale: 2,
             ..EnhanceParams::default()
         };
-        let (w, h, out) =
-            process_still_pixels(&bgra, 4, 3, 0, ColorAdjust::default(), enh).expect("processed");
+        let (w, h, out) = process_still_pixels(&bgra, 4, 3, 0, ColorAdjust::default(), enh, false)
+            .expect("processed");
         assert_eq!((w, h), (8, 6), "2× upscale doubles each dimension");
         assert_eq!(out.len(), (8 * 6 * 4) as usize, "buffer matches new dims");
+    }
+
+    #[test]
+    fn preview_skips_the_upscale() {
+        // A drag-time preview keeps native size — the heavy resample is the
+        // step we defer to the full-quality pass on release.
+        let bgra = vec![128u8; 4 * 3 * 4];
+        let enh = EnhanceParams {
+            upscale: 4,
+            ..EnhanceParams::default()
+        };
+        let (w, h, _) = process_still_pixels(&bgra, 4, 3, 0, ColorAdjust::default(), enh, true)
+            .expect("processed");
+        assert_eq!((w, h), (4, 3), "preview leaves dimensions at native size");
     }
 
     #[test]
@@ -2794,8 +3342,40 @@ mod grade_tests {
             upscale: 2,
             ..EnhanceParams::default()
         };
-        let (w, h, _) =
-            process_still_pixels(&bgra, 4, 3, 1, ColorAdjust::default(), enh).expect("processed");
+        let (w, h, _) = process_still_pixels(&bgra, 4, 3, 1, ColorAdjust::default(), enh, false)
+            .expect("processed");
         assert_eq!((w, h), (6, 8), "90° turn swaps the upscaled dims");
+    }
+
+    #[test]
+    fn auto_grade_stretches_low_contrast() {
+        // A grey image whose luma sits in a narrow [96, 160]-ish band should
+        // get a positive contrast push to fill the range.
+        let mut bgra = Vec::new();
+        for i in 0..4096u32 {
+            let v = (96 + (i % 64)) as u8; // values 96..159
+            bgra.extend_from_slice(&[v, v, v, 255]);
+        }
+        let g = compute_auto_grade(&bgra);
+        assert!(g.contrast > 0.1, "low-contrast input gets a contrast push");
+        // Pure grey → no saturation tint.
+        assert_eq!(g.saturation, 0.0, "monochrome input is left un-saturated");
+    }
+
+    #[test]
+    fn auto_grade_leaves_full_range_neutral() {
+        // A full 0..255 luma ramp is already auto-levelled — barely touched.
+        let mut bgra = Vec::new();
+        for v in 0..=255u8 {
+            for _ in 0..16 {
+                bgra.extend_from_slice(&[v, v, v, 255]);
+            }
+        }
+        let g = compute_auto_grade(&bgra);
+        assert!(g.contrast.abs() < 0.1, "full-range input stays near-neutral");
+        assert!(
+            g.brightness.abs() < 0.1,
+            "full-range input keeps brightness"
+        );
     }
 }

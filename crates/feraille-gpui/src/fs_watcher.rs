@@ -36,11 +36,21 @@ impl FsWatcher {
     pub fn new() -> Result<Self> {
         let (tx, rx) = channel();
         let watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
-            if let Ok(ev) = res {
-                // Drop send errors silently — the receiver side may
-                // have been torn down (window closed) before the
-                // watcher thread finished its last batch.
-                let _ = tx.send(ev);
+            match res {
+                Ok(ev) => {
+                    // Drop send errors silently — the receiver side may
+                    // have been torn down (window closed) before the
+                    // watcher thread finished its last batch.
+                    let _ = tx.send(ev);
+                }
+                Err(_) => {
+                    // A watcher *error* is notify's "events were lost,
+                    // rescan" signal (inotify queue overflow, FSEvents
+                    // must-rescan). Dropping it would leave listings
+                    // permanently stale — surface it as an empty-paths
+                    // event, which the drain treats as everything-dirty.
+                    let _ = tx.send(Event::new(EventKind::Other));
+                }
             }
         })?;
         Ok(Self {
@@ -60,6 +70,26 @@ impl FsWatcher {
         self.watcher.watch(path, RecursiveMode::NonRecursive)?;
         self.watched.insert(path.to_path_buf());
         Ok(())
+    }
+
+    /// Retain only the directories some live tab still shows, releasing
+    /// every other OS watch. Without this the watch set was add-only —
+    /// every directory ever visited stayed FSEvents/inotify-watched for
+    /// the whole session (Linux walks into `max_user_watches`, after
+    /// which *new* watches silently fail and live-update stops).
+    /// Callers pass the union of every window's tab directories after
+    /// navigation/close events.
+    pub fn retain_watched(&mut self, keep: &HashSet<PathBuf>) {
+        let stale: Vec<PathBuf> = self
+            .watched
+            .iter()
+            .filter(|p| !keep.contains(*p))
+            .cloned()
+            .collect();
+        for path in stale {
+            let _ = self.watcher.unwatch(&path);
+            self.watched.remove(&path);
+        }
     }
 
     /// Drain any pending events and return the watched directory roots
@@ -99,3 +129,15 @@ impl FsWatcher {
 /// Recommended poll interval for the foreground-executor polling
 /// task. 250 ms gives near-immediate response without spinning.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Minimum interval between reloads of the *same* directory. The poll
+/// already coalesces all events within one 250 ms window into a single
+/// reload; this throttles *across* windows, so a burst — a multi-file
+/// paste, a download landing, an editor's create+rename+modify save —
+/// collapses into far fewer re-enumerate + prefetch passes instead of one
+/// per window. Leading-edge: the first event reloads immediately; only
+/// repeats inside the window are deferred, and a still-changing directory
+/// keeps reloading once per window — so a real change is never dropped,
+/// only rate-limited. This is throttling, not suppression: it does not
+/// compare contents or skip work that would surface a change.
+pub const RELOAD_DEBOUNCE: Duration = Duration::from_millis(750);

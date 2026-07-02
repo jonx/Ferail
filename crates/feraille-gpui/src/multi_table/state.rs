@@ -1096,6 +1096,14 @@ where
         self.horizontal_scroll_handle.set_offset(offset);
     }
 
+    /// Live column widths in display order (col_groups carry the
+    /// drag-resized values; `delegate.columns[..].width` only holds
+    /// the construction seed). Fork addition — backs column
+    /// order/width persistence in the host shell.
+    pub fn col_widths(&self) -> Vec<Pixels> {
+        self.col_groups.iter().map(|g| g.width).collect()
+    }
+
     /// The `ix`` is the index of the col to resize,
     /// and the `size` is the new size for the col.
     fn resize_cols(&mut self, ix: usize, size: Pixels, _: &mut Window, cx: &mut Context<Self>) {
@@ -2423,14 +2431,17 @@ where
                                             cx,
                                         );
 
-                                        if visible_range.end > rows_count {
-                                            table.scroll_to_row(
-                                                std::cmp::min(
-                                                    visible_range.start,
-                                                    rows_count.saturating_sub(1),
-                                                ),
-                                                cx,
-                                            );
+                                        // Recover the scroll offset after the row list
+                                        // shrank under it. With stripe filler the
+                                        // visible range's END legitimately extends past
+                                        // `rows_count` whenever the rows don't fill the
+                                        // viewport — testing `end` here made this branch
+                                        // scroll_to_row + notify on every frame, keeping
+                                        // the table repainting forever on short folders.
+                                        // Only a range that *starts* past the last real
+                                        // row means the viewport is actually stranded.
+                                        if rows_count > 0 && visible_range.start >= rows_count {
+                                            table.scroll_to_row(rows_count - 1, cx);
                                         }
 
                                         let mut items = Vec::with_capacity(

@@ -61,14 +61,14 @@ fn humanize_bytes(b: u64) -> String {
 /// Density-of-decisions metrics surfaced by the status bar
 /// (Phase 8). Each field is precomputed by the Shell so the render
 /// path doesn't recompute on every paint.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 pub struct StatusMetrics {
     pub entries: usize,
     pub selected_count: usize,
     pub selected_size: u64,
     pub total_size: u64,
     pub free_bytes: Option<u64>,
-    pub volume_name: Option<&'static str>,
+    pub volume_name: Option<SharedString>,
 }
 
 pub fn render(

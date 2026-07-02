@@ -9,7 +9,7 @@ members = [
     "crates/feraille-shell-mac",
     "crates/feraille-shell-win32",
     "crates/feraille-shell-linux",
-    "crates/feraille-video-vlc",
+    "crates/feraille-video-mpv",
     "crates/feraille-gpui",
 ]
 
@@ -31,7 +31,7 @@ feraille-meta         = { path = "crates/feraille-meta" }
 feraille-shell-mac    = { path = "crates/feraille-shell-mac" }
 feraille-shell-win32  = { path = "crates/feraille-shell-win32" }
 feraille-shell-linux  = { path = "crates/feraille-shell-linux" }
-feraille-video-vlc    = { path = "crates/feraille-video-vlc" }
+feraille-video-mpv    = { path = "crates/feraille-video-mpv" }
 
 # Still needed by feraille-shell-mac for the winit-window-taking subset
 # (begin_drag, show_context_menu, install_services_anchor, etc.) — those
@@ -49,6 +49,11 @@ uuid        = { version = "1", features = ["v4"] }
 # intent from Ferail's hash pipeline.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 blake3      = "1"
+
+# Bulk-rename pattern rules (docs/features/BULK_RENAME.md): user-supplied
+# find/replace patterns with $1..$9 capture refs. MIT/Apache-2.0 — clean
+# for the dual-licensed release.
+regex       = "1"
 
 # External — new stack (feraille-gpui).
 #
@@ -85,5 +90,9 @@ opt-level = 1
 [profile.release]
 lto = true
 codegen-units = 1
-panic = "abort"
+# Unwind (not abort) so GPUI's per-frame `catch_unwind` can absorb a stray
+# paint/event panic and keep the window alive — the prime directive ("the UI
+# must never stop") outweighs the small size win of aborting. The obs panic
+# hook still prints a crash report either way.
+panic = "unwind"
 strip = true

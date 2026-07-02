@@ -17,8 +17,10 @@
 //! - Background captured at a fixed white fill — preview handlers
 //!   that paint partially-transparent content end up with white
 //!   showing through.
-//! - 500 ms message-pump budget for `DoPreview` to render. Faster
-//!   in-proc handlers complete well under that; slow ones get cut.
+//! - Message-pump budget of 3.5 s for `DoPreview` to render, probed
+//!   every ~250 ms: the pump exits early once the capture shows
+//!   non-background pixels, so fast handlers don't pay the whole
+//!   budget; handlers still blank at the deadline get cut.
 //!
 //! Caller must run this off the UI thread (preview handlers may post
 //! messages and call back into shell extensions that block).
@@ -83,7 +85,7 @@ pub(crate) fn try_capture(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u3
         })
         .ok()?;
 
-    // Allow up to 5s overall — 2s for the message pump plus headroom
+    // Allow up to 6s overall — the 3.5s message-pump budget plus headroom
     // for handler startup (prevhost.exe cold-launch can take a moment).
     let result = rx.recv_timeout(std::time::Duration::from_secs(6)).ok().flatten();
     // Let the worker finish its cleanup; if it's hung past our
@@ -180,17 +182,74 @@ unsafe fn try_capture_inner(
             return None;
         }
 
-        // Pump messages so async-rendering handlers can complete.
-        // Some handlers (PDF, Excel) post async work and need extra
-        // time — large PDFs can take a second or two on cold starts.
-        // Cap at 3.5s so a broken handler doesn't hang the worker
-        // (the outer try_capture timeout is 5s).
-        pump_messages(Duration::from_millis(3500));
-
-    let rgba = capture_window(hwnd, size_px, size_px);
+    // Pump messages so async-rendering handlers can complete. Some
+    // handlers (PDF, Excel) post async work and need extra time —
+    // large PDFs can take a second or two on cold starts. Cap at 3.5s
+    // so a broken handler doesn't hang the worker (the outer
+    // try_capture timeout is 6s) — but don't burn the whole budget
+    // blindly: every ~250ms of pumping, capture the host window and
+    // stop as soon as non-background pixels appear. When content
+    // first shows up, pump one extra slice and re-capture so
+    // progressive renderers (Office via prevhost paints chrome before
+    // body content) get a settle pass before we take the final frame.
+    const PUMP_BUDGET: Duration = Duration::from_millis(3500);
+    const PROBE_EVERY: Duration = Duration::from_millis(250);
+    let started = Instant::now();
+    let deadline = started + PUMP_BUDGET;
+    let rgba = loop {
+        let slice_end = (Instant::now() + PROBE_EVERY).min(deadline);
+        pump_messages_until(slice_end);
+        let shot = capture_window(hwnd, size_px, size_px);
+        let painted = shot
+            .as_ref()
+            .is_some_and(|(px, _, _)| has_non_background_pixels(px));
+        if painted {
+            if debug() {
+                eprintln!(
+                    "preview_handler: content after {:?} (budget {:?})",
+                    started.elapsed(),
+                    PUMP_BUDGET
+                );
+            }
+            // Settle pass, then the final frame; keep the probe shot
+            // if the re-capture fails under GDI pressure.
+            pump_messages_until((Instant::now() + PROBE_EVERY).min(deadline));
+            break capture_window(hwnd, size_px, size_px).or(shot);
+        }
+        if Instant::now() >= deadline {
+            // Budget exhausted with no visible content — return the
+            // last capture anyway (a handler may legitimately render
+            // an all-white page).
+            if debug() {
+                eprintln!("preview_handler: no content within {:?}", PUMP_BUDGET);
+            }
+            break shot;
+        }
+    };
     let _ = handler.Unload();
     let _ = DestroyWindow(hwnd);
     rgba
+}
+
+/// True once a captured frame holds "real" content: more than a
+/// handful of pixels differing from the white background the host
+/// pre-fills (see the FillRect calls in [`try_capture_inner`] and
+/// [`capture_window`]). The small threshold ignores stray one-pixel
+/// artifacts while still triggering on the first line of rendered
+/// text or chrome. Alpha is ignored — `capture_window` already
+/// normalizes the all-alpha-zero case to opaque.
+fn has_non_background_pixels(rgba: &[u8]) -> bool {
+    const THRESHOLD: usize = 32;
+    let mut n = 0usize;
+    for px in rgba.chunks_exact(4) {
+        if px[0] != 0xFF || px[1] != 0xFF || px[2] != 0xFF {
+            n += 1;
+            if n >= THRESHOLD {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn lookup_handler_clsid(ext_lower: &str) -> Option<GUID> {
@@ -314,8 +373,7 @@ unsafe extern "system" fn host_wnd_proc(
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
-unsafe fn pump_messages(timeout: Duration) {
-    let deadline = Instant::now() + timeout;
+unsafe fn pump_messages_until(deadline: Instant) {
     let mut msg = MSG::default();
     while Instant::now() < deadline {
         // Non-blocking peek + dispatch

@@ -46,14 +46,40 @@ open — see "Still open" below.
 - **Descend into packages**: `disk_usage.toggle_packages`. By default
   `.app`, `.bundle`, `.framework`, `.plugin`, `.kext`, `.xcodeproj`
   are treated as opaque leaves, matching Finder. Toggling re-scans.
-- **Right-click**: Reveal in Finder, Open, Copy Path, Move to Trash,
-  Zoom into. Move-to-Trash succeeds → the affected subtree is
-  surgically removed from the in-memory tree and Top-N is rebuilt; no
-  re-scan is needed.
+- **Right-click a rect** (shipped): the file-list verbs on the resolved
+  selection — Open, Reveal in Finder, Get Info (when opened from a
+  shell), Copy (real file URLs), Copy Path(s), an **Export as HTML**
+  submenu (Copy/Save This Folder for a single folder target,
+  Copy/Save Whole View), Zoom In/Out, Move to Trash. Finder targeting
+  rule: right-clicking a rect outside the selection retargets to just
+  it; right-clicking a member acts on the whole set. A successful
+  trash re-scans the root (honest totals) and reloads any shell tabs
+  showing the affected directories.
+- **Right-click the background**: Zoom Out, plus Copy/Save View as
+  HTML for the whole current focus.
+- **One menu layer by design**: rects record themselves as the target
+  on right-mouse-down and the treemap's single context menu routes on
+  it — per-rect ContextMenu layers stacked (their overlay hitboxes
+  paint above the rects and don't stop propagation), opening two
+  colliding menus and wiping the selection.
+- **HTML export** (shipped): `feraille_disk_usage::treemap_html_*`
+  renders the same tree through the same layout pipeline into
+  self-contained HTML (inline styles, no JS) — "Copy as HTML" puts a
+  paste-anywhere `<figure>` fragment on the clipboard; "Save as
+  HTML…" writes a standalone page to `~/Downloads` and reveals it.
+  The category palette is canonical in that crate
+  (`category_color_rgba`), shared by the GPUI view, so window and
+  export can't drift.
 
-Selection: plain click replaces, `Cmd+Click` toggles, `Escape` clears.
+Selection (shipped): plain click replaces, `Cmd+Click` toggles; the
+footer shows the single item's name+size or "N selected · total".
 Clicking a Top-N row selects the matching file in the treemap, and
-vice versa.
+vice versa. Keyboard (shipped, `DiskUsage` context, claimed by clicking
+the treemap): `Enter` zooms into the selected folder, `Backspace` zooms
+out, `Escape` clears the selection, and `Cmd+C` / `Cmd+I` /
+`Cmd+Backspace` mirror Copy / Get Info / Move to Trash on the treemap
+selection. (User-remappable command ids for these are a follow-up —
+the `disk_usage.*` ids in keymap.rs are still placeholders.)
 
 ## Architecture
 

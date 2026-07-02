@@ -144,7 +144,7 @@ fn about_body() -> impl IntoElement {
                 .items_center()
                 .child(meta_row("Platform", format!("{os_label} \u{00B7} {arch}")))
                 .child(meta_row("Author", "John Knipper".to_string()))
-                .child(website_row("jkn.me/ferail")),
+                .child(website_row("github.com/jonx/Feraille")),
         )
         .child(WithTheme::copyright("Copyright \u{00A9} 2026 John Knipper"))
 }

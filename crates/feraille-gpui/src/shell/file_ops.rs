@@ -1,4 +1,3 @@
-use crate::text::TextScale as _;
 use super::*;
 
 /// Copy vs move for [`Shell::spawn_transfer_op`].
@@ -22,20 +21,35 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
-        let paths: Vec<PathBuf> = self
+        // `is_dir` comes from the cached FileEntry so the pasteboard
+        // write never stats — a per-path stat on the main thread hangs
+        // Cmd+C on a dead network mount (Prime Directive).
+        let items: Vec<(PathBuf, bool)> = self
             .action_entries_visible_order(cx)
             .into_iter()
-            .map(|(_, _, path)| path)
+            .map(|(_, entry, path)| {
+                (
+                    path,
+                    matches!(entry.kind, feraille_core::EntryKind::Directory),
+                )
+            })
             .collect();
-        if paths.is_empty() {
+        if items.is_empty() {
             return;
         }
-        let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
-        crate::platform_shell::clipboard_copy_file_urls(&refs);
+        let refs: Vec<(&std::path::Path, bool)> =
+            items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
+        if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
+            window.push_notification(
+                Notification::error("File clipboard isn't available on this platform yet."),
+                cx,
+            );
+            return;
+        }
         // A fresh Copy cancels any pending Cut.
         self.process.cut_marker.borrow_mut().clear();
-        let msg = match paths.as_slice() {
-            [single] => format!(
+        let msg = match items.as_slice() {
+            [(single, _)] => format!(
                 "Copied \u{201c}{}\u{201d}",
                 single.file_name().unwrap_or_default().to_string_lossy()
             ),
@@ -55,16 +69,32 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
-        let paths: Vec<PathBuf> = self
+        // Same no-stat contract as Copy (see on_copy_files).
+        let items: Vec<(PathBuf, bool)> = self
             .action_entries_visible_order(cx)
             .into_iter()
-            .map(|(_, _, path)| path)
+            .map(|(_, entry, path)| {
+                (
+                    path,
+                    matches!(entry.kind, feraille_core::EntryKind::Directory),
+                )
+            })
             .collect();
-        if paths.is_empty() {
+        if items.is_empty() {
             return;
         }
-        let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
-        crate::platform_shell::clipboard_copy_file_urls(&refs);
+        let refs: Vec<(&std::path::Path, bool)> =
+            items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
+        if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
+            // Don't dim rows for a Cut that can never complete its
+            // move — the stub platform has no file clipboard.
+            window.push_notification(
+                Notification::error("File clipboard isn't available on this platform yet."),
+                cx,
+            );
+            return;
+        }
+        let paths: Vec<PathBuf> = items.into_iter().map(|(p, _)| p).collect();
         let msg = match paths.as_slice() {
             [single] => format!(
                 "Cut \u{201c}{}\u{201d}",
@@ -668,6 +698,17 @@ impl Shell {
                                 TransferMode::Move if *all_same_volume => {
                                     this.push_undo(UndoOp::MoveBack(outcome.created.clone()));
                                 }
+                                // Cross-volume (or mixed-volume) move:
+                                // undo copies each item back and then
+                                // deletes the moved copy. Only when the
+                                // move replaced nothing — copy-back-
+                                // undoing a replace would erase the sole
+                                // remaining version's provenance.
+                                TransferMode::Move if outcome.replaced == 0 => {
+                                    this.push_undo(UndoOp::MoveBackCross(
+                                        outcome.created.clone(),
+                                    ));
+                                }
                                 TransferMode::Copy if outcome.replaced == 0 => {
                                     this.push_undo(UndoOp::RemoveCreated(
                                         outcome.created.iter().map(|(_, d)| d.clone()).collect(),
@@ -699,6 +740,52 @@ impl Shell {
             let _ = win.update(cx, |_, window, cx| {
                 match &result {
                     Ok((outcome, _, effective)) => {
+                        // Failures always surface — even for sub-150ms ops —
+                        // as a per-item, classified report. The toast offers
+                        // Copy (raw detail → clipboard), an in-process Retry of
+                        // just the failed items, and Retry as administrator…
+                        // when a permission denial could be fixed by elevating.
+                        if outcome.has_failures() {
+                            let op_noun = match effective {
+                                TransferMode::Move => "Move",
+                                _ => "Copy",
+                            };
+                            let summary = file_op_outcome_summary(op_noun, outcome);
+                            // The failed top-level sources: those with a failure
+                            // recorded against them (path equals or sits under
+                            // the source). Excludes succeeded and skipped items.
+                            let retry_sources: Vec<PathBuf> = sources
+                                .iter()
+                                .filter(|s| {
+                                    let s: &PathBuf = s;
+                                    outcome
+                                        .failed
+                                        .iter()
+                                        .any(|f| f.path == *s || f.path.starts_with(s))
+                                })
+                                .cloned()
+                                .collect();
+                            if retry_sources.is_empty() {
+                                window.push_notification(error_notification(summary), cx);
+                            } else {
+                                let elevation_recoverable = outcome
+                                    .failed
+                                    .iter()
+                                    .any(|f| f.kind.is_elevation_recoverable());
+                                let retry = crate::shell::TransferRetry {
+                                    shell: weak.clone(),
+                                    sources: retry_sources,
+                                    dest: dest.clone(),
+                                    mode: *effective,
+                                    elevation_recoverable,
+                                };
+                                window.push_notification(
+                                    crate::shell::transfer_failure_notification(summary, retry),
+                                    cx,
+                                );
+                            }
+                            return;
+                        }
                         if !surfaced && !outcome.cancelled && outcome.skipped == 0 {
                             return;
                         }
@@ -737,6 +824,94 @@ impl Shell {
         })
         .detach();
     }
+
+    /// Re-run the failed items of a transfer **with administrator privileges**.
+    /// Serialises them into an `ElevatedOp` and runs the privileged worker
+    /// (which re-execs this binary elevated — one OS auth prompt); reads back
+    /// which items still failed and reports it. The whole thing runs off the UI
+    /// thread because the auth dialog blocks.
+    pub(crate) fn retry_transfer_elevated(
+        &mut self,
+        sources: Vec<PathBuf>,
+        dest: PathBuf,
+        mode: TransferMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+
+        let is_move = matches!(mode, TransferMode::Move);
+        let op = crate::elevation::ElevatedOp {
+            is_move,
+            dest_dir: dest.clone(),
+            sources: sources.clone(),
+        };
+        let process = self.process.clone();
+        let win = window.window_handle();
+        cx.spawn(async move |_this, cx| {
+            // Blocks on the OS auth dialog — keep it on the executor, never the
+            // UI thread (Prime Directive).
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::elevation::run_elevated_op(&op) })
+                .await;
+
+            // Refresh the destination, plus the moved-from parents on a move —
+            // a partial elevated run may have changed either side.
+            let mut reload = vec![dest.clone()];
+            if is_move {
+                for s in &sources {
+                    if let Some(p) = s.parent() {
+                        let p = p.to_path_buf();
+                        if !reload.contains(&p) {
+                            reload.push(p);
+                        }
+                    }
+                }
+            }
+            Shell::broadcast_reload_for_process(&process, reload, cx);
+
+            let _ = win.update(cx, |_, window, cx| match result {
+                Ok(r) if r.failures.is_empty() => {
+                    let items = if r.ok == 1 { "item" } else { "items" };
+                    window.push_notification(
+                        Notification::success(format!(
+                            "Completed {} {items} as administrator",
+                            r.ok
+                        )),
+                        cx,
+                    );
+                }
+                Ok(r) => {
+                    let mut msg = format!(
+                        "As administrator: {} done \u{00b7} {} still failed",
+                        r.ok,
+                        r.failures.len()
+                    );
+                    for (kind, path) in r.failures.iter().take(4) {
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.display().to_string());
+                        msg.push_str(&format!("\n\u{2022} {name} \u{2014} {}", kind.summary()));
+                    }
+                    window.push_notification(error_notification(msg), cx);
+                }
+                Err(e) if e == "cancelled" => {
+                    window
+                        .push_notification(Notification::info("Administrator retry cancelled"), cx);
+                }
+                Err(e) => {
+                    window.push_notification(
+                        error_notification(format!("Retry as administrator failed: {e}")),
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn on_copy_path(
         &mut self,
         _: &CopyPath,
@@ -831,9 +1006,6 @@ impl Shell {
             cx,
             move |_this, window, cx| {
                 use gpui_component::notification::Notification;
-                for path in &paths {
-                    crate::platform_shell::reveal_in_finder(path);
-                }
                 let msg = if paths.len() == 1 {
                     let name = paths[0]
                         .file_name()
@@ -844,6 +1016,15 @@ impl Shell {
                 } else {
                     format!("Showing {} items in {}", paths.len(), reveal_target)
                 };
+                // Reveal is a process spawn on mac/win but a blocking
+                // D-Bus round-trip per path on Linux — run the loop on
+                // the background executor (Prime Directive).
+                cx.background_spawn(async move {
+                    for path in &paths {
+                        crate::platform_shell::reveal_in_finder(path);
+                    }
+                })
+                .detach();
                 window.push_notification(Notification::info(msg), cx);
             },
         );
@@ -853,12 +1034,16 @@ impl Shell {
         &mut self,
         _: &RevealContextPath,
         _: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(path) = self.context_target.take() else {
             return;
         };
-        crate::platform_shell::reveal_in_finder(&path);
+        // Blocking D-Bus round-trip on Linux — worker, not UI thread.
+        cx.background_spawn(async move {
+            crate::platform_shell::reveal_in_finder(&path);
+        })
+        .detach();
     }
 
     pub(super) fn on_copy_context_path(
@@ -928,7 +1113,12 @@ impl Shell {
     /// while the system flushes/closes the device), then reports
     /// success or failure as a toast. The volume observer drops the row
     /// from the sidebar once the unmount lands.
-    pub(crate) fn eject_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn eject_path(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use gpui_component::notification::Notification;
         let name = path
             .file_name()
@@ -997,78 +1187,131 @@ impl Shell {
     fn toggle_tag_on_target(
         &mut self,
         color: feraille_core::commands::TagColor,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        for (_, _, path) in self.action_entries_visible_order(cx) {
-            let _ = crate::platform_shell::toggle_tag(&path, color);
+        // Tag xattrs are filesystem I/O — a large selection means one
+        // read-modify-write per file, and any file on a dead network
+        // mount blocks for the mount timeout. Prime Directive: collect
+        // the paths here, run the toggles on the background executor,
+        // then re-read the listing's tags on completion so the dot
+        // chips repaint (the writes only touch disk, not the delegate's
+        // parallel `tags` vec).
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
+            return;
         }
-        // Re-read the listing's tags so the dot chips repaint the
-        // toggle — the write above only touched disk, not the delegate's
-        // parallel `tags` vec.
-        self.refresh_file_list_tags_in_tab(self.active, cx);
+        let active = self.active;
+        let win = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            let (done, failures) = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut done = 0usize;
+                    let mut failures: Vec<feraille_fs_native::file_ops::FileOpError> = Vec::new();
+                    for path in &paths {
+                        match crate::platform_shell::toggle_tag(path, color) {
+                            Ok(()) => done += 1,
+                            // Stringly-typed platform error — classify it
+                            // so the report shares the one advice table.
+                            Err(e) => failures.push(
+                                feraille_fs_native::file_ops::FileOpError::other(
+                                    path,
+                                    super::classify_error_text(&e),
+                                    e,
+                                ),
+                            ),
+                        }
+                    }
+                    (done, failures)
+                })
+                .await;
+            if !failures.is_empty() {
+                crate::log_warn!(90, "tag toggle: {} item(s) failed", failures.len());
+                // Quiet on success; failures surface through the same
+                // structured "N of M · why" report as the other mutations.
+                let summary = crate::shell::file_op_failure_report("Tag", done, 0, &failures);
+                let _ = win.update(cx, |_, window, cx| {
+                    window.push_notification(super::error_notification(summary), cx);
+                });
+            }
+            let _ = this.update(cx, |this, cx| {
+                let tab = if this.tabs.get(active).is_some() {
+                    active
+                } else {
+                    this.active
+                };
+                this.refresh_file_list_tags_in_tab(tab, cx);
+            });
+        })
+        .detach();
     }
 
     pub(super) fn on_toggle_tag_red(
         &mut self,
         _: &ToggleTagRed,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Red, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Red, window, cx);
     }
 
     pub(super) fn on_toggle_tag_orange(
         &mut self,
         _: &ToggleTagOrange,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Orange, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Orange, window, cx);
     }
 
     pub(super) fn on_toggle_tag_yellow(
         &mut self,
         _: &ToggleTagYellow,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Yellow, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Yellow, window, cx);
     }
 
     pub(super) fn on_toggle_tag_green(
         &mut self,
         _: &ToggleTagGreen,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Green, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Green, window, cx);
     }
 
     pub(super) fn on_toggle_tag_blue(
         &mut self,
         _: &ToggleTagBlue,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Blue, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Blue, window, cx);
     }
 
     pub(super) fn on_toggle_tag_purple(
         &mut self,
         _: &ToggleTagPurple,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Purple, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Purple, window, cx);
     }
 
     pub(super) fn on_toggle_tag_gray(
         &mut self,
         _: &ToggleTagGray,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_tag_on_target(feraille_core::commands::TagColor::Gray, cx);
+        self.toggle_tag_on_target(feraille_core::commands::TagColor::Gray, window, cx);
     }
 
     fn open_with_slot(&mut self, slot: usize, cx: &mut Context<Self>) {
@@ -1102,9 +1345,15 @@ impl Shell {
             }
         };
         if let Some(app) = app_path {
-            for path in paths {
-                let _ = crate::platform_shell::open_with_app(&path, &app);
-            }
+            // `open -a` waits for the app to check in (seconds on a
+            // cold launch) — one batched invocation on the background
+            // executor instead of N sequential waits on the UI thread.
+            cx.background_spawn(async move {
+                if let Err(e) = crate::platform_shell::open_with_app_many(&paths, &app) {
+                    crate::log_warn!(90, "open with {}: {e}", app.display());
+                }
+            })
+            .detach();
         }
     }
 
@@ -1278,23 +1527,36 @@ impl Shell {
         let weak = cx.weak_entity();
         let win = window.window_handle();
         cx.spawn(async move |_this, cx| {
+            // Don't bail on the first failure: trash every item we can, and
+            // collect the rest as classified `FileOpError`s so a permission
+            // denial on one protected app doesn't strand the others and so we
+            // can offer an elevated retry for just the recoverable ones.
             let result = cx
                 .background_executor()
                 .spawn(async move {
                     let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
+                    let mut done = 0usize;
+                    let mut failures: Vec<feraille_fs_native::file_ops::FileOpError> = Vec::new();
                     for path in &paths {
                         match feraille_fs_native::move_to_trash(path) {
-                            Ok(Some(trashed)) => pairs.push((path.clone(), trashed)),
-                            Ok(None) => {}
-                            Err(e) => return (pairs, Some(e.to_string())),
+                            Ok(Some(trashed)) => {
+                                done += 1;
+                                pairs.push((path.clone(), trashed));
+                            }
+                            // Trashed, but the resulting URL wasn't
+                            // reported — done, just not undoable.
+                            Ok(None) => done += 1,
+                            Err(e) => failures.push(
+                                feraille_fs_native::file_ops::FileOpError::from_io(&e, path),
+                            ),
                         }
                     }
-                    (pairs, None)
+                    (pairs, done, failures)
                 })
                 .await;
-            let (pairs, error) = result;
-            match &error {
-                Some(e) => process.tasks.borrow_mut().end_failed(task_id, e.clone()),
+            let (pairs, done, failures) = result;
+            match failures.first() {
+                Some(f) => process.tasks.borrow_mut().end_failed(task_id, f.to_string()),
                 None => process.tasks.borrow_mut().end(task_id),
             }
             if let Some(shell) = weak.upgrade() {
@@ -1306,15 +1568,276 @@ impl Shell {
                 });
             }
             Shell::broadcast_reload_for_process(&process, vec![cur], cx);
-            let _ = win.update(cx, |_, window, cx| match &error {
-                None => window.push_notification(
-                    Notification::info(format!("Moved \u{201C}{}\u{201D} to Trash", name)),
+            let weak = weak.clone();
+            let _ = win.update(cx, move |_, window, cx| {
+                if failures.is_empty() {
+                    window.push_notification(
+                        Notification::info(format!("Moved \u{201C}{}\u{201D} to Trash", name)),
+                        cx,
+                    );
+                    return;
+                }
+                // The structured "N of M · why" report shared with the
+                // copy/move path; the raw OS detail rides along for the
+                // Copy action.
+                let summary =
+                    crate::shell::file_op_failure_report("Move to Trash", done, 0, &failures);
+                let detail = failures
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                // The items elevation could still trash — bare permission
+                // denials (a root-owned app), not locked/missing ones.
+                let recoverable: Vec<PathBuf> = failures
+                    .iter()
+                    .filter(|f| f.kind.is_elevation_recoverable())
+                    .map(|f| f.path.clone())
+                    .collect();
+                let retry = crate::shell::TrashRetry {
+                    shell: weak,
+                    sources: recoverable,
+                    delete: false,
+                };
+                window.push_notification(
+                    crate::shell::trash_failure_notification(
+                        summary.clone(),
+                        format!("{summary}\n\n{detail}"),
+                        retry,
+                    ),
                     cx,
-                ),
-                Some(e) => window.push_notification(
-                    Notification::error(format!("Move to Trash failed: {e}")),
-                    cx,
-                ),
+                );
+            });
+        })
+        .detach();
+    }
+
+    /// Re-run the given items' trash (or permanent delete, when `delete`) with
+    /// administrator rights: serialise them, run the elevated worker (one OS
+    /// auth prompt — same osascript path copy/move uses), and report what
+    /// landed. Elevated trashes move into the user's `~/.Trash` as root, so the
+    /// item lands owned by root; we don't register Undo for them (restoring a
+    /// root-owned item to a root-owned location would itself need elevation).
+    pub(crate) fn retry_trash_elevated(
+        &mut self,
+        sources: Vec<PathBuf>,
+        delete: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::notification::Notification;
+        let trash_dir = feraille_fs_native::home_trash_dir();
+        let op = crate::elevation::ElevatedTrashOp {
+            delete,
+            trash_dir: trash_dir.clone(),
+            sources: sources.clone(),
+        };
+        let process = self.process.clone();
+        let win = window.window_handle();
+        cx.spawn(async move |_this, cx| {
+            // Blocks on the OS auth dialog — keep it off the UI thread.
+            let result = cx
+                .background_executor()
+                .spawn(async move { crate::elevation::run_elevated_trash_op(&op) })
+                .await;
+
+            // Refresh the moved-from parents and, for a trash, the Trash itself.
+            let mut reload = Vec::new();
+            for s in &sources {
+                if let Some(p) = s.parent() {
+                    let p = p.to_path_buf();
+                    if !reload.contains(&p) {
+                        reload.push(p);
+                    }
+                }
+            }
+            if !delete && !reload.contains(&trash_dir) {
+                reload.push(trash_dir);
+            }
+            Shell::broadcast_reload_for_process(&process, reload, cx);
+
+            let total = sources.len();
+            let _ = win.update(cx, move |_, window, cx| match result {
+                Ok(r) if r.failed.is_empty() => {
+                    let n = if delete { total } else { r.trashed.len() };
+                    let items = if n == 1 { "item" } else { "items" };
+                    let note = if delete {
+                        format!("Deleted {n} {items} as administrator")
+                    } else {
+                        format!("Moved {n} {items} to Trash as administrator")
+                    };
+                    window.push_notification(Notification::success(note), cx);
+                }
+                Ok(r) => {
+                    let done = total.saturating_sub(r.failed.len());
+                    window.push_notification(
+                        super::error_notification(format!(
+                            "As administrator: {done} done \u{00b7} {} still failed",
+                            r.failed.len()
+                        )),
+                        cx,
+                    );
+                }
+                Err(e) if e == "cancelled" => {
+                    window.push_notification(Notification::info("Administrator action cancelled"), cx);
+                }
+                Err(e) => {
+                    window.push_notification(
+                        super::error_notification(format!("Elevated action failed: {e}")),
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Permanently delete the selected items (no Trash) after a counted
+    /// confirmation — a targeted Empty Trash. No undo. A permission denial on
+    /// a protected item offers an elevated retry, exactly like Move to Trash.
+    /// Bound to Option+Cmd+Delete [mac] / Shift+Delete [win/linux].
+    pub(super) fn on_delete_immediately(
+        &mut self,
+        _: &DeleteImmediately,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::trail::command("Delete Immediately");
+        use gpui_component::button::ButtonVariants as _;
+        use gpui_component::notification::Notification;
+
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let count = paths.len();
+        let name = if count == 1 {
+            paths[0]
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("item")
+                .to_string()
+        } else {
+            format!("{count} items")
+        };
+        let cur = self.active_tab().current_dir.clone();
+        let process = self.process.clone();
+        let win = window.window_handle();
+
+        cx.spawn(async move |this, cx| {
+            // Confirm first — this is the one delete with no undo.
+            let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
+            let opened = win.update(cx, |_, window, cx| {
+                let tx = go_tx.clone();
+                let name = name.clone();
+                window.open_dialog(cx, move |dialog, _window, _cx| {
+                    let tx_go = tx.clone();
+                    let tx_cancel = tx.clone();
+                    let plural = if count == 1 { "item" } else { "items" };
+                    let what = if count == 1 {
+                        format!("\u{201C}{name}\u{201D}")
+                    } else {
+                        format!("{count} {plural}")
+                    };
+                    let body = format!("Permanently delete {what}? This can\u{2019}t be undone.");
+                    dialog
+                        .title("Delete Immediately?")
+                        .child(div().text_scale_sm().child(body))
+                        .child(
+                            h_flex().pt_2().child(
+                                Button::new("delete-now-go")
+                                    .label("Delete")
+                                    .danger()
+                                    .small()
+                                    .on_click(move |_, window, cx| {
+                                        let _ = tx_go.try_send(true);
+                                        window.close_dialog(cx);
+                                    }),
+                            ),
+                        )
+                        .on_cancel(move |_, _, _| {
+                            let _ = tx_cancel.try_send(false);
+                            true
+                        })
+                });
+            });
+            if opened.is_err() || !matches!(go_rx.recv().await, Ok(true)) {
+                return;
+            }
+
+            let task_id = process.tasks.borrow_mut().begin(
+                crate::tasks::TaskKind::FileOp,
+                format!("Deleting {name}"),
+                false,
+            );
+            let to_delete = paths;
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut deleted = 0usize;
+                    let mut first_err: Option<String> = None;
+                    let mut failed_perm: Vec<PathBuf> = Vec::new();
+                    for p in &to_delete {
+                        let removed = match std::fs::symlink_metadata(p) {
+                            Ok(m) if m.is_dir() && !m.is_symlink() => std::fs::remove_dir_all(p),
+                            Ok(_) => std::fs::remove_file(p),
+                            Err(e) => Err(e),
+                        };
+                        match removed {
+                            Ok(()) => deleted += 1,
+                            Err(e) => {
+                                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                                    failed_perm.push(p.clone());
+                                }
+                                if first_err.is_none() {
+                                    first_err = Some(format!("{}: {e}", p.display()));
+                                }
+                            }
+                        }
+                    }
+                    (deleted, first_err, failed_perm)
+                })
+                .await;
+            let (deleted, first_err, failed_perm) = result;
+            match &first_err {
+                Some(e) => process.tasks.borrow_mut().end_failed(task_id, e.clone()),
+                None => process.tasks.borrow_mut().end(task_id),
+            }
+            Shell::broadcast_reload_for_process(&process, vec![cur], cx);
+            let _ = win.update(cx, move |_, window, cx| {
+                let plural = if deleted == 1 { "item" } else { "items" };
+                match first_err {
+                    None => window.push_notification(
+                        Notification::success(format!("Deleted {deleted} {plural}")),
+                        cx,
+                    ),
+                    Some(e) => {
+                        let detail = format!("Deleted {deleted} {plural} with errors: {e}");
+                        let headline = if failed_perm.is_empty() {
+                            detail.clone()
+                        } else if failed_perm.len() == 1 {
+                            "1 item needs administrator rights to delete.".to_string()
+                        } else {
+                            format!(
+                                "{} items need administrator rights to delete.",
+                                failed_perm.len()
+                            )
+                        };
+                        let retry = crate::shell::TrashRetry {
+                            shell: this,
+                            sources: failed_perm,
+                            delete: true,
+                        };
+                        window.push_notification(
+                            crate::shell::trash_failure_notification(headline, detail, retry),
+                            cx,
+                        )
+                    }
+                }
             });
         })
         .detach();
@@ -1335,7 +1858,7 @@ impl Shell {
         use gpui_component::notification::Notification;
         let process = self.process.clone();
         let win = window.window_handle();
-        cx.spawn(async move |_this, cx| {
+        cx.spawn(async move |this, cx| {
             // Count first (background) so the confirmation says what
             // it's about to destroy.
             let preview = cx
@@ -1413,7 +1936,11 @@ impl Shell {
                 .background_executor()
                 .spawn(async move {
                     let mut deleted = 0usize;
-                    let mut first_err: Option<String> = None;
+                    // Every item that couldn't be removed, classified —
+                    // feeds the shared "N of M · why" report, and its
+                    // permission-denied subset is exactly what an
+                    // elevated retry can finish (root-owned trash).
+                    let mut failures: Vec<feraille_fs_native::file_ops::FileOpError> = Vec::new();
                     for d in &dirs {
                         let Ok(rd) = std::fs::read_dir(d) else {
                             continue;
@@ -1429,46 +1956,72 @@ impl Shell {
                             };
                             match removed {
                                 Ok(()) => deleted += 1,
-                                Err(e) if first_err.is_none() => {
-                                    first_err = Some(format!("{}: {e}", p.display()));
-                                }
-                                Err(_) => {}
+                                Err(e) => failures.push(
+                                    feraille_fs_native::file_ops::FileOpError::from_io(&e, &p),
+                                ),
                             }
                         }
                     }
-                    (deleted, first_err, dirs)
+                    (deleted, failures, dirs)
                 })
                 .await;
-            let (deleted, first_err, dirs) = result;
-            match &first_err {
-                Some(e) => process.tasks.borrow_mut().end_failed(task_id, e.clone()),
+            let (deleted, failures, dirs) = result;
+            match failures.first() {
+                Some(f) => process.tasks.borrow_mut().end_failed(task_id, f.to_string()),
                 None => process.tasks.borrow_mut().end(task_id),
             }
             // Trash contents changed under any tab browsing it.
             Shell::broadcast_reload_for_process(&process, dirs, cx);
-            let _ = win.update(cx, |_, window, cx| {
+            let _ = win.update(cx, move |_, window, cx| {
                 let plural = if deleted == 1 { "item" } else { "items" };
-                match first_err {
-                    None if deleted == 0 && unreadable => window.push_notification(
-                        Notification::error(
-                            "Couldn't read the Trash (permission denied). Grant Feraille \
-                             Files & Folders access and try again.",
-                        ),
-                        cx,
-                    ),
-                    None => window.push_notification(
-                        Notification::success(format!(
-                            "Emptied Trash \u{2014} {deleted} {plural} deleted"
-                        )),
-                        cx,
-                    ),
-                    Some(e) => window.push_notification(
-                        Notification::warning(format!(
-                            "Emptied Trash with errors ({deleted} {plural} deleted): {e}"
-                        )),
-                        cx,
-                    ),
+                if failures.is_empty() {
+                    if deleted == 0 && unreadable {
+                        window.push_notification(
+                            Notification::error(
+                                "Couldn't read the Trash (permission denied). Grant Feraille \
+                                 Files & Folders access and try again.",
+                            ),
+                            cx,
+                        );
+                    } else {
+                        window.push_notification(
+                            Notification::success(format!(
+                                "Emptied Trash \u{2014} {deleted} {plural} deleted"
+                            )),
+                            cx,
+                        );
+                    }
+                    return;
                 }
+                // Partial result through the same structured report the
+                // copy/move path uses. Root-owned trash items can be
+                // finished as admin; when nothing is recoverable this
+                // falls back to the plain expandable/copyable toast.
+                let summary =
+                    crate::shell::file_op_failure_report("Empty Trash", deleted, 0, &failures);
+                let detail = failures
+                    .iter()
+                    .map(|f| f.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let failed_perm: Vec<PathBuf> = failures
+                    .iter()
+                    .filter(|f| f.kind.is_elevation_recoverable())
+                    .map(|f| f.path.clone())
+                    .collect();
+                let retry = crate::shell::TrashRetry {
+                    shell: this,
+                    sources: failed_perm,
+                    delete: true,
+                };
+                window.push_notification(
+                    crate::shell::trash_failure_notification(
+                        summary.clone(),
+                        format!("{summary}\n\n{detail}"),
+                        retry,
+                    ),
+                    cx,
+                );
             });
         })
         .detach();
@@ -1483,6 +2036,8 @@ impl Shell {
     /// opening 200 things. Batch commands that collapse to one operation
     /// (Compress, Move to Trash, Tags) never route through here.
     /// (docs/features/CONTEXT_MENU.md)
+    // The fan-out confirmation dialog genuinely needs each of these inputs.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn confirm_fanout(
         &mut self,
         count: usize,
@@ -1501,7 +2056,7 @@ impl Shell {
         }
         let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
         let win = window.window_handle();
-        let _ = window.open_dialog(cx, move |dialog, _window, _cx| {
+        window.open_dialog(cx, move |dialog, _window, _cx| {
             let tx_go = go_tx.clone();
             let tx_cancel = go_tx.clone();
             let body = body.clone();
@@ -1542,6 +2097,10 @@ impl Shell {
         self.on_rename_selected(&RenameSelected, window, cx);
     }
 
+    pub fn trigger_bulk_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_bulk_rename_selected(&BulkRenameSelected, window, cx);
+    }
+
     pub fn trigger_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.on_new_folder(&NewFolder, window, cx);
     }
@@ -1563,8 +2122,12 @@ impl Shell {
             "Untitled folder",
             String::new(),
             move |this, name, window, cx| {
+                // A typed `/` is the Finder-displayed slash → store a `:` on
+                // disk (macOS). Also keeps the name a single leaf, so New
+                // Folder never silently descends into an existing subdir.
+                let disk = feraille_fs_native::paths::on_disk_leaf(&name).into_owned();
                 let mut path = parent.clone();
-                path.push(&name);
+                path.push(&disk);
                 let cur = parent.clone();
                 let op_path = path.clone();
                 let undo_path = path.clone();
@@ -1676,10 +2239,17 @@ impl Shell {
         self.open_text_prompt(
             "Rename",
             "New name",
-            entry.name.clone(),
+            // Pre-fill the name the user sees (display leaf, macOS `:` → `/`);
+            // `on_disk_leaf` below maps any edit back to on-disk bytes, so an
+            // unchanged value round-trips to a no-op.
+            entry.display_name.clone(),
             move |this, new_name, window, cx| {
+                // Finder parity: a typed `/` stores a `:` on disk (macOS), and
+                // the rename target stays a single leaf — no accidental move
+                // into a sibling directory from a `/` in the typed name.
+                let disk = feraille_fs_native::paths::on_disk_leaf(&new_name).into_owned();
                 let mut new_path = old_path.clone();
-                new_path.set_file_name(&new_name);
+                new_path.set_file_name(&disk);
                 let op_old_path = old_path.clone();
                 let op_new_path = new_path.clone();
                 this.spawn_file_op(
@@ -1702,6 +2272,36 @@ impl Shell {
             window,
             cx,
         );
+    }
+
+    /// Bulk rename over the resolved multi-selection
+    /// (docs/features/BULK_RENAME.md). Snapshots the selection once —
+    /// `(path, display name, mtime)` triples, model/cache-only — and
+    /// opens the pattern-rule dialog over it. With fewer than two
+    /// targets this degrades to the single-rename prompt (one) or a
+    /// no-op (none), so palette/menu dispatch is always sensible.
+    pub(super) fn on_bulk_rename_selected(
+        &mut self,
+        _: &BulkRenameSelected,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::trail::command("Bulk Rename");
+        // Peek the target count without consuming `context_row`: the
+        // single-rename fallback below resolves its own target from it.
+        let count = self.resolve_targets(self.context_row, cx).len();
+        if count < 2 {
+            if count == 1 {
+                self.on_rename_selected(&RenameSelected, window, cx);
+            }
+            return;
+        }
+        let items: Vec<(PathBuf, String, i64)> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, entry, path)| (path, entry.display_name, entry.mtime_unix))
+            .collect();
+        crate::bulk_rename::open(self, items, window, cx);
     }
 
     pub(super) fn on_quick_look(
@@ -1890,11 +2490,11 @@ impl Shell {
         }
         let db = self.process.db_snapshot();
         cx.spawn_in(window, async move |this, cx| {
-            let (cleared, failed) = cx
+            let (cleared, failures) = cx
                 .background_executor()
                 .spawn(async move {
                     let mut cleared: Vec<feraille_core::NodeId> = Vec::new();
-                    let mut failed = 0usize;
+                    let mut failures: Vec<feraille_fs_native::file_ops::FileOpError> = Vec::new();
                     for (id, path) in targets {
                         match feraille_fs_native::clear_quarantine(&path) {
                             Ok(()) => {
@@ -1918,15 +2518,17 @@ impl Shell {
                                     "clear_quarantine failed for {}: {e}",
                                     path.display()
                                 );
-                                failed += 1;
+                                failures.push(feraille_fs_native::file_ops::FileOpError::from_io(
+                                    &e, &path,
+                                ));
                             }
                         }
                     }
-                    (cleared, failed)
+                    (cleared, failures)
                 })
                 .await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.apply_quarantine_cleared(&cleared, failed, window, cx);
+                this.apply_quarantine_cleared(&cleared, &failures, window, cx);
             });
         })
         .detach();
@@ -1938,7 +2540,7 @@ impl Shell {
     fn apply_quarantine_cleared(
         &mut self,
         cleared: &[feraille_core::NodeId],
-        failed: usize,
+        failures: &[feraille_fs_native::file_ops::FileOpError],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1967,10 +2569,16 @@ impl Shell {
             };
             window.push_notification(Notification::success(msg), cx);
         }
-        if failed > 0 {
+        if !failures.is_empty() {
+            // Per-item failures through the same structured report the
+            // copy/move path uses (Copy button + expandable detail via
+            // the shared error toast).
             window.push_notification(
-                Notification::warning(format!(
-                    "Couldn't clear the mark on {failed} file(s) — see log"
+                super::error_notification(crate::shell::file_op_failure_report(
+                    "Clear quarantine",
+                    cleared.len(),
+                    0,
+                    failures,
                 )),
                 cx,
             );

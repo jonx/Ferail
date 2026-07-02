@@ -319,7 +319,12 @@ impl Shell {
                     .justify_center()
                     .cursor_pointer()
                     .when(marked, |this| {
-                        this.child(div().text_scale_xs().text_color(gpui::white()).child("\u{2713}"))
+                        this.child(
+                            div()
+                                .text_scale_xs()
+                                .text_color(gpui::white())
+                                .child("\u{2713}"),
+                        )
                     })
                     .on_click(cx.listener(move |this, _, _, cx| this.dupe_toggle_mark(node, cx)));
 
@@ -394,10 +399,10 @@ impl Shell {
 
     // ===== Group actions =====
 
-    fn dupe_group_mut<'a>(
-        groups: &'a mut [DupeGroupView],
+    fn dupe_group_mut(
+        groups: &mut [DupeGroupView],
         group_no: usize,
-    ) -> Option<&'a mut DupeGroupView> {
+    ) -> Option<&mut DupeGroupView> {
         groups.iter_mut().find(|g| g.group_no == group_no)
     }
 

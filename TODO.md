@@ -25,11 +25,11 @@ and let git history plus release notes carry the record.
 - **Notifications & undo coverage for mutations.** Success feedback is now
   intentionally quiet for immediate visible work: rename/new-folder stay silent
   on success, and task-backed copy/move/duplicate/compress only toast after the
-  task surfaced. Remaining gaps:
-  - **Cross-volume move undo** — `UndoOp::MoveBack` is registered only for
-    same-volume moves; cross-volume moves fall back to copy-undo or none.
-  - Extend actionable raw-error messages beyond the common file-op/search/dupe
-    paths to every remaining mutation surface.
+  task surfaced.
+  - ✅ **Cross-volume move undo** — shipped on main (`b2c5ca3`): `UndoOp::MoveBack`
+    now covers cross-volume moves.
+  - ✅ **Actionable raw-error messages** — shipped on main (`b2c5ca3`): structured
+    failure reports across the mutation surfaces.
   - **Error-notification UX** — add a **copy** button so the user can copy the
     message (and full technical detail) to the clipboard, and an
     **expand/unfold** control to reveal the complete technical error when the
@@ -38,8 +38,8 @@ and let git history plus release notes carry the record.
     so this needs either an extension to the pinned gpui-component fork or a
     custom notification body that carries a short summary plus the collapsible
     full error.
-- **Persist file-table column order** after drag-reorder. `move_column`
-  reorders the live vec but never persists; widths already persist.
+- ✅ **Persist file-table column order** — shipped on main (`c0f1de2`): column
+  order AND widths now persist across launches.
 - **Grid marquee / rubber-band selection** — the last grid-parity gap now that
   per-cell adornments (tag dots, star, heat tint, cut dimming, tooltip) are
   painted. No list equivalent to copy; new background drag-rect gesture.
@@ -49,12 +49,10 @@ and let git history plus release notes carry the record.
 Net-new, but each sits on plumbing that already exists, so the build is small
 relative to the daily value. Ordered by bang-for-buck.
 
-- **Bulk rename with regex / pattern rules.** A self-contained modal over the
-  current selection: literal + regex find/replace, sequence numbering, case
-  transforms, and metadata tokens (date / dimensions / counter), with a live
-  before→after preview. Reuses the unified `open_text_prompt` naming modal and
-  the existing bulk file-op engine — no new subsystem. Highest daily value; the
-  system explorers and power tools all have it and we don't.
+- ✅ **Bulk rename with regex / pattern rules** — shipped on main (`689406d`):
+  self-contained modal over the selection with literal + regex find/replace,
+  sequence numbering, case transforms, and a live before→after preview
+  (docs/features/BULK_RENAME.md).
 - **Smart Folders / Saved Searches.** Wire the reserved
   `FavoriteTarget::SavedSearch` (favorites.rs) into a real feature: pin a search
   as a favorite that re-runs live on click — Spotlight-backed where available,
@@ -135,17 +133,17 @@ relative to the daily value. Ordered by bang-for-buck.
 - Recents follow-ups: recently-opened **files** (needs a file-open signal — we
   only log folder visits today); optionally a dedicated recents store decoupled
   from the heat map (today Clear/Remove also clears that folder's heat).
-- **Refresh folder sizes after size-changing ops.** After a mutation that
-  changes a directory's contents — trash/delete, move, copy/paste, duplicate,
-  compress — invalidate and recompute the affected folder-size rows instead of
-  waiting for a navigation/reload (today the only trigger is `folder_sizes::start`
-  from `finish_directory_load_in_tab`). The cache contract in `folder_sizes.rs`
-  validates a row by the folder's *own* mtime, but a directory's mtime bumps only
-  on *direct* child changes, so a delete deep in a subtree leaves a stale size;
-  recompute both the directories whose contents changed and the current folder's
-  own aggregate. The durable fix is the watcher/FSEvents-driven invalidation
-  already flagged in `folder_sizes.rs` and under Responsiveness & Data
-  Architecture.
+- **Refresh folder sizes after size-changing ops.** ✅ *In-app half shipped on
+  main* via [FRESHNESS.md](docs/features/FRESHNESS.md): subtree-derived caches now
+  validate by mtime + TTL, invalidate the ancestor chain on in-app mutations, and
+  force a size refresh when the window returns to the foreground (see also the
+  **Cache freshness follow-ups** item under Responsiveness & Data Architecture).
+  Historical context: after a mutation that changes a directory's contents —
+  trash/delete, move, copy/paste, duplicate, compress — the affected folder-size
+  rows must recompute instead of waiting for a navigation/reload; the old cache
+  contract in `folder_sizes.rs` validated a row by the folder's *own* mtime, but a
+  directory's mtime bumps only on *direct* child changes, so a delete deep in a
+  subtree left a stale size.
   - This must also catch **external changes from third-party apps** — deletes,
     adds, or edits made outside Feraille (another file manager, a terminal `rm`,
     an installer). Feraille can't self-report those, so only a live filesystem
@@ -189,20 +187,19 @@ fallback). Remaining is the UX the system explorers have and we don't:
   shows cost, precise/scrubbing seek (`seekToTime:` tolerance-zero), volume
   control. Windows parity: Ctrl/F11 chords, `IShellItemImageFactory` fallback,
   Media Foundation video frame source feeding the shared `RenderImage` path.
-- **mpv video backend → retire VLC** ([docs/features/VIDEO_MPV.md](docs/features/VIDEO_MPV.md)).
-  Add a libmpv provider behind the existing `VideoBackend` seam (runtime
-  `dlopen`, SW render into the BGRA pull buffer) that plays the same broad set
-  *and* applies denoise/sharpen/deband/grain **live** via `vf set` — fixing the
-  VLC limitation that forces a stream re-open on every filter change. macOS
-  first. Iterations: (1) crate + playback + frame pull, (2) transport, (3) live
-  grade, (4) live `vf` filters + `set_enhance` seam method + Plugins option,
-  (5) **retire VLC** once mpv is verified — remove the crate/feature and delete
-  the seamless-reopen / `video_pending_seek` / `video_repause` machinery.
-- **Color-key transparency** (follow-on, [docs/features/VIDEO_MPV.md](docs/features/VIDEO_MPV.md)
-  §Color-key). Rides the mpv backend's per-pixel alpha pass: key a chosen color
-  to transparent so the video shows through. v1 = RGB-distance + tolerance
-  slider. Open product fork before it starts: see-through to an in-app backdrop
-  (cheap) vs. to the desktop via a transparent window (the "wow" version, ~3×).
+- ✅ **mpv video backend → retire VLC** — shipped on main
+  ([docs/features/VIDEO-MPV.md](docs/features/VIDEO-MPV.md)): libmpv provider behind
+  the `VideoBackend` seam (runtime load, SW render into the BGRA pull buffer) with
+  live `vf set` denoise/sharpen/deband/grain; VLC crate deleted (`3b1abc5`) and the
+  seamless-reopen machinery removed (`c8b117f`). **Windows parity pending (this
+  port):** confirm native Media Foundation video (`video_mf.rs`) still integrates
+  after the viewer refactor, and the optional mpv plugin loads via `LoadLibraryW`.
+- ✅ **Color-key transparency** — shipped on main
+  ([docs/features/VIDEO-MPV.md](docs/features/VIDEO-MPV.md)): single-layer chroma
+  key + eyedropper (`9fb9ff7`), N-layer compositing (`f9cbdc8`), and see-through
+  transparent windows (`750eb6c`/`afeb437`). **Windows parity pending (this
+  port):** transparent windows are the highest-risk Windows-specific gap
+  (DWM/layered vs NSWindow) — top Phase 1 investigation.
 
 ## Metadata & Intelligence
 
@@ -228,10 +225,11 @@ fallback). Remaining is the UX the system explorers have and we don't:
 - **Mouse predictor** ([docs/features/MOUSE_PREDICTOR.md](docs/features/MOUSE_PREDICTOR.md)):
   pure pointer prediction module, Ant Trail blend, task-scheduler integration,
   debug overlay, and pointer-path performance tests.
-- **APFS clone-aware disk-usage sizing**: the duplicate finder detects clones +
-  hard links and excludes them from reclaimable bytes, but the **disk-usage
-  scanner still counts every hard-link name and clone at full size** — add
-  `(dev, inode)` de-dup and clone-aware sizing there.
+- **APFS clone-aware disk-usage sizing**: hard-link `(dev, inode)` de-dup and
+  filesystem-boundary handling (firmlink-aware `du -x` semantics) now ship in
+  the scanner; **APFS clones still count at full size** (clones share extents
+  without `nlink > 1`, so detecting them needs per-file clone-id queries —
+  weigh the extra syscall per file before adding it).
 - Disk Usage follow-ups from the feature doc: richer iCloud download-state
   handling once the existing path-prefix cloud glyph is not enough.
 
@@ -239,6 +237,24 @@ fallback). Remaining is the UX the system explorers have and we don't:
 
 - Finish the stable **NodeStore identity** model for rename, move, mount
   changes, Ant Trail, selection, watcher events, and metadata cache keys.
+- **NodeId intern-map lifecycle**: `NativeFs`'s `NodeId ↔ PathBuf` maps (and
+  `NodeStore`'s) are add-only — a disk-usage scan or duplicate sweep of a
+  multi-million-file volume permanently pins one `PathBuf` per file for the
+  process lifetime (GB-scale RSS surviving window close). A safe fix needs an
+  id *lifecycle*, not an eviction hack: scan-minted ids interleave with ids
+  live tabs/selections/history hold (the path-keyed map returns the same id to
+  both), so range- or ownership-based forgetting can misdirect a later
+  trash/rename through a stale `path_for`. Design: either refcount ids per
+  holding surface, or give tool results (DU, dupes, search) a per-scan arena
+  id namespace that drops with the surface, keeping the global map for
+  navigation identity only.
+- **Cache freshness follow-ups** ([docs/features/FRESHNESS.md](docs/features/FRESHNESS.md)).
+  Subtree-derived caches now stay honest via mtime + TTL validity, exact
+  ancestor invalidation on in-app mutations, and a forced size refresh when the
+  window returns to the foreground. Remaining: invalidate **both** parents'
+  ancestor chains on a cross-directory move (`spawn_file_op` reloads a single
+  `reload_path` today); and reuse the same model for the next recursive
+  aggregates (item counts, APFS clone-aware sizing) rather than a parallel one.
 - Add **cancellation tokens** consistently for enumeration, preview, thumbnails,
   disk usage, search, copy/move, and duplicate finding (most register tasks
   now, but several still drop stale results at apply rather than cancelling).
@@ -318,10 +334,37 @@ fallback). Remaining is the UX the system explorers have and we don't:
 
 ## Cross-Platform
 
+- **Filename display-convention parity.** macOS landed: a name's on-disk `:`
+  shows as `/` and a typed `/` stores `:`, matching Finder, via
+  `feraille_fs_native::paths::{display_leaf,on_disk_leaf}` (the seam for
+  per-platform name presentation; see ARCHITECTURE.md "Raw name vs. display
+  name"). Remaining per-platform quirks to consider on the same seam, none
+  implemented yet:
+  - Windows: reserved device names (`CON`, `PRN`, `NUL`, `COM1`…`LPT9`),
+    reserved characters (`<>:"|?*`), and trailing-dot/space stripping —
+    validate/transform typed names on the input side so a New Folder / rename
+    can't silently fail or produce an inaccessible name. (`\`↔`/` separators
+    are already handled by `std`; the JP/KO `\`-as-¥/₩ glyph is a font/code-page
+    matter, not an app concern.)
+  - macOS: HFS NFD normalization is cosmetic and renders fine today; revisit
+    only if a normalization-sensitive comparison surfaces.
+  - Optional: an informational (not red-hazard) note in Get Info when a name
+    contains a `/`-shown-as-`:`, so the on-disk reality is discoverable.
 - Windows deferred ports (windows-port.md §6b): third-party shell-extension
   context-menu verbs (`IContextMenu`) and WSL integration. The near-term
   behavior-breaking stubs (CF_HDROP clipboard, `WM_DEVICECHANGE` volume
   observer, text-naming modal) all shipped.
+- **Resilient file-op coping — Windows-native primitives** (the cross-platform
+  surface + macOS already landed; see docs/features/FILE_OPS.md). Implement on
+  the Windows box behind the existing `platform_shell` stubs:
+  `run_elevated_self` via `ShellExecuteExW` verb `"runas"` (UAC) +
+  wait-for-exit, so **Retry as administrator** works; `processes_using` via the
+  **Restart Manager** (`RmStartSession`/`RmRegisterResources`/`RmGetList`) to
+  name the process holding a locked file; `force_close_processes` via
+  `RmShutdown` (+ `TerminateProcess` fallback) for force-close-and-retry. Then
+  flip `elevation_available()` / `lock_diagnostics_available()` true and wire
+  the "See what's using it" / force-close buttons (the GPUI side already gates
+  on those bools). Linux follow-up: `pkexec` re-exec + `/proc/*/fd` lockers.
 - Linux port ([docs/features/linux-port.md](docs/features/linux-port.md)):
   `feraille-gpui` now **builds and runs** on Linux (verified on WSL2 / Ubuntu
   24.04 under WSLg + lavapipe — launches a Wayland window, opens its XDG SQLite
@@ -348,6 +391,34 @@ fallback). Remaining is the UX the system explorers have and we don't:
 - Publish the gpui fork carrying the `gpui_windows::render_to_image` patch and
   point the `[patch]` block at `git = "<fork-url>", rev = "..."` so the Windows
   screenshot harness builds identically to macOS (today a local-path override).
+
+## Open-Source Release
+
+The repo is prepared for a **source-first** public release (dual MIT/Apache;
+README, CONTRIBUTING, SECURITY, THIRD-PARTY-NOTICES in place; private checkout
+paths scrubbed). Source-first is unblocked. Remaining:
+
+- **`cargo-deny` for license / advisory drift.** No `deny.toml` today. Add one
+  so a future `gpui` rev bump that changes the transitive license surface is
+  caught mechanically (see the GPL note below).
+
+### Before distributing a prebuilt binary
+
+Publishing *source* is unaffected by the transitive GPL chain; a redistributable
+*binary* is not. Do these only when building a download:
+
+- **Sever the GPL-3.0 dependency edge.** A default build links GPL-3.0
+  `ztracing` / `zlog` / `ztracing_macro` through a single non-optional path
+  `gpui → sum_tree → ztracing` (they supply `#[instrument]` macros that no-op at
+  runtime in non-Zed builds). To keep a shipped binary MIT/Apache, patch
+  `sum_tree` to drop the `ztracing` dep plus its two `use ztracing::instrument;`
+  sites — verified trivial and fully severable (`sum_tree` is the sole consumer).
+  Upstream fix tracked at <https://github.com/zed-industries/zed/issues/55470>
+  (acknowledged but stuck in legal — do **not** assume it lands on a timeline).
+  Context in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+- Code signing / notarization / `.dmg` / release CI: tracked under
+  **Packaging & Polish** (Developer ID, hardened-runtime-without-sandbox
+  entitlements, notarization + stapling, versioning/tags, macOS release job).
 
 ## Cleanup
 

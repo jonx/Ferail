@@ -96,10 +96,11 @@ pub fn analyze(name: &str) -> Vec<NameSegment> {
         }
     };
 
+    let mixed = mixed_script_flags(&chars);
     for (i, &c) in chars.iter().enumerate() {
         let in_lead = i < lead_end;
         let in_trail = i >= trail_start && trail_start < chars.len();
-        match classify(c, in_lead, in_trail) {
+        match classify(c, in_lead, in_trail, mixed[i]) {
             Some(seg) => {
                 flush(&mut plain, &mut out);
                 out.push(seg);
@@ -111,9 +112,43 @@ pub fn analyze(name: &str) -> Vec<NameSegment> {
     out
 }
 
+/// Per-char homoglyph context: `true` when the char's alphabetic token
+/// mixes ASCII Latin letters with confusable non-ASCII letters — a
+/// UTS #39-style mixed-script heuristic. An all-Cyrillic or all-Greek
+/// word is just a name in that language; unconditionally flagging it
+/// painted a Russian user's entire Documents folder with the
+/// deceptive-character highlight, destroying the signal. The attack
+/// shape is "раypal": lookalikes hidden *inside* an otherwise-Latin
+/// word, so only mixed tokens light up.
+fn mixed_script_flags(chars: &[char]) -> Vec<bool> {
+    let mut flags = vec![false; chars.len()];
+    let mut i = 0;
+    while i < chars.len() {
+        if !chars[i].is_alphabetic() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && chars[i].is_alphabetic() {
+            i += 1;
+        }
+        let token = &chars[start..i];
+        let has_ascii = token.iter().any(|c| c.is_ascii_alphabetic());
+        let has_confusable = token.iter().any(|c| confusable(*c).is_some());
+        if has_ascii && has_confusable {
+            for flag in &mut flags[start..i] {
+                *flag = true;
+            }
+        }
+    }
+    flags
+}
+
 /// Classify a single character. `in_lead`/`in_trail` mark the leading and
 /// trailing whitespace zones so a normal interior space stays plain.
-fn classify(c: char, in_lead: bool, in_trail: bool) -> Option<NameSegment> {
+/// `in_mixed_token` gates the homoglyph check (see
+/// [`mixed_script_flags`]).
+fn classify(c: char, in_lead: bool, in_trail: bool, in_mixed_token: bool) -> Option<NameSegment> {
     let cp = c as u32;
 
     // Bidirectional controls — the headline trick (reverses gpj.exe ⇒ exe.jpg).
@@ -156,14 +191,17 @@ fn classify(c: char, in_lead: bool, in_trail: bool) -> Option<NameSegment> {
             None,
         ));
     }
-    // Homoglyphs — non-ASCII letters that mimic an ASCII one.
-    if let Some((ascii, script)) = confusable(c) {
-        return Some(hazard(
-            c,
-            HazardKind::Homoglyph,
-            format!("{script} '{c}' (U+{cp:04X}) — looks like '{ascii}'"),
-            None,
-        ));
+    // Homoglyphs — non-ASCII letters that mimic an ASCII one, flagged
+    // only inside a token that also carries ASCII Latin letters.
+    if in_mixed_token {
+        if let Some((ascii, script)) = confusable(c) {
+            return Some(hazard(
+                c,
+                HazardKind::Homoglyph,
+                format!("{script} '{c}' (U+{cp:04X}) — looks like '{ascii}'"),
+                None,
+            ));
+        }
     }
     None
 }
@@ -344,6 +382,23 @@ mod tests {
             .collect();
         assert_eq!(homos.len(), 2);
         assert!(homos[0].label.as_ref().unwrap().contains("Cyrillic"));
+    }
+
+    #[test]
+    fn all_cyrillic_name_is_clean() {
+        // A normal Russian document name: single-script tokens are a
+        // language, not an attack (extension token "pdf" is pure
+        // ASCII, stem is pure Cyrillic — never mixed).
+        assert!(!has_hazards("Договор аренды.pdf"));
+        assert!(!has_hazards("Отчёт_2024.docx"));
+        // Greek too.
+        assert!(!has_hazards("Σημειώσεις.txt"));
+    }
+
+    #[test]
+    fn mixed_token_still_flagged() {
+        // Cyrillic 'о' hidden inside a Latin word — the actual attack.
+        assert!(has_hazards("inv\u{043E}ice.pdf"));
     }
 
     #[test]

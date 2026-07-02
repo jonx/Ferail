@@ -9,8 +9,10 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 # 2026-06-23 mpv video backend, VLC retirement & color-key transparency (planned)
 
-Full plan: [docs/features/VIDEO_MPV.md](docs/features/VIDEO_MPV.md). Planned, not
-started; implementation begins on macOS.
+Full plan: [docs/features/VIDEO-MPV.md](docs/features/VIDEO-MPV.md). ✅ Shipped on
+main (Phases 1–5): the libmpv backend replaced VLC and color-key / transparent-
+window compositing landed on macOS. Windows parity is tracked in the
+`windows-parity` port work.
 
 ## The decision (mpv over VLC and over raw FFmpeg)
 
@@ -1301,3 +1303,191 @@ Spec §2.3 wants a focus ring distinct from selection fill. The Table primitive 
 - Spec §2.4 "Right-click on empty space" same status — not surfaced by the primitive yet.
 - Spec §2.6 streaming reconciliation: minimal pass only. `refresh_file_list_selection` runs on every batch + Done so NodeIds in the set rejoin visually as their rows land. Live Shift-range recomputation across batches deferred to iter 2 (range freezes at click time).
 - Verified visually: `screenshots/selection-iter1-single.png` (one row, focus ring, "1 of 44 selected"), `screenshots/selection-iter1-multi.png` (four rows, anchor=2, lead=8, "4 of 44 selected · 20.3 KB", lead distinct from set members).
+
+# 2026-06-23 mpv backend + chroma-key compositor (planning + Phase 0 spike)
+
+Plan: rip out the libvlc video backend, replace it with **libmpv**, and build
+an **N-layer transparent-colour (chroma-key) compositor** on top — pick a
+transparent colour on a video, see the layer(s) beneath show through, where a
+lower layer can itself be a keyed video. Full design in
+[docs/features/VIDEO-MPV.md](docs/features/VIDEO-MPV.md).
+
+Why mpv over VLC, in one line: libvlc can't change a video filter live, which
+is the whole reason for the seamless-reopen apparatus in the viewer
+(`commit_video_enhance` / `video_pending_seek` / `video_repause`) — mpv's `vf`
+is live, so that apparatus deletes AND live filters are exactly what a *live*
+colour-key picker needs.
+
+Two scope calls I made up front:
+- **Replace VLC outright** (not keep as a fallback), sequenced so mpv hits
+  parity + passes its integration test before VLC is deleted in the same phase
+  — never left without working video.
+- **N-layer stack** from the start. The data model is N; the honest perf
+  ceiling of the CPU-buffer-pull path is a handful of layers at ≤1080p, past
+  which the fix is GPU surfaces (`gpui::surface`) — a documented follow-up, not
+  an MVP blocker.
+
+**Phase 0 spike (`spikes/mpv-probe/`, dependency-free dlopen FFI) — ran green
+against Homebrew libmpv (`/opt/homebrew/opt/mpv/lib/libmpv.2.dylib`).** It
+exists to resolve the gating unknowns before any real integration:
+
+- **SW render pulls BGRA frames.** `mpv_render_context_create(..,"sw")` +
+  `mpv_render_context_render` with `SW_SIZE/SW_FORMAT="bgra"/SW_STRIDE/
+  SW_POINTER` hands back a tightly-packed BGRA buffer at the size we ask —
+  same shape as libvlc's vmem, so the `copy_frame → (w,h,BGRA)` seam is
+  untouched.
+- **THE GATE — SW render emits a REAL alpha channel. PASS.** A `colorkey`
+  filter set live produced correct per-pixel alpha through SW render: keying
+  the clip's green background made it transparent (`alpha lo=0`), the overlaid
+  test box stayed opaque (`hi=255`), ~66k/76.8k px transparent. Eyeballed at
+  `screenshots/mpv-probe-B_alpha_green.png` (green→black, box→white). So
+  **keying lives in mpv's filter chain** (live, off our threads), not a CPU
+  pass. Recipe: end the vf chain in an alpha format and request bgra —
+  `vf = lavfi=[...,format=rgba,colorkey=color=0xRRGGBB:similarity=..:blend=..]`.
+- **Live vf change works with no re-open.** Setting `vf` *after* playback
+  started applied immediately (the green key above was set live, ret=0). This
+  is what kills the VLC reopen dance and enables live key + live enhance.
+- **Two corrections to fold into the plan:**
+  1. **mpv's `brightness` equalizer property is a no-op on the SW-render
+     output** (luma 83.8 → 83.8 unchanged). The equalizer lives in the GPU VO
+     shaders; SW render doesn't run them. So **colour grade must route through
+     a lavfi filter** (`eq`/`colorlevels`) in the live vf chain, not via the
+     `brightness/contrast/saturation/gamma/hue` properties — which unifies
+     grade + enhance + key into one live chain. (Or keep the existing CPU
+     grade; lavfi is cleaner now that the chain is live.)
+  2. **The `--alpha` option doesn't exist in this mpv build** (rejected -5).
+     Didn't matter — alpha came purely from `format=rgba` in the chain + the
+     bgra SW format. One less knob.
+  - (Minor: the spike's *second* live retune snapshot was stale — 200 ms
+    wasn't enough settle, not a mechanism failure; the real backend uses
+    mpv's render update-callback rather than a fixed sleep.)
+
+Net: the architecture holds and the risky unknown is retired green. Next is
+Phase 1 — `feraille-video-mpv` to parity, then delete `feraille-video-vlc` +
+the `vlc` feature + the reopen apparatus. Delete `spikes/mpv-probe/` once
+Phase 1 lands (binding decision now recorded here).
+
+---
+
+# 2026-06-23 resilient file operations — cope with permission/lock failures + report transparently
+
+Problem: a copy/move that hit a permission denial or a locked file (open in
+another process) aborted the **whole batch on the first failure**, threw away
+the structured cause at the `format!("{path}: {e}")` boundary, and surfaced one
+flat string — with no way to *cope* (escalate) or even see which items failed.
+Plan: `~/.claude/plans/tidy-dreaming-lobster.md` (approved). Phased: Chunk A =
+transparency foundation; Chunk B = retry + elevation vertical slice (macOS-real,
+Win/Linux stubbed); Chunk C = Windows-native lock detection + runas (deferred to
+the Windows box, since I can't runtime-test Win32 from this Mac).
+
+User decisions: explicit **"Retry as administrator"** button (no auto-escalation);
+build the platform-neutral + macOS foundation now; **force-close** of a locking
+process is in scope (Windows-native, Chunk C).
+
+## Two deviations from the plan letter (both to match existing conventions)
+
+1. **`FileOpError`/`FileOpErrorKind` live in `feraille-fs-native`, not
+   `feraille-core`.** The plan said core "beside `EnumerationError`", but core
+   deliberately uses `String` for paths and never imports `std::path` — a
+   `PathBuf`-bearing error type doesn't belong there. fs-native is the engine's
+   home and where the libc-based classifier must live anyway (errno values vary
+   across unix flavours, so the classifier uses `libc::EACCES` etc., not
+   literals). gpui reaches them via `feraille_fs_native::file_ops::FileOpError`.
+2. **No serde.** The project persists settings as a hand-rolled `key=value`
+   format; neither core, fs-native, nor gpui pull serde. So the Chunk B elevated-
+   op descriptor will use the same hand-rolled line format, and the platform
+   elevation primitive stays a dumb "re-launch self elevated with these args"
+   call (it never sees the op type) — which also keeps crate boundaries clean
+   (shell crates can't depend on gpui's descriptor type).
+
+## Chunk A — landed (this session)
+
+- `FileOpErrorKind { PermissionDenied | Locked | NotFound | NoSpace | ReadOnly |
+  NameTooLong | AlreadyExists | Other }` with `summary()` (plain label),
+  `advice()` (centralised — the GPUI notification's old inline string-match table
+  moved here), `is_elevation_recoverable()` (PermissionDenied only — elevation
+  doesn't release another process's lock or fill a disk) and `is_lock()`.
+- `FileOpError { kind, path, raw, os_code }` + `FileOpError::from_io` classifier:
+  `ErrorKind` first, then raw OS code (libc on unix, documented winerror.h values
+  on the windows arm — pure data, safe to write blind).
+- Engine collect-and-continue: `OpOutcome.failed: Vec<FileOpError>`; the per-item
+  loops in `run_copy`/`run_move` record a failed item and **keep going** instead
+  of `?`-aborting; `resolve_dest` returns a `Resolution` enum and no longer
+  mutates the outcome. `run_copy`/`run_move` keep their `Result<_, String>`
+  signature but in practice only ever return `Ok` now (per-item errors live in
+  `failed`; cancellation stays a distinct early break). All inner tiers
+  (`copy_item`, `copy_leaf_file`, `copy_file_chunked`, `recreate_symlink`,
+  `mac::copy_file`) now return `FileOpError`.
+- Surfacing: `file_op_outcome_summary(verb, &OpOutcome)` →
+  "Move: 7 of 10 done · 3 failed" + first 4 items with reasons + dominant-kind
+  advice; wired into `spawn_transfer_op` so **failures always surface** (even
+  sub-150ms ops) with the existing Copy-to-clipboard action. The old transfer
+  error path used a bare `Notification::error` that skipped the advice helper
+  entirely — fixed. `file_op_error_notification` now delegates to
+  `classify_error_text(...).advice()` so the string-error surfaces (rename,
+  duplicate, compress, alias) share the one advice table.
+- Tests: `partial_failure_continues_and_is_recorded` (a hand-built plan with a
+  ghost second source → first item copies, second recorded as `NotFound`, batch
+  not aborted) and `classify_maps_os_errors_to_kinds` (synthetic OS errors →
+  kinds + the elevation/lock predicates). All 15 file_ops tests green.
+
+## With more time / deferred
+
+- Chunk B next (this session): elevated-op descriptor + `--elevated-op` worker +
+  `platform_shell` elevation/lock surface + Retry / Retry-as-administrator UI.
+- Chunk C (Windows box): Restart Manager lockers, RmShutdown/Terminate force-
+  close, `runas` re-exec. macOS elevation via osascript is the simplest viable
+  mechanism (runs the worker as root, generic auth dialog) — a `SMAppService`
+  privileged helper is the upgrade.
+
+## Chunk B — landed (this session): retry + elevation vertical slice
+
+Verified end-to-end on macOS (only the literal auth prompt is the manual step).
+
+- **Descriptor model + worker** (`crates/feraille-gpui/src/elevation.rs`):
+  `ElevatedOp { is_move, dest_dir, sources }` + `ElevatedResult`, NUL-separated
+  encoding (robust against any path on unix; no serde). `--elevated-op
+  <descriptor> --elevated-result <result>` CLI mode (dispatched in main.rs
+  before any GUI init) runs the op via the *same engine* the GUI uses, writes
+  per-item results, and **exits 0 even when items fail** (failures live in the
+  result file) so the osascript wrapper treats "ran" as success. Round-trip
+  unit tests + a direct CLI test (copied/moved real files, spaced filenames).
+- **Platform surface** (all three shell crates, `platform_shell::*`):
+  `elevation_available()`, `run_elevated_self(args)`, `lock_diagnostics_available()`,
+  `processes_using(path) -> Vec<LockingProcess>`, `force_close_processes(pids)`.
+  The primitive is deliberately dumb — "re-launch THIS exe elevated with these
+  args and wait" — so it never sees the op type and the shell crates need no
+  dep on gpui's descriptor. macOS `run_elevated_self` = osascript `do shell
+  script … with administrator privileges` (two-layer quoting: POSIX
+  single-quote per token, then AppleScript string escaping — verified through
+  osascript with a spaced filename). Windows/Linux = stubs (Chunk C / pkexec).
+- **UI** (`shell.rs` `transfer_failure_notification` + `TransferRetry`;
+  `file_ops.rs` `retry_transfer_elevated`): the failure toast offers Copy +
+  in-process **Retry** (re-runs just the failed top-level sources) + **Retry as
+  administrator…** (gated on `is_elevation_recoverable() && elevation_available()`).
+  Elevated retry runs `run_elevated_op` on the executor (the auth dialog
+  blocks), reloads, and reports "completed N as administrator" / "M still
+  failed". gpui-component `Notification`: `.action` sets the primary button AND
+  disables autohide; `.content` renders the secondary button row.
+
+### Decisions / trade-offs
+
+- **macOS PermissionDenied + TCC**: "Retry as administrator" runs the worker as
+  root, which fixes Unix-ownership denials but NOT TCC/privacy denials (root is
+  still gated on protected folders without Full Disk Access). The follow-up
+  toast reports honestly when it still fails. The old mac-specific "grant Full
+  Disk Access in System Settings" hint is dropped in favour of one
+  platform-neutral advice line; acceptable, revisit if it confuses.
+- **Scope held**: only the copy/move/paste/drag transfer path got the retry UI
+  this session. The other silent/first-error surfaces (trash, tag-toggle) are
+  noted in TODO, not done — they're separate surfaces, and the user was editing
+  in parallel (`//`), so I kept the blast radius tight.
+- **Clippy**: my additions are warning-clean; the few workspace warnings live in
+  files I didn't touch (search.rs, open_text_prompt region) — pre-existing or
+  the parallel edits, left alone.
+
+### Chunk C (next, on the Windows box) — see TODO "Resilient file-op coping"
+
+`ShellExecuteExW` runas for `run_elevated_self`; Restart Manager for
+`processes_using`; `RmShutdown`/`TerminateProcess` for `force_close_processes`;
+then flip the two `*_available()` bools true.

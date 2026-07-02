@@ -105,7 +105,7 @@ pub fn make_alias(target: &Path) -> Result<PathBuf, String> {
 pub fn make_alias_in(target: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
     use objc2::msg_send;
     use objc2::msg_send_id;
-    use objc2::rc::Retained;
+    use objc2::rc::{autoreleasepool, Retained};
     use objc2::runtime::AnyClass;
     use objc2_foundation::{NSData, NSError, NSString, NSURL};
 
@@ -121,7 +121,10 @@ pub fn make_alias_in(target: &Path, dest_dir: &Path) -> Result<PathBuf, String> 
     // NSURLBookmarkCreationSuitableForBookmarkFile = 1 << 10 (Apple SDK).
     const SUITABLE_FOR_BOOKMARK_FILE: u64 = 1 << 10;
 
-    unsafe {
+    // Worker-callable: drain the autoreleased Cocoa objects (bookmark
+    // NSData, NSErrors) per call instead of accumulating them until the
+    // worker queue idles.
+    autoreleasepool(|_| unsafe {
         let src_path_ns = NSString::from_str(&target.to_string_lossy());
         let src_url: Retained<NSURL> =
             NSURL::fileURLWithPath_isDirectory(&src_path_ns, target.is_dir());
@@ -154,9 +157,9 @@ pub fn make_alias_in(target: &Path, dest_dir: &Path) -> Result<PathBuf, String> 
         if !ok {
             return Err(ns_error_message(werr, "writeBookmarkData failed"));
         }
-    }
 
-    Ok(dst)
+        Ok(dst)
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -178,11 +181,12 @@ pub fn make_alias_in(_target: &Path, _dest_dir: &Path) -> Result<PathBuf, String
 pub fn eject_volume(path: &Path) -> Result<(), String> {
     use objc2::msg_send;
     use objc2::msg_send_id;
-    use objc2::rc::Retained;
+    use objc2::rc::{autoreleasepool, Retained};
     use objc2::runtime::{AnyClass, AnyObject};
     use objc2_foundation::{NSError, NSString, NSURL};
 
-    unsafe {
+    // Worker-callable: see make_alias_in.
+    autoreleasepool(|_| unsafe {
         let path_ns = NSString::from_str(&path.to_string_lossy());
         let url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&path_ns, true);
 
@@ -199,8 +203,8 @@ pub fn eject_volume(path: &Path) -> Result<(), String> {
         if !ok {
             return Err(ns_error_message(err, "eject failed"));
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Best-effort string from an `NSError*` (which may be null). Falls

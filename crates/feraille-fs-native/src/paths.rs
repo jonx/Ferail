@@ -6,7 +6,54 @@
 //! redirected / moved) folder rather than a literal `%USERPROFILE%\Pictures`
 //! that may not exist; on macOS/Unix by joining the standard subfolder name.
 
+use std::borrow::Cow;
 use std::path::PathBuf;
+
+/// Convert a raw on-disk filename *leaf* to the form the user should see.
+///
+/// macOS inherits two path separators — the colon (`:`) from classic Mac OS /
+/// HFS+ and the slash (`/`) from Unix / NeXTSTEP. The POSIX layer stores a
+/// colon *inside* a name component where Finder shows a slash, so a file
+/// `ls` reports as `a:b` is presented by Finder as `a/b`. We mirror Finder:
+/// the byte on disk stays the colon (the truth used for path ops), but every
+/// user-facing surface shows the slash. See
+/// <https://www.osnews.com/story/145356/a-tale-of-two-path-separators/>.
+///
+/// Operates on a single leaf, never a full path — the caller has already split
+/// off the component. Returns `Cow::Borrowed` when nothing changes (the common
+/// case), so the no-alloc-on-paint contract holds for clean names. Other
+/// platforms are the identity today; this is the seam where future
+/// per-platform display quirks plug in.
+pub fn display_leaf(raw: &str) -> Cow<'_, str> {
+    #[cfg(target_os = "macos")]
+    {
+        if raw.contains(':') {
+            return Cow::Owned(raw.replace(':', "/"));
+        }
+    }
+    Cow::Borrowed(raw)
+}
+
+/// Inverse of [`display_leaf`]: convert a *typed* (display-form) filename leaf
+/// to the bytes to write on disk.
+///
+/// On macOS a user who types `/` in a rename / New-Folder field means the
+/// Finder-displayed slash, which is stored as a colon — exactly what Finder
+/// does. This also removes a footgun: without the swap, a typed `/` reaches
+/// `rename(2)` / `mkdir(2)` as a real separator and either errors (parent
+/// component missing) or silently retargets an existing subdirectory.
+///
+/// Leaf-only, like [`display_leaf`]; `display_leaf(on_disk_leaf(x)) == x` on
+/// every platform (round-trip tested below).
+pub fn on_disk_leaf(typed: &str) -> Cow<'_, str> {
+    #[cfg(target_os = "macos")]
+    {
+        if typed.contains('/') {
+            return Cow::Owned(typed.replace('/', ":"));
+        }
+    }
+    Cow::Borrowed(typed)
+}
 
 /// The user's home directory. Reads the platform's home env var; if
 /// unset, falls back to a sentinel (`C:\` / `/`) so the rest of the
@@ -61,6 +108,8 @@ pub enum SpecialFolderMode {
 
 impl SpecialFolderMode {
     /// Parse the persisted `app_state` token. Unknown / missing → `Auto`.
+    // Intentional inherent method (infallible token parse), not `std::str::FromStr`.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "local" => SpecialFolderMode::Local,
@@ -242,6 +291,62 @@ fn known_folder_path(rfid: &windows::core::GUID) -> Option<PathBuf> {
         let path = pwstr.to_string().ok().map(PathBuf::from);
         CoTaskMemFree(Some(pwstr.0 as *const core::ffi::c_void));
         path
+    }
+}
+
+#[cfg(test)]
+mod leaf_tests {
+    use super::*;
+
+    #[test]
+    fn clean_leaf_is_borrowed_unchanged() {
+        // No separator chars → identity, and no allocation.
+        assert!(matches!(display_leaf("report.pdf"), Cow::Borrowed("report.pdf")));
+        assert!(matches!(on_disk_leaf("report.pdf"), Cow::Borrowed("report.pdf")));
+    }
+
+    #[test]
+    fn on_disk_names_round_trip_through_display() {
+        // An on-disk leaf never contains `/` (it's the POSIX separator), so
+        // showing it then mapping back to disk is lossless on every platform.
+        for disk in ["a:b", "plain.txt", "Q1:Q2:report", "x y.txt"] {
+            assert_eq!(
+                on_disk_leaf(&display_leaf(disk)),
+                disk,
+                "on-disk round-trip for {disk:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_names_round_trip_through_disk() {
+        // A name the user types in a rename/New-Folder field carries no `:`
+        // (on macOS that's the displayed-as-`/` separator); storing it then
+        // re-displaying is lossless on every platform.
+        for typed in ["a/b", "plain.txt", "2024/2025 budget", "x y.txt"] {
+            assert_eq!(
+                display_leaf(&on_disk_leaf(typed)),
+                typed,
+                "typed round-trip for {typed:?}"
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_swaps_colon_and_slash() {
+        // Finder parity: on-disk colon shows as slash; typed slash stores a colon.
+        assert_eq!(display_leaf("a:b"), "a/b");
+        assert_eq!(on_disk_leaf("a/b"), "a:b");
+        assert_eq!(display_leaf("Q1:Q2:report"), "Q1/Q2/report");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn non_macos_is_identity() {
+        // Off macOS the colon/slash have their normal meaning; no swap.
+        assert_eq!(display_leaf("a:b"), "a:b");
+        assert_eq!(on_disk_leaf("a:b"), "a:b");
     }
 }
 

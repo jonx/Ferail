@@ -32,7 +32,7 @@ pub struct ShellInfo {
 pub fn read_shell_info(path: &Path) -> ShellInfo {
     use objc2::msg_send;
     use objc2::msg_send_id;
-    use objc2::rc::Retained;
+    use objc2::rc::{autoreleasepool, Retained};
     use objc2::runtime::AnyObject;
     use objc2::ClassType;
     use objc2_foundation::{
@@ -45,7 +45,10 @@ pub fn read_shell_info(path: &Path) -> ShellInfo {
         return ShellInfo::default();
     };
 
-    unsafe {
+    // Worker-callable: drain the autoreleased Cocoa objects (key array,
+    // resource-values dictionary and its values) per call instead of
+    // accumulating them across a batched Get Info / list sweep.
+    autoreleasepool(|_| unsafe {
         let ns_path = NSString::from_str(path_str);
         let url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&ns_path, path.is_dir());
 
@@ -95,7 +98,7 @@ pub fn read_shell_info(path: &Path) -> ShellInfo {
             is_package: lookup_bool(NSURLIsPackageKey),
             is_alias: lookup_bool(NSURLIsAliasFileKey),
         }
-    }
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -108,7 +111,7 @@ pub fn read_shell_info(_path: &Path) -> ShellInfo {
 #[cfg(target_os = "macos")]
 pub fn set_hidden_extension(path: &Path, hidden: bool) -> Result<(), String> {
     use objc2::msg_send;
-    use objc2::rc::Retained;
+    use objc2::rc::{autoreleasepool, Retained};
     use objc2_foundation::{
         NSError, NSNumber, NSString, NSURLHasHiddenExtensionKey, NSURL,
     };
@@ -116,7 +119,8 @@ pub fn set_hidden_extension(path: &Path, hidden: bool) -> Result<(), String> {
     let Some(path_str) = path.to_str() else {
         return Err("path is not valid UTF-8".into());
     };
-    unsafe {
+    // Worker-callable: see read_shell_info.
+    autoreleasepool(|_| unsafe {
         let ns_path = NSString::from_str(path_str);
         let url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&ns_path, path.is_dir());
         let value = NSNumber::numberWithBool(hidden);
@@ -133,8 +137,8 @@ pub fn set_hidden_extension(path: &Path, hidden: bool) -> Result<(), String> {
                 "setResourceValue(hidden extension) failed",
             ));
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 #[cfg(not(target_os = "macos"))]

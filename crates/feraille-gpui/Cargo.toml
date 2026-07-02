@@ -11,9 +11,9 @@ rust-version = "1.85"
 publish = false
 
 [features]
-# Compile in the VLC video provider (libvlc, loaded at runtime from the
-# VLC.app set in Settings). Off by default so a stock build needs nothing.
-vlc = ["dep:feraille-video-vlc"]
+# Compile in the optional mpv video provider (libmpv, loaded at runtime from
+# the path set in Settings). Off by default so a stock build needs nothing.
+mpv = ["dep:feraille-video-mpv"]
 
 [dependencies]
 anyhow.workspace = true
@@ -42,6 +42,12 @@ smallvec = "1"
 # loader (docs/features/VIEWER.md); non-raster formats fall back to
 # Quick Look thumbnails.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+# SIMD-accelerated resampler for the viewer's still upscale (x2/x4). The
+# `image` crate's `imageops::resize` is single-threaded with no SIMD, so a
+# Lanczos3 enlargement to the 8192 px cap stalled the UI for seconds; this
+# does the same Lanczos3 convolution with SSE4.1/AVX2/NEON. MIT OR Apache-2.0,
+# minimal deps — clean for the dual-licensed release.
+fast_image_resize = "5"
 # The issue reporter bundles the diagnostics report + activity trail + a
 # (redacted) screenshot into a `.zip`. Same major/features as the shell crates'
 # compress_paths so the graph holds a single zip.
@@ -55,6 +61,8 @@ raw-window-handle = "0.6"
 # lsp-types. Same version as gpui-component's so the trait's types
 # unify (it only re-exports Position).
 lsp-types = "0.97.0"
+# Bulk-rename find/replace rules (docs/features/BULK_RENAME.md).
+regex.workspace = true
 
 # Domain wiring. feraille-gpui consumes the domain layer through the
 # domain crates' trait surface; they link directly.
@@ -73,20 +81,20 @@ feraille-disk-usage.workspace = true
 # surface mirrors between the two so `crate::platform_shell` (in
 # `lib.rs`) can alias them with a single `#[cfg]` switch; gpui call
 # sites use `platform_shell::*` and don't care which is active.
-# Optional VLC video provider (enabled by the `vlc` feature). libvlc is
+# Optional mpv video provider (enabled by the `mpv` feature). libmpv is
 # loaded at runtime on every desktop OS, so the dep is declared per-target
 # alongside each platform's shell crate.
 [target.'cfg(target_os = "macos")'.dependencies]
 feraille-shell-mac.workspace = true
-feraille-video-vlc = { workspace = true, optional = true }
+feraille-video-mpv = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 feraille-shell-win32.workspace = true
-feraille-video-vlc = { workspace = true, optional = true }
+feraille-video-mpv = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 feraille-shell-linux.workspace = true
-feraille-video-vlc = { workspace = true, optional = true }
+feraille-video-mpv = { workspace = true, optional = true }
 
 # Windows-only build script that embeds resources/feraille.ico and a
 # VERSIONINFO block into the .exe. On non-Windows the build script

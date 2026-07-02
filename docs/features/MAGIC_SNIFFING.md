@@ -49,6 +49,37 @@ The public split is intentional:
 - `detect_magic(path)` returns only a display label.
 - `detect_magic_info(path)` returns `MagicInfo` with type-specific facts.
 
+## Format Indicator (Disguise Detection)
+
+The Format column compares the extension-derived kind against the
+content-detected type and grades the relationship. The model is
+**directional risk escalation, not symmetric disagreement** — a file is
+only alarming when its real content is *more dangerous* than its extension
+lets on. `FileEntry::format_label` returns a [`FormatFlag`] with three
+tiers, computed by `classify_format` in `feraille-core`:
+
+- **Alert** (red `triangle-alert`): a genuine disguise. Executable / script
+  / shortcut content under a non-code extension (`vacation.png` that is a
+  Mach-O, `setup.jpg` that is a shell script), macros hidden in a plain
+  `.docx`/`.xlsx`/`.pptx`, or an archive/opaque binary smuggled inside a
+  media / document / text file (`invoice.pdf` that is a ZIP).
+- **Notice** (muted `circle-help`): a benign disagreement — a renamed or
+  resaved file with no danger. A `.config` that is really XML, a PNG kept
+  as `.txt`. Surfaced quietly so it never drowns out the real disguises.
+- **None**: extension and content agree, it's an honest executable
+  (`.exe` → PE, `.py` → script), or there is no extension claim
+  (`File`/`Folder`/`Symlink`).
+
+The danger judgment reads three already-cached display strings —
+`display_kind`, `display_magic`, and `display_description` (the macro flag
+rides in the description as `… · macro-enabled`). No new I/O, schema, or
+`FileEntry` field. `content_risk` classifies the content (Executable /
+Script / Macro / ArchiveOrBinary / Passive); `ext_class` classifies the
+extension (Code / OfficeMacro / Media / Document / Text / Archive / Opaque
+/ Placeholder). The legacy `formats_compatible` heuristic survives as the
+"these two benign labels actually agree" check (alias normalization,
+ZIP-wrapped Office, etc.).
+
 ## Cached Fields
 
 `MagicInfo` can populate:
