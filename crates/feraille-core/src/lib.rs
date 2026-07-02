@@ -844,46 +844,6 @@ pub struct EnumerationHandle {
     pub error: Option<EnumerationError>,
 }
 
-/// Folder usage heat — how many times the user has navigated into a node.
-/// Iter-3 keeps this in-memory; iter-6 persists it to SQLite (matching
-/// Ferail's predecessor implementation). Heat is reported normalized to
-/// the most-visited node so a single very-busy folder doesn't washed out
-/// the rest.
-#[derive(Default, Clone, Debug)]
-pub struct AntTrail {
-    visits: std::collections::HashMap<NodeId, u32>,
-    max: u32,
-}
-
-impl AntTrail {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn record(&mut self, id: NodeId) {
-        let v = self.visits.entry(id).or_insert(0);
-        *v += 1;
-        if *v > self.max {
-            self.max = *v;
-        }
-    }
-
-    /// 0.0..=1.0 normalized heat. Log-scaled so a 10-visit folder isn't
-    /// 10× brighter than a 5-visit one. Returns 0.0 for never-visited.
-    pub fn heat(&self, id: NodeId) -> f32 {
-        let Some(&v) = self.visits.get(&id) else { return 0.0 };
-        if self.max <= 1 {
-            return 1.0;
-        }
-        ((v as f32 + 1.0).log2() / (self.max as f32 + 1.0).log2()).clamp(0.0, 1.0)
-    }
-
-    /// Up to `n` most-visited NodeIds, descending by visit count.
-    /// Ties broken by NodeId order. Used by the tree to populate the
-    /// "Recents" section.
-    pub fn most_visited(&self, n: usize) -> Vec<NodeId> {
-        let mut v: Vec<(NodeId, u32)> = self.visits.iter().map(|(k, c)| (*k, *c)).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        v.into_iter().take(n).map(|(id, _)| id).collect()
-    }
-}
+// (The old in-memory `AntTrail` struct lived here; superseded by the
+// SQLite-backed heat in `feraille-meta` + `ProcessState::ant_visits`
+// and deleted as dead code.)

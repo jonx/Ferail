@@ -835,6 +835,61 @@ impl Shell {
             let thumbs = shell.process.thumbnails.clone();
             let icons = shell.process.icons.clone();
 
+            // Selection drag payload, built ONCE per visible-range
+            // render and shared by every selected cell — the previous
+            // per-cell walk over ALL entries made a large selection
+            // quadratic per pass. (List rows use the delegate's cached
+            // DragSnapshot; this closure only holds a read borrow, so
+            // it hoists instead.)
+            let show_thumbs_for_drag = show_thumbs;
+            let sel_drag: Option<(
+                Rc<Vec<PathBuf>>,
+                SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]>,
+                SmallVec<[SharedString; GHOST_STACK_CAP]>,
+            )> = if del.selected_set.is_empty() {
+                None
+            } else {
+                let mut paths: Vec<PathBuf> = Vec::with_capacity(del.selected_set.len());
+                let mut gicons: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
+                    SmallVec::new();
+                for e in entries.iter() {
+                    if !del.selected_set.contains(&e.id) {
+                        continue;
+                    }
+                    let Some(p) = del.path_for_entry(e.id) else {
+                        continue;
+                    };
+                    if gicons.len() < GHOST_STACK_CAP {
+                        let thumb = if show_thumbs_for_drag {
+                            thumbs.borrow().get(&p, THUMB_PX)
+                        } else {
+                            None
+                        };
+                        match thumb {
+                            Some(t) => gicons.push(t),
+                            None => gicons.push(icons.borrow_mut().icon_for(e, &p)),
+                        }
+                    }
+                    paths.push(p);
+                }
+                let names: SmallVec<[SharedString; GHOST_STACK_CAP]> = paths
+                    .iter()
+                    .take(GHOST_STACK_CAP)
+                    .map(|p| {
+                        p.file_name()
+                            .map(|n| {
+                                feraille_fs_native::paths::display_leaf(
+                                    n.to_string_lossy().as_ref(),
+                                )
+                                .into_owned()
+                            })
+                            .unwrap_or_default()
+                            .into()
+                    })
+                    .collect();
+                Some((Rc::new(paths), gicons, names))
+            };
+
             let (row_lo, row_hi) = (row_range.start, row_range.end);
             let mut out: Vec<gpui::AnyElement> = Vec::with_capacity(row_range.len());
             for grid_row in row_range {
@@ -930,58 +985,53 @@ impl Shell {
 
                     // OS drag-out ghost (dnd-spec §3.1, mirrors the list
                     // row): pressing a selected cell drags the whole
-                    // selection; an unselected cell drags just itself.
-                    // Ghost images come only from already-warm caches, so
-                    // building them never touches the filesystem.
+                    // selection (shared payload hoisted above); an
+                    // unselected cell drags just itself. Ghost images
+                    // come only from already-warm caches, so building
+                    // them never touches the filesystem.
                     let is_dir = matches!(entry.kind, EntryKind::Directory);
-                    let mut drag_paths: SmallVec<[PathBuf; 2]> = SmallVec::new();
-                    let mut ghost_icons: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
-                        SmallVec::new();
-                    {
-                        let mut push_ghost = |e: &FileEntry, p: &PathBuf| {
-                            if ghost_icons.len() >= GHOST_STACK_CAP {
-                                return;
+                    let (drag_paths, ghost_icons, ghost_names): (
+                        SmallVec<[PathBuf; 2]>,
+                        SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]>,
+                        SmallVec<[SharedString; GHOST_STACK_CAP]>,
+                    ) = if selected {
+                        match &sel_drag {
+                            Some((paths, gi, gn)) => {
+                                (SmallVec::from_vec((**paths).clone()), gi.clone(), gn.clone())
                             }
-                            if show_thumbs {
-                                if let Some(t) = thumbs.borrow().get(p, THUMB_PX) {
-                                    ghost_icons.push(t);
-                                    return;
-                                }
-                            }
-                            ghost_icons.push(icons.borrow_mut().icon_for(e, p));
-                        };
-                        if selected {
-                            for e in entries.iter() {
-                                if del.selected_set.contains(&e.id) {
-                                    if let Some(p) = del.path_for_entry(e.id) {
-                                        push_ghost(e, &p);
-                                        drag_paths.push(p);
-                                    }
-                                }
-                            }
-                        } else {
-                            push_ghost(entry, &path);
-                            drag_paths.push(path.clone());
+                            None => (SmallVec::new(), SmallVec::new(), SmallVec::new()),
                         }
-                    }
+                    } else {
+                        let mut gi: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
+                            SmallVec::new();
+                        let thumb = if show_thumbs {
+                            thumbs.borrow().get(&path, THUMB_PX)
+                        } else {
+                            None
+                        };
+                        match thumb {
+                            Some(t) => gi.push(t),
+                            None => gi.push(icons.borrow_mut().icon_for(entry, &path)),
+                        }
+                        let name: SharedString = path
+                            .file_name()
+                            .map(|n| {
+                                // Drag chip shows the display leaf (macOS `:` → `/`).
+                                feraille_fs_native::paths::display_leaf(
+                                    n.to_string_lossy().as_ref(),
+                                )
+                                .into_owned()
+                            })
+                            .unwrap_or_default()
+                            .into();
+                        (
+                            SmallVec::from_vec(vec![path.clone()]),
+                            gi,
+                            SmallVec::from_vec(vec![name]),
+                        )
+                    };
                     let drag_count = drag_paths.len();
                     let can_drag = !drag_paths.is_empty();
-                    let ghost_names: SmallVec<[SharedString; GHOST_STACK_CAP]> = drag_paths
-                        .iter()
-                        .take(GHOST_STACK_CAP)
-                        .map(|p| {
-                            p.file_name()
-                                .map(|n| {
-                                    // Drag chip shows the display leaf (macOS `:` → `/`).
-                                    feraille_fs_native::paths::display_leaf(
-                                        n.to_string_lossy().as_ref(),
-                                    )
-                                    .into_owned()
-                                })
-                                .unwrap_or_default()
-                                .into()
-                        })
-                        .collect();
                     // Finder-style selection pill behind the label: full
                     // accent on the focused (lead) cell, slightly muted
                     // for other members of a multi-selection.
@@ -1832,8 +1882,10 @@ impl Shell {
                 // an auto-hiding drawer (docs/features/DOCK.md). Pressed look
                 // while docked; the active edge carries a checkmark. Wrapped
                 // in a mouse-down-stopping div for the Win32 title-bar-drag
-                // gotcha, like the other dropdowns.
-                .child(
+                // gotcha, like the other dropdowns. macOS-only for now (the
+                // win32/linux window primitives are stubs) — hidden elsewhere
+                // so the menu isn't three silent no-ops.
+                .when(cfg!(target_os = "macos"), |bar| bar.child(
                     div()
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
@@ -1867,7 +1919,7 @@ impl Shell {
                                         )
                                 }),
                         ),
-                )
+                ))
                 // View switcher: list ⇄ icon grid (per-tab). The active
                 // mode's button is highlighted.
                 .child(
@@ -2926,18 +2978,29 @@ impl Render for Shell {
         let delegate = self.active_tab().table.read(cx).delegate();
         let entries = &delegate.entries;
         let entry_count = entries.len();
-        let total_size: u64 = entries.iter().map(|e| e.size).sum();
-        // Multi-select stats: count the whole selection set and sum
-        // the visible entries' sizes for the rows that are members.
-        // Iterating `entries` once is O(N) and the membership check
-        // is an O(1) HashSet hit per row.
+        // Totals come from the delegate's lazy caches — recomputed
+        // once per model/selection change, not O(N) per render pass
+        // (a 100k-entry folder added hundreds of µs to every repaint).
+        let total_size: u64 = delegate.cached_total_size.get().unwrap_or_else(|| {
+            let t = entries.iter().map(|e| e.size).sum();
+            delegate.cached_total_size.set(Some(t));
+            t
+        });
         let selection = &self.active_tab().selection;
         let selected_count = selection.len();
-        let selected_size: u64 = entries
-            .iter()
-            .filter(|e| selection.contains(&e.id))
-            .map(|e| e.size)
-            .sum();
+        let selected_size: u64 = if selected_count == 0 {
+            0
+        } else {
+            delegate.cached_selected_size.get().unwrap_or_else(|| {
+                let s = entries
+                    .iter()
+                    .filter(|e| delegate.selected_set.contains(&e.id))
+                    .map(|e| e.size)
+                    .sum();
+                delegate.cached_selected_size.set(Some(s));
+                s
+            })
+        };
         // Free-space label — reads the per-tab cache maintained by
         // `refresh_volume_info_in_tab` (load completion + volume
         // watch). The underlying NSURL/statfs query can round-trip to

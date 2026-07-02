@@ -1880,23 +1880,37 @@ impl ViewerWindow {
     /// Leaves enhancement (denoise/sharpen/upscale) untouched. No-op if no
     /// source pixels are available yet.
     fn auto_enhance(&mut self, cx: &mut Context<Self>) {
+        // Stills: hand the worker the Arc'd RenderImage and read the
+        // pixels there (a to_vec here was a huge UI-thread memcpy).
+        // Videos: the raw frame is already an owned buffer clone.
+        enum AutoSrc {
+            Video(Vec<u8>),
+            Still(Arc<RenderImage>),
+        }
         let src = if self.current_is_video() {
-            self.video_frame_raw.clone()
+            self.video_frame_raw
+                .clone()
+                .map(|(_, _, bytes)| AutoSrc::Video(bytes))
         } else {
             let path = self.current().map(|e| e.path.clone());
             path.and_then(|p| match self.cache.get(&p) {
-                Some(FrameState::Loaded(f)) => {
-                    f.image.as_bytes(0).map(|b| (f.w, f.h, b.to_vec()))
-                }
+                Some(FrameState::Loaded(f)) => Some(AutoSrc::Still(f.image.clone())),
                 _ => None,
             })
         };
-        let Some((_, _, bytes)) = src else { return };
+        let Some(src) = src else { return };
         let weak = cx.weak_entity();
         cx.spawn(async move |_this, cx| {
             let grade = cx
                 .background_executor()
-                .spawn(async move { compute_auto_grade(&bytes) })
+                .spawn(async move {
+                    match &src {
+                        AutoSrc::Video(bytes) => compute_auto_grade(bytes),
+                        AutoSrc::Still(image) => {
+                            compute_auto_grade(image.as_bytes(0).unwrap_or(&[]))
+                        }
+                    }
+                })
                 .await;
             let Some(this) = weak.upgrade() else { return };
             this.update(cx, |this, cx| {
@@ -1975,9 +1989,11 @@ impl ViewerWindow {
         if self.process_inflight {
             return;
         }
-        let Some(src) = frame.image.as_bytes(0).map(|b| b.to_vec()) else {
-            return;
-        };
+        // Hand the worker the frame's Arc'd RenderImage and read the
+        // pixels THERE — copying `as_bytes` into a Vec here put an
+        // up-to-268 MB memcpy on the UI thread every process kick
+        // (~10 Hz during a slider drag).
+        let image = frame.image.clone();
         let (w, h) = (frame.w, frame.h);
         self.process_gen += 1;
         let token = self.process_gen;
@@ -1986,7 +2002,11 @@ impl ViewerWindow {
         cx.spawn(async move |_this, cx| {
             let out = cx
                 .background_executor()
-                .spawn(async move { process_still_pixels(&src, w, h, rot, grade, enh, preview) })
+                .spawn(async move {
+                    image
+                        .as_bytes(0)
+                        .and_then(|src| process_still_pixels(src, w, h, rot, grade, enh, preview))
+                })
                 .await;
             let Some(this) = weak.upgrade() else { return };
             this.update(cx, |this, cx| {

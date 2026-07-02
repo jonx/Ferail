@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use feraille_core::{EntryKind, FileEntry, FormatFlag, FsBackend, NodeId};
+use feraille_core::{EntryKind, FileEntry, FormatFlag, NodeId};
 use feraille_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -406,6 +406,31 @@ pub struct FileListDelegate {
     /// previous-frame fallback — which left shortcuts blank for the
     /// first frame or two after the menu opened.
     pub shell_focus: gpui::FocusHandle,
+    /// Lazily-built drag payload for the CURRENT selection, shared by
+    /// every selected row's `on_drag`. Built once on the first
+    /// selected-row render after a selection/model change; without it
+    /// each selected visible row re-walked ALL entries per render
+    /// (Select All in a 10k folder ≈ 400k HashSet probes + PathBuf
+    /// clones per pass). Invalidated by every selection write and
+    /// every structural entries change.
+    drag_snapshot: Option<DragSnapshot>,
+    /// Status-bar totals, computed lazily once per model/selection
+    /// change instead of O(N) sums on every render pass (`Cell` so the
+    /// read-only render path can fill them). Invalidated together with
+    /// `drag_snapshot`, plus when folder sizes stream in.
+    pub cached_total_size: std::cell::Cell<Option<u64>>,
+    pub cached_selected_size: std::cell::Cell<Option<u64>>,
+}
+
+/// See [`FileListDelegate::drag_snapshot`].
+struct DragSnapshot {
+    /// Visible-order paths of the whole selection — the real OS drag
+    /// payload. Rows still clone this into their `ExternalPaths`
+    /// value (gpui's mac backend needs it by value), but the walk,
+    /// membership probes, and ghost assembly happen once.
+    paths: Vec<PathBuf>,
+    names: SmallVec<[SharedString; GHOST_STACK_CAP]>,
+    icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>,
 }
 
 impl FileListDelegate {
@@ -464,8 +489,75 @@ impl FileListDelegate {
             current_sort,
             sort_state,
             shell_focus,
+            drag_snapshot: None,
+            cached_total_size: std::cell::Cell::new(None),
+            cached_selected_size: std::cell::Cell::new(None),
         }
     }
+
+    /// Drop the cached selection drag payload. Call on every
+    /// selection write and structural entries change.
+    pub fn invalidate_drag_snapshot(&mut self) {
+        self.drag_snapshot = None;
+        self.cached_total_size.set(None);
+        self.cached_selected_size.set(None);
+    }
+
+    /// Build the shared drag payload for the current selection —
+    /// visible-order paths plus the capped ghost images/names. Ghost
+    /// images come only from already-warm caches (thumbnail when
+    /// cached, else the workspace type icon), per the UI_NONBLOCKING
+    /// contract.
+    fn build_drag_snapshot(&self, cx: &gpui::App) -> DragSnapshot {
+        let want_thumb = show_thumbnails(cx);
+        let mut paths: Vec<PathBuf> = Vec::with_capacity(self.selected_set.len());
+        let mut icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]> = smallvec![];
+        for entry in &self.entries {
+            if !self.selected_set.contains(&entry.id) {
+                continue;
+            }
+            let Some(path) = self.path_for_entry(entry.id) else {
+                continue;
+            };
+            self.push_ghost_icon(entry, &path, want_thumb, &mut icons);
+            paths.push(path);
+        }
+        // Names shown on the ghost, lead-first and capped — the
+        // single chip uses the first; the multi list shows up to
+        // GHOST_NAME_CAP with a "+N more" overflow.
+        let names: SmallVec<[SharedString; GHOST_STACK_CAP]> = paths
+            .iter()
+            .take(GHOST_STACK_CAP)
+            .map(|p| ghost_name(p))
+            .collect();
+        DragSnapshot {
+            paths,
+            names,
+            icons,
+        }
+    }
+
+    /// Push one warm-cache ghost image (thumbnail if cached, else the
+    /// type icon), capped at [`GHOST_STACK_CAP`].
+    fn push_ghost_icon(
+        &self,
+        entry: &FileEntry,
+        path: &PathBuf,
+        want_thumb: bool,
+        out: &mut SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>,
+    ) {
+        if out.len() >= GHOST_STACK_CAP {
+            return;
+        }
+        if want_thumb {
+            if let Some(t) = self.thumbnails.borrow().get(path, THUMB_PX) {
+                out.push(t);
+                return;
+            }
+        }
+        out.push(self.icons.borrow_mut().icon_for(entry, path));
+    }
+
 
     fn effective_sort(&self) -> (SortColumn, bool) {
         self.current_sort.unwrap_or((SortColumn::Name, true))
@@ -503,6 +595,10 @@ impl FileListDelegate {
         if self.entries.len() <= 1 {
             return;
         }
+        // Row order changes: the drag snapshot's visible-order paths
+        // are stale (totals unchanged by a re-order, but cheap to
+        // recompute and one invalidation path is simpler).
+        self.invalidate_drag_snapshot();
 
         let mut row_state: HashMap<NodeId, (f32, Vec<feraille_core::commands::TagColor>, bool)> =
             self.entries
@@ -539,78 +635,13 @@ impl FileListDelegate {
         }
     }
 
-    /// Enumerate `path` via the FS backend, apply the show-hidden +
-    /// filter-text filters, and swap the entries in. Returns the
-    /// error variant when the OS reports one (e.g. macOS TCC
-    /// denial) so the Shell can render an empty-state.
-    pub fn load(
-        &mut self,
-        path: PathBuf,
-        show_hidden: bool,
-        filter_text: &str,
-    ) -> Option<feraille_core::EnumerationError> {
-        let id = self.fs.id_for_path(&path);
-        let handle = self.fs.enumerate(id);
-        let needle = filter_text.trim().to_lowercase();
-        self.entries = handle
-            .initial
-            .into_iter()
-            // Platform hidden semantics resolved at enumerate time
-            // (UF_HIDDEN / FILE_ATTRIBUTE_HIDDEN), not a name check.
-            .filter(|e| show_hidden || !e.hidden)
-            .filter(|e| {
-                if needle.is_empty() {
-                    true
-                } else {
-                    // Filter searches the visible Format value (the
-                    // unified Magic-or-Kind label the Format column
-                    // shows), not just the raw kind.
-                    let (format, _) = e.format_label();
-                    // Match the name the user sees (display leaf), so typing a
-                    // slash finds a macOS file Finder shows with one.
-                    e.display_name.to_lowercase().contains(&needle)
-                        || format.to_lowercase().contains(&needle)
-                }
-            })
-            .collect();
-        self.paths.clear();
-        for entry in &self.entries {
-            if let Some(path) = self.fs.path_for(entry.id) {
-                self.paths.insert(entry.id, path);
-            }
-        }
-        // Reset heats; Shell repopulates after load returns.
-        self.heats = vec![0.0; self.entries.len()];
-        // Reset favorited bits; Shell repopulates from the favorites
-        // entity right after load (Shell::refresh_file_list_favorited).
-        self.is_favorited = vec![false; self.entries.len()];
-        // Selection is not row-indexed, so we don't clear it here.
-        // Shell drives reconciliation against the new model from
-        // `apply_directory_batch` / `finish_directory_load` per
-        // spec §2.6.
-        // Read Finder colour tags for the first `TAG_PREFETCH_CAP`
-        // rows. xattr reads cost ~1ms each on macOS — fine for
-        // typical folders (~50 entries), capped so a giant Downloads
-        // doesn't stall the UI thread. Beyond the cap, rows render
-        // tagless until either (a) we add a background prefetch
-        // pipeline or (b) the user explicitly Get-Info's the row.
-        const TAG_PREFETCH_CAP: usize = 200;
-        self.tags = Vec::with_capacity(self.entries.len());
-        for entry in self.entries.iter().take(TAG_PREFETCH_CAP) {
-            let tags = self
-                .path_for_entry(entry.id)
-                .map(|p| crate::platform_shell::read_canonical_tags(&p))
-                .unwrap_or_default();
-            self.tags.push(tags);
-        }
-        for _ in TAG_PREFETCH_CAP..self.entries.len() {
-            self.tags.push(Vec::new());
-        }
-        self.apply_effective_sort();
-        handle.error
-    }
+    // (The old synchronous `load()` — enumerate + up-to-200 inline xattr
+    // tag reads on the UI thread — was dead code; the streaming pipeline in
+    // `Shell::load_path_for_tab` is the only listing path. Deleted so nobody
+    // resurrects a Prime Directive violation.)
 
     pub fn clear(&mut self) {
+        self.invalidate_drag_snapshot();
         self.entries.clear();
         self.paths.clear();
         self.heats.clear();
@@ -627,6 +658,7 @@ impl FileListDelegate {
         paths: HashMap<NodeId, PathBuf>,
         heats: Vec<f32>,
     ) {
+        self.invalidate_drag_snapshot();
         self.entries = entries;
         self.paths = paths;
         self.heats = heats;
@@ -644,6 +676,7 @@ impl FileListDelegate {
         paths: HashMap<NodeId, PathBuf>,
         heats: Vec<f32>,
     ) {
+        self.invalidate_drag_snapshot();
         self.paths.extend(paths);
         let n = entries.len();
         self.entries.extend(entries);
@@ -886,85 +919,45 @@ impl TableDelegate for FileListDelegate {
         // selection; pressing an unselected row drags just that row.
         if let Some(entry) = self.entries.get(row_ix) {
             let row_is_selected = self.selected_set.contains(&entry.id);
-            let mut drag_paths: smallvec::SmallVec<[PathBuf; 2]> = smallvec![];
-            // Real item images for the drag ghost, lead-first, capped at
-            // GHOST_STACK_CAP. Per the UI_NONBLOCKING contract these come
-            // only from already-warm caches: a Quick Look thumbnail when
-            // cached (Finder-like), else the workspace type icon — both
-            // warm for any visible/selected row, so this stays off the
-            // filesystem.
-            let want_thumb = show_thumbnails(cx);
-            let mut ghost_icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]> = smallvec![];
-            let push_ghost =
-                |entry: &FileEntry,
-                 path: &PathBuf,
-                 icons: &Rc<RefCell<IconCache>>,
-                 thumbs: &Rc<RefCell<ThumbnailCache>>,
-                 out: &mut SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>| {
-                    if out.len() >= GHOST_STACK_CAP {
-                        return;
-                    }
-                    if want_thumb {
-                        if let Some(t) = thumbs.borrow().get(path, THUMB_PX) {
-                            out.push(t);
-                            return;
-                        }
-                    }
-                    out.push(icons.borrow_mut().icon_for(entry, path));
-                };
             if row_is_selected {
-                for selected in &self.entries {
-                    if self.selected_set.contains(&selected.id) {
-                        if let Some(path) = self.path_for_entry(selected.id) {
-                            push_ghost(
-                                selected,
-                                &path,
-                                &self.icons,
-                                &self.thumbnails,
-                                &mut ghost_icons,
-                            );
-                            drag_paths.push(path);
-                        }
+                // Shared snapshot for the whole selection: built once
+                // per selection/model change, reused by every selected
+                // row. The old per-row walk over ALL entries made a
+                // big selection quadratic per render pass.
+                if self.drag_snapshot.is_none() {
+                    self.drag_snapshot = Some(self.build_drag_snapshot(cx));
+                }
+                if let Some(snapshot) = self.drag_snapshot.as_ref() {
+                    if !snapshot.paths.is_empty() {
+                        let count = snapshot.paths.len();
+                        let names = snapshot.names.clone();
+                        let ghost_icons = snapshot.icons.clone();
+                        return row.on_drag(
+                            ExternalPaths(snapshot.paths.clone().into()),
+                            move |_paths, offset, _window, cx| {
+                                cx.new(|_| DragBadge {
+                                    names: names.clone(),
+                                    icons: ghost_icons.clone(),
+                                    count,
+                                    offset,
+                                })
+                            },
+                        );
                     }
                 }
             } else if let Some(path) = self.path_for_entry(entry.id) {
-                push_ghost(
-                    entry,
-                    &path,
-                    &self.icons,
-                    &self.thumbnails,
-                    &mut ghost_icons,
-                );
-                drag_paths.push(path);
-            }
-            if !drag_paths.is_empty() {
-                let count = drag_paths.len();
-                // Names shown on the ghost, lead-first and capped — the
-                // single chip uses the first; the multi list shows up to
-                // GHOST_NAME_CAP with a "+N more" overflow.
-                let names: SmallVec<[SharedString; GHOST_STACK_CAP]> = drag_paths
-                    .iter()
-                    .take(GHOST_STACK_CAP)
-                    .map(|p| {
-                        p.file_name()
-                            .map(|n| {
-                                // Display leaf on the drag chip (macOS `:` → `/`).
-                                feraille_fs_native::paths::display_leaf(
-                                    n.to_string_lossy().as_ref(),
-                                )
-                                .into_owned()
-                            })
-                            .unwrap_or_default()
-                            .into()
-                    })
-                    .collect();
+                // Unselected row: drags just itself — cheap, no snapshot.
+                let mut ghost_icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]> = smallvec![];
+                self.push_ghost_icon(entry, &path, show_thumbnails(cx), &mut ghost_icons);
+                let names: SmallVec<[SharedString; GHOST_STACK_CAP]> =
+                    smallvec![ghost_name(&path)];
                 return row.on_drag(
-                    ExternalPaths(drag_paths),
+                    ExternalPaths(vec![path].into()),
                     move |_paths, offset, _window, cx| {
                         cx.new(|_| DragBadge {
                             names: names.clone(),
                             icons: ghost_icons.clone(),
-                            count,
+                            count: 1,
                             offset,
                         })
                     },
@@ -1696,47 +1689,79 @@ impl std::str::FromStr for SortColumn {
 
 /// In-place sort with folders-first grouping (Finder convention).
 /// Pure logic, easy to extend.
-pub fn sort_in_place(entries: &mut [feraille_core::FileEntry], col: SortColumn, asc: bool) {
-    entries.sort_by(|a, b| compare_entries(a, b, col, asc));
+/// Display-leaf name for the drag chip (macOS `:` → `/`).
+fn ghost_name(path: &std::path::Path) -> SharedString {
+    path.file_name()
+        .map(|n| feraille_fs_native::paths::display_leaf(n.to_string_lossy().as_ref()).into_owned())
+        .unwrap_or_default()
+        .into()
 }
 
-fn compare_entries(
-    a: &feraille_core::FileEntry,
-    b: &feraille_core::FileEntry,
-    col: SortColumn,
-    asc: bool,
-) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
-    // Folders always come before non-folders, regardless of sort direction.
-    // The sort key only orders within each group.
-    let group_order = match (a.kind, b.kind) {
-        (feraille_core::EntryKind::Directory, feraille_core::EntryKind::Directory) => {
-            Ordering::Equal
-        }
-        (feraille_core::EntryKind::Directory, _) => Ordering::Less,
-        (_, feraille_core::EntryKind::Directory) => Ordering::Greater,
-        _ => Ordering::Equal,
-    };
-    if group_order != Ordering::Equal {
-        return group_order;
+/// Sort with `sort_by_cached_key`: each element's key (its casefolded
+/// name, plus the format label for the Format column) is built ONCE
+/// per element, not per comparison. The previous comparator allocated
+/// 2–4 lowercase Strings per COMPARISON — and the streaming pipeline
+/// re-sorts the whole accumulated listing per 256-entry batch, so a
+/// 100k-entry directory paid billions of allocations on the UI thread
+/// while loading. (Next step if profiling still shows this hot: merge
+/// each sorted batch into the sorted body instead of re-sorting.)
+///
+/// Ordering (unchanged): folders first regardless of direction; the
+/// column key ascending/descending; casefolded display-name (the
+/// display leaf, so ordering matches what the user reads on macOS
+/// where an on-disk `:` shows as `/`) and NodeId as stable tiebreaks
+/// (never reversed).
+pub fn sort_in_place(entries: &mut [feraille_core::FileEntry], col: SortColumn, asc: bool) {
+    use std::cmp::Reverse;
+    fn non_dir(e: &feraille_core::FileEntry) -> bool {
+        !matches!(e.kind, feraille_core::EntryKind::Directory)
     }
-
-    let primary = match col {
-        // Sort by the displayed name (display leaf), so ordering matches what
-        // the user reads on macOS where an on-disk `:` shows as `/`.
-        SortColumn::Name => a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()),
-        SortColumn::Size => a.size.cmp(&b.size),
-        SortColumn::Format => a
-            .format_label()
-            .0
-            .to_lowercase()
-            .cmp(&b.format_label().0.to_lowercase()),
-        SortColumn::Modified => a.mtime_unix.cmp(&b.mtime_unix),
-    };
-    let primary = if asc { primary } else { primary.reverse() };
-    primary
-        .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
-        .then_with(|| a.id.as_raw().cmp(&b.id.as_raw()))
+    fn name_key(e: &feraille_core::FileEntry) -> String {
+        e.display_name.to_lowercase()
+    }
+    match (col, asc) {
+        (SortColumn::Name, true) => {
+            entries.sort_by_cached_key(|e| (non_dir(e), name_key(e), e.id.as_raw()));
+        }
+        (SortColumn::Name, false) => {
+            entries.sort_by_cached_key(|e| (non_dir(e), Reverse(name_key(e)), e.id.as_raw()));
+        }
+        (SortColumn::Size, true) => {
+            entries.sort_by_cached_key(|e| (non_dir(e), e.size, name_key(e), e.id.as_raw()));
+        }
+        (SortColumn::Size, false) => {
+            entries
+                .sort_by_cached_key(|e| (non_dir(e), Reverse(e.size), name_key(e), e.id.as_raw()));
+        }
+        (SortColumn::Format, true) => {
+            entries.sort_by_cached_key(|e| {
+                (
+                    non_dir(e),
+                    e.format_label().0.to_lowercase(),
+                    name_key(e),
+                    e.id.as_raw(),
+                )
+            });
+        }
+        (SortColumn::Format, false) => {
+            entries.sort_by_cached_key(|e| {
+                (
+                    non_dir(e),
+                    Reverse(e.format_label().0.to_lowercase()),
+                    name_key(e),
+                    e.id.as_raw(),
+                )
+            });
+        }
+        (SortColumn::Modified, true) => {
+            entries.sort_by_cached_key(|e| (non_dir(e), e.mtime_unix, name_key(e), e.id.as_raw()));
+        }
+        (SortColumn::Modified, false) => {
+            entries.sort_by_cached_key(|e| {
+                (non_dir(e), Reverse(e.mtime_unix), name_key(e), e.id.as_raw())
+            });
+        }
+    }
 }
 
 /// Apply a column sort to the live Table by enum. The toolbar sort

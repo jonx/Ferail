@@ -995,9 +995,6 @@ impl Shell {
             cx,
             move |_this, window, cx| {
                 use gpui_component::notification::Notification;
-                for path in &paths {
-                    crate::platform_shell::reveal_in_finder(path);
-                }
                 let msg = if paths.len() == 1 {
                     let name = paths[0]
                         .file_name()
@@ -1008,6 +1005,15 @@ impl Shell {
                 } else {
                     format!("Showing {} items in {}", paths.len(), reveal_target)
                 };
+                // Reveal is a process spawn on mac/win but a blocking
+                // D-Bus round-trip per path on Linux — run the loop on
+                // the background executor (Prime Directive).
+                cx.background_spawn(async move {
+                    for path in &paths {
+                        crate::platform_shell::reveal_in_finder(path);
+                    }
+                })
+                .detach();
                 window.push_notification(Notification::info(msg), cx);
             },
         );
@@ -1017,12 +1023,16 @@ impl Shell {
         &mut self,
         _: &RevealContextPath,
         _: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(path) = self.context_target.take() else {
             return;
         };
-        crate::platform_shell::reveal_in_finder(&path);
+        // Blocking D-Bus round-trip on Linux — worker, not UI thread.
+        cx.background_spawn(async move {
+            crate::platform_shell::reveal_in_finder(&path);
+        })
+        .detach();
     }
 
     pub(super) fn on_copy_context_path(

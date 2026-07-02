@@ -2083,7 +2083,18 @@ impl Shell {
         match edge {
             None => {
                 if let Some(d) = self.dock.take() {
-                    let r = d.restore;
+                    // The display may have changed while docked — clamp
+                    // the remembered frame onto the CURRENT screen so
+                    // undock can't strand the window off every display.
+                    let mut r = d.restore;
+                    if let Some((sx, sy, sw, sh)) =
+                        crate::platform_shell::screen_visible_frame_for_window(ns_view)
+                    {
+                        r.w = r.w.min(sw);
+                        r.h = r.h.min(sh);
+                        r.x = r.x.clamp(sx, sx + sw - r.w);
+                        r.y = r.y.clamp(sy, sy + sh - r.h);
+                    }
                     crate::platform_shell::set_window_frame(ns_view, r.x, r.y, r.w, r.h);
                     crate::platform_shell::set_window_all_spaces(ns_view, false);
                     crate::platform_shell::set_window_floating(ns_view, false);
@@ -2094,6 +2105,17 @@ impl Shell {
                 }
             }
             Some(e) => {
+                // AppKit handles setFrame: on a native-fullscreen window
+                // poorly (Space bookkeeping); refuse instead of glitching.
+                if crate::platform_shell::window_is_fullscreen(ns_view) {
+                    window.push_notification(
+                        gpui_component::notification::Notification::info(
+                            "Exit full screen before docking the window.",
+                        ),
+                        cx,
+                    );
+                    return;
+                }
                 let Some(screen) =
                     crate::platform_shell::screen_visible_frame_for_window(ns_view)
                         .map(|(x, y, w, h)| ScreenFrame::new(x, y, w, h))
@@ -2161,12 +2183,40 @@ impl Shell {
         if self.dock_poll_epoch != epoch {
             return; // superseded by a re-dock / undock
         }
+        if self.dock.is_none() {
+            return; // undocked
+        }
         let ptr = self.dock_ns_view as *mut std::ffi::c_void;
+        // Liveness probe for the cached raw pointer: `window_frame`
+        // returning None means there's no NSWindow behind the view any
+        // more (teardown) — stop the loop instead of msg_send'ing into
+        // a dead view.
+        let Some(live_frame) = crate::platform_shell::window_frame(ptr) else {
+            self.dock = None;
+            self.dock_ns_view = 0;
+            return;
+        };
         let mouse = crate::platform_shell::current_mouse_location();
         let Some(dock) = self.dock.as_mut() else {
-            return; // undocked
+            return;
         };
-        dock.revealed = dock.wants_reveal(mouse);
+        let wants = dock.wants_reveal(mouse);
+        if wants && !dock.revealed {
+            // Transitioning hidden → revealing: the display arrangement
+            // or the drawer's user-dragged size may have changed while
+            // tucked away. Re-query the screen and re-derive the extent
+            // from the actual window so the slide targets live
+            // geometry instead of the dock-time snapshot (which could
+            // be a disconnected display).
+            if let Some((sx, sy, sw, sh)) =
+                crate::platform_shell::screen_visible_frame_for_window(ptr)
+            {
+                dock.screen = ScreenFrame::new(sx, sy, sw, sh);
+            }
+            let live = ScreenFrame::new(live_frame.0, live_frame.1, live_frame.2, live_frame.3);
+            dock.extent = dock::extent_for(live, dock.screen);
+        }
+        dock.revealed = wants;
         let frame = dock.step().then(|| dock.current_frame());
         let animating = dock.is_animating();
         if let Some(f) = frame {
@@ -3717,6 +3767,21 @@ impl Shell {
                 .background_executor()
                 .spawn(async move {
                     let db = open_metadata_db();
+                    // Once-per-launch cache pruning: the files /
+                    // folder_sizes / folder_usage tables otherwise grow
+                    // without bound (dead paths kept forever;
+                    // folder_usage is loaded wholesale into RAM below).
+                    if let Some(d) = db.as_ref() {
+                        if let Ok(g) = d.lock() {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs() as i64)
+                                .unwrap_or(0);
+                            if let Err(e) = g.prune_stale(now) {
+                                crate::log_warn!(90, "metadata prune failed: {e}");
+                            }
+                        }
+                    }
                     let (ant_visits, ant_max, recents) = hydrate_ant_trail(db.as_ref());
                     let favs_collapsed = db
                         .as_ref()
@@ -5079,9 +5144,9 @@ impl Shell {
 
     /// Bump the Ant Trail visit count for `path` in the in-memory
     /// map and persist asynchronously through `metadata_db`. Cheap
-    /// on the foreground executor — the DB write is a single
-    /// upsert and `feraille_meta::MetadataDb` does its own
-    /// connection pooling internally.
+    /// on the foreground executor — the DB write is a single upsert
+    /// dispatched to the background executor (one shared connection
+    /// behind a mutex; there is no pooling).
     pub fn record_ant_visit(&mut self, node_id: NodeId, cx: &mut Context<Self>) {
         let Some(path) = self
             .process

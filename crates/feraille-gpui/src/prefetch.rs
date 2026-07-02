@@ -187,6 +187,10 @@ fn run_worker(
     cancel: Arc<AtomicBool>,
 ) -> Vec<PrefetchRow> {
     let mut out = Vec::with_capacity(seeds.len());
+    // Write-through accumulates here and lands as ONE transaction at
+    // the end (`upsert_files`) — per-row autocommit upserts serialized
+    // a directory's worth of fsyncs behind the connection mutex.
+    let mut pending_writes: Vec<FileMetaRecord> = Vec::new();
     for seed in seeds {
         // Navigation flipped the flag: the listing this pass was
         // sniffing for is gone, stop burning 4 KB reads per file.
@@ -258,34 +262,31 @@ fn run_worker(
                 }
             };
 
-        // Write through to DB.
-        if let Some(db) = db.as_ref() {
-            if let Ok(guard) = db.lock() {
-                let rec = FileMetaRecord {
-                    path: path_str.clone(),
-                    mtime_unix: seed.mtime_unix,
-                    size: seed.size,
-                    magic_label: if magic_label.is_empty() {
-                        None
-                    } else {
-                        Some(magic_label.clone())
-                    },
-                    description: if description.is_empty() {
-                        None
-                    } else {
-                        Some(description.clone())
-                    },
-                    partial_hash: cached.as_ref().and_then(|r| r.partial_hash.clone()),
-                    full_hash: cached.as_ref().and_then(|r| r.full_hash.clone()),
-                    mime: cached.as_ref().and_then(|r| r.mime.clone()),
-                    quarantined: Some(quarantined),
-                    quarantine_agent: agent.clone(),
-                    quarantine_iso: iso.clone(),
-                    quarantine_where_from: where_from.clone(),
-                    indexed_at_unix: now_unix(),
-                };
-                let _ = guard.upsert_file(&rec);
-            }
+        // Stage the write-through; flushed in one transaction below.
+        if db.is_some() {
+            pending_writes.push(FileMetaRecord {
+                path: path_str.clone(),
+                mtime_unix: seed.mtime_unix,
+                size: seed.size,
+                magic_label: if magic_label.is_empty() {
+                    None
+                } else {
+                    Some(magic_label.clone())
+                },
+                description: if description.is_empty() {
+                    None
+                } else {
+                    Some(description.clone())
+                },
+                partial_hash: cached.as_ref().and_then(|r| r.partial_hash.clone()),
+                full_hash: cached.as_ref().and_then(|r| r.full_hash.clone()),
+                mime: cached.as_ref().and_then(|r| r.mime.clone()),
+                quarantined: Some(quarantined),
+                quarantine_agent: agent.clone(),
+                quarantine_iso: iso.clone(),
+                quarantine_where_from: where_from.clone(),
+                indexed_at_unix: now_unix(),
+            });
         }
 
         out.push(PrefetchRow {
@@ -297,6 +298,15 @@ fn run_worker(
             quarantine_iso: iso,
             quarantine_where_from: where_from,
         });
+    }
+    // One transaction for the whole pass (cancel included — whatever
+    // was derived is still valid per-row data worth keeping).
+    if let Some(db) = db.as_ref() {
+        if let Ok(guard) = db.lock() {
+            if let Err(e) = guard.upsert_files(&pending_writes) {
+                crate::log_warn!(90, "prefetch: write-through failed: {e}");
+            }
+        }
     }
     out
 }

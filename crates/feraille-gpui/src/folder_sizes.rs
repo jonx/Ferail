@@ -262,6 +262,8 @@ fn run_worker(
 /// correctly) and the pre-formatted `display_size` (per the
 /// no-alloc-on-paint contract).
 fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<SizeRow>) {
+    // Sizes change → the status bar's cached totals are stale.
+    delegate.invalidate_drag_snapshot();
     for row in batch {
         if let Some(e) = delegate.entries.iter_mut().find(|e| e.id == row.node) {
             e.size = row.size;

@@ -10,8 +10,10 @@
 //! `Arc<Mutex<VecDeque<ScanMsg>>>` queue; a FG timer drains bounded
 //! FIFO chunks on a dynamic cadence and applies them to the tree,
 //! debouncing layout rebuilds the same way the old
-//! `disk_usage_state` did. Cancellation is cooperative via
-//! `AtomicBool`.
+//! `disk_usage_state` did. The queue is bounded ([`DU_QUEUE_CAP`]):
+//! when the drain falls behind, the scanner thread parks briefly
+//! instead of growing the backlog. Cancellation is cooperative via
+//! `AtomicBool` (also checked inside the backpressure wait).
 
 use crate::text::TextScale as _;
 use std::cell::RefCell;
@@ -64,6 +66,25 @@ const DU_MAX_MSGS_PER_TICK: usize = 12;
 /// human-scale refresh rate. The Done message always forces a final
 /// rebuild regardless.
 const DU_TOPN_REBUILD_INTERVAL: Duration = Duration::from_millis(500);
+/// Treemap layout rebuild (aggregate recursion over every node in the
+/// tree) is the other per-tick cost that scales with tree size. While
+/// facts are streaming, rebuild at most this often; progress counters
+/// keep updating every tick, and Done always forces a final rebuild so
+/// the last frame is exact. User-driven invalidations (zoom, filter,
+/// size-mode, resize) bypass this and stay immediate.
+const DU_LAYOUT_REBUILD_INTERVAL: Duration = Duration::from_millis(250);
+/// Backpressure cap on the BG→FG queue. The drain applies at most
+/// `DU_MAX_MSGS_PER_TICK` per busy tick, so a warm-cache scan of a huge
+/// volume can outrun it indefinitely — without a cap the backlog grows
+/// to hundreds of MB of fact batches. When the queue is full the
+/// scanner thread naps ([`DU_BACKPRESSURE_NAP`]) until the drain
+/// catches up, re-checking `cancel` each lap so a cancelled scan (or a
+/// closed window) never hangs in the wait.
+const DU_QUEUE_CAP: usize = 256;
+/// How long the scanner sleeps per backpressure lap. Short enough that
+/// the walker resumes promptly once the drain frees a slot; the
+/// scanner runs on a background pool thread, so blocking it is fine.
+const DU_BACKPRESSURE_NAP: Duration = Duration::from_millis(8);
 
 pub struct DiskUsageView {
     root_path: PathBuf,
@@ -319,6 +340,7 @@ impl DiskUsageView {
         let generation = self.scan_generation;
         let root = self.root_path.clone();
         let cancel = self.cancel.clone();
+        let cancel_for_push = self.cancel.clone();
         let descend = self.descend_packages;
         let queue_for_scan = self.msg_queue.clone();
         let queue_for_progress = self.msg_queue.clone();
@@ -341,8 +363,29 @@ impl DiskUsageView {
                     &cancel,
                     descend,
                     |batch| {
-                        if let Ok(mut q) = queue_for_scan.lock() {
-                            q.push_back(ScanMsg::Batch(batch));
+                        // Backpressure: never let the queue outrun the FG
+                        // drain. When it's full, park this (background pool)
+                        // thread briefly and retry; bail on cancel so a
+                        // cancelled scan / closed window can't hang here.
+                        // The walker checks `cancel` itself right after the
+                        // callback returns, so dropping the batch is safe.
+                        let mut pending = Some(batch);
+                        loop {
+                            if cancel_for_push.load(Ordering::Relaxed) {
+                                return;
+                            }
+                            match queue_for_scan.lock() {
+                                Ok(mut q) => {
+                                    if q.len() < DU_QUEUE_CAP {
+                                        if let Some(batch) = pending.take() {
+                                            q.push_back(ScanMsg::Batch(batch));
+                                        }
+                                        return;
+                                    }
+                                }
+                                Err(_) => return,
+                            }
+                            std::thread::sleep(DU_BACKPRESSURE_NAP);
                         }
                     },
                     |progress| {
@@ -370,6 +413,7 @@ impl DiskUsageView {
         let queue_for_drain = self.msg_queue.clone();
         cx.spawn(async move |this, cx| {
             let mut last_topn_rebuild = Instant::now() - DU_TOPN_REBUILD_INTERVAL;
+            let mut last_layout_rebuild = Instant::now() - DU_LAYOUT_REBUILD_INTERVAL;
             let mut interval = DU_DRAIN_INTERVAL_IDLE;
             loop {
                 cx.background_executor().timer(interval).await;
@@ -412,8 +456,20 @@ impl DiskUsageView {
                         v.apply_scan_msg(msg);
                     }
                     if had_batch || done {
-                        v.invalidate_layout();
-                        v.rebuild_layout_if_ready();
+                        // Streaming layout throttle: invalidate + full-tree
+                        // rebuild is the expensive half of a drain tick, so
+                        // while batches are streaming it runs at most every
+                        // DU_LAYOUT_REBUILD_INTERVAL. Done always rebuilds so
+                        // the final frame is exact; ticks in between still
+                        // notify so the header counters stay live against
+                        // the last-built treemap.
+                        let rebuild_layout =
+                            done || last_layout_rebuild.elapsed() >= DU_LAYOUT_REBUILD_INTERVAL;
+                        if rebuild_layout {
+                            v.invalidate_layout();
+                            v.rebuild_layout_if_ready();
+                            last_layout_rebuild = Instant::now();
+                        }
                         let rebuild_topn =
                             done || last_topn_rebuild.elapsed() >= DU_TOPN_REBUILD_INTERVAL;
                         if rebuild_topn {
@@ -553,6 +609,12 @@ impl DiskUsageView {
         if let Some(id) = self.task_id.take() {
             self.with_tasks(cx, |reg| reg.end(id));
         }
+        // The drain loop breaks on the stale generation without a final
+        // pass, and streaming ticks throttle layout rebuilds — so rebuild
+        // here (user-driven, immediate) to show every fact applied so far.
+        self.invalidate_layout();
+        self.rebuild_layout_if_ready();
+        self.rebuild_top_files();
         cx.notify();
     }
 

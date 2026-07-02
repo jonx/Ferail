@@ -168,10 +168,11 @@ fallback). Remaining is the UX the system explorers have and we don't:
 - **Mouse predictor** ([docs/features/MOUSE_PREDICTOR.md](docs/features/MOUSE_PREDICTOR.md)):
   pure pointer prediction module, Ant Trail blend, task-scheduler integration,
   debug overlay, and pointer-path performance tests.
-- **APFS clone-aware disk-usage sizing**: the duplicate finder detects clones +
-  hard links and excludes them from reclaimable bytes, but the **disk-usage
-  scanner still counts every hard-link name and clone at full size** — add
-  `(dev, inode)` de-dup and clone-aware sizing there.
+- **APFS clone-aware disk-usage sizing**: hard-link `(dev, inode)` de-dup and
+  filesystem-boundary handling (firmlink-aware `du -x` semantics) now ship in
+  the scanner; **APFS clones still count at full size** (clones share extents
+  without `nlink > 1`, so detecting them needs per-file clone-id queries —
+  weigh the extra syscall per file before adding it).
 - Disk Usage follow-ups from the feature doc: richer iCloud download-state
   handling once the existing path-prefix cloud glyph is not enough.
 
@@ -179,6 +180,17 @@ fallback). Remaining is the UX the system explorers have and we don't:
 
 - Finish the stable **NodeStore identity** model for rename, move, mount
   changes, Ant Trail, selection, watcher events, and metadata cache keys.
+- **NodeId intern-map lifecycle**: `NativeFs`'s `NodeId ↔ PathBuf` maps (and
+  `NodeStore`'s) are add-only — a disk-usage scan or duplicate sweep of a
+  multi-million-file volume permanently pins one `PathBuf` per file for the
+  process lifetime (GB-scale RSS surviving window close). A safe fix needs an
+  id *lifecycle*, not an eviction hack: scan-minted ids interleave with ids
+  live tabs/selections/history hold (the path-keyed map returns the same id to
+  both), so range- or ownership-based forgetting can misdirect a later
+  trash/rename through a stale `path_for`. Design: either refcount ids per
+  holding surface, or give tool results (DU, dupes, search) a per-scan arena
+  id namespace that drops with the surface, keeping the global map for
+  navigation identity only.
 - **Cache freshness follow-ups** ([docs/features/FRESHNESS.md](docs/features/FRESHNESS.md)).
   Subtree-derived caches now stay honest via mtime + TTL validity, exact
   ancestor invalidation on in-app mutations, and a forced size refresh when the

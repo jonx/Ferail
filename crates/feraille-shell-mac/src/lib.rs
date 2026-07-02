@@ -16,25 +16,13 @@ mod app_menu;
 mod archive;
 
 #[cfg(target_os = "macos")]
-mod drag;
-
-#[cfg(target_os = "macos")]
 mod file_ops;
-
-#[cfg(target_os = "macos")]
-mod menu;
 
 #[cfg(target_os = "macos")]
 mod open_with;
 
 #[cfg(target_os = "macos")]
 mod quick_look;
-
-#[cfg(target_os = "macos")]
-pub(crate) mod services;
-
-#[cfg(target_os = "macos")]
-mod share;
 
 #[cfg(target_os = "macos")]
 mod tags;
@@ -219,142 +207,6 @@ pub fn open_url(url: &str) {
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }
 
-/// Plan-driven context menu types. Build a [`MenuPlan`] at the
-/// right-click site, hand it to [`show_context_menu`], and dispatch
-/// the returned [`MenuPick`].
-#[cfg(target_os = "macos")]
-pub use menu::{MenuPick, MenuPlan, MenuPlanItem};
-
-/// Non-macOS shadow of [`MenuPlan`]. Same shape so call-sites
-/// compile uniformly; [`show_context_menu`] is a no-op.
-#[cfg(not(target_os = "macos"))]
-#[derive(Clone, Debug, Default)]
-pub struct MenuPlan {
-    pub items: Vec<MenuPlanItem>,
-}
-
-#[cfg(not(target_os = "macos"))]
-#[derive(Clone, Debug)]
-pub enum MenuPlanItem {
-    Action {
-        command: feraille_core::commands::CommandId,
-        title: String,
-        enabled: bool,
-        checked: bool,
-        payload: Option<feraille_core::commands::CommandPayload>,
-    },
-    Separator,
-    Submenu {
-        title: String,
-        items: Vec<MenuPlanItem>,
-    },
-    ServicesSubmenu {
-        title: String,
-    },
-}
-
-#[cfg(not(target_os = "macos"))]
-#[derive(Clone, Debug)]
-pub struct MenuPick {
-    pub command: feraille_core::commands::CommandId,
-    pub payload: Option<feraille_core::commands::CommandPayload>,
-}
-
-#[cfg(not(target_os = "macos"))]
-impl MenuPlan {
-    pub fn new() -> Self {
-        Self::default()
-    }
-    pub fn push(&mut self, item: MenuPlanItem) -> &mut Self {
-        self.items.push(item);
-        self
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-impl MenuPlanItem {
-    pub fn action(command: feraille_core::commands::CommandId, title: impl Into<String>) -> Self {
-        MenuPlanItem::Action {
-            command,
-            title: title.into(),
-            enabled: true,
-            checked: false,
-            payload: None,
-        }
-    }
-    pub fn action_with_payload(
-        command: feraille_core::commands::CommandId,
-        title: impl Into<String>,
-        payload: feraille_core::commands::CommandPayload,
-    ) -> Self {
-        MenuPlanItem::Action {
-            command,
-            title: title.into(),
-            enabled: true,
-            checked: false,
-            payload: Some(payload),
-        }
-    }
-    pub fn checked(mut self, on: bool) -> Self {
-        if let MenuPlanItem::Action {
-            ref mut checked, ..
-        } = self
-        {
-            *checked = on;
-        }
-        self
-    }
-    pub fn separator() -> Self {
-        MenuPlanItem::Separator
-    }
-    pub fn submenu(title: impl Into<String>, items: Vec<MenuPlanItem>) -> Self {
-        MenuPlanItem::Submenu {
-            title: title.into(),
-            items,
-        }
-    }
-    pub fn services_submenu(title: impl Into<String>) -> Self {
-        MenuPlanItem::ServicesSubmenu {
-            title: title.into(),
-        }
-    }
-}
-
-/// Show a context menu at `cursor_dips` (relative to the window's
-/// content view) with the items in `plan`. Returns the picked
-/// item, or `None` on dismiss. Synchronous — blocks the calling
-/// thread while the menu is open.
-#[cfg(target_os = "macos")]
-pub fn show_context_menu(
-    window: &winit::window::Window,
-    plan: MenuPlan,
-    cursor_dips: (f32, f32),
-) -> Option<MenuPick> {
-    menu::show_context_menu(window, plan, cursor_dips)
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn show_context_menu(
-    _window: &winit::window::Window,
-    _plan: MenuPlan,
-    _cursor_dips: (f32, f32),
-) -> Option<MenuPick> {
-    None
-}
-
-/// Drag a list of file paths out to Finder / other apps. Returns `true`
-/// if the system accepted the drag; `false` if a prerequisite failed
-/// (no window handle, no current NSEvent, etc.). Non-macOS: always `false`.
-#[cfg(target_os = "macos")]
-pub fn begin_drag(window: &winit::window::Window, paths: &[&std::path::Path]) -> bool {
-    drag::begin_drag(window, paths)
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn begin_drag(_window: &winit::window::Window, _paths: &[&std::path::Path]) -> bool {
-    false
-}
-
 /// Place a string on the system clipboard.
 #[cfg(target_os = "macos")]
 pub fn copy_to_clipboard(text: &str) {
@@ -401,14 +253,34 @@ pub fn app_bundle_path() -> Option<String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Spawn `cmd` detached: stdio is nulled so the child can never block on
+/// inherited pipes, and a small named thread `wait()`s it so it doesn't
+/// linger as a zombie until app exit. The children launched through here
+/// (`open`, `qlmanage`) exit quickly, so the reaper threads are short-lived.
+pub(crate) fn spawn_and_reap(cmd: &mut std::process::Command) -> std::io::Result<()> {
+    use std::process::Stdio;
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    // Best-effort: if the reaper thread can't start, the child still ran —
+    // it just won't be reaped until process exit (the old behavior).
+    let _ = std::thread::Builder::new()
+        .name("child-reaper".into())
+        .spawn(move || {
+            let _ = child.wait();
+        });
+    Ok(())
+}
+
 /// Open Finder with `path` selected. macOS: shells out to `open -R`.
 /// Non-macOS: no-op.
 #[cfg(target_os = "macos")]
 pub fn reveal_in_finder(path: &std::path::Path) {
-    let _ = std::process::Command::new("open")
-        .arg("-R")
-        .arg(path)
-        .spawn();
+    let mut cmd = std::process::Command::new("open");
+    cmd.arg("-R").arg(path);
+    let _ = spawn_and_reap(&mut cmd);
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -419,11 +291,9 @@ pub fn reveal_in_finder(_path: &std::path::Path) {}
 /// directory. Non-macOS: no-op.
 #[cfg(target_os = "macos")]
 pub fn open_terminal(path: &std::path::Path) {
-    let _ = std::process::Command::new("open")
-        .arg("-a")
-        .arg("Terminal")
-        .arg(path)
-        .spawn();
+    let mut cmd = std::process::Command::new("open");
+    cmd.arg("-a").arg("Terminal").arg(path);
+    let _ = spawn_and_reap(&mut cmd);
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -646,47 +516,6 @@ pub fn open_with_app_many(
         let _ = (targets, app_path);
         Err("open_with_app_many is macOS-only".into())
     }
-}
-
-/// Splice a Services-vending responder into the window's chain
-/// and publish the empty `NSApp.servicesMenu` AppKit will populate
-/// on demand. Idempotent. Call once after the main window exists,
-/// on the main thread. No-op on non-macOS.
-#[cfg(target_os = "macos")]
-pub fn install_services_anchor(window: &winit::window::Window) {
-    services::install(window);
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn install_services_anchor(_window: &winit::window::Window) {}
-
-/// Push the right-clicked selection so the Services anchor has
-/// something to vend when AppKit asks. Call from the right-click
-/// handler just before [`show_context_menu`]. No-op on non-macOS.
-#[cfg(target_os = "macos")]
-pub fn set_services_selection(paths: Vec<std::path::PathBuf>) {
-    services::set_current_selection(paths);
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn set_services_selection(_paths: Vec<std::path::PathBuf>) {}
-
-/// Show the system Share picker (`NSSharingServicePicker`) for
-/// `paths`, anchored to the given window's content view.
-#[cfg(target_os = "macos")]
-pub fn show_share_picker(
-    window: &winit::window::Window,
-    paths: &[&std::path::Path],
-) -> Result<(), String> {
-    share::show_picker(window, paths)
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn show_share_picker(
-    _window: &winit::window::Window,
-    _paths: &[&std::path::Path],
-) -> Result<(), String> {
-    Err("share is macOS-only".into())
 }
 
 /// Replace the running process's dock/app icon with the image decoded
@@ -1369,7 +1198,12 @@ pub fn set_window_frame(_ns_view: *mut std::ffi::c_void, _x: f64, _y: f64, _w: f
 /// Toggle whether a window joins every Space and floats over full-screen apps
 /// (`NSWindowCollectionBehaviorCanJoinAllSpaces | FullScreenAuxiliary`). A
 /// docked drawer wants this so it stays reachable from any Space; pass `false`
-/// to restore default behavior on undock. Main-thread only; no-op otherwise.
+/// to drop the behavior again on undock. Main-thread only; no-op otherwise.
+///
+/// Sets/clears ONLY those two bits, preserving whatever else the host
+/// configured — writing `0` on undock used to clobber gpui's original
+/// `collectionBehavior` (full-screen-primary participation, Stage
+/// Manager behavior) for the rest of the session.
 #[cfg(target_os = "macos")]
 pub fn set_window_all_spaces(ns_view: *mut std::ffi::c_void, all_spaces: bool) {
     use objc2::{msg_send, msg_send_id, rc::Retained, runtime::AnyObject};
@@ -1383,8 +1217,14 @@ pub fn set_window_all_spaces(ns_view: *mut std::ffi::c_void, all_spaces: bool) {
     let window: Option<Retained<NSWindow>> = unsafe { msg_send_id![view, window] };
     if let Some(window) = window {
         // CanJoinAllSpaces (1 << 0) | FullScreenAuxiliary (1 << 8).
-        let behavior: usize = if all_spaces { (1 << 0) | (1 << 8) } else { 0 };
+        const BITS: usize = (1 << 0) | (1 << 8);
         unsafe {
+            let current: usize = msg_send![&*window, collectionBehavior];
+            let behavior = if all_spaces {
+                current | BITS
+            } else {
+                current & !BITS
+            };
             let _: () = msg_send![&*window, setCollectionBehavior: behavior];
         }
     }
@@ -1392,6 +1232,36 @@ pub fn set_window_all_spaces(ns_view: *mut std::ffi::c_void, all_spaces: bool) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn set_window_all_spaces(_ns_view: *mut std::ffi::c_void, _all_spaces: bool) {}
+
+/// Whether the window is in native full screen (`styleMask` carries
+/// `NSWindowStyleMaskFullScreen`). Docking must refuse a fullscreen
+/// window — `setFrame:` on one confuses AppKit's Space bookkeeping.
+/// `false` off the main thread / off macOS.
+#[cfg(target_os = "macos")]
+pub fn window_is_fullscreen(ns_view: *mut std::ffi::c_void) -> bool {
+    use objc2::{msg_send, msg_send_id, rc::Retained, runtime::AnyObject};
+    use objc2_app_kit::NSWindow;
+    use objc2_foundation::MainThreadMarker;
+
+    if MainThreadMarker::new().is_none() || ns_view.is_null() {
+        return false;
+    }
+    let view: &AnyObject = unsafe { &*(ns_view as *const AnyObject) };
+    let window: Option<Retained<NSWindow>> = unsafe { msg_send_id![view, window] };
+    match window {
+        Some(window) => {
+            let mask: usize = unsafe { msg_send![&*window, styleMask] };
+            // NSWindowStyleMaskFullScreen = 1 << 14.
+            mask & (1 << 14) != 0
+        }
+        None => false,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn window_is_fullscreen(_ns_view: *mut std::ffi::c_void) -> bool {
+    false
+}
 
 /// A window's current frame as `(x, y, width, height)` in global screen
 /// space, so the host can remember where to put it back when undocking.
@@ -1420,48 +1290,6 @@ pub fn window_frame(ns_view: *mut std::ffi::c_void) -> Option<(f64, f64, f64, f6
 #[cfg(not(target_os = "macos"))]
 pub fn window_frame(_ns_view: *mut std::ffi::c_void) -> Option<(f64, f64, f64, f64)> {
     None
-}
-
-/// Width to reserve at the leading edge of the tabstrip so the OS
-/// traffic-light buttons (close / minimize / zoom) don't overlap our
-/// content. Standard macOS layout puts the leftmost button at ~10 DIPs
-/// from the window edge; the cluster ends near 70 DIPs.
-pub const TRAFFIC_LIGHT_INSET: f32 = 78.0;
-
-/// Apply native window chrome and return the leading-edge inset (in
-/// DIPs) the host should reserve for traffic-light buttons. Returns
-/// `0.0` on non-macOS or if the chrome couldn't be applied.
-#[cfg(target_os = "macos")]
-pub fn apply_native_chrome(window: &winit::window::Window) -> f32 {
-    use objc2_app_kit::{NSView, NSWindowStyleMask, NSWindowTitleVisibility};
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
-    let Ok(handle) = window.window_handle() else {
-        return 0.0;
-    };
-    let RawWindowHandle::AppKit(h) = handle.as_raw() else {
-        return 0.0;
-    };
-    let ns_view_ptr = h.ns_view.as_ptr();
-    if ns_view_ptr.is_null() {
-        return 0.0;
-    }
-    unsafe {
-        let ns_view: &NSView = &*(ns_view_ptr as *const NSView);
-        let Some(ns_window) = ns_view.window() else {
-            return 0.0;
-        };
-        ns_window.setTitlebarAppearsTransparent(true);
-        ns_window.setTitleVisibility(NSWindowTitleVisibility::NSWindowTitleHidden);
-        let mask = ns_window.styleMask() | NSWindowStyleMask::FullSizeContentView;
-        ns_window.setStyleMask(mask);
-    }
-    TRAFFIC_LIGHT_INSET
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn apply_native_chrome(_window: &winit::window::Window) -> f32 {
-    0.0
 }
 
 // ---------------------------------------------------------------------------

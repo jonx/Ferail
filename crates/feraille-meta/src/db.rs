@@ -584,40 +584,39 @@ impl MetadataDb {
     /// have their derived columns reset (the caller passes whatever
     /// fields it has; the rest stay NULL until next probe).
     pub fn upsert_file(&self, rec: &FileMetaRecord) -> Result<()> {
-        // If the path exists with a different mtime, clear stale
-        // derived data first so the new rec doesn't ride alongside
-        // outdated hashes/magic/quarantine.
-        let stale_mtime = self
-            .conn
-            .query_row(
-                "SELECT mtime_unix FROM files WHERE path = ?1",
-                params![rec.path],
-                |row| row.get::<_, i64>(0),
-            )
-            .ok();
-        if let Some(prev) = stale_mtime {
-            if prev != rec.mtime_unix {
-                self.conn
-                    .execute("DELETE FROM files WHERE path = ?1", params![rec.path])?;
-            }
-        }
+        // ONE statement, atomic: when the stored mtime differs the row
+        // is effectively replaced (stale derived data must not ride
+        // alongside a changed file), otherwise incoming NULLs preserve
+        // existing derived fields. The previous SELECT + DELETE +
+        // INSERT shape cost three autocommit statements per row —
+        // ~6 fsyncs pre-WAL — and wasn't atomic (a crash between
+        // DELETE and INSERT dropped the row).
         self.conn.execute(
             "INSERT INTO files (path, mtime_unix, size, magic_label, description, partial_hash, \
                                 full_hash, mime, quarantined, quarantine_agent, \
                                 quarantine_iso, quarantine_where_from, indexed_at_unix) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
              ON CONFLICT(path) DO UPDATE SET \
-               mtime_unix = excluded.mtime_unix, \
                size = excluded.size, \
-               magic_label = COALESCE(excluded.magic_label, files.magic_label), \
-               description = COALESCE(excluded.description, files.description), \
-               partial_hash = COALESCE(excluded.partial_hash, files.partial_hash), \
-               full_hash = COALESCE(excluded.full_hash, files.full_hash), \
-               mime = COALESCE(excluded.mime, files.mime), \
-               quarantined = COALESCE(excluded.quarantined, files.quarantined), \
-               quarantine_agent = COALESCE(excluded.quarantine_agent, files.quarantine_agent), \
-               quarantine_iso = COALESCE(excluded.quarantine_iso, files.quarantine_iso), \
-               quarantine_where_from = COALESCE(excluded.quarantine_where_from, files.quarantine_where_from), \
+               magic_label = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.magic_label, files.magic_label) ELSE excluded.magic_label END, \
+               description = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.description, files.description) ELSE excluded.description END, \
+               partial_hash = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.partial_hash, files.partial_hash) ELSE excluded.partial_hash END, \
+               full_hash = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.full_hash, files.full_hash) ELSE excluded.full_hash END, \
+               mime = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.mime, files.mime) ELSE excluded.mime END, \
+               quarantined = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.quarantined, files.quarantined) ELSE excluded.quarantined END, \
+               quarantine_agent = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.quarantine_agent, files.quarantine_agent) ELSE excluded.quarantine_agent END, \
+               quarantine_iso = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.quarantine_iso, files.quarantine_iso) ELSE excluded.quarantine_iso END, \
+               quarantine_where_from = CASE WHEN files.mtime_unix = excluded.mtime_unix \
+                 THEN COALESCE(excluded.quarantine_where_from, files.quarantine_where_from) ELSE excluded.quarantine_where_from END, \
+               mtime_unix = excluded.mtime_unix, \
                indexed_at_unix = excluded.indexed_at_unix",
             params![
                 rec.path,
@@ -634,6 +633,54 @@ impl MetadataDb {
                 rec.quarantine_where_from,
                 rec.indexed_at_unix,
             ],
+        )?;
+        Ok(())
+    }
+
+    /// Upsert a batch of file records in ONE transaction. The hot
+    /// writers (magic/quarantine prefetch over a whole directory, the
+    /// dupe hash cache) call this instead of per-row [`Self::upsert_file`]
+    /// autocommits — a 5,000-entry folder was ~10k autocommit
+    /// statements serialized behind the connection mutex.
+    pub fn upsert_files(&self, recs: &[FileMetaRecord]) -> Result<()> {
+        if recs.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        for rec in recs {
+            if let Err(e) = self.upsert_file(rec) {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                return Err(e);
+            }
+        }
+        self.conn.execute_batch("COMMIT")?;
+        Ok(())
+    }
+
+    /// Age out cache rows so the store stops growing without bound:
+    /// `files` and `folder_sizes` entries not refreshed in 90 days are
+    /// dead weight (their mtime checks would re-derive anyway), and
+    /// `folder_usage` — loaded wholesale into memory at startup — is
+    /// capped to its most recent 4,096 rows. User-curated tables
+    /// (favorites, pinned items) are never touched. Run once per
+    /// launch on the background executor.
+    pub fn prune_stale(&self, now_unix: i64) -> Result<()> {
+        const MAX_AGE_SECS: i64 = 90 * 86_400;
+        const FOLDER_USAGE_CAP: i64 = 4096;
+        let cutoff = now_unix.saturating_sub(MAX_AGE_SECS);
+        self.conn.execute(
+            "DELETE FROM files WHERE indexed_at_unix < ?1",
+            params![cutoff],
+        )?;
+        self.conn.execute(
+            "DELETE FROM folder_sizes WHERE computed_at_unix < ?1",
+            params![cutoff],
+        )?;
+        self.conn.execute(
+            "DELETE FROM folder_usage WHERE folder_path NOT IN ( \
+               SELECT folder_path FROM folder_usage \
+               ORDER BY last_access_unix DESC LIMIT ?1)",
+            params![FOLDER_USAGE_CAP],
         )?;
         Ok(())
     }

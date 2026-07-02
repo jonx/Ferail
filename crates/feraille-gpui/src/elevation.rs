@@ -15,6 +15,32 @@
 //! No serde in this workspace (settings use a hand-rolled `key=value` format),
 //! so the descriptor and result use a small NUL-separated encoding — robust
 //! against any path on unix, where the bytes round-trip losslessly.
+//!
+//! ## Handshake hardening
+//!
+//! The descriptor tells a **root** process what to move/copy/delete, so the
+//! files it travels through must not be plantable or swappable by another
+//! local user (macOS's per-user mode-700 `$TMPDIR` masks this, but a shared
+//! `/tmp` — the future Linux pkexec path — does not):
+//!
+//! - Each op gets a fresh private directory `feraille-elev-<random>` in
+//!   `temp_dir()`, created **exclusively** with mode `0o700` on unix
+//!   ([`ElevFiles::create`]). The random token comes from `/dev/urandom`
+//!   when available, else a documented std-only hash fallback.
+//! - The descriptor inside it is created with `O_EXCL` + mode `0o600`
+//!   *before* any content is written.
+//! - The elevated worker is told the invoking user's uid
+//!   (`--elevated-uid`, read off the directory the parent just created) and
+//!   refuses to read the descriptor or create the result unless the private
+//!   directory is a real (non-symlink) directory owned by that uid with no
+//!   group/other access, and the descriptor itself — opened `O_NOFOLLOW`,
+//!   then re-checked on the open fd — is a regular file owned by that uid
+//!   and not group/other writable.
+//! - The worker creates the result file with `O_EXCL` (which never follows
+//!   a planted symlink), so root's write cannot be redirected.
+//! - Result records are line-delimited; path fields are escaped
+//!   ([`escape_field`]) so a filename containing `\n` cannot split or spoof
+//!   records.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -128,6 +154,48 @@ impl ElevatedOp {
     }
 }
 
+// ---- field escaping for the line-delimited result files --------------------
+//
+// Result files are one record per line, fields NUL-separated. A filename
+// containing `\n` (legal on unix) would otherwise split a record — letting a
+// crafted name truncate the report or spoof extra records when the parent
+// parses what root wrote. Path fields are therefore escaped on encode:
+// `\` → `\\`, newline → `\n`, NUL → `\0` (the kernel forbids NUL in real
+// path bytes, but escaping it too makes the framing injection-proof even for
+// synthetic paths). Descriptors are purely NUL-separated with no line
+// framing and stay unescaped.
+
+fn escape_field(b: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(b.len());
+    for &c in b {
+        match c {
+            b'\\' => out.extend_from_slice(b"\\\\"),
+            b'\n' => out.extend_from_slice(b"\\n"),
+            0 => out.extend_from_slice(b"\\0"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+fn unescape_field(b: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(b.len());
+    let mut it = b.iter().copied();
+    while let Some(c) = it.next() {
+        if c == b'\\' {
+            match it.next() {
+                Some(b'n') => out.push(b'\n'),
+                Some(b'0') => out.push(0),
+                Some(other) => out.push(other), // `\\`; unknown escapes pass through
+                None => out.push(b'\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn kind_name(k: FileOpErrorKind) -> &'static str {
     match k {
         FileOpErrorKind::PermissionDenied => "PermissionDenied",
@@ -155,7 +223,8 @@ fn kind_from_name(s: &str) -> FileOpErrorKind {
 
 impl ElevatedResult {
     /// One record per line; fields NUL-separated. `ok\0<n>` then
-    /// `fail\0<KindName>\0<path>` per remaining failure.
+    /// `fail\0<KindName>\0<path>` per remaining failure. Path fields are
+    /// escaped ([`escape_field`]) so a `\n` in a filename can't break framing.
     fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(b"ok\0");
@@ -165,7 +234,7 @@ impl ElevatedResult {
             out.extend_from_slice(b"fail\0");
             out.extend_from_slice(kind_name(*kind).as_bytes());
             out.push(0);
-            out.extend_from_slice(&path_to_bytes(path));
+            out.extend_from_slice(&escape_field(&path_to_bytes(path)));
         }
         out
     }
@@ -185,9 +254,10 @@ impl ElevatedResult {
                 Some(b"fail") => {
                     let kind = f.next().ok_or("result: fail missing kind")?;
                     let path = f.next().ok_or("result: fail missing path")?;
-                    result
-                        .failures
-                        .push((kind_from_name(&String::from_utf8_lossy(kind)), bytes_to_path(path)));
+                    result.failures.push((
+                        kind_from_name(&String::from_utf8_lossy(kind)),
+                        bytes_to_path(&unescape_field(path)),
+                    ));
                 }
                 _ => {}
             }
@@ -233,7 +303,8 @@ impl ElevatedTrashOp {
 
 impl ElevatedTrashResult {
     /// One record per line; fields NUL-separated. `trash\0<orig>\0<landed>` per
-    /// moved item, `fail\0<path>` per remaining failure.
+    /// moved item, `fail\0<path>` per remaining failure. Path fields are
+    /// escaped ([`escape_field`]) so a `\n` in a filename can't break framing.
     fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
         let mut first = true;
@@ -247,14 +318,14 @@ impl ElevatedTrashResult {
         for (orig, landed) in &self.trashed {
             sep(&mut out);
             out.extend_from_slice(b"trash\0");
-            out.extend_from_slice(&path_to_bytes(orig));
+            out.extend_from_slice(&escape_field(&path_to_bytes(orig)));
             out.push(0);
-            out.extend_from_slice(&path_to_bytes(landed));
+            out.extend_from_slice(&escape_field(&path_to_bytes(landed)));
         }
         for path in &self.failed {
             sep(&mut out);
             out.extend_from_slice(b"fail\0");
-            out.extend_from_slice(&path_to_bytes(path));
+            out.extend_from_slice(&escape_field(&path_to_bytes(path)));
         }
         out
     }
@@ -270,13 +341,14 @@ impl ElevatedTrashResult {
                 Some(b"trash") => {
                     let orig = f.next().ok_or("result: trash missing original")?;
                     let landed = f.next().ok_or("result: trash missing landed")?;
-                    result
-                        .trashed
-                        .push((bytes_to_path(orig), bytes_to_path(landed)));
+                    result.trashed.push((
+                        bytes_to_path(&unescape_field(orig)),
+                        bytes_to_path(&unescape_field(landed)),
+                    ));
                 }
                 Some(b"fail") => {
                     let path = f.next().ok_or("result: fail missing path")?;
-                    result.failed.push(bytes_to_path(path));
+                    result.failed.push(bytes_to_path(&unescape_field(path)));
                 }
                 _ => {}
             }
@@ -285,37 +357,324 @@ impl ElevatedTrashResult {
     }
 }
 
-fn unique_temp(ext: &str) -> PathBuf {
+// ---- private handshake directory -------------------------------------------
+
+/// Random hex token for the private directory name. Prefers real OS
+/// randomness — 16 bytes of `/dev/urandom` via `std::fs` (this workspace
+/// avoids new deps, so no `rand`/`getrandom` crate). The fallback hashes
+/// `SystemTime` + pid + a process-local counter + a stack address (ASLR)
+/// through `DefaultHasher`; it is *not* cryptographic, but the name only
+/// needs to be unguessable in practice, and the directory create below is
+/// exclusive, so a guessed/pre-created name fails closed instead of being
+/// silently adopted.
+fn random_token() -> String {
+    #[cfg(unix)]
+    {
+        use std::io::Read as _;
+        let mut buf = [0u8; 16];
+        if std::fs::File::open("/dev/urandom")
+            .and_then(|mut f| f.read_exact(&mut buf))
+            .is_ok()
+        {
+            use std::fmt::Write as _;
+            let mut out = String::with_capacity(32);
+            for b in buf {
+                let _ = write!(out, "{b:02x}");
+            }
+            return out;
+        }
+    }
+    use std::hash::{Hash as _, Hasher as _};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("feraille-elevop-{}-{n}.{ext}", std::process::id()))
+    let mut out = String::with_capacity(32);
+    let mut seed = COUNTER.fetch_add(1, Ordering::Relaxed);
+    for _ in 0..2 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        std::time::SystemTime::now().hash(&mut h);
+        std::process::id().hash(&mut h);
+        seed.hash(&mut h);
+        (&seed as *const u64 as usize).hash(&mut h);
+        seed = h.finish();
+        use std::fmt::Write as _;
+        let _ = write!(out, "{seed:016x}");
+    }
+    out
+}
+
+/// The user-side handshake area: a freshly created private directory in
+/// `temp_dir()` holding the descriptor and (after the worker runs) the
+/// result. See the module docs ("Handshake hardening") for the threat model;
+/// in short, the directory name is unpredictable, its creation is exclusive
+/// with mode `0o700` on unix, and the descriptor is `O_EXCL` + `0o600` before
+/// content lands — so on a shared `/tmp` no other user can pre-create, read,
+/// or swap any part of the handshake.
+struct ElevFiles {
+    dir: PathBuf,
+    desc: PathBuf,
+    result: PathBuf,
+}
+
+impl ElevFiles {
+    fn create(descriptor: &[u8]) -> Result<ElevFiles, String> {
+        let mut last_err = "create private dir: exhausted retries".to_string();
+        for _ in 0..8 {
+            let dir = std::env::temp_dir().join(format!("feraille-elev-{}", random_token()));
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt as _;
+                builder.mode(0o700);
+            }
+            match builder.create(&dir) {
+                Ok(()) => {
+                    let desc = dir.join("op.desc");
+                    let result = dir.join("op.result");
+                    let mut opts = std::fs::OpenOptions::new();
+                    // O_EXCL: fail rather than adopt anything pre-created.
+                    opts.write(true).create_new(true);
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::OpenOptionsExt as _;
+                        // Owner-only *at creation*, before content is written.
+                        opts.mode(0o600);
+                    }
+                    let write = opts
+                        .open(&desc)
+                        .and_then(|mut f| std::io::Write::write_all(&mut f, descriptor));
+                    return match write {
+                        Ok(()) => Ok(ElevFiles { dir, desc, result }),
+                        Err(e) => {
+                            let _ = std::fs::remove_file(&desc);
+                            let _ = std::fs::remove_dir(&dir);
+                            Err(format!("write descriptor: {e}"))
+                        }
+                    };
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // Collision (astronomically unlikely with urandom; possible
+                    // under the hash fallback) — try a fresh token.
+                    last_err = format!("create private dir: {e}");
+                }
+                Err(e) => return Err(format!("create private dir: {e}")),
+            }
+        }
+        Err(last_err)
+    }
+
+    /// The uid the elevated worker must see as owner of the handshake dir —
+    /// i.e. OUR uid, read back from the directory we just created (std
+    /// exposes no `getuid` without libc, and this crate has no libc dep).
+    #[cfg(unix)]
+    fn owner_uid(&self) -> Result<u32, String> {
+        use std::os::unix::fs::MetadataExt as _;
+        std::fs::symlink_metadata(&self.dir)
+            .map(|m| m.uid())
+            .map_err(|e| format!("stat private dir: {e}"))
+    }
+
+    /// Worker CLI for this handshake: `<flag> <desc> --elevated-result <res>`
+    /// plus, on unix, `--elevated-uid <uid>` so the root side can verify who
+    /// staged the descriptor.
+    fn worker_args(&self, flag: &str) -> Result<Vec<String>, String> {
+        #[allow(unused_mut)]
+        let mut args = vec![
+            flag.to_string(),
+            self.desc.to_string_lossy().into_owned(),
+            "--elevated-result".to_string(),
+            self.result.to_string_lossy().into_owned(),
+        ];
+        #[cfg(unix)]
+        {
+            args.push("--elevated-uid".to_string());
+            args.push(self.owner_uid()?.to_string());
+        }
+        Ok(args)
+    }
+
+    fn cleanup(&self) {
+        let _ = std::fs::remove_file(&self.desc);
+        let _ = std::fs::remove_file(&self.result);
+        let _ = std::fs::remove_dir(&self.dir);
+    }
+}
+
+// ---- worker-side verification -----------------------------------------------
+
+/// `O_NOFOLLOW` for `OpenOptionsExt::custom_flags`, spelled per-OS because
+/// this crate deliberately links no libc. Values match the platform ABI
+/// headers (`<fcntl.h>`): `0x0100` across the BSD family incl. macOS/iOS,
+/// `0o400000` on Linux/Android.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
+const O_NOFOLLOW: i32 = 0x0100;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const O_NOFOLLOW: i32 = 0o400000;
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "linux",
+        target_os = "android"
+    ))
+))]
+const O_NOFOLLOW: i32 = 0; // unknown unix: the metadata checks still apply
+
+/// Root side: refuse to trust the handshake dir unless it is a real
+/// (non-symlink) directory owned by the invoking user with zero group/other
+/// access — exactly what [`ElevFiles::create`] made. On a shared `/tmp` this
+/// is what stops another local user from staging a descriptor for root to
+/// execute, or from redirecting where root writes the result.
+#[cfg(unix)]
+fn verify_private_dir(dir: &Path, expected_uid: u32) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt as _;
+    let md =
+        std::fs::symlink_metadata(dir).map_err(|e| format!("stat {}: {e}", dir.display()))?;
+    if !md.file_type().is_dir() {
+        return Err(format!("{}: not a directory", dir.display()));
+    }
+    if md.uid() != expected_uid {
+        return Err(format!(
+            "{}: owned by uid {}, expected {}",
+            dir.display(),
+            md.uid(),
+            expected_uid
+        ));
+    }
+    if md.mode() & 0o077 != 0 {
+        return Err(format!(
+            "{}: group/other permissions present (mode {:o})",
+            dir.display(),
+            md.mode() & 0o777
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn expected_uid_from_args(args: &[String]) -> Result<u32, String> {
+    flag_value(args, "--elevated-uid")
+        .ok_or_else(|| "missing --elevated-uid".to_string())?
+        .parse()
+        .map_err(|_| "--elevated-uid: not a uid".to_string())
+}
+
+/// Read the descriptor as the (possibly root) worker. On unix the file is
+/// trusted only after verifying the private dir (ownership + `0o700`) and the
+/// descriptor itself: opened with `O_NOFOLLOW` so a symlink swap fails, then
+/// re-checked on the *open fd* (regular file, owned by the invoking uid, not
+/// group/other writable) so there is no check-then-open race outside the
+/// invoking user's own control. On non-unix (Windows elevation is stubbed)
+/// this is a plain read; the per-user ACL'd temp dir covers it.
+fn read_descriptor_verified(desc_path: &str, args: &[String]) -> Result<Vec<u8>, String> {
+    #[cfg(unix)]
+    {
+        use std::io::Read as _;
+        use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+        let expected_uid = expected_uid_from_args(args)?;
+        let path = Path::new(desc_path);
+        let dir = path
+            .parent()
+            .ok_or_else(|| "descriptor path has no parent".to_string())?;
+        verify_private_dir(dir, expected_uid)?;
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(O_NOFOLLOW)
+            .open(path)
+            .map_err(|e| format!("open descriptor: {e}"))?;
+        let md = file
+            .metadata()
+            .map_err(|e| format!("stat descriptor: {e}"))?;
+        if !md.file_type().is_file() {
+            return Err("descriptor is not a regular file".into());
+        }
+        if md.uid() != expected_uid {
+            return Err(format!(
+                "descriptor owned by uid {}, expected {}",
+                md.uid(),
+                expected_uid
+            ));
+        }
+        if md.mode() & 0o022 != 0 {
+            return Err("descriptor is group/other writable".into());
+        }
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|e| format!("read descriptor: {e}"))?;
+        Ok(bytes)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = args;
+        std::fs::read(desc_path).map_err(|e| format!("read descriptor: {e}"))
+    }
+}
+
+/// Write the result as the (possibly root) worker. Exclusive create —
+/// `O_CREAT|O_EXCL` never follows a planted symlink, so root's write cannot
+/// be redirected — after re-verifying the private dir on unix. Mode `0o644`
+/// (set explicitly on the fd, immune to the root shell's umask) so the
+/// root-owned file is readable back by the invoking user; the `0o700`
+/// directory keeps it private from everyone else.
+fn write_result_verified(result_path: &str, bytes: &[u8], args: &[String]) -> Result<(), String> {
+    let path = Path::new(result_path);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let expected_uid = expected_uid_from_args(args)?;
+        let dir = path
+            .parent()
+            .ok_or_else(|| "result path has no parent".to_string())?;
+        verify_private_dir(dir, expected_uid)?;
+        opts.mode(0o644);
+    }
+    #[cfg(not(unix))]
+    let _ = args;
+    let mut file = opts.open(path).map_err(|e| format!("create result: {e}"))?;
+    std::io::Write::write_all(&mut file, bytes).map_err(|e| format!("write result: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        // create_new's mode is masked by umask; force user readability so the
+        // parent can read the root-owned result back.
+        file.set_permissions(std::fs::Permissions::from_mode(0o644))
+            .map_err(|e| format!("chmod result: {e}"))?;
+    }
+    Ok(())
 }
 
 /// Parent side: serialise `op` to a temp descriptor, run the elevated worker
 /// (blocks on the OS auth prompt — call from a background thread), and read
 /// back which items still failed. An empty `failures` means everything landed.
 pub fn run_elevated_op(op: &ElevatedOp) -> Result<ElevatedResult, String> {
-    let desc = unique_temp("desc");
-    let res = unique_temp("result");
-    std::fs::write(&desc, op.encode()).map_err(|e| format!("write descriptor: {e}"))?;
-
-    let args = vec![
-        "--elevated-op".to_string(),
-        desc.to_string_lossy().into_owned(),
-        "--elevated-result".to_string(),
-        res.to_string_lossy().into_owned(),
-    ];
+    let files = ElevFiles::create(&op.encode())?;
+    let args = match files.worker_args("--elevated-op") {
+        Ok(args) => args,
+        Err(e) => {
+            files.cleanup();
+            return Err(e);
+        }
+    };
     let run = crate::platform_shell::run_elevated_self(&args);
     // The worker exits 0 even when some items fail (per-item status is in the
     // result file); a hard error here means it couldn't be launched/elevated.
     let outcome = run.and_then(|_code| {
-        std::fs::read(&res)
+        std::fs::read(&files.result)
             .map_err(|e| format!("read result: {e}"))
             .and_then(|b| ElevatedResult::decode(&b))
     });
 
-    let _ = std::fs::remove_file(&desc);
-    let _ = std::fs::remove_file(&res);
+    files.cleanup();
     outcome
 }
 
@@ -333,10 +692,10 @@ pub fn run_elevated_op_worker(args: &[String]) -> i32 {
         eprintln!("--elevated-op: missing --elevated-result path");
         return 2;
     };
-    let bytes = match std::fs::read(&desc_path) {
+    let bytes = match read_descriptor_verified(&desc_path, args) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("--elevated-op: read descriptor: {e}");
+            eprintln!("--elevated-op: {e}");
             return 2;
         }
     };
@@ -370,8 +729,8 @@ pub fn run_elevated_op_worker(args: &[String]) -> i32 {
         Err(e) => fatal_result(&op, &e),
     };
 
-    if let Err(e) = std::fs::write(&result_path, result.encode()) {
-        eprintln!("--elevated-op: write result: {e}");
+    if let Err(e) = write_result_verified(&result_path, &result.encode(), args) {
+        eprintln!("--elevated-op: {e}");
         return 1;
     }
     0
@@ -381,25 +740,22 @@ pub fn run_elevated_op_worker(args: &[String]) -> i32 {
 /// on the OS auth prompt — call from a background thread), and read back which
 /// items landed in the Trash and which still failed.
 pub fn run_elevated_trash_op(op: &ElevatedTrashOp) -> Result<ElevatedTrashResult, String> {
-    let desc = unique_temp("desc");
-    let res = unique_temp("result");
-    std::fs::write(&desc, op.encode()).map_err(|e| format!("write descriptor: {e}"))?;
-
-    let args = vec![
-        "--elevated-trash".to_string(),
-        desc.to_string_lossy().into_owned(),
-        "--elevated-result".to_string(),
-        res.to_string_lossy().into_owned(),
-    ];
+    let files = ElevFiles::create(&op.encode())?;
+    let args = match files.worker_args("--elevated-trash") {
+        Ok(args) => args,
+        Err(e) => {
+            files.cleanup();
+            return Err(e);
+        }
+    };
     let run = crate::platform_shell::run_elevated_self(&args);
     let outcome = run.and_then(|_code| {
-        std::fs::read(&res)
+        std::fs::read(&files.result)
             .map_err(|e| format!("read result: {e}"))
             .and_then(|b| ElevatedTrashResult::decode(&b))
     });
 
-    let _ = std::fs::remove_file(&desc);
-    let _ = std::fs::remove_file(&res);
+    files.cleanup();
     outcome
 }
 
@@ -417,10 +773,10 @@ pub fn run_elevated_trash_op_worker(args: &[String]) -> i32 {
         eprintln!("--elevated-trash: missing --elevated-result path");
         return 2;
     };
-    let bytes = match std::fs::read(&desc_path) {
+    let bytes = match read_descriptor_verified(&desc_path, args) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("--elevated-trash: read descriptor: {e}");
+            eprintln!("--elevated-trash: {e}");
             return 2;
         }
     };
@@ -447,8 +803,8 @@ pub fn run_elevated_trash_op_worker(args: &[String]) -> i32 {
         }
     }
 
-    if let Err(e) = std::fs::write(&result_path, result.encode()) {
-        eprintln!("--elevated-trash: write result: {e}");
+    if let Err(e) = write_result_verified(&result_path, &result.encode(), args) {
+        eprintln!("--elevated-trash: {e}");
         return 1;
     }
     0
@@ -591,5 +947,103 @@ mod tests {
         let empty = ElevatedTrashResult::default();
         let decoded = ElevatedTrashResult::decode(&empty.encode()).unwrap();
         assert!(decoded.trashed.is_empty() && decoded.failed.is_empty());
+    }
+
+    #[test]
+    fn field_escaping_round_trips() {
+        for raw in [
+            &b"plain"[..],
+            b"with\nnewline",
+            b"back\\slash",
+            b"\\n literal, then \n real",
+            b"trailing backslash\\",
+            b"nul\0inside",
+            b"\n",
+            b"",
+        ] {
+            assert_eq!(unescape_field(&escape_field(raw)), raw, "raw: {raw:?}");
+            // Framing bytes must never survive escaping.
+            let escaped = escape_field(raw);
+            assert!(!escaped.contains(&b'\n') && !escaped.contains(&0));
+        }
+    }
+
+    /// A `\n` in a filename must not split, truncate, or spoof result
+    /// records — the class of bug that would let the elevated worker's
+    /// report be forged by a crafted name.
+    #[test]
+    fn newline_in_paths_cannot_spoof_result_records() {
+        let evil = PathBuf::from("/x/evil\nok\u{0}9999");
+        let r = ElevatedResult {
+            ok: 1,
+            failures: vec![(FileOpErrorKind::Locked, evil.clone())],
+        };
+        let decoded = ElevatedResult::decode(&r.encode()).unwrap();
+        assert_eq!(decoded.ok, 1, "embedded newline spoofed the ok record");
+        assert_eq!(decoded.failures, vec![(FileOpErrorKind::Locked, evil.clone())]);
+
+        let t = ElevatedTrashResult {
+            trashed: vec![(evil.clone(), PathBuf::from("/t/landed\nfail\u{0}/forged"))],
+            failed: vec![evil.clone()],
+        };
+        let decoded = ElevatedTrashResult::decode(&t.encode()).unwrap();
+        assert_eq!(decoded.trashed, t.trashed);
+        assert_eq!(decoded.failed, t.failed);
+    }
+
+    /// End-to-end over the private handshake dir: what the parent stages is
+    /// exactly what a verifying worker reads back — and tampered ownership /
+    /// permissions / symlinked descriptors are refused.
+    #[cfg(unix)]
+    #[test]
+    fn private_dir_handshake_verifies() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let payload = b"MOVE\0/dest\0/src/a".to_vec();
+        let files = ElevFiles::create(&payload).unwrap();
+        assert!(
+            files.dir.file_name().unwrap().len() > "feraille-elev-".len() + 16,
+            "dir name should carry a random token: {:?}",
+            files.dir
+        );
+        let uid = files.owner_uid().unwrap();
+        let desc_str = files.desc.to_string_lossy().into_owned();
+        let args = vec!["--elevated-uid".to_string(), uid.to_string()];
+
+        // Happy path: verified read returns the staged bytes.
+        assert_eq!(read_descriptor_verified(&desc_str, &args).unwrap(), payload);
+
+        // Missing / wrong uid is refused.
+        assert!(read_descriptor_verified(&desc_str, &[]).is_err());
+        let wrong = vec!["--elevated-uid".to_string(), (uid ^ 1).to_string()];
+        assert!(read_descriptor_verified(&desc_str, &wrong).is_err());
+
+        // A group/other-accessible handshake dir is refused.
+        std::fs::set_permissions(&files.dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(read_descriptor_verified(&desc_str, &args).is_err());
+        std::fs::set_permissions(&files.dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        // A symlink planted where the descriptor should be is refused
+        // (O_NOFOLLOW), even when it points at a file we own.
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let target = files.dir.join("decoy");
+            std::fs::write(&target, b"COPY\0/attacker\0/etc/shadow").unwrap();
+            std::fs::remove_file(&files.desc).unwrap();
+            std::os::unix::fs::symlink(&target, &files.desc).unwrap();
+            assert!(read_descriptor_verified(&desc_str, &args).is_err());
+            std::fs::remove_file(&target).unwrap();
+        }
+
+        // Result write is exclusive: a pre-created file (or planted symlink)
+        // at the result path makes the worker fail instead of following it.
+        write_result_verified(&files.result.to_string_lossy(), b"ok\x000", &args).unwrap();
+        assert!(
+            write_result_verified(&files.result.to_string_lossy(), b"ok\x000", &args).is_err()
+        );
+        assert_eq!(std::fs::read(&files.result).unwrap(), b"ok\x000");
+
+        files.cleanup();
+        assert!(!files.dir.exists(), "cleanup removes the handshake dir");
     }
 }

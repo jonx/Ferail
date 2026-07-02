@@ -281,9 +281,8 @@ fn try_show(path: &Path, on_ended: Box<dyn Fn() + 'static + Send>) -> Option<u64
     // Point it at the file. The media engine rejects the `\\?\` extended-length
     // prefix the file list uses (ERROR_INVALID_NAME), so strip it; a plain
     // `C:\…` path is accepted as the source URL.
-    let raw = path.to_string_lossy();
-    let cleaned = raw.strip_prefix(r"\\?\").unwrap_or(&raw);
-    let url = BSTR::from(cleaned);
+    let cleaned = crate::strip_verbatim(path);
+    let url = BSTR::from(cleaned.to_string_lossy().as_ref());
     mf_step!(unsafe { engine.SetSource(&url) }, "SetSource");
 
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);

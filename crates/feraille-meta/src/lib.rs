@@ -13,10 +13,8 @@
 //! Per the UI-nonblocking contract, read/write calls must NOT happen on
 //! the paint thread.
 
-pub mod cache;
 pub mod db;
 
-pub use cache::MetadataCache;
 pub use db::{
     AntTrailEntry, FileMetaRecord, FolderSizeRecord, LayoutState, MetadataDb, MetadataError,
     ResetScope, Result, TabState, WindowState,

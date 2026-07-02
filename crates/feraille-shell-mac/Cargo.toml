@@ -7,8 +7,12 @@ repository.workspace = true
 description = "macOS shell integration for Feraille (chrome, drag-drop, NSMenu)"
 
 [dependencies]
-feraille-core.workspace = true
+# No direct use since the winit-era menu/drag/services/share surface was
+# deleted, but winit's objc2 feature unification still supplies AppKit
+# features (NSScreen, MainThreadMarker::new) this crate uses. Replace with
+# explicit objc2-app-kit/objc2-foundation features before dropping it.
 winit.workspace = true
+feraille-core.workspace = true
 png = "0.17"
 
 [target.'cfg(target_os = "macos")'.dependencies]

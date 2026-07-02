@@ -20,7 +20,7 @@ use std::sync::mpsc;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 /// Maximum wall-clock time to wait for Quick Look to produce a
 /// representation before giving up and returning `None`. Quick Look
@@ -56,11 +56,10 @@ pub fn show(paths: &[&Path]) -> Result<(), String> {
     for p in paths {
         cmd.arg(p);
     }
-    // qlmanage prints chatty status to stderr — mute it so the
-    // launching terminal stays clean.
-    cmd.stdout(Stdio::null()).stderr(Stdio::null());
-    cmd.spawn()
-        .map_err(|e| format!("failed to spawn qlmanage: {e}"))?;
+    // spawn_and_reap nulls stdio (qlmanage prints chatty status to
+    // stderr — muting it keeps the launching terminal clean) and reaps
+    // the child so it never lingers as a zombie.
+    crate::spawn_and_reap(&mut cmd).map_err(|e| format!("failed to spawn qlmanage: {e}"))?;
     Ok(())
 }
 
@@ -77,7 +76,7 @@ pub fn show(paths: &[&Path]) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 pub fn fetch_thumbnail(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     use block2::RcBlock;
-    use objc2::rc::{Allocated, Id};
+    use objc2::rc::{autoreleasepool, Allocated, Id};
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send, msg_send_id};
     use objc2_foundation::{CGSize, NSString, NSURL};
@@ -90,7 +89,10 @@ pub fn fetch_thumbnail(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
     // boundary.
     let (tx, rx) = mpsc::channel::<Option<(Vec<u8>, u32, u32)>>();
 
-    unsafe {
+    // Worker-callable: drain the autoreleased Cocoa objects this call
+    // creates per invocation instead of letting them pile up until the
+    // worker queue idles.
+    autoreleasepool(|_| unsafe {
         let ns_path = NSString::from_str(path_str);
         let url: Id<NSURL> = msg_send_id![class!(NSURL), fileURLWithPath: &*ns_path];
 
@@ -136,7 +138,7 @@ pub fn fetch_thumbnail(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
         // Block on the async completion. `request`/`generator`/`block`
         // stay alive on the stack until we return.
         rx.recv_timeout(QL_TIMEOUT).ok().flatten()
-    }
+    })
 }
 
 /// Newtype over a `CGImageRef` whose Objective-C type encoding is

@@ -314,6 +314,7 @@ impl Shell {
         let lead_row = table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
             delegate.selected_set = selection;
+            delegate.invalidate_drag_snapshot();
             delegate.lead = lead;
             let lead_row = lead.and_then(|id| delegate.entries.iter().position(|e| e.id == id));
             state.refresh(cx);

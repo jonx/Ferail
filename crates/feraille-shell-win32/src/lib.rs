@@ -38,6 +38,87 @@ pub use capture::{capture_window_rgba, hide_window_for_capture};
 mod video_mf;
 
 // =============================================================
+// Path helpers
+// =============================================================
+
+/// Convert a verbatim (extended-length) path to the plain form the
+/// Windows *shell* APIs accept: `\\?\C:\…` → `C:\…` and
+/// `\\?\UNC\server\share\…` → `\\server\share\…`. Non-verbatim paths
+/// come back unchanged.
+///
+/// `std::fs::canonicalize` returns verbatim paths on Windows, and the
+/// favorites / tabs / persisted paths the host hands us carry that
+/// prefix — but `explorer /select`, `wt.exe -d`, CF_HDROP, `IShellLink::
+/// SetPath`, `SHCreateItemFromParsingName`, `SHGetFileInfoW`, and the
+/// Media Foundation source URL all reject or mis-handle `\\?\`. Every
+/// outward shell boundary in this crate routes through this helper.
+///
+/// Pure string logic (no I/O), compiled on every host so the unit tests
+/// below run on non-Windows dev machines too. Paths that are not valid
+/// UTF-8 (unpaired surrogates) are returned unchanged rather than
+/// lossily rewritten.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn strip_verbatim(path: &std::path::Path) -> std::path::PathBuf {
+    let Some(s) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    let Some(rest) = s.strip_prefix(r"\\?\") else {
+        return path.to_path_buf();
+    };
+    // `\\?\UNC\server\share\…` → `\\server\share\…` (prefix is
+    // case-insensitive, matching the kernel's own parsing).
+    let b = rest.as_bytes();
+    if b.len() > 4
+        && b[0].eq_ignore_ascii_case(&b'U')
+        && b[1].eq_ignore_ascii_case(&b'N')
+        && b[2].eq_ignore_ascii_case(&b'C')
+        && b[3] == b'\\'
+    {
+        return std::path::PathBuf::from(format!(r"\\{}", &rest[4..]));
+    }
+    std::path::PathBuf::from(rest)
+}
+
+#[cfg(test)]
+mod strip_verbatim_tests {
+    use super::strip_verbatim;
+    use std::path::Path;
+
+    #[test]
+    fn plain_drive_path_unchanged() {
+        let p = Path::new(r"C:\Users\jkn\file.txt");
+        assert_eq!(strip_verbatim(p), p);
+    }
+
+    #[test]
+    fn drive_verbatim_stripped() {
+        assert_eq!(
+            strip_verbatim(Path::new(r"\\?\C:\Users\jkn\file.txt")),
+            Path::new(r"C:\Users\jkn\file.txt")
+        );
+    }
+
+    #[test]
+    fn unc_verbatim_rewritten() {
+        assert_eq!(
+            strip_verbatim(Path::new(r"\\?\UNC\server\share\dir\file.txt")),
+            Path::new(r"\\server\share\dir\file.txt")
+        );
+        // Prefix match is case-insensitive.
+        assert_eq!(
+            strip_verbatim(Path::new(r"\\?\unc\server\share")),
+            Path::new(r"\\server\share")
+        );
+    }
+
+    #[test]
+    fn non_verbatim_unc_unchanged() {
+        let p = Path::new(r"\\server\share\dir");
+        assert_eq!(strip_verbatim(p), p);
+    }
+}
+
+// =============================================================
 // Types — defined unconditionally so callers can name them on
 // either platform; the shell-mac equivalents have the same shape.
 // =============================================================
@@ -370,8 +451,11 @@ pub fn app_bundle_path() -> Option<String> {
 /// Windows: `explorer.exe /select,<path>`.
 #[cfg(windows)]
 pub fn reveal_in_finder(path: &std::path::Path) {
+    // `explorer /select,` rejects the `\\?\` verbatim form and falls back
+    // to opening a default folder instead of selecting the item.
+    let cleaned = strip_verbatim(path);
     let _ = std::process::Command::new("explorer")
-        .arg(format!("/select,{}", path.display()))
+        .arg(format!("/select,{}", cleaned.display()))
         .spawn();
 }
 
@@ -383,9 +467,10 @@ pub fn reveal_in_finder(_path: &std::path::Path) {}
 /// `path`. Non-Windows: no-op.
 #[cfg(windows)]
 pub fn open_terminal(path: &std::path::Path) {
+    // `wt.exe -d` mis-parses the `\\?\` verbatim form; hand it the plain path.
     let _ = std::process::Command::new("wt.exe")
         .arg("-d")
-        .arg(path)
+        .arg(strip_verbatim(path))
         .spawn();
 }
 
@@ -396,8 +481,6 @@ pub fn open_terminal(_path: &std::path::Path) {}
 // File operations
 // =============================================================
 
-/// Duplicate `src` next to itself with Explorer's " - Copy" /
-/// " - Copy (2)" naming. Files use `fs::copy`; directories use a
 /// Unmount and eject the volume mounted at `path` (a drive root like `E:\`).
 /// Opens the volume device `\\.\E:`, flushes + locks it best-effort, dismounts
 /// it (`FSCTL_DISMOUNT_VOLUME`), re-allows media removal, then ejects
@@ -421,13 +504,23 @@ pub fn eject_volume(path: &std::path::Path) -> Result<(), String> {
     // newtype churn between `windows` crate versions).
     const GENERIC_READ_WRITE: u32 = 0x8000_0000 | 0x4000_0000;
 
-    let s = path.to_string_lossy();
-    let drive = s
-        .trim_start_matches(r"\\?\")
-        .chars()
-        .next()
-        .filter(|c| c.is_ascii_alphabetic())
-        .ok_or_else(|| format!("eject: not a drive path: {s}"))?;
+    let cleaned = strip_verbatim(path);
+    let s = cleaned.to_string_lossy();
+    // A UNC path (`\\server\share`, incl. the `\\?\UNC\…` verbatim form)
+    // names a network location, not a local volume — refuse it outright.
+    // (Before strip_verbatim, `\\?\UNC\server\…` trimmed to `UNC\…` and its
+    // leading `U` parsed as drive `U:`, risking a dismount of an unrelated
+    // real volume.)
+    if s.starts_with(r"\\") {
+        return Err(format!("eject: network (UNC) paths cannot be ejected: {s}"));
+    }
+    // Require the `X:` shape so an arbitrary relative path can't donate its
+    // first letter as a drive.
+    let mut chars = s.chars();
+    let drive = match (chars.next(), chars.next()) {
+        (Some(d), Some(':')) if d.is_ascii_alphabetic() => d,
+        _ => return Err(format!("eject: not a drive path: {s}")),
+    };
     let device = format!(r"\\.\{}:", drive.to_ascii_uppercase());
     let wide: Vec<u16> = device.encode_utf16().chain(std::iter::once(0)).collect();
 
@@ -487,6 +580,8 @@ pub fn eject_volume(_path: &std::path::Path) -> Result<(), String> {
     Err("eject is not implemented on this OS".into())
 }
 
+/// Duplicate `src` next to itself with Explorer's " - Copy" /
+/// " - Copy (2)" naming. Files use `fs::copy`; directories use a
 /// recursive copy walk (std has no recursive copy). Returns the
 /// destination path on success.
 ///
@@ -598,7 +693,10 @@ fn write_shell_link(
         return Err("make_alias: exhausted shortcut name slots".into());
     }
 
-    let target_wide: Vec<u16> = target
+    // Store the .lnk target in plain form — a `\\?\` verbatim target baked
+    // into the shortcut leaves Explorer unable to resolve it.
+    let target_clean = strip_verbatim(target);
+    let target_wide: Vec<u16> = target_clean
         .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
@@ -826,10 +924,14 @@ pub fn fetch_quick_look_thumbnail(
         SIIGBF_THUMBNAILONLY,
     };
 
+    // `SHCreateItemFromParsingName` rejects the `\\?\` verbatim prefix, so
+    // parse the plain form (the preview-handler fallback below gets the same
+    // cleaned path — its `IInitializeWithFile` has the same restriction).
+    let cleaned = strip_verbatim(path);
     // Convert the path to a null-terminated UTF-16 string. Holding
     // it for the duration of the COM call so the PCWSTR remains
     // valid.
-    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let mut wide: Vec<u16> = cleaned.as_os_str().encode_wide().collect();
     wide.push(0);
 
     unsafe {
@@ -897,7 +999,7 @@ pub fn fetch_quick_look_thumbnail(
                         if debug {
                             eprintln!("THUMBNAILONLY failed: {e:?} — trying preview handler");
                         }
-                        if let Some(rgba) = preview_handler::try_capture(path, size_px) {
+                        if let Some(rgba) = preview_handler::try_capture(&cleaned, size_px) {
                             if debug {
                                 eprintln!("preview handler ok");
                             }
@@ -1035,10 +1137,13 @@ pub fn fetch_quick_look_thumbnail(
 #[cfg(windows)]
 pub fn read_shell_info(path: &std::path::Path) -> ShellInfo {
     use windows::core::PCWSTR;
-    use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
-    use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_TYPENAME};
+    use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::{
+        SHGetFileInfoW, SHFILEINFOW, SHGFI_TYPENAME, SHGFI_USEFILEATTRIBUTES,
+    };
 
-    let mut info = ShellInfo {
+    let info = ShellInfo {
         is_alias: Some(
             path.extension()
                 .and_then(|e| e.to_str())
@@ -1048,32 +1153,64 @@ pub fn read_shell_info(path: &std::path::Path) -> ShellInfo {
     };
 
     // Shell APIs reject the `\\?\` extended-length prefix the file list uses
-    // internally; strip it (drive paths only) so SHGetFileInfoW resolves.
-    let display = path.to_string_lossy();
-    let cleaned = display.strip_prefix(r"\\?\").unwrap_or(&display);
-    let wide: Vec<u16> = cleaned
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
+    // internally; strip it so SHGetFileInfoW resolves.
+    let cleaned = strip_verbatim(path);
+    let display = cleaned.to_string_lossy();
+
+    // SHGFI_USEFILEATTRIBUTES makes SHGetFileInfoW derive the type name from
+    // the path *string* + the attributes we assert, never touching disk —
+    // without it, a dead UNC path blocked this worker for the full SMB
+    // timeout. The signature carries no is_dir hint, so pick the attribute
+    // from the path shape:
+    //   - trailing separator → directory ("File folder"),
+    //   - extension present  → ordinary file (type name from the extension),
+    //   - extensionless, no trailing separator → ambiguous. Skip the lookup
+    //     (kind stays None): SHGetFileInfoW would only answer the generic
+    //     "File"/"File folder" here, and guessing wrong would mislabel
+    //     folders as files (or LICENSE-style files as folders) in Get Info.
+    //     The caller's fallback chain (magic sniff, then its own is_dir
+    //     classification) names these correctly.
+    let attrs = if display.ends_with('\\') || display.ends_with('/') {
+        FILE_ATTRIBUTE_DIRECTORY
+    } else if cleaned.extension().is_some() {
+        FILE_ATTRIBUTE_NORMAL
+    } else {
+        return info;
+    };
+    let mut info = info;
+
+    let wide: Vec<u16> = display.encode_utf16().chain(std::iter::once(0)).collect();
     let mut shfi = SHFILEINFOW::default();
-    let res = unsafe {
-        SHGetFileInfoW(
+    unsafe {
+        // Same per-call COM pattern as `fetch_quick_look_thumbnail` /
+        // `open_with_candidates`: S_FALSE (already initialized on this
+        // thread) is a success and still needs the balancing
+        // CoUninitialize; RPC_E_CHANGED_MODE is a failure HRESULT, so
+        // `is_ok()` is false and we skip the uninitialize.
+        let co_hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let we_initialized = co_hr.is_ok();
+
+        let res = SHGetFileInfoW(
             PCWSTR(wide.as_ptr()),
-            FILE_FLAGS_AND_ATTRIBUTES(0),
+            attrs,
             Some(&mut shfi),
             std::mem::size_of::<SHFILEINFOW>() as u32,
-            SHGFI_TYPENAME,
-        )
-    };
-    if res != 0 {
-        let len = shfi
-            .szTypeName
-            .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(shfi.szTypeName.len());
-        let kind = String::from_utf16_lossy(&shfi.szTypeName[..len]);
-        if !kind.is_empty() {
-            info.kind = Some(kind);
+            SHGFI_TYPENAME | SHGFI_USEFILEATTRIBUTES,
+        );
+        if res != 0 {
+            let len = shfi
+                .szTypeName
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(shfi.szTypeName.len());
+            let kind = String::from_utf16_lossy(&shfi.szTypeName[..len]);
+            if !kind.is_empty() {
+                info.kind = Some(kind);
+            }
+        }
+
+        if we_initialized {
+            CoUninitialize();
         }
     }
     info
@@ -1509,9 +1646,12 @@ pub fn clipboard_copy_file_urls(items: &[(&std::path::Path, bool)]) -> bool {
     // Wide path list: each path null-terminated, then a final null to
     // close the double-null-terminated CF_HDROP list. The `is_dir`
     // hint is a mac-pasteboard need; CF_HDROP carries bare paths.
+    // Verbatim-strip each entry — CF_HDROP paths carrying `\\?\` make
+    // Explorer's paste silently fail.
     let mut list: Vec<u16> = Vec::new();
     for (p, _is_dir) in items {
-        list.extend(p.as_os_str().encode_wide());
+        let cleaned = strip_verbatim(p);
+        list.extend(cleaned.as_os_str().encode_wide());
         list.push(0);
     }
     list.push(0);
@@ -2029,6 +2169,9 @@ pub fn set_window_frame(_ns_view: *mut std::ffi::c_void, _x: f64, _y: f64, _w: f
 pub fn set_window_all_spaces(_ns_view: *mut std::ffi::c_void, _all_spaces: bool) {}
 pub fn window_frame(_ns_view: *mut std::ffi::c_void) -> Option<(f64, f64, f64, f64)> {
     None
+}
+pub fn window_is_fullscreen(_ns_view: *mut std::ffi::c_void) -> bool {
+    false
 }
 
 // =============================================================

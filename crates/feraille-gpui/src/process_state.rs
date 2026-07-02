@@ -218,8 +218,13 @@ impl ProcessState {
             recents_section_collapsed: Cell::new(false),
             preview_cache: RefCell::new(PreviewCache::new()),
             text_preview_cache: RefCell::new(TextPreviewCache::new()),
-            volumes: RefCell::new(list_volumes()),
-            cloud_locations: RefCell::new(feraille_fs_native::cloud_synced_locations()),
+            // Seeded EMPTY and filled asynchronously (start_volume_watch's
+            // initial pass / fill_volumes_once): list_volumes touches every
+            // drive root, and on Windows a dead mapped network drive makes
+            // GetVolumeInformationW block for the SMB timeout — running it
+            // here delayed the first window by up to ~45s.
+            volumes: RefCell::new(Vec::new()),
+            cloud_locations: RefCell::new(HashMap::new()),
             next_tab_id: Cell::new(0),
             metadata_loaded: Cell::new(false),
             favorites_section_collapsed: Cell::new(false),
@@ -411,34 +416,56 @@ pub fn start_volume_watch(cx: &mut App) {
         let _ = tx.try_send(());
     }));
     cx.spawn(async move |cx| {
-        while rx.recv().await.is_ok() {
+        // First pass runs immediately: ProcessState::new seeds the
+        // volume list empty (a synchronous list_volumes there hung
+        // startup on dead network drives), so this is the initial fill.
+        loop {
+            refresh_volumes(cx).await;
+            if rx.recv().await.is_err() {
+                break;
+            }
             // Coalesce bursts — a mount often arrives with a rename
             // right behind it; one re-list covers both.
             while rx.try_recv().is_ok() {}
-            let (vols, clouds) = cx
-                .background_executor()
-                .spawn(async { (list_volumes(), feraille_fs_native::cloud_synced_locations()) })
-                .await;
-            cx.update(|cx| {
-                let process = process_state(cx);
-                *process.volumes.borrow_mut() = vols;
-                *process.cloud_locations.borrow_mut() = clouds;
-                process
-                    .favorites
-                    .update(cx, |favs, cx| favs.refresh_mount_states(cx));
-                for weak in process.live_shells() {
-                    if let Some(shell) = weak.upgrade() {
-                        shell.update(cx, |this, cx| {
-                            // A mount/unmount/rename may change the volume
-                            // behind any tab's directory — re-query each
-                            // tab's cached free-space/name off-thread.
-                            this.refresh_volume_info_all_tabs(cx);
-                            cx.notify();
-                        });
-                    }
-                }
-            });
         }
+    })
+    .detach();
+}
+
+/// One asynchronous volume/cloud-location refresh + fan-out. Used by
+/// the volume watch loop and by the screenshot harness's one-shot fill.
+async fn refresh_volumes(cx: &mut gpui::AsyncApp) {
+    let (vols, clouds) = cx
+        .background_executor()
+        .spawn(async { (list_volumes(), feraille_fs_native::cloud_synced_locations()) })
+        .await;
+    let _ = cx.update(|cx| {
+        let process = process_state(cx);
+        *process.volumes.borrow_mut() = vols;
+        *process.cloud_locations.borrow_mut() = clouds;
+        process
+            .favorites
+            .update(cx, |favs, cx| favs.refresh_mount_states(cx));
+        for weak in process.live_shells() {
+            if let Some(shell) = weak.upgrade() {
+                shell.update(cx, |this, cx| {
+                    // A mount/unmount/rename may change the volume
+                    // behind any tab's directory — re-query each
+                    // tab's cached free-space/name off-thread.
+                    this.refresh_volume_info_all_tabs(cx);
+                    cx.notify();
+                });
+            }
+        }
+    });
+}
+
+/// One-shot volume fill for hosts that don't run the live watch (the
+/// screenshot harness). The GUI path gets this from
+/// [`start_volume_watch`]'s initial pass.
+pub fn fill_volumes_once(cx: &mut App) {
+    cx.spawn(async move |cx| {
+        refresh_volumes(cx).await;
     })
     .detach();
 }

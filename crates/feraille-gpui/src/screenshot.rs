@@ -370,6 +370,10 @@ pub fn run(args: Args) -> Result<()> {
         // subsequent Shell::new) can read it back.
         let process = Shell::build_process_state(cx);
         cx.set_global(crate::process_state::ProcessStateGlobal(process));
+        // Volumes are seeded empty and filled asynchronously; the fill
+        // lands well within the pre-capture settle delay, so the
+        // sidebar's Volumes section renders in screenshots.
+        crate::process_state::fill_volumes_once(cx);
 
         let path = path.clone();
         let settings_page = settings_page.clone();

@@ -179,9 +179,18 @@ pub fn finish_bundle(screenshot: Option<&RgbaImage>, note: &str) -> Result<PathB
 /// before sending.
 pub fn open_reporter(window: &mut gpui::Window) {
     let shot = window.render_to_image().ok();
-    match finish_bundle(shot.as_ref(), "") {
-        Ok(path) => crate::log_info!(90, "issue report ready: {}", path.display()),
-        Err(e) => crate::log_warn!(90, "issue report failed: {e}"),
+    // Only the capture needs the window/UI thread. Bundle assembly is
+    // zip + disk I/O and the reveal can block on a D-Bus round-trip
+    // (Linux) — run them on their own thread (Prime Directive).
+    let spawned = std::thread::Builder::new()
+        .name("issue-report".into())
+        .spawn(move || match finish_bundle(shot.as_ref(), "") {
+            Ok(path) => crate::log_info!(90, "issue report ready: {}", path.display()),
+            Err(e) => crate::log_warn!(90, "issue report failed: {e}"),
+        })
+        .is_ok();
+    if !spawned {
+        crate::log_warn!(90, "issue report: worker spawn failed");
     }
 }
 

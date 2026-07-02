@@ -327,14 +327,13 @@ impl FsBackend for NativeFs {
             // hazard flag from drifting between the two listing routes.
             entries.push(self.file_entry_from_metadata(&child_path, name, &metadata));
         }
-        // Directories first, then case-insensitive name.
-        entries.sort_by(|a, b| match (a.kind, b.kind) {
-            (EntryKind::Directory, EntryKind::Directory) => {
-                a.name.to_lowercase().cmp(&b.name.to_lowercase())
-            }
-            (EntryKind::Directory, _) => std::cmp::Ordering::Less,
-            (_, EntryKind::Directory) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        // Directories first, then case-insensitive name. Cached keys:
+        // one lowercase per entry, not two per comparison.
+        entries.sort_by_cached_key(|e| {
+            (
+                !matches!(e.kind, EntryKind::Directory),
+                e.name.to_lowercase(),
+            )
         });
         EnumerationHandle {
             initial: entries,
@@ -365,10 +364,22 @@ pub fn open_with_default(path: &Path) -> std::io::Result<()> {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn open_with_default(path: &Path) -> std::io::Result<()> {
-    std::process::Command::new("xdg-open")
+    use std::process::Stdio;
+    // Null stdio so the child can't block on inherited pipes, and reap it
+    // from a short-lived thread so it doesn't linger as a zombie
+    // (`xdg-open` hands off and exits quickly).
+    let mut child = std::process::Command::new("xdg-open")
         .arg(path)
-        .spawn()
-        .map(|_| ())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let _ = std::thread::Builder::new()
+        .name("child-reaper".into())
+        .spawn(move || {
+            let _ = child.wait();
+        });
+    Ok(())
 }
 
 /// Move `path` into the user's Trash, with the OS's full Trash

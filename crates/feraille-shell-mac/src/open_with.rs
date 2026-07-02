@@ -35,13 +35,16 @@ pub struct OpenWithCandidate {
 #[cfg(target_os = "macos")]
 pub fn candidates_for(path: &Path) -> Vec<OpenWithCandidate> {
     use objc2::msg_send_id;
-    use objc2::rc::Retained;
+    use objc2::rc::{autoreleasepool, Retained};
     use objc2_app_kit::NSWorkspace;
     use objc2_foundation::{NSArray, NSString, NSURL};
 
     let mut out: Vec<OpenWithCandidate> = Vec::new();
 
-    unsafe {
+    // Worker-callable: drain the autoreleased Launch Services objects
+    // (candidate URL array, path strings) per call instead of
+    // accumulating them until the worker queue idles.
+    autoreleasepool(|_| unsafe {
         let path_ns = NSString::from_str(&path.to_string_lossy());
         let url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&path_ns, path.is_dir());
         let workspace = NSWorkspace::sharedWorkspace();
@@ -87,7 +90,7 @@ pub fn candidates_for(path: &Path) -> Vec<OpenWithCandidate> {
                 }
             }
         }
-    }
+    });
 
     out
 }
