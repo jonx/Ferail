@@ -26,9 +26,10 @@ pub const STRIP_PX: f64 = 6.0;
 /// so it is easy to hit; the handle is the visual hint.
 pub const REVEAL_PX: f64 = 4.0;
 
-/// Floor on a drawer's width, so a tiny pre-dock window can't collapse the
-/// drawer to an unusable sliver.
-pub const MIN_EXTENT: f64 = 140.0;
+// (No size floor/clamp: docking NEVER resizes the window. gpui's
+// drawable does not follow an out-of-band AppKit `setFrame:` resize —
+// forcing the drawer to full screen height left the extra area black —
+// so the drawer is the window at its own size, purely translated.)
 
 /// Fraction of the hidden→revealed travel the slide advances per poll tick.
 /// At the ~16 ms animating poll interval this is a ~5-frame, ~80 ms slide.
@@ -81,26 +82,24 @@ impl DockEdge {
     }
 }
 
-/// The drawer's width, derived from the pre-dock window width and clamped to
-/// `[MIN_EXTENT, screen]`. The drawer always fills the screen height.
-pub fn extent_for(window: ScreenFrame, screen: ScreenFrame) -> f64 {
-    window.w.clamp(MIN_EXTENT, screen.w.max(MIN_EXTENT))
-}
-
 /// The window frame when the drawer is fully revealed: flush against the dock
-/// edge, full screen height, `extent` wide.
-pub fn revealed_frame(edge: DockEdge, s: ScreenFrame, extent: f64) -> ScreenFrame {
+/// edge at the window's OWN size — docking never resizes (see module docs).
+/// `win` supplies the size and the preferred `y`; the `y` is clamped so the
+/// window stays on the screen vertically (a window taller than the screen
+/// pins to the screen's bottom edge).
+pub fn revealed_frame(edge: DockEdge, s: ScreenFrame, win: ScreenFrame) -> ScreenFrame {
+    let y = win.y.clamp(s.y, (s.y + s.h - win.h).max(s.y));
     match edge {
-        DockEdge::Left => ScreenFrame::new(s.x, s.y, extent, s.h),
-        DockEdge::Right => ScreenFrame::new(s.x + s.w - extent, s.y, extent, s.h),
+        DockEdge::Left => ScreenFrame::new(s.x, y, win.w, win.h),
+        DockEdge::Right => ScreenFrame::new(s.x + s.w - win.w, y, win.w, win.h),
     }
 }
 
 /// The window frame when the drawer is fully hidden: same size as revealed,
 /// shoved out toward the dock edge until only `strip` px remain on-screen.
-pub fn hidden_frame(edge: DockEdge, s: ScreenFrame, extent: f64, strip: f64) -> ScreenFrame {
-    let r = revealed_frame(edge, s, extent);
-    let off = (extent - strip).max(0.0);
+pub fn hidden_frame(edge: DockEdge, s: ScreenFrame, win: ScreenFrame, strip: f64) -> ScreenFrame {
+    let r = revealed_frame(edge, s, win);
+    let off = (win.w - strip).max(0.0);
     match edge {
         DockEdge::Left => ScreenFrame { x: r.x - off, ..r },
         DockEdge::Right => ScreenFrame { x: r.x + off, ..r },
@@ -142,8 +141,11 @@ pub struct DockState {
     pub edge: DockEdge,
     /// `visibleFrame` of the docked display, captured when docking.
     pub screen: ScreenFrame,
-    /// Drawer width.
-    pub extent: f64,
+    /// The drawer's frame source: the window's own size + preferred `y`.
+    /// Docking never resizes, so this is the live window frame, refreshed
+    /// by the host on reveal transitions (the user may have moved/resized
+    /// the revealed drawer).
+    pub win: ScreenFrame,
     /// Window frame before docking, restored on undock.
     pub restore: ScreenFrame,
     /// Whether the drawer is sliding toward / resting revealed.
@@ -154,11 +156,11 @@ pub struct DockState {
 }
 
 impl DockState {
-    pub fn new(edge: DockEdge, screen: ScreenFrame, extent: f64, restore: ScreenFrame) -> Self {
+    pub fn new(edge: DockEdge, screen: ScreenFrame, win: ScreenFrame, restore: ScreenFrame) -> Self {
         Self {
             edge,
             screen,
-            extent,
+            win,
             restore,
             revealed: false,
             progress: 0.0,
@@ -167,8 +169,8 @@ impl DockState {
 
     /// The window frame to apply this tick, eased between hidden and revealed.
     pub fn current_frame(&self) -> ScreenFrame {
-        let hidden = hidden_frame(self.edge, self.screen, self.extent, STRIP_PX);
-        let shown = revealed_frame(self.edge, self.screen, self.extent);
+        let hidden = hidden_frame(self.edge, self.screen, self.win, STRIP_PX);
+        let shown = revealed_frame(self.edge, self.screen, self.win);
         lerp_frame(hidden, shown, ease_out_cubic(self.progress as f64))
     }
 
@@ -180,7 +182,7 @@ impl DockState {
             return true;
         }
         if self.revealed {
-            let shown = revealed_frame(self.edge, self.screen, self.extent);
+            let shown = revealed_frame(self.edge, self.screen, self.win);
             if shown.contains(mouse.0, mouse.1) {
                 return true;
             }
@@ -231,40 +233,68 @@ mod tests {
         assert_eq!(DockEdge::from_token("nonsense"), None);
     }
 
+    // A 400x600 window sitting somewhere mid-screen.
+    fn window() -> ScreenFrame {
+        ScreenFrame::new(500.0, 120.0, 400.0, 600.0)
+    }
+
     #[test]
-    fn revealed_left_is_flush_and_full_height() {
+    fn revealed_left_is_flush_and_keeps_window_size_and_y() {
         let s = screen();
-        let r = revealed_frame(DockEdge::Left, s, 400.0);
-        assert_eq!(r, ScreenFrame::new(0.0, 0.0, 400.0, 875.0));
+        let w = window();
+        let r = revealed_frame(DockEdge::Left, s, w);
+        // Docking is a pure translation: size and y untouched.
+        assert_eq!(r, ScreenFrame::new(0.0, 120.0, 400.0, 600.0));
     }
 
     #[test]
     fn revealed_right_hugs_right_edge() {
         let s = screen();
-        let r = revealed_frame(DockEdge::Right, s, 400.0);
+        let w = window();
+        let r = revealed_frame(DockEdge::Right, s, w);
         assert_eq!(r.x + r.w, s.x + s.w); // right edge flush
-        assert_eq!(r, ScreenFrame::new(1040.0, 0.0, 400.0, 875.0));
+        assert_eq!(r, ScreenFrame::new(1040.0, 120.0, 400.0, 600.0));
+    }
+
+    #[test]
+    fn revealed_clamps_y_onto_the_screen_but_never_resizes() {
+        let s = screen();
+        // Window hanging off the top of the screen → pinned to the top.
+        let high = ScreenFrame::new(500.0, 800.0, 400.0, 600.0);
+        let r = revealed_frame(DockEdge::Left, s, high);
+        assert_eq!((r.y, r.w, r.h), (275.0, 400.0, 600.0)); // 875 - 600
+        // Window below the screen → pinned to the bottom.
+        let low = ScreenFrame::new(500.0, -300.0, 400.0, 600.0);
+        let r = revealed_frame(DockEdge::Left, s, low);
+        assert_eq!((r.y, r.w, r.h), (0.0, 400.0, 600.0));
+        // Taller than the screen: pinned to the bottom, STILL not resized.
+        let tall = ScreenFrame::new(500.0, 100.0, 400.0, 1200.0);
+        let r = revealed_frame(DockEdge::Left, s, tall);
+        assert_eq!((r.y, r.w, r.h), (0.0, 400.0, 1200.0));
     }
 
     #[test]
     fn hidden_leaves_exactly_a_strip_on_screen() {
         let s = screen();
+        let w = window();
         let strip = STRIP_PX;
         // Left: window's right edge sits `strip` px past the screen's left.
-        let h = hidden_frame(DockEdge::Left, s, 400.0, strip);
+        let h = hidden_frame(DockEdge::Left, s, w, strip);
         assert!((h.x + h.w - (s.x + strip)).abs() < 1e-9);
         // Right: window's left edge sits `strip` px short of the screen's right.
-        let h = hidden_frame(DockEdge::Right, s, 400.0, strip);
+        let h = hidden_frame(DockEdge::Right, s, w, strip);
         assert!((h.x - (s.x + s.w - strip)).abs() < 1e-9);
     }
 
     #[test]
     fn hidden_and_revealed_keep_the_same_size() {
         let s = screen();
+        let w = window();
         for e in DockEdge::ALL {
-            let r = revealed_frame(e, s, 350.0);
-            let h = hidden_frame(e, s, 350.0, STRIP_PX);
+            let r = revealed_frame(e, s, w);
+            let h = hidden_frame(e, s, w, STRIP_PX);
             assert!((r.w - h.w).abs() < 1e-9 && (r.h - h.h).abs() < 1e-9);
+            assert!((r.w - w.w).abs() < 1e-9 && (r.h - w.h).abs() < 1e-9);
         }
     }
 
@@ -285,8 +315,8 @@ mod tests {
     #[test]
     fn revealed_drawer_stays_open_while_pointer_is_over_it() {
         let s = screen();
-        let mut st =
-            DockState::new(DockEdge::Left, s, 400.0, ScreenFrame::new(0.0, 0.0, 400.0, 700.0));
+        let win = ScreenFrame::new(0.0, 0.0, 400.0, 700.0);
+        let mut st = DockState::new(DockEdge::Left, s, win, win);
         st.revealed = true;
         // Pointer deep inside the drawer (x=200), away from the edge zone.
         assert!(st.wants_reveal((200.0, 400.0)));
@@ -297,8 +327,8 @@ mod tests {
     #[test]
     fn step_converges_to_target_and_then_settles() {
         let s = screen();
-        let mut st =
-            DockState::new(DockEdge::Left, s, 400.0, ScreenFrame::new(0.0, 0.0, 400.0, 700.0));
+        let win = ScreenFrame::new(0.0, 0.0, 400.0, 700.0);
+        let mut st = DockState::new(DockEdge::Left, s, win, win);
         st.revealed = true;
         let mut ticks = 0;
         while st.step() {
@@ -315,26 +345,16 @@ mod tests {
     #[test]
     fn current_frame_endpoints_match_hidden_and_revealed() {
         let s = screen();
-        let mut st =
-            DockState::new(DockEdge::Right, s, 300.0, ScreenFrame::new(0.0, 0.0, 300.0, 875.0));
+        let win = ScreenFrame::new(0.0, 0.0, 300.0, 875.0);
+        let mut st = DockState::new(DockEdge::Right, s, win, win);
         // progress 0 → hidden
         assert_eq!(
             st.current_frame(),
-            hidden_frame(DockEdge::Right, s, 300.0, STRIP_PX)
+            hidden_frame(DockEdge::Right, s, win, STRIP_PX)
         );
         // progress 1 → revealed
         st.progress = 1.0;
-        assert_eq!(st.current_frame(), revealed_frame(DockEdge::Right, s, 300.0));
+        assert_eq!(st.current_frame(), revealed_frame(DockEdge::Right, s, win));
     }
 
-    #[test]
-    fn extent_clamps_to_floor_and_screen() {
-        let s = screen();
-        // Tiny window clamps up to MIN_EXTENT.
-        let tiny = ScreenFrame::new(0.0, 0.0, 50.0, 50.0);
-        assert_eq!(extent_for(tiny, s), MIN_EXTENT);
-        // Oversized window clamps down to the screen width.
-        let huge = ScreenFrame::new(0.0, 0.0, 9000.0, 9000.0);
-        assert_eq!(extent_for(huge, s), s.w);
-    }
 }

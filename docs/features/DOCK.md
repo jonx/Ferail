@@ -38,9 +38,12 @@ platforms' shell stubs no-op, so the toolbar menu silently does nothing there.
   activates it. It also joins all Spaces and floats over full-screen apps
   (`NSWindowCollectionBehaviorCanJoinAllSpaces | FullScreenAuxiliary`), so it's
   reachable from any Space.
-- **Drawer size.** The drawer keeps the window's pre-dock width (clamped to
-  `[MIN_EXTENT, screen]`) and fills the screen height. Undocking restores the
-  exact pre-dock frame.
+- **Drawer size.** Docking NEVER resizes the window — the drawer is the
+  window at its own size, purely translated to the edge (`y` clamped onto the
+  screen). gpui's drawable doesn't follow an out-of-band AppKit `setFrame:`
+  resize, so the earlier full-screen-height drawer rendered its stretched
+  area black. Undocking restores the exact pre-dock frame (clamped onto the
+  live screen in case the display arrangement changed while docked).
 
 ## Architecture
 

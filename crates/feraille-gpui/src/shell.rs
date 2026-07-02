@@ -2132,13 +2132,20 @@ impl Shell {
                             .map(|(x, y, w, h)| ScreenFrame::new(x, y, w, h))
                     })
                     .unwrap_or(screen);
-                let extent = dock::extent_for(restore, screen);
-                let mut state = DockState::new(e, screen, extent, restore);
+                // The drawer keeps the window's OWN size and vertical
+                // position — docking is a pure horizontal translation.
+                // (gpui's drawable doesn't follow an out-of-band AppKit
+                // resize; stretching the window to the screen height
+                // left the extra area black.)
+                let win = crate::platform_shell::window_frame(ns_view)
+                    .map(|(x, y, w, h)| ScreenFrame::new(x, y, w, h))
+                    .unwrap_or(restore);
+                let mut state = DockState::new(e, screen, win, restore);
                 // Start fully shown, then let the poll tuck it away unless the
                 // cursor is already at the edge.
                 state.revealed = false;
                 state.progress = 1.0;
-                let shown = dock::revealed_frame(e, screen, extent);
+                let shown = dock::revealed_frame(e, screen, win);
 
                 crate::platform_shell::set_window_floating(ns_view, true);
                 crate::platform_shell::set_window_all_spaces(ns_view, true);
@@ -2204,17 +2211,17 @@ impl Shell {
         if wants && !dock.revealed {
             // Transitioning hidden → revealing: the display arrangement
             // or the drawer's user-dragged size may have changed while
-            // tucked away. Re-query the screen and re-derive the extent
-            // from the actual window so the slide targets live
-            // geometry instead of the dock-time snapshot (which could
-            // be a disconnected display).
+            // tucked away. Re-query the screen and adopt the actual
+            // window frame so the slide targets live geometry instead
+            // of the dock-time snapshot (which could be a disconnected
+            // display). Size passes through untouched — docking never
+            // resizes the window.
             if let Some((sx, sy, sw, sh)) =
                 crate::platform_shell::screen_visible_frame_for_window(ptr)
             {
                 dock.screen = ScreenFrame::new(sx, sy, sw, sh);
             }
-            let live = ScreenFrame::new(live_frame.0, live_frame.1, live_frame.2, live_frame.3);
-            dock.extent = dock::extent_for(live, dock.screen);
+            dock.win = ScreenFrame::new(live_frame.0, live_frame.1, live_frame.2, live_frame.3);
         }
         dock.revealed = wants;
         let frame = dock.step().then(|| dock.current_frame());
