@@ -46,14 +46,30 @@ open — see "Still open" below.
 - **Descend into packages**: `disk_usage.toggle_packages`. By default
   `.app`, `.bundle`, `.framework`, `.plugin`, `.kext`, `.xcodeproj`
   are treated as opaque leaves, matching Finder. Toggling re-scans.
-- **Right-click**: Reveal in Finder, Open, Copy Path, Move to Trash,
-  Zoom into. Move-to-Trash succeeds → the affected subtree is
-  surgically removed from the in-memory tree and Top-N is rebuilt; no
-  re-scan is needed.
+- **Right-click a rect** (shipped): the file-list verbs on the resolved
+  selection — Open, Reveal in Finder, Get Info (when opened from a
+  shell), Copy (real file URLs), Copy Path(s), Copy/Save as HTML
+  (single folder target), Zoom In/Out, Move to Trash. Finder targeting
+  rule: right-clicking a rect outside the selection retargets to just
+  it; right-clicking a member acts on the whole set. A successful
+  trash re-scans the root (honest totals) and reloads any shell tabs
+  showing the affected directories.
+- **Right-click the background**: Zoom Out, plus Copy/Save **View** as
+  HTML for the whole current focus.
+- **HTML export** (shipped): `feraille_disk_usage::treemap_html_*`
+  renders the same tree through the same layout pipeline into
+  self-contained HTML (inline styles, no JS) — "Copy as HTML" puts a
+  paste-anywhere `<figure>` fragment on the clipboard; "Save as
+  HTML…" writes a standalone page to `~/Downloads` and reveals it.
+  The category palette is canonical in that crate
+  (`category_color_rgba`), shared by the GPUI view, so window and
+  export can't drift.
 
-Selection: plain click replaces, `Cmd+Click` toggles, `Escape` clears.
+Selection (shipped): plain click replaces, `Cmd+Click` toggles; the
+footer shows the single item's name+size or "N selected · total".
 Clicking a Top-N row selects the matching file in the treemap, and
-vice versa.
+vice versa. `Escape`-clears and the Enter/Backspace zoom keys remain
+keyboard follow-ups (their command ids are still keymap placeholders).
 
 ## Architecture
 

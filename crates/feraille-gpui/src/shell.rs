@@ -2418,15 +2418,20 @@ impl Shell {
         let fs = self.process.fs.clone();
         let tasks = self.process.tasks.clone();
         let notify_owner = self.disk_usage_notify_owner(cx);
+        let shell_weak = cx.weak_entity();
         let view = cx.new(|cx| {
-            crate::disk_usage::DiskUsageView::new(
+            let mut view = crate::disk_usage::DiskUsageView::new(
                 root.clone(),
                 fs.clone(),
                 tasks.clone(),
                 Some(notify_owner.clone()),
                 None,
                 cx,
-            )
+            );
+            // Lets the DU context menu open Get Info windows and
+            // reload affected tabs after a trash.
+            view.shell = Some(shell_weak);
+            view
         });
         self.dock_disk_usage_view(root, view, cx);
     }

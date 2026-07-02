@@ -17,12 +17,30 @@
 
 use crate::text::TextScale as _;
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+gpui::actions!(
+    disk_usage,
+    [
+        DuOpen,
+        DuReveal,
+        DuGetInfo,
+        DuCopyFiles,
+        DuCopyPaths,
+        DuTrash,
+        DuZoomIn,
+        DuZoomOut,
+        DuCopyHtml,
+        DuSaveHtml,
+        DuCopyViewHtml,
+        DuSaveViewHtml,
+    ]
+);
 
 use feraille_core::{EnumerationError, NodeId};
 use feraille_disk_usage::{
@@ -33,7 +51,7 @@ use feraille_fs_native::NativeFs;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Disableable, ElementExt, Root, Selectable, Sizable,
+    ActiveTheme, Disableable, ElementExt, Root, Selectable, Sizable, WindowExt as _,
     button::{Button, ButtonGroup},
     h_flex, v_flex,
 };
@@ -111,8 +129,19 @@ pub struct DiskUsageView {
     /// `last() == focus` — the deepest folder the user has clicked
     /// into. Empty == root.
     zoom_path: Vec<NodeId>,
-    selected_node: Option<NodeId>,
+    /// Multi-selection over treemap rects / Top-N rows, spec-matching
+    /// the file list: plain click selects one, Cmd-click toggles.
+    /// In-memory interaction state only.
+    selected: HashSet<NodeId>,
+    /// Most recently selected node — drives the status line's
+    /// single-item detail and Zoom In targeting.
+    lead: Option<NodeId>,
     category_filter: Option<FileCategory>,
+    /// Weak handle to the owning Shell, when opened from one (always,
+    /// in the real app; `None` in the screenshot harness). Lets the
+    /// context menu open Get Info windows and reload affected tabs
+    /// after a trash.
+    pub(crate) shell: Option<gpui::WeakEntity<crate::shell::Shell>>,
 
     size_mode: SizeMode,
     descend_packages: bool,
@@ -212,8 +241,10 @@ impl DiskUsageView {
             treemap_size: None,
             scan_generation: 0,
             zoom_path: Vec::new(),
-            selected_node: None,
+            selected: HashSet::new(),
+            lead: None,
             category_filter: None,
+            shell: None,
             size_mode: SizeMode::Apparent,
             descend_packages: false,
             volume,
@@ -576,7 +607,8 @@ impl DiskUsageView {
         self.cancel = Arc::new(AtomicBool::new(false));
         self.msg_queue = Arc::new(Mutex::new(VecDeque::new()));
         self.zoom_path.clear();
-        self.selected_node = None;
+        self.selected.clear();
+        self.lead = None;
         self.top_files.clear();
         self.invalidate_layout();
         self.rebuild_layout_if_ready();
@@ -622,11 +654,57 @@ impl DiskUsageView {
         self.zoom_path.last().copied().unwrap_or(self.root_id)
     }
 
-    fn select_node(&mut self, target: NodeId, cx: &mut Context<Self>) {
-        if self.selected_node != Some(target) {
-            self.selected_node = Some(target);
+    /// Plain click: this node becomes the whole selection.
+    fn select_only(&mut self, target: NodeId, cx: &mut Context<Self>) {
+        self.selected.clear();
+        self.selected.insert(target);
+        self.lead = Some(target);
+        cx.notify();
+    }
+
+    /// Cmd-click: toggle membership, keeping `lead` on a live member.
+    fn toggle_select(&mut self, target: NodeId, cx: &mut Context<Self>) {
+        if self.selected.remove(&target) {
+            if self.lead == Some(target) {
+                self.lead = self.selected.iter().next().copied();
+            }
+        } else {
+            self.selected.insert(target);
+            self.lead = Some(target);
         }
         cx.notify();
+    }
+
+    /// Right-click target rule (Finder-style): clicking a node outside
+    /// the current selection retargets the selection to just it;
+    /// clicking a member keeps the whole selection as the menu target.
+    fn ensure_selected_for_menu(&mut self, target: NodeId, cx: &mut Context<Self>) {
+        if !self.selected.contains(&target) {
+            self.select_only(target, cx);
+        } else {
+            self.lead = Some(target);
+        }
+    }
+
+    /// The selection resolved to `(path, is_dir, NodeId)` triples via
+    /// the id map — action handlers only (never render).
+    fn selected_paths(&self) -> Vec<(PathBuf, bool, NodeId)> {
+        let mut out = Vec::with_capacity(self.selected.len());
+        for id in &self.selected {
+            let Some(path) = self.fs.path_for(*id) else {
+                continue;
+            };
+            let is_dir = self
+                .tree
+                .nodes
+                .get(id)
+                .map(|n| matches!(n.kind, feraille_disk_usage::NodeKind::Container))
+                .unwrap_or(false);
+            out.push((path, is_dir, *id));
+        }
+        // Stable order for path lists / fanout.
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
     }
 
     fn toggle_category_filter(&mut self, category: FileCategory, cx: &mut Context<Self>) {
@@ -863,7 +941,7 @@ impl DiskUsageView {
             .iter()
             .enumerate()
             .map(|(ix, e)| {
-                let selected = self.selected_node == Some(e.node_id);
+                let selected = self.selected.contains(&e.node_id);
                 let node_id = e.node_id;
                 h_flex()
                     .id(("du-top-file", ix))
@@ -879,8 +957,12 @@ impl DiskUsageView {
                     })
                     .when(selected, |this| this.bg(theme.accent))
                     .hover(|style| style.bg(theme.accent.opacity(0.65)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.select_node(node_id, cx);
+                    .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                        if event.modifiers().platform {
+                            this.toggle_select(node_id, cx);
+                        } else {
+                            this.select_only(node_id, cx);
+                        }
                     }))
                     .child(
                         div()
@@ -1007,18 +1089,33 @@ impl DiskUsageView {
                         .child(SharedString::from(*label)),
                 )
         });
-        let selection = self
-            .selected_node
-            .and_then(|id| self.tree.nodes.get(&id))
-            .map(|n| {
-                let size = size_for_mode(n.size_bytes, n.allocated_bytes, self.size_mode);
-                format!("{}  {}", n.display_name, humanize_bytes(size))
-            })
-            .or_else(|| {
-                self.category_filter
-                    .map(|cat| format!("Filtering {}", category_label(cat)))
-            })
-            .unwrap_or_else(|| "All categories".to_owned());
+        let selection = match self.selected.len() {
+            0 => None,
+            1 => self
+                .lead
+                .or_else(|| self.selected.iter().next().copied())
+                .and_then(|id| self.tree.nodes.get(&id))
+                .map(|n| {
+                    let size = size_for_mode(n.size_bytes, n.allocated_bytes, self.size_mode);
+                    format!("{}  {}", n.display_name, humanize_bytes(size))
+                }),
+            n => {
+                let total: u64 = self
+                    .selected
+                    .iter()
+                    .filter_map(|id| self.tree.nodes.get(id))
+                    .map(|node| {
+                        size_for_mode(node.size_bytes, node.allocated_bytes, self.size_mode)
+                    })
+                    .sum();
+                Some(format!("{n} selected  {}", humanize_bytes(total)))
+            }
+        }
+        .or_else(|| {
+            self.category_filter
+                .map(|cat| format!("Filtering {}", category_label(cat)))
+        })
+        .unwrap_or_else(|| "All categories".to_owned());
         h_flex()
             .w_full()
             .items_center()
@@ -1040,10 +1137,20 @@ impl DiskUsageView {
             )
     }
 
-    fn treemap(&self, w: f32, h: f32, cx: &mut Context<Self>) -> Div {
+    fn treemap(
+        &self,
+        w: f32,
+        h: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui_component::menu::ContextMenu<gpui::Stateful<Div>> {
+        use gpui_component::menu::ContextMenuExt as _;
         let (w, h) = (w.max(260.0), h.max(220.0));
         let view = cx.entity().clone();
+        let weak_bg_menu = cx.weak_entity();
+        let zoomed = !self.zoom_path.is_empty();
+        let bg_focus = self.focus_handle.clone();
         let mut container = div()
+            .id("du-treemap")
             .relative()
             .w(px(w))
             .h(px(h))
@@ -1056,6 +1163,27 @@ impl DiskUsageView {
                         cx,
                     );
                 });
+            })
+            // Background (empty space / whole view) menu. Right-click
+            // used to zoom out directly; that quick-nav now lives here
+            // alongside the whole-view HTML export the rects can't
+            // express.
+            .context_menu(move |menu, _window, cx| {
+                // Clicking the background retargets "the view", not a
+                // rect — drop any rect selection so the status line and
+                // the menu agree on the target.
+                if let Some(v) = weak_bg_menu.upgrade() {
+                    v.update(cx, |this, cx| {
+                        this.selected.clear();
+                        this.lead = None;
+                        cx.notify();
+                    });
+                }
+                menu.action_context(bg_focus.clone())
+                    .menu_with_disabled("Zoom Out", Box::new(DuZoomOut), !zoomed)
+                    .separator()
+                    .menu("Copy View as HTML", Box::new(DuCopyViewHtml))
+                    .menu("Save View as HTML\u{2026}", Box::new(DuSaveViewHtml))
             });
         for (ix, r) in self.rects_cache.iter().enumerate() {
             if r.width < 1.0 || r.height < 1.0 {
@@ -1073,7 +1201,7 @@ impl DiskUsageView {
             let size = humanize_bytes(r.size_bytes);
             let show_label = r.width >= 60.0 && r.height >= 24.0;
             let show_size = r.width >= 80.0 && r.height >= 40.0;
-            let selected = self.selected_node == Some(node_id);
+            let selected = self.selected.contains(&node_id);
             let dimmed = self
                 .category_filter
                 .is_some_and(|category| category != r.file_category);
@@ -1092,6 +1220,12 @@ impl DiskUsageView {
                 })
                 .id(("du-rect", ix))
                 .cursor_pointer()
+                // Topmost-rect-wins for right-clicks: without occlusion
+                // every ancestor rect's context menu (and the container's
+                // background menu) would ALSO fire — gpui-component's
+                // ContextMenu tests `hitbox.is_hovered` without stopping
+                // propagation.
+                .occlude()
                 .when(dimmed, |this| this.opacity(0.26))
                 .hover(|this| this.border_color(cx.theme().selection));
             if show_label {
@@ -1116,21 +1250,91 @@ impl DiskUsageView {
                     });
                 rect = rect.child(inner);
             }
-            // Single click selects; double click on a container zooms
-            // in. Right click backs out one level, matching the old
-            // native view's quick navigation feel without opening a
-            // modal menu on the hot path.
+            // Single click selects (Cmd-click toggles, file-list
+            // parity); double click on a container zooms in. Right
+            // click opens the context menu below (zoom-out moved to
+            // the background menu / the menu itself).
             rect = rect.on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                 if event.is_right_click() {
-                    this.zoom_out(cx);
-                } else if event.click_count() >= 2 && has_children {
-                    this.selected_node = Some(node_id);
+                    return; // handled by the context menu
+                }
+                if event.click_count() >= 2 && has_children {
+                    this.select_only(node_id, cx);
                     this.zoom_into(node_id, cx);
+                } else if event.modifiers().platform {
+                    this.toggle_select(node_id, cx);
                 } else {
-                    this.select_node(node_id, cx);
+                    this.select_only(node_id, cx);
                 }
             }));
-            container = container.child(rect);
+            {
+                use gpui_component::menu::ContextMenuExt as _;
+                let weak = cx.weak_entity();
+                let rect_focus = self.focus_handle.clone();
+                let is_container = has_children
+                    || self
+                        .tree
+                        .nodes
+                        .get(&node_id)
+                        .map(|n| matches!(n.kind, feraille_disk_usage::NodeKind::Container))
+                        .unwrap_or(false);
+                let zoomed = !self.zoom_path.is_empty();
+                let rect = rect.context_menu(move |menu, _window, cx| {
+                    // Retarget the selection Finder-style before the
+                    // menu builds, then gate items on the resolved set.
+                    let (count, has_shell) = match weak.upgrade() {
+                        Some(v) => v.update(cx, |this, cx| {
+                            this.ensure_selected_for_menu(node_id, cx);
+                            (this.selected.len(), this.shell.is_some())
+                        }),
+                        None => (1, false),
+                    };
+                    let single = count == 1;
+                    let mut menu = menu
+                        .action_context(rect_focus.clone())
+                        .menu("Open", Box::new(DuOpen))
+                        .menu(
+                            if cfg!(target_os = "macos") {
+                                "Reveal in Finder"
+                            } else {
+                                "Reveal in File Manager"
+                            },
+                            Box::new(DuReveal),
+                        );
+                    if has_shell {
+                        menu = menu.menu("Get Info", Box::new(DuGetInfo));
+                    }
+                    menu = menu
+                        .separator()
+                        .menu("Copy", Box::new(DuCopyFiles))
+                        .menu(
+                            if single { "Copy Path" } else { "Copy Paths" },
+                            Box::new(DuCopyPaths),
+                        )
+                        .separator()
+                        .menu_with_disabled(
+                            "Copy as HTML",
+                            Box::new(DuCopyHtml),
+                            !(single && is_container),
+                        )
+                        .menu_with_disabled(
+                            "Save as HTML\u{2026}",
+                            Box::new(DuSaveHtml),
+                            !(single && is_container),
+                        )
+                        .separator()
+                        .menu_with_disabled(
+                            "Zoom In",
+                            Box::new(DuZoomIn),
+                            !(single && is_container),
+                        )
+                        .menu_with_disabled("Zoom Out", Box::new(DuZoomOut), !zoomed)
+                        .separator()
+                        .menu("Move to Trash", Box::new(DuTrash));
+                    menu
+                });
+                container = container.child(rect);
+            }
         }
         container
     }
@@ -1157,6 +1361,372 @@ impl DiskUsageView {
             self.rebuild_layout_if_ready();
             cx.notify();
         }
+    }
+}
+
+// ---- Context-menu operations ----------------------------------------
+//
+// The same core verbs the list/grid rows offer, implemented directly on
+// the view (a Disk Usage window may float independently of any shell
+// window, so nothing here routes through Shell state except Get Info's
+// window opener and the post-trash tab reload, which use the weak shell
+// handle when present). All filesystem work runs on the background
+// executor (Prime Directive); path resolution happens in the handlers,
+// never at paint time.
+impl DiskUsageView {
+    fn on_du_open(&mut self, _: &DuOpen, _: &mut Window, cx: &mut Context<Self>) {
+        let paths = self.selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        cx.background_spawn(async move {
+            for (path, _, _) in &paths {
+                if let Err(e) = feraille_fs_native::open_with_default(path) {
+                    crate::log_warn!(90, "du open {}: {e}", path.display());
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn on_du_reveal(&mut self, _: &DuReveal, _: &mut Window, cx: &mut Context<Self>) {
+        let paths = self.selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        cx.background_spawn(async move {
+            for (path, _, _) in &paths {
+                crate::platform_shell::reveal_in_finder(path);
+            }
+        })
+        .detach();
+    }
+
+    fn on_du_get_info(&mut self, _: &DuGetInfo, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::notification::Notification;
+        let Some(shell) = self.shell.clone() else {
+            return;
+        };
+        // One window per item, capped so a huge selection can't carpet
+        // the screen (the shell's own Get Info uses a fanout confirm;
+        // a hard cap keeps this dependency-free here).
+        const GET_INFO_CAP: usize = 8;
+        let paths = self.selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        if paths.len() > GET_INFO_CAP {
+            window.push_notification(
+                Notification::info(format!(
+                    "Showing info for the first {GET_INFO_CAP} of {} items.",
+                    paths.len()
+                )),
+                cx,
+            );
+        }
+        for (path, is_dir, _) in paths.into_iter().take(GET_INFO_CAP) {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            let target = if is_dir {
+                feraille_core::entry_info::InfoTarget::Folder
+            } else {
+                feraille_core::entry_info::InfoTarget::File
+            };
+            crate::entry_info::open(path, name, target, None, shell.clone(), cx);
+        }
+    }
+
+    fn on_du_copy_files(&mut self, _: &DuCopyFiles, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::notification::Notification;
+        let items = self.selected_paths();
+        if items.is_empty() {
+            return;
+        }
+        let refs: Vec<(&std::path::Path, bool)> =
+            items.iter().map(|(p, d, _)| (p.as_path(), *d)).collect();
+        if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
+            window.push_notification(
+                Notification::error("File clipboard isn't available on this platform yet."),
+                cx,
+            );
+            return;
+        }
+        let msg = if items.len() == 1 {
+            format!(
+                "Copied \u{201C}{}\u{201D}",
+                items[0].0.file_name().unwrap_or_default().to_string_lossy()
+            )
+        } else {
+            format!("Copied {} items", items.len())
+        };
+        window.push_notification(Notification::success(msg), cx);
+    }
+
+    fn on_du_copy_paths(&mut self, _: &DuCopyPaths, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::notification::Notification;
+        let items = self.selected_paths();
+        if items.is_empty() {
+            return;
+        }
+        let text = items
+            .iter()
+            .map(|(p, _, _)| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        crate::platform_shell::copy_to_clipboard(&text);
+        let msg = if items.len() == 1 {
+            "Copied path".to_owned()
+        } else {
+            format!("Copied {} paths", items.len())
+        };
+        window.push_notification(Notification::success(msg), cx);
+    }
+
+    fn on_du_trash(&mut self, _: &DuTrash, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::notification::Notification;
+        let items = self.selected_paths();
+        if items.is_empty() {
+            return;
+        }
+        let win = window.window_handle();
+        let shell = self.shell.clone();
+        cx.spawn(async move |this, cx| {
+            let results = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut ok = 0usize;
+                    let mut failed: Vec<String> = Vec::new();
+                    let mut parents: Vec<PathBuf> = Vec::new();
+                    for (path, _, _) in &items {
+                        match feraille_fs_native::move_to_trash(path) {
+                            Ok(_) => {
+                                ok += 1;
+                                if let Some(parent) = path.parent() {
+                                    let parent = parent.to_path_buf();
+                                    if !parents.contains(&parent) {
+                                        parents.push(parent);
+                                    }
+                                }
+                            }
+                            Err(e) => failed.push(format!("{}: {e}", path.display())),
+                        }
+                    }
+                    (ok, failed, parents)
+                })
+                .await;
+            let (ok, failed, parents) = results;
+            if let Some(this) = this.upgrade() {
+                let _ = this.update(cx, |this, cx| {
+                    // The scan tree still counts the trashed bytes —
+                    // rescan for an honest picture.
+                    if ok > 0 {
+                        this.restart_scan(cx);
+                    }
+                });
+            }
+            if let (Some(shell), false) = (shell, parents.is_empty()) {
+                if let Some(shell) = shell.upgrade() {
+                    let _ = shell.update(cx, |shell, cx| {
+                        shell.reload_tabs_matching_paths(&parents, cx);
+                    });
+                }
+            }
+            let _ = win.update(cx, |_, window, cx| {
+                if failed.is_empty() {
+                    let msg = if ok == 1 {
+                        "Moved 1 item to Trash".to_owned()
+                    } else {
+                        format!("Moved {ok} items to Trash")
+                    };
+                    window.push_notification(Notification::success(msg), cx);
+                } else {
+                    window.push_notification(
+                        Notification::error(format!(
+                            "Trashed {ok}, {} failed \u{2014} {}",
+                            failed.len(),
+                            failed.first().cloned().unwrap_or_default()
+                        )),
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn on_du_zoom_in(&mut self, _: &DuZoomIn, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(target) = self.single_selected_container() {
+            self.zoom_into(target, cx);
+        }
+    }
+
+    fn on_du_zoom_out(&mut self, _: &DuZoomOut, _: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_out(cx);
+    }
+
+    /// The single selected container, when the selection is exactly one
+    /// folder — the target rule for Zoom In and the subtree HTML export.
+    fn single_selected_container(&self) -> Option<NodeId> {
+        if self.selected.len() != 1 {
+            return None;
+        }
+        let id = self.selected.iter().next().copied()?;
+        let node = self.tree.nodes.get(&id)?;
+        matches!(node.kind, feraille_disk_usage::NodeKind::Container).then_some(id)
+    }
+
+    /// Export dimensions: what the user is looking at, with a floor so
+    /// a squeezed docked pane still exports a readable picture.
+    fn export_dims(&self) -> (f32, f32) {
+        let (w, h) = self.treemap_size.unwrap_or((1200.0, 800.0));
+        (w.max(800.0), h.max(560.0))
+    }
+
+    /// Build the HTML for `root` at the current size mode. Runs inline
+    /// on a semantic user action — same order of work as one streaming
+    /// layout rebuild tick.
+    fn export_html(&self, root: NodeId, document: bool) -> String {
+        let (w, h) = self.export_dims();
+        if document {
+            feraille_disk_usage::treemap_html_document(
+                &self.tree,
+                root,
+                self.size_mode,
+                w,
+                h,
+                DU_LAYOUT_DEPTH,
+            )
+        } else {
+            feraille_disk_usage::treemap_html_fragment(
+                &self.tree,
+                root,
+                self.size_mode,
+                w,
+                h,
+                DU_LAYOUT_DEPTH,
+            )
+        }
+    }
+
+    /// Subtree export target: the single selected folder, else the
+    /// current zoom focus.
+    fn html_target(&self) -> NodeId {
+        self.single_selected_container().unwrap_or(self.focus_id())
+    }
+
+    fn on_du_copy_html(&mut self, _: &DuCopyHtml, window: &mut Window, cx: &mut Context<Self>) {
+        let target = self.html_target();
+        self.copy_html_for(target, window, cx);
+    }
+
+    fn on_du_copy_view_html(
+        &mut self,
+        _: &DuCopyViewHtml,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = self.focus_id();
+        self.copy_html_for(target, window, cx);
+    }
+
+    fn copy_html_for(&mut self, target: NodeId, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::notification::Notification;
+        // Fragment on the clipboard: pasteable straight into an
+        // existing document/page (a full <!DOCTYPE> is for files).
+        let html = self.export_html(target, false);
+        crate::platform_shell::copy_to_clipboard(&html);
+        window.push_notification(
+            Notification::success("Treemap HTML copied \u{2014} paste into any page or document."),
+            cx,
+        );
+    }
+
+    fn on_du_save_html(&mut self, _: &DuSaveHtml, window: &mut Window, cx: &mut Context<Self>) {
+        let target = self.html_target();
+        self.save_html_for(target, window, cx);
+    }
+
+    fn on_du_save_view_html(
+        &mut self,
+        _: &DuSaveViewHtml,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = self.focus_id();
+        self.save_html_for(target, window, cx);
+    }
+
+    fn save_html_for(&mut self, target: NodeId, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::notification::Notification;
+        let html = self.export_html(target, true);
+        let name = self
+            .tree
+            .nodes
+            .get(&target)
+            .map(|n| n.display_name.clone())
+            .unwrap_or_else(|| "treemap".to_owned());
+        // Sanitized leaf for the file name (path separators and other
+        // hostile characters out).
+        let safe: String = name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let win = window.window_handle();
+        cx.spawn(async move |_this, cx| {
+            let (path, result) = cx
+                .background_executor()
+                .spawn(async move {
+                    // Downloads when it exists (the natural "hand me
+                    // the file" place), else the temp dir.
+                    let downloads = feraille_fs_native::home_dir().join("Downloads");
+                    let dir = if downloads.is_dir() {
+                        downloads
+                    } else {
+                        std::env::temp_dir()
+                    };
+                    let path = dir.join(format!("feraille-treemap-{safe}-{stamp}.html"));
+                    let result = std::fs::write(&path, html.as_bytes());
+                    (path, result)
+                })
+                .await;
+            let ok = result.is_ok();
+            let _ = win.update(cx, |_, window, cx| match &result {
+                Ok(()) => {
+                    window.push_notification(
+                        Notification::success(format!(
+                            "Saved {}",
+                            path.file_name().unwrap_or_default().to_string_lossy()
+                        )),
+                        cx,
+                    );
+                }
+                Err(e) => {
+                    window
+                        .push_notification(Notification::error(format!("Save failed: {e}")), cx);
+                }
+            });
+            if ok {
+                // Show the file so it's one drag away from the document.
+                cx.background_executor()
+                    .spawn(async move {
+                        crate::platform_shell::reveal_in_finder(&path);
+                    })
+                    .detach();
+            }
+        })
+        .detach();
     }
 }
 
@@ -1215,6 +1785,21 @@ impl Render for DiskUsageView {
         let view = cx.entity().clone();
         v_flex()
             .track_focus(&self.focus_handle)
+            .key_context("DiskUsage")
+            // Context-menu verbs (rect + background menus dispatch
+            // these through the view's focus context).
+            .on_action(cx.listener(Self::on_du_open))
+            .on_action(cx.listener(Self::on_du_reveal))
+            .on_action(cx.listener(Self::on_du_get_info))
+            .on_action(cx.listener(Self::on_du_copy_files))
+            .on_action(cx.listener(Self::on_du_copy_paths))
+            .on_action(cx.listener(Self::on_du_trash))
+            .on_action(cx.listener(Self::on_du_zoom_in))
+            .on_action(cx.listener(Self::on_du_zoom_out))
+            .on_action(cx.listener(Self::on_du_copy_html))
+            .on_action(cx.listener(Self::on_du_save_html))
+            .on_action(cx.listener(Self::on_du_copy_view_html))
+            .on_action(cx.listener(Self::on_du_save_view_html))
             .size_full()
             .bg(cx.theme().background)
             .on_prepaint(move |bounds, _, cx| {
@@ -1245,50 +1830,16 @@ enum ScanMsg {
     Done(Option<EnumerationError>),
 }
 
+/// Category fill, from the canonical palette in `feraille-disk-usage`
+/// (`category_color_rgba`) — one source shared with the HTML export so
+/// the window and an exported page can't drift apart.
 fn category_color(cat: FileCategory) -> Rgba {
-    match cat {
-        FileCategory::Image => Rgba {
-            r: 0.30,
-            g: 0.60,
-            b: 0.95,
-            a: 0.85,
-        },
-        FileCategory::Video => Rgba {
-            r: 0.85,
-            g: 0.25,
-            b: 0.45,
-            a: 0.85,
-        },
-        FileCategory::Audio => Rgba {
-            r: 0.70,
-            g: 0.40,
-            b: 0.85,
-            a: 0.85,
-        },
-        FileCategory::Document => Rgba {
-            r: 0.95,
-            g: 0.75,
-            b: 0.20,
-            a: 0.85,
-        },
-        FileCategory::Archive => Rgba {
-            r: 0.60,
-            g: 0.50,
-            b: 0.30,
-            a: 0.85,
-        },
-        FileCategory::Executable => Rgba {
-            r: 0.55,
-            g: 0.55,
-            b: 0.55,
-            a: 0.85,
-        },
-        FileCategory::Other => Rgba {
-            r: 0.65,
-            g: 0.65,
-            b: 0.65,
-            a: 0.70,
-        },
+    let (r, g, b, a) = feraille_disk_usage::category_color_rgba(cat);
+    Rgba {
+        r: r as f32 / 255.0,
+        g: g as f32 / 255.0,
+        b: b as f32 / 255.0,
+        a: a as f32 / 255.0,
     }
 }
 
