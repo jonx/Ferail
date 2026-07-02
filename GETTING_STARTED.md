@@ -107,8 +107,8 @@ A window opens onto your home folder. You're running Feraille.
 > Documents / Downloads / removable / network) show an in-app "Access required"
 > screen instead of the normal system prompt. To get the real
 > *"…would like to access…"* prompts, run the signed app bundle — see
-> [step 5](#5-macos-the-signed-app-bundle). Full detail:
-> [README → macOS Permissions](README.md#macos-permissions-access-prompts).
+> [step 5](#5-macos-the-signed-app-bundle) and its
+> [permissions notes](#macos-permissions).
 
 ---
 
@@ -142,8 +142,36 @@ sign with a real identity:
 CODESIGN_IDENTITY="Developer ID Application: …" scripts/bundle-mac.sh
 ```
 
-The caveats (stale grants from terminal runs, re-prompting on ad-hoc rebuilds)
-are documented in [README → macOS Permissions](README.md#macos-permissions-access-prompts).
+### macOS permissions {#macos-permissions}
+
+macOS gates the protected folders (Desktop, Documents, Downloads, removable
+volumes, network volumes, cloud providers) behind its privacy system (TCC).
+The *"Feraille would like to access files in your Documents folder"* prompt
+only appears when **all** of these hold:
+
+1. the path is in one of those promptable categories (arbitrary folders are
+   never promptable — they need Full Disk Access);
+2. Feraille runs as a code-signed `.app` bundle with a stable identity;
+3. that bundle's `Info.plist` declares the matching `NS*UsageDescription`
+   string ([packaging/macos/Info.plist](packaging/macos/Info.plist)).
+
+Caveats:
+
+- **Stale grants from terminal runs.** Earlier `cargo run` sessions attribute
+  grants/denials to *Terminal*, not Feraille. If the bundle doesn't prompt,
+  clear the stale state:
+
+  ```sh
+  tccutil reset SystemPolicyRemovableVolumes me.jkn.feraille
+  tccutil reset SystemPolicyDocumentsFolder  me.jkn.feraille
+  ```
+
+- **Ad-hoc signing doesn't persist.** The default ad-hoc signature changes
+  every build, so macOS treats each build as a new app and re-prompts. Sign
+  with a real identity (above) for grants that stick.
+- **After a denial, macOS never re-prompts.** Once you click "Don't Allow",
+  the only recourse is the in-app "Open Full Disk Access settings" link
+  (also the path for arbitrary, non-promptable folders).
 
 ---
 

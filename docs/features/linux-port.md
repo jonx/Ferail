@@ -53,7 +53,7 @@ applies on Linux just as strictly — and D-Bus round-trips (portals, udisks2)
 are exactly the kind of latency that must never touch the hot path.
 
 There is no Linux predecessor to port *from* (unlike Windows, which has
-`../Ferail/`). The reference is the macOS shell crate's *shape* plus the
+a private predecessor checkout). The reference is the macOS shell crate's *shape* plus the
 freedesktop specifications.
 
 ---
