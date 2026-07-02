@@ -44,6 +44,23 @@ exceptions = [
 
 [advisories]
 yanked = "warn"
+# Every entry below arrives transitively through the PINNED upstream
+# revs (gpui / gpui-component) and cannot be fixed from this workspace —
+# they clear only when the upstream pins bump. Listed individually (not
+# blanket-silenced) so anything NEW still fails the check. Re-audit
+# this list on every gpui/gpui-component rev bump.
+ignore = [
+    "RUSTSEC-2024-0370", # proc-macro-error unmaintained (transitive)
+    "RUSTSEC-2024-0384", # instant unmaintained (transitive)
+    "RUSTSEC-2024-0436", # paste unmaintained (transitive)
+    "RUSTSEC-2025-0052", # async-std discontinued (gpui)
+    "RUSTSEC-2025-0134", # proc-macro-error2 unmaintained (transitive)
+    "RUSTSEC-2026-0173", # anyhow downcast_mut unsoundness (upstream pin)
+    "RUSTSEC-2026-0190", # transitive unmaintained via upstream pin
+    "RUSTSEC-2026-0192", # transitive unmaintained via upstream pin
+    "RUSTSEC-2026-0194", # transitive unmaintained via upstream pin
+    "RUSTSEC-2026-0195", # transitive unmaintained via upstream pin
+]
 
 [bans]
 multiple-versions = "allow"
