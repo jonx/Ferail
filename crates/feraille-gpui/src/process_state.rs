@@ -291,6 +291,40 @@ impl ProcessState {
         shells.clone()
     }
 
+    /// Release OS file watches for directories no live tab is showing.
+    /// The watch set is otherwise add-only: every directory ever
+    /// visited would stay FSEvents/inotify-watched all session — its
+    /// events fanning reloads forever, and Linux eventually hitting
+    /// `max_user_watches`, after which *new* watches silently fail and
+    /// live-update stops. Called after navigation and tab close.
+    ///
+    /// The calling Shell is mid-`update`, so it cannot be `read`
+    /// through `cx` — it passes its own entity id and tab directories
+    /// instead, and only *other* live shells are read here.
+    pub fn prune_watches(
+        &self,
+        own_id: gpui::EntityId,
+        own_dirs: impl IntoIterator<Item = std::path::PathBuf>,
+        cx: &gpui::App,
+    ) {
+        let mut keep: std::collections::HashSet<std::path::PathBuf> =
+            own_dirs.into_iter().collect();
+        for weak in self.live_shells() {
+            if weak.entity_id() == own_id {
+                continue;
+            }
+            if let Some(shell) = weak.upgrade() {
+                let shell = shell.read(cx);
+                for tab in &shell.tabs {
+                    keep.insert(tab.current_dir.clone());
+                }
+            }
+        }
+        if let Some(w) = self.watcher.borrow_mut().as_mut() {
+            w.retain_watched(&keep);
+        }
+    }
+
     /// Register a newly-opened viewer window for process-wide fan-out.
     /// Retains its window handle (so it isn't dropped mid-open) and
     /// prunes any viewers that have since closed.

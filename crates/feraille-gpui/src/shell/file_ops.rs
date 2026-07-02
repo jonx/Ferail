@@ -21,20 +21,35 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
-        let paths: Vec<PathBuf> = self
+        // `is_dir` comes from the cached FileEntry so the pasteboard
+        // write never stats — a per-path stat on the main thread hangs
+        // Cmd+C on a dead network mount (Prime Directive).
+        let items: Vec<(PathBuf, bool)> = self
             .action_entries_visible_order(cx)
             .into_iter()
-            .map(|(_, _, path)| path)
+            .map(|(_, entry, path)| {
+                (
+                    path,
+                    matches!(entry.kind, feraille_core::EntryKind::Directory),
+                )
+            })
             .collect();
-        if paths.is_empty() {
+        if items.is_empty() {
             return;
         }
-        let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
-        crate::platform_shell::clipboard_copy_file_urls(&refs);
+        let refs: Vec<(&std::path::Path, bool)> =
+            items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
+        if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
+            window.push_notification(
+                Notification::error("File clipboard isn't available on this platform yet."),
+                cx,
+            );
+            return;
+        }
         // A fresh Copy cancels any pending Cut.
         self.process.cut_marker.borrow_mut().clear();
-        let msg = match paths.as_slice() {
-            [single] => format!(
+        let msg = match items.as_slice() {
+            [(single, _)] => format!(
                 "Copied \u{201c}{}\u{201d}",
                 single.file_name().unwrap_or_default().to_string_lossy()
             ),
@@ -54,16 +69,32 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
-        let paths: Vec<PathBuf> = self
+        // Same no-stat contract as Copy (see on_copy_files).
+        let items: Vec<(PathBuf, bool)> = self
             .action_entries_visible_order(cx)
             .into_iter()
-            .map(|(_, _, path)| path)
+            .map(|(_, entry, path)| {
+                (
+                    path,
+                    matches!(entry.kind, feraille_core::EntryKind::Directory),
+                )
+            })
             .collect();
-        if paths.is_empty() {
+        if items.is_empty() {
             return;
         }
-        let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
-        crate::platform_shell::clipboard_copy_file_urls(&refs);
+        let refs: Vec<(&std::path::Path, bool)> =
+            items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
+        if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
+            // Don't dim rows for a Cut that can never complete its
+            // move — the stub platform has no file clipboard.
+            window.push_notification(
+                Notification::error("File clipboard isn't available on this platform yet."),
+                cx,
+            );
+            return;
+        }
+        let paths: Vec<PathBuf> = items.into_iter().map(|(p, _)| p).collect();
         let msg = match paths.as_slice() {
             [single] => format!(
                 "Cut \u{201c}{}\u{201d}",
@@ -1137,13 +1168,48 @@ impl Shell {
         color: feraille_core::commands::TagColor,
         cx: &mut Context<Self>,
     ) {
-        for (_, _, path) in self.action_entries_visible_order(cx) {
-            let _ = crate::platform_shell::toggle_tag(&path, color);
+        // Tag xattrs are filesystem I/O — a large selection means one
+        // read-modify-write per file, and any file on a dead network
+        // mount blocks for the mount timeout. Prime Directive: collect
+        // the paths here, run the toggles on the background executor,
+        // then re-read the listing's tags on completion so the dot
+        // chips repaint (the writes only touch disk, not the delegate's
+        // parallel `tags` vec).
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        if paths.is_empty() {
+            return;
         }
-        // Re-read the listing's tags so the dot chips repaint the
-        // toggle — the write above only touched disk, not the delegate's
-        // parallel `tags` vec.
-        self.refresh_file_list_tags_in_tab(self.active, cx);
+        let active = self.active;
+        cx.spawn(async move |this, cx| {
+            let failures = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut failed = 0usize;
+                    for path in &paths {
+                        if crate::platform_shell::toggle_tag(path, color).is_err() {
+                            failed += 1;
+                        }
+                    }
+                    failed
+                })
+                .await;
+            if failures > 0 {
+                crate::log_warn!(90, "tag toggle: {failures} item(s) failed");
+            }
+            let _ = this.update(cx, |this, cx| {
+                let tab = if this.tabs.get(active).is_some() {
+                    active
+                } else {
+                    this.active
+                };
+                this.refresh_file_list_tags_in_tab(tab, cx);
+            });
+        })
+        .detach();
     }
 
     pub(super) fn on_toggle_tag_red(
@@ -1240,9 +1306,15 @@ impl Shell {
             }
         };
         if let Some(app) = app_path {
-            for path in paths {
-                let _ = crate::platform_shell::open_with_app(&path, &app);
-            }
+            // `open -a` waits for the app to check in (seconds on a
+            // cold launch) — one batched invocation on the background
+            // executor instead of N sequential waits on the UI thread.
+            cx.background_spawn(async move {
+                if let Err(e) = crate::platform_shell::open_with_app_many(&paths, &app) {
+                    crate::log_warn!(90, "open with {}: {e}", app.display());
+                }
+            })
+            .detach();
         }
     }
 

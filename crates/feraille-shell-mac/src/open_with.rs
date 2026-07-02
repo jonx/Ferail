@@ -101,10 +101,21 @@ pub fn candidates_for(_path: &Path) -> Vec<OpenWithCandidate> {
 /// out to `/usr/bin/open -a` so we don't have to handle the
 /// completion-handler dance for `NSWorkspace.openURLs:`.
 pub fn open_with(target: &Path, app_path: &Path) -> Result<(), String> {
+    open_with_many(std::slice::from_ref(&target.to_path_buf()), app_path)
+}
+
+/// Open all `targets` with one `/usr/bin/open -a` invocation. `open`
+/// accepts multiple files, so a multi-selection pays the app's
+/// check-in wait once instead of once per file. Blocks until `open`
+/// exits — worker-thread only.
+pub fn open_with_many(targets: &[std::path::PathBuf], app_path: &Path) -> Result<(), String> {
+    if targets.is_empty() {
+        return Ok(());
+    }
     let status = std::process::Command::new("/usr/bin/open")
         .arg("-a")
         .arg(app_path)
-        .arg(target)
+        .args(targets)
         .status()
         .map_err(|e| format!("failed to spawn open: {e}"))?;
     if !status.success() {

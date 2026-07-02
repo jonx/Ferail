@@ -1230,6 +1230,25 @@ pub fn open_with_app(_target: &std::path::Path, _app_path: &std::path::Path) -> 
     Err("open_with_app: not implemented on this OS".into())
 }
 
+/// Open every `target` with the app at `app_path`. One process per
+/// file — the spawns don't wait, so the loop is cheap; the batch form
+/// exists for parity with shell-mac's single-invocation `open -a`.
+pub fn open_with_app_many(
+    targets: &[std::path::PathBuf],
+    app_path: &std::path::Path,
+) -> Result<(), String> {
+    let mut last_err = None;
+    for target in targets {
+        if let Err(e) = open_with_app(target, app_path) {
+            last_err = Some(e);
+        }
+    }
+    match last_err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
 // =============================================================
 // App icon / theme
 // =============================================================
@@ -1462,7 +1481,7 @@ pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static + Send>
 /// setting. Best-effort and silent on failure, matching the mac
 /// `NSPasteboard` contract. Empty input is a no-op. docs/features/FILE_OPS.md.
 #[cfg(windows)]
-pub fn clipboard_copy_file_urls(paths: &[&std::path::Path]) {
+pub fn clipboard_copy_file_urls(items: &[(&std::path::Path, bool)]) -> bool {
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::DataExchange::{
@@ -1472,8 +1491,8 @@ pub fn clipboard_copy_file_urls(paths: &[&std::path::Path]) {
     use windows::Win32::System::Ole::CF_HDROP;
     use windows::Win32::UI::Shell::DROPFILES;
 
-    if paths.is_empty() {
-        return;
+    if items.is_empty() {
+        return false;
     }
 
     /// Pair every early return with `CloseClipboard` (mirrors
@@ -1488,9 +1507,10 @@ pub fn clipboard_copy_file_urls(paths: &[&std::path::Path]) {
     }
 
     // Wide path list: each path null-terminated, then a final null to
-    // close the double-null-terminated CF_HDROP list.
+    // close the double-null-terminated CF_HDROP list. The `is_dir`
+    // hint is a mac-pasteboard need; CF_HDROP carries bare paths.
     let mut list: Vec<u16> = Vec::new();
-    for p in paths {
+    for (p, _is_dir) in items {
         list.extend(p.as_os_str().encode_wide());
         list.push(0);
     }
@@ -1501,16 +1521,19 @@ pub fn clipboard_copy_file_urls(paths: &[&std::path::Path]) {
 
     unsafe {
         if OpenClipboard(None).is_err() {
-            return;
+            return false;
         }
         let _guard = CloseGuard;
         let _ = EmptyClipboard();
         let Ok(handle) = GlobalAlloc(GHND, bytes) else {
-            return;
+            return false;
         };
         let base = GlobalLock(handle) as *mut u8;
         if base.is_null() {
-            return;
+            // Lock failure: nothing owns the allocation yet — free it
+            // or it leaks.
+            let _ = windows::Win32::Foundation::GlobalFree(handle);
+            return false;
         }
         // DROPFILES sits at the front; the path list follows it. GHND
         // already zeroed pt/fNC, so leave those.
@@ -1523,12 +1546,16 @@ pub fn clipboard_copy_file_urls(paths: &[&std::path::Path]) {
         // system owns the HGLOBAL; on failure we must free it.
         if SetClipboardData(CF_HDROP.0 as u32, HANDLE(handle.0)).is_err() {
             let _ = windows::Win32::Foundation::GlobalFree(handle);
+            return false;
         }
+        true
     }
 }
 
 #[cfg(not(windows))]
-pub fn clipboard_copy_file_urls(_paths: &[&std::path::Path]) {}
+pub fn clipboard_copy_file_urls(_items: &[(&std::path::Path, bool)]) -> bool {
+    false
+}
 
 /// Read a `CF_HDROP` file list off the clipboard (e.g. files a user
 /// copied in Explorer, or via our own [`clipboard_copy_file_urls`]).
@@ -1987,6 +2014,22 @@ pub fn video_overlay_step(id: u64, frames: i64) {
 pub fn video_overlay_step(_id: u64, _frames: i64) {}
 
 pub fn set_window_floating(_ns_view: *mut std::ffi::c_void, _floating: bool) {}
+
+// Window docking primitives (macOS-only feature; no-op stubs here so the
+// shared `platform_shell::*` surface compiles. See docs/features/DOCK.md).
+pub fn current_mouse_location() -> (f64, f64) {
+    (0.0, 0.0)
+}
+pub fn screen_visible_frame_for_window(
+    _ns_view: *mut std::ffi::c_void,
+) -> Option<(f64, f64, f64, f64)> {
+    None
+}
+pub fn set_window_frame(_ns_view: *mut std::ffi::c_void, _x: f64, _y: f64, _w: f64, _h: f64) {}
+pub fn set_window_all_spaces(_ns_view: *mut std::ffi::c_void, _all_spaces: bool) {}
+pub fn window_frame(_ns_view: *mut std::ffi::c_void) -> Option<(f64, f64, f64, f64)> {
+    None
+}
 
 // =============================================================
 // Internal helpers

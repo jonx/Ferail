@@ -407,6 +407,22 @@ pub fn open_with_app(_target: &Path, _app_path: &Path) -> Result<(), String> {
     Err("open_with_app: not implemented on this platform".into())
 }
 
+/// Open every `target` with the app at `app_path`. One detached spawn
+/// per file; the batch form exists for parity with shell-mac's
+/// single-invocation `open -a`.
+pub fn open_with_app_many(targets: &[std::path::PathBuf], app_path: &Path) -> Result<(), String> {
+    let mut last_err = None;
+    for target in targets {
+        if let Err(e) = open_with_app(target, app_path) {
+            last_err = Some(e);
+        }
+    }
+    match last_err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
 // =============================================================
 // Clipboard
 // =============================================================
@@ -430,8 +446,12 @@ pub fn copy_to_clipboard(_text: &str) {}
 /// Copy file paths to the clipboard as `text/uri-list` `file://` URIs (plus
 /// the GNOME `x-special/gnome-copied-files` target for Nautilus interop).
 /// Stub — needs Wayland/X11 selection access (`wl-clipboard` / `xclip` / a
-/// native protocol client).
-pub fn clipboard_copy_file_urls(_paths: &[&Path]) {}
+/// native protocol client). Returns `false` so callers surface "not
+/// available" instead of a lying success toast (the `is_dir` half of
+/// each item is a mac-pasteboard need).
+pub fn clipboard_copy_file_urls(_items: &[(&Path, bool)]) -> bool {
+    false
+}
 
 /// Read file paths previously placed on the clipboard. Empty if none. Stub.
 pub fn clipboard_read_file_urls() -> Vec<PathBuf> {
@@ -823,6 +843,22 @@ pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
 /// macOS-shaped `*mut c_void` (an `NSView`) is meaningless on Linux; a real
 /// impl will key off the gpui/compositor handle instead. No-op for now.
 pub fn set_window_floating(_handle: *mut c_void, _floating: bool) {}
+
+/// Window docking primitives (docs/features/DOCK.md). macOS-only feature; the
+/// `*mut c_void` handle is meaningless on Linux, so these are no-op stubs that
+/// keep the shared `platform_shell::*` surface compiling. A real impl would
+/// key off the Wayland/X11 compositor handle.
+pub fn current_mouse_location() -> (f64, f64) {
+    (0.0, 0.0)
+}
+pub fn screen_visible_frame_for_window(_handle: *mut c_void) -> Option<(f64, f64, f64, f64)> {
+    None
+}
+pub fn set_window_frame(_handle: *mut c_void, _x: f64, _y: f64, _w: f64, _h: f64) {}
+pub fn set_window_all_spaces(_handle: *mut c_void, _all_spaces: bool) {}
+pub fn window_frame(_handle: *mut c_void) -> Option<(f64, f64, f64, f64)> {
+    None
+}
 
 // =============================================================
 // Video overlay (windowless player feeding the viewer BGRA frames).

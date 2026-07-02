@@ -409,10 +409,17 @@ pub enum NameScheme {
 /// First non-existing `dest_dir/<variant of name>` under `scheme`.
 /// Extension is preserved (`a.txt` → `a 2.txt`). `None` after 9999
 /// candidates (pathological; caller treats as an error).
+///
+/// The candidate file name is built by string concatenation, NOT
+/// `Path::set_extension`: on a stem like `"a.tar 2"` set_extension
+/// treats `"tar 2"` as the extension and *replaces* it, turning
+/// `a.tar.gz` into `a.gz` — and collapsing every numbered candidate
+/// to the same name, so the loop exhausted all 9999 and the whole
+/// operation failed with "no free name".
 pub fn pick_available_name(dest_dir: &Path, name: &OsStr, scheme: NameScheme) -> Option<PathBuf> {
     let as_path = Path::new(name);
     let stem = as_path.file_stem().unwrap_or(name).to_string_lossy();
-    let ext = as_path.extension();
+    let ext = as_path.extension().map(|e| e.to_string_lossy());
     for n in 1..=9999u32 {
         let candidate_stem = match scheme {
             NameScheme::Copy if n == 1 => format!("{stem} copy"),
@@ -420,10 +427,11 @@ pub fn pick_available_name(dest_dir: &Path, name: &OsStr, scheme: NameScheme) ->
             // Numbered starts at 2: "name" exists, next is "name 2".
             NameScheme::Numbered => format!("{stem} {}", n + 1),
         };
-        let mut candidate = dest_dir.join(&candidate_stem);
-        if let Some(e) = ext {
-            candidate.set_extension(e);
-        }
+        let candidate_name = match &ext {
+            Some(e) => format!("{candidate_stem}.{e}"),
+            None => candidate_stem,
+        };
+        let candidate = dest_dir.join(candidate_name);
         if !candidate.exists() {
             return Some(candidate);
         }
@@ -1159,6 +1167,43 @@ mod tests {
         assert_eq!(out.created[0].1, dest.join("a 3.txt"));
         assert_eq!(fs::read(dest.join("a.txt")).unwrap(), b"old");
         assert_eq!(fs::read(dest.join("a 3.txt")).unwrap(), b"new");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn keep_both_preserves_multi_dot_names() {
+        let root = scratch("keep-both-multidot");
+        let dest = root.join("dest");
+        write(&dest.join("a.tar.gz"), b"old");
+
+        // `a.tar.gz` collides → the candidate must be `a.tar 2.gz`,
+        // not `a.gz` (set_extension on stem "a.tar 2" replaced the
+        // "tar 2" pseudo-extension and collapsed every candidate to
+        // the same name).
+        let picked = pick_available_name(
+            &dest,
+            std::ffi::OsStr::new("a.tar.gz"),
+            NameScheme::Numbered,
+        )
+        .unwrap();
+        assert_eq!(picked, dest.join("a.tar 2.gz"));
+
+        // With the first candidate occupied, numbering advances
+        // instead of failing after 9999 identical candidates.
+        write(&dest.join("a.tar 2.gz"), b"older");
+        let picked = pick_available_name(
+            &dest,
+            std::ffi::OsStr::new("a.tar.gz"),
+            NameScheme::Numbered,
+        )
+        .unwrap();
+        assert_eq!(picked, dest.join("a.tar 3.gz"));
+
+        // Duplicate flavor keeps the full extension too.
+        let picked =
+            pick_available_name(&dest, std::ffi::OsStr::new("a.tar.gz"), NameScheme::Copy)
+                .unwrap();
+        assert_eq!(picked, dest.join("a.tar copy.gz"));
         let _ = fs::remove_dir_all(&root);
     }
 

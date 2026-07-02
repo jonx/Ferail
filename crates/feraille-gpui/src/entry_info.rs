@@ -456,6 +456,7 @@ impl EntryInfoView {
     /// (Re-)gather the record on the background executor and apply it.
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let gather_path = self.path.clone();
+        let apply_path = gather_path.clone();
         let known_size = self.known_size;
         cx.spawn(async move |this, cx| {
             let info = cx
@@ -463,6 +464,13 @@ impl EntryInfoView {
                 .spawn(async move { gather(&gather_path, known_size) })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                // Staleness guard: the panel may have been retargeted
+                // (preview-pane embedded mode) while a slow gather —
+                // e.g. a network mount — was in flight. Applying it
+                // would show file A's size/permissions under file B.
+                if this.path != apply_path {
+                    return;
+                }
                 this.name = info.name.clone();
                 this.kind = info.kind.clone();
                 this.state = GatherState::Ready(info);
@@ -504,6 +512,8 @@ impl EntryInfoView {
         let cancel = Arc::new(AtomicBool::new(false));
         self.size_cancel = Some(cancel.clone());
         let path = self.path.clone();
+        let apply_path = path.clone();
+        let apply_cancel = cancel.clone();
         // Share the file list's folder-size cache so a folder already
         // sized in the Size column answers instantly, and a value
         // computed here feeds that column too (one source of truth,
@@ -517,6 +527,20 @@ impl EntryInfoView {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                // Drop stale/cancelled results: a cancelled walk
+                // returns an invalid partial sum, and a retarget swaps
+                // both the path and the cancel handle — presenting
+                // either as a confident size would be wrong (and
+                // would clobber the newer scan's cancel handle).
+                if this.path != apply_path
+                    || apply_cancel.load(std::sync::atomic::Ordering::Relaxed)
+                    || !this
+                        .size_cancel
+                        .as_ref()
+                        .is_some_and(|c| Arc::ptr_eq(c, &apply_cancel))
+                {
+                    return;
+                }
                 this.known_size = Some(bytes);
                 if let GatherState::Ready(info) = &mut this.state {
                     info.set_size_value(SizeValue::Known {
@@ -533,31 +557,64 @@ impl EntryInfoView {
         cx.notify();
     }
 
+    /// Run a native write on the background executor, then route its
+    /// result through [`Self::after_write`] with the window available
+    /// for the failure toast. `chflags`/`chmod`/xattr writes are
+    /// filesystem I/O — inline in a click listener they'd block the UI
+    /// for the full mount timeout on a dead network volume or a
+    /// dataless placeholder (Prime Directive).
+    fn spawn_write(
+        &mut self,
+        write: impl FnOnce() -> Result<(), String> + Send + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx.background_executor().spawn(async move { write() }).await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.after_write(result, window, cx);
+            });
+        })
+        .detach();
+    }
+
     /// Flip a boolean attribute (Locked / Invisible / Hide extension) via
     /// the matching native writer, then refresh.
     fn apply_toggle(&mut self, attr: Attr, on: bool, window: &mut Window, cx: &mut Context<Self>) {
         use feraille_fs_native::stat_info;
-        let result = match attr {
-            Attr::Locked => stat_info::set_locked(&self.path, on),
-            Attr::Invisible => stat_info::set_invisible(&self.path, on),
-            Attr::HiddenExtension => crate::platform_shell::set_hidden_extension(&self.path, on),
-            Attr::Stationery => Err("Stationery editing is not supported yet".into()),
-        };
-        self.after_write(result, window, cx);
+        let path = self.path.clone();
+        self.spawn_write(
+            move || match attr {
+                Attr::Locked => stat_info::set_locked(&path, on),
+                Attr::Invisible => stat_info::set_invisible(&path, on),
+                Attr::HiddenExtension => crate::platform_shell::set_hidden_extension(&path, on),
+                Attr::Stationery => Err("Stationery editing is not supported yet".into()),
+            },
+            window,
+            cx,
+        );
     }
 
     /// Add or remove a Finder color label, preserving other tags.
     fn toggle_color(&mut self, color: TagColor, window: &mut Window, cx: &mut Context<Self>) {
-        let result = crate::platform_shell::toggle_tag(&self.path, color);
-        self.after_write(result, window, cx);
+        let path = self.path.clone();
+        self.spawn_write(
+            move || crate::platform_shell::toggle_tag(&path, color),
+            window,
+            cx,
+        );
     }
 
     /// Rewrite the permission mode after a single rwx box flipped. Unix only —
     /// Windows shows a read-only summary instead of the editable rwx grid.
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn apply_permissions(&mut self, mode: u32, window: &mut Window, cx: &mut Context<Self>) {
-        let result = feraille_fs_native::stat_info::set_permissions(&self.path, mode);
-        self.after_write(result, window, cx);
+        let path = self.path.clone();
+        self.spawn_write(
+            move || feraille_fs_native::stat_info::set_permissions(&path, mode),
+            window,
+            cx,
+        );
     }
 }
 

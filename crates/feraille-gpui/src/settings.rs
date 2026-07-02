@@ -1,5 +1,6 @@
 //! Settings — Phase 3 of the next-level plan adopts gpui-component's
-//! [`gpui_component::setting::Settings`] primitive. The library ships
+//! setting primitive (now vendored as [`crate::setting_panel::Settings`]
+//! to fix a resize flicker; see that module's header). The library ships
 //! a hierarchical Settings (pages → groups → items → fields) with
 //! a sidebar, **built-in search**, optional reset, and the same field
 //! types we used to hand-roll (switch / dropdown / number-input /
@@ -22,7 +23,10 @@ use gpui::{Axis, *};
 use gpui_component::{
     ActiveTheme, Icon, Root, Theme, ThemeMode,
     color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState},
-    setting::{SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
+};
+
+use crate::setting_panel::{
+    SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
 };
 
 use feraille_core::commands::{Category, all_commands};

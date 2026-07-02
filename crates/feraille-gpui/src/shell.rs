@@ -794,7 +794,7 @@ pub struct Shell {
     /// Resizable-splitter state for the sidebar / center / preview
     /// columns. Persists across renders so the drag handles work as
     /// expected; sizes survive theme changes etc.
-    pub splitter_state: Entity<gpui_component::resizable::ResizableState>,
+    pub splitter_state: Entity<crate::splitter::ResizableState>,
     /// Current sidebar width in DIPs (next-level Phase 5). Read from
     /// `app_state::sidebar_width` at construction (or the default
     /// 220), threaded into `resizable_panel().size(...)` on every
@@ -1137,7 +1137,19 @@ impl Shell {
         process
             .recents_section_collapsed
             .set(persisted.recents_collapsed.unwrap_or(false));
-        let start = persisted.last_dir.clone().unwrap_or_else(home_dir);
+        // Persisted state is an external boundary for the path-identity
+        // contract: validate + re-canonicalize the raw stored path here
+        // (the one-time startup consumer) so a symlinked spelling saved
+        // last session can't mint a second NodeId, and a vanished
+        // directory falls back to home. `app_state::load()` itself no
+        // longer stats — it's called from click handlers and render
+        // getters.
+        let start = persisted
+            .last_dir
+            .clone()
+            .filter(|p| p.is_dir())
+            .map(path::canonicalize_for_identity)
+            .unwrap_or_else(home_dir);
         let start_id = process.fs.id_for_path(&start);
         // Seed the NodeStore with the start path so the very first
         // navigate doesn't re-mint a different NodeId. Idempotent —
@@ -1425,7 +1437,7 @@ impl Shell {
             tab_scroll: ScrollHandle::new(),
             preview_scroll_path: None,
             ui_scale,
-            splitter_state: cx.new(|_| gpui_component::resizable::ResizableState::default()),
+            splitter_state: cx.new(|_| crate::splitter::ResizableState::default()),
             sidebar_width: persisted
                 .sidebar_width
                 .unwrap_or(220.0)
@@ -2995,6 +3007,10 @@ impl Shell {
         if let Some(w) = self.process.watcher.borrow_mut().as_mut() {
             let _ = w.watch(&path);
         }
+        // Drop watches no live tab shows anymore (this navigation may
+        // have been the last reference to the previous directory).
+        let own_dirs: Vec<PathBuf> = self.tabs.iter().map(|t| t.current_dir.clone()).collect();
+        self.process.prune_watches(cx.entity_id(), own_dirs, cx);
         self.save_state_async(cx);
 
         let fs = self.process.fs.clone();
@@ -4670,16 +4686,28 @@ impl Shell {
         let already_favorite =
             |path: &Path, this: &Self| this.process.favorites.read(cx).contains_path(path);
         if let Some(p) = self.favorites_context_path.take() {
-            let kind = if already_favorite(&p, self) || p.is_dir() {
-                FavoriteResolved::Folder
-            } else {
-                FavoriteResolved::NotAFolder
-            };
-            return Some((p, kind));
+            // Every surface that sets `favorites_context_path` is
+            // folder-only by construction (favorites rows, sidebar
+            // tree rows, breadcrumb segments, the active tab's
+            // current_dir) — classify as Folder without a stat. An
+            // `is_dir()` here hung Cmd+D on dead network mounts
+            // (Prime Directive). Keep that invariant when adding
+            // setters.
+            return Some((p, FavoriteResolved::Folder));
         }
         if let Some(row) = self.target_row(cx) {
             if let Some(path) = self.path_for_row(row, cx) {
-                let kind = if already_favorite(&path, self) || path.is_dir() {
+                // Classify from the cached FileEntry, not a fresh stat.
+                let is_dir = self
+                    .active_tab()
+                    .table
+                    .read(cx)
+                    .delegate()
+                    .entries
+                    .get(row)
+                    .map(|e| matches!(e.kind, feraille_core::EntryKind::Directory))
+                    .unwrap_or(false);
+                let kind = if already_favorite(&path, self) || is_dir {
                     FavoriteResolved::Folder
                 } else {
                     FavoriteResolved::NotAFolder
@@ -4755,6 +4783,10 @@ impl Shell {
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len() - 1;
         }
+        // The closed tab may have been the last reference to its
+        // directory's file watch.
+        let own_dirs: Vec<PathBuf> = self.tabs.iter().map(|t| t.current_dir.clone()).collect();
+        self.process.prune_watches(cx.entity_id(), own_dirs, cx);
         // No re-load — the now-active tab already has its own
         // TableState populated from its earlier load (Phase A+B).
         cx.notify();

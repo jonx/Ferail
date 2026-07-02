@@ -3182,7 +3182,7 @@ impl Render for Shell {
                 // Three-column resizable layout: sidebar | center | preview.
                 // The status bar runs full-width across the bottom so its
                 // task summary + progress strip is always visible.
-                use gpui_component::resizable::{h_resizable, resizable_panel};
+                use crate::splitter::{h_resizable, resizable_panel};
                 let file_body = self.file_pane_body(cx);
                 // Phase 6 review fix: an outer .context_menu on the
                 // file body wrapper consumed the click events bound

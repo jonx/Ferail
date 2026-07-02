@@ -613,6 +613,9 @@ pub fn open_with_candidates(_path: &std::path::Path) -> Vec<OpenWithCandidate> {
 /// Open `target` with the app at `app_path`. Shells out to
 /// `/usr/bin/open -a` so we don't have to wire up the
 /// `NSWorkspace.openURLs:` completion-handler contract.
+///
+/// `open` waits for the target app to check in — seconds on a cold
+/// launch — so call from a worker, never the UI thread.
 pub fn open_with_app(target: &std::path::Path, app_path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -622,6 +625,26 @@ pub fn open_with_app(target: &std::path::Path, app_path: &std::path::Path) -> Re
     {
         let _ = (target, app_path);
         Err("open_with_app is macOS-only".into())
+    }
+}
+
+/// Open every `target` with the app at `app_path` in ONE
+/// `/usr/bin/open -a` invocation — N sequential `open` calls each wait
+/// for the app to check in, so a multi-selection pays the launch wait
+/// once instead of N times. Same worker-only contract as
+/// [`open_with_app`].
+pub fn open_with_app_many(
+    targets: &[std::path::PathBuf],
+    app_path: &std::path::Path,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        open_with::open_with_many(targets, app_path)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (targets, app_path);
+        Err("open_with_app_many is macOS-only".into())
     }
 }
 
@@ -974,36 +997,44 @@ pub fn start_system_theme_observer(_callback: Box<dyn Fn(bool) + 'static>) {}
 /// the cross-app file-copy verb (Finder pastes what we copy and vice
 /// versa). Replaces the pasteboard's previous contents. Main-thread
 /// only (AppKit). docs/features/FILE_OPS.md.
+///
+/// Each item carries its `is_dir` flag from the caller's cached
+/// `FileEntry` — `fileURLWithPath_isDirectory:` exists precisely so
+/// nobody has to stat here, and a stat per path on the main thread
+/// would hang Cmd+C on a dead network mount.
 #[cfg(target_os = "macos")]
-pub fn clipboard_copy_file_urls(paths: &[&std::path::Path]) {
+pub fn clipboard_copy_file_urls(items: &[(&std::path::Path, bool)]) -> bool {
     use objc2::runtime::ProtocolObject;
     use objc2_app_kit::{NSPasteboard, NSPasteboardWriting};
     use objc2_foundation::{NSArray, NSString, NSURL};
     if objc2_foundation::MainThreadMarker::new().is_none() {
-        return;
+        return false;
     }
     unsafe {
         let pb = NSPasteboard::generalPasteboard();
         pb.clearContents();
-        let writers: Vec<objc2::rc::Retained<ProtocolObject<dyn NSPasteboardWriting>>> = paths
+        let writers: Vec<objc2::rc::Retained<ProtocolObject<dyn NSPasteboardWriting>>> = items
             .iter()
-            .filter_map(|p| {
+            .filter_map(|(p, is_dir)| {
                 let s = p.to_str()?;
-                let url = NSURL::fileURLWithPath_isDirectory(&NSString::from_str(s), p.is_dir());
+                let url = NSURL::fileURLWithPath_isDirectory(&NSString::from_str(s), *is_dir);
                 Some(ProtocolObject::from_id(url))
             })
             .collect();
         if writers.is_empty() {
-            return;
+            return false;
         }
         let array: objc2::rc::Retained<NSArray<ProtocolObject<dyn NSPasteboardWriting>>> =
             NSArray::from_vec(writers);
-        let _: bool = objc2::msg_send![&*pb, writeObjects: &*array];
+        let ok: bool = objc2::msg_send![&*pb, writeObjects: &*array];
+        ok
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn clipboard_copy_file_urls(_paths: &[&std::path::Path]) {}
+pub fn clipboard_copy_file_urls(_items: &[(&std::path::Path, bool)]) -> bool {
+    false
+}
 
 /// Read file URLs off the general pasteboard (what Cmd+V pastes).
 /// Empty when the pasteboard holds no file URLs. Main-thread only.
@@ -1219,6 +1250,177 @@ pub fn set_window_floating(ns_view: *mut std::ffi::c_void, floating: bool) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn set_window_floating(_ns_view: *mut std::ffi::c_void, _floating: bool) {}
+
+// ---------------------------------------------------------------------------
+// Window docking primitives (docs/features/DOCK.md).
+//
+// The host (`feraille-gpui`) drives the slide-in/out drawer entirely from its
+// own GPUI tick: it polls the cursor, does the geometry, and moves the window.
+// This crate only exposes the four AppKit calls that work has to bottom out in.
+// All coordinates are macOS *global screen space* — origin at the bottom-left
+// of the main display, y growing upward — which is the one space that
+// `NSEvent.mouseLocation`, `NSScreen.visibleFrame`, and `NSWindow.frame` all
+// already agree on, so the host's math needs no flipping.
+// ---------------------------------------------------------------------------
+
+/// Current global mouse location in macOS screen coordinates. A cheap class
+/// method (no permission, thread-safe) the host polls on a timer only while a
+/// dock edge is active. `(0.0, 0.0)` on non-macOS.
+#[cfg(target_os = "macos")]
+pub fn current_mouse_location() -> (f64, f64) {
+    use objc2::{class, msg_send};
+    use objc2_foundation::NSPoint;
+    let p: NSPoint = unsafe { msg_send![class!(NSEvent), mouseLocation] };
+    (p.x, p.y)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn current_mouse_location() -> (f64, f64) {
+    (0.0, 0.0)
+}
+
+/// The `visibleFrame` (menu-bar/Dock-excluded) of the display the given
+/// window currently occupies, as `(x, y, width, height)` in global screen
+/// space. Falls back to the main screen when the window is off every display
+/// (which happens once it is parked off-screen as a hidden drawer), so the
+/// host can re-query safely. `None` off the main thread or with no screen.
+#[cfg(target_os = "macos")]
+pub fn screen_visible_frame_for_window(
+    ns_view: *mut std::ffi::c_void,
+) -> Option<(f64, f64, f64, f64)> {
+    use objc2::{class, msg_send, msg_send_id, rc::Retained, runtime::AnyObject};
+    use objc2_app_kit::{NSScreen, NSWindow};
+    use objc2_foundation::{MainThreadMarker, NSRect};
+
+    if MainThreadMarker::new().is_none() || ns_view.is_null() {
+        return None;
+    }
+    let view: &AnyObject = unsafe { &*(ns_view as *const AnyObject) };
+    let window: Option<Retained<NSWindow>> = unsafe { msg_send_id![view, window] };
+    let window = window?;
+    let screen: Option<Retained<NSScreen>> = unsafe { msg_send_id![&*window, screen] };
+    let screen = match screen {
+        Some(s) => s,
+        None => {
+            let main: Option<Retained<NSScreen>> =
+                unsafe { msg_send_id![class!(NSScreen), mainScreen] };
+            main?
+        }
+    };
+    let frame: NSRect = unsafe { msg_send![&*screen, visibleFrame] };
+    Some((
+        frame.origin.x,
+        frame.origin.y,
+        frame.size.width,
+        frame.size.height,
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn screen_visible_frame_for_window(
+    _ns_view: *mut std::ffi::c_void,
+) -> Option<(f64, f64, f64, f64)> {
+    None
+}
+
+/// Move/resize a window (identified by one of its content NSViews) to the
+/// given frame in global screen space. Deliberately *not* animated — the host
+/// runs any slide itself, one step per GPUI frame, so this returns immediately
+/// and never spins the run loop (Prime Directive). The host keeps the size
+/// fixed during a slide, so this is a pure move and gpui never re-sizes its
+/// drawable. Main-thread only; no-op otherwise.
+#[cfg(target_os = "macos")]
+pub fn set_window_frame(ns_view: *mut std::ffi::c_void, x: f64, y: f64, w: f64, h: f64) {
+    use objc2::{
+        msg_send, msg_send_id,
+        rc::Retained,
+        runtime::{AnyObject, Bool},
+    };
+    use objc2_app_kit::NSWindow;
+    use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
+
+    if MainThreadMarker::new().is_none() || ns_view.is_null() {
+        return;
+    }
+    let view: &AnyObject = unsafe { &*(ns_view as *const AnyObject) };
+    let window: Option<Retained<NSWindow>> = unsafe { msg_send_id![view, window] };
+    if let Some(window) = window {
+        let frame = NSRect {
+            origin: NSPoint { x, y },
+            size: NSSize {
+                width: w,
+                height: h,
+            },
+        };
+        unsafe {
+            let _: () = msg_send![
+                &*window,
+                setFrame: frame,
+                display: Bool::new(true),
+                animate: Bool::new(false),
+            ];
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_window_frame(_ns_view: *mut std::ffi::c_void, _x: f64, _y: f64, _w: f64, _h: f64) {}
+
+/// Toggle whether a window joins every Space and floats over full-screen apps
+/// (`NSWindowCollectionBehaviorCanJoinAllSpaces | FullScreenAuxiliary`). A
+/// docked drawer wants this so it stays reachable from any Space; pass `false`
+/// to restore default behavior on undock. Main-thread only; no-op otherwise.
+#[cfg(target_os = "macos")]
+pub fn set_window_all_spaces(ns_view: *mut std::ffi::c_void, all_spaces: bool) {
+    use objc2::{msg_send, msg_send_id, rc::Retained, runtime::AnyObject};
+    use objc2_app_kit::NSWindow;
+    use objc2_foundation::MainThreadMarker;
+
+    if MainThreadMarker::new().is_none() || ns_view.is_null() {
+        return;
+    }
+    let view: &AnyObject = unsafe { &*(ns_view as *const AnyObject) };
+    let window: Option<Retained<NSWindow>> = unsafe { msg_send_id![view, window] };
+    if let Some(window) = window {
+        // CanJoinAllSpaces (1 << 0) | FullScreenAuxiliary (1 << 8).
+        let behavior: usize = if all_spaces { (1 << 0) | (1 << 8) } else { 0 };
+        unsafe {
+            let _: () = msg_send![&*window, setCollectionBehavior: behavior];
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_window_all_spaces(_ns_view: *mut std::ffi::c_void, _all_spaces: bool) {}
+
+/// A window's current frame as `(x, y, width, height)` in global screen
+/// space, so the host can remember where to put it back when undocking.
+/// `None` off the main thread or with no window. Main-thread only.
+#[cfg(target_os = "macos")]
+pub fn window_frame(ns_view: *mut std::ffi::c_void) -> Option<(f64, f64, f64, f64)> {
+    use objc2::{msg_send, msg_send_id, rc::Retained, runtime::AnyObject};
+    use objc2_app_kit::NSWindow;
+    use objc2_foundation::{MainThreadMarker, NSRect};
+
+    if MainThreadMarker::new().is_none() || ns_view.is_null() {
+        return None;
+    }
+    let view: &AnyObject = unsafe { &*(ns_view as *const AnyObject) };
+    let window: Option<Retained<NSWindow>> = unsafe { msg_send_id![view, window] };
+    let window = window?;
+    let frame: NSRect = unsafe { msg_send![&*window, frame] };
+    Some((
+        frame.origin.x,
+        frame.origin.y,
+        frame.size.width,
+        frame.size.height,
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn window_frame(_ns_view: *mut std::ffi::c_void) -> Option<(f64, f64, f64, f64)> {
+    None
+}
 
 /// Width to reserve at the leading edge of the tabstrip so the OS
 /// traffic-light buttons (close / minimize / zoom) don't overlap our

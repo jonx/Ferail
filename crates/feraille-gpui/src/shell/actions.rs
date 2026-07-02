@@ -285,5 +285,13 @@ actions!(
         /// Header/row context menu — forget the whole visit log
         /// (clears Recents and the Ant Trail heat).
         ClearRecents,
+        // Window docking (docs/features/DOCK.md). Dock the whole window to the
+        // left or right screen edge as an auto-hiding drawer that floats over
+        // everything and reveals on an edge-slam; `Undock` restores it to a
+        // normal window. macOS-only in practice — the other platforms' shell
+        // stubs no-op, so these silently do nothing there.
+        DockLeft,
+        DockRight,
+        Undock,
     ]
 );

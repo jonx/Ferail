@@ -172,9 +172,10 @@ impl DiskUsageView {
         let root_id = fs.id_for_path(&canonical);
         let cancel = Arc::new(AtomicBool::new(false));
         let msg_queue = Arc::new(Mutex::new(VecDeque::new()));
-        // Resolve volume capacity for the header capacity bar.
-        // None on non-macOS or when the volume info lookup failed.
-        let volume = feraille_fs_native::volume_info_for_path(&canonical);
+        // Volume capacity for the header bar arrives off-thread below —
+        // the NSURL/statfs lookup can round-trip to a network mount,
+        // and this constructor runs on the UI thread.
+        let volume = None;
         let mut view = Self {
             root_path: canonical.clone(),
             root_id,
@@ -207,6 +208,21 @@ impl DiskUsageView {
             focus_handle: cx.focus_handle(),
         };
         view.start_scan(fs, cx);
+        // Fetch the header capacity-bar volume info off-thread. The
+        // root never changes for a DU view, so no staleness guard is
+        // needed beyond the entity being alive.
+        let vol_path = canonical;
+        cx.spawn(async move |this, cx| {
+            let volume = cx
+                .background_executor()
+                .spawn(async move { feraille_fs_native::volume_info_for_path(&vol_path) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.volume = volume;
+                cx.notify();
+            });
+        })
+        .detach();
         view
     }
 
