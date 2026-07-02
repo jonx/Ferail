@@ -1096,6 +1096,14 @@ where
         self.horizontal_scroll_handle.set_offset(offset);
     }
 
+    /// Live column widths in display order (col_groups carry the
+    /// drag-resized values; `delegate.columns[..].width` only holds
+    /// the construction seed). Fork addition — backs column
+    /// order/width persistence in the host shell.
+    pub fn col_widths(&self) -> Vec<Pixels> {
+        self.col_groups.iter().map(|g| g.width).collect()
+    }
+
     /// The `ix`` is the index of the col to resize,
     /// and the `size` is the new size for the col.
     fn resize_cols(&mut self, ix: usize, size: Pixels, _: &mut Window, cx: &mut Context<Self>) {

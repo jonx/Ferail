@@ -1626,7 +1626,7 @@ impl Shell {
         let subscription = cx.subscribe_in(
             &table,
             window,
-            move |this, _table, event: &TableEvent, window, cx| {
+            move |this, table, event: &TableEvent, window, cx| {
                 if this.active_tab().id != tab_id {
                     return;
                 }
@@ -1635,6 +1635,23 @@ impl Shell {
                         row_ix, modifiers, ..
                     } => {
                         this.apply_row_click_gesture(*row_ix, *modifiers, cx);
+                    }
+                    // Column layout is a process-wide preference: a
+                    // reorder or resize on any tab writes through and
+                    // seeds every NEW tab/window (existing tabs keep
+                    // their live state). app_state::save is cached +
+                    // write-behind — no I/O on this thread.
+                    TableEvent::MoveColumn(..) | TableEvent::ColumnWidthsChanged(..) => {
+                        let spec = {
+                            let state = table.read(cx);
+                            crate::file_list::columns_spec(
+                                &state.delegate().columns,
+                                Some(&state.col_widths()),
+                            )
+                        };
+                        let mut s = app_state::load();
+                        s.list_columns = Some(spec);
+                        app_state::save(&s);
                     }
                     TableEvent::ExternalDrop { row_ix, paths } => {
                         // Dropped onto a folder row — transfer into

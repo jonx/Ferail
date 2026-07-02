@@ -444,6 +444,11 @@ impl FileListDelegate {
         shell_focus: gpui::FocusHandle,
     ) -> Self {
         let current_sort = sort_state.get();
+        let mut columns = default_columns();
+        // Column order + widths survive across launches (drag-reorder
+        // and drag-resize write through the shell's table-event
+        // bridge). app_state::load() is the in-memory cache — no I/O.
+        apply_persisted_columns(&mut columns, crate::app_state::load().list_columns.as_deref());
         Self {
             entries: Vec::new(),
             // Next-level Phase 1: Magic-driven `Format` column
@@ -457,22 +462,7 @@ impl FileListDelegate {
             // also handles resizing + reorder when its TableState
             // has col_resizable / col_movable enabled (both default
             // true in our pinned version).
-            columns: vec![
-                Column::new("name", "Name").width(360.0).sortable(),
-                Column::new("size", "Size").width(100.0).sortable(),
-                Column::new("format", "Format").width(220.0).sortable(),
-                Column::new("modified", "Modified").width(160.0).sortable(),
-                // Description column: rich ` · `-joined facts derived
-                // from the magic-byte parse (bitness/arch/subsystem
-                // for binaries, w×h for images, channels/kHz/duration
-                // for audio, etc.). Populated by the prefetch worker —
-                // empty until the worker batch lands, then never
-                // touched by paint. Not sortable in v1: lex sort of
-                // description strings groups MP3s near MP4s but
-                // separates 32-bit from 64-bit binaries, which is
-                // confusing. Revisit if users ask.
-                Column::new("description", "Description").width(320.0),
-            ],
+            columns,
             fs,
             paths: HashMap::new(),
             icons,
@@ -1689,6 +1679,84 @@ impl std::str::FromStr for SortColumn {
 
 /// In-place sort with folders-first grouping (Finder convention).
 /// Pure logic, easy to extend.
+
+/// The built-in column set, in default order.
+fn default_columns() -> Vec<Column> {
+    vec![
+        Column::new("name", "Name").width(360.0).sortable(),
+        Column::new("size", "Size").width(100.0).sortable(),
+        Column::new("format", "Format").width(220.0).sortable(),
+        Column::new("modified", "Modified").width(160.0).sortable(),
+        // Description column: rich ` · `-joined facts derived
+        // from the magic-byte parse (bitness/arch/subsystem
+        // for binaries, w×h for images, channels/kHz/duration
+        // for audio, etc.). Populated by the prefetch worker —
+        // empty until the worker batch lands, then never
+        // touched by paint. Not sortable in v1: lex sort of
+        // description strings groups MP3s near MP4s but
+        // separates 32-bit from 64-bit binaries, which is
+        // confusing. Revisit if users ask.
+        Column::new("description", "Description").width(320.0),
+    ]
+}
+
+/// Column width clamp for persisted values — a corrupt entry can't
+/// collapse a column to 0 or blow the layout out.
+const COLUMN_WIDTH_MIN: f32 = 60.0;
+const COLUMN_WIDTH_MAX: f32 = 1200.0;
+
+/// Apply a persisted `key:width,key:width,…` spec (see
+/// `app_state::AppState::list_columns`) onto the default column set:
+/// listed keys take the spec's order and width; unknown keys are
+/// ignored; columns missing from the spec keep their default relative
+/// order at the end. Forward- and backward-compatible by construction.
+pub fn apply_persisted_columns(columns: &mut Vec<Column>, spec: Option<&str>) {
+    let Some(spec) = spec else { return };
+    let mut ordered: Vec<Column> = Vec::with_capacity(columns.len());
+    for entry in spec.split(',') {
+        let mut parts = entry.splitn(2, ':');
+        let key = parts.next().unwrap_or("").trim();
+        if key.is_empty() {
+            continue;
+        }
+        let Some(pos) = columns.iter().position(|c| c.key.as_ref() == key) else {
+            continue; // unknown key (older/newer build) — skip
+        };
+        let mut col = columns.remove(pos);
+        // `"NaN".parse::<f32>()` succeeds — filter non-finite values
+        // or the clamp propagates NaN into the layout.
+        if let Some(w) = parts
+            .next()
+            .and_then(|w| w.trim().parse::<f32>().ok())
+            .filter(|w| w.is_finite())
+        {
+            col.width = px(w.clamp(COLUMN_WIDTH_MIN, COLUMN_WIDTH_MAX));
+        }
+        ordered.push(col);
+    }
+    // Anything the spec didn't mention (new columns in this build)
+    // trails in default order.
+    ordered.append(columns);
+    *columns = ordered;
+}
+
+/// Serialize the current column order (+ live widths when the table
+/// provides them, else the construction widths) into the persisted
+/// `key:width` spec.
+pub fn columns_spec(columns: &[Column], live_widths: Option<&[Pixels]>) -> String {
+    columns
+        .iter()
+        .enumerate()
+        .map(|(ix, col)| {
+            let width = live_widths
+                .and_then(|w| w.get(ix).copied())
+                .unwrap_or(col.width);
+            format!("{}:{:.0}", col.key, f32::from(width))
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// Display-leaf name for the drag chip (macOS `:` → `/`).
 fn ghost_name(path: &std::path::Path) -> SharedString {
     path.file_name()
@@ -1801,6 +1869,51 @@ pub fn apply_sort<C: gpui::AppContext>(
 #[allow(dead_code)]
 fn _font_weight_check() -> FontWeight {
     FontWeight::MEDIUM
+}
+
+#[cfg(test)]
+mod column_persist_tests {
+    use super::{apply_persisted_columns, columns_spec, default_columns};
+    use gpui::px;
+
+    #[test]
+    fn spec_round_trips_order_and_widths() {
+        let mut cols = default_columns();
+        apply_persisted_columns(&mut cols, Some("modified:200,name:420,size:90"));
+        let keys: Vec<&str> = cols.iter().map(|c| c.key.as_ref()).collect();
+        // Listed keys in spec order; unlisted (format, description)
+        // trail in default relative order.
+        assert_eq!(keys, ["modified", "name", "size", "format", "description"]);
+        assert_eq!(cols[0].width, px(200.0));
+        assert_eq!(cols[1].width, px(420.0));
+        assert_eq!(cols[2].width, px(90.0));
+        // Serialize → re-apply gives the same layout.
+        let spec = columns_spec(&cols, None);
+        let mut again = default_columns();
+        apply_persisted_columns(&mut again, Some(&spec));
+        assert_eq!(
+            again.iter().map(|c| c.key.clone()).collect::<Vec<_>>(),
+            cols.iter().map(|c| c.key.clone()).collect::<Vec<_>>()
+        );
+        assert_eq!(again[0].width, cols[0].width);
+    }
+
+    #[test]
+    fn hostile_specs_cannot_wedge_the_table() {
+        // Unknown keys, garbage widths, empty entries: defaults survive.
+        let mut cols = default_columns();
+        apply_persisted_columns(&mut cols, Some("bogus:10,,name:NaN,size:-50,modified:99999"));
+        assert_eq!(cols.len(), default_columns().len());
+        // name kept its default width (unparseable), size clamped up,
+        // modified clamped down.
+        assert_eq!(cols[0].key.as_ref(), "name");
+        assert_eq!(cols[0].width, px(360.0));
+        assert_eq!(cols[1].width, px(super::COLUMN_WIDTH_MIN));
+        assert_eq!(cols[2].width, px(super::COLUMN_WIDTH_MAX));
+        // Live widths override construction widths in the spec.
+        let spec = columns_spec(&cols, Some(&[px(111.0), px(222.0)]));
+        assert!(spec.starts_with("name:111,size:222,"));
+    }
 }
 
 #[cfg(test)]

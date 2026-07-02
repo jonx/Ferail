@@ -37,8 +37,6 @@ and let git history plus release notes carry the record.
     worker and Empty Trash (show partial + per-item), Clear Quarantine (count
     only today), and the **silent** context-menu tag-toggle (logs, never
     notifies).
-- **Persist file-table column order** after drag-reorder. `move_column`
-  reorders the live vec but never persists; widths already persist.
 - **Grid marquee / rubber-band selection** — the last grid-parity gap now that
   per-cell adornments (tag dots, star, heat tint, cut dimming, tooltip) are
   painted. No list equivalent to copy; new background drag-rect gesture.

@@ -95,6 +95,13 @@ pub struct AppState {
     /// Grid icon display size in logical px (longest edge). `None` ==
     /// never set (defaults to [`crate::grid::DEFAULT_ICON_SIZE`]).
     pub icon_size: Option<u32>,
+    /// File-table column order + widths, as `key:width` pairs in
+    /// display order (e.g. `name:360,size:100,...`). One key covers
+    /// both drag-reorder and drag-resize. `None` == defaults.
+    /// Unknown/missing column keys are reconciled at load by
+    /// [`crate::file_list::apply_persisted_columns`], so schema drift
+    /// can't wedge the table.
+    pub list_columns: Option<String>,
     /// "light", "dark", or "system". `None` = follow the system
     /// detection done at startup (Stage 9.a default).
     pub theme_pref: Option<String>,
@@ -283,6 +290,9 @@ fn load_from_disk() -> AppState {
             "icon_size" => {
                 out.icon_size = val.trim().parse::<u32>().ok();
             }
+            "list_columns" if !val.trim().is_empty() => {
+                out.list_columns = Some(val.trim().to_string());
+            }
             "theme_pref" => {
                 let v = val.trim().to_lowercase();
                 if matches!(v.as_str(), "light" | "dark" | "system") {
@@ -427,6 +437,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(n) = state.icon_size {
         s.push_str(&format!("icon_size={n}\n"));
+    }
+    if let Some(c) = &state.list_columns {
+        s.push_str(&format!("list_columns={c}\n"));
     }
     if let Some(p) = &state.theme_pref {
         s.push_str(&format!("theme_pref={p}\n"));
