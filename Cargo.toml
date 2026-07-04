@@ -9,6 +9,7 @@ members = [
     "crates/feraille-shell-mac",
     "crates/feraille-shell-win32",
     "crates/feraille-shell-linux",
+    "crates/feraille-shell-aros",
     "crates/feraille-video-mpv",
     "crates/feraille-gpui",
 ]
@@ -31,6 +32,7 @@ feraille-meta         = { path = "crates/feraille-meta" }
 feraille-shell-mac    = { path = "crates/feraille-shell-mac" }
 feraille-shell-win32  = { path = "crates/feraille-shell-win32" }
 feraille-shell-linux  = { path = "crates/feraille-shell-linux" }
+feraille-shell-aros   = { path = "crates/feraille-shell-aros" }
 feraille-video-mpv    = { path = "crates/feraille-video-mpv" }
 
 # Still needed by feraille-shell-mac for the winit-window-taking subset
@@ -82,6 +84,34 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee3
 # grammar is a C-compiled crate — a real but one-time build cost.
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "c112e7b482b6b9c53a8c43deaf5847b94a29ad82", features = ["tree-sitter-languages"] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "c112e7b482b6b9c53a8c43deaf5847b94a29ad82" }
+
+# AROS port (branch aros-port, local-only): gpui + gpui_platform come from the
+# local zed fork (same pinned rev 1d217ee + the new gpui_aros backend crate).
+# On macOS/Windows/Linux the fork's code is byte-identical to the pinned rev,
+# so this patch changes nothing off-AROS; gpui's intra-repo path deps (and
+# gpui-component's gpui dep) all resolve into the fork automatically.
+[patch."https://github.com/zed-industries/zed"]
+gpui = { path = "/Users/jkn/Source/zed-aros/crates/gpui" }
+gpui_platform = { path = "/Users/jkn/Source/zed-aros/crates/gpui_platform" }
+
+# gpui-component at the same pinned rev (a worktree of the local checkout at
+# c112e7b, branch aros-port) with one delta: `smol` → `async-channel` at its
+# two channel-only call sites, keeping smol's async-io/rustix reactor (no
+# AROS arm) out of the graph. Identical behavior on every target.
+[patch."https://github.com/longbridge/gpui-component"]
+gpui-component = { path = "/Users/jkn/Source/gpui-component-aros/crates/ui" }
+gpui-component-assets = { path = "/Users/jkn/Source/gpui-component-aros/crates/assets" }
+
+# stacker has no AROS arm upstream (its C stack-growth probe assumes
+# unix/windows); the zed fork vendors 0.1.23 with a no-op AROS fallback.
+# Byte-identical behavior on every other target (same upstream source +
+# an added cfg arm), so this patch is inert off-AROS.
+[patch.crates-io]
+stacker = { path = "/Users/jkn/Source/zed-aros/vendor-aros/stacker" }
+# filetime (via notify) has unix/windows/wasm arms only; the vendored copy
+# adds an AROS arm (std-Metadata reads, set-times unsupported). Same source
+# otherwise — inert off-AROS.
+filetime = { path = "/Users/jkn/Source/zed-aros/vendor-aros/filetime" }
 
 [profile.dev]
 # Text rasterization is sluggish at -Copt-level=0 — keep some optimization in dev.

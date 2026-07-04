@@ -10,6 +10,12 @@ edition = "2024"
 rust-version = "1.85"
 publish = false
 
+# "aros" is a custom-JSON target (branch aros-port); register its target_os
+# value so host builds don't warn on the platform_shell alias' cfg arm.
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(target_os, values("aros"))']
+
 [features]
 # Compile in the optional mpv video provider (libmpv, loaded at runtime from
 # the path set in Settings). Off by default so a stock build needs nothing.
@@ -95,6 +101,12 @@ feraille-video-mpv = { workspace = true, optional = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 feraille-shell-linux.workspace = true
 feraille-video-mpv = { workspace = true, optional = true }
+
+# AROS (branch aros-port): the shell-linux stub scaffold re-exported under
+# the AROS name. No mpv — libmpv has no AROS build, so the `mpv` feature
+# stays a no-op there.
+[target.'cfg(target_os = "aros")'.dependencies]
+feraille-shell-aros.workspace = true
 
 # Windows-only build script that embeds resources/feraille.ico and a
 # VERSIONINFO block into the .exe. On non-Windows the build script

@@ -1,0 +1,15 @@
+[package]
+name = "feraille-shell-aros"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+edition = "2021"
+publish = false
+
+[dependencies]
+# v1: the AROS shell rides feraille-shell-linux's portable scaffold — its
+# `cfg(not(target_os = "linux"))` arms are exactly the safe no-op surface a
+# new platform starts from, and the platform-neutral impls (zip compression)
+# are pure Rust. Real AROS integrations (workbench.library, icon.library,
+# clipboard.device file URLs) replace re-exports here incrementally.
+feraille-shell-linux.workspace = true
