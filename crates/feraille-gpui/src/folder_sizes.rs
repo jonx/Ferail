@@ -94,6 +94,14 @@ pub fn start(
     force: bool,
     cx: &mut gpui::Context<Shell>,
 ) {
+    // AROS (branch aros-port): the recursive du walk drives hosted AROS's
+    // emul-handler into a DoExamineNext bus fault (the handler's own stack
+    // — graft/UPSTREAM-NOTES item 35 territory), tearing down the fs a
+    // minute into every session. Folder sizes stay "--" there until the
+    // handler is hardened; a missing nicety beats a Suspend requester.
+    if cfg!(target_os = "aros") {
+        return;
+    }
     // Snapshot the directory rows on the foreground executor. The
     // worker gets `Send` data only. Symlinks-to-directories are
     // `EntryKind::Symlink` and stay excluded — we never follow them.
