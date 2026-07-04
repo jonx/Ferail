@@ -116,10 +116,21 @@ vanish independently while directories survive. Encountered so far:
   like `-noposixc`), Homebrew clang builtin headers copied into its GC'd
   resource dir, and `lib/generic/libclang_rt.builtins-aarch64.a` symlinked
   into the xtools.
-- `C/Shell`, `L/Shell-Seg` and other runtime files — the current recovery
-  is a **full `make` of the scratch tree** and booting that instead
-  (self-consistent image at source HEAD); single-file transplants into the
-  old image get past one failure and into the next.
+- **`AROS.boot`** — the sneakiest one. dos's `__dos_IsBootable` requires a
+  signature file `:AROS.boot` at the boot volume root containing the CPU
+  string (`aarch64`). With it GC'd, every mount succeeds but the boot
+  volume is deemed "not bootable" (Res2=212) and dos.library's init
+  returns NULL — surfacing as the wildly misleading `Could not open
+  version 36 or higher of library "dos.library"` alert from dosboot.
+  Restore with `echo aarch64 > <bootdir>/AROS.boot`. (Diagnosed by
+  transplanting a `-DDEBUG=1` dos.library built via
+  `make kernel-dos` in the scratch tree — the `Dos/CliInit:` trace names
+  the failing step directly. Keep the debug build out of normal boots:
+  it logs every DOS packet and makes big LoadSegs crawl.)
+- Single-file transplants from the scratch tree into the old image work
+  fine (FileSystem.resource, dos.library round-tripped cleanly);
+  `make <metatarget>` in the scratch tree is the recovery tool of choice.
+  Avoid plain `make` — the default target tries to fetch and build LLVM.
 
 The durable fix would be moving the canonical build out of `/tmp` (the
 tooling honors `AROS_BUILD`/`BUILD`/`AROS_CTL_BOOTD` env for that).
