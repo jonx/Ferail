@@ -158,6 +158,15 @@ impl IconCache {
         self.by_kind.insert(key, icon);
     }
 
+    /// Whether `img` is the shared blank placeholder — i.e. the platform
+    /// couldn't produce an icon (either a transient failure, or a platform
+    /// whose `fetch_icon_rgba` is still a stub: Linux scaffold, AROS).
+    /// Render paths use this to fall back to the Lucide type glyph instead
+    /// of an empty slot.
+    pub fn is_blank(&self, img: &Arc<RenderImage>) -> bool {
+        self.blank.as_ref().is_some_and(|b| Arc::ptr_eq(b, img))
+    }
+
     fn blank_icon(&mut self) -> Arc<RenderImage> {
         if let Some(b) = &self.blank {
             return b.clone();

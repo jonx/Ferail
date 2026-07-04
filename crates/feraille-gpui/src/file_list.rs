@@ -995,12 +995,27 @@ impl TableDelegate for FileListDelegate {
                 let icon_wrapper: gpui::AnyElement = match entry.kind {
                     EntryKind::Directory => {
                         let icon = self.icons.borrow_mut().icon_for(entry, &path);
+                        // Platforms whose icon bridge is still a stub (Linux
+                        // scaffold, AROS) yield the blank placeholder — show
+                        // the Lucide folder glyph instead of an empty slot.
+                        let inner: gpui::AnyElement = if self.icons.borrow().is_blank(&icon) {
+                            let fi = file_type_icon(entry);
+                            let tint = tint_color(fi.tint, cx);
+                            svg()
+                                .path(fi.path)
+                                .w(px(slot))
+                                .h(px(slot))
+                                .text_color(tint)
+                                .into_any_element()
+                        } else {
+                            img(icon).w(px(slot)).h(px(slot)).into_any_element()
+                        };
                         div()
                             .relative()
                             .flex_shrink_0()
                             .w(px(slot))
                             .h(px(slot))
-                            .child(img(icon).w(px(slot)).h(px(slot)))
+                            .child(inner)
                             .when(quarantined, badge_overlay)
                             .into_any_element()
                     }

@@ -959,12 +959,30 @@ impl Shell {
                             let cached = icons.borrow().get_folder_icon_sized(&path, icon_bucket);
                             let ic =
                                 cached.unwrap_or_else(|| icons.borrow_mut().icon_for(entry, &path));
-                            img(ic).max_w(px(slot)).max_h(px(slot)).into_any_element()
+                            if icons.borrow().is_blank(&ic) {
+                                // Platform icon bridge still a stub (Linux
+                                // scaffold, AROS): Lucide folder glyph, same
+                                // sizing as the file-side SVG fallback.
+                                let fi = crate::icons::file_type_icon(entry);
+                                let tint = crate::icons::tint_color(fi.tint, app);
+                                svg()
+                                    .path(fi.path)
+                                    .w(px(slot * 0.72))
+                                    .h(px(slot * 0.72))
+                                    .text_color(tint)
+                                    .into_any_element()
+                            } else {
+                                img(ic).max_w(px(slot)).max_h(px(slot)).into_any_element()
+                            }
                         }
                         EntryKind::File | EntryKind::Symlink => {
                             let thumb = if show_thumbs && crate::thumbnails::is_thumbnailable(entry)
                             {
-                                thumbs.borrow().get(&path, bucket)
+                                // `get_best`: show the crisp bucket once ready,
+                                // else a smaller cached tier (the low-res
+                                // preview, or a size warmed at another zoom) as
+                                // an instant stand-in that sharpens in place.
+                                thumbs.borrow().get_best(&path, bucket)
                             } else {
                                 None
                             };
@@ -1286,6 +1304,21 @@ impl Shell {
             .on_action(cx.listener(Self::on_grid_down_extend))
             .child(measure)
             .child(list)
+            // Vertical scrollbar overlay, mirroring the preview pane /
+            // dupe panel pattern: a 16px strip pinned to the right edge
+            // as the last child of this `.relative()` container. Binds
+            // to the same `grid_scroll` handle the uniform_list tracks;
+            // auto-hides per the theme's `scrollbar_show` (the list
+            // view gets its equivalent from the multi_table primitive).
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .bottom_0()
+                    .w(px(16.0))
+                    .child(gpui_component::scroll::Scrollbar::vertical(&scroll)),
+            )
             .into_any_element()
     }
 
@@ -3076,6 +3109,11 @@ impl Render for Shell {
         div()
             .key_context(SHELL_CONTEXT)
             .track_focus(&self.focus_handle)
+            // Type-to-select: printable keys with the list or grid
+            // focused jump the selection to the first matching name.
+            // Runs only for characters no keybinding claimed (gpui
+            // matches actions first), so it never shadows nav keys.
+            .on_key_down(cx.listener(Self::on_typeahead_key))
             // Any left-click dismisses an open breadcrumb context menu
             // (picking an item or clicking away), so it's also the
             // moment to re-enable the crumb tooltip we suppressed while
