@@ -10,6 +10,7 @@ members = [
     "crates/feraille-shell-win32",
     "crates/feraille-shell-linux",
     "crates/feraille-shell-aros",
+    "crates/feraille-aros-app",
     "crates/feraille-video-mpv",
     "crates/feraille-gpui",
 ]

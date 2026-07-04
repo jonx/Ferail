@@ -26,9 +26,26 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
   nothing points back at the app). `Stack 16000000` before launching (see
   `gpui_aros_smoke/gpui-smoke.startup`) fixes it. Feraille's eventual
   launcher must set this (startup script or icon stack tooltype).
-- Next for Feraille itself: `cargo build` the real binary the same way
-  (staticlib + C harness is the proven route today), scroll-wheel + window
-  resize exercise, and growing real AROS impls in `feraille-shell-aros`.
+- **FERAILLE ITSELF RUNS ON AROS** (same day): `crates/feraille-aros-app`
+  (staticlib + C harness + `link-aros.sh`, mirroring the smoke) boots the
+  full app through the shared `feraille_gpui::boot::run_gui` — complete
+  chrome, dark theme, and a real `SYS:` listing (30 items: boot, C,
+  Classes, Developer, Devs, Fonts, Libs, Prefs, Storage…). Proof:
+  `screenshots/aros-feraille-clean.png`. Launch recipe:
+  `feraille.startup` (`Stack 16000000` + `SetEnv HOME "SYS:"` +
+  `C:Feraille --theme dark`).
+- Landed on the way: `feraille_gpui::boot` (the GUI boot moved from
+  `main.rs` into the library so the desktop binary and the AROS wrapper
+  share one path), and a rust-aros std fix (`cstr()` translates unix
+  path joins — `SYS:/C` → `SYS:C` — at the syscall boundary; commit
+  a089e3d there).
+- Known AROS-side frontier: under Feraille's concurrent metadata walkers
+  the OS's own **emul-handler** can bus-fault in `DoExamineNext`
+  (graft/UPSTREAM-NOTES item 35 territory — its stack). The
+  crash-containment work catches it (Suspend keeps the session alive).
+  Consider gating the folder-size walker / thumbnail warmers on AROS
+  until the handler is hardened. Also: `--screenshot` (headless) is
+  macOS-only; proof shots go through `graft/aros-ctl shot`.
 
 ## The pieces and where they live
 

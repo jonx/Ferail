@@ -1973,6 +1973,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "feraille-aros-app"
+version = "0.0.1"
+dependencies = [
+ "feraille-gpui",
+ "getrandom 0.3.4",
+]
+
+[[package]]
 name = "feraille-core"
 version = "0.0.1"
 dependencies = [
