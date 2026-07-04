@@ -790,4 +790,159 @@ impl Shell {
     ) {
         self.clear_active_selection(cx);
     }
+
+    /// Type-to-select. A printable key pressed with the file list or
+    /// icon grid focused jumps the selection to the first entry whose
+    /// display name starts with the accumulated prefix, scrolling it
+    /// into view. Wired as an `on_key_down` on the shell root, so it
+    /// covers both views (the grid renders inside the same tree).
+    ///
+    /// gpui matches keybindings to actions *before* running key
+    /// listeners (window.rs `dispatch_key_event`), so arrows, Space
+    /// (Quick Look), Cmd/Ctrl chords, etc. are consumed as actions and
+    /// never reach here — only unbound printable characters do.
+    pub(crate) fn on_typeahead_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Only act when the active view genuinely holds focus. The
+        // shell root sees key events bubbling up from descendants
+        // (e.g. the toolbar filter input); those must not typeahead.
+        let grid = matches!(self.active_tab().view_mode, crate::grid::ViewMode::Grid);
+        // `contains_focused`, not `is_focused`: clicking a row moves window
+        // focus to the table's own handle (a descendant of the shell root),
+        // and typing right after a click must still typeahead. Exact-match
+        // checking silently disabled typeahead after any click — found on
+        // the AROS port, but latent on every platform. The filter input is
+        // not a descendant of either handle, so it stays excluded.
+        let focused = if grid {
+            self.active_tab().grid_focus.contains_focused(window, cx)
+        } else {
+            self.focus_handle.contains_focused(window, cx)
+        };
+        if !focused {
+            return;
+        }
+
+        // Command/Control/Function chords are not typeahead input.
+        // (`key_char` is already None for most of them, but Function
+        // keys can carry a char — belt and suspenders.)
+        let m = &event.keystroke.modifiers;
+        if m.platform || m.control || m.function {
+            return;
+        }
+        // `key_char` is the character that would have been typed (None
+        // for Cmd-S etc.). Accept only a single, non-control glyph.
+        let Some(ch) = event
+            .keystroke
+            .key_char
+            .as_deref()
+            .and_then(|s| s.chars().next().filter(|c| !c.is_control() && s.chars().count() == 1))
+        else {
+            return;
+        };
+        // Lowercase for case-insensitive matching (first scalar is
+        // enough for the ASCII + common-accent names we match against).
+        let ch = ch.to_lowercase().next().unwrap_or(ch);
+
+        if self.typeahead_advance(ch, grid, cx) {
+            // Consumed — don't let the character fall through to any
+            // IME / text-input handling on the way back up.
+            cx.stop_propagation();
+        }
+    }
+
+    /// Append `ch` to the type-to-select buffer (resetting it first if
+    /// the idle timeout elapsed) and move the selection to the first
+    /// matching entry. Returns whether a keystroke was consumed.
+    ///
+    /// Behaviour mirrors Finder: accumulating characters narrow the
+    /// prefix from the top of the list; pressing the *same* single
+    /// character repeatedly cycles through every entry starting with
+    /// it, wrapping around.
+    fn typeahead_advance(&mut self, ch: char, grid: bool, cx: &mut Context<Self>) -> bool {
+        let now = std::time::Instant::now();
+        let expired = self
+            .typeahead
+            .as_ref()
+            .map_or(true, |(_, t)| now.duration_since(*t) > TYPEAHEAD_TIMEOUT);
+        let prev = if expired {
+            String::new()
+        } else {
+            self.typeahead
+                .as_ref()
+                .map(|(b, _)| b.clone())
+                .unwrap_or_default()
+        };
+        let candidate = format!("{prev}{ch}");
+
+        // Snapshot the visible entries (display names lowercased) and
+        // the current lead's index — same read pattern the arrow-key
+        // navigators use.
+        let (names, ids): (Vec<String>, Vec<NodeId>) = {
+            let d = self.active_tab().table.read(cx).delegate();
+            (
+                d.entries
+                    .iter()
+                    .map(|e| e.display_name.to_lowercase())
+                    .collect(),
+                d.entries.iter().map(|e| e.id).collect(),
+            )
+        };
+        if ids.is_empty() {
+            return false;
+        }
+        let cur = self
+            .active_tab()
+            .lead
+            .and_then(|id| ids.iter().position(|x| *x == id));
+
+        // 1. Extend the prefix: first entry (from the top) matching the
+        //    full accumulated candidate.
+        let (matched, buffer) = if let Some(i) = names.iter().position(|n| n.starts_with(&candidate))
+        {
+            (Some(i), candidate)
+        } else if prev.is_empty() || prev.chars().all(|c| c == ch) {
+            // 2. Same single character repeated with no longer match →
+            //    cycle to the next entry starting with `ch`, wrapping.
+            let single = ch.to_string();
+            let start = cur.map_or(0, |i| i + 1);
+            let next = (0..ids.len())
+                .map(|k| (start + k) % ids.len())
+                .find(|&k| names[k].starts_with(&single));
+            (next, single)
+        } else {
+            // 3. Multi-character prefix that matches nothing: keep the
+            //    old buffer and don't move (but stay grouped in time).
+            (None, prev)
+        };
+
+        self.typeahead = Some((buffer, now));
+
+        let Some(i) = matched else {
+            // Still consumed the key (typeahead is active); just no move.
+            return true;
+        };
+        let id = ids[i];
+        let cols = if grid { self.grid_cols(cx).max(1) } else { 1 };
+        self.replace_select_one(id, cx);
+        self.request_preview_for_row(i, cx);
+        if grid {
+            // The list view auto-scrolls via `set_selected_row`; the
+            // grid's uniform_list has its own scroll handle that
+            // selection does not touch, so nudge it here.
+            self.active_tab()
+                .grid_scroll
+                .scroll_to_item(i / cols, gpui::ScrollStrategy::Center);
+        }
+        cx.notify();
+        true
+    }
 }
+
+/// Idle window after which the type-to-select buffer resets: a keystroke
+/// this long after the previous one starts a fresh prefix rather than
+/// extending the old one (Finder uses roughly this).
+const TYPEAHEAD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
