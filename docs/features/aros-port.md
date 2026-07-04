@@ -11,9 +11,24 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
   — the whole app type-checks for AROS: gpui via the `gpui_aros` CPU
   backend, gpui-component (full tree-sitter grammar set), bundled sqlite,
   notify, and every feraille crate.
-- A GPUI smoke app (`zed-aros/crates/gpui_aros_smoke`) **links** into a real
-  AROS `C:GpuiSmoke` command via collect-aros.
-- Run-on-AROS is gated on a healthy boot image (see *Boot image damage*).
+- **GPUI RUNS INTERACTIVELY ON BOOTED AROS** (2026-07-04). The smoke app
+  (`zed-aros/crates/gpui_aros_smoke`, linked via collect-aros into
+  `C:GpuiSmoke`) opens a real Intuition window, renders gradients / glyphs /
+  shadowed cards / quads through the tiny-skia CPU renderer, and echoes
+  live keyboard input end-to-end (cocoametal → keyboard HIDD → Intuition
+  RAWKEY → keymap.library → gpui `Keystroke` → re-render). Proof:
+  `screenshots/aros-gpui-window.png`, `aros-gpui-bigstack-key.png`,
+  `aros-gpui-final.png`.
+- **Stack is the sharp edge**: AROS shells launch commands with tens-of-KB
+  stacks; gpui's dispatch/layout recursion overflows that, and in AROS's
+  single address space the overflow corrupts *neighboring* tasks
+  (emul-handler / graphics.library crash with wild NULL-offset faults —
+  nothing points back at the app). `Stack 16000000` before launching (see
+  `gpui_aros_smoke/gpui-smoke.startup`) fixes it. Feraille's eventual
+  launcher must set this (startup script or icon stack tooltype).
+- Next for Feraille itself: `cargo build` the real binary the same way
+  (staticlib + C harness is the proven route today), scroll-wheel + window
+  resize exercise, and growing real AROS impls in `feraille-shell-aros`.
 
 ## The pieces and where they live
 
