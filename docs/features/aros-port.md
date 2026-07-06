@@ -1,5 +1,9 @@
 # AROS port (branch `aros-port`)
 
+> Building this from scratch? **[aros-building.md](aros-building.md)** is
+> the step-by-step guide (prerequisites, checkout layout, the whole chain).
+> This document is the map: what lives where and why.
+
 Feraille on AROS (the open-source AmigaOS), targeting the user's hosted
 `darwin-aarch64` AROS (AROS running as a macOS process — see
 `~/Source/aros-aarch64`). Local-only work: absolute paths to sibling
@@ -56,8 +60,8 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 | Target spec JSON + C compat shims (`endian.h`, `sys/ioctl.h`) + std C glue | `~/Source/aros-aarch64/hosted/rust/` | — |
 | gpui-component with `smol` → `async-channel` (keeps the async-io/rustix reactor out) | `~/Source/gpui-component-aros` (worktree @ pinned rev c112e7b) | `aros-port` |
 | AROS OS source (incl. `exec/types.h` storage-class-macro guards) | `~/Source/aros-upstream` | `crash-containment` |
-| AROS build tree / SDK / boot image | `/tmp/arosbuild` (canonical), `/tmp/arosbuild2` (scratch rebuilds) | — |
-| Patched crosstools (AROS clang/lld, `aarch64elf_aros` emulation, compiler-rt builtins) | `/tmp/aros-crosstools` | — |
+| AROS build tree / SDK / boot image | `~/aros-build` (env `AROS_BUILD`) | — |
+| Patched crosstools (AROS clang/lld, `aarch64elf_aros` emulation, compiler-rt builtins) | `~/aros-crosstools` (env `AROS_CROSSTOOLS`) | — |
 | Hosted-AROS run/automation harness | `~/Source/aros-aarch64/graft/` (`aros-ctl`, `run-window.sh`, smokes) | — |
 
 ## The check command
@@ -132,11 +136,28 @@ AROS_CTL_DESKTOP_EXTRA='Run <NIL: >NIL: QUIET C:GpuiSmoke' \
 graft/aros-ctl shot proof.png
 ```
 
-## Boot image damage (the `/tmp` GC problem)
+## Build tree location (stable) + recovery
 
-macOS periodically GCs `/tmp` **by file atime**, so `/tmp/arosbuild` decays
+The canonical AROS build tree and toolchain live **outside `/tmp`** (moved
+2026-07-05 after the macOS `/tmp` cleaner repeatedly gutted them):
+
+- **`~/aros-build`** — the AROS SDK / build tree / boot image.
+- **`~/aros-crosstools`** — the preserved patched clang 20.1.0 + `ld.lld` +
+  compiler-rt (the expensive part; never rebuild it).
+
+`check-aros.sh`, `link-aros.sh`, and the `.cargo/config.toml` CFLAGS all point
+here; `gpui_aros/build.rs` probes `$AROS_BUILD` (default `~/aros-build`) for the
+SDK headers. **To rebuild/recover the whole boot + desktop set** in one command
+(reusing the toolchain): `aros-aarch64/graft/rebuild-aros.sh` (see
+[build/README.md](../../../aros-aarch64/docs/features/build/README.md)). Then
+rebuild + relink Feraille: `cargo … build -p feraille-aros-app …` then
+`crates/feraille-aros-app/link-aros.sh`.
+
+### Legacy: the `/tmp` GC failure modes (why the move happened)
+
+macOS periodically GCs `/tmp` **by file atime**, so `/tmp/arosbuild` decayed
 piecemeal — headers, kickstart modules, C: commands and crosstools binaries
-vanish independently while directories survive. Encountered so far:
+vanished independently while directories survived. Encountered:
 
 - SDK headers (`gen/include`) — regenerate with the scratch recipe:
   configure a fresh `/tmp/arosbuild2` (thin xtools per
