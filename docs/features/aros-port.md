@@ -11,6 +11,29 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 
 ## Status
 
+- **On-device battery, 2026-07-06** (booted via `graft/aros-ctl`, `C:Feraille`
+  rebuilt with the native-shell + dirty-rect backend):
+  - **Self-guard boot WORKS** — launched with no `Stack` line, the wrapper
+    relaunches its own seglist at 16 MB and Feraille boots to a full themed
+    SYS: listing (30 items), sidebar, columns. `crash=none`.
+  - **Native Intuition menu bar WORKS** — the gadtools `SetMenuStrip` populated
+    from gpui `set_menus` shows `Feraille | File | Edit | Go | View | Window`
+    with the app menu (About / Settings / Quit). Verified with `aros-ctl menu`.
+  - **Open finding — selecting a menu item that opens a second window traps**
+    (About Feraille → new window → `Trap signal 5/11`, thin backtrace). The menu
+    strip renders/populates fine; the fault is in the pick→action→window-open
+    path (multi-window is untested on AROS). Containment keeps the desktop alive.
+  - **emul-handler: ExWalk PASS** (`C:ExWalk 8x25 EXALL` over SYS:C, 24600
+    entries, 0 errors) — the stack fix holds. **But** Feraille's recursive SYS:
+    folder-size walk trips a *distinct* `DoExamineNext` bus fault (0x80000002),
+    so the walker is re-gated on AROS again (see aros-aarch64 UPSTREAM-NOTES
+    item 36). Everything else runs clean.
+  - **Wheel automation** is deployed in the shim (`aros-ctl wheel` → `cm_gpu`
+    build) but end-to-end scroll needs the rebuilt `cocoa.hidd` (wheel→rawkey)
+    in the *booted kickstart*, not just the source — pending a kickstart refresh.
+  - **GPU video path measured** — `hosted/gpufx-bench` (`C:GpuFxBench`) shows the
+    3D shim's YUV420→RGBA is 5-7× faster than the software kernel; relevant to a
+    future `feraille-video` / preview path on AROS.
 - **`cargo check -p feraille-gpui --target aarch64-unknown-aros` is GREEN**
   — the whole app type-checks for AROS: gpui via the `gpui_aros` CPU
   backend, gpui-component (full tree-sitter grammar set), bundled sqlite,
