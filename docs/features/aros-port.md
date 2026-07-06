@@ -121,6 +121,69 @@ cargo +nightly-2026-06-27 check -p feraille-gpui \
 AROS integrations to grow there: workbench.library reveal, icon.library
 icons, clipboard.device file URLs, DefIcons-style thumbnails.
 
+## Feature completeness & roadmap (takeover)
+
+Feraille **runs** on AROS as a browsable, themed file manager, but is **not at
+parity** with the Mac build. `feraille-gpui` is barely modified (two
+`cfg(target_os="aros")` sites), so most gaps are in the platform layers
+(`gpui_aros`, `feraille-shell-aros`) or are macOS-only features needing an
+AROS-native equivalent.
+
+Legend: ✅ works · 🟡 partial/unverified · ❌ absent.
+
+| Feature | AROS | Notes / where the work is |
+|---|---|---|
+| Boot, window, dark theme, navigation, file list | ✅ | verified live (`SYS:` listing) |
+| Keyboard / mouse / wheel | ✅ | `gpui_aros` input |
+| Clipboard (text) | ✅ | `clipboard.device` via `gpui_aros` |
+| Never-block UI | ✅ | GPUI + std-thread dispatcher |
+| Magic/content detection | ✅ | logic proven (Track-A probe) |
+| Disk-usage treemap + HTML export | ✅ | pure logic, proven |
+| Duplicate finder | ✅ | pure logic (blake3/xxh3), proven |
+| Bulk rename (regex) | ✅ | pure logic, proven |
+| Ant Trail, favorites, undo, SQLite metadata | ✅ | SQLite proven; UI paths unverified |
+| Command palette (Cmd+K) | 🟡 | GPUI-drawn (works); no native menu bar |
+| Code/syntax preview (tree-sitter) | 🟡 | grammars build; render path unverified |
+| Icon grid / native file icons | ❌ | needs `icon.library` (shell stub) |
+| Thumbnails | ❌ | needs shell + image decode + walker (gated) |
+| Reveal in Workbench | ❌ | needs `workbench.library` (shell stub) |
+| Native menu bar | ❌ | `gpui_aros` `set_menus` stub → Intuition menus |
+| Native file requesters | ❌ | `gpui_aros` → `asl.library` |
+| Media viewer (mpv) | ❌ | `feraille-video-mpv` is a macOS backend |
+| Quick Look previews | ❌ | macOS-only; AROS-way = `datatypes.library` |
+| Spotlight / indexed search | ❌ | macOS-only; no AROS equivalent yet |
+| Tags, quarantine "where from" | ❌ | macOS-only; AROS-way = **filenote** comment |
+| Drag & drop | ❌ | needs Intuition/Workbench drag |
+| Multi-window / tabs | 🟡 | single window verified; multi untested |
+
+### Roadmap (rough order)
+
+1. **Make `gpui_aros` native-shell-complete** — menus, `asl.library` file
+   requesters, cursor shapes. (See `gpui_aros/HANDOFF.md` §What's missing.)
+2. **Implement `feraille-shell-aros` for real** (it's a Linux-stub re-export
+   today): `icon.library` icons, Workbench reveal, `clipboard.device` file
+   URLs, `datatypes.library` thumbnails.
+3. **Harden the OS frontier** — the `emul-handler` bus-fault under concurrent
+   metadata walkers (folder-size walker is gated off on AROS today; see Status).
+4. **Native-the-Amiga-way features** — quarantine→filenote, previews via
+   `datatypes.library`, an AROS media path.
+
+### The AROS-specific crates (the owner flagged this — do it)
+
+Both `gpui_aros` and `feraille-shell-aros` need AROS platform APIs, and both
+currently reach them through ad-hoc C glue. Consolidate into a shared binding
+layer instead:
+
+- **`aros-sys`** — raw `extern "C"` + C shim for exec/dos/intuition/graphics/
+  cybergraphics/keymap/asl/workbench/icon/datatypes/clipboard.device.
+- **`aros`** — safe wrappers (`Window`, `MenuStrip`, `FileRequester`, `Icon`,
+  `DataType`, `Clipboard`, …), RAII, `-ffixed-x18`-safe.
+
+Then `feraille-shell-aros` builds reveal/icons/thumbnails on `aros`, and
+`gpui_aros` moves its window/menu/dialog/clipboard glue onto the same crate.
+Full rationale + surface in
+[`gpui_aros/HANDOFF.md`](../../../zed-aros/crates/gpui_aros/HANDOFF.md#proposed-next-architecture-an-aros-platform-crate-family).
+
 ## Running on hosted AROS
 
 ```sh
