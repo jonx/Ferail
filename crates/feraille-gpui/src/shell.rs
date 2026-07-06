@@ -951,6 +951,18 @@ pub struct Shell {
     pub sidebar_width: f32,
     /// Current preview pane width. Same lifecycle as `sidebar_width`.
     pub preview_width: f32,
+    /// Height of the preview pane's thumbnail box in DIPs. Adjusted by
+    /// dragging the resize grip under the image; persisted via
+    /// `app_state::preview_thumb_height` on the same debounced save as
+    /// the splitter widths.
+    pub preview_thumb_h: f32,
+    /// Live drag anchor for the thumbnail resize grip: the mouse y at
+    /// drag start and `preview_thumb_h` at that moment. The grip's
+    /// `on_drag_move` computes the new height from the absolute delta
+    /// so the box tracks the cursor 1:1 regardless of pane scroll.
+    /// Set by the grip's drag constructor; never cleared (a new drag
+    /// overwrites it, and `on_drag_move` only fires mid-drag).
+    pub preview_thumb_drag: Option<(Pixels, f32)>,
     /// True while a trailing splitter-width save is queued. The
     /// on_resize callback fires per drag tick; rather than write on each
     /// (and risk dropping the final value), the first tick arms a
@@ -1035,6 +1047,14 @@ pub struct Shell {
     /// launch activation or a same-state re-fire. Seeded `true`: the
     /// window starts active, so launch doesn't trigger a re-walk.
     was_window_active: bool,
+    /// Type-to-select buffer for the file list / icon grid. Printable
+    /// keystrokes typed with the list or grid focused accumulate here
+    /// and jump the selection to the first entry whose display name
+    /// starts with the buffer (Finder-style), scrolling it into view.
+    /// The `Instant` is the last keystroke time; after
+    /// `TYPEAHEAD_TIMEOUT` of idle the buffer resets so a fresh prefix
+    /// starts clean. `None` until first use. See `on_typeahead_key`.
+    typeahead: Option<(String, std::time::Instant)>,
     /// Live subscription handles (Input change, future watchers).
     /// Dropping them tears down the listeners — keep alongside the
     /// Shell so they outlive any frame.
@@ -1252,6 +1272,12 @@ const SIDEBAR_MAX_WIDTH: f32 = 400.0;
 const FILE_PANE_MIN_WIDTH: f32 = 360.0;
 const PREVIEW_MIN_WIDTH: f32 = 260.0;
 const PREVIEW_MAX_WIDTH: f32 = 640.0;
+/// Height range for the preview pane's thumbnail box, adjusted by the
+/// drag grip under the image (`Shell::preview`). Matches the clamp
+/// `app_state` applies at load so a stale persisted value can't wedge
+/// the pane.
+pub(crate) const PREVIEW_THUMB_MIN_H: f32 = 120.0;
+pub(crate) const PREVIEW_THUMB_MAX_H: f32 = 600.0;
 
 impl Shell {
     /// Construct the singleton `ProcessState` for this process.
@@ -1594,6 +1620,11 @@ impl Shell {
                 .preview_width
                 .unwrap_or(380.0)
                 .clamp(PREVIEW_MIN_WIDTH, PREVIEW_MAX_WIDTH),
+            preview_thumb_h: persisted
+                .preview_thumb_height
+                .unwrap_or(200.0)
+                .clamp(PREVIEW_THUMB_MIN_H, PREVIEW_THUMB_MAX_H),
+            preview_thumb_drag: None,
             splitter_save_scheduled: false,
             sidebar_collapsed: persisted.sidebar_collapsed.unwrap_or(false),
             favorites_section_collapsed: false,
@@ -1609,6 +1640,7 @@ impl Shell {
             dock_poll_epoch: 0,
             last_window_title: String::new(),
             was_window_active: true,
+            typeahead: None,
             _subscriptions: vec![breadcrumb_subscription, shortcuts_help_subscription],
         };
         shell.process.register_shell(cx.weak_entity());
@@ -2563,6 +2595,7 @@ impl Shell {
                 let mut state = app_state::load();
                 state.sidebar_width = Some(this.sidebar_width);
                 state.preview_width = Some(this.preview_width);
+                state.preview_thumb_height = Some(this.preview_thumb_h);
                 app_state::save(&state);
             });
         })
@@ -3743,49 +3776,84 @@ impl Shell {
             }
         }
 
-        // Files: Quick Look on the background executor, deduped.
-        let mut todo: Vec<PathBuf> = Vec::new();
+        // Files: Quick Look on the background executor, in bounded
+        // concurrent waves rather than the old strictly-serial loop —
+        // so a folder of photos fills in parallel instead of one icon
+        // at a time.
+        //
+        // At large icon sizes we also fetch low-res-first: a small
+        // `THUMB_PREVIEW_PX` preview before the crisp `thumb_px`, so a
+        // soft stand-in paints almost at once and then sharpens (the
+        // render side reads `get_best`, which shows the preview until
+        // the crisp bucket lands). We only bother when the crisp bucket
+        // is the largest one (512) — at smaller buckets a 128-px preview
+        // is visually indistinguishable from the final at that slot
+        // size, so the extra Quick Look call wouldn't earn its keep;
+        // there, parallelism alone carries the speed-up.
+        const PREVIEW_PX: u32 = crate::thumbnails::THUMB_PREVIEW_PX;
+        const PREVIEW_ABOVE_BUCKET: u32 = 256;
+        const WARM_CONCURRENCY: usize = 6;
+        let mut work: Vec<(PathBuf, u32)> = Vec::new();
         {
             let cache = self.process.thumbnails.borrow();
+            if thumb_px > PREVIEW_ABOVE_BUCKET {
+                for path in &files {
+                    // A preview is pointless once the crisp size is ready.
+                    if cache.get(path, thumb_px).is_none() && cache.needs_fetch(path, PREVIEW_PX) {
+                        work.push((path.clone(), PREVIEW_PX));
+                    }
+                }
+            }
             for path in &files {
                 if cache.needs_fetch(path, thumb_px) {
-                    todo.push(path.clone());
+                    work.push((path.clone(), thumb_px));
                 }
             }
         }
-        if todo.is_empty() {
+        if work.is_empty() {
             return;
         }
         {
             let mut cache = self.process.thumbnails.borrow_mut();
-            for path in &todo {
-                cache.mark_in_flight(path.clone(), thumb_px);
+            for (path, size) in &work {
+                cache.mark_in_flight(path.clone(), *size);
             }
         }
         let task_id = self.process.tasks.borrow_mut().begin(
             TaskKind::ThumbnailPrefetch,
-            format!("Loading {} thumbnails\u{2026}", todo.len()),
+            format!("Loading {} thumbnails\u{2026}", work.len()),
             false,
         );
         let thumbs = self.process.thumbnails.clone();
         let tasks = self.process.tasks.clone();
         cx.spawn(async move |this, cx| {
-            for path in todo {
-                let fetch_path = path.clone();
-                let rgba = cx
-                    .background_executor()
-                    .spawn(async move {
-                        crate::platform_shell::fetch_quick_look_thumbnail(&fetch_path, thumb_px)
+            // Each wave spawns up to `WARM_CONCURRENCY` Quick Look calls
+            // onto the background pool at once (the pool bounds real
+            // parallelism; this cap keeps some threads free for other
+            // background work), then drains them, inserting as each lands.
+            'outer: for chunk in work.chunks(WARM_CONCURRENCY) {
+                let handles: Vec<_> = chunk
+                    .iter()
+                    .cloned()
+                    .map(|(path, size)| {
+                        let fetch_path = path.clone();
+                        let handle = cx.background_executor().spawn(async move {
+                            crate::platform_shell::fetch_quick_look_thumbnail(&fetch_path, size)
+                        });
+                        (path, size, handle)
                     })
-                    .await;
-                if this
-                    .update(cx, |_this, cx| {
-                        thumbs.borrow_mut().insert(path, thumb_px, rgba);
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
+                    .collect();
+                for (path, size, handle) in handles {
+                    let rgba = handle.await;
+                    if this
+                        .update(cx, |_this, cx| {
+                            thumbs.borrow_mut().insert(path, size, rgba);
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        break 'outer;
+                    }
                 }
             }
             // Always retire the task; drop it directly if the Shell is gone.
@@ -5204,6 +5272,18 @@ impl Shell {
             let parent = parent.to_path_buf();
             if parent != cur {
                 self.navigate(parent, cx);
+                // Select the folder we came from so it's highlighted and
+                // scrolled into view once the parent's contents stream
+                // in — `cur` is by definition an immediate child of
+                // `parent`. `navigate` just cleared selection; seed it
+                // here and the streaming reconcile
+                // (`refresh_file_list_selection_in_tab`) applies + reveals
+                // it, matching what Back does via `history_child_to_select`.
+                let child_id = self.process.fs.id_for_path(&cur);
+                let tab = self.active_tab_mut();
+                tab.selection.insert(child_id);
+                tab.anchor = Some(child_id);
+                tab.lead = Some(child_id);
             }
         }
     }

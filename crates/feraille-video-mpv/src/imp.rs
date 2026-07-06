@@ -18,6 +18,7 @@ use feraille_core::video::{ChromaKey, VideoAdjust, VideoBackend, VideoEnhance, V
 // ---- libmpv constants ------------------------------------------------------
 
 // mpv_format
+const MPV_FORMAT_FLAG: c_int = 3;
 const MPV_FORMAT_INT64: c_int = 4;
 const MPV_FORMAT_DOUBLE: c_int = 5;
 // mpv_render_param_type
@@ -422,6 +423,7 @@ impl VideoBackend for MpvBackend {
             rctx,
             on_ended,
             ended_fired: false,
+            eof_prev: false,
             adjust: VideoAdjust::default(),
             enhance,
             key: None,
@@ -440,6 +442,10 @@ struct MpvStream {
     rctx: *mut c_void,
     on_ended: Box<dyn Fn() + Send + 'static>,
     ended_fired: bool,
+    /// Last polled `eof-reached` value, for rising-edge detection — the
+    /// property stays true until a seek moves the playhead off the end,
+    /// and firing `on_ended` on the level would re-trigger every tick.
+    eof_prev: bool,
     adjust: VideoAdjust,
     enhance: VideoEnhance,
     key: Option<ChromaKey>,
@@ -477,6 +483,18 @@ impl MpvStream {
                 }
             }
         }
+        // With `keep-open=yes` a natural end never unloads the file, so
+        // MPV_EVENT_END_FILE (above) never fires for it — the core pauses on
+        // the last frame and raises the `eof-reached` property instead. Poll
+        // it here and fire the same callback on the false→true edge; that is
+        // what makes the viewer's loop checkbox and slideshow-advance work
+        // on this backend.
+        let eof = self.prop_flag("eof-reached");
+        if eof && !self.eof_prev && !self.ended_fired {
+            self.ended_fired = true;
+            (self.on_ended)();
+        }
+        self.eof_prev = eof;
     }
 
     /// Read an int64 property (display width/height); 0 if unavailable yet.
@@ -493,6 +511,18 @@ impl MpvStream {
         } else {
             0
         }
+    }
+
+    /// Read a flag (bool) property; `false` if unavailable.
+    fn prop_flag(&self, name: &str) -> bool {
+        let mut v: c_int = 0;
+        let r = (self.lib.get_property)(
+            self.h,
+            cstr(name).as_ptr(),
+            MPV_FORMAT_FLAG,
+            &mut v as *mut c_int as *mut c_void,
+        );
+        r == 0 && v != 0
     }
 
     fn prop_f64(&self, name: &str) -> f64 {

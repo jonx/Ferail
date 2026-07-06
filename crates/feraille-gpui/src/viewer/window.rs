@@ -7,7 +7,6 @@
 //! [`VIEWER_CONTEXT`] so Shell shortcuts can't fire here and vice versa.
 
 use crate::text::TextScale as _;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -15,7 +14,8 @@ use std::sync::Arc;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, button::Button, checkbox::Checkbox, h_flex, v_flex,
+    ActiveTheme, Selectable, Sizable, WindowExt as _, button::Button, checkbox::Checkbox, h_flex,
+    v_flex,
 };
 
 use std::time::Duration;
@@ -48,6 +48,7 @@ actions!(
         ViewerRotateCw,
         ViewerRotateCcw,
         ViewerToggleAdjust,
+        ViewerDelete,
         ViewerDismiss
     ]
 );
@@ -635,10 +636,11 @@ pub struct ViewerWindow {
     /// the desktop, composited by the OS window server on the GPU
     /// (docs/features/VIDEO-MPV.md).
     transparent: bool,
-    /// Whether this viewer window is the active (focused) one. Background
-    /// windows mute their video so stacked transparent viewers don't all play
-    /// audio at once — only the focused window is audible.
-    window_active: bool,
+    /// Whether video audio is muted (the transport's mute toggle). Starts
+    /// muted so opening a video — or several stacked viewer windows — never
+    /// blasts audio unasked; the user opts in per window. `set_muted` no-ops
+    /// on the built-in player.
+    video_muted: bool,
     /// Current video `(position, duration)` in seconds, refreshed by a
     /// poll while a video overlay is live. Drives the seek bar + time.
     video_position: (f64, f64),
@@ -659,13 +661,13 @@ pub struct ViewerWindow {
     /// Process singleton — the shared 512 px preview cache doubles as
     /// an instant placeholder while the full-res decode is in flight.
     process: Rc<ProcessState>,
-    /// Ephemeral, per-item view rotation in clockwise quarter-turns
-    /// (1 = 90°, 2 = 180°, 3 = 270°), keyed by playlist index. Not
-    /// saved anywhere and not global — it lives only as long as this
-    /// window and applies to one item at a time (docs/features/VIEWER.md).
-    /// Absent / 0 means upright. gpui can't rotate an `img` element
-    /// (docs/GPUI-UPSTREAM.md), so the pixels are rotated on the CPU.
-    rotations: HashMap<usize, u8>,
+    /// Ephemeral view rotation in clockwise quarter-turns (1 = 90°,
+    /// 2 = 180°, 3 = 270°). Window-level and carried across navigation
+    /// like the grade, so a rotation set once applies to every item you
+    /// flip through until the viewer closes (docs/features/VIEWER.md).
+    /// Not saved anywhere; 0 means upright. gpui can't rotate an `img`
+    /// element (docs/GPUI-UPSTREAM.md), so the pixels are rotated on the CPU.
+    rotation: u8,
     /// One-slot cache of the rotated bitmap for the current
     /// (index, quarter-turns), so we rotate once per change instead of
     /// every frame. Invalidated on rotate and on navigation.
@@ -745,18 +747,6 @@ impl ViewerWindow {
         // repositions to the new stage.
         cx.observe_window_bounds(window, |_, _, cx| cx.notify())
             .detach();
-        // Mute the video while this window isn't focused, so stacked
-        // transparent viewer windows don't all play audio at once — only the
-        // active one is audible. `set_muted` no-ops on the built-in player.
-        cx.observe_window_activation(window, |this, window, cx| {
-            let active = window.is_window_active();
-            this.window_active = active;
-            if let Some((stream, _)) = &mut this.video_overlay {
-                stream.set_muted(!active);
-            }
-            cx.notify();
-        })
-        .detach();
         let interval = crate::app_state::load()
             .viewer_slideshow_interval
             .unwrap_or(super::playback::DEFAULT_INTERVAL_SECS);
@@ -803,7 +793,7 @@ impl ViewerWindow {
             video_loop: false,
             stay_on_top: false,
             transparent: false,
-            window_active: true,
+            video_muted: true,
             video_position: (0.0, 0.0),
             cue_in: 0.0,
             cue_out: 1.0,
@@ -811,7 +801,7 @@ impl ViewerWindow {
             seek_drag: None,
             video_ended_tx,
             process,
-            rotations: HashMap::new(),
+            rotation: 0,
             rotated: None,
             adjust: ColorAdjust::default(),
             enhance: EnhanceParams::default(),
@@ -852,9 +842,9 @@ impl ViewerWindow {
         self.index = start.min(playlist.len().saturating_sub(1));
         self.playlist = playlist;
         self.stage = StageState::default();
-        // New playlist → indices no longer mean the same items; drop the
-        // per-item rotations (they don't outlive a retarget either).
-        self.rotations.clear();
+        // New playlist → a fresh viewing session; drop the sticky
+        // rotation (it doesn't outlive a retarget either).
+        self.rotation = 0;
         self.rotated = None;
         self.playback.playing = false;
         self.playback.bump();
@@ -1051,12 +1041,10 @@ impl ViewerWindow {
             self.video_dims = (0.0, 0.0);
             self.video_overlay = Some((stream, path));
             self.video_enhance_applied = enhance;
-            // A freshly opened stream is unmuted; mute it if this window isn't
-            // the focused one (the activation observer handles later changes).
-            if !self.window_active {
-                if let Some((stream, _)) = &mut self.video_overlay {
-                    stream.set_muted(true);
-                }
+            // A freshly opened stream is unmuted; apply the window's mute
+            // toggle (muted by default) so audio only plays when opted in.
+            if let Some((stream, _)) = &mut self.video_overlay {
+                stream.set_muted(self.video_muted);
             }
             // Push any live grade into the backend (mpv applies it natively;
             // the native player reports unsupported).
@@ -1097,6 +1085,17 @@ impl ViewerWindow {
             self.video_frames_to_drop.push(img);
         }
         self.video_dims = (0.0, 0.0);
+    }
+
+    /// Toggle audio mute of the current video (the transport's speaker
+    /// button). Windows start muted; the choice sticks across clips within
+    /// this window because `open_video_stream` re-applies it.
+    fn toggle_video_muted(&mut self, cx: &mut Context<Self>) {
+        self.video_muted = !self.video_muted;
+        if let Some((stream, _)) = &mut self.video_overlay {
+            stream.set_muted(self.video_muted);
+        }
+        cx.notify();
     }
 
     /// Toggle play/pause of the current video (our gpui control stands in
@@ -1328,10 +1327,19 @@ impl ViewerWindow {
                 stream.seek(in_s);
                 stream.set_paused(false);
             }
+            self.video_paused = false;
+            cx.notify();
             return;
         }
         if self.playback.playing {
             self.step(1, cx);
+        } else {
+            // Neither looping nor a slideshow: both backends hold the last
+            // frame paused (AVPlayer's action-at-end, mpv's keep-open) —
+            // mirror that so the transport shows ▶, and resuming restarts
+            // from the In cue via `toggle_video_paused`.
+            self.video_paused = true;
+            cx.notify();
         }
     }
 
@@ -1735,25 +1743,21 @@ impl ViewerWindow {
         self.rotate_by(-1, cx);
     }
 
-    /// Current item's view rotation in clockwise quarter-turns (0..=3).
+    /// Current view rotation in clockwise quarter-turns (0..=3).
     fn current_rotation(&self) -> u8 {
-        self.rotations.get(&self.index).copied().unwrap_or(0)
+        self.rotation
     }
 
-    /// Rotate the current item by `delta` quarter-turns (+1 CW / -1 CCW),
-    /// view-only and per-item. Works for images (CPU bitmap rotate) and
-    /// videos (native layer transform, applied in `sync_video`); both are
-    /// in-memory/GPU only — nothing is written to disk.
+    /// Rotate by `delta` quarter-turns (+1 CW / -1 CCW), view-only and
+    /// window-level: the rotation sticks across next/prev so it applies to
+    /// every item until the viewer closes. Works for images (CPU bitmap
+    /// rotate) and videos (native layer transform, applied in `sync_video`);
+    /// both are in-memory/GPU only — nothing is written to disk.
     fn rotate_by(&mut self, delta: i8, cx: &mut Context<Self>) {
         if self.current().is_none() {
             return;
         }
-        let next = (self.current_rotation() as i8 + delta).rem_euclid(4) as u8;
-        if next == 0 {
-            self.rotations.remove(&self.index);
-        } else {
-            self.rotations.insert(self.index, next);
-        }
+        self.rotation = (self.rotation as i8 + delta).rem_euclid(4) as u8;
         // Drop the cached rotated bitmap; the stage rebuilds it on demand.
         self.rotated = None;
         // Rotation changes the processed key (the pipeline bakes in the
@@ -1773,6 +1777,111 @@ impl ViewerWindow {
         } else {
             window.remove_window();
         }
+    }
+
+    /// Delete / Cmd+Backspace / toolbar trash — move the current file to
+    /// the Trash and advance to the next slide, so a media browse can
+    /// cull files without leaving the viewer. The trash call is
+    /// filesystem I/O, so it runs on the background executor (prime
+    /// directive); the playlist entry is only dropped once the OS
+    /// reports success. Always the recoverable move-to-Trash, never a
+    /// permanent delete — though this window has no Cmd+Z stack, so
+    /// restoring means the OS Trash.
+    fn on_delete(&mut self, _: &ViewerDelete, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui_component::notification::Notification;
+        let Some(entry) = self.current().cloned() else {
+            return;
+        };
+        let process = self.process.clone();
+        let weak = cx.weak_entity();
+        let win = window.window_handle();
+        cx.spawn(async move |_this, cx| {
+            let p = entry.path.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { feraille_fs_native::move_to_trash(&p) })
+                .await;
+            match result {
+                Ok(_) => {
+                    let mut close_window = false;
+                    if let Some(this) = weak.upgrade() {
+                        this.update(cx, |this, cx| {
+                            this.remove_playlist_entry(&entry.path, cx);
+                            close_window = this.playlist.is_empty();
+                        });
+                    }
+                    // Any browser tab showing the parent folder reloads,
+                    // and stale ancestor folder sizes are invalidated —
+                    // the same broadcast the Shell's own trash worker uses.
+                    if let Some(parent) = entry.path.parent() {
+                        crate::shell::Shell::broadcast_reload_for_process(
+                            &process,
+                            vec![parent.to_path_buf()],
+                            cx,
+                        );
+                    }
+                    let _ = win.update(cx, move |_, window, cx| {
+                        if close_window {
+                            // Nothing left to view.
+                            window.remove_window();
+                        } else {
+                            window.push_notification(
+                                Notification::info(format!(
+                                    "Moved \u{201C}{}\u{201D} to Trash",
+                                    entry.name
+                                )),
+                                cx,
+                            );
+                        }
+                    });
+                }
+                Err(e) => {
+                    let _ = win.update(cx, move |_, window, cx| {
+                        window.push_notification(
+                            Notification::error(format!("Move to Trash failed: {e}")),
+                            cx,
+                        );
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Drop `path` from the playlist after a successful trash and keep
+    /// the show going: the item that followed becomes current (the last
+    /// item falls back to the new tail), the index-keyed bitmap caches
+    /// are invalidated, and the slideshow timer re-arms — the same
+    /// post-navigation steps as [`Self::step`]. If the playlist just
+    /// emptied, the caller closes the window instead.
+    fn remove_playlist_entry(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        let Some(ix) = self.playlist.iter().position(|e| e.path == path) else {
+            return;
+        };
+        self.playlist.remove(ix);
+        if self.playlist.is_empty() {
+            cx.notify();
+            return;
+        }
+        if ix < self.index {
+            self.index -= 1;
+        } else {
+            self.index = self.index.min(self.playlist.len() - 1);
+        }
+        // These caches key on the playlist index, which just shifted;
+        // a stale hit would show the removed file's pixels under the
+        // next file's name. (`sync_video` reconciles any live video
+        // stream against the new current entry on the next render.)
+        self.rotated = None;
+        self.processed = None;
+        self.request_current(cx);
+        self.prefetch_neighbors(cx);
+        self.schedule_process(cx);
+        let epoch = self.playback.bump();
+        if self.playback.playing && !self.current_is_video() {
+            self.arm_timer(epoch, cx);
+        }
+        cx.notify();
     }
 
     /// `E` / toolbar button / right-click — toggle the colour-adjust popup.
@@ -1802,6 +1911,18 @@ impl ViewerWindow {
         self.video_adjust_native = true;
         self.chroma_on = true;
         self.adjust_panel_open = true;
+    }
+
+    /// Screenshot-only fixture: apply `turns` clockwise quarter-turns, then
+    /// advance `steps` items. Lets the headless harness verify that rotation
+    /// sticks across navigation (the item at the new index renders rotated).
+    pub fn sim_rotate_then_step(&mut self, turns: u8, steps: isize, cx: &mut Context<Self>) {
+        for _ in 0..(turns % 4) {
+            self.rotate_by(1, cx);
+        }
+        if steps != 0 {
+            self.step(steps, cx);
+        }
     }
 
     /// Current value of a popup slider (reads `adjust` or `enhance`).
@@ -2090,6 +2211,7 @@ impl ViewerWindow {
         // Custom video transport + window state (native controls hidden).
         let is_video = self.current_is_video();
         let video_paused = self.video_paused;
+        let video_muted = self.video_muted;
         let video_loop = self.video_loop;
         let stay_on_top = self.stay_on_top;
         let transparent = self.transparent;
@@ -2195,9 +2317,24 @@ impl ViewerWindow {
                             this.on_toggle_adjust(&ViewerToggleAdjust, window, cx)
                         })),
                 )
+                // Move the current file to the Trash and advance —
+                // cull while browsing. Also Delete / Cmd+Backspace.
+                .child(
+                    Button::new("viewer-trash")
+                        .icon(gpui_component::Icon::empty().path("icons/trash.svg"))
+                        .small()
+                        .tooltip_with_action(
+                            feraille_core::commands::TRASH_LABEL,
+                            &ViewerDelete,
+                            Some(VIEWER_CONTEXT),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_delete(&ViewerDelete, window, cx)
+                        })),
+                )
             })
             // Video transport (native controls are hidden so they work
-            // at any rotation): play/pause + a loop toggle.
+            // at any rotation): play/pause, mute + a loop toggle.
             .when(is_video, |bar| {
                 let loop_entity = entity.clone();
                 bar.child(
@@ -2221,6 +2358,18 @@ impl ViewerWindow {
                         .label("+1f")
                         .small()
                         .on_click(cx.listener(|this, _, _, cx| this.step_video(1, cx))),
+                )
+                // Audio mute toggle. Muted by default — sound is opt-in per
+                // window, so stacked viewers never all play at once.
+                .child(
+                    Button::new("viewer-video-mute")
+                        .icon(gpui_component::Icon::empty().path(if video_muted {
+                            "icons/volume-x.svg"
+                        } else {
+                            "icons/volume-2.svg"
+                        }))
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_video_muted(cx))),
                 )
                 .child(
                     Checkbox::new("viewer-video-loop")
@@ -3157,6 +3306,7 @@ impl Render for ViewerWindow {
             .on_action(cx.listener(Self::on_rotate_cw))
             .on_action(cx.listener(Self::on_rotate_ccw))
             .on_action(cx.listener(Self::on_toggle_adjust))
+            .on_action(cx.listener(Self::on_delete))
             .on_action(cx.listener(Self::on_dismiss))
             .relative()
             .size_full()
@@ -3216,6 +3366,13 @@ impl Render for ViewerWindow {
                 .when_some(chrome, Div::child)
                 .when_some(status, Div::child)
                 .when_some(panel, Div::child)
+                // This window's own Root holds the notification state but
+                // doesn't render the layer — do it here so the trash
+                // success/failure toasts appear (same as the Get Info
+                // window).
+                .children(gpui_component::Root::render_notification_layer(
+                    window, cx,
+                ))
         } else {
             let toolbar = self.toolbar(cx);
             let status = self.status_strip(cx);
@@ -3223,6 +3380,9 @@ impl Render for ViewerWindow {
                 .child(stage_area)
                 .child(status)
                 .when_some(panel, Div::child)
+                .children(gpui_component::Root::render_notification_layer(
+                    window, cx,
+                ))
         }
     }
 }

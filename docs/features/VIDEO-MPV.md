@@ -64,9 +64,11 @@ check -p feraille-gpui --features mpv` is green.
 > screenshot of a *live keyed video* (the keyed pixels actually transparent),
 > which needs the poll to run — a follow-up.
 
-Per-window mute shipped — a viewer window mutes its video while it isn't the
-active window (`observe_window_activation` → `set_muted`), so stacked
-transparent viewers don't all play audio at once.
+Per-window mute shipped — each viewer window has a mute toggle in the video
+transport (`volume-x`/`volume-2` button → `set_muted`), **muted by default**,
+so stacked transparent viewers never all play audio at once; sound is opt-in
+per window. (An earlier focus-follows-audio version — auto-mute while the
+window wasn't active — was replaced by the explicit toggle.)
 
 ### GPU video path — spiked, not viable (keep the SW path)
 
@@ -398,6 +400,6 @@ UI phases add a screenshot under `screenshots/`.
   performance escalation, deferred until measured.
 - libmpv discovery defaults on Windows/Linux **[win-parity]** — mirror the
   mac Homebrew/`mpv.app` probe.
-- Per-layer audio policy beyond "mute all but the focused layer" (defaulted).
+- Per-layer audio policy beyond the per-window mute toggle (muted by default).
 - Layer sourcing UX (playlist neighbour vs file picker vs drag-in) — settle in
   Phase 4.

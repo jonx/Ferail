@@ -68,6 +68,20 @@ impl Render for TabDragPayload {
 /// as `favorites_section::render_drop_gap` rotated 90°. On drop,
 /// `Shell::reorder_tab` resolves the source `TabId` and moves the tab
 /// into this position.
+/// Drag payload for the resize grip under the preview thumbnail —
+/// same invisible-ghost shape as `multi_table`'s `ResizeColumn`: the
+/// drag machinery wants a Render entity to follow the cursor, but a
+/// resize has nothing to show, so it renders `Empty`. The real state
+/// (drag-start anchor) lives in `Shell::preview_thumb_drag`.
+#[derive(Clone)]
+pub(crate) struct ResizePreviewThumb;
+
+impl Render for ResizePreviewThumb {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
 /// Truncated single-line URL for the preview pane's provenance rows,
 /// with the full URL in a hover tooltip — same treatment as the
 /// "Where" path row. Pure display; no parsing.
@@ -2111,6 +2125,59 @@ impl Shell {
         cx.stop_propagation();
     }
 
+    /// The drag grip under the preview thumbnail box. Dragging it
+    /// down/up grows/shrinks the box between `PREVIEW_THUMB_MIN_H`
+    /// and `PREVIEW_THUMB_MAX_H`; the height persists via the same
+    /// debounced save as the splitter widths. The drag anchor (mouse
+    /// y + height at drag start) is snapped in the `on_drag`
+    /// constructor; `on_drag_move` then applies the absolute delta,
+    /// so the box edge tracks the cursor 1:1 — no per-tick
+    /// accumulation drift, no dependence on the pane's scroll offset.
+    fn preview_thumb_resize_grip(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let weak = cx.weak_entity();
+        div()
+            .id("preview-thumb-resize")
+            .group("preview-thumb-grip")
+            .w_full()
+            .h(px(9.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_row_resize()
+            .child(
+                div()
+                    .w(px(48.0))
+                    .h(px(3.0))
+                    .rounded_full()
+                    .bg(cx.theme().border)
+                    .group_hover("preview-thumb-grip", |this| this.bg(cx.theme().drag_border)),
+            )
+            .on_drag(ResizePreviewThumb, move |drag, _offset, window, cx| {
+                cx.stop_propagation();
+                let y = window.mouse_position().y;
+                if let Some(shell) = weak.upgrade() {
+                    shell.update(cx, |this, _| {
+                        this.preview_thumb_drag = Some((y, this.preview_thumb_h));
+                    });
+                }
+                cx.new(|_| drag.clone())
+            })
+            .on_drag_move(cx.listener(
+                |this, e: &DragMoveEvent<ResizePreviewThumb>, _window, cx| {
+                    let Some((y0, h0)) = this.preview_thumb_drag else {
+                        return;
+                    };
+                    let h = (h0 + f32::from(e.event.position.y - y0))
+                        .clamp(PREVIEW_THUMB_MIN_H, PREVIEW_THUMB_MAX_H);
+                    if h != this.preview_thumb_h {
+                        this.preview_thumb_h = h;
+                        this.schedule_splitter_save(cx);
+                        cx.notify();
+                    }
+                },
+            ))
+    }
+
     /// Build the preview pane on the right of the file list. Shows
     /// title / kind / size / modified / full path of the selected
     /// row. Falls back to a neutral empty state when nothing is
@@ -2334,6 +2401,11 @@ impl Shell {
                     // top-right corner is the discoverability affordance
                     // (only shown here, where a viewer-capable preview
                     // exists) instead of a text caption.
+                    //
+                    // Box height is user-adjustable via the resize grip
+                    // below; the image fills whatever the box allows
+                    // (aspect preserved — gpui's img derives its
+                    // aspect_ratio from the bitmap's intrinsic size).
                     col = col.child(
                         div()
                             .id("preview-thumb-open")
@@ -2342,7 +2414,8 @@ impl Shell {
                             .items_center()
                             .justify_center()
                             .w_full()
-                            .h(px(200.0))
+                            .h(px(self.preview_thumb_h))
+                            .p_2()
                             .rounded(cx.theme().radius)
                             .bg(cx.theme().secondary.opacity(0.5))
                             .cursor_pointer()
@@ -2350,7 +2423,7 @@ impl Shell {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.on_open_viewer(&OpenViewer, window, cx)
                             }))
-                            .child(gpui::img(img).max_w(px(248.0)).max_h(px(184.0)))
+                            .child(gpui::img(img).max_w_full().max_h_full())
                             .child(
                                 div()
                                     .absolute()
@@ -2371,6 +2444,7 @@ impl Shell {
                                     ),
                             ),
                     );
+                    col = col.child(self.preview_thumb_resize_grip(cx));
                 } else if matches!(thumb_state, Some(crate::preview::PreviewState::Pending)) {
                     col = col.child(
                         div()
@@ -2378,13 +2452,14 @@ impl Shell {
                             .items_center()
                             .justify_center()
                             .w_full()
-                            .h(px(200.0))
+                            .h(px(self.preview_thumb_h))
                             .rounded(cx.theme().radius)
                             .bg(cx.theme().secondary.opacity(0.5))
                             .text_scale_xs()
                             .text_color(cx.theme().muted_foreground)
                             .child("Loading preview\u{2026}"),
                     );
+                    col = col.child(self.preview_thumb_resize_grip(cx));
                 }
 
                 // Filename header. A clean name truncates with a full-name

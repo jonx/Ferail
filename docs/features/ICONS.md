@@ -221,6 +221,9 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Reveal in Finder | `icons/folder-open.svg` ↑ | Lucide |
 | Copy Path | `icons/copy.svg` ↑ | Lucide |
 
+The preview pane also draws a plain-div **resize grip** (rounded pill) under
+the thumbnail — pure chrome, not an icon asset.
+
 ### Viewer window ([viewer/window.rs](../../crates/feraille-gpui/src/viewer/window.rs))
 
 | Command | Icon path | Origin |
@@ -231,6 +234,8 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Rotate | `icons/redo.svg` ↑ | Lucide |
 | Color adjust | `icons/palette.svg` ↑ | Lucide |
 | Auto-enhance ("magic") | `icons/wand-sparkles.svg` | **In-house** Lucide `wand-sparkles` (house style, stroke 1.75). Spare pool has no wand/sparkles glyph. Adjustments-panel header, beside Reset. |
+| Move to Trash | `icons/trash.svg` | **In-house** Lucide `trash` (house style, stroke 1.75). Neither pool has a trash glyph. Deliberately the plain can — the sidebar Trash *place* uses `nav/trash.svg` (`trash-2`, with inner lines), so the command and the location stay distinguishable. |
+| Video mute toggle | `icons/volume-x.svg` (muted) / `icons/volume-2.svg` (audible) | **In-house** Lucide `volume-x` / `volume-2` (house style, stroke 1.75). Spare pool has no speaker/volume glyph. One button, state-swapped icon — video audio is muted by default, opt-in per window. |
 | Fullscreen | `icons/maximize.svg` ↑ | Lucide |
 
 ### Disk Usage window ([disk_usage.rs](../../crates/feraille-gpui/src/disk_usage.rs))

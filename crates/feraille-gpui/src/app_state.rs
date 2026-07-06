@@ -119,6 +119,9 @@ pub struct AppState {
     pub sidebar_width: Option<f32>,
     /// Preview pane width in DIPs. Same clamp story.
     pub preview_width: Option<f32>,
+    /// Height of the preview pane's thumbnail box in DIPs, set by
+    /// dragging the resize grip under the image. Same clamp story.
+    pub preview_thumb_height: Option<f32>,
     /// Whether the sidebar is collapsed to icons-only. None == the
     /// user has never expressed a preference (defaults to expanded).
     pub sidebar_collapsed: Option<bool>,
@@ -325,6 +328,13 @@ fn load_from_disk() -> AppState {
                     .ok()
                     .map(|n| n.clamp(220.0, 520.0));
             }
+            "preview_thumb_height" => {
+                out.preview_thumb_height = val
+                    .trim()
+                    .parse::<f32>()
+                    .ok()
+                    .map(|n| n.clamp(120.0, 600.0));
+            }
             "sidebar_collapsed" => {
                 out.sidebar_collapsed = parse_bool(val);
             }
@@ -455,6 +465,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(w) = state.preview_width {
         s.push_str(&format!("preview_width={w}\n"));
+    }
+    if let Some(h) = state.preview_thumb_height {
+        s.push_str(&format!("preview_thumb_height={h}\n"));
     }
     if let Some(b) = state.sidebar_collapsed {
         s.push_str(&format!("sidebar_collapsed={b}\n"));
