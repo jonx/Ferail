@@ -28,9 +28,14 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
     folder-size walk trips a *distinct* `DoExamineNext` bus fault (0x80000002),
     so the walker is re-gated on AROS again (see aros-aarch64 UPSTREAM-NOTES
     item 36). Everything else runs clean.
-  - **Wheel automation** is deployed in the shim (`aros-ctl wheel` → `cm_gpu`
-    build) but end-to-end scroll needs the rebuilt `cocoa.hidd` (wheel→rawkey)
-    in the *booted kickstart*, not just the source — pending a kickstart refresh.
+  - **Wheel scrolling WORKS end-to-end** — a real trackpad/mouse scroll over
+    the Feraille window scrolls the list: host `NSEvent scrollWheel` → shim
+    `CM_EV_WHEEL` → the rebuilt `cocoa.hidd` → NewMouse rawkeys 0x7A/0x7B →
+    Intuition `IDCMP_RAWKEY` → `gpui_aros` `ScrollWheel`. Confirms the rebuilt
+    `cocoa.hidd` is live in the booted kickstart. (The *injected* automation
+    path — `aros-ctl wheel`, the shim's `W` control-FIFO synth — did not move
+    the list in testing; that is a harness gap, separate from the real path,
+    and likely needs the pointer over the window.)
   - **GPU video path measured** — `hosted/gpufx-bench` (`C:GpuFxBench`) shows the
     3D shim's YUV420→RGBA is 5-7× faster than the software kernel; relevant to a
     future `feraille-video` / preview path on AROS.
