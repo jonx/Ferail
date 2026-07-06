@@ -65,5 +65,10 @@ COMPILER_PATH="$XTBIN" "$COLLECT" \
     -\( "${AUTOLIB[@]}" "${STDLIBS[@]}" -\)
 echo "[link] built: $OUT/Feraille ($(stat -f%z "$OUT/Feraille") bytes)"
 
+# Debug-info ET_RELs take minutes to LoadSeg (every reloc walked); strip
+# before deploy (gpui_aros/PORTING.md "LoadSeg scale").
+"$XTOOLS/bin/llvm-strip" --strip-debug "$OUT/Feraille"
+echo "[link] stripped: $OUT/Feraille ($(stat -f%z "$OUT/Feraille") bytes)"
+
 cp -f "$OUT/Feraille" "$CDIR/Feraille"; chmod +x "$CDIR/Feraille"
 echo "[link] deployed -> $CDIR/Feraille"
