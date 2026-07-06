@@ -636,6 +636,12 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::Window,
         shortcuts: &[Shortcut::primary_shift("[")],
     },
+    CommandSpec {
+        id: CommandId("window.bring_all_to_front"),
+        title: "Bring All to Front",
+        category: Category::Window,
+        shortcuts: &[],
+    },
     // Help
     CommandSpec {
         id: CommandId("help.github"),

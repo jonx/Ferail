@@ -1491,6 +1491,13 @@ pub fn show_desktop() -> bool {
     false
 }
 
+/// Raise every app window preserving z-order (macOS `arrangeInFront:`).
+/// No Windows equivalent wired yet — `false` makes the caller fall back
+/// to raising each window through gpui.
+pub fn bring_all_windows_to_front() -> bool {
+    false
+}
+
 /// Subscribe to system theme changes.
 ///
 /// Spawns a dedicated worker thread that owns a message-only `HWND`

@@ -797,6 +797,31 @@ pub fn show_desktop() -> bool {
     false
 }
 
+/// Bring every app window to the front, preserving their relative
+/// z-order and leaving the key window unchanged — AppKit's
+/// `-[NSApplication arrangeInFront:]`, the selector Finder's
+/// Window ▸ Bring All to Front is wired to. Returns `false` (never
+/// panics) off the main thread or on non-macOS so the caller can
+/// fall back to raising windows one by one.
+#[cfg(target_os = "macos")]
+pub fn bring_all_windows_to_front() -> bool {
+    use objc2_app_kit::NSApplication;
+    use objc2_foundation::MainThreadMarker;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    unsafe {
+        NSApplication::sharedApplication(mtm).arrangeInFront(None);
+    }
+    true
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn bring_all_windows_to_front() -> bool {
+    false
+}
+
 /// Subscribe to macOS Appearance change notifications. The callback
 /// fires on the main thread with the new dark-mode state every time
 /// the user toggles System Settings → Appearance, or "Auto" mode

@@ -116,6 +116,13 @@ pub fn show_desktop() -> bool {
     false
 }
 
+/// Raise every app window preserving z-order (macOS `arrangeInFront:`).
+/// No portable Linux/AROS primitive — `false` makes the caller fall
+/// back to raising each window through gpui.
+pub fn bring_all_windows_to_front() -> bool {
+    false
+}
+
 // =============================================================
 // Pickers / launching
 // =============================================================

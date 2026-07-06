@@ -25,11 +25,14 @@ use gpui_component::Theme;
 // owns focus, so they're bound via `cx.on_action` at the App level
 // rather than under the `SHELL_CONTEXT` keymap.
 //
-// - `Quit`        — Cmd+Q
-// - `OpenAbout`   — About menu item
-// - `NewWindow`   — Cmd+N. Opens a fresh window sharing the singleton
-//                   `ProcessState`. See `open_new_window`.
-actions!(app, [Quit, OpenAbout, NewWindow]);
+// - `Quit`            — Cmd+Q
+// - `OpenAbout`       — About menu item
+// - `NewWindow`       — Cmd+N. Opens a fresh window sharing the singleton
+//                       `ProcessState`. See `open_new_window`.
+// - `BringAllToFront` — Window ▸ Bring All to Front. Raises every open
+//                       window (shells, viewers, tool windows) above
+//                       other apps'. See `bring_all_to_front`.
+actions!(app, [Quit, OpenAbout, NewWindow, BringAllToFront]);
 
 
 pub fn run_gui(args: screenshot::Args) {
@@ -190,6 +193,12 @@ pub fn run_gui(args: screenshot::Args) {
         cx.bind_keys([KeyBinding::new("secondary-n", NewWindow, None)]);
         cx.on_action(|_: &NewWindow, cx| {
             open_shell_window(cx);
+        });
+
+        // Window ▸ Bring All to Front. App-level like NewWindow: the
+        // menu item must fire no matter which window (or none) is key.
+        cx.on_action(|_: &BringAllToFront, cx| {
+            bring_all_to_front(cx);
         });
 
         install_app_menus(cx);
@@ -409,6 +418,27 @@ fn install_app_menus(cx: &mut App) {
             items: view_items,
             disabled: false,
         },
+        Menu {
+            // gpui registers a top-level menu literally named "Window"
+            // as NSApp's windows menu, so on macOS AppKit automatically
+            // appends the live list of open windows below these items —
+            // every titled window (shells, viewers, Settings, Disk
+            // Usage, …), kept fresh as they open/close/retitle, with
+            // the checkmark on the key window; selecting one brings it
+            // to front. The trailing separator divides our items from
+            // that appended list. Windows/Linux's AppMenuBar renders
+            // only the explicit items; the window list is a macOS
+            // freebie until a cross-platform list is built by hand.
+            name: "Window".into(),
+            items: vec![
+                MenuItem::action(
+                    title("window.bring_all_to_front", "Bring All to Front"),
+                    BringAllToFront,
+                ),
+                MenuItem::separator(),
+            ],
+            disabled: false,
+        },
     ]);
 
     // Mirror the menu list into gpui-component's GlobalState. macOS
@@ -416,6 +446,22 @@ fn install_app_menus(cx: &mut App) {
     // reads from here. One source of truth for the menu spec.
     if let Some(menus) = cx.get_menus() {
         gpui_component::global_state::GlobalState::global_mut(cx).set_app_menus(menus);
+    }
+}
+
+/// Raise every open window above other apps' windows — Finder's
+/// Window ▸ Bring All to Front. On macOS this is the native
+/// `arrangeInFront:`, which preserves the windows' relative z-order
+/// and leaves the key window unchanged. Elsewhere it falls back to
+/// activating each window through gpui: `activate_window` queues its
+/// platform raise on the foreground executor in call order, so the
+/// windows come up in `cx.windows()` order with the last one key.
+fn bring_all_to_front(cx: &mut App) {
+    if crate::platform_shell::bring_all_windows_to_front() {
+        return;
+    }
+    for handle in cx.windows() {
+        let _ = handle.update(cx, |_, window, _| window.activate_window());
     }
 }
 
