@@ -93,10 +93,21 @@ fi
 /usr/bin/plutil -lint "${CONTENTS}/Info.plist" >/dev/null
 
 echo "==> Signing (identity: ${IDENTITY})"
-# --force so re-bundling replaces a prior signature. No hardened runtime /
-# entitlements: TCC consent prompts don't need them, and the sandbox
-# would block the broad filesystem access a file manager is for.
-codesign --force --sign "${IDENTITY}" --timestamp=none "${APP_DIR}"
+# Two signing modes:
+#   HARDENED=1 -> release signing for notarization: hardened runtime
+#     (--options runtime), a secure timestamp, and the entitlements that
+#     let an mpv build dlopen an unsigned libmpv. Used by package-mac.sh.
+#   default    -> ad-hoc / quick dev signing. No hardened runtime: TCC
+#     consent prompts don't need it, and re-signs stay fast. (This is NOT
+#     the sandbox either way — a file manager needs broad file access.)
+if [[ "${HARDENED:-0}" == "1" ]]; then
+	ENTITLEMENTS="${REPO_ROOT}/packaging/macos/Feraille.entitlements"
+	codesign --force --options runtime --timestamp \
+		--entitlements "${ENTITLEMENTS}" \
+		--sign "${IDENTITY}" "${APP_DIR}"
+else
+	codesign --force --sign "${IDENTITY}" --timestamp=none "${APP_DIR}"
+fi
 codesign --verify --deep --strict --verbose=2 "${APP_DIR}"
 
 echo
