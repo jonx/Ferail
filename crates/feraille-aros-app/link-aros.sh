@@ -54,6 +54,7 @@ echo "[link] compile rust-aros std glues"
 "$CC" "${CFLAGS[@]}" -c "$RS/aros_process_glue.c" -o "$OUT/aros_process_glue.o"
 "$CC" "${CFLAGS[@]}" -c "$RS/aros_thread_glue.c" -o "$OUT/aros_thread_glue.o"
 "$CC" "${CFLAGS[@]}" -I"$GEN/include/aros/posixc" -c "$RS/aros_sync_glue.c" -o "$OUT/aros_sync_glue.o"
+"$CC" "${CFLAGS[@]}" -c "$RS/aros_env_glue.c" -o "$OUT/aros_env_glue.o"
 
 echo "[link] collect-aros -> ET_REL AROS program ($PROFILE)"
 COMPILER_PATH="$XTBIN" "$COLLECT" \
@@ -61,7 +62,7 @@ COMPILER_PATH="$XTBIN" "$COLLECT" \
     -L"$LIBDIR" -o "$OUT/Feraille" \
     "$LIBDIR/startup.o" "$OUT/feraille_main.o" \
     "$OUT/aros_net_glue.o" "$OUT/aros_fs_glue.o" "$OUT/aros_process_glue.o" \
-    "$OUT/aros_thread_glue.o" "$OUT/aros_sync_glue.o" "$RSLIB" \
+    "$OUT/aros_thread_glue.o" "$OUT/aros_sync_glue.o" "$OUT/aros_env_glue.o" "$RSLIB" \
     -\( "${AUTOLIB[@]}" "${STDLIBS[@]}" -\)
 echo "[link] built: $OUT/Feraille ($(stat -f%z "$OUT/Feraille") bytes)"
 
