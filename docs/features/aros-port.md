@@ -11,6 +11,26 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 
 ## Status
 
+- **Rebuilt + re-verified on-device, 2026-07-13.** Both AROS binaries rebuild
+  from clean after two regressions were fixed:
+  - `aros-aarch64/hosted/rust/compat/include/{endian.h,sys/ioctl.h}` — the host
+    libc compat shim that `.cargo/config.toml` references via
+    `-DHAVE_ENDIAN_H -I .../compat/include`. It had been gitignored as
+    "experimental/unwired" but is required: a newer tree-sitter calls `le16toh`,
+    which is undeclared without it (build now tracks the shim).
+  - `crates/feraille-aros-app/link-aros.sh` (and the zed-aros twin) now compile
+    and link `aros_env_glue.c`; the std shim gained `aros_env_enum`
+    (`std::env::vars`) after the scripts were written, so the link failed on an
+    undefined `aros_env_enum`.
+  - **Runs live:** `C:Feraille` (203 MB stripped) LoadSegs and opens its window
+    on the Wanderer desktop — the dark theme renders, the `SYS:` listing shows
+    30 items with Name/Size/Format columns and the sidebar, `crash=none`,
+    rendering clean (no dirty-rect smearing). **Memory:** the 203 MB binary needs
+    more than the default 256 MB hosted RAM to LoadSeg — boot with
+    `AROS_HOST_MEMORY=1280` (or `memory 1280` in `aros-host.conf`), else the load
+    silently fails and no window appears. **Launch:** the app must start *before*
+    the desktop Startup-Sequence's `EndCLI` (a launch appended after `EndCLI`
+    never runs); `feraille.startup`'s `Stack 16000000` + `SetEnv HOME` still apply.
 - **On-device battery, 2026-07-06** (booted via `graft/aros-ctl`, `C:Feraille`
   rebuilt with the native-shell + dirty-rect backend):
   - **Self-guard boot WORKS** — launched with no `Stack` line, the wrapper
