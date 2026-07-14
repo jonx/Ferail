@@ -119,6 +119,18 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             (None, None)
         };
 
+        // Physical-device probe (skipped for network drives — no local
+        // device to ask). Two things GetDriveTypeW can't tell us: which
+        // physical disk backs the volume (the eject-all grouping key),
+        // and whether a DRIVE_FIXED disk actually hangs off USB — external
+        // HDDs/SSDs report as fixed, but are ejectable like Finder's.
+        let (device_id, usb_bus) = if kind == DRIVE_REMOTE {
+            (None, false)
+        } else {
+            probe_volume_device(letter)
+        };
+        let is_removable = is_removable || usb_bus;
+
         out.push(VolumeInfo {
             path: format!("{letter}:\\").into(),
             name,
@@ -128,11 +140,114 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             is_removable,
             format: None,
             bsd_device: None,
+            device_id,
         });
     }
 
     out.sort_by(|a, b| a.path.cmp(&b.path));
     out
+}
+
+/// Physical-device probe for the volume behind drive `letter`: the
+/// physical disk number(s) backing it (`Some("disk3")` — the eject-all
+/// grouping key) and whether the disk hangs off the USB bus. The latter
+/// matters because `GetDriveTypeW` reports external USB HDDs/SSDs as
+/// `DRIVE_FIXED`, hiding that they're ejectable.
+///
+/// Opens the volume with **zero** access rights — metadata-only queries,
+/// no media I/O, no admin required. Best-effort: `(None, false)` on any
+/// failure (CD-ROM volumes and RAM disks have no disk extents).
+#[cfg(windows)]
+fn probe_volume_device(letter: char) -> (Option<String>, bool) {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::{
+        BusTypeUsb, CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, OPEN_EXISTING,
+    };
+    use windows::Win32::System::Ioctl::{
+        PropertyStandardQuery, StorageDeviceProperty, IOCTL_STORAGE_QUERY_PROPERTY,
+        STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY, VOLUME_DISK_EXTENTS,
+    };
+    use windows::Win32::System::IO::DeviceIoControl;
+
+    let device = format!(r"\\.\{letter}:");
+    let wide: Vec<u16> = device.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let Ok(handle) = CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        ) else {
+            return (None, false);
+        };
+
+        // Disk extents → physical disk number(s). One extent for plain
+        // volumes; a spanned volume lists several, which we join
+        // ("disk1+3") so it only ever groups with an identical span.
+        // u64 buffer for the 8-byte alignment VOLUME_DISK_EXTENTS wants.
+        let mut extents_buf = [0u64; 64];
+        let mut returned = 0u32;
+        let device_id = DeviceIoControl(
+            handle,
+            IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
+            None,
+            0,
+            Some(extents_buf.as_mut_ptr() as *mut core::ffi::c_void),
+            std::mem::size_of_val(&extents_buf) as u32,
+            Some(&mut returned),
+            None,
+        )
+        .ok()
+        .and_then(|()| {
+            let info = &*(extents_buf.as_ptr() as *const VOLUME_DISK_EXTENTS);
+            // Extents is declared `[DISK_EXTENT; 1]`; further extents
+            // follow contiguously in the buffer. Cap at what the buffer
+            // can actually hold.
+            let n = (info.NumberOfDiskExtents as usize).min(20);
+            let first = info.Extents.as_ptr();
+            let mut disks: Vec<u32> = (0..n).map(|i| (*first.add(i)).DiskNumber).collect();
+            disks.sort_unstable();
+            disks.dedup();
+            if disks.is_empty() {
+                None
+            } else {
+                let nums: Vec<String> = disks.iter().map(u32::to_string).collect();
+                Some(format!("disk{}", nums.join("+")))
+            }
+        });
+
+        // Bus type: is the backing device on USB? (SD/MMC readers report
+        // DRIVE_REMOVABLE already; USB enclosures are the blind spot.)
+        let query = STORAGE_PROPERTY_QUERY {
+            PropertyId: StorageDeviceProperty,
+            QueryType: PropertyStandardQuery,
+            AdditionalParameters: [0],
+        };
+        let mut desc_buf = [0u64; 128];
+        let usb_bus = DeviceIoControl(
+            handle,
+            IOCTL_STORAGE_QUERY_PROPERTY,
+            Some(&query as *const _ as *const core::ffi::c_void),
+            std::mem::size_of::<STORAGE_PROPERTY_QUERY>() as u32,
+            Some(desc_buf.as_mut_ptr() as *mut core::ffi::c_void),
+            std::mem::size_of_val(&desc_buf) as u32,
+            Some(&mut returned),
+            None,
+        )
+        .map(|()| {
+            let desc = &*(desc_buf.as_ptr() as *const STORAGE_DEVICE_DESCRIPTOR);
+            desc.BusType == BusTypeUsb
+        })
+        .unwrap_or(false);
+
+        let _ = CloseHandle(handle);
+        (device_id, usb_bus)
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -156,6 +271,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             is_removable: false,
             format: None,
             bsd_device: None,
+            device_id: None,
         });
         out.push(info);
     }
@@ -234,6 +350,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             is_removable: is_user_mount,
             format: Some(fs_type.to_string()),
             bsd_device: Some(source.to_string()),
+            device_id: linux_device_group(source),
         });
     }
 
@@ -307,4 +424,114 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
 #[cfg(not(any(target_os = "macos", windows)))]
 pub fn volume_info_for_path(_path: &Path) -> Option<VolumeInfo> {
     None
+}
+
+/// Whole-disk BSD name from a device node: "/dev/disk3s1s1" → "disk3".
+/// `None` when the name isn't `diskN…`-shaped (network sources, synthetic
+/// mounts). APFS note: volumes of one container share a *synthesized*
+/// whole disk, so they group together — exactly what the eject-all offer
+/// wants. A mixed-scheme disk (APFS container next to a FAT partition)
+/// groups as two devices; acceptable miss, Finder-parity for the common
+/// case. Compiled on all hosts so the unit test runs everywhere (hence
+/// the allow — only macOS builds reach it outside tests).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn whole_disk_bsd(dev: &str) -> Option<String> {
+    let name = dev.strip_prefix("/dev/").unwrap_or(dev);
+    let rest = name.strip_prefix("disk")?;
+    let digits: &str = &rest[..rest.chars().take_while(|c| c.is_ascii_digit()).count()];
+    if digits.is_empty() {
+        return None;
+    }
+    Some(format!("disk{digits}"))
+}
+
+/// Parent disk name for a Linux partition device name, by string shape
+/// alone: "sdb1" → "sdb", "nvme0n1p2" → "nvme0n1", "mmcblk0p1" →
+/// "mmcblk0". Returns `None` when the name doesn't look like a partition
+/// (whole disks, `dm-0`, `loop0` — safer to not group than to mis-group).
+/// Fallback for when sysfs isn't available; compiled on all hosts so the
+/// unit test runs everywhere (hence the allow — only Linux builds reach
+/// it outside tests).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn linux_parent_disk_name(name: &str) -> Option<String> {
+    // nvme0n1p2 / mmcblk0p1 style: "<disk ending in a digit>p<digits>".
+    if let Some(pos) = name.rfind('p') {
+        let (disk, part) = (&name[..pos], &name[pos + 1..]);
+        if !part.is_empty()
+            && part.chars().all(|c| c.is_ascii_digit())
+            && disk.ends_with(|c: char| c.is_ascii_digit())
+        {
+            return Some(disk.to_string());
+        }
+    }
+    // sdb1 / vda2 / xvdf3 style: letters then digits, for known prefixes
+    // only ("loop0" and friends are whole devices, not partitions).
+    for prefix in ["sd", "hd", "vd", "xvd"] {
+        if let Some(rest) = name.strip_prefix(prefix) {
+            let letters = rest.chars().take_while(|c| c.is_ascii_alphabetic()).count();
+            let digits = &rest[letters..];
+            if letters > 0 && !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+                return Some(format!("{prefix}{}", &rest[..letters]));
+            }
+        }
+    }
+    None
+}
+
+/// Whole-device grouping key for a Linux mount source like "/dev/sdb1".
+/// Prefers sysfs (authoritative: `/sys/class/block/<name>` resolves into
+/// the parent disk's directory for partitions), falling back to the
+/// string-shape parse. Whole-disk sources (no partition table) group
+/// under their own name.
+#[cfg(target_os = "linux")]
+fn linux_device_group(source: &str) -> Option<String> {
+    let name = source.strip_prefix("/dev/")?;
+    if name.contains('/') {
+        return None; // /dev/mapper/… etc. — don't guess.
+    }
+    let sys = std::path::Path::new("/sys/class/block").join(name);
+    if sys.join("partition").exists() {
+        // Partition: the sysfs node lives at …/block/<disk>/<part>.
+        if let Ok(target) = std::fs::read_link(&sys) {
+            if let Some(disk) = target.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str())
+            {
+                if disk != "block" {
+                    return Some(disk.to_string());
+                }
+            }
+        }
+        return linux_parent_disk_name(name);
+    }
+    if sys.exists() {
+        return Some(name.to_string()); // Whole disk mounted directly.
+    }
+    linux_parent_disk_name(name).or_else(|| Some(name.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn whole_disk_bsd_parses_slices_and_rejects_non_disks() {
+        assert_eq!(whole_disk_bsd("/dev/disk3s1s1").as_deref(), Some("disk3"));
+        assert_eq!(whole_disk_bsd("/dev/disk12s2").as_deref(), Some("disk12"));
+        assert_eq!(whole_disk_bsd("disk4").as_deref(), Some("disk4"));
+        assert_eq!(whole_disk_bsd("//host/share"), None);
+        assert_eq!(whole_disk_bsd("/dev/diskXs1"), None);
+        assert_eq!(whole_disk_bsd("map auto_home"), None);
+    }
+
+    #[test]
+    fn linux_parent_disk_parses_partitions_only() {
+        assert_eq!(linux_parent_disk_name("sdb1").as_deref(), Some("sdb"));
+        assert_eq!(linux_parent_disk_name("xvdf3").as_deref(), Some("xvdf"));
+        assert_eq!(linux_parent_disk_name("nvme0n1p2").as_deref(), Some("nvme0n1"));
+        assert_eq!(linux_parent_disk_name("mmcblk0p1").as_deref(), Some("mmcblk0"));
+        // Whole devices and unknown shapes stay ungrouped.
+        assert_eq!(linux_parent_disk_name("sdb"), None);
+        assert_eq!(linux_parent_disk_name("nvme0n1"), None);
+        assert_eq!(linux_parent_disk_name("loop0"), None);
+        assert_eq!(linux_parent_disk_name("dm-0"), None);
+    }
 }

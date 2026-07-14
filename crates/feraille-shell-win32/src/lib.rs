@@ -489,6 +489,35 @@ pub fn open_terminal(_path: &std::path::Path) {}
 /// hard failure (e.g. files still open) is surfaced to the host as a toast.
 #[cfg(windows)]
 pub fn eject_volume(path: &std::path::Path) -> Result<(), String> {
+    eject_volume_inner(path, true)
+}
+
+/// Unmount every volume in `volume_paths` (drive roots on one physical
+/// device), then eject/power down the device — Finder's "Eject All".
+/// All volumes are dismounted **before** the media eject: ejecting
+/// mid-loop could yank partitions that are still mounted. If any
+/// dismount fails the media eject is skipped and the first error is
+/// returned (already-dismounted siblings stay dismounted, like Finder).
+#[cfg(windows)]
+pub fn eject_device(volume_paths: &[&std::path::Path]) -> Result<(), String> {
+    let Some((last, rest)) = volume_paths.split_last() else {
+        return Err("eject: no volumes given".into());
+    };
+    for path in rest {
+        eject_volume_inner(path, false)?;
+    }
+    eject_volume_inner(last, true)
+}
+
+#[cfg(not(windows))]
+pub fn eject_device(_volume_paths: &[&std::path::Path]) -> Result<(), String> {
+    Err("eject is not implemented on this OS".into())
+}
+
+/// Dismount one volume; with `eject_media` also allow removal + eject
+/// the backing device (tray open / power down) afterwards.
+#[cfg(windows)]
+fn eject_volume_inner(path: &std::path::Path, eject_media: bool) -> Result<(), String> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Storage::FileSystem::{
@@ -553,6 +582,19 @@ pub fn eject_volume(path: &std::path::Path) -> Result<(), String> {
         // Best-effort lock (fails if files are open — dismount still tried).
         let _ = ioctl(FSCTL_LOCK_VOLUME, None, 0);
         let dismounted = ioctl(FSCTL_DISMOUNT_VOLUME, None, 0);
+
+        if !eject_media {
+            // Sibling pass of an eject-all: dismount only, the device
+            // eject happens once after every volume is off it.
+            let _ = CloseHandle(handle);
+            if dismounted.is_err() {
+                return Err(format!(
+                    "could not dismount {device} (files may still be open)"
+                ));
+            }
+            return Ok(());
+        }
+
         // Allow the media to be removed, then eject.
         let mut allow = PREVENT_MEDIA_REMOVAL {
             PreventMediaRemoval: false.into(),
@@ -578,6 +620,15 @@ pub fn eject_volume(path: &std::path::Path) -> Result<(), String> {
 #[cfg(not(windows))]
 pub fn eject_volume(_path: &std::path::Path) -> Result<(), String> {
     Err("eject is not implemented on this OS".into())
+}
+
+/// Names of processes holding files open on the volume at `path` — the
+/// "why won't it eject" answer for a failed eject. Not implemented on
+/// Windows yet (the honest source is the Restart Manager, which wants a
+/// file list, not a volume; NtQuerySystemInformation handle walks need
+/// admin). Callers must treat empty as "unknown", not "nothing".
+pub fn volume_busy_processes(_path: &std::path::Path) -> Vec<String> {
+    Vec::new()
 }
 
 /// Duplicate `src` next to itself with Explorer's " - Copy" /

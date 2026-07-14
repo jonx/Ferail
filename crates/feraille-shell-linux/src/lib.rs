@@ -522,10 +522,239 @@ pub fn duplicate_path(_src: &Path) -> Result<PathBuf, String> {
     Err("duplicate_path: not implemented on this platform".into())
 }
 
-/// Eject / unmount a volume. Real impl: udisks2 `Filesystem.Unmount` /
-/// `Drive.Eject` over D-Bus. Stub.
+/// Unmount and eject the volume mounted at `path`, Finder-style:
+/// unmount the filesystem, then — once nothing else on the same drive
+/// is mounted — power the drive down so it's safe to unplug.
+///
+/// `udisksctl` does the heavy lifting (the desktop-standard udisks2
+/// path; works without root for seat-local users), with a plain
+/// `umount` fallback for setups without udisks. Synchronous — callers
+/// dispatch from a worker. The power-off step is best-effort: by then
+/// the volume the caller named is already unmounted.
+#[cfg(target_os = "linux")]
+pub fn eject_volume(path: &Path) -> Result<(), String> {
+    eject_device(&[path])
+}
+
+#[cfg(not(target_os = "linux"))]
 pub fn eject_volume(_path: &Path) -> Result<(), String> {
-    Err("eject_volume: not implemented on Linux yet".into())
+    Err("eject_volume: not implemented on this platform".into())
+}
+
+/// Unmount every volume in `volume_paths` (mount points on one physical
+/// device), then power the device down — Finder's "Eject All". A single
+/// path is the plain eject. If any unmount fails, the power-off is
+/// skipped and the first error returned (already-unmounted siblings
+/// stay unmounted, like Finder).
+#[cfg(target_os = "linux")]
+pub fn eject_device(volume_paths: &[&Path]) -> Result<(), String> {
+    if volume_paths.is_empty() {
+        return Err("eject: no volumes given".into());
+    }
+    let mut first_err: Option<String> = None;
+    let mut disk: Option<String> = None;
+    for path in volume_paths {
+        let Some(source) = mount_source_for(path) else {
+            first_err
+                .get_or_insert_with(|| format!("no mounted filesystem found at {}", path.display()));
+            continue;
+        };
+        if disk.is_none() {
+            disk = parent_disk_of(&source);
+        }
+        if let Err(e) = unmount_filesystem(&source, path) {
+            first_err.get_or_insert(e);
+        }
+    }
+    if let Some(e) = first_err {
+        return Err(e);
+    }
+    // Power off the drive once its last filesystem is gone, so the
+    // "safe to unplug" semantics match Finder. Best-effort: by now the
+    // volumes the caller named are already unmounted.
+    if let Some(disk) = disk {
+        if !disk_has_mounted_filesystems(&disk) {
+            let _ = run_checked(std::process::Command::new("udisksctl").args([
+                "power-off",
+                "--no-user-interaction",
+                "-b",
+                &format!("/dev/{disk}"),
+            ]));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn eject_device(_volume_paths: &[&Path]) -> Result<(), String> {
+    Err("eject_device: not implemented on this platform".into())
+}
+
+/// Unmount one filesystem: udisksctl first (the desktop-standard path),
+/// plain `umount` as fallback for setups without udisks. When both
+/// fail, surface the udisks error — it's the more descriptive one
+/// ("target is busy", polkit denial, …).
+#[cfg(target_os = "linux")]
+fn unmount_filesystem(source: &str, mount_point: &Path) -> Result<(), String> {
+    if let Err(udisks_err) = run_checked(
+        std::process::Command::new("udisksctl")
+            .args(["unmount", "--no-user-interaction", "-b", source]),
+    ) {
+        run_checked(std::process::Command::new("umount").arg(mount_point))
+            .map_err(|_| udisks_err)?;
+    }
+    Ok(())
+}
+
+/// Names of processes holding files open on the volume at `path` — the
+/// "why won't it eject" answer for a failed unmount. Scans
+/// `/proc/<pid>/fd/*` and `/proc/<pid>/cwd` symlinks for targets inside
+/// the mount point (what `lsof` does); without root this only sees the
+/// user's own processes, which are exactly the ones a desktop eject
+/// trips over. Best-effort, sorted, deduped, capped at 5. Callers
+/// dispatch from a worker.
+#[cfg(target_os = "linux")]
+pub fn volume_busy_processes(path: &Path) -> Vec<String> {
+    let Ok(procs) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = Vec::new();
+    for entry in procs.flatten() {
+        let pid_os = entry.file_name();
+        let Some(pid) = pid_os
+            .to_str()
+            .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        else {
+            continue;
+        };
+        let proc_dir = entry.path();
+        let mut holds =
+            std::fs::read_link(proc_dir.join("cwd")).is_ok_and(|cwd| cwd.starts_with(path));
+        if !holds {
+            if let Ok(fds) = std::fs::read_dir(proc_dir.join("fd")) {
+                holds = fds
+                    .flatten()
+                    .filter_map(|fd| std::fs::read_link(fd.path()).ok())
+                    .any(|target| target.starts_with(path));
+            }
+        }
+        if holds {
+            let name = std::fs::read_to_string(proc_dir.join("comm"))
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+            names.push(if name.is_empty() { format!("pid {pid}") } else { name });
+        }
+    }
+    names.sort();
+    names.dedup();
+    names.truncate(5);
+    names
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn volume_busy_processes(_path: &Path) -> Vec<String> {
+    Vec::new()
+}
+
+/// Run a command to completion; `Err` carries trimmed stderr (or the
+/// spawn error) so eject failures surface *why* — "target is busy",
+/// polkit denials — instead of a bare exit status.
+#[cfg(target_os = "linux")]
+fn run_checked(cmd: &mut std::process::Command) -> Result<(), String> {
+    let program = cmd.get_program().to_string_lossy().into_owned();
+    match cmd.output() {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stderr = stderr.trim();
+            if stderr.is_empty() {
+                Err(format!("{program} failed ({})", out.status))
+            } else {
+                Err(stderr.to_string())
+            }
+        }
+        Err(e) => Err(format!("{program}: {e}")),
+    }
+}
+
+/// The `/dev/...` source of the filesystem mounted at `path`, from
+/// `/proc/self/mounts`. `None` for virtual/network sources.
+#[cfg(target_os = "linux")]
+fn mount_source_for(path: &Path) -> Option<String> {
+    let mounts = std::fs::read_to_string("/proc/self/mounts").ok()?;
+    let want = path.to_str()?;
+    for line in mounts.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(source), Some(mount_point)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        if unescape_mounts(mount_point) == want && source.starts_with("/dev/") {
+            return Some(source.to_string());
+        }
+    }
+    None
+}
+
+/// Parent disk name for a mount source: "/dev/sdb1" → "sdb",
+/// "/dev/nvme0n1p2" → "nvme0n1". Resolved through sysfs (a partition's
+/// `/sys/class/block/<name>` entry lives inside its disk's directory);
+/// a whole-disk source maps to itself. `None` when unsure — safer to
+/// skip the power-off than to power off the wrong drive.
+#[cfg(target_os = "linux")]
+fn parent_disk_of(source: &str) -> Option<String> {
+    let name = source.strip_prefix("/dev/")?;
+    if name.contains('/') {
+        return None; // /dev/mapper/… — don't guess.
+    }
+    let sys = Path::new("/sys/class/block").join(name);
+    if sys.join("partition").exists() {
+        let target = std::fs::read_link(&sys).ok()?;
+        let disk = target.parent()?.file_name()?.to_str()?;
+        if disk == "block" {
+            return None;
+        }
+        return Some(disk.to_string());
+    }
+    sys.exists().then(|| name.to_string())
+}
+
+/// True when any filesystem is still mounted from a partition (or the
+/// whole device) of `disk` per `/proc/self/mounts` — gates the
+/// post-unmount `power-off`.
+#[cfg(target_os = "linux")]
+fn disk_has_mounted_filesystems(disk: &str) -> bool {
+    let Ok(mounts) = std::fs::read_to_string("/proc/self/mounts") else {
+        return true; // Unknown → don't power off.
+    };
+    mounts
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|source| source.starts_with("/dev/"))
+        .any(|source| parent_disk_of(source).as_deref() == Some(disk))
+}
+
+/// Decode the octal escapes `/proc/self/mounts` uses in path fields
+/// (space `\040`, tab `\011`, newline `\012`, backslash `\134`).
+#[cfg(target_os = "linux")]
+fn unescape_mounts(s: &str) -> String {
+    if !s.contains('\\') {
+        return s.to_string();
+    }
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 3 < bytes.len() {
+            if let Ok(n) = u8::from_str_radix(&s[i + 1..i + 4], 8) {
+                out.push(n as char);
+                i += 4;
+                continue;
+            }
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
 }
 
 /// Make an "alias" to `target` beside it — a POSIX symlink named

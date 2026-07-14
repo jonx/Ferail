@@ -1,44 +1,45 @@
 # Feraille
 
-**The power-user file manager that never freezes.** Native, fast, written
-in Rust — with the tools you usually install separately built in: a
-duplicate finder, a disk-usage treemap you can export as HTML, magic-byte
-file identification, bulk rename with regex, a media viewer with sticky
-zoom, and a command palette. macOS today, Windows close behind, Linux
-underway.
+**A power-user file manager that never freezes.** Native, fast, written in
+Rust — with the tools you normally install separately built in: a duplicate
+finder, a disk-usage treemap you can export as HTML, magic-byte file
+identification, regex bulk rename, a media viewer, and a command palette.
 
 ![Feraille main window](docs/images/tour-shell.png)
 
-## Why try it
+## What is Feraille?
 
-- **It refuses to beachball.** One rule shapes the whole codebase — *the
-  UI must never stop*. Paint, scroll, hover, and typing never touch the
-  filesystem, network, or database; a dead network mount slows a
-  background task, never your pointer.
-  ([how that's enforced](docs/ARCHITECTURE.md#prime-directive))
-- **It reads bytes, not extensions.** Every file is identified by
-  content — a `.jpg` that's secretly a `.zip` is flagged in the list,
-  with real facts (architecture, dimensions, duration) in a Description
-  column no other file manager has.
+Feraille is a desktop file manager built around a single conviction: **the UI
+must never stop.** Painting, scrolling, hovering, hit-testing, and typing are
+read-only and nonblocking — they never touch the filesystem, network, or
+database. A dead network mount slows a background task, never your pointer.
+Everything expensive happens off the UI thread and reports back when it's
+ready; results that arrive after you've moved on are dropped.
+
+On top of that responsive core, Feraille folds in the utilities power users
+otherwise juggle as separate apps, and adds content intelligence the stock
+managers lack: every file is identified by its **bytes, not its extension**, so
+a `.jpg` that's secretly a `.zip` is flagged in the list, with real facts —
+architecture, dimensions, duration — surfaced in a Description column.
+
+It targets the gap the default managers leave: **responsiveness under load** and
+**content intelligence**, without a pile of third-party add-ons.
+
+## What makes it different
+
+- **It refuses to beachball.** One invariant shapes the whole codebase.
+  ([how it's enforced](docs/ARCHITECTURE.md#prime-directive))
+- **It reads bytes, not extensions.** Content/magic detection identifies every
+  file and reports real metadata no other manager shows.
 - **The power tools are built in.** Duplicate finder (hash-funnel,
-  APFS-clone-aware), disk-usage treemap (multi-select, act on squares,
+  clone/hard-link aware), disk-usage treemap (multi-select, act on squares,
   **export the picture as embeddable HTML**), regex bulk rename with live
-  preview, sticky-zoom media viewer, Cmd+K palette — zero extra downloads.
-- **It learns your habits.** The Ant Trail heat-tints the folders you
-  actually use and keeps them one click away.
-- **Everything is undoable.** Rename, bulk rename, move, copy, trash —
-  Cmd+Z, with guards so an undo never overwrites newer work.
-
-## Quick start
-
-```sh
-git clone https://github.com/jonx/Feraille && cd Feraille
-cargo run --release --bin feraille-gpui
-```
-
-On macOS, build the signed bundle instead to get the normal folder-access
-prompts: `scripts/bundle-mac.sh && open target/Feraille.app` — details and
-per-platform prerequisites in **[GETTING_STARTED.md](GETTING_STARTED.md)**.
+  preview, sticky-zoom media viewer, Cmd+K command palette — zero extra
+  downloads.
+- **It learns your habits.** The Ant Trail heat-tints the folders you actually
+  use and keeps them one click away.
+- **Everything is undoable.** Rename, bulk rename, move, copy, trash — Cmd+Z,
+  with guards so an undo never overwrites newer work.
 
 ## Feature tour
 
@@ -51,19 +52,41 @@ The full tour with a picture per feature lives in
 | **Icon grid** | **Media viewer + live grading** | **Command palette** |
 | ![Icon grid](docs/images/tour-grid.png) | ![Viewer](docs/images/tour-viewer.png) | ![Palette](docs/images/tour-palette.png) |
 
-And the ones a screenshot can't show: sticky zoom that carries your zoom
-and pan to the next file; chroma-keyed transparent video windows you can
-stack over your desktop (optional mpv backend); a dock drawer that parks
-the window against a screen edge and slides in on an edge-slam; streaming
-search; quarantine "where from" provenance; a homoglyph-aware deceptive-
-filename detector. **[Read the tour →](docs/FEATURES.md)**
+And the ones a screenshot can't show: sticky zoom that carries your zoom and pan
+to the next file; chroma-keyed transparent video windows you can stack over your
+desktop (optional mpv backend); a dock drawer that parks against a screen edge
+and slides in on an edge-slam; streaming search; quarantine "where from"
+provenance; a homoglyph-aware deceptive-filename detector.
+**[Read the tour →](docs/FEATURES.md)**
 
-## How Feraille compares
+## Vision & roadmap
 
-Feraille optimizes for what the default managers treat as afterthoughts:
-**responsiveness under load** and **content intelligence**. It reuses the
-good OS plumbing where it exists — Quick Look, Spotlight, tags, quarantine
-on macOS — and builds in the rest. The ❌ rows are real gaps, not modesty.
+One file manager that is responsive, content-aware, and equally at home on every
+desktop — with the power tools first-class instead of bolted on.
+
+- **Cross-platform parity.** macOS is the daily driver today; the roadmap is
+  full native parity on Windows and Linux (clipboard, trash, thumbnails, "open
+  with", native video), reusing OS plumbing where it's good and building in the
+  rest.
+- **Deeper content intelligence.** File-level frecency feeding search ranking,
+  smart folders / saved searches that re-run live, and richer magic/metadata.
+- **Sharper everyday flow.** Clipboard history with a paste picker, command-
+  palette navigation polish, and a unified selection/hover design language.
+
+The prioritized list of open work is in **[TODO.md](TODO.md)**.
+
+## Current status
+
+| Platform | Status |
+|---|---|
+| **macOS** | **Primary, daily-driver.** Feature-complete for everyday use. |
+| **Windows** | **Active port**, broad native parity — clipboard, Recycle Bin, thumbnails, Open With, Media Foundation video. Verified on real hardware; elevation and shell-extension verbs still stubbed. ([details](docs/features/windows-port.md)) |
+| **Linux** | **Early port** — builds and runs; volumes, Trash, and Open With are real; clipboard, thumbnails, and video are still stubbed. ([details](docs/features/linux-port.md)) |
+| **AROS** | **Research port** — Feraille boots and runs as a browsable, themed file manager on [AROS](https://aros.org) (the open-source AmigaOS) via a from-scratch GPUI platform backend. Not at parity: some features are gated pending native shell integration. ([details](docs/features/aros-port.md)) |
+
+### How Feraille compares
+
+The ❌ rows are real gaps, not modesty.
 
 | Capability | Feraille | Finder (macOS) | File Explorer (Windows) | Dolphin / Nautilus (Linux) |
 |---|---|---|---|---|
@@ -77,38 +100,29 @@ on macOS — and builds in the rest. The ❌ rows are real gaps, not modesty.
 | **Tabs + multi-window** | ✅ | ⚠️ tabs, no split | ⚠️ tabs (recent) | ✅ Dolphin best-in-class |
 | **Command palette** | ✅ Cmd+K | ❌ | ❌ | ❌ |
 | **Global / indexed search** | ⚠️ Spotlight-backed, single query box | ✅ rich | ✅ indexed | ✅ Tracker / Baloo |
-| **Cloud integration** (iCloud / OneDrive) | ⚠️ detects placeholders | ✅ deep | ✅ deep | ⚠️ |
-| **3rd-party shell-extension verbs** | ❌ (built-ins + Open With) | ✅ Services | ✅ large ecosystem | ✅ service menus |
 | **Accessibility / localization / maturity** | ❌ young, single-dev | ✅ decades | ✅ decades | ✅ mature |
 
 ✅ first-class · ⚠️ partial / varies · ❌ absent
 
-## Platform status
+## Getting started
 
-| Platform | Status |
-|---|---|
-| **macOS** | Primary, daily-driver. Feature-complete for everyday use. |
-| **Windows** | Active port, broad native parity (clipboard, Recycle Bin, thumbnails, Open With, Media Foundation video). Verified on real hardware; elevation and shell-extension verbs still stubbed. ([details](docs/features/windows-port.md)) |
-| **Linux** | Early port — builds and runs; volumes, Trash, Open With real; clipboard/thumbnails/video still stubbed. ([details](docs/features/linux-port.md)) |
+```sh
+git clone https://github.com/jonx/Feraille && cd Feraille
+cargo run --release --bin feraille-gpui
+```
 
-Open work lives in [TODO.md](TODO.md).
-
-## macOS permissions (access prompts)
-
-macOS gates Desktop/Documents/Downloads (and removable/network volumes)
-behind its privacy system. The familiar consent prompt only appears for a
-**code-signed `.app` bundle** with the matching usage strings — the loose
-`cargo run` binary can't prompt and shows the in-app "Access required"
-screen instead. To get real prompts:
+On macOS, build the signed bundle instead to get the normal folder-access
+prompts (Desktop / Documents / Downloads and removable/network volumes are
+gated behind the OS privacy system, which only prompts a **code-signed `.app`
+bundle** — the loose `cargo run` binary shows an in-app "Access required" screen
+instead):
 
 ```sh
 scripts/bundle-mac.sh && open target/Feraille.app
 ```
 
-Caveats (stale terminal grants, ad-hoc signing, re-prompts) are covered in
-[GETTING_STARTED.md](GETTING_STARTED.md#macos-permissions); the short
-version: sign with a real identity for grants that stick, and if a prompt
-never shows, `tccutil reset` the stale state.
+Per-platform prerequisites, permission caveats, and packaging live in
+**[GETTING_STARTED.md](GETTING_STARTED.md)**.
 
 ## Project layout
 
@@ -142,17 +156,17 @@ Crate-boundary rules:
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Feraille is, by design, mostly
-**AI pair-programmed** — that's the workflow, not a caveat — and
-**AI-generated pull requests are welcome**: point your agent at
-[CLAUDE.md](CLAUDE.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
-keep the prime directive, and run `cargo check` / `cargo test` before
-opening the PR. Human review gates every merge. In short:
+See [CONTRIBUTING.md](CONTRIBUTING.md). Feraille is, by design, mostly **AI
+pair-programmed** — that's the workflow, not a caveat — and **AI-generated pull
+requests are welcome**: point your agent at [CLAUDE.md](CLAUDE.md) and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), keep the prime directive, and run
+`cargo check` / `cargo test` before opening the PR. Human review gates every
+merge.
 
-- New product work belongs in `crates/feraille-gpui`; keep domain code
-  UI-free in the core crates.
-- Before finishing: `cargo check`, `cargo test`, and a fresh screenshot
-  for UI changes. See [CLAUDE.md](CLAUDE.md#verification).
+- New product work belongs in `crates/feraille-gpui`; keep domain code UI-free
+  in the core crates.
+- Before finishing: `cargo check`, `cargo test`, and a fresh screenshot for UI
+  changes. See [CLAUDE.md](CLAUDE.md#verification).
 
 ## License
 
@@ -163,10 +177,10 @@ Dual-licensed under either of
 
 at your option.
 
-Third-party components incorporated into a built binary (GPUI,
-gpui-component, and the bundled Lucide / Bootstrap icon artwork) are
-credited in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Third-party components incorporated into a built binary (GPUI, gpui-component,
+and the bundled Lucide / Bootstrap icon artwork) are credited in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-> **Note:** Feraille depends on `gpui` / `gpui-component` as git
-> dependencies (not on crates.io), so there is no `cargo install` — build
-> from source; reproducible builds come from the committed `Cargo.lock`.
+> **Note:** Feraille depends on `gpui` / `gpui-component` as git dependencies
+> (not on crates.io), so there is no `cargo install` — build from source;
+> reproducible builds come from the committed `Cargo.lock`.

@@ -207,6 +207,157 @@ pub fn eject_volume(path: &Path) -> Result<(), String> {
     })
 }
 
+/// Unmount **every** volume on the physical device backing
+/// `volume_paths[0]`, then eject the device — Finder's "Eject All".
+/// macOS: `-[NSFileManager unmountVolumeAtURL:options:completionHandler:]`
+/// with `NSFileManagerUnmountAllPartitionsAndEjectDisk`, the one
+/// primitive that handles sibling partitions atomically. (Looping
+/// `unmountAndEjectDeviceAtURL` per volume does NOT work: it returns
+/// OSStatus -36 for every partition except the last one still mounted,
+/// verified on-device.) The extra paths are unused on macOS — the
+/// option ejects the whole device from any one of its volumes — but the
+/// slice keeps the cross-platform signature, since Windows/Linux
+/// dismount each volume individually.
+///
+/// Synchronous — blocks on the completion handler (which fires on a
+/// dispatch queue, not the caller's thread), so callers dispatch from
+/// a worker. A generous timeout guards against a completion that never
+/// arrives; the flush of a slow device can take a while, so it errs
+/// long.
+#[cfg(target_os = "macos")]
+pub fn eject_device(volume_paths: &[&Path]) -> Result<(), String> {
+    use block2::RcBlock;
+    use objc2::msg_send;
+    use objc2::msg_send_id;
+    use objc2::rc::{autoreleasepool, Retained};
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2_foundation::{NSError, NSString, NSURL};
+
+    let Some(first) = volume_paths.first() else {
+        return Err("eject: no volumes given".into());
+    };
+
+    // NSFileManagerUnmountOptions (NSFileManager.h).
+    const UNMOUNT_ALL_PARTITIONS_AND_EJECT_DISK: usize = 1 << 0;
+    const UNMOUNT_WITHOUT_UI: usize = 1 << 1;
+
+    autoreleasepool(|_| unsafe {
+        let path_ns = NSString::from_str(&first.to_string_lossy());
+        let url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&path_ns, true);
+
+        let cls: &AnyClass =
+            AnyClass::get("NSFileManager").ok_or("NSFileManager class missing")?;
+        let fm: Retained<AnyObject> = msg_send_id![cls, defaultManager];
+
+        let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
+        let block = RcBlock::new(move |err: *mut NSError| {
+            let result = if err.is_null() {
+                Ok(())
+            } else {
+                Err(ns_error_message(err, "eject failed"))
+            };
+            let _ = tx.send(result);
+        });
+
+        let options = UNMOUNT_ALL_PARTITIONS_AND_EJECT_DISK | UNMOUNT_WITHOUT_UI;
+        let _: () = msg_send![
+            &*fm,
+            unmountVolumeAtURL: &*url,
+            options: options,
+            completionHandler: &*block,
+        ];
+
+        match rx.recv_timeout(std::time::Duration::from_secs(180)) {
+            Ok(result) => result,
+            Err(_) => Err("eject timed out".into()),
+        }
+    })
+}
+
+/// Names of processes holding files open on the volume mounted at
+/// `path` — the "why won't it eject" answer for a failed eject.
+///
+/// Uses libproc's `proc_listpidspath` (public since 10.5; the same
+/// machinery `lsof -- /Volumes/X` rides), so no subprocess and no
+/// directory walk. `PATH_IS_VOLUME` matches any open file on the
+/// volume; `EXCLUDE_EVTONLY` skips event-only watchers (Spotlight/FSEvents
+/// kqueue fds) that don't actually block an unmount, so we don't accuse
+/// innocent daemons. Best-effort: empty on any failure. Sorted, deduped,
+/// capped at 5. Synchronous — callers run this on a worker.
+#[cfg(target_os = "macos")]
+pub fn volume_busy_processes(path: &Path) -> Vec<String> {
+    use std::os::raw::{c_char, c_int, c_void};
+    use std::os::unix::ffi::OsStrExt;
+
+    const PROC_ALL_PIDS: u32 = 1;
+    const PROC_LISTPIDSPATH_PATH_IS_VOLUME: u32 = 1;
+    const PROC_LISTPIDSPATH_EXCLUDE_EVTONLY: u32 = 2;
+
+    extern "C" {
+        // libproc.h — exported by libSystem, no extra link flags needed.
+        fn proc_listpidspath(
+            r#type: u32,
+            typeinfo: u32,
+            path: *const c_char,
+            pathflags: u32,
+            buffer: *mut c_void,
+            buffersize: c_int,
+        ) -> c_int;
+        fn proc_name(pid: c_int, buffer: *mut c_void, buffersize: u32) -> c_int;
+    }
+
+    let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return Vec::new();
+    };
+    let flags = PROC_LISTPIDSPATH_PATH_IS_VOLUME | PROC_LISTPIDSPATH_EXCLUDE_EVTONLY;
+    unsafe {
+        // First call sizes the pid buffer; second fills it. Pad the
+        // buffer so processes appearing in between still fit.
+        let bytes = proc_listpidspath(
+            PROC_ALL_PIDS,
+            0,
+            c_path.as_ptr(),
+            flags,
+            std::ptr::null_mut(),
+            0,
+        );
+        if bytes <= 0 {
+            return Vec::new();
+        }
+        let mut pids = vec![0 as c_int; bytes as usize / 4 + 16];
+        let bytes = proc_listpidspath(
+            PROC_ALL_PIDS,
+            0,
+            c_path.as_ptr(),
+            flags,
+            pids.as_mut_ptr() as *mut c_void,
+            (pids.len() * 4) as c_int,
+        );
+        if bytes <= 0 {
+            return Vec::new();
+        }
+        let count = (bytes as usize / 4).min(pids.len());
+        let mut names: Vec<String> = Vec::new();
+        for &pid in &pids[..count] {
+            if pid <= 0 {
+                continue;
+            }
+            let mut buf = [0u8; 256];
+            let len = proc_name(pid, buf.as_mut_ptr() as *mut c_void, buf.len() as u32);
+            if len > 0 {
+                let name = String::from_utf8_lossy(&buf[..len as usize]).into_owned();
+                if !name.is_empty() {
+                    names.push(name);
+                }
+            }
+        }
+        names.sort();
+        names.dedup();
+        names.truncate(5);
+        names
+    }
+}
+
 /// Best-effort string from an `NSError*` (which may be null). Falls
 /// back to the static fallback when the error is missing or its
 /// `localizedDescription` selector isn't reachable.

@@ -1253,38 +1253,227 @@ impl Shell {
 
     /// Eject the volume mounted at `path`. Shared by the context-menu
     /// "Eject" action and the trailing eject button drawn on ejectable
-    /// volume rows. Unmounts on a worker (`unmountAndEject` can block
-    /// while the system flushes/closes the device), then reports
-    /// success or failure as a toast. The volume observer drops the row
-    /// from the sidebar once the unmount lands.
+    /// volume rows.
+    ///
+    /// Finder parity: when the volume shares its physical device with
+    /// other mounted volumes (a partitioned external disk, a
+    /// multi-volume APFS container), ask first — eject just this
+    /// volume, or every volume on the disk so it can be unplugged. The
+    /// sibling lookup reads the cached sidebar volume list only; no
+    /// I/O on the click path.
     pub(crate) fn eject_path(
         &mut self,
         path: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        use gpui_component::button::ButtonVariants as _;
+
+        let name = self.volume_display_name(&path);
+        let siblings = self.sibling_volumes_on_device(&path);
+        if siblings.is_empty() {
+            self.eject_volumes(vec![(path, name)], window, cx);
+            return;
+        }
+
+        #[derive(Clone, Copy)]
+        enum EjectChoice {
+            One,
+            All,
+            Cancel,
+        }
+        let (choice_tx, choice_rx) = async_channel::bounded::<EjectChoice>(1);
+        let total = siblings.len() + 1;
+        let body = format!(
+            "\u{201C}{name}\u{201D} is one of {total} volumes on its disk. \
+             Do you want to eject \u{201C}{name}\u{201D} only, or all volumes on the disk?"
+        );
+        let only_label = format!("Eject \u{201C}{name}\u{201D} Only");
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let tx_all = choice_tx.clone();
+            let tx_one = choice_tx.clone();
+            let tx_cancel = choice_tx.clone();
+            dialog
+                .title("Eject")
+                .child(div().text_scale_sm().child(body.clone()))
+                .child(
+                    h_flex()
+                        .pt_2()
+                        .gap_2()
+                        .child(
+                            Button::new("eject-all")
+                                .label("Eject All")
+                                .primary()
+                                .small()
+                                .on_click(move |_, window, cx| {
+                                    let _ = tx_all.try_send(EjectChoice::All);
+                                    window.close_dialog(cx);
+                                }),
+                        )
+                        .child(
+                            Button::new("eject-one")
+                                .label(only_label.clone())
+                                .small()
+                                .on_click(move |_, window, cx| {
+                                    let _ = tx_one.try_send(EjectChoice::One);
+                                    window.close_dialog(cx);
+                                }),
+                        ),
+                )
+                .on_cancel(move |_, _, _| {
+                    let _ = tx_cancel.try_send(EjectChoice::Cancel);
+                    true
+                })
+        });
+        let weak = cx.weak_entity();
+        let win = window.window_handle();
+        cx.spawn(async move |_, cx| {
+            let choice = match choice_rx.recv().await {
+                Ok(EjectChoice::Cancel) | Err(_) => return,
+                Ok(choice) => choice,
+            };
+            let _ = win.update(cx, |_, window, cx| {
+                let Some(shell) = weak.upgrade() else { return };
+                shell.update(cx, |shell, cx| {
+                    let volumes = match choice {
+                        EjectChoice::All => {
+                            // Clicked volume last: the device powers
+                            // down when its final volume unmounts.
+                            let mut all = siblings.clone();
+                            all.push((path.clone(), name.clone()));
+                            all
+                        }
+                        _ => vec![(path.clone(), name.clone())],
+                    };
+                    shell.eject_volumes(volumes, window, cx);
+                });
+            });
+        })
+        .detach();
+    }
+
+    /// Display name for the volume mounted at `path`, from the cached
+    /// sidebar volume list (fallback: the path's leaf).
+    fn volume_display_name(&self, path: &Path) -> String {
+        self.process
+            .volumes
+            .borrow()
+            .iter()
+            .find(|v| v.path == path)
+            .map(|v| v.name.clone())
+            .unwrap_or_else(|| {
+                path.file_name()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| path.display().to_string())
+            })
+    }
+
+    /// Other mounted volumes sharing `path`'s physical device, as
+    /// `(mount path, display name)` pairs from the cached sidebar
+    /// volume list — no I/O. Removable volumes only: an internal-disk
+    /// grouping must never be swept into an eject-all.
+    fn sibling_volumes_on_device(&self, path: &Path) -> Vec<(PathBuf, String)> {
+        let volumes = self.process.volumes.borrow();
+        let Some(device) = volumes
+            .iter()
+            .find(|v| v.path == path)
+            .and_then(|v| v.device_id.clone())
+        else {
+            return Vec::new();
+        };
+        volumes
+            .iter()
+            .filter(|v| {
+                v.path != path && v.is_removable && v.device_id.as_deref() == Some(device.as_str())
+            })
+            .map(|v| (v.path.clone(), v.name.clone()))
+            .collect()
+    }
+
+    /// Eject the given `(mount path, display name)` volumes on a
+    /// worker (unmount/eject can block while the system flushes and
+    /// closes the device). A single volume goes through
+    /// `eject_volume`; several — the "Eject All" answer — go through
+    /// `eject_device`, which unmounts every partition before powering
+    /// the device down (a per-volume loop spuriously fails on macOS
+    /// while sibling partitions are mounted). Failure toasts are
+    /// enriched with the processes still holding files open on the
+    /// volume — the usual reason an eject fails, and the part Finder's
+    /// "disk is in use" alert never tells you. The volume observer
+    /// drops ejected rows from the sidebar once the unmounts land.
+    fn eject_volumes(
+        &mut self,
+        volumes: Vec<(PathBuf, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use gpui_component::notification::Notification;
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(str::to_string)
-            .unwrap_or_else(|| path.display().to_string());
+
+        /// Failed-eject toast: name who's blocking when we can (the
+        /// actionable why), else fall back to the platform error.
+        fn failure_message(busy: &[String], what: &str, err: &str) -> String {
+            let apps = match busy {
+                [] => return format!("Couldn’t eject {what}: {err}"),
+                [a] => format!("{a} has"),
+                [a, b] => format!("{a} and {b} have"),
+                [head @ .., last] => format!("{} and {last} have", head.join(", ")),
+            };
+            format!("Couldn’t eject {what} — {apps} files open on it. Close them and try again.")
+        }
+
         let win = window.window_handle();
         cx.spawn(async move |_this, cx| {
-            let path_for_op = path.clone();
-            let result = cx
+            let (ejected, failures) = cx
                 .background_executor()
-                .spawn(async move { crate::platform_shell::eject_volume(&path_for_op) })
+                .spawn(async move {
+                    let mut ejected: Vec<String> = Vec::new();
+                    let mut failures: Vec<String> = Vec::new();
+                    match volumes.as_slice() {
+                        [] => {}
+                        [(path, name)] => match crate::platform_shell::eject_volume(path) {
+                            Ok(()) => ejected.push(name.clone()),
+                            Err(e) => {
+                                let busy = crate::platform_shell::volume_busy_processes(path);
+                                let what = format!("\u{201C}{name}\u{201D}");
+                                failures.push(failure_message(&busy, &what, &e));
+                            }
+                        },
+                        many => {
+                            let paths: Vec<&Path> = many.iter().map(|(p, _)| p.as_path()).collect();
+                            match crate::platform_shell::eject_device(&paths) {
+                                Ok(()) => ejected.extend(many.iter().map(|(_, n)| n.clone())),
+                                Err(e) => {
+                                    // Whoever holds a file open on *any* of the
+                                    // device's volumes blocks the whole eject.
+                                    let mut busy: Vec<String> = many
+                                        .iter()
+                                        .flat_map(|(p, _)| {
+                                            crate::platform_shell::volume_busy_processes(p)
+                                        })
+                                        .collect();
+                                    busy.sort();
+                                    busy.dedup();
+                                    busy.truncate(5);
+                                    failures.push(failure_message(&busy, "the disk", &e));
+                                }
+                            }
+                        }
+                    }
+                    (ejected, failures)
+                })
                 .await;
-            let _ = win.update(cx, |_, window, cx| match result {
-                Ok(()) => window.push_notification(
-                    Notification::info(format!("Ejected \u{201C}{name}\u{201D}")),
-                    cx,
-                ),
-                Err(e) => window.push_notification(
-                    Notification::error(format!("Couldn’t eject \u{201C}{name}\u{201D}: {e}")),
-                    cx,
-                ),
+            let _ = win.update(cx, |_, window, cx| {
+                if failures.is_empty() && !ejected.is_empty() {
+                    let msg = match ejected.as_slice() {
+                        [name] => format!("Ejected \u{201C}{name}\u{201D}"),
+                        names => format!("Ejected {} volumes", names.len()),
+                    };
+                    window.push_notification(Notification::info(msg), cx);
+                }
+                for msg in failures {
+                    window.push_notification(Notification::error(msg), cx);
+                }
             });
         })
         .detach();
