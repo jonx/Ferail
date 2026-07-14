@@ -44,13 +44,16 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 T=824; SS=4; TS=$((T*SS))        # tile side, supersample factor, supersampled canvas
 RAD=185.4                        # nominal corner radius (0.225 x 824); edge-break point
 SMOOTH=0.6                       # figma corner-smoothing (Apple's continuous-corner value)
-CROPL=9                          # source columns shaved off the LEFT edge (see step 2)
+G=40                             # overscan margin cropped off each side (see step 2)
 
-# figma corner-smoothing: emit the squircle SVG path (T-space, equal corners). Ported from
-# figma-squircle; s=SMOOTH, and the base radius is RAD/(1+s) so the straight edges break at
-# exactly RAD (matching the old circular footprint). Verified pixel-identical to the reference.
-squircle_path() {
-  awk -v W="$T" -v s="$SMOOTH" -v RAD="$RAD" '
+# figma corner-smoothing: emit ONE quadrant of the squircle (its top-right corner), as an SVG
+# path in supersampled space. Only this single corner is hand-written — the full mask is then
+# assembled by flip/flop mirroring, so all four corners are identical BY CONSTRUCTION (an
+# earlier version hand-mirrored the path for each corner and got each one subtly wrong).
+# Geometry is the figma-squircle top-right corner verbatim; s=SMOOTH, and the base radius is
+# RAD/(1+s) so the straight edges break at exactly RAD (same footprint as a circular cut).
+squircle_quadrant_path() {
+  awk -v W="$1" -v s="$SMOOTH" -v RAD="$2" '
     function rad(x){return x*PI/180}
     function tn(x){return sin(x)/cos(x)}
     BEGIN{
@@ -58,23 +61,11 @@ squircle_path() {
       p=(1+s)*r; arc=90*(1-s); al=sin(rad(arc/2))*r*sqrt(2);
       alpha=(90-arc)/2; beta=45*s; p3=r*tn(rad(beta/2));
       c=p3*cos(rad(alpha)); d=c*tn(rad(alpha)); b=(p-al-c-d)/3; a=2*b;
-      ab=a+b; abc=a+b+c; bc=b+c; H=W;
-      printf "M %.4f 0 ", W-p;
-      printf "c %.4f 0 %.4f 0 %.4f %.4f ", a, ab, abc, d;
+      printf "M 0 0 L %.4f 0 ", W-p;
+      printf "c %.4f 0 %.4f 0 %.4f %.4f ", a, a+b, a+b+c, d;
       printf "a %.4f %.4f 0 0 1 %.4f %.4f ", r, r, al, al;
-      printf "c %.4f %.4f %.4f %.4f %.4f %.4f ", d, c, d, bc, d, abc;
-      printf "L %.4f %.4f ", W, H-p;
-      printf "c 0 %.4f 0 %.4f %.4f %.4f ", a, ab, -d, abc;
-      printf "a %.4f %.4f 0 0 1 %.4f %.4f ", r, r, -al, al;
-      printf "c %.4f %.4f %.4f %.4f %.4f %.4f ", -c, d, -bc, d, -abc, d;
-      printf "L %.4f %.4f ", p, H;
-      printf "c %.4f 0 %.4f 0 %.4f %.4f ", -a, -ab, -abc, -d;
-      printf "a %.4f %.4f 0 0 1 %.4f %.4f ", r, r, -al, -al;
-      printf "c %.4f %.4f %.4f %.4f %.4f %.4f ", -d, -c, -d, -bc, -d, -abc;
-      printf "L 0 %.4f ", p;
-      printf "c 0 %.4f 0 %.4f %.4f %.4f ", -a, -ab, d, -abc;
-      printf "a %.4f %.4f 0 0 1 %.4f %.4f ", r, r, al, -al;
-      printf "c %.4f %.4f %.4f %.4f %.4f %.4f Z", c, -d, bc, -d, abc, -d;
+      printf "c %.4f %.4f %.4f %.4f %.4f %.4f ", d, c, d, b+c, d, a+b+c;
+      printf "L %.4f %.4f L 0 %.4f Z", W, W, W;
     }'
 }
 
@@ -89,21 +80,29 @@ magick "$SRC" -alpha set -fill none -fuzz 9% \
   -channel A -morphology Erode Disk:1 +channel \
   -trim +repage "$TMP/tile.png"
 
-# 2. Shave CROPL columns off the LEFT of the source, then square to the 824 tile. The source
-#    has a baked-in specular highlight down its LEFT edge (a ~4px near-white band) that reads
-#    as a stray white column against the Dock; dropping the leftmost columns lands the tile
-#    edge on the mid-tone metal instead. We crop in source space and keep the real right edge
-#    (smooth metal — no highlight, and no replication smear). A 5% aspect nudge on a texture is
-#    invisible and keeps the full composition (the rust corner still reaches the tile edge).
-SW="$(magick identify -format '%w' "$TMP/tile.png")"; SH="$(magick identify -format '%h' "$TMP/tile.png")"
-magick "$TMP/tile.png" -crop "$((SW-CROPL))x${SH}+${CROPL}+0" +repage \
-  -resize "${T}x${T}!" "$TMP/art.png"
+# 2. Square the art with a G-px OVERSCAN: resize to (T+2G) then centre-crop back to T. Two
+#    problems solved at once, both caused by the source being an already-cut tile rather than
+#    full-bleed art:
+#    - its own old rounded corners (hand-cut, slightly asymmetric) would otherwise sit inside
+#      the new mask and bleed through DstIn, making the four cut corners differ;
+#    - it has a baked-in specular highlight down its LEFT edge (~4px near-white band) that
+#      read as a stray white column against the Dock.
+#    Overscanning pushes the old cut edge fully OUTSIDE the new mask (G=40 verified: DstIn
+#    alpha is then pixel-identical to the mask alpha), so every visible pixel is genuine
+#    texture and the mask alone defines the silhouette. A ~5% texture zoom is invisible and
+#    the rust corner still reaches the tile edge.
+magick "$TMP/tile.png" -resize "$((T+2*G))x$((T+2*G))!" \
+  -gravity center -crop "${T}x${T}+0+0" +repage "$TMP/art.png"
 
-# 3. Anti-aliased continuous-corner (squircle) mask, drawn at SSx supersample then downsampled.
-#    Interior opaque white, exterior transparent, so the shape lives in the alpha channel that
-#    step 4's DstIn samples.
-magick -size "${TS}x${TS}" xc:none -fill white \
-  -draw "scale $SS $SS path '$(squircle_path)'" \
+# 3. Anti-aliased continuous-corner (squircle) mask: draw one quadrant at SSx supersample,
+#    mirror it into the four corners, then downsample. Interior opaque white, exterior
+#    transparent, so the shape lives in the alpha channel that step 4's DstIn samples.
+Q=$((TS/2))                       # quadrant side in supersampled space
+magick -size "${Q}x${Q}" xc:none -fill white \
+  -draw "path '$(squircle_quadrant_path "$Q" "$(awk -v r="$RAD" -v ss="$SS" 'BEGIN{printf "%.4f", r*ss}')")'" \
+  "$TMP/quad.png"
+magick \( "$TMP/quad.png" -flop \) "$TMP/quad.png" +append "$TMP/tophalf.png"
+magick "$TMP/tophalf.png" \( "$TMP/tophalf.png" -flip \) -append \
   -filter Lanczos -resize "${T}x${T}" "$TMP/mask.png"
 
 # 4. Clip the art to the tile (mask forced to sRGB — see header note). Apple's squircle is
@@ -127,3 +126,19 @@ iconutil -c icns "$IS" -o "$HERE/feraille-macos.icns"
 
 echo ">> wrote feraille-macos.png, feraille-macos.icns in $HERE"
 echo ">> master: $(magick "$HERE/feraille-macos.png" -format '%@ on %wx%h' info:)  (expect 824x824+100+100 on 1024x1024)"
+
+# Self-check: the four cut corners of the SHIPPED master must be identical (mirror-compare
+# its alpha — checking the mask alone is not enough, since the art's own alpha could still
+# bleed through DstIn if the overscan ever stops clearing the old cut).
+magick "$HERE/feraille-macos.png" -alpha extract "$TMP/MA.png"
+magick "$TMP/MA.png" -crop "260x260+100+100" +repage "$TMP/m_tl.png"
+magick "$TMP/MA.png" -crop "260x260+$((1024-100-260))+100" +repage -flop "$TMP/m_tr.png"
+magick "$TMP/MA.png" -crop "260x260+100+$((1024-100-260))" +repage -flip "$TMP/m_bl.png"
+magick "$TMP/MA.png" -crop "260x260+$((1024-100-260))+$((1024-100-260))" +repage -flip -flop "$TMP/m_br.png"
+FAIL=0
+for c in m_tr m_bl m_br; do
+  D="$(magick "$TMP/m_tl.png" "$TMP/$c.png" -compose difference -composite -threshold 10% -format '%[fx:round(mean*w*h)]' info:)"
+  echo ">> corner check $c vs m_tl: ${D} differing px (expect 0)"
+  [ "$D" = "0" ] || FAIL=1
+done
+[ "$FAIL" = "0" ] || { echo ">> CORNER CHECK FAILED — the four corners are not identical" >&2; exit 1; }
