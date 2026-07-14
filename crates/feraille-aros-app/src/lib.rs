@@ -49,7 +49,11 @@ pub extern "C" fn feraille_aros_main() -> u32 {
 
 /// getrandom v0.3 custom backend (`getrandom_backend="custom"` in the
 /// AROS target rustflags): posixc provides a host-backed arc4random_buf
-/// CSPRNG. Inert on other targets (nothing references the symbol).
+/// CSPRNG. AROS-gated: on hosts without `arc4random_buf` in libc (MSVC)
+/// the extern would otherwise fail the *test-harness* link even though
+/// nothing calls it — the getrandom crate only references this symbol
+/// under the custom-backend cfg the AROS target sets.
+#[cfg(target_os = "aros")]
 #[unsafe(no_mangle)]
 unsafe extern "Rust" fn __getrandom_v03_custom(
     dest: *mut u8,

@@ -419,6 +419,8 @@ impl ElevFiles {
         let mut last_err = "create private dir: exhausted retries".to_string();
         for _ in 0..8 {
             let dir = std::env::temp_dir().join(format!("feraille-elev-{}", random_token()));
+            // `mut` feeds the unix-only mode(0o700) below.
+            #[cfg_attr(not(unix), allow(unused_mut))]
             let mut builder = std::fs::DirBuilder::new();
             #[cfg(unix)]
             {

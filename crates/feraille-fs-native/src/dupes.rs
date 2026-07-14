@@ -739,6 +739,11 @@ mod tests {
         assert_eq!(members.len(), 2, "both names reported");
         #[cfg(unix)]
         assert_eq!(*distinct_occupants, 1, "hard links share one inode");
+        #[cfg(not(unix))]
+        assert_eq!(
+            *distinct_occupants, 2,
+            "no file identity off-unix — two names are two occupants"
+        );
     }
 
     #[test]

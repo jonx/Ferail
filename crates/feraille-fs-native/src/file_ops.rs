@@ -462,11 +462,63 @@ pub fn same_volume(a: &Path, b: &Path) -> bool {
             _ => false,
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // Volume identity = the NTFS volume serial number from
+        // GetFileInformationByHandle, on each path's nearest existing
+        // ancestor. Comparing drive-letter prefixes would lie under
+        // junction-mounted volumes (a D: volume mounted at C:\mnt\d);
+        // the serial is the ground truth MoveFileEx itself honors.
+        fn serial_of(p: &Path) -> Option<u32> {
+            use std::os::windows::ffi::OsStrExt;
+            use windows::core::PCWSTR;
+            use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::Storage::FileSystem::{
+                CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+                FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
+                FILE_SHARE_WRITE, OPEN_EXISTING,
+            };
+            let wide: Vec<u16> = p.as_os_str().encode_wide().chain(Some(0)).collect();
+            // Access rights 0: attribute-only query; BACKUP_SEMANTICS lets
+            // CreateFileW open directories.
+            let handle = unsafe {
+                CreateFileW(
+                    PCWSTR::from_raw(wide.as_ptr()),
+                    0,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    None,
+                    OPEN_EXISTING,
+                    FILE_FLAG_BACKUP_SEMANTICS,
+                    None,
+                )
+            }
+            .ok()?;
+            let mut info = BY_HANDLE_FILE_INFORMATION::default();
+            let got = unsafe { GetFileInformationByHandle(handle, &mut info) };
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            got.ok().map(|()| info.dwVolumeSerialNumber)
+        }
+        fn serial_of_nearest(p: &Path) -> Option<u32> {
+            let mut cur = Some(p);
+            while let Some(c) = cur {
+                if let Some(s) = serial_of(c) {
+                    return Some(s);
+                }
+                cur = c.parent();
+            }
+            None
+        }
+        match (serial_of_nearest(a), serial_of_nearest(b)) {
+            (Some(sa), Some(sb)) => sa == sb,
+            _ => false,
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         // Conservative: forces the copy+delete path, which is always
-        // correct, just slower. Real volume identity lands with the
-        // Windows parity pass.
+        // correct, just slower.
         let _ = (a, b);
         false
     }
@@ -768,16 +820,37 @@ fn copy_item(
 /// Recreate a symlink at `dst` pointing wherever `src` points.
 /// Links are never followed (same stance as the disk-usage walker) —
 /// copying a folder of symlinks must not balloon into copying their
-/// targets. [win-parity: symlink creation needs privilege; revisit]
+/// targets.
 fn recreate_symlink(src: &Path, dst: &Path) -> Result<(), FileOpError> {
     let target = fs::read_link(src).map_err(|e| FileOpError::from_io(&e, src))?;
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&target, dst).map_err(|e| FileOpError::from_io(&e, dst))
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = target;
+        // Windows symlinks are typed. Classify by the target's metadata,
+        // resolving a relative target against the link's parent; an
+        // unresolvable (dangling) target defaults to a file symlink, same as
+        // what Explorer produces. std passes ALLOW_UNPRIVILEGED_CREATE, so
+        // this works under Developer Mode without elevation; otherwise the
+        // privilege error surfaces through the normal failure report.
+        let resolved = if target.is_absolute() {
+            target.clone()
+        } else {
+            src.parent().map_or_else(|| target.clone(), |p| p.join(&target))
+        };
+        let is_dir = fs::metadata(&resolved).map(|m| m.is_dir()).unwrap_or(false);
+        let made = if is_dir {
+            std::os::windows::fs::symlink_dir(&target, dst)
+        } else {
+            std::os::windows::fs::symlink_file(&target, dst)
+        };
+        made.map_err(|e| FileOpError::from_io(&e, dst))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, dst);
         Err(FileOpError::other(
             src,
             FileOpErrorKind::Other,

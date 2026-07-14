@@ -82,8 +82,18 @@ thread_local! {
 #[implement(IMFMediaEngineNotify)]
 struct Notify {
     ready: Arc<AtomicBool>,
-    ended: Arc<AtomicBool>,
     on_ended: Mutex<Option<Box<dyn Fn() + Send + 'static>>>,
+}
+
+impl Notify {
+    /// Fire the viewer's end-of-playback callback (at most once).
+    fn fire_ended(&self) {
+        if let Ok(mut guard) = self.on_ended.lock() {
+            if let Some(cb) = guard.take() {
+                cb();
+            }
+        }
+    }
 }
 
 impl IMFMediaEngineNotify_Impl for Notify_Impl {
@@ -91,15 +101,12 @@ impl IMFMediaEngineNotify_Impl for Notify_Impl {
         if event == MF_MEDIA_ENGINE_EVENT_CANPLAY.0 as u32 {
             self.ready.store(true, Ordering::SeqCst);
         } else if event == MF_MEDIA_ENGINE_EVENT_ENDED.0 as u32 {
-            self.ended.store(true, Ordering::SeqCst);
-            if let Ok(mut guard) = self.on_ended.lock() {
-                if let Some(cb) = guard.take() {
-                    cb();
-                }
-            }
+            self.fire_ended();
         } else if event == MF_MEDIA_ENGINE_EVENT_ERROR.0 as u32 {
-            // Treat a load/decode error as "ended" so the viewer stops waiting.
-            self.ended.store(true, Ordering::SeqCst);
+            // Treat a load/decode error as "ended" — the callback is the only
+            // signal the viewer gets, so without it a broken file would stall
+            // playlist auto-advance forever.
+            self.fire_ended();
         }
         Ok(())
     }
@@ -117,7 +124,6 @@ struct Player {
     height: u32,
     started: bool,
     ready: Arc<AtomicBool>,
-    ended: Arc<AtomicBool>,
     last_pts: i64,
     // Keep COM initialized until after the Media Engine interfaces above drop.
     _com: ComApartment,
@@ -236,10 +242,8 @@ fn try_show(path: &Path, on_ended: Box<dyn Fn() + 'static + Send>) -> Option<u64
 
     // Shared flags + the notify COM object.
     let ready = Arc::new(AtomicBool::new(false));
-    let ended = Arc::new(AtomicBool::new(false));
     let notify: IMFMediaEngineNotify = Notify {
         ready: ready.clone(),
-        ended: ended.clone(),
         on_ended: Mutex::new(Some(on_ended)),
     }
     .into();
@@ -299,7 +303,6 @@ fn try_show(path: &Path, on_ended: Box<dyn Fn() + 'static + Send>) -> Option<u64
                 height: 0,
                 started: false,
                 ready,
-                ended,
                 last_pts: -1,
                 _com: com,
             },

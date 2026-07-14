@@ -7,6 +7,56 @@ Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
 ---
 
+# 2026-07-14 Windows/Linux parity session (windows-parity branch)
+
+Bringing the Windows and Linux ports to parity with the Mac after the July
+merges. Baseline first, then phased: re-verify merged Mac features on Windows →
+Windows Chunk C (elevation + Restart Manager) → Linux shell fills → Linux
+headless screenshots → Windows polish.
+
+## Key decisions
+
+- **aros-port merged into windows-parity** (`ceea656`), not cherry-picked — the
+  branch carried cross-platform work (viewer trash-and-advance, mpv
+  end-detection, grid low-res thumbnails, Lucide icon fallback for stub
+  platforms, typeahead focus fix) that parity work builds on, and a merge keeps
+  future syncs conflict-free. TODO.md conflict resolved by keeping aros-port's
+  prunes (favorites polish, marquee, configurable columns shipped there) plus
+  main's newer items (error-notification UX, hidden-file affordances).
+- **Patch-graph reconciliation is per-box local state.** The committed
+  `[patch]` entries point at Mac-only sibling checkouts (`../zed-aros`,
+  `../gpui-component-aros`). On the Windows box the zed patch is re-pointed at
+  `../zed-feraille-patch` (same rev + the D3D11 `render_to_image`), and the
+  gpui-component / crates-io (stacker, filetime) patches are commented out —
+  their deltas are inert off-AROS. Do not push Cargo.toml/Cargo.lock as-is.
+  Open question for CI/other machines: publish the forks (TODO already tracks
+  publishing the render_to_image fork).
+- **`same_volume` got its real Windows arm** (pulled forward from the polish
+  phase because the Mac-authored test `move_renames_on_same_volume` correctly
+  failed on Windows): volume serial via `CreateFileW(0 access,
+  BACKUP_SEMANTICS)` + `GetFileInformationByHandle`, nearest-existing-ancestor
+  walk mirroring the unix `dev()` loop. Drive-letter prefix comparison was
+  rejected — it lies under junction-mounted volumes. This flips Windows moves
+  from copy+delete to the rename fast path.
+- **`recreate_symlink` got a real Windows arm** — `symlink_file`/`symlink_dir`
+  classified by the resolved target (dangling → file symlink, Explorer's
+  default). Works unprivileged under Developer Mode; otherwise the privilege
+  error flows through the structured failure report.
+- **`video_mf.rs` end-detection bug fixed**: a decode ERROR only set an
+  `ended` flag nobody read — the viewer's only signal is the `on_ended`
+  callback, so broken files stalled playlist auto-advance. ERROR now fires the
+  callback; the dead flag was removed from `Notify` and `Player`.
+- **libmpv installed** at `C:\Source\john-knipper-personal\libmpv\libmpv-2.dll`
+  (shinchiro 2026-06-07 dev build) for runtime verification of the mpv backend
+  on Windows; point Settings → Plugins there.
+
+## With more time, I would
+
+- Add a Windows `file_id` arm to dupes.rs (`GetFileInformationByHandle`
+  nFileIndex) so NTFS hard links collapse to one occupant like unix.
+
+---
+
 # 2026-06-23 mpv video backend, VLC retirement & color-key transparency (planned)
 
 Full plan: [docs/features/VIDEO-MPV.md](docs/features/VIDEO-MPV.md). ✅ Shipped on

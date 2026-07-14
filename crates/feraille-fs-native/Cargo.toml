@@ -19,6 +19,8 @@ windows = { version = "0.58", features = [
     "Win32_Foundation",
     # GetLogicalDrives, GetDriveTypeW, GetVolumeInformationW, GetDiskFreeSpaceExW
     "Win32_Storage_FileSystem",
+    # CreateFileW takes SECURITY_ATTRIBUTES (same_volume's serial lookup)
+    "Win32_Security",
     # move_to_trash → SHFileOperationW, icons → SHGetFileInfoW
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",

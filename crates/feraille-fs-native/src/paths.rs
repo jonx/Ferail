@@ -167,6 +167,8 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         }
     };
 
+    // `mut` feeds the macOS-only iCloud Drive push below.
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut locations: Vec<WellKnownLocation> = entries
         .iter()
         .map(|&(label, sub, icon)| WellKnownLocation {
