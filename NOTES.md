@@ -117,6 +117,20 @@ headless screenshots → Windows polish.
   WSL2: generated a real 256×256 thumbnail that populated the shared cache
   (`examples/thumb_dump.rs`).
 
+- **Windows path polish shipped.** Two correctness fixes on the Windows box:
+  - `paths::display_path` strips the `\\?\` verbatim prefix from every
+    user-facing whole-path string (breadcrumb root, window title, disk-usage
+    header + titlebar, Get Info "Where"). `std::fs::canonicalize` returns
+    verbatim paths and the file list navigates with them, so a raw
+    `to_string_lossy` was leaking `\\?\C:\…` — verified fixed by screenshot.
+  - `paths::validate_leaf` blocks reserved Windows names on New Folder / rename
+    (device names, reserved chars, trailing dot/space) via the shared
+    `open_named_prompt` modal, which stays open on rejection. Favorite-label
+    rename opts out (it's not a filename). Logic is unit-tested; the modal
+    text-input path itself is interactive-verify-only (the screenshot harness
+    can't dispatch keystrokes into a dialog `InputState`, same limitation as
+    drag gestures).
+
 ## With more time, I would
 
 - Add a Windows `file_id` arm to dupes.rs (`GetFileInformationByHandle`

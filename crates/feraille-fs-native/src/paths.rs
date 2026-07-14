@@ -60,6 +60,67 @@ pub fn display_path(path: &std::path::Path) -> String {
     s.into_owned()
 }
 
+/// Validate a *typed* filename leaf before it is used to create or rename a
+/// file, returning a user-facing error when the platform would reject it or
+/// silently transform it into a different (often inaccessible) name.
+///
+/// On Windows this catches the three classic footguns:
+/// - **Reserved characters** `< > : " | ? *`, the separators `\` `/`, and
+///   control chars — the filesystem rejects them outright.
+/// - **Reserved DOS device names** (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`,
+///   `LPT1`–`LPT9`), with or without an extension (`CON.txt` is reserved too):
+///   creating one either fails or yields a handle to the device.
+/// - **Trailing dot or space**: Windows strips these, so `report.` silently
+///   becomes `report` and `data ` becomes an inaccessible sibling.
+///
+/// Off Windows this is the identity (`Ok(())`) — POSIX only forbids `/` and NUL
+/// in a leaf, and the caller has already split off the component. Operates on a
+/// single leaf, never a full path.
+pub fn validate_leaf(name: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        if let Some(bad) = name
+            .chars()
+            .find(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '\\' | '/') || (*c as u32) < 0x20)
+        {
+            return Err(match bad {
+                '\\' | '/' => "A name can’t contain a slash.".to_string(),
+                c if (c as u32) < 0x20 => "A name can’t contain control characters.".to_string(),
+                c => format!("A name can’t contain the {c} character."),
+            });
+        }
+        if name.ends_with('.') || name.ends_with(' ') {
+            return Err("A name can’t end with a space or a period.".to_string());
+        }
+        let stem = name.split('.').next().unwrap_or(name);
+        if is_reserved_dos_name(stem) {
+            return Err(format!("“{stem}” is a reserved Windows device name."));
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = name;
+    Ok(())
+}
+
+/// Whether `stem` (a filename's base, before any extension) is a reserved DOS
+/// device name — case-insensitive `CON`/`PRN`/`AUX`/`NUL` or `COM`/`LPT`
+/// followed by a single `1`–`9`.
+#[cfg(windows)]
+fn is_reserved_dos_name(stem: &str) -> bool {
+    let upper = stem.to_ascii_uppercase();
+    if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+        return true;
+    }
+    for prefix in ["COM", "LPT"] {
+        if let Some(rest) = upper.strip_prefix(prefix) {
+            if rest.len() == 1 && matches!(rest.as_bytes()[0], b'1'..=b'9') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Inverse of [`display_leaf`]: convert a *typed* (display-form) filename leaf
 /// to the bytes to write on disk.
 ///
@@ -420,6 +481,43 @@ mod leaf_tests {
             display_path(Path::new(r"\\?\UNC\server\share\dir")),
             r"\\server\share\dir"
         );
+    }
+
+    #[test]
+    fn validate_leaf_accepts_ordinary_names() {
+        for ok in ["report.pdf", "My Folder", "2024-budget", "notes"] {
+            assert!(validate_leaf(ok).is_ok(), "{ok:?} should be valid");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn validate_leaf_rejects_reserved_chars() {
+        for bad in [r"a<b", r"a>b", "a:b", "a\"b", "a|b", "a?b", "a*b", r"a\b", "a/b"] {
+            assert!(validate_leaf(bad).is_err(), "{bad:?} should be rejected");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn validate_leaf_rejects_reserved_device_names() {
+        // Bare, any case, and with an extension are all reserved.
+        for bad in ["CON", "con", "NUL", "PRN", "AUX", "COM1", "LPT9", "CON.txt", "nul.log"] {
+            assert!(validate_leaf(bad).is_err(), "{bad:?} should be rejected");
+        }
+        // COM0 / LPT0 and multi-digit are NOT reserved device names.
+        for ok in ["COM0", "LPT0", "COM10", "CONSOLE", "COMET"] {
+            assert!(validate_leaf(ok).is_ok(), "{ok:?} should be allowed");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn validate_leaf_rejects_trailing_dot_or_space() {
+        assert!(validate_leaf("report.").is_err());
+        assert!(validate_leaf("data ").is_err());
+        assert!(validate_leaf(".").is_err());
+        assert!(validate_leaf("..").is_err());
     }
 }
 

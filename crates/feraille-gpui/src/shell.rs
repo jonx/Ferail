@@ -4833,10 +4833,13 @@ impl Shell {
         // Same gpui rename modal the file list uses (renaming the
         // shortcut's label, not the folder on disk) — consistent
         // surface and cross-platform, unlike the old native prompt.
-        self.open_text_prompt(
+        // A favorite's label is not a filesystem name, so skip filename
+        // validation (it may legitimately contain `:`, trailing dots, etc.).
+        self.open_named_prompt(
             "Rename Favorite",
             "New name",
             current,
+            false,
             move |this, new_name, _window, cx| {
                 this.process
                     .favorites

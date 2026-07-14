@@ -337,12 +337,13 @@ fallback). Remaining is the UX the system explorers have and we don't:
   per-platform name presentation; see ARCHITECTURE.md "Raw name vs. display
   name"). Remaining per-platform quirks to consider on the same seam, none
   implemented yet:
-  - Windows: reserved device names (`CON`, `PRN`, `NUL`, `COM1`…`LPT9`),
-    reserved characters (`<>:"|?*`), and trailing-dot/space stripping —
-    validate/transform typed names on the input side so a New Folder / rename
-    can't silently fail or produce an inaccessible name. (`\`↔`/` separators
-    are already handled by `std`; the JP/KO `\`-as-¥/₩ glyph is a font/code-page
-    matter, not an app concern.)
+  - ✅ **Windows name validation** — shipped: `paths::validate_leaf` rejects
+    reserved device names (`CON`/`PRN`/`AUX`/`NUL`/`COM1`–`COM9`/`LPT1`–`LPT9`,
+    with or without an extension), reserved characters (`<>:"|?*` + separators +
+    controls), and trailing dot/space, with a user-facing message. Wired into
+    the shared New Folder / rename modal (`open_named_prompt`), which keeps the
+    dialog open on rejection so the name can be fixed; the favorite-*label*
+    rename opts out (not a filesystem name). Identity/no-op off Windows.
   - macOS: HFS NFD normalization is cosmetic and renders fine today; revisit
     only if a normalization-sensitive comparison surfaces.
   - Optional: an informational (not red-hazard) note in Get Info when a name

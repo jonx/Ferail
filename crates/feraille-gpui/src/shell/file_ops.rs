@@ -2315,6 +2315,25 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_named_prompt(title, placeholder, initial, true, on_commit, window, cx);
+    }
+
+    /// Backing implementation of [`Self::open_text_prompt`] with an explicit
+    /// `validate_as_filename` flag. File/folder naming surfaces pass `true` so
+    /// a typed name that the OS would reject or silently mangle (Windows
+    /// reserved names/chars, trailing dot/space) is caught up front and the
+    /// dialog stays open with an explanation. Surfaces that name something
+    /// *other* than a file — the favorite-shortcut label — pass `false`.
+    pub(crate) fn open_named_prompt(
+        &mut self,
+        title: impl Into<SharedString>,
+        placeholder: impl Into<SharedString>,
+        initial: String,
+        validate_as_filename: bool,
+        on_commit: impl Fn(&mut Self, String, &mut Window, &mut Context<Self>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let title = title.into();
         let placeholder = placeholder.into();
         let original = initial.clone();
@@ -2336,6 +2355,20 @@ impl Shell {
                     let new_name = input.read(cx).value().trim().to_string();
                     if new_name.is_empty() || new_name == original {
                         return true;
+                    }
+                    // Reject names the OS would refuse or silently rewrite,
+                    // keeping the dialog open (return false) so the user can
+                    // correct it. Validate the on-disk form (identity on
+                    // Windows; the macOS `/`↔`:` swap happens in on_commit).
+                    if validate_as_filename {
+                        let disk = feraille_fs_native::paths::on_disk_leaf(&new_name);
+                        if let Err(msg) = feraille_fs_native::paths::validate_leaf(&disk) {
+                            window.push_notification(
+                                gpui_component::notification::Notification::error(msg),
+                                cx,
+                            );
+                            return false;
+                        }
                     }
                     let on_commit = on_commit.clone();
                     shell.update(cx, move |this, cx| {
