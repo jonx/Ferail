@@ -295,6 +295,37 @@ window paints (title bar, rows, text) but the glyphs are missing.
 > the bundled-SVG chrome + Lucide-fallback path — fixing it makes the toolbar,
 > sidebar, and type-icon glyphs appear even while native file icons stay stubbed.
 
+#### Static analysis done on the Mac (2026-07-14) — the three ranked causes are ruled out
+
+Followed the action plan on the Mac against the `zed-aros` checkout, but by code
+read + host tests rather than a boot. **All three ranked causes above are
+eliminated — the bug is not statically findable, so the run log is genuinely the
+next step, not more code reading.**
+
+- **Cause #1 (`scale_factor()` → 0) is impossible.** `gpui_aros`'s
+  `window.rs::scale_factor()` returns `render_scale`, seeded by `dynres_scale()`,
+  which `.clamp(0.25, 1.0)`s and defaults to `1.0` — it can never be `0.0`/NaN.
+  And `Window::paint_svg` (shared gpui `window.rs`) sizes the raster as
+  `bounds.size * SMOOTH_SVG_SCALE_FACTOR` (the constant `2`), **not**
+  `* scale_factor()` — so the icon raster can't collapse to zero at scale 1.0.
+  The "text survives a zero scale factor, SVG doesn't" theory doesn't apply here.
+- **Causes #2 (atlas) and #3 (tint) are already pinned green on the host.**
+  `cargo test -p gpui_aros` passes 16/16, including `svg_sprite_downsamples_into_bounds`,
+  `glyph_sprite_blits_one_to_one`, and `monochrome_tint_is_premultiplied` — the
+  exact monochrome-sprite atlas + downsample + premultiplied-tint path. The
+  renderer draws SVG-sourced masks correctly on the host (a prior 2×-size icon
+  bug, 2026-07-04, was already fixed and pinned there). The conformance suite
+  the plan's step 4 asks for **already exists**.
+
+So the fault is **runtime-specific to booted AROS**, downstream of the
+host-tested Rust: either the SVG mask never reaches the atlas (real
+`render_alpha_mask` bailing / `paint_svg` returning `Ok(None)` on the device,
+which the `.log_err()` swallows), or the AROS-side scene upload/draw treats the
+SVG `MonochromeSprites` batch differently from the glyph one at runtime. **Do
+step 1 first: capture `graft/aros-ctl run` stderr and grep for the `paint_svg` /
+`can't render at a zero size` / atlas line — it names which.** Static analysis
+can't narrow it further from here.
+
 ### Roadmap (rough order)
 
 1. **Make `gpui_aros` native-shell-complete** — menus, `asl.library` file

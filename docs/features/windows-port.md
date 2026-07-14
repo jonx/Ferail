@@ -95,9 +95,21 @@ own commit on the `windows-parity` branch:
   as `DRIVE_FIXED` are now ejectable, matching Finder). `eject_device` dismounts
   every partition of a disk before the single `IOCTL_STORAGE_EJECT_MEDIA`.
   `volume_busy_processes` (the "why won't it eject" holder list) is still a
-  Windows stub — needs Restart Manager or an `NtQuerySystemInformation` handle
-  walk; empty means "unknown", so the eject-failure toast falls back to the raw
-  error.
+  Windows stub — empty means "unknown", so the eject-failure toast falls back
+  to the raw error.
+  - **Note (2026-07-14): the new `elevation.rs::processes_using` does NOT fit
+    this.** Restart Manager is *file*-scoped — `RmRegisterResources` takes a
+    list of specific files/keys and tells you who locks *those*. Eject needs
+    the inverse: every process holding *any* handle *anywhere on the volume*,
+    which RM can't enumerate. Don't try to bend `processes_using` to it. The
+    real implementation is an `NtQuerySystemInformation(SystemHandleInformation)`
+    handle-table walk — enumerate system handles, `NtQueryObject` each file
+    handle for its name, filter to the volume's device path (`\Device\HarddiskVolumeN`,
+    resolved from the drive letter via `QueryDosDeviceW`), map back to PIDs. It's
+    the same mechanism `handle.exe`/Process Explorer use; run it on a worker.
+    macOS uses libproc and Linux scans `/proc/<pid>/{fd,cwd}` for exactly this
+    (see `feraille-shell-{mac,linux}`), so the cross-platform contract already
+    exists — only the Windows body is missing.
 - **Sidebar Locations resolve via `SHGetKnownFolderPath`** so OneDrive-moved
   Documents/Pictures/etc. point at the real path (was a literal
   `%USERPROFILE%\Pictures` that "Folder not found"-ed on most OneDrive boxes).
