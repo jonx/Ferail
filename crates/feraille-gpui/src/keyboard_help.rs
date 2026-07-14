@@ -79,6 +79,7 @@ fn action_for_command(id: feraille_core::commands::CommandId) -> Option<Box<dyn 
         "selection.page_down" => Box::new(PageDown),
         "window.next_tab" => Box::new(NextTab),
         "window.prev_tab" => Box::new(PrevTab),
+        "window.bring_all_to_front" => Box::new(crate::boot::BringAllToFront),
         _ => return None,
     })
 }

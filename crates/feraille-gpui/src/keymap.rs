@@ -30,9 +30,9 @@ use crate::shell::{
     ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
 };
 use crate::viewer::window::{
-    VIEWER_CONTEXT, ViewerActualSize, ViewerDismiss, ViewerLeft, ViewerNext, ViewerPrev,
-    ViewerRight, ViewerRotateCcw, ViewerRotateCw, ViewerToggleAdjust, ViewerToggleFullscreen,
-    ViewerTogglePlay, ViewerZoomIn, ViewerZoomOut, ViewerZoomReset,
+    VIEWER_CONTEXT, ViewerActualSize, ViewerDelete, ViewerDismiss, ViewerLeft, ViewerNext,
+    ViewerPrev, ViewerRight, ViewerRotateCcw, ViewerRotateCw, ViewerToggleAdjust,
+    ViewerToggleFullscreen, ViewerTogglePlay, ViewerZoomIn, ViewerZoomOut, ViewerZoomReset,
 };
 
 /// Install keybindings for every command in `feraille_core::commands`
@@ -448,6 +448,15 @@ pub(crate) fn install_extras(cx: &mut App) {
         // Colour adjustments popup (brightness / contrast / colour). Also
         // reachable by right-click on the stage or the toolbar button.
         KeyBinding::new("e", ViewerToggleAdjust, Some(VIEWER_CONTEXT)),
+        // Move the current file to the Trash and advance. Cmd+Backspace is
+        // the canonical Finder binding. We also bind the bare delete keys so
+        // pressing Delete on its own works (safe here — the viewer has no
+        // text inputs): on macOS the ⌫ key above Return emits `backspace`,
+        // while `delete` is forward-delete (⌦ / fn+⌫), so bind both to cover
+        // every keyboard — matching the favorites `DeleteFavorite` binding.
+        KeyBinding::new("secondary-backspace", ViewerDelete, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("backspace", ViewerDelete, Some(VIEWER_CONTEXT)),
+        KeyBinding::new("delete", ViewerDelete, Some(VIEWER_CONTEXT)),
         // -- Keyboard-layout alternates for the digit-based zoom keys --
         // This build's gpui has no platform key-equivalents mapper, so
         // bindings match the *character* a key produces, with no

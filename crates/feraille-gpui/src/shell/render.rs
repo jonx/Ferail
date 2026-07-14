@@ -68,6 +68,20 @@ impl Render for TabDragPayload {
 /// as `favorites_section::render_drop_gap` rotated 90°. On drop,
 /// `Shell::reorder_tab` resolves the source `TabId` and moves the tab
 /// into this position.
+/// Drag payload for the resize grip under the preview thumbnail —
+/// same invisible-ghost shape as `multi_table`'s `ResizeColumn`: the
+/// drag machinery wants a Render entity to follow the cursor, but a
+/// resize has nothing to show, so it renders `Empty`. The real state
+/// (drag-start anchor) lives in `Shell::preview_thumb_drag`.
+#[derive(Clone)]
+pub(crate) struct ResizePreviewThumb;
+
+impl Render for ResizePreviewThumb {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+
 /// Truncated single-line URL for the preview pane's provenance rows,
 /// with the full URL in a hover tooltip — same treatment as the
 /// "Where" path row. Pure display; no parsing.
@@ -86,10 +100,10 @@ fn truncated_url_value(key: &'static str, url: &str, id: feraille_core::NodeId) 
 
 /// One mounted volume for the sidebar Volumes section:
 /// `(path, display name, Some((total, available)) capacity bytes,
-/// is removable/ejectable)`.
-type VolumeRow = (PathBuf, String, Option<(u64, u64)>, bool);
+/// is removable/ejectable, is network mount)`.
+type VolumeRow = (PathBuf, String, Option<(u64, u64)>, bool, bool);
 /// `VolumeRow` plus the "is favorited" star flag.
-type VolumeRowFav = (PathBuf, String, Option<(u64, u64)>, bool, bool);
+type VolumeRowFav = (PathBuf, String, Option<(u64, u64)>, bool, bool, bool);
 
 fn tab_drop_gap(pos: usize, cx: &mut Context<Shell>) -> impl IntoElement {
     let theme = cx.theme();
@@ -221,6 +235,7 @@ impl Shell {
             self.favorites_focus.clone(),
             self.fav_appear.clone(),
             self.fav_pulse.clone(),
+            self.fav_removing.clone(),
         ))
     }
 
@@ -522,18 +537,18 @@ impl Shell {
                     (Some(t), Some(a)) if t > 0 => Some((t, a)),
                     _ => None,
                 };
-                (v.path.clone(), v.name.clone(), cap, v.is_removable)
+                (v.path.clone(), v.name.clone(), cap, v.is_removable, !v.is_local)
             })
             .collect();
         let mut entries: Vec<VolumeRowFav> = volume_paths
             .into_iter()
-            .map(|(p, n, c, ejectable)| {
+            .map(|(p, n, c, ejectable, is_network)| {
                 let fav = favs.contains_path(&p);
-                (p, n, c, fav, ejectable)
+                (p, n, c, fav, ejectable, is_network)
             })
             .collect();
         let _ = favs;
-        for (path, name, capacity, favorited, ejectable) in entries.drain(..) {
+        for (path, name, capacity, favorited, ejectable, is_network) in entries.drain(..) {
             let node_id = self.process.fs.id_for_path(&path);
             self.process
                 .node_store
@@ -550,7 +565,11 @@ impl Shell {
                 is_expanded,
                 is_active: path == current,
                 capacity,
-                icon: TreeRowIcon::Volume,
+                icon: if is_network {
+                    TreeRowIcon::Network
+                } else {
+                    TreeRowIcon::Volume
+                },
                 favorited,
                 ejectable,
             });
@@ -780,16 +799,21 @@ impl Shell {
         let bucket = crate::grid::thumb_bucket(icon_px);
         let icon_bucket = crate::grid::folder_icon_bucket(icon_px);
         let show_thumbs = crate::thumbnails::show_thumbnails(cx);
-        let cell_w = crate::grid::cell_width(icon_px);
-        let cell_h = crate::grid::cell_height(icon_px);
+        let gap = crate::grid::cell_gap(cx);
+        let cell_w = crate::grid::cell_width(icon_px, gap);
+        let cell_h = crate::grid::cell_height(icon_px, gap);
 
         let pane_w = f32::from(self.active_tab().grid_pane_width).max(cell_w);
-        let cols = crate::grid::cols_per_row(pane_w, icon_px);
+        let cols = crate::grid::cols_per_row(pane_w, icon_px, gap);
         let entries_len = self.active_tab().table.read(cx).delegate().entries.len();
         let row_count = entries_len.div_ceil(cols);
 
         let theme = cx.theme();
         let muted = theme.muted_foreground;
+        // Grid-cell hover wash — the icon grid was the one surface with no
+        // hover feedback at all. Reuse the list's `table_hover` token so
+        // hovering a cell reads the same as hovering a list row.
+        let hover_bg = theme.table_hover;
         // Finder-style blue selection. The default theme's `accent` is a
         // near-white gray — fine for hover, invisible as a selection on a
         // busy thumbnail grid — so we key selection off the shared
@@ -959,12 +983,30 @@ impl Shell {
                             let cached = icons.borrow().get_folder_icon_sized(&path, icon_bucket);
                             let ic =
                                 cached.unwrap_or_else(|| icons.borrow_mut().icon_for(entry, &path));
-                            img(ic).max_w(px(slot)).max_h(px(slot)).into_any_element()
+                            if icons.borrow().is_blank(&ic) {
+                                // Platform icon bridge still a stub (Linux
+                                // scaffold, AROS): Lucide folder glyph, same
+                                // sizing as the file-side SVG fallback.
+                                let fi = crate::icons::file_type_icon(entry);
+                                let tint = crate::icons::tint_color(fi.tint, app);
+                                svg()
+                                    .path(fi.path)
+                                    .w(px(slot * 0.72))
+                                    .h(px(slot * 0.72))
+                                    .text_color(tint)
+                                    .into_any_element()
+                            } else {
+                                img(ic).max_w(px(slot)).max_h(px(slot)).into_any_element()
+                            }
                         }
                         EntryKind::File | EntryKind::Symlink => {
                             let thumb = if show_thumbs && crate::thumbnails::is_thumbnailable(entry)
                             {
-                                thumbs.borrow().get(&path, bucket)
+                                // `get_best`: show the crisp bucket once ready,
+                                // else a smaller cached tier (the low-res
+                                // preview, or a size warmed at another zoom) as
+                                // an instant stand-in that sharpens in place.
+                                thumbs.borrow().get_best(&path, bucket)
                             } else {
                                 None
                             };
@@ -1041,19 +1083,17 @@ impl Shell {
                     let weak_menu = weak.clone();
                     let weak_drop = weak.clone();
                     let weak_hover = weak.clone();
-                    let cell = v_flex()
-                        .id(("grid-cell", i))
-                        .w(px(cell_w))
-                        .h(px(cell_h))
+                    let inner = v_flex()
+                        .id(("grid-cell-inner", i))
+                        .size_full()
                         .items_center()
                         .justify_start()
-                        .gap_1()
+                        .gap(px(1.0))
                         .p_1()
                         .rounded(px(6.0))
-                        .cursor_pointer()
-                        // Cut cells dim until the move pastes (mirrors the
-                        // dimmed list row).
-                        .when(is_cut, |d| d.opacity(0.45))
+                        // Hover wash on unselected cells (selection bg wins
+                        // when both apply) — the grid's missing hover state.
+                        .when(!selected, |d| d.hover(|s| s.bg(hover_bg)))
                         // Ant Trail heat tint behind unselected directory
                         // cells (selection bg wins when both apply). Stable
                         // warm hue across themes — same recipe as the row.
@@ -1129,7 +1169,25 @@ impl Shell {
                                 .when(selected, |d| d.bg(label_pill).text_color(pill_fg))
                                 .when(!selected, |d| d.text_color(muted))
                                 .child(grid_label),
-                        )
+                        );
+                    // Wrap the highlighted content in a fixed-size cell box
+                    // and inset it with uniform padding, so adjacent
+                    // selection fills/borders never touch. The gutter lives
+                    // *inside* the cell footprint — the row still strides by
+                    // `cell_width`, so column count is unchanged. Interaction
+                    // (click / drag / menu / tooltip) lives on this outer box
+                    // so the whole cell, gutter included, stays hittable.
+                    let cell = div()
+                        .id(("grid-cell", i))
+                        .w(px(cell_w))
+                        .h(px(cell_h))
+                        .p(px(gap))
+                        .flex()
+                        .cursor_pointer()
+                        // Cut cells dim until the move pastes (mirrors the
+                        // dimmed list row).
+                        .when(is_cut, |d| d.opacity(0.45))
+                        .child(inner)
                         // The label is `.truncate()`d, so surface the full
                         // name on hover (mirrors the list row's tooltip).
                         .tooltip(move |window, cx| {
@@ -1257,8 +1315,13 @@ impl Shell {
         let measure = canvas(
             move |bounds, _window, app| {
                 let w = bounds.size.width;
+                let origin = bounds.origin;
                 let _ = weak_measure.update(app, |this, cx| {
                     if let Some(tab) = this.tabs.iter_mut().find(|t| t.id == tab_id) {
+                        // Cache the pane origin every frame (cheap) so marquee
+                        // hit-testing maps window→content coords correctly even
+                        // after the window moves; width changes still notify.
+                        tab.grid_pane_origin = origin;
                         if (f32::from(tab.grid_pane_width) - f32::from(w)).abs() > 0.5 {
                             tab.grid_pane_width = w;
                             cx.notify();
@@ -1270,6 +1333,21 @@ impl Shell {
         )
         .absolute()
         .size_full();
+
+        // Rubber-band rectangle, positioned relative to this `.relative()`
+        // root (whose content origin is `grid_pane_origin`). Only shown
+        // once the drag has moved past the click threshold.
+        let marquee_rect: Option<(Pixels, Pixels, Pixels, Pixels)> = {
+            let tab = self.active_tab();
+            tab.marquee.as_ref().filter(|m| m.moved).map(|m| {
+                let o = tab.grid_pane_origin;
+                let l = f32::from(m.start.x).min(f32::from(m.current.x)) - f32::from(o.x);
+                let t = f32::from(m.start.y).min(f32::from(m.current.y)) - f32::from(o.y);
+                let w = (f32::from(m.start.x) - f32::from(m.current.x)).abs();
+                let h = (f32::from(m.start.y) - f32::from(m.current.y)).abs();
+                (px(l), px(t), px(w), px(h))
+            })
+        };
 
         div()
             .key_context(crate::grid::GRID_CONTEXT)
@@ -1284,8 +1362,48 @@ impl Shell {
             .on_action(cx.listener(Self::on_grid_right_extend))
             .on_action(cx.listener(Self::on_grid_up_extend))
             .on_action(cx.listener(Self::on_grid_down_extend))
+            // Marquee gesture: a press on empty background sweeps a
+            // selection rectangle (cell presses are guarded out in the
+            // handler so their click/drag still win). `up_out` ends the
+            // drag when released past the pane edge.
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(Self::on_grid_marquee_down),
+            )
+            .on_mouse_move(cx.listener(Self::on_grid_marquee_move))
+            .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::on_grid_marquee_up))
+            .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::on_grid_marquee_up))
             .child(measure)
             .child(list)
+            .when_some(marquee_rect, |d, (l, t, w, h)| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left(l)
+                        .top(t)
+                        .w(w)
+                        .h(h)
+                        .bg(sel_bg)
+                        .border_1()
+                        .border_color(blue)
+                        .rounded(px(2.0)),
+                )
+            })
+            // Vertical scrollbar overlay, mirroring the preview pane /
+            // dupe panel pattern: a 16px strip pinned to the right edge
+            // as the last child of this `.relative()` container. Binds
+            // to the same `grid_scroll` handle the uniform_list tracks;
+            // auto-hides per the theme's `scrollbar_show` (the list
+            // view gets its equivalent from the multi_table primitive).
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .bottom_0()
+                    .w(px(16.0))
+                    .child(gpui_component::scroll::Scrollbar::vertical(&scroll)),
+            )
             .into_any_element()
     }
 
@@ -2078,6 +2196,59 @@ impl Shell {
         cx.stop_propagation();
     }
 
+    /// The drag grip under the preview thumbnail box. Dragging it
+    /// down/up grows/shrinks the box between `PREVIEW_THUMB_MIN_H`
+    /// and `PREVIEW_THUMB_MAX_H`; the height persists via the same
+    /// debounced save as the splitter widths. The drag anchor (mouse
+    /// y + height at drag start) is snapped in the `on_drag`
+    /// constructor; `on_drag_move` then applies the absolute delta,
+    /// so the box edge tracks the cursor 1:1 — no per-tick
+    /// accumulation drift, no dependence on the pane's scroll offset.
+    fn preview_thumb_resize_grip(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let weak = cx.weak_entity();
+        div()
+            .id("preview-thumb-resize")
+            .group("preview-thumb-grip")
+            .w_full()
+            .h(px(9.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_row_resize()
+            .child(
+                div()
+                    .w(px(48.0))
+                    .h(px(3.0))
+                    .rounded_full()
+                    .bg(cx.theme().border)
+                    .group_hover("preview-thumb-grip", |this| this.bg(cx.theme().drag_border)),
+            )
+            .on_drag(ResizePreviewThumb, move |drag, _offset, window, cx| {
+                cx.stop_propagation();
+                let y = window.mouse_position().y;
+                if let Some(shell) = weak.upgrade() {
+                    shell.update(cx, |this, _| {
+                        this.preview_thumb_drag = Some((y, this.preview_thumb_h));
+                    });
+                }
+                cx.new(|_| drag.clone())
+            })
+            .on_drag_move(cx.listener(
+                |this, e: &DragMoveEvent<ResizePreviewThumb>, _window, cx| {
+                    let Some((y0, h0)) = this.preview_thumb_drag else {
+                        return;
+                    };
+                    let h = (h0 + f32::from(e.event.position.y - y0))
+                        .clamp(PREVIEW_THUMB_MIN_H, PREVIEW_THUMB_MAX_H);
+                    if h != this.preview_thumb_h {
+                        this.preview_thumb_h = h;
+                        this.schedule_splitter_save(cx);
+                        cx.notify();
+                    }
+                },
+            ))
+    }
+
     /// Build the preview pane on the right of the file list. Shows
     /// title / kind / size / modified / full path of the selected
     /// row. Falls back to a neutral empty state when nothing is
@@ -2301,6 +2472,11 @@ impl Shell {
                     // top-right corner is the discoverability affordance
                     // (only shown here, where a viewer-capable preview
                     // exists) instead of a text caption.
+                    //
+                    // Box height is user-adjustable via the resize grip
+                    // below; the image fills whatever the box allows
+                    // (aspect preserved — gpui's img derives its
+                    // aspect_ratio from the bitmap's intrinsic size).
                     col = col.child(
                         div()
                             .id("preview-thumb-open")
@@ -2309,7 +2485,8 @@ impl Shell {
                             .items_center()
                             .justify_center()
                             .w_full()
-                            .h(px(200.0))
+                            .h(px(self.preview_thumb_h))
+                            .p_2()
                             .rounded(cx.theme().radius)
                             .bg(cx.theme().secondary.opacity(0.5))
                             .cursor_pointer()
@@ -2317,7 +2494,7 @@ impl Shell {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.on_open_viewer(&OpenViewer, window, cx)
                             }))
-                            .child(gpui::img(img).max_w(px(248.0)).max_h(px(184.0)))
+                            .child(gpui::img(img).max_w_full().max_h_full())
                             .child(
                                 div()
                                     .absolute()
@@ -2338,6 +2515,7 @@ impl Shell {
                                     ),
                             ),
                     );
+                    col = col.child(self.preview_thumb_resize_grip(cx));
                 } else if matches!(thumb_state, Some(crate::preview::PreviewState::Pending)) {
                     col = col.child(
                         div()
@@ -2345,13 +2523,14 @@ impl Shell {
                             .items_center()
                             .justify_center()
                             .w_full()
-                            .h(px(200.0))
+                            .h(px(self.preview_thumb_h))
                             .rounded(cx.theme().radius)
                             .bg(cx.theme().secondary.opacity(0.5))
                             .text_scale_xs()
                             .text_color(cx.theme().muted_foreground)
                             .child("Loading preview\u{2026}"),
                     );
+                    col = col.child(self.preview_thumb_resize_grip(cx));
                 }
 
                 // Filename header. A clean name truncates with a full-name
@@ -2636,6 +2815,27 @@ impl Shell {
                 );
         }
         let segments = path_segments(&self.active_tab().current_dir);
+        // Warm each segment's child-folder list off-thread so the "Go to
+        // Subfolder" submenu is populated by the time the user
+        // right-clicks (Prime Directive: the enumeration runs on a
+        // worker, never here). Only spawn for segments not yet cached.
+        {
+            let uncached: Vec<PathBuf> = segments
+                .iter()
+                .map(|(_, p)| p.clone())
+                .filter(|p| !self.breadcrumb_children.contains_key(p))
+                .collect();
+            if !uncached.is_empty() {
+                let weak = cx.weak_entity();
+                cx.defer(move |cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        for p in uncached {
+                            this.warm_breadcrumb_children(p, cx);
+                        }
+                    });
+                });
+            }
+        }
         let mut row = h_flex()
             .w_full()
             .items_center()
@@ -2755,7 +2955,7 @@ impl Shell {
                         cx,
                     );
                 }))
-                .context_menu(move |menu, _window, cx| {
+                .context_menu(move |menu, window, cx| {
                     let favorited_now = if let Some(s) = weak_for_crumb.upgrade() {
                         let already = s
                             .read(cx)
@@ -2780,6 +2980,13 @@ impl Shell {
                     } else {
                         "Add to Favorites"
                     };
+                    // "Go to Subfolder ▸" — jump to any child folder of
+                    // this segment (Finder's column-view-style lateral
+                    // navigation). Children are enumerated off-thread and
+                    // cached; the submenu reads that cache only (Prime
+                    // Directive), showing "Loading…" on the first open.
+                    let weak_sub = weak_for_crumb.clone();
+                    let path_sub = path_for_menu.clone();
                     menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
                         .separator()
                         .menu(
@@ -2791,6 +2998,45 @@ impl Shell {
                         .menu(favorite_label, Box::new(ToggleFavoriteForTarget))
                         .separator()
                         .menu("New Folder Here", Box::new(NewFolderHere))
+                        .separator()
+                        .submenu("Go to Subfolder", window, cx, move |mut sub, _w, c| {
+                            use gpui_component::menu::PopupMenuItem;
+                            let Some(s) = weak_sub.upgrade() else {
+                                return sub;
+                            };
+                            let cached = s.read(c).breadcrumb_children.get(&path_sub).cloned();
+                            match cached {
+                                Some(Some(children)) if !children.is_empty() => {
+                                    for (name, child) in children.iter() {
+                                        let child = child.clone();
+                                        let weak_nav = weak_sub.clone();
+                                        sub = sub.item(
+                                            PopupMenuItem::new(name.clone()).on_click(
+                                                move |_ev, _w, cx| {
+                                                    let child = child.clone();
+                                                    let _ = weak_nav.update(cx, |sh, cx| {
+                                                        sh.navigate(child, cx);
+                                                    });
+                                                },
+                                            ),
+                                        );
+                                    }
+                                    sub
+                                }
+                                Some(Some(_)) => sub
+                                    .item(PopupMenuItem::new("No subfolders").disabled(true)),
+                                _ => {
+                                    // Cold or in-flight — kick a warm and show
+                                    // a placeholder; a re-open shows the list.
+                                    s.update(c, |sh, cx| {
+                                        sh.warm_breadcrumb_children(path_sub.clone(), cx);
+                                    });
+                                    sub.item(
+                                        PopupMenuItem::new("Loading\u{2026}").disabled(true),
+                                    )
+                                }
+                            }
+                        })
                 });
             row = row.child(crumb);
         }
@@ -3076,6 +3322,11 @@ impl Render for Shell {
         div()
             .key_context(SHELL_CONTEXT)
             .track_focus(&self.focus_handle)
+            // Type-to-select: printable keys with the list or grid
+            // focused jump the selection to the first matching name.
+            // Runs only for characters no keybinding claimed (gpui
+            // matches actions first), so it never shadows nav keys.
+            .on_key_down(cx.listener(Self::on_typeahead_key))
             // Any left-click dismisses an open breadcrumb context menu
             // (picking an item or clicking away), so it's also the
             // moment to re-enable the crumb tooltip we suppressed while

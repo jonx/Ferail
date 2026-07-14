@@ -15,6 +15,7 @@ pub mod ant_trail;
 pub mod app_icon;
 pub mod app_state;
 pub mod assets;
+pub mod boot;
 pub mod bulk_rename;
 pub mod diagnostics;
 pub mod disk_usage;
@@ -85,3 +86,8 @@ pub use feraille_shell_linux as platform_shell;
 pub use feraille_shell_mac as platform_shell;
 #[cfg(windows)]
 pub use feraille_shell_win32 as platform_shell;
+/// AROS rides the shell-linux stub scaffold re-exported under its own crate
+/// name (see `feraille-shell-aros`); real workbench.library / icon.library
+/// integrations replace re-exports there incrementally.
+#[cfg(target_os = "aros")]
+pub use feraille_shell_aros as platform_shell;

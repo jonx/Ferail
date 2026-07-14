@@ -61,24 +61,43 @@ fn open_viewer_inner(
     // from a window on a secondary monitor appears there rather than jumping
     // to the primary display. Then cascade by a fixed step (wrapping after a
     // handful) so a fresh window doesn't land exactly atop the last.
-    let display_id = window.display(cx).map(|d| d.id());
+    //
+    // Platform wart: gpui's mac backend anchors `window_bounds` to
+    // `WindowOptions::display_id` — the origin is *display-relative*, and a
+    // `None` display id means the primary screen (which is why global
+    // coordinates alone always landed there). Windows/X11 take global
+    // coordinates. So pass the display id AND, on macOS, strip the display's
+    // global origin from the centred bounds.
+    let display = window.display(cx);
+    let display_id = display.as_ref().map(|d| d.id());
     let step = (VIEWER_CASCADE.fetch_add(1, Ordering::Relaxed) % 6) as f32 * 28.0;
     let mut bounds = Bounds::centered(display_id, size(px(1100.0), px(760.0)), cx);
+    if cfg!(target_os = "macos") {
+        if let Some(display) = &display {
+            let display_origin = display.bounds().origin;
+            bounds.origin.x -= display_origin.x;
+            bounds.origin.y -= display_origin.y;
+        }
+    }
     bounds.origin.x += px(step);
     bounds.origin.y += px(step);
 
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        display_id,
         titlebar: Some(TitlebarOptions {
             title: Some(SharedString::from("Viewer")),
             ..Default::default()
         }),
-        // Create the window transparency-capable so the in-viewer "Transparent"
-        // toggle actually shows through (the macOS CAMetalLayer's transparency
-        // is fixed at creation; flipping it at runtime on an opaque window only
-        // changes the NSWindow, not the drawable). Normal mode keeps an opaque
-        // content background, so it looks identical until the toggle is on.
-        window_background: WindowBackgroundAppearance::Transparent,
+        // Open opaque, matching the default (toggle-off) state. The in-viewer
+        // "Transparent" toggle flips the backing live via
+        // `set_background_appearance`, which updates both the NSWindow and the
+        // CAMetalLayer's opacity (see `MetalRenderer::update_transparency`), so
+        // creating it transparent up front is unnecessary — and a permanently
+        // non-opaque backing makes the macOS fullscreen animation janky. Opaque
+        // by default keeps the fullscreen transition clean; the toggle grants
+        // see-through only when the user asks for it.
+        window_background: WindowBackgroundAppearance::Opaque,
         ..Default::default()
     };
     let mut weak_view = None;

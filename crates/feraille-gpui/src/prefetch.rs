@@ -30,6 +30,25 @@ use crate::multi_table::TableState;
 use crate::shell::{Shell, TabId};
 use crate::tasks::{TaskKind, TaskRegistry};
 
+/// Process-wide master switch for the per-row file-detail scans that run
+/// on every folder load (Settings → Performance). Covers both the magic
+/// byte / quarantine sniff here *and* the Finder-tag xattr reads in
+/// `Shell::refresh_file_list_tags_in_tab` — the two ungated per-row disk
+/// costs. Off, the Format column falls back to extension-based types and
+/// tag dots don't paint, but no per-row content/xattr I/O runs. Seeded
+/// from persisted settings at startup; default on.
+#[derive(Clone, Copy)]
+pub struct FileDetailScan(pub bool);
+
+impl gpui::Global for FileDetailScan {}
+
+/// Whether per-row magic sniffing + Finder-tag reads are allowed to run.
+pub fn file_detail_scan_enabled(cx: &gpui::App) -> bool {
+    cx.try_global::<FileDetailScan>()
+        .map(|g| g.0)
+        .unwrap_or(true)
+}
+
 /// One row's worth of prefetched data, returned by the worker.
 /// Keyed by `NodeId` — stable across re-sorts and re-enumerations —
 /// so a batch can never land on the wrong row (raw indices shift

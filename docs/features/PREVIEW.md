@@ -26,6 +26,9 @@ per-provider cancellation tokens.
 - Shows selected item name, kind, path, size, modified date, magic label,
   description, and quarantine/provenance when available.
 - Clickable Quick Look thumbnail opens the viewer window.
+- A drag grip under the thumbnail resizes the thumbnail box (120–600 DIPs);
+  the height persists across restarts (`app_state::preview_thumb_height`, on
+  the same debounced save as the splitter widths).
 - Inline text/code preview appears before the detailed metadata for text-like
   files.
 - The preview pane has its own scroll state and can be resized without stealing

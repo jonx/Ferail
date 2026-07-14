@@ -83,7 +83,7 @@ All keyboard selection reads cached model state only.
 | **Page Up / Page Down** | Move lead by one viewport height of rows; plain = replace, Shift = extend. |
 | **Cmd+A** | Select all rows currently in the model (respecting active filter). anchor = first visible, lead = last visible. |
 | **Esc** | Clear selection. If a drag or rename or inline operation is in progress, Esc cancels that first and only clears selection on a second press. |
-| **Type-ahead** (printable characters) | Move lead to the next visible row whose `name` starts with the typed buffer (buffer resets after a short idle). Plain navigation semantics (replace selection). Type-ahead matching uses the already-cached `name` display field — no I/O. |
+| **Type-ahead** (printable characters) | Move lead to the first row whose `display_name` starts (case-insensitively) with the typed buffer, scrolling it into view. Consecutive keystrokes within ~0.75s accumulate into a longer prefix; the same single character pressed repeatedly cycles through every match, wrapping. After the idle timeout the buffer resets. Plain navigation semantics (replace selection). Works in both the list and icon-grid views; matching uses the already-cached `display_name` — no I/O. Implemented in `Shell::on_typeahead_key` (`shell/selection.rs`), wired as an `on_key_down` on the shell root; gpui matches keybindings to actions *before* key listeners, so only unbound printable characters reach it. |
 | **Space** | Trigger Quick Look / preview for the lead node, if Feraille wires Quick Look. Does not change selection. |
 | **Return / Enter** | Open the selection (same as double-click). With multiple selected, open all, with a sane cap and a confirmation above some threshold (e.g. >10). |
 | **Arrow Left / Right** in the **table** | Reserved for column-less navigation no-op, OR collapse/expand if the table ever shows a tree column. In flat table mode, Left/Right do nothing to selection. |
@@ -295,7 +295,7 @@ Selection:
 - [ ] Anchor and lead behave correctly across mixed modifier gestures.
 - [ ] Lead/focus ring is visually distinct from selection fill and from hover.
 - [ ] Up/Down, Shift+Up/Down, Cmd+Up/Down, Cmd+Shift+Up/Down, Page Up/Down, Cmd+A, Esc all behave per §2.5.
-- [ ] Type-ahead moves the lead using cached names with no I/O.
+- [x] Type-ahead moves the lead using cached names with no I/O (list + grid; prefix accumulation, repeated-letter cycling, scroll-into-view).
 - [ ] File table and Browse tree hold independent selections; the inactive context renders dimmed.
 - [ ] Right-click on a selected row keeps the selection; on an unselected row replaces it; both open a menu targeting the selection.
 - [ ] Selection survives streaming batches unchanged in identity.

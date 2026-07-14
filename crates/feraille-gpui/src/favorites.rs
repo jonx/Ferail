@@ -124,6 +124,33 @@ impl Favorites {
         self.refresh_state(cx);
     }
 
+    /// Filesystem-watcher hook: a directory containing a favorited path
+    /// changed, so a favorite may have been deleted or moved (flipping
+    /// Available → Missing) or restored. Same background probe as the
+    /// mount/hydrate passes — see [`Self::watch_dirs`] for what the
+    /// watcher registers.
+    pub fn refresh_availability(&self, cx: &mut Context<Self>) {
+        self.refresh_state(cx);
+    }
+
+    /// Parent directories of every path favorite, deduplicated. The
+    /// filesystem watcher registers these (non-recursively) so a delete,
+    /// move, or rename of a favorited entry surfaces as an event on its
+    /// parent — driving [`Self::refresh_availability`] so the row flips
+    /// to Missing live, not only on the next mount/unmount or re-hydrate.
+    pub fn watch_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for f in &self.entries {
+            if let Some(parent) = f.target.as_path().and_then(|p| p.parent()) {
+                let parent = parent.to_path_buf();
+                if !dirs.contains(&parent) {
+                    dirs.push(parent);
+                }
+            }
+        }
+        dirs
+    }
+
     /// Recompute state for every favorite off the UI thread. Called
     /// after hydrate, add, repoint, volume mount/unmount (via
     /// [`Self::refresh_mount_states`]), and (eventually) on watcher
@@ -232,6 +259,52 @@ impl Favorites {
         cx.emit(FavoritesEvent::Added { id, index });
         cx.notify();
         AddOutcome::Added(id)
+    }
+
+    /// Pin a Finder tag as a favorite (§9). Clicking the row runs a
+    /// tag search (`Shell::navigate_from_tag_favorite`). Dedup-aware:
+    /// re-pinning the same tag fires `DedupPulse` and returns
+    /// `Existing(id)` rather than duplicating the row.
+    pub fn add_tag(&mut self, name: String, cx: &mut Context<Self>) -> AddOutcome {
+        if let Some(existing) = self.tag_id(&name) {
+            cx.emit(FavoritesEvent::DedupPulse(existing));
+            return AddOutcome::Existing(existing);
+        }
+        let sort_index = self
+            .entries
+            .last()
+            .map(|f| f.sort_index + 1024.0)
+            .unwrap_or(0.0);
+        let fav = Favorite {
+            id: FavoriteId::new(),
+            kind: FavoriteKind::Tag,
+            target: FavoriteTarget::Tag(name),
+            display_name: None,
+            custom_icon: None,
+            sort_index,
+            date_added: now_unix(),
+        };
+        let id = fav.id;
+        let index = self.entries.len();
+        self.entries.push(fav.clone());
+        self.persist_save(fav, cx);
+        cx.emit(FavoritesEvent::Added { id, index });
+        cx.notify();
+        AddOutcome::Added(id)
+    }
+
+    /// Id of the favorite pinning tag `name`, if any. Tag favorites are
+    /// not in the path `index`, so this scans the (small) entry list.
+    pub fn tag_id(&self, name: &str) -> Option<FavoriteId> {
+        self.entries
+            .iter()
+            .find(|f| matches!(&f.target, FavoriteTarget::Tag(t) if t == name))
+            .map(|f| f.id)
+    }
+
+    /// Whether tag `name` is already pinned as a favorite.
+    pub fn contains_tag(&self, name: &str) -> bool {
+        self.tag_id(name).is_some()
     }
 
     /// Insert a favorite at a specific fractional `sort_index` — used by

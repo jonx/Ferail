@@ -314,6 +314,12 @@ fn avail_anchor_file(t: &MenuTargets) -> bool {
 pub struct FileListDelegate {
     pub entries: Vec<FileEntry>,
     pub columns: Vec<Column>,
+    /// Columns the user has hidden (header right-click → uncheck). Kept
+    /// out of `columns` — the table only ever sees the visible set, so
+    /// its index-based reorder/sort/resize logic stays untouched — but
+    /// retained here (with identity + width) so re-showing restores them
+    /// and they persist across launches. See [`split_persisted_columns`].
+    pub hidden_columns: Vec<Column>,
     pub fs: Arc<NativeFs>,
     /// Snapshot of entry paths captured during enumeration/application.
     /// Rendering may read this cache, but must not call back into the
@@ -444,11 +450,12 @@ impl FileListDelegate {
         shell_focus: gpui::FocusHandle,
     ) -> Self {
         let current_sort = sort_state.get();
-        let mut columns = default_columns();
-        // Column order + widths survive across launches (drag-reorder
-        // and drag-resize write through the shell's table-event
-        // bridge). app_state::load() is the in-memory cache — no I/O.
-        apply_persisted_columns(&mut columns, crate::app_state::load().list_columns.as_deref());
+        // Column order + widths + visibility survive across launches
+        // (drag-reorder, drag-resize, and header show/hide all write
+        // through the shell's table-event bridge). app_state::load() is
+        // the in-memory cache — no I/O.
+        let (columns, hidden_columns) =
+            split_persisted_columns(crate::app_state::load().list_columns.as_deref());
         Self {
             entries: Vec::new(),
             // Next-level Phase 1: Magic-driven `Format` column
@@ -463,6 +470,7 @@ impl FileListDelegate {
             // has col_resizable / col_movable enabled (both default
             // true in our pinned version).
             columns,
+            hidden_columns,
             fs,
             paths: HashMap::new(),
             icons,
@@ -483,6 +491,44 @@ impl FileListDelegate {
             cached_total_size: std::cell::Cell::new(None),
             cached_selected_size: std::cell::Cell::new(None),
         }
+    }
+
+    /// Whether column `key` is currently shown (present in `columns`).
+    pub fn is_column_visible(&self, key: &str) -> bool {
+        self.columns.iter().any(|c| c.key.as_ref() == key)
+    }
+
+    /// Show or hide column `key` (header right-click menu). Hiding moves
+    /// it into `hidden_columns` retaining its width; showing appends it
+    /// back to the visible set. The primary `name` column can't be
+    /// hidden, nor can the last remaining visible column. Returns whether
+    /// the set changed — the caller then `refresh`es and persists.
+    pub fn toggle_column(&mut self, key: &str) -> bool {
+        if let Some(pos) = self.columns.iter().position(|c| c.key.as_ref() == key) {
+            if key == "name" || self.columns.len() <= 1 {
+                return false;
+            }
+            let col = self.columns.remove(pos);
+            self.hidden_columns.push(col);
+            true
+        } else if let Some(pos) = self
+            .hidden_columns
+            .iter()
+            .position(|c| c.key.as_ref() == key)
+        {
+            let col = self.hidden_columns.remove(pos);
+            self.columns.push(col);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Restore the default column set (order + widths), un-hiding all
+    /// columns. Backs the header menu's "Reset Columns".
+    pub fn reset_columns(&mut self) {
+        self.columns = default_columns();
+        self.hidden_columns.clear();
     }
 
     /// Drop the cached selection drag payload. Call on every
@@ -995,12 +1041,27 @@ impl TableDelegate for FileListDelegate {
                 let icon_wrapper: gpui::AnyElement = match entry.kind {
                     EntryKind::Directory => {
                         let icon = self.icons.borrow_mut().icon_for(entry, &path);
+                        // Platforms whose icon bridge is still a stub (Linux
+                        // scaffold, AROS) yield the blank placeholder — show
+                        // the Lucide folder glyph instead of an empty slot.
+                        let inner: gpui::AnyElement = if self.icons.borrow().is_blank(&icon) {
+                            let fi = file_type_icon(entry);
+                            let tint = tint_color(fi.tint, cx);
+                            svg()
+                                .path(fi.path)
+                                .w(px(slot))
+                                .h(px(slot))
+                                .text_color(tint)
+                                .into_any_element()
+                        } else {
+                            img(icon).w(px(slot)).h(px(slot)).into_any_element()
+                        };
                         div()
                             .relative()
                             .flex_shrink_0()
                             .w(px(slot))
                             .h(px(slot))
-                            .child(img(icon).w(px(slot)).h(px(slot)))
+                            .child(inner)
                             .when(quarantined, badge_overlay)
                             .into_any_element()
                     }
@@ -1254,6 +1315,60 @@ impl TableDelegate for FileListDelegate {
         if is_name { px(46.0) } else { px(0.0) }
     }
 
+    fn header_has_menu(&self, _cx: &App) -> bool {
+        true
+    }
+
+    fn header_context_menu(
+        &mut self,
+        mut menu: PopupMenu,
+        _window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        // Show/hide toggles for every hideable column, plus a reset.
+        // Closure items mutate the table's delegate directly through its
+        // entity, then refresh + emit `ColumnWidthsChanged` so the shell's
+        // existing persistence subscription writes the new layout. `Name`
+        // is the primary column and is never offered for hiding.
+        let state = cx.entity();
+        for col in default_columns() {
+            if col.key.as_ref() == "name" {
+                continue;
+            }
+            let key = col.key.to_string();
+            let visible = self.is_column_visible(&key);
+            // A leading check marks the shown columns (Finder-style).
+            let label = if visible {
+                format!("\u{2713} {}", col.name)
+            } else {
+                format!("\u{2007}\u{2007}{}", col.name)
+            };
+            let state_toggle = state.clone();
+            menu = menu.item(PopupMenuItem::new(label).on_click(move |_ev, _w, cx| {
+                let key = key.clone();
+                state_toggle.update(cx, |s, cx| {
+                    if s.delegate_mut().toggle_column(&key) {
+                        s.refresh(cx);
+                        let widths = s.col_widths();
+                        cx.emit(TableEvent::ColumnWidthsChanged(widths));
+                    }
+                });
+            }));
+        }
+        let state_reset = state.clone();
+        menu.separator()
+            .item(
+                PopupMenuItem::new("Reset Columns").on_click(move |_ev, _w, cx| {
+                    state_reset.update(cx, |s, cx| {
+                        s.delegate_mut().reset_columns();
+                        s.refresh(cx);
+                        let widths = s.col_widths();
+                        cx.emit(TableEvent::ColumnWidthsChanged(widths));
+                    });
+                }),
+            )
+    }
+
     fn context_menu(
         &mut self,
         row_ix: usize,
@@ -1464,14 +1579,37 @@ impl TableDelegate for FileListDelegate {
             }
         }
 
+        // Names of the tags applied to the clicked row — offered for
+        // pinning to the sidebar as Tag favorites (§9).
+        let applied_tag_names: Vec<String> =
+            applied_tags.iter().map(|c| c.name().to_string()).collect();
         let tags_submenu = PopupMenu::build(window, app_cx, move |m, _w, _c| {
-            m.menu_with_check("Red", tag_red_on, Box::new(ToggleTagRed))
+            let mut m = m
+                .menu_with_check("Red", tag_red_on, Box::new(ToggleTagRed))
                 .menu_with_check("Orange", tag_orange_on, Box::new(ToggleTagOrange))
                 .menu_with_check("Yellow", tag_yellow_on, Box::new(ToggleTagYellow))
                 .menu_with_check("Green", tag_green_on, Box::new(ToggleTagGreen))
                 .menu_with_check("Blue", tag_blue_on, Box::new(ToggleTagBlue))
                 .menu_with_check("Purple", tag_purple_on, Box::new(ToggleTagPurple))
-                .menu_with_check("Gray", tag_gray_on, Box::new(ToggleTagGray))
+                .menu_with_check("Gray", tag_gray_on, Box::new(ToggleTagGray));
+            // Pin each applied tag to the sidebar. Closure items add the
+            // Tag favorite directly through the process-global entity —
+            // no per-tag action needed (writes are off the paint path).
+            if !applied_tag_names.is_empty() {
+                m = m.separator();
+                for name in &applied_tag_names {
+                    let name = name.clone();
+                    let label = format!("Pin \u{201c}{name}\u{201d} to Sidebar");
+                    m = m.item(PopupMenuItem::new(label).on_click(move |_ev, _w, cx| {
+                        let favs = crate::process_state::process_state(cx).favorites.clone();
+                        let name = name.clone();
+                        favs.update(cx, |f, cx| {
+                            f.add_tag(name, cx);
+                        });
+                    }));
+                }
+            }
+            m
         });
         menu = menu.item(PopupMenuItem::submenu("Tags", tags_submenu));
 
@@ -1716,24 +1854,32 @@ fn default_columns() -> Vec<Column> {
 const COLUMN_WIDTH_MIN: f32 = 60.0;
 const COLUMN_WIDTH_MAX: f32 = 1200.0;
 
-/// Apply a persisted `key:width,key:width,…` spec (see
-/// `app_state::AppState::list_columns`) onto the default column set:
-/// listed keys take the spec's order and width; unknown keys are
-/// ignored; columns missing from the spec keep their default relative
-/// order at the end. Forward- and backward-compatible by construction.
-pub fn apply_persisted_columns(columns: &mut Vec<Column>, spec: Option<&str>) {
-    let Some(spec) = spec else { return };
-    let mut ordered: Vec<Column> = Vec::with_capacity(columns.len());
+/// Split a persisted `key:width:vis,…` spec (see
+/// `app_state::AppState::list_columns`) into the visible column set (in
+/// the spec's order, with its widths) and the hidden set. `vis` is
+/// `1` (visible) or `0` (hidden); a legacy `key:width` token with no
+/// flag is treated as visible. Unknown keys are ignored; default
+/// columns the spec never mentions (new in this build) trail as
+/// visible. The primary `name` column can never be hidden, and the
+/// visible set is never allowed to go empty. Forward- and
+/// backward-compatible by construction.
+pub fn split_persisted_columns(spec: Option<&str>) -> (Vec<Column>, Vec<Column>) {
+    let mut pool = default_columns();
+    let Some(spec) = spec else {
+        return (pool, Vec::new());
+    };
+    let mut visible: Vec<Column> = Vec::with_capacity(pool.len());
+    let mut hidden: Vec<Column> = Vec::new();
     for entry in spec.split(',') {
-        let mut parts = entry.splitn(2, ':');
+        let mut parts = entry.splitn(3, ':');
         let key = parts.next().unwrap_or("").trim();
         if key.is_empty() {
             continue;
         }
-        let Some(pos) = columns.iter().position(|c| c.key.as_ref() == key) else {
+        let Some(pos) = pool.iter().position(|c| c.key.as_ref() == key) else {
             continue; // unknown key (older/newer build) — skip
         };
-        let mut col = columns.remove(pos);
+        let mut col = pool.remove(pos);
         // `"NaN".parse::<f32>()` succeeds — filter non-finite values
         // or the clamp propagates NaN into the layout.
         if let Some(w) = parts
@@ -1743,29 +1889,44 @@ pub fn apply_persisted_columns(columns: &mut Vec<Column>, spec: Option<&str>) {
         {
             col.width = px(w.clamp(COLUMN_WIDTH_MIN, COLUMN_WIDTH_MAX));
         }
-        ordered.push(col);
+        let vis = parts.next().map(|v| v.trim() != "0").unwrap_or(true);
+        if vis || col.key.as_ref() == "name" {
+            visible.push(col);
+        } else {
+            hidden.push(col);
+        }
     }
-    // Anything the spec didn't mention (new columns in this build)
-    // trails in default order.
-    ordered.append(columns);
-    *columns = ordered;
+    // Columns this build's default set has that the spec didn't mention
+    // (new since the spec was written) trail as visible.
+    visible.append(&mut pool);
+    // Never leave the table with no columns.
+    if visible.is_empty() && !hidden.is_empty() {
+        let name_pos = hidden.iter().position(|c| c.key.as_ref() == "name");
+        visible.push(hidden.remove(name_pos.unwrap_or(0)));
+    }
+    (visible, hidden)
 }
 
-/// Serialize the current column order (+ live widths when the table
-/// provides them, else the construction widths) into the persisted
-/// `key:width` spec.
-pub fn columns_spec(columns: &[Column], live_widths: Option<&[Pixels]>) -> String {
-    columns
-        .iter()
-        .enumerate()
-        .map(|(ix, col)| {
-            let width = live_widths
-                .and_then(|w| w.get(ix).copied())
-                .unwrap_or(col.width);
-            format!("{}:{:.0}", col.key, f32::from(width))
-        })
-        .collect::<Vec<_>>()
-        .join(",")
+/// Serialize the current column layout into the persisted
+/// `key:width:vis` spec: visible columns first (in order, with live
+/// widths when the table provides them), then hidden columns. `vis` is
+/// `1` for visible, `0` for hidden.
+pub fn columns_spec(
+    visible: &[Column],
+    hidden: &[Column],
+    live_widths: Option<&[Pixels]>,
+) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(visible.len() + hidden.len());
+    for (ix, col) in visible.iter().enumerate() {
+        let width = live_widths
+            .and_then(|w| w.get(ix).copied())
+            .unwrap_or(col.width);
+        parts.push(format!("{}:{:.0}:1", col.key, f32::from(width)));
+    }
+    for col in hidden {
+        parts.push(format!("{}:{:.0}:0", col.key, f32::from(col.width)));
+    }
+    parts.join(",")
 }
 
 /// Display-leaf name for the drag chip (macOS `:` → `/`).
@@ -1884,13 +2045,13 @@ fn _font_weight_check() -> FontWeight {
 
 #[cfg(test)]
 mod column_persist_tests {
-    use super::{apply_persisted_columns, columns_spec, default_columns};
+    use super::{columns_spec, default_columns, split_persisted_columns};
     use gpui::px;
 
     #[test]
     fn spec_round_trips_order_and_widths() {
-        let mut cols = default_columns();
-        apply_persisted_columns(&mut cols, Some("modified:200,name:420,size:90"));
+        let (cols, hidden) = split_persisted_columns(Some("modified:200,name:420,size:90"));
+        assert!(hidden.is_empty());
         let keys: Vec<&str> = cols.iter().map(|c| c.key.as_ref()).collect();
         // Listed keys in spec order; unlisted (format, description)
         // trail in default relative order.
@@ -1898,10 +2059,9 @@ mod column_persist_tests {
         assert_eq!(cols[0].width, px(200.0));
         assert_eq!(cols[1].width, px(420.0));
         assert_eq!(cols[2].width, px(90.0));
-        // Serialize → re-apply gives the same layout.
-        let spec = columns_spec(&cols, None);
-        let mut again = default_columns();
-        apply_persisted_columns(&mut again, Some(&spec));
+        // Serialize → re-split gives the same layout.
+        let spec = columns_spec(&cols, &hidden, None);
+        let (again, _) = split_persisted_columns(Some(&spec));
         assert_eq!(
             again.iter().map(|c| c.key.clone()).collect::<Vec<_>>(),
             cols.iter().map(|c| c.key.clone()).collect::<Vec<_>>()
@@ -1910,10 +2070,35 @@ mod column_persist_tests {
     }
 
     #[test]
+    fn hidden_columns_round_trip() {
+        // A `:0` flag hides a column; it lands in the hidden set and
+        // survives a serialize → re-split cycle.
+        let (visible, hidden) =
+            split_persisted_columns(Some("name:360:1,size:100:1,format:220:0,modified:160:1"));
+        assert!(visible.iter().all(|c| c.key.as_ref() != "format"));
+        assert_eq!(hidden.len(), 1);
+        assert_eq!(hidden[0].key.as_ref(), "format");
+        let spec = columns_spec(&visible, &hidden, None);
+        let (v2, h2) = split_persisted_columns(Some(&spec));
+        assert!(v2.iter().all(|c| c.key.as_ref() != "format"));
+        assert_eq!(h2.len(), 1);
+        assert_eq!(h2[0].key.as_ref(), "format");
+    }
+
+    #[test]
+    fn name_column_is_never_hidden() {
+        // Even an explicit `name:...:0` keeps Name visible.
+        let (visible, hidden) = split_persisted_columns(Some("name:360:0,size:100:1"));
+        assert!(visible.iter().any(|c| c.key.as_ref() == "name"));
+        assert!(hidden.iter().all(|c| c.key.as_ref() != "name"));
+    }
+
+    #[test]
     fn hostile_specs_cannot_wedge_the_table() {
         // Unknown keys, garbage widths, empty entries: defaults survive.
-        let mut cols = default_columns();
-        apply_persisted_columns(&mut cols, Some("bogus:10,,name:NaN,size:-50,modified:99999"));
+        let (cols, hidden) =
+            split_persisted_columns(Some("bogus:10,,name:NaN,size:-50,modified:99999"));
+        assert!(hidden.is_empty());
         assert_eq!(cols.len(), default_columns().len());
         // name kept its default width (unparseable), size clamped up,
         // modified clamped down.
@@ -1921,9 +2106,10 @@ mod column_persist_tests {
         assert_eq!(cols[0].width, px(360.0));
         assert_eq!(cols[1].width, px(super::COLUMN_WIDTH_MIN));
         assert_eq!(cols[2].width, px(super::COLUMN_WIDTH_MAX));
-        // Live widths override construction widths in the spec.
-        let spec = columns_spec(&cols, Some(&[px(111.0), px(222.0)]));
-        assert!(spec.starts_with("name:111,size:222,"));
+        // Live widths override construction widths in the spec, and each
+        // visible token now carries the `:1` visibility flag.
+        let spec = columns_spec(&cols, &hidden, Some(&[px(111.0), px(222.0)]));
+        assert!(spec.starts_with("name:111:1,size:222:1,"));
     }
 }
 

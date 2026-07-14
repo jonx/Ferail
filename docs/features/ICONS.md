@@ -66,7 +66,7 @@ Snapshot at rev `c112e7b` — re-run the listing below if you bump gpui-componen
 - **Windows / panels** — `panel-left` `panel-bottom` `panel-bottom-open` `window-close` `window-maximize` `window-minimize` `window-restore` `frame` `resize-corner`
 - **Theme / view** — `sun` `moon` `eye` `eye-off` `layout-dashboard` `chart-pie`
 - **Text / search controls** — `a-large-small` `case-sensitive` `asterisk` `dash` `check` `replace`
-- **System / hardware** — `cpu` `memory-stick` `network` `square-terminal` `bot` `inspector` `loader` `loader-circle` `battery` (+ `-charging` `-full` `-medium` `-low` `-warning`)
+- **System / hardware** — `memory-stick` `square-terminal` `bot` `inspector` `loader` `loader-circle` `battery` (+ `-charging` `-full` `-medium` `-low` `-warning`) (`cpu` now used by the Settings → Performance page; `network` now used for network-mount volume rows)
 - **People / misc** — `user` `circle-user` `delete` `bell` `calendar` `book-open` `building-2` `globe` `github` `map` `menu` `ellipsis-vertical` `undo` `undo-2` `redo-2`
 
 ```sh
@@ -160,10 +160,18 @@ All local, all Lucide-derived.
 | Pictures | `nav/pictures.svg` | `image` |
 
 Mounted **volumes** in the tree use `nav/drive.svg` (Lucide `hard-drive`) —
-[tree.rs](../../crates/feraille-gpui/src/tree.rs). Removable/external volume
-rows (`is_removable`, i.e. the boot disk never) also draw a **trailing**
-`nav/eject.svg` button (Lucide `eject`, local 1.75): clicking it unmounts the
-drive (`Shell::eject_path`) without opening the context menu, matching Finder.
+[tree.rs](../../crates/feraille-gpui/src/tree.rs). **Network mounts**
+(`is_local == false`) instead draw `network.svg` (Lucide `network`, from the
+spare upstream pool) so a remote share reads differently from a local disk
+(`TreeRowIcon::Network`). Removable/external volume rows (`is_removable`, i.e.
+the boot disk never) also draw a **trailing** `nav/eject.svg` button (Lucide
+`eject`, local 1.75): clicking it unmounts the drive (`Shell::eject_path`)
+without opening the context menu, matching Finder.
+
+The **iCloud Drive** sidebar Location (surfaced only when the ubiquity
+container exists) uses the same `nav/cloud.svg` outline glyph as the leading
+icon — the iCloud metaphor, distinct from the trailing cloud *badge* below,
+which is a per-location download-state indicator, not a command.
 
 iCloud Locations draw a **trailing** cloud badge at `icon_px(14)` in
 `sidebar_foreground` (matching the black Locations leading icons, not muted
@@ -221,6 +229,9 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Reveal in Finder | `icons/folder-open.svg` ↑ | Lucide |
 | Copy Path | `icons/copy.svg` ↑ | Lucide |
 
+The preview pane also draws a plain-div **resize grip** (rounded pill) under
+the thumbnail — pure chrome, not an icon asset.
+
 ### Viewer window ([viewer/window.rs](../../crates/feraille-gpui/src/viewer/window.rs))
 
 | Command | Icon path | Origin |
@@ -231,6 +242,8 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Rotate | `icons/redo.svg` ↑ | Lucide |
 | Color adjust | `icons/palette.svg` ↑ | Lucide |
 | Auto-enhance ("magic") | `icons/wand-sparkles.svg` | **In-house** Lucide `wand-sparkles` (house style, stroke 1.75). Spare pool has no wand/sparkles glyph. Adjustments-panel header, beside Reset. |
+| Move to Trash | `icons/trash.svg` | **In-house** Lucide `trash` (house style, stroke 1.75). Neither pool has a trash glyph. Deliberately the plain can — the sidebar Trash *place* uses `nav/trash.svg` (`trash-2`, with inner lines), so the command and the location stay distinguishable. |
+| Video mute toggle | `icons/volume-x.svg` (muted) / `icons/volume-2.svg` (audible) | **In-house** Lucide `volume-x` / `volume-2` (house style, stroke 1.75). Spare pool has no speaker/volume glyph. One button, state-swapped icon — video audio is muted by default, opt-in per window. |
 | Fullscreen | `icons/maximize.svg` ↑ | Lucide |
 
 ### Disk Usage window ([disk_usage.rs](../../crates/feraille-gpui/src/disk_usage.rs))
@@ -251,6 +264,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Search & Duplicates | `icons/search.svg` ↑ | Lucide |
 | Appearance | `icons/palette.svg` ↑ | Lucide |
 | Files | `icons/folder.svg` ↑ | Lucide |
+| Performance | `icons/cpu.svg` ↑ | Lucide (from the spare upstream pool) |
 | Layout | `icons/settings-2.svg` ↑ | Lucide |
 | Plugins | `icons/settings.svg` ↑ | Lucide |
 | Keyboard Shortcuts | `icons/keyboard.svg` | **In-house** Lucide `keyboard` (stroke 2, matches rail) |

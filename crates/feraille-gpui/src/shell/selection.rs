@@ -1,5 +1,13 @@
 use super::*;
 
+/// Left padding of a grid row's cell flex (`.px_2()` ≈ 8px), subtracted
+/// when mapping a pointer into per-cell content coordinates for marquee
+/// hit-testing.
+const GRID_ROW_PAD: f32 = 8.0;
+/// Pointer travel (px) before a background press is treated as a marquee
+/// sweep rather than a plain click that clears the selection.
+const MARQUEE_THRESHOLD: f32 = 4.0;
+
 impl Shell {
     // -- Selection model (spec §2) ---------------------------------
     //
@@ -327,6 +335,26 @@ impl Shell {
                     table.update(cx, |state, cx| {
                         state.set_selected_row(row, cx);
                     });
+                    // The list view auto-scrolls via `set_selected_row`,
+                    // but the grid's `uniform_list` rides its own
+                    // `grid_scroll` handle that the table never touches — so
+                    // reveal the lead there too. Without this, Back / parent
+                    // navigation (which seeds the child folder as the lead)
+                    // selects a cell that may sit far below the fold while
+                    // the grid stays pinned at the top. Gated on the lead
+                    // actually changing (`needs_set`), matching the table, so
+                    // streaming batches don't fight the user's scroll.
+                    if let Some(tab) = self.tabs.get(idx) {
+                        if matches!(tab.view_mode, crate::grid::ViewMode::Grid) {
+                            let icon_px = crate::grid::icon_size(cx);
+                            let gap = crate::grid::cell_gap(cx);
+                            let w = f32::from(tab.grid_pane_width)
+                                .max(crate::grid::cell_width(icon_px, gap));
+                            let cols = crate::grid::cols_per_row(w, icon_px, gap).max(1);
+                            tab.grid_scroll
+                                .scroll_to_item(row / cols, gpui::ScrollStrategy::Center);
+                        }
+                    }
                 }
             }
             // No lead → no selection. Clear the primitive's focus overlay so
@@ -642,8 +670,10 @@ impl Shell {
     /// width and live icon size. At least 1.
     fn grid_cols(&self, cx: &App) -> usize {
         let icon_px = crate::grid::icon_size(cx);
-        let w = f32::from(self.active_tab().grid_pane_width).max(crate::grid::cell_width(icon_px));
-        crate::grid::cols_per_row(w, icon_px)
+        let gap = crate::grid::cell_gap(cx);
+        let w = f32::from(self.active_tab().grid_pane_width)
+            .max(crate::grid::cell_width(icon_px, gap));
+        crate::grid::cols_per_row(w, icon_px, gap)
     }
 
     pub(super) fn on_grid_left(&mut self, _: &GridLeft, _: &mut Window, cx: &mut Context<Self>) {
@@ -693,6 +723,182 @@ impl Shell {
     ) {
         let c = self.grid_cols(cx) as i64;
         self.move_grid_selection(c, true, cx);
+    }
+
+    // -- Grid marquee / rubber-band selection ----------------------
+    //
+    // A press on the grid's empty background (not a cell) begins a
+    // marquee; dragging sweeps a selection rectangle over the cells. The
+    // gesture lives on the grid root div (`grid_body`); these handlers
+    // run in window space and map into grid content space via the tab's
+    // cached `grid_pane_origin` + live scroll offset. All geometry is
+    // analytic (no per-cell bounds are stored) — the same O(n) scan the
+    // list's `range_select` already does.
+
+    /// Map a window-space pointer position to the grid entry index under
+    /// it, or `None` when the pointer is over empty background (a gap
+    /// column, below the last row, or a trailing empty slot). Drives the
+    /// marquee's "start only on background" guard so presses on real
+    /// cells still reach the cell's own click/drag handlers.
+    fn grid_index_at(&self, pos: gpui::Point<Pixels>, cx: &App) -> Option<usize> {
+        let tab = self.active_tab();
+        let icon_px = crate::grid::icon_size(cx);
+        let gap = crate::grid::cell_gap(cx);
+        let cell_w = crate::grid::cell_width(icon_px, gap);
+        let cell_h = crate::grid::cell_height(icon_px, gap);
+        let cols = self.grid_cols(cx);
+        let off = tab.grid_scroll.0.borrow().base_handle.offset();
+        let o = tab.grid_pane_origin;
+        let content_x = f32::from(pos.x) - f32::from(o.x) - f32::from(off.x) - GRID_ROW_PAD;
+        let content_y = f32::from(pos.y) - f32::from(o.y) - f32::from(off.y);
+        if content_x < 0.0 || content_y < 0.0 {
+            return None;
+        }
+        let col = (content_x / cell_w).floor() as usize;
+        if col >= cols {
+            return None;
+        }
+        let row = (content_y / cell_h).floor() as usize;
+        let i = row * cols + col;
+        let n = tab.table.read(cx).delegate().entries.len();
+        (i < n).then_some(i)
+    }
+
+    /// Mouse-down on the grid root: begin a marquee only when the press
+    /// lands on empty background. Shift/Cmd makes it additive (union with
+    /// the existing selection).
+    pub(super) fn on_grid_marquee_down(
+        &mut self,
+        ev: &gpui::MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.grid_index_at(ev.position, cx).is_some() {
+            return;
+        }
+        let additive = ev.modifiers.shift || ev.modifiers.secondary();
+        window.focus(&self.active_tab().grid_focus, cx);
+        let base = if additive {
+            self.active_tab().selection.clone()
+        } else {
+            HashSet::new()
+        };
+        self.active_tab_mut().marquee = Some(super::tab::Marquee {
+            start: ev.position,
+            current: ev.position,
+            additive,
+            base,
+            moved: false,
+        });
+    }
+
+    /// Mouse-move while a marquee is live: grow the rectangle and, once
+    /// the pointer has travelled past the click threshold, recompute the
+    /// swept selection.
+    pub(super) fn on_grid_marquee_move(
+        &mut self,
+        ev: &gpui::MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((start, was_moved)) = self
+            .active_tab()
+            .marquee
+            .as_ref()
+            .map(|m| (m.start, m.moved))
+        else {
+            return;
+        };
+        let dx = f32::from(ev.position.x) - f32::from(start.x);
+        let dy = f32::from(ev.position.y) - f32::from(start.y);
+        let past = dx.abs() > MARQUEE_THRESHOLD || dy.abs() > MARQUEE_THRESHOLD;
+        if let Some(m) = self.active_tab_mut().marquee.as_mut() {
+            m.current = ev.position;
+            if past {
+                m.moved = true;
+            }
+        }
+        if was_moved || past {
+            self.apply_marquee_selection(cx);
+            cx.notify();
+        }
+    }
+
+    /// Mouse-up (inside or outside the pane): finish the marquee. A
+    /// press that never moved is a plain background click — it clears the
+    /// selection (unless it was additive, which is a no-op).
+    pub(super) fn on_grid_marquee_up(
+        &mut self,
+        _ev: &gpui::MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(m) = self.active_tab_mut().marquee.take() else {
+            return;
+        };
+        if !m.moved && !m.additive {
+            self.clear_active_selection(cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    /// Recompute the selection swept by the current marquee rectangle,
+    /// unioning with the pre-drag snapshot when the gesture is additive.
+    fn apply_marquee_selection(&mut self, cx: &mut Context<Self>) {
+        let (start, current, base) = {
+            let Some(m) = self.active_tab().marquee.as_ref() else {
+                return;
+            };
+            (m.start, m.current, m.base.clone())
+        };
+        let tab = self.active_tab();
+        let icon_px = crate::grid::icon_size(cx);
+        let gap = crate::grid::cell_gap(cx);
+        let cell_w = crate::grid::cell_width(icon_px, gap);
+        let cell_h = crate::grid::cell_height(icon_px, gap);
+        let cols = self.grid_cols(cx);
+        let off = tab.grid_scroll.0.borrow().base_handle.offset();
+        let o = tab.grid_pane_origin;
+        let to_content = |p: gpui::Point<Pixels>| {
+            (
+                f32::from(p.x) - f32::from(o.x) - f32::from(off.x) - GRID_ROW_PAD,
+                f32::from(p.y) - f32::from(o.y) - f32::from(off.y),
+            )
+        };
+        let (ax, ay) = to_content(start);
+        let (bx, by) = to_content(current);
+        let (x0, x1) = (ax.min(bx), ax.max(bx));
+        let (y0, y1) = (ay.min(by), ay.max(by));
+        let entries: Vec<NodeId> = tab
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        let mut hits = base;
+        let mut last_hit: Option<NodeId> = None;
+        for (i, id) in entries.iter().enumerate() {
+            let col = i % cols;
+            let row = i / cols;
+            let cx0 = col as f32 * cell_w;
+            let cy0 = row as f32 * cell_h;
+            // Rectangle-vs-rectangle overlap (half-open on the far edges).
+            if x0 < cx0 + cell_w && x1 > cx0 && y0 < cy0 + cell_h && y1 > cy0 {
+                hits.insert(*id);
+                last_hit = Some(*id);
+            }
+        }
+        let tab = self.active_tab_mut();
+        tab.selection = hits;
+        tab.range_live = false;
+        if let Some(l) = last_hit {
+            tab.lead = Some(l);
+            tab.anchor = Some(l);
+        }
+        self.refresh_file_list_selection(cx);
     }
 
     pub(super) fn on_cursor_up(&mut self, _: &CursorUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -790,4 +996,159 @@ impl Shell {
     ) {
         self.clear_active_selection(cx);
     }
+
+    /// Type-to-select. A printable key pressed with the file list or
+    /// icon grid focused jumps the selection to the first entry whose
+    /// display name starts with the accumulated prefix, scrolling it
+    /// into view. Wired as an `on_key_down` on the shell root, so it
+    /// covers both views (the grid renders inside the same tree).
+    ///
+    /// gpui matches keybindings to actions *before* running key
+    /// listeners (window.rs `dispatch_key_event`), so arrows, Space
+    /// (Quick Look), Cmd/Ctrl chords, etc. are consumed as actions and
+    /// never reach here — only unbound printable characters do.
+    pub(crate) fn on_typeahead_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Only act when the active view genuinely holds focus. The
+        // shell root sees key events bubbling up from descendants
+        // (e.g. the toolbar filter input); those must not typeahead.
+        let grid = matches!(self.active_tab().view_mode, crate::grid::ViewMode::Grid);
+        // `contains_focused`, not `is_focused`: clicking a row moves window
+        // focus to the table's own handle (a descendant of the shell root),
+        // and typing right after a click must still typeahead. Exact-match
+        // checking silently disabled typeahead after any click — found on
+        // the AROS port, but latent on every platform. The filter input is
+        // not a descendant of either handle, so it stays excluded.
+        let focused = if grid {
+            self.active_tab().grid_focus.contains_focused(window, cx)
+        } else {
+            self.focus_handle.contains_focused(window, cx)
+        };
+        if !focused {
+            return;
+        }
+
+        // Command/Control/Function chords are not typeahead input.
+        // (`key_char` is already None for most of them, but Function
+        // keys can carry a char — belt and suspenders.)
+        let m = &event.keystroke.modifiers;
+        if m.platform || m.control || m.function {
+            return;
+        }
+        // `key_char` is the character that would have been typed (None
+        // for Cmd-S etc.). Accept only a single, non-control glyph.
+        let Some(ch) = event
+            .keystroke
+            .key_char
+            .as_deref()
+            .and_then(|s| s.chars().next().filter(|c| !c.is_control() && s.chars().count() == 1))
+        else {
+            return;
+        };
+        // Lowercase for case-insensitive matching (first scalar is
+        // enough for the ASCII + common-accent names we match against).
+        let ch = ch.to_lowercase().next().unwrap_or(ch);
+
+        if self.typeahead_advance(ch, grid, cx) {
+            // Consumed — don't let the character fall through to any
+            // IME / text-input handling on the way back up.
+            cx.stop_propagation();
+        }
+    }
+
+    /// Append `ch` to the type-to-select buffer (resetting it first if
+    /// the idle timeout elapsed) and move the selection to the first
+    /// matching entry. Returns whether a keystroke was consumed.
+    ///
+    /// Behaviour mirrors Finder: accumulating characters narrow the
+    /// prefix from the top of the list; pressing the *same* single
+    /// character repeatedly cycles through every entry starting with
+    /// it, wrapping around.
+    fn typeahead_advance(&mut self, ch: char, grid: bool, cx: &mut Context<Self>) -> bool {
+        let now = std::time::Instant::now();
+        let expired = self
+            .typeahead
+            .as_ref()
+            .map_or(true, |(_, t)| now.duration_since(*t) > TYPEAHEAD_TIMEOUT);
+        let prev = if expired {
+            String::new()
+        } else {
+            self.typeahead
+                .as_ref()
+                .map(|(b, _)| b.clone())
+                .unwrap_or_default()
+        };
+        let candidate = format!("{prev}{ch}");
+
+        // Snapshot the visible entries (display names lowercased) and
+        // the current lead's index — same read pattern the arrow-key
+        // navigators use.
+        let (names, ids): (Vec<String>, Vec<NodeId>) = {
+            let d = self.active_tab().table.read(cx).delegate();
+            (
+                d.entries
+                    .iter()
+                    .map(|e| e.display_name.to_lowercase())
+                    .collect(),
+                d.entries.iter().map(|e| e.id).collect(),
+            )
+        };
+        if ids.is_empty() {
+            return false;
+        }
+        let cur = self
+            .active_tab()
+            .lead
+            .and_then(|id| ids.iter().position(|x| *x == id));
+
+        // 1. Extend the prefix: first entry (from the top) matching the
+        //    full accumulated candidate.
+        let (matched, buffer) = if let Some(i) = names.iter().position(|n| n.starts_with(&candidate))
+        {
+            (Some(i), candidate)
+        } else if prev.is_empty() || prev.chars().all(|c| c == ch) {
+            // 2. Same single character repeated with no longer match →
+            //    cycle to the next entry starting with `ch`, wrapping.
+            let single = ch.to_string();
+            let start = cur.map_or(0, |i| i + 1);
+            let next = (0..ids.len())
+                .map(|k| (start + k) % ids.len())
+                .find(|&k| names[k].starts_with(&single));
+            (next, single)
+        } else {
+            // 3. Multi-character prefix that matches nothing: keep the
+            //    old buffer and don't move (but stay grouped in time).
+            (None, prev)
+        };
+
+        self.typeahead = Some((buffer, now));
+
+        let Some(i) = matched else {
+            // Still consumed the key (typeahead is active); just no move.
+            return true;
+        };
+        let id = ids[i];
+        let cols = if grid { self.grid_cols(cx).max(1) } else { 1 };
+        self.replace_select_one(id, cx);
+        self.request_preview_for_row(i, cx);
+        if grid {
+            // The list view auto-scrolls via `set_selected_row`; the
+            // grid's uniform_list has its own scroll handle that
+            // selection does not touch, so nudge it here.
+            self.active_tab()
+                .grid_scroll
+                .scroll_to_item(i / cols, gpui::ScrollStrategy::Center);
+        }
+        cx.notify();
+        true
+    }
 }
+
+/// Idle window after which the type-to-select buffer resets: a keystroke
+/// this long after the previous one starts a fresh prefix rather than
+/// extending the old one (Finder uses roughly this).
+const TYPEAHEAD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);

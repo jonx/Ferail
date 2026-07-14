@@ -200,16 +200,27 @@ another entry keeps `{mode, center}` verbatim:
   - `Esc`: exit fullscreen if fullscreen, else close window
   - `Cmd+=` / `Cmd+-` / `Cmd+0` **[mac; win-parity Ctrl]**: zoom in/out/reset
   - `Cmd+Ctrl+F` **[mac]**: fullscreen
-  - `R` / `Shift+R`: rotate the current item clockwise / counter-clockwise
+  - `R` / `Shift+R`: rotate clockwise / counter-clockwise (sticky — the
+    rotation carries to the next/previous item until the viewer closes)
   - `E`: toggle the **Adjustments** popup (also a right-click on the stage,
     or the palette toolbar button). `Esc` closes the popup first; a click
     elsewhere on the stage dismisses it.
+  - `Cmd+Backspace` / `Delete` **[mac canonical / universal alternate]**:
+    move the current file to the **Trash** and advance (also the trash
+    toolbar button). Cull-while-browsing: the trash call runs on the
+    background executor; on success the entry leaves the playlist (the
+    following item becomes current, index-keyed bitmap caches are
+    invalidated, the browser reloads any tab showing the parent folder) and
+    a toast confirms. The last entry closes the window. Always the
+    recoverable move-to-Trash — the viewer has no undo stack, so restoring
+    means the OS Trash.
   - Wheel: zoom toward cursor · Drag: pan when zoomed · Double-click:
     fit ↔ actual
-- **Rotation** is view-only, per-item, and ephemeral: it lives in
-  `ViewerWindow::rotations` (a per-index `HashMap`), never touches the
-  file, applies to one item at a time, and is dropped when the window
-  closes or retargets.
+- **Rotation** is view-only, window-level, and ephemeral: it lives in
+  `ViewerWindow::rotation` (a single `u8` of quarter-turns), never touches
+  the file, and — like the colour grade — is carried across next/prev so a
+  rotation set once applies to every item you flip through. It is dropped
+  when the window closes or retargets onto a new playlist.
   - **Images and videos both** CPU-rotate the bitmap (`rotate_render_image`,
     cached in one slot) since gpui can't transform an `img`
     (docs/GPUI-UPSTREAM.md #5). A video frame is just an `img`, so it
@@ -218,7 +229,8 @@ another entry keeps `{mode, center}` verbatim:
 - **Video transport**: since the video is a gpui `img` (no native
   overlay floating on top), the toolbar/seek-bar hit-test normally at any
   rotation. Toolbar play/pause + frame-step (`−1f` / `+1f`, via
-  `stepByCount:`) + a **Loop** checkbox; a custom **seek bar** + elapsed/
+  `stepByCount:`) + a **mute toggle** (speaker button, **muted by default** —
+  audio is opt-in per window) + a **Loop** checkbox; a custom **seek bar** + elapsed/
   total in the status strip (drag to scrub via `seekToTime:`). `CMTime` is
   mirrored locally for the seek/time calls.
 - **In / Out cue points**: the seek bar carries two draggable grips that

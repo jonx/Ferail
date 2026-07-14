@@ -325,8 +325,31 @@ impl ProcessState {
                 }
             }
         }
+        // Favorite parent directories are watched independently of any
+        // tab so a favorited path deleted/moved while unseen still flips
+        // to Missing (see `Favorites::watch_dirs`). Keep them across the
+        // prune, not just the visible tab dirs.
+        keep.extend(self.favorites.read(cx).watch_dirs());
         if let Some(w) = self.watcher.borrow_mut().as_mut() {
             w.retain_watched(&keep);
+        }
+    }
+
+    /// Register every favorite's parent directory on the filesystem
+    /// watcher (idempotent). Called whenever the favorites list changes
+    /// so a newly added favorite's parent starts being watched right
+    /// away — deletes/moves of the favorited path then surface as events
+    /// that drive `Favorites::refresh_availability`. `prune_watches`
+    /// keeps these registered across navigation.
+    pub fn watch_favorite_dirs(&self, cx: &gpui::App) {
+        let dirs = self.favorites.read(cx).watch_dirs();
+        if dirs.is_empty() {
+            return;
+        }
+        if let Some(w) = self.watcher.borrow_mut().as_mut() {
+            for dir in dirs {
+                let _ = w.watch(&dir);
+            }
         }
     }
 

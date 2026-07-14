@@ -12,12 +12,18 @@
 //!
 //! ## Prime-directive shape
 //!
-//! - **Render** only ever calls [`ThumbnailCache::get`] — a HashMap
-//!   read, no I/O, no allocation beyond an `Arc` clone.
-//! - **Fetching** is driven from the table's `visible_rows_changed`
-//!   hook (viewport-only) and runs the Quick Look call on a background
-//!   thread; the decoded bytes are turned into a `RenderImage` back on
-//!   the UI thread and inserted here.
+//! - **Render** only ever calls [`ThumbnailCache::get`] /
+//!   [`ThumbnailCache::get_best`] — a HashMap read, no I/O, no
+//!   allocation beyond an `Arc` clone.
+//! - **Fetching** is driven from the viewport (the list's
+//!   `visible_rows_changed` hook / the grid's deferred
+//!   `warm_grid_viewport`) and runs the Quick Look calls on the
+//!   background pool; the decoded bytes become a `RenderImage` back on
+//!   the UI thread and are inserted here. The grid warms in bounded
+//!   concurrent waves (not one file at a time) and low-res-first: for
+//!   any bucket larger than [`THUMB_PREVIEW_PX`] it fetches that small
+//!   preview before the crisp size, so [`ThumbnailCache::get_best`]
+//!   can paint a soft stand-in that sharpens in place.
 //! - A bounded LRU keeps memory flat even for folders of thousands;
 //!   negative results (no thumbnail available) are cached too so we
 //!   never re-request a file the OS can't thumbnail.
@@ -55,6 +61,13 @@ pub fn show_thumbnails(cx: &gpui::App) -> bool {
 /// preview-grade resolution per row. The icon view (later) will keep
 /// its own larger cache.
 pub const THUMB_PX: u32 = 96;
+
+/// Low-res tier for the icon grid. When a cell wants a bucket larger
+/// than this, the warmer fetches this small size *first* (a fast,
+/// often already system-cached Quick Look call) so a soft preview
+/// paints almost immediately, then upgrades to the crisp bucket. Sized
+/// to the smallest grid bucket so a 128-px request never double-fetches.
+pub const THUMB_PREVIEW_PX: u32 = 128;
 
 /// How many ready thumbnails to keep across all sizes (list 96 px +
 /// grid buckets). A big photo folder scrolls past far more than fit on
@@ -124,6 +137,27 @@ impl ThumbnailCache {
             .flatten()
     }
 
+    /// Render-path lookup that prefers the exact `size_px` but, when it
+    /// is not yet ready, falls back to the largest *smaller* thumbnail
+    /// already cached for the same file. That lets a low-res tier (or a
+    /// size warmed at another zoom stop / by the list view) stand in —
+    /// scaled up, so slightly soft — while the crisp fetch is still in
+    /// flight, then upgrade seamlessly when the exact size lands.
+    /// Non-mutating and allocation-free beyond the `Arc` clone.
+    pub fn get_best(&self, path: &Path, size_px: u32) -> Option<Arc<RenderImage>> {
+        if let Some(img) = self.get(path, size_px) {
+            return Some(img);
+        }
+        // The only sizes ever fetched are the list row (96) and the grid
+        // buckets (128/256/512) plus the preview tier (128), so scan that
+        // fixed candidate set largest-first rather than the whole map.
+        const CANDIDATES: [u32; 4] = [512, 256, 128, 96];
+        CANDIDATES
+            .into_iter()
+            .filter(|&s| s < size_px)
+            .find_map(|s| self.get(path, s))
+    }
+
     /// Whether `(path, size_px)` still needs a background fetch — i.e.
     /// it is neither resolved (positively or negatively) nor in flight.
     pub fn needs_fetch(&self, path: &Path, size_px: u32) -> bool {
@@ -152,5 +186,48 @@ impl ThumbnailCache {
                 self.ready.remove(&old);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pixel() -> Option<(Vec<u8>, u32, u32)> {
+        Some((vec![0u8; 4], 1, 1))
+    }
+
+    #[test]
+    fn get_best_prefers_exact_then_falls_back_to_smaller() {
+        let mut c = ThumbnailCache::new();
+        let p = Path::new("/x/photo.png");
+
+        // Nothing cached → no stand-in.
+        assert!(c.get_best(p, 512).is_none());
+
+        // A small preview lands first: get_best for the big bucket
+        // returns it as a low-res stand-in.
+        c.insert(p.to_path_buf(), 128, pixel());
+        assert!(c.get(p, 512).is_none());
+        assert!(c.get_best(p, 512).is_some());
+
+        // The crisp size lands: get_best now returns the exact one, and
+        // it never reaches *up* to a larger size than requested.
+        c.insert(p.to_path_buf(), 512, pixel());
+        assert!(c.get_best(p, 512).is_some());
+        assert!(c.get_best(p, 128).is_some()); // exact 128 still there
+        assert!(c.get_best(p, 96).is_none()); // no size <= 96 cached
+    }
+
+    #[test]
+    fn get_best_ignores_a_negatively_cached_exact_size() {
+        let mut c = ThumbnailCache::new();
+        let p = Path::new("/x/doc.pdf");
+        c.insert(p.to_path_buf(), 128, pixel());
+        // Quick Look produced nothing at 256 (negative cache) — still
+        // surface the smaller ready preview rather than the SVG.
+        c.insert(p.to_path_buf(), 256, None);
+        assert!(c.get(p, 256).is_none());
+        assert!(c.get_best(p, 256).is_some());
     }
 }

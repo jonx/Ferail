@@ -11,17 +11,6 @@ and let git history plus release notes carry the record.
 
 ## Highest Priority — finish in-flight features
 
-- **Favorites polish** ([docs/features/FAVORITES.md](docs/features/FAVORITES.md)).
-  The v1 plus the cross-platform rename modal, Locate flow, drop-onto, add/dedup
-  animations, and keyboard focus/delete/new-window have shipped. Remaining:
-  - Live filesystem-watcher for **Missing transitions** on delete/move (today
-    only mount/unmount re-evaluates state, via the NSWorkspace volume watch;
-    file-level changes flip state only on re-hydrate). Nice-to-have per spec
-    §5.3 / §11.10; deferred.
-  - Tag favorites (§9) — pin a tag as a favorite. (Saved-search favorites are
-    covered by **Smart Folders / Saved Searches** under High-Value Features.)
-  - Tear-off / collapse **remove** animation (add fade-in + dedup pulse shipped;
-    the §3.2 collapse-on-remove still pops rather than animating).
 - **Notifications & undo coverage for mutations.** Success feedback is now
   intentionally quiet for immediate visible work: rename/new-folder stay silent
   on success, and task-backed copy/move/duplicate/compress only toast after the
@@ -40,9 +29,6 @@ and let git history plus release notes carry the record.
     full error.
 - ✅ **Persist file-table column order** — shipped on main (`c0f1de2`): column
   order AND widths now persist across launches.
-- **Grid marquee / rubber-band selection** — the last grid-parity gap now that
-  per-cell adornments (tag dots, star, heat tint, cut dimming, tooltip) are
-  painted. No list equivalent to copy; new background drag-rect gesture.
 
 ## High-Value Features — mostly wiring over subsystems we already own
 
@@ -78,19 +64,31 @@ relative to the daily value. Ordered by bang-for-buck.
 
 ## File List, Sidebar & Navigation
 
-- Audit hover, focus, and selected states across file rows, sidebar rows,
-  theme tiles, tabs, breadcrumbs, and menus so active state is visually
-  consistent.
+- Finish the hover/focus/selected-state consistency audit. First pass shipped:
+  the icon grid gained its missing hover wash (`table_hover`) and an
+  out-of-range sort-icon `opacity(7.)` was fixed. Remaining is the larger
+  unification — the app carries a bespoke `feraille_design` token set that is
+  dead for color while every surface pulls ad-hoc from the gpui-component theme
+  plus `selection_colors`, giving five different hover treatments and three
+  selection systems. Wire one semantic token layer (or standardize every
+  surface onto the existing `*_hover` / `*_active` / `ring` tokens) so tabs,
+  breadcrumbs, rows, grid, and sidebar read as one system.
 - Add sidebar collapse-to-icons and narrow-window behavior; give the sidebar a
   keyboard focus region (also unblocks the Favorites arrow-key item above).
 - Add "Reveal in Browse" file-list context action.
-- Add Finder-style roots beyond Home and Volumes where useful: iCloud,
-  Network, external disks, removable media, and user custom locations.
-- Add breadcrumb completion and richer segment menus.
+- More Finder-style sidebar roots. Shipped: an **iCloud Drive** Location
+  (surfaced only when the ubiquity container exists) and a distinct
+  `network.svg` glyph for **network mounts** (`is_local == false`).
+  Removable/external disks already carry the eject affordance, and arbitrary
+  user locations are covered by Favorites. Remaining if wanted: a dedicated
+  Network browse root and splitting Volumes into Internal / External / Network
+  sections.
+- Breadcrumb completion (Cmd+L path edit) and a per-segment **Go to Subfolder**
+  menu have shipped; richer completion (inline segment-mode filtering) is the
+  remaining polish.
 - Toolbar **grouping by kind / date** — a shared list+grid sort/render model
   (group headers with members beneath). Deferred from the density pass.
 - Persist per-tab sort/filter/scroll state where it is not already stable.
-- Add configurable visible columns and a widths/order reset.
 - **Hidden-file affordances.** When *show hidden* is on, render hidden entries
   dimmed/greyed (row text + icon) so they read as distinct from normal files.
   When hidden files are *off*, surface their presence passively — aggregate
@@ -110,10 +108,9 @@ relative to the daily value. Ordered by bang-for-buck.
 
 ## File Ops, Trash & Drag
 
-- Drag follow-ups: **auto-scroll near the list edges** while dragging (needs
-  `UniformListScrollHandle` offset access); **drops on favorite rows** (shared
-  with the Favorites drop-onto item). Drag gestures need interactive testing —
-  not headlessly drivable.
+- Drag follow-ups: **auto-scroll near the list edges** while dragging and
+  **drops on favorite rows** have shipped. Remaining drag work needs
+  interactive testing — not headlessly drivable.
 - Trash follow-ups: general **"Put Back"** for items trashed in earlier
   sessions or by Finder (needs Finder's private put-back metadata — may stay
   session-scoped); a richer **Trash browsing view** (original-location column).

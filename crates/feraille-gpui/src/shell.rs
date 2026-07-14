@@ -818,6 +818,11 @@ pub fn init(cx: &mut App) {
     crate::syntax_extra::register_extra_languages();
 }
 
+/// Per-segment breadcrumb child-folder cache: segment path → its child
+/// folders (display name + path), or `None` while an enumeration is in
+/// flight. See [`Shell::warm_breadcrumb_children`].
+type BreadcrumbChildren = HashMap<PathBuf, Option<Rc<Vec<(SharedString, PathBuf)>>>>;
+
 pub struct Shell {
     /// Process-scoped state shared with every other window of this
     /// process (today there is only one window, but the singleton
@@ -867,6 +872,12 @@ pub struct Shell {
     /// menu builder runs, cleared on the next left mouse-down at the
     /// shell root (which is also how the menu dismisses).
     pub breadcrumb_menu_open: bool,
+    /// Off-thread-warmed child-folder lists per breadcrumb segment path,
+    /// backing each segment's "Go to Subfolder" submenu. `None` == an
+    /// enumeration is in flight (show "Loading…"); `Some(vec)` == done
+    /// (possibly empty). Never `read_dir` on the menu/render path — the
+    /// Prime Directive; the submenu reads this cache only.
+    pub breadcrumb_children: BreadcrumbChildren,
     /// Spring-load dwell tracker: `(row_ix, first-hover time)` for a
     /// folder row a drag is currently hovering. After a short dwell the
     /// shell drills into that folder so the user can drop deeper without
@@ -951,6 +962,18 @@ pub struct Shell {
     pub sidebar_width: f32,
     /// Current preview pane width. Same lifecycle as `sidebar_width`.
     pub preview_width: f32,
+    /// Height of the preview pane's thumbnail box in DIPs. Adjusted by
+    /// dragging the resize grip under the image; persisted via
+    /// `app_state::preview_thumb_height` on the same debounced save as
+    /// the splitter widths.
+    pub preview_thumb_h: f32,
+    /// Live drag anchor for the thumbnail resize grip: the mouse y at
+    /// drag start and `preview_thumb_h` at that moment. The grip's
+    /// `on_drag_move` computes the new height from the absolute delta
+    /// so the box tracks the cursor 1:1 regardless of pane scroll.
+    /// Set by the grip's drag constructor; never cleared (a new drag
+    /// overwrites it, and `on_drag_move` only fires mid-drag).
+    pub preview_thumb_drag: Option<(Pixels, f32)>,
     /// True while a trailing splitter-width save is queued. The
     /// on_resize callback fires per drag tick; rather than write on each
     /// (and risk dropping the final value), the first tick arms a
@@ -990,6 +1013,10 @@ pub struct Shell {
     /// `DedupPulse` event; the render keys the pulse animation on the
     /// counter so a repeat dedup-add re-triggers the flash.
     pub fav_pulse: HashMap<feraille_core::favorites::FavoriteId, u32>,
+    /// Favorites being removed with the §3.2 collapse animation. The row
+    /// stays in the entity (rendering a fade+collapse) until its timer
+    /// fires and drops it. Cleared on the actual `Removed` event.
+    pub fav_removing: HashSet<feraille_core::favorites::FavoriteId>,
     /// Windows/Linux app menu bar (`gpui-component::AppMenuBar`).
     /// `Some(_)` only on non-macOS — those platforms have no global
     /// menu bar, so we render the menu strip in-window beneath the
@@ -1035,6 +1062,14 @@ pub struct Shell {
     /// launch activation or a same-state re-fire. Seeded `true`: the
     /// window starts active, so launch doesn't trigger a re-walk.
     was_window_active: bool,
+    /// Type-to-select buffer for the file list / icon grid. Printable
+    /// keystrokes typed with the list or grid focused accumulate here
+    /// and jump the selection to the first entry whose display name
+    /// starts with the buffer (Finder-style), scrolling it into view.
+    /// The `Instant` is the last keystroke time; after
+    /// `TYPEAHEAD_TIMEOUT` of idle the buffer resets so a fresh prefix
+    /// starts clean. `None` until first use. See `on_typeahead_key`.
+    typeahead: Option<(String, std::time::Instant)>,
     /// Live subscription handles (Input change, future watchers).
     /// Dropping them tears down the listeners — keep alongside the
     /// Shell so they outlive any frame.
@@ -1252,6 +1287,12 @@ const SIDEBAR_MAX_WIDTH: f32 = 400.0;
 const FILE_PANE_MIN_WIDTH: f32 = 360.0;
 const PREVIEW_MIN_WIDTH: f32 = 260.0;
 const PREVIEW_MAX_WIDTH: f32 = 640.0;
+/// Height range for the preview pane's thumbnail box, adjusted by the
+/// drag grip under the image (`Shell::preview`). Matches the clamp
+/// `app_state` applies at load so a stale persisted value can't wedge
+/// the pane.
+pub(crate) const PREVIEW_THUMB_MIN_H: f32 = 120.0;
+pub(crate) const PREVIEW_THUMB_MAX_H: f32 = 600.0;
 
 impl Shell {
     /// Construct the singleton `ProcessState` for this process.
@@ -1324,6 +1365,19 @@ impl Shell {
                 .icon_size
                 .unwrap_or(crate::grid::DEFAULT_ICON_SIZE),
         )));
+        // Seed the live grid selection-gutter size from persisted settings.
+        cx.set_global(crate::grid::CellGap(crate::grid::clamp_cell_gap(
+            persisted.cell_gap.unwrap_or(crate::grid::DEFAULT_CELL_GAP),
+        )));
+        // Seed the folder-size walker master switch. Default true (on).
+        cx.set_global(crate::folder_sizes::FolderSizingEnabled(
+            persisted.folder_sizing.unwrap_or(true),
+        ));
+        // Seed the per-row file-detail scan switch (magic sniff + Finder
+        // tags). Default true (on).
+        cx.set_global(crate::prefetch::FileDetailScan(
+            persisted.file_detail_scan.unwrap_or(true),
+        ));
         // Seed the live selection accent (file list + grid share it).
         // `None` ⇒ the helpers fall back to the theme's blue.
         cx.set_global(crate::selection_colors::SelectionAccent(
@@ -1564,6 +1618,7 @@ impl Shell {
             tree_spring: None,
             favorites_context_path: None,
             breadcrumb_menu_open: false,
+            breadcrumb_children: HashMap::new(),
             task_panel_open: false,
             simulated_progress: None,
             breadcrumb_editing: false,
@@ -1594,6 +1649,11 @@ impl Shell {
                 .preview_width
                 .unwrap_or(380.0)
                 .clamp(PREVIEW_MIN_WIDTH, PREVIEW_MAX_WIDTH),
+            preview_thumb_h: persisted
+                .preview_thumb_height
+                .unwrap_or(200.0)
+                .clamp(PREVIEW_THUMB_MIN_H, PREVIEW_THUMB_MAX_H),
+            preview_thumb_drag: None,
             splitter_save_scheduled: false,
             sidebar_collapsed: persisted.sidebar_collapsed.unwrap_or(false),
             favorites_section_collapsed: false,
@@ -1601,6 +1661,7 @@ impl Shell {
             favorites_focus: cx.focus_handle(),
             fav_appear: HashSet::new(),
             fav_pulse: HashMap::new(),
+            fav_removing: HashSet::new(),
             menu_bar,
             expanded: HashSet::new(),
             tree_children: HashMap::new(),
@@ -1609,6 +1670,7 @@ impl Shell {
             dock_poll_epoch: 0,
             last_window_title: String::new(),
             was_window_active: true,
+            typeahead: None,
             _subscriptions: vec![breadcrumb_subscription, shortcuts_help_subscription],
         };
         shell.process.register_shell(cx.weak_entity());
@@ -1625,6 +1687,10 @@ impl Shell {
         // truly synchronous list updates we also push a refresh here.
         let fav_subscription = cx.observe(&shell.process.favorites, |this, _favs, cx| {
             this.refresh_file_list_favorited(cx);
+            // Keep the watcher registered on each favorite's parent dir so
+            // a delete/move of a favorited path flips it to Missing live
+            // (§8). Idempotent; prune_watches keeps these across nav.
+            this.process.watch_favorite_dirs(cx);
             cx.notify();
         });
         shell._subscriptions.push(fav_subscription);
@@ -1674,6 +1740,7 @@ impl Shell {
                     FavoritesEvent::Removed(fav) => {
                         this.fav_appear.remove(&fav.id);
                         this.fav_pulse.remove(&fav.id);
+                        this.fav_removing.remove(&fav.id);
                     }
                     _ => {}
                 }
@@ -1695,6 +1762,53 @@ impl Shell {
                 cx.notify();
             });
         shell._subscriptions.push(thumb_subscription);
+
+        // Live folder-sizing toggle (Settings → Performance). Turning it
+        // on computes sizes for every open tab's current listing without a
+        // relaunch; turning it off stops any in-flight walks so the change
+        // takes effect immediately.
+        let folder_size_subscription =
+            cx.observe_global::<crate::folder_sizes::FolderSizingEnabled>(|this, cx| {
+                if crate::folder_sizes::folder_sizing_enabled(cx) {
+                    this.restart_folder_size_passes(false, cx);
+                } else {
+                    for idx in 0..this.tabs.len() {
+                        if let Some(cancel) = this.tabs[idx].folder_size_cancel.take() {
+                            cancel.store(true, Ordering::Relaxed);
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        shell._subscriptions.push(folder_size_subscription);
+
+        // Live file-detail-scan toggle (Settings → Performance). Turning
+        // it on reloads each open tab in place — a same-path reload
+        // re-streams without flicker and re-fires the format-sniff + tag
+        // passes under the new setting; turning it off cancels any
+        // in-flight prefetch so scanning stops at once.
+        let scan_subscription =
+            cx.observe_global::<crate::prefetch::FileDetailScan>(|this, cx| {
+                if crate::prefetch::file_detail_scan_enabled(cx) {
+                    let targets: Vec<(TabId, PathBuf)> = this
+                        .tabs
+                        .iter()
+                        .filter(|t| t.tool_result.is_none())
+                        .map(|t| (t.id, t.current_dir.clone()))
+                        .collect();
+                    for (id, path) in targets {
+                        this.load_path_for_tab(id, path, cx);
+                    }
+                } else {
+                    for idx in 0..this.tabs.len() {
+                        if let Some(cancel) = this.tabs[idx].prefetch_cancel.take() {
+                            cancel.store(true, Ordering::Relaxed);
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        shell._subscriptions.push(scan_subscription);
 
         // Esc cancels an in-progress drag. gpui only auto-cancels on
         // mouse-up, and an element `on_key_down` needs the shell focused
@@ -1794,6 +1908,7 @@ impl Shell {
                             let state = table.read(cx);
                             crate::file_list::columns_spec(
                                 &state.delegate().columns,
+                                &state.delegate().hidden_columns,
                                 Some(&state.col_widths()),
                             )
                         };
@@ -2563,6 +2678,7 @@ impl Shell {
                 let mut state = app_state::load();
                 state.sidebar_width = Some(this.sidebar_width);
                 state.preview_width = Some(this.preview_width);
+                state.preview_thumb_height = Some(this.preview_thumb_h);
                 app_state::save(&state);
             });
         })
@@ -3427,6 +3543,13 @@ impl Shell {
     /// path is dead now that loads stream through `append_entries`,
     /// which stubs the tag slots empty.)
     fn refresh_file_list_tags_in_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        // Finder-tag reads are xattr I/O, part of the file-detail scan the
+        // Performance toggle gates. Off, rows render tagless (no per-row
+        // xattr read). Gated inside the fn so every caller — the load-done
+        // pass and the post-file-op refresh — respects the setting.
+        if !crate::prefetch::file_detail_scan_enabled(cx) {
+            return;
+        }
         let Some(tab) = self.tabs.get(idx) else {
             return;
         };
@@ -3566,46 +3689,55 @@ impl Shell {
         // foreground table state has received the final snapshot.
         // A Refresh-driven load re-sniffs from disk instead of trusting
         // the cached magic/description (see `Tab::force_resniff`).
+        // Skipped when the user has disabled file-detail scanning
+        // (Settings → Performance) — the Format column then shows
+        // extension-based types with no per-row content sniff.
         let force_resniff = self.tabs[idx].force_resniff;
         let table = self.tabs[idx].table.clone();
         let fs = self.process.fs.clone();
         let db = self.process.db_snapshot();
         let tasks = self.process.tasks.clone();
-        let weak = cx.weak_entity();
-        let prefetch_cancel = Arc::new(AtomicBool::new(false));
-        let prefetch_tab_id = self.tabs[idx].id;
-        let prefetch_generation = self.tabs[idx].load_generation;
-        self.tabs[idx].prefetch_cancel = Some(prefetch_cancel.clone());
-        crate::prefetch::start(
-            table.clone(),
-            fs.clone(),
-            db.clone(),
-            tasks.clone(),
-            weak,
-            prefetch_tab_id,
-            prefetch_generation,
-            prefetch_cancel,
-            force_resniff,
-            cx,
-        );
+        if crate::prefetch::file_detail_scan_enabled(cx) {
+            let weak = cx.weak_entity();
+            let prefetch_cancel = Arc::new(AtomicBool::new(false));
+            let prefetch_tab_id = self.tabs[idx].id;
+            let prefetch_generation = self.tabs[idx].load_generation;
+            self.tabs[idx].prefetch_cancel = Some(prefetch_cancel.clone());
+            crate::prefetch::start(
+                table.clone(),
+                fs.clone(),
+                db.clone(),
+                tasks.clone(),
+                weak,
+                prefetch_tab_id,
+                prefetch_generation,
+                prefetch_cancel,
+                force_resniff,
+                cx,
+            );
+        }
         // Folder sizes for the directory rows: cache-validated
         // against each folder's mtime, recomputed off-thread on
-        // miss, streamed back as they resolve.
-        let size_cancel = Arc::new(AtomicBool::new(false));
-        let size_tab_id = self.tabs[idx].id;
-        let size_generation = self.tabs[idx].load_generation;
-        self.tabs[idx].folder_size_cancel = Some(size_cancel.clone());
-        crate::folder_sizes::start(
-            table,
-            fs,
-            db,
-            tasks,
-            size_tab_id,
-            size_generation,
-            size_cancel,
-            false,
-            cx,
-        );
+        // miss, streamed back as they resolve. Skipped entirely when
+        // the user has disabled folder sizing (Settings → Performance)
+        // — the Size column then shows a dash for directories.
+        if crate::folder_sizes::folder_sizing_enabled(cx) {
+            let size_cancel = Arc::new(AtomicBool::new(false));
+            let size_tab_id = self.tabs[idx].id;
+            let size_generation = self.tabs[idx].load_generation;
+            self.tabs[idx].folder_size_cancel = Some(size_cancel.clone());
+            crate::folder_sizes::start(
+                table,
+                fs,
+                db,
+                tasks,
+                size_tab_id,
+                size_generation,
+                size_cancel,
+                false,
+                cx,
+            );
+        }
         let icon_seeds = self.icon_seeds_from_table_in_tab(idx, cx);
         self.start_icon_warm(icon_seeds, cx);
         // Real thumbnails for the first screen — without this they'd
@@ -3743,49 +3875,84 @@ impl Shell {
             }
         }
 
-        // Files: Quick Look on the background executor, deduped.
-        let mut todo: Vec<PathBuf> = Vec::new();
+        // Files: Quick Look on the background executor, in bounded
+        // concurrent waves rather than the old strictly-serial loop —
+        // so a folder of photos fills in parallel instead of one icon
+        // at a time.
+        //
+        // At large icon sizes we also fetch low-res-first: a small
+        // `THUMB_PREVIEW_PX` preview before the crisp `thumb_px`, so a
+        // soft stand-in paints almost at once and then sharpens (the
+        // render side reads `get_best`, which shows the preview until
+        // the crisp bucket lands). We only bother when the crisp bucket
+        // is the largest one (512) — at smaller buckets a 128-px preview
+        // is visually indistinguishable from the final at that slot
+        // size, so the extra Quick Look call wouldn't earn its keep;
+        // there, parallelism alone carries the speed-up.
+        const PREVIEW_PX: u32 = crate::thumbnails::THUMB_PREVIEW_PX;
+        const PREVIEW_ABOVE_BUCKET: u32 = 256;
+        const WARM_CONCURRENCY: usize = 6;
+        let mut work: Vec<(PathBuf, u32)> = Vec::new();
         {
             let cache = self.process.thumbnails.borrow();
+            if thumb_px > PREVIEW_ABOVE_BUCKET {
+                for path in &files {
+                    // A preview is pointless once the crisp size is ready.
+                    if cache.get(path, thumb_px).is_none() && cache.needs_fetch(path, PREVIEW_PX) {
+                        work.push((path.clone(), PREVIEW_PX));
+                    }
+                }
+            }
             for path in &files {
                 if cache.needs_fetch(path, thumb_px) {
-                    todo.push(path.clone());
+                    work.push((path.clone(), thumb_px));
                 }
             }
         }
-        if todo.is_empty() {
+        if work.is_empty() {
             return;
         }
         {
             let mut cache = self.process.thumbnails.borrow_mut();
-            for path in &todo {
-                cache.mark_in_flight(path.clone(), thumb_px);
+            for (path, size) in &work {
+                cache.mark_in_flight(path.clone(), *size);
             }
         }
         let task_id = self.process.tasks.borrow_mut().begin(
             TaskKind::ThumbnailPrefetch,
-            format!("Loading {} thumbnails\u{2026}", todo.len()),
+            format!("Loading {} thumbnails\u{2026}", work.len()),
             false,
         );
         let thumbs = self.process.thumbnails.clone();
         let tasks = self.process.tasks.clone();
         cx.spawn(async move |this, cx| {
-            for path in todo {
-                let fetch_path = path.clone();
-                let rgba = cx
-                    .background_executor()
-                    .spawn(async move {
-                        crate::platform_shell::fetch_quick_look_thumbnail(&fetch_path, thumb_px)
+            // Each wave spawns up to `WARM_CONCURRENCY` Quick Look calls
+            // onto the background pool at once (the pool bounds real
+            // parallelism; this cap keeps some threads free for other
+            // background work), then drains them, inserting as each lands.
+            'outer: for chunk in work.chunks(WARM_CONCURRENCY) {
+                let handles: Vec<_> = chunk
+                    .iter()
+                    .cloned()
+                    .map(|(path, size)| {
+                        let fetch_path = path.clone();
+                        let handle = cx.background_executor().spawn(async move {
+                            crate::platform_shell::fetch_quick_look_thumbnail(&fetch_path, size)
+                        });
+                        (path, size, handle)
                     })
-                    .await;
-                if this
-                    .update(cx, |_this, cx| {
-                        thumbs.borrow_mut().insert(path, thumb_px, rgba);
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
+                    .collect();
+                for (path, size, handle) in handles {
+                    let rgba = handle.await;
+                    if this
+                        .update(cx, |_this, cx| {
+                            thumbs.borrow_mut().insert(path, size, rgba);
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        break 'outer;
+                    }
                 }
             }
             // Always retire the task; drop it directly if the Shell is gone.
@@ -4065,6 +4232,13 @@ impl Shell {
     /// and on app activation (`force = true`: bypass the cache so a
     /// deep external change made while we were away is re-walked).
     fn restart_folder_size_passes(&mut self, force: bool, cx: &mut Context<Self>) {
+        // Respect the Performance toggle — this is also the activation
+        // re-walk path (`observe_window_activation`), so disabling folder
+        // sizing stops the cache-bypassed re-scan that would otherwise
+        // fire every time the window comes forward.
+        if !crate::folder_sizes::folder_sizing_enabled(cx) {
+            return;
+        }
         let db = self.process.db_snapshot();
         if db.is_none() {
             return;
@@ -4142,6 +4316,14 @@ impl Shell {
                 });
             }
         }
+        // A watched directory changed — a favorited path inside it may
+        // have been deleted/moved/restored. Re-check availability off the
+        // UI thread (no-op when there are no path favorites). This is the
+        // live Missing-transition hook (§8): favorite parents are watched
+        // independently of the visible tabs (`watch_favorite_dirs`).
+        let _ = process
+            .favorites
+            .update(cx, |f, cx| f.refresh_availability(cx));
     }
 
     /// Drop cached folder sizes for each changed directory and all of
@@ -4423,9 +4605,7 @@ impl Shell {
             // Capture the full entry before removal so the undo
             // restores name + icon + sort_index + date_added.
             let removed_for_undo = self.process.favorites.read(cx).entry_by_id(id).cloned();
-            favs.update(cx, |f, cx| {
-                f.remove(id, cx);
-            });
+            self.remove_favorite_collapsing(id, cx);
             if let Some(fav) = removed_for_undo {
                 self.push_undo(UndoOp::RemoveFavorite(fav));
             }
@@ -4459,6 +4639,41 @@ impl Shell {
                 cx,
             );
         }
+    }
+
+    /// Remove a favorite with the §3.2 collapse-on-remove animation.
+    /// The row is marked `removing` — it fades and collapses in place —
+    /// and dropped from the entity once the fade window elapses. Callers
+    /// capture the pre-removal entry for undo *before* calling this, so a
+    /// Cmd+Z during the brief collapse still restores name/icon/sort.
+    fn remove_favorite_collapsing(
+        &mut self,
+        id: feraille_core::favorites::FavoriteId,
+        cx: &mut Context<Self>,
+    ) {
+        // Must match `favorites_section::COLLAPSE_MS`.
+        const FAV_COLLAPSE_MS: u64 = 150;
+        if !self.fav_removing.insert(id) {
+            return; // already collapsing
+        }
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(FAV_COLLAPSE_MS))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                // Still marked removing ⇒ the fade finished normally; drop
+                // it now. If it was already cleared (undo, re-add), the
+                // entity remove would be redundant, so skip it.
+                if this.fav_removing.remove(&id) {
+                    this.process.favorites.update(cx, |f, cx| {
+                        f.remove(id, cx);
+                    });
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Backs `File → Add to Favorites` and the section-header `+`
@@ -4760,9 +4975,7 @@ impl Shell {
                                         .map(|f| f.effective_label())
                                         .unwrap_or_else(|| "favorite".to_string());
                                     shell_remove.update(cx, |s, cx| {
-                                        s.process.favorites.update(cx, |f, cx| {
-                                            f.remove(id, cx);
-                                        });
+                                        s.remove_favorite_collapsing(id, cx);
                                         if let Some(fav) = removed {
                                             s.push_undo(UndoOp::RemoveFavorite(fav));
                                         }
@@ -4877,9 +5090,7 @@ impl Shell {
             return;
         };
         let label = fav.effective_label();
-        self.process.favorites.update(cx, |f, cx| {
-            f.remove(id, cx);
-        });
+        self.remove_favorite_collapsing(id, cx);
         self.push_undo(UndoOp::RemoveFavorite(fav));
         self.focused_favorite = None;
         window.push_notification(
@@ -5204,6 +5415,18 @@ impl Shell {
             let parent = parent.to_path_buf();
             if parent != cur {
                 self.navigate(parent, cx);
+                // Select the folder we came from so it's highlighted and
+                // scrolled into view once the parent's contents stream
+                // in — `cur` is by definition an immediate child of
+                // `parent`. `navigate` just cleared selection; seed it
+                // here and the streaming reconcile
+                // (`refresh_file_list_selection_in_tab`) applies + reveals
+                // it, matching what Back does via `history_child_to_select`.
+                let child_id = self.process.fs.id_for_path(&cur);
+                let tab = self.active_tab_mut();
+                tab.selection.insert(child_id);
+                tab.anchor = Some(child_id);
+                tab.lead = Some(child_id);
             }
         }
     }
@@ -5250,6 +5473,65 @@ impl Shell {
     pub fn navigate_from_favorite(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let record = !crate::ant_trail::exclude_favorites(cx);
         self.navigate_with_tracking(path, record, cx);
+    }
+
+    /// Warm the child-folder list for a breadcrumb segment off the UI
+    /// thread (Prime Directive: no `read_dir` on the menu/render path).
+    /// Feeds the segment's "Go to Subfolder" submenu. No-op once an
+    /// entry exists (in-flight `None` or completed `Some`).
+    pub fn warm_breadcrumb_children(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.breadcrumb_children.contains_key(&path) {
+            return;
+        }
+        // Mark in-flight so repeated menu opens don't respawn.
+        self.breadcrumb_children.insert(path.clone(), None);
+        let dir = path.clone();
+        let task = cx.background_spawn(async move {
+            let mut out: Vec<(SharedString, PathBuf)> = Vec::new();
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                for e in rd.flatten() {
+                    let Some(name) = e.file_name().to_str().map(|s| s.to_string()) else {
+                        continue;
+                    };
+                    if name.starts_with('.') {
+                        continue;
+                    }
+                    // `is_dir` follows symlinks so a link-to-folder is a
+                    // valid navigation target, matching path completion.
+                    if !e.path().is_dir() {
+                        continue;
+                    }
+                    let display =
+                        feraille_fs_native::paths::display_leaf(&name).into_owned();
+                    out.push((SharedString::from(display), e.path()));
+                }
+            }
+            out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+            out.truncate(100);
+            out
+        });
+        cx.spawn(async move |this, cx| {
+            let children = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.breadcrumb_children.insert(path, Some(Rc::new(children)));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Clicking a Tag favorite (§9): run a Finder-tag search in the
+    /// active tab, replacing its listing with the tagged items. Uses the
+    /// same streaming search surface as text search.
+    pub fn navigate_from_tag_favorite(
+        &mut self,
+        tag: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let tab_id = self.active_tab().id;
+        let notify = Some(window.window_handle());
+        self.start_tag_search(tab_id, tag, notify, cx);
     }
 
     /// Shared navigation body. `record_visit` gates the Ant Trail +

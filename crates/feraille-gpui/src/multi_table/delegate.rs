@@ -105,6 +105,26 @@ pub trait TableDelegate: Sized + 'static {
         menu
     }
 
+    /// Whether this delegate wants a context menu on the column header
+    /// (right-click). Default `false` — the header is inert.
+    fn header_has_menu(&self, cx: &App) -> bool {
+        let _ = cx;
+        false
+    }
+
+    /// Build the column-header context menu (right-click). Only consulted
+    /// when [`Self::header_has_menu`] is `true`. Default returns the menu
+    /// unchanged.
+    fn header_context_menu(
+        &mut self,
+        menu: PopupMenu,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        let _ = (window, cx);
+        menu
+    }
+
     /// Render cell at the given row and column.
     fn render_td(
         &mut self,

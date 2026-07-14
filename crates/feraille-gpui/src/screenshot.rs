@@ -37,6 +37,9 @@ pub struct Args {
     /// active tab; chaining seeds the ant trail with realistic
     /// visit counts.
     pub navigate: Vec<PathBuf>,
+    /// After the `--navigate` chain, go up to the parent folder via
+    /// the real `navigate_parent` path — exercises came-from selection.
+    pub navigate_parent: bool,
     /// Extra tabs to open after the initial one.
     pub new_tabs: Vec<PathBuf>,
     /// Tab index to make active after `--new-tab` flags apply.
@@ -151,6 +154,11 @@ pub struct Args {
     /// mode (all colour/enhance/transparent-colour controls) without opening a
     /// live stream — for capturing the panel layout.
     pub viewer_adjust_video: bool,
+    /// Screenshot-only: clockwise quarter-turns to rotate the viewer before
+    /// capture. Combined with `--viewer-step` it verifies rotation is sticky.
+    pub viewer_rotate: u8,
+    /// Screenshot-only: items to advance in the viewer (after any rotate).
+    pub viewer_step: isize,
     /// Render the drag ghost ([`crate::file_list::DragBadge`]) for a
     /// drag of N items, in isolation, against a neutral backdrop —
     /// the only way to capture the cursor ghost headlessly (it never
@@ -188,6 +196,7 @@ pub fn parse_args() -> Args {
                     args.navigate.push(PathBuf::from(p));
                 }
             }
+            "--navigate-parent" => args.navigate_parent = true,
             "--new-tab" => {
                 if let Some(p) = iter.next() {
                     args.new_tabs.push(PathBuf::from(p));
@@ -269,6 +278,12 @@ pub fn parse_args() -> Args {
             "--viewer" => args.viewer = iter.next().map(PathBuf::from),
             "--viewer-adjust" => args.viewer_adjust = true,
             "--viewer-adjust-video" => args.viewer_adjust_video = true,
+            "--viewer-rotate" => {
+                args.viewer_rotate = iter.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+            }
+            "--viewer-step" => {
+                args.viewer_step = iter.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+            }
             "--icon-picker" => args.icon_picker = true,
             "--drag-ghost" => args.drag_ghost = iter.next().and_then(|s| s.parse().ok()),
             "--help" | "-h" => {
@@ -295,6 +310,7 @@ OPTIONS
   --scale <factor>         Display scale factor (default 2.0).
   --theme light|dark       Theme (default: follow system appearance).
   --navigate <path>        Navigate the active tab to <path>. Repeatable.
+  --navigate-parent        After --navigate, go up to the parent folder.
   --new-tab <path>         Open an additional tab at <path>. Repeatable.
   --tab <idx>              Set active tab index after --new-tab(s) apply.
   --expand <path>          Reveal & expand <path> in the sidebar tree. Repeatable.
@@ -329,6 +345,8 @@ OPTIONS
   --viewer <path>          Render the viewer window for <path> (file or
                            folder) instead of the shell.
   --viewer-adjust          Open the viewer's colour/enhance panel for capture.
+  --viewer-rotate <n>      Rotate the viewer n clockwise quarter-turns.
+  --viewer-step <n>        Advance n items in the viewer (after --viewer-rotate).
   --drag-ghost <N>         Render the drag cursor ghost for an N-item drag
                            (placeholder tiles) against a neutral backdrop.
   -h, --help               Print this help.
@@ -357,6 +375,8 @@ pub fn run(args: Args) -> Result<()> {
     let viewer_target = args.viewer.clone();
     let viewer_adjust = args.viewer_adjust;
     let viewer_adjust_video = args.viewer_adjust_video;
+    let viewer_rotate = args.viewer_rotate;
+    let viewer_step = args.viewer_step;
     let drag_ghost = args.drag_ghost;
     let icon_picker = args.icon_picker;
 
@@ -477,6 +497,11 @@ pub fn run(args: Args) -> Result<()> {
                         if viewer_adjust_video {
                             view.update(cx, |w, _| w.sim_full_adjust_panel());
                         }
+                        if viewer_rotate != 0 || viewer_step != 0 {
+                            view.update(cx, |w, cx| {
+                                w.sim_rotate_then_step(viewer_rotate, viewer_step, cx)
+                            });
+                        }
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if icon_picker {
                         // Headless icon-picker window: a standalone
@@ -591,6 +616,7 @@ fn capture_window(handle: &AnyWindowHandle, cx: &mut AsyncApp) -> Result<image::
 #[derive(Clone, Debug, Default)]
 struct ShellArgs {
     navigate: Vec<PathBuf>,
+    navigate_parent: bool,
     new_tabs: Vec<PathBuf>,
     tab: Option<usize>,
     show_hidden: bool,
@@ -629,6 +655,7 @@ impl From<&Args> for ShellArgs {
     fn from(a: &Args) -> Self {
         Self {
             navigate: a.navigate.clone(),
+            navigate_parent: a.navigate_parent,
             new_tabs: a.new_tabs.clone(),
             tab: a.tab,
             show_hidden: a.show_hidden,
@@ -676,6 +703,19 @@ impl ShellArgs {
         for path in self.navigate.iter() {
             let p = canonicalize_or_passthrough(path);
             shell.update(cx, |s, cx| s.navigate(p, cx));
+        }
+        if self.navigate_parent {
+            // Let the child dir's enumeration settle so `current_dir`
+            // and the streamed model are real, then go up. The
+            // came-from folder is seeded as the selection; give the
+            // parent's batches a beat to reconcile + scroll it in.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(500))
+                .await;
+            shell.update(cx, |s, cx| s.navigate_parent(cx));
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(700))
+                .await;
         }
         for path in self.new_tabs.iter() {
             let p = canonicalize_or_passthrough(path);
