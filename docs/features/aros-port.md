@@ -245,6 +245,56 @@ tests, not an AROS repro):
   where glyph-sized ones fit; (3) the `MonochromeSprite` tint color resolving
   wrong on AROS. All three live in `gpui_aros`, not in feraille.
 
+#### Action plan on the Mac (do these in order)
+
+The whole loop runs on the Mac against the `zed-aros` checkout — nothing here is
+reproducible from the Windows/Linux boxes (their renderers work). Boot Feraille
+on AROS (`graft/aros-ctl run`, see [aros-building.md](aros-building.md)); the
+window paints (title bar, rows, text) but the glyphs are missing.
+
+1. **Read the log first — it almost certainly names the cause.**
+   `elements/svg.rs` swallows every SVG paint failure with `.log_err()`, so the
+   reason is already being printed each frame. Look for `can't render at a zero
+   size` (from `SvgRenderer::render_alpha_mask`) or any atlas error. Feraille's
+   panic/obs log lands in `MacRW:feraille-panic.txt` on hard failures, but these
+   are *logged, not panicked* — capture stderr from `aros-ctl run` instead.
+   - **Log is loud (`zero size`) → cause #1.** Confirm by logging
+     `window.scale_factor()` and the SVG `bounds` once in `elements/svg.rs`
+     before `paint_svg`. If `scale_factor()` is `0.0`/NaN or `bounds` is empty,
+     fix it in `gpui_aros`'s window: return a sane device-pixel ratio (`1.0` if
+     AROS has no HiDPI notion) from the `scale_factor()`/`PlatformWindow` impl.
+     Text survives a zero scale factor because glyph rasterization floors the
+     font size; SVG multiplies straight through to a 0×0 pixmap.
+   - **Log is silent → cause #2 or #3.** The mask reached the atlas; the draw is
+     wrong. Go to step 2.
+
+2. **Minimal repro to iterate fast** (outside Feraille, in a `gpui_aros`
+   example): one window whose root is `svg().path("icons/nav/home.svg").size_6()
+   .text_color(white)` next to a `div().child("A")`. If the letter draws and the
+   house doesn't, you've isolated the SVG-sprite path from text with a 20-line
+   repro — rebuild-run that, not the whole app.
+
+3. **Compare the two `MonochromeSprite` sources in the renderer.** Text glyphs
+   and SVG icons emit the *same* `Primitive::MonochromeSprite`
+   (`scene.rs`), batched as `PrimitiveBatch::MonochromeSprites`. In
+   `gpui_aros`'s batch handler, check: (a) the atlas tile is allocated in the
+   **monochrome/A8** texture (not the polychrome one) for both; (b) the sample
+   uses the tile's real size — an icon tile (24 px+) is bigger than a glyph
+   tile, so a row-packing or max-tile-size bug shows up only for icons;
+   (c) the tint is `sprite.color` (the element's `text_color`), not the
+   background — a swapped/zeroed color paints the glyph invisibly.
+
+4. **Regression guard back in feraille:** once it draws, the existing
+   `feraille-gpui` `assets::tests` (every icon rasterizes non-empty) already
+   guards the *asset* side cross-platform; the *AROS render* side wants a
+   `gpui_aros` conformance test (its `PORTING.md` bug→test ledger) that renders
+   one SVG sprite and asserts non-zero coverage, mirroring the glyph test.
+
+> Status-table cross-ref: the **Icon grid / native file icons ❌** row is the
+> *separate* `icon.library` shell stub (real per-file OS icons). This section is
+> the bundled-SVG chrome + Lucide-fallback path — fixing it makes the toolbar,
+> sidebar, and type-icon glyphs appear even while native file icons stay stubbed.
+
 ### Roadmap (rough order)
 
 1. **Make `gpui_aros` native-shell-complete** — menus, `asl.library` file
