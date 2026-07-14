@@ -95,11 +95,22 @@ pub struct AppState {
     /// Grid icon display size in logical px (longest edge). `None` ==
     /// never set (defaults to [`crate::grid::DEFAULT_ICON_SIZE`]).
     pub icon_size: Option<u32>,
-    /// File-table column order + widths, as `key:width` pairs in
-    /// display order (e.g. `name:360,size:100,...`). One key covers
-    /// both drag-reorder and drag-resize. `None` == defaults.
-    /// Unknown/missing column keys are reconciled at load by
-    /// [`crate::file_list::apply_persisted_columns`], so schema drift
+    /// Grid selection-gutter size in logical px. `None` == never set
+    /// (defaults to [`crate::grid::DEFAULT_CELL_GAP`]).
+    pub cell_gap: Option<f32>,
+    /// Whether the background folder-size walker runs (Performance).
+    /// `None` == never set (defaults to `true`, sizing on).
+    pub folder_sizing: Option<bool>,
+    /// Whether per-row magic sniffing + Finder-tag reads run
+    /// (Performance). `None` == never set (defaults to `true`, on).
+    pub file_detail_scan: Option<bool>,
+    /// File-table column order + widths + visibility, as
+    /// `key:width:vis` tuples in display order (e.g.
+    /// `name:360:1,size:100:1,format:220:0,...`). `vis` is `1` visible /
+    /// `0` hidden; a legacy `key:width` token is read as visible. One key
+    /// covers drag-reorder, drag-resize, and header show/hide. `None` ==
+    /// defaults. Unknown/missing column keys are reconciled at load by
+    /// [`crate::file_list::split_persisted_columns`], so schema drift
     /// can't wedge the table.
     pub list_columns: Option<String>,
     /// "light", "dark", or "system". `None` = follow the system
@@ -293,6 +304,15 @@ fn load_from_disk() -> AppState {
             "icon_size" => {
                 out.icon_size = val.trim().parse::<u32>().ok();
             }
+            "cell_gap" => {
+                out.cell_gap = val.trim().parse::<f32>().ok();
+            }
+            "folder_sizing" => {
+                out.folder_sizing = parse_bool(val);
+            }
+            "file_detail_scan" => {
+                out.file_detail_scan = parse_bool(val);
+            }
             "list_columns" if !val.trim().is_empty() => {
                 out.list_columns = Some(val.trim().to_string());
             }
@@ -447,6 +467,15 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(n) = state.icon_size {
         s.push_str(&format!("icon_size={n}\n"));
+    }
+    if let Some(g) = state.cell_gap {
+        s.push_str(&format!("cell_gap={g}\n"));
+    }
+    if let Some(b) = state.folder_sizing {
+        s.push_str(&format!("folder_sizing={b}\n"));
+    }
+    if let Some(b) = state.file_detail_scan {
+        s.push_str(&format!("file_detail_scan={b}\n"));
     }
     if let Some(c) = &state.list_columns {
         s.push_str(&format!("list_columns={c}\n"));

@@ -1,5 +1,13 @@
 use super::*;
 
+/// Left padding of a grid row's cell flex (`.px_2()` ≈ 8px), subtracted
+/// when mapping a pointer into per-cell content coordinates for marquee
+/// hit-testing.
+const GRID_ROW_PAD: f32 = 8.0;
+/// Pointer travel (px) before a background press is treated as a marquee
+/// sweep rather than a plain click that clears the selection.
+const MARQUEE_THRESHOLD: f32 = 4.0;
+
 impl Shell {
     // -- Selection model (spec §2) ---------------------------------
     //
@@ -327,6 +335,26 @@ impl Shell {
                     table.update(cx, |state, cx| {
                         state.set_selected_row(row, cx);
                     });
+                    // The list view auto-scrolls via `set_selected_row`,
+                    // but the grid's `uniform_list` rides its own
+                    // `grid_scroll` handle that the table never touches — so
+                    // reveal the lead there too. Without this, Back / parent
+                    // navigation (which seeds the child folder as the lead)
+                    // selects a cell that may sit far below the fold while
+                    // the grid stays pinned at the top. Gated on the lead
+                    // actually changing (`needs_set`), matching the table, so
+                    // streaming batches don't fight the user's scroll.
+                    if let Some(tab) = self.tabs.get(idx) {
+                        if matches!(tab.view_mode, crate::grid::ViewMode::Grid) {
+                            let icon_px = crate::grid::icon_size(cx);
+                            let gap = crate::grid::cell_gap(cx);
+                            let w = f32::from(tab.grid_pane_width)
+                                .max(crate::grid::cell_width(icon_px, gap));
+                            let cols = crate::grid::cols_per_row(w, icon_px, gap).max(1);
+                            tab.grid_scroll
+                                .scroll_to_item(row / cols, gpui::ScrollStrategy::Center);
+                        }
+                    }
                 }
             }
             // No lead → no selection. Clear the primitive's focus overlay so
@@ -642,8 +670,10 @@ impl Shell {
     /// width and live icon size. At least 1.
     fn grid_cols(&self, cx: &App) -> usize {
         let icon_px = crate::grid::icon_size(cx);
-        let w = f32::from(self.active_tab().grid_pane_width).max(crate::grid::cell_width(icon_px));
-        crate::grid::cols_per_row(w, icon_px)
+        let gap = crate::grid::cell_gap(cx);
+        let w = f32::from(self.active_tab().grid_pane_width)
+            .max(crate::grid::cell_width(icon_px, gap));
+        crate::grid::cols_per_row(w, icon_px, gap)
     }
 
     pub(super) fn on_grid_left(&mut self, _: &GridLeft, _: &mut Window, cx: &mut Context<Self>) {
@@ -693,6 +723,182 @@ impl Shell {
     ) {
         let c = self.grid_cols(cx) as i64;
         self.move_grid_selection(c, true, cx);
+    }
+
+    // -- Grid marquee / rubber-band selection ----------------------
+    //
+    // A press on the grid's empty background (not a cell) begins a
+    // marquee; dragging sweeps a selection rectangle over the cells. The
+    // gesture lives on the grid root div (`grid_body`); these handlers
+    // run in window space and map into grid content space via the tab's
+    // cached `grid_pane_origin` + live scroll offset. All geometry is
+    // analytic (no per-cell bounds are stored) — the same O(n) scan the
+    // list's `range_select` already does.
+
+    /// Map a window-space pointer position to the grid entry index under
+    /// it, or `None` when the pointer is over empty background (a gap
+    /// column, below the last row, or a trailing empty slot). Drives the
+    /// marquee's "start only on background" guard so presses on real
+    /// cells still reach the cell's own click/drag handlers.
+    fn grid_index_at(&self, pos: gpui::Point<Pixels>, cx: &App) -> Option<usize> {
+        let tab = self.active_tab();
+        let icon_px = crate::grid::icon_size(cx);
+        let gap = crate::grid::cell_gap(cx);
+        let cell_w = crate::grid::cell_width(icon_px, gap);
+        let cell_h = crate::grid::cell_height(icon_px, gap);
+        let cols = self.grid_cols(cx);
+        let off = tab.grid_scroll.0.borrow().base_handle.offset();
+        let o = tab.grid_pane_origin;
+        let content_x = f32::from(pos.x) - f32::from(o.x) - f32::from(off.x) - GRID_ROW_PAD;
+        let content_y = f32::from(pos.y) - f32::from(o.y) - f32::from(off.y);
+        if content_x < 0.0 || content_y < 0.0 {
+            return None;
+        }
+        let col = (content_x / cell_w).floor() as usize;
+        if col >= cols {
+            return None;
+        }
+        let row = (content_y / cell_h).floor() as usize;
+        let i = row * cols + col;
+        let n = tab.table.read(cx).delegate().entries.len();
+        (i < n).then_some(i)
+    }
+
+    /// Mouse-down on the grid root: begin a marquee only when the press
+    /// lands on empty background. Shift/Cmd makes it additive (union with
+    /// the existing selection).
+    pub(super) fn on_grid_marquee_down(
+        &mut self,
+        ev: &gpui::MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.grid_index_at(ev.position, cx).is_some() {
+            return;
+        }
+        let additive = ev.modifiers.shift || ev.modifiers.secondary();
+        window.focus(&self.active_tab().grid_focus, cx);
+        let base = if additive {
+            self.active_tab().selection.clone()
+        } else {
+            HashSet::new()
+        };
+        self.active_tab_mut().marquee = Some(super::tab::Marquee {
+            start: ev.position,
+            current: ev.position,
+            additive,
+            base,
+            moved: false,
+        });
+    }
+
+    /// Mouse-move while a marquee is live: grow the rectangle and, once
+    /// the pointer has travelled past the click threshold, recompute the
+    /// swept selection.
+    pub(super) fn on_grid_marquee_move(
+        &mut self,
+        ev: &gpui::MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((start, was_moved)) = self
+            .active_tab()
+            .marquee
+            .as_ref()
+            .map(|m| (m.start, m.moved))
+        else {
+            return;
+        };
+        let dx = f32::from(ev.position.x) - f32::from(start.x);
+        let dy = f32::from(ev.position.y) - f32::from(start.y);
+        let past = dx.abs() > MARQUEE_THRESHOLD || dy.abs() > MARQUEE_THRESHOLD;
+        if let Some(m) = self.active_tab_mut().marquee.as_mut() {
+            m.current = ev.position;
+            if past {
+                m.moved = true;
+            }
+        }
+        if was_moved || past {
+            self.apply_marquee_selection(cx);
+            cx.notify();
+        }
+    }
+
+    /// Mouse-up (inside or outside the pane): finish the marquee. A
+    /// press that never moved is a plain background click — it clears the
+    /// selection (unless it was additive, which is a no-op).
+    pub(super) fn on_grid_marquee_up(
+        &mut self,
+        _ev: &gpui::MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(m) = self.active_tab_mut().marquee.take() else {
+            return;
+        };
+        if !m.moved && !m.additive {
+            self.clear_active_selection(cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    /// Recompute the selection swept by the current marquee rectangle,
+    /// unioning with the pre-drag snapshot when the gesture is additive.
+    fn apply_marquee_selection(&mut self, cx: &mut Context<Self>) {
+        let (start, current, base) = {
+            let Some(m) = self.active_tab().marquee.as_ref() else {
+                return;
+            };
+            (m.start, m.current, m.base.clone())
+        };
+        let tab = self.active_tab();
+        let icon_px = crate::grid::icon_size(cx);
+        let gap = crate::grid::cell_gap(cx);
+        let cell_w = crate::grid::cell_width(icon_px, gap);
+        let cell_h = crate::grid::cell_height(icon_px, gap);
+        let cols = self.grid_cols(cx);
+        let off = tab.grid_scroll.0.borrow().base_handle.offset();
+        let o = tab.grid_pane_origin;
+        let to_content = |p: gpui::Point<Pixels>| {
+            (
+                f32::from(p.x) - f32::from(o.x) - f32::from(off.x) - GRID_ROW_PAD,
+                f32::from(p.y) - f32::from(o.y) - f32::from(off.y),
+            )
+        };
+        let (ax, ay) = to_content(start);
+        let (bx, by) = to_content(current);
+        let (x0, x1) = (ax.min(bx), ax.max(bx));
+        let (y0, y1) = (ay.min(by), ay.max(by));
+        let entries: Vec<NodeId> = tab
+            .table
+            .read(cx)
+            .delegate()
+            .entries
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        let mut hits = base;
+        let mut last_hit: Option<NodeId> = None;
+        for (i, id) in entries.iter().enumerate() {
+            let col = i % cols;
+            let row = i / cols;
+            let cx0 = col as f32 * cell_w;
+            let cy0 = row as f32 * cell_h;
+            // Rectangle-vs-rectangle overlap (half-open on the far edges).
+            if x0 < cx0 + cell_w && x1 > cx0 && y0 < cy0 + cell_h && y1 > cy0 {
+                hits.insert(*id);
+                last_hit = Some(*id);
+            }
+        }
+        let tab = self.active_tab_mut();
+        tab.selection = hits;
+        tab.range_live = false;
+        if let Some(l) = last_hit {
+            tab.lead = Some(l);
+            tab.anchor = Some(l);
+        }
+        self.refresh_file_list_selection(cx);
     }
 
     pub(super) fn on_cursor_up(&mut self, _: &CursorUp, _: &mut Window, cx: &mut Context<Self>) {

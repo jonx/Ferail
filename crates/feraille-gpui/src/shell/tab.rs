@@ -270,6 +270,29 @@ impl DupeGroupView {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TabId(pub u64);
 
+/// Live rubber-band (marquee) drag state for the icon grid. A press on
+/// empty grid background starts one; dragging sweeps a selection
+/// rectangle over the cells. Coordinates are window-space (raw mouse
+/// event positions); the render maps them into the grid's content space
+/// via the cached `grid_pane_origin` + scroll offset. Only present while
+/// a marquee is in flight.
+pub struct Marquee {
+    /// Window-space position where the press began.
+    pub start: gpui::Point<Pixels>,
+    /// Window-space position of the pointer now.
+    pub current: gpui::Point<Pixels>,
+    /// Shift / Cmd held at press — union the swept set into `base`
+    /// instead of replacing the selection.
+    pub additive: bool,
+    /// Selection snapshot captured at press, unioned with the swept
+    /// hits when `additive`. Empty for a plain (replacing) marquee.
+    pub base: HashSet<NodeId>,
+    /// True once the pointer has moved past the start threshold — until
+    /// then the gesture is still a candidate plain background click
+    /// (which clears the selection on release).
+    pub moved: bool,
+}
+
 pub struct Tab {
     /// Process-local stable identity. Stays the same through
     /// reorder, history navigation, and (later) tear-off.
@@ -328,6 +351,14 @@ pub struct Tab {
     /// the grid receives arrow-key navigation independently of the
     /// table's own key context.
     pub grid_focus: FocusHandle,
+    /// Window-space origin of the grid pane's content box, captured by
+    /// the same measuring `canvas` that tracks `grid_pane_width`. Used to
+    /// map raw mouse-event positions into grid content space for marquee
+    /// hit-testing and rubber-band painting.
+    pub grid_pane_origin: gpui::Point<Pixels>,
+    /// Live rubber-band drag over the icon grid, if any. `Some` only
+    /// between a background press and its release.
+    pub marquee: Option<Marquee>,
     /// Monotonic generation for *this* tab's directory loads.
     /// Background enumeration results apply only if their generation
     /// still matches the tab they were spawned for.
@@ -460,6 +491,8 @@ impl Tab {
             grid_scroll: UniformListScrollHandle::new(),
             grid_pane_width: px(0.0),
             grid_focus,
+            grid_pane_origin: gpui::Point::default(),
+            marquee: None,
             load_generation: 0,
             load_cancel: None,
             folder_size_cancel: None,

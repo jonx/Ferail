@@ -78,7 +78,40 @@ pub const ADORN_MIN_ICON: u32 = 96;
 /// Extra width/height a cell spends beyond the thumbnail slot on its
 /// label, padding, and selection inset.
 pub const CELL_LABEL_H: f32 = 34.0;
-pub const CELL_PAD: f32 = 16.0;
+pub const CELL_PAD: f32 = 30.0;
+
+/// Default uniform inset (px) between a grid cell's footprint and its
+/// highlighted (selection fill/border) box, when the user hasn't chosen
+/// one. The gutter is *added* to the `cell_width`/`cell_height` stride
+/// (see [`cell_width`]), so the icon + label area is invariant to the
+/// gap and two adjacent selected cells show a `2 * gap` gutter between
+/// their fills.
+pub const DEFAULT_CELL_GAP: f32 = 4.0;
+
+/// Largest gap the setting allows (px). Bounds how much the gutter can
+/// eat into column density.
+pub const MAX_CELL_GAP: f32 = 16.0;
+
+/// Clamp an arbitrary gap into the supported range.
+pub fn clamp_cell_gap(v: f32) -> f32 {
+    v.clamp(0.0, MAX_CELL_GAP)
+}
+
+/// Process-wide live grid cell gap (px). Seeded from persisted settings
+/// at startup and updated by the Settings dropdown; the grid reads it
+/// during render so a change re-lays-out immediately (same mechanism as
+/// [`IconSize`]).
+#[derive(Clone, Copy)]
+pub struct CellGap(pub f32);
+
+impl gpui::Global for CellGap {}
+
+/// The live grid cell gap, defaulting to [`DEFAULT_CELL_GAP`].
+pub fn cell_gap(cx: &App) -> f32 {
+    cx.try_global::<CellGap>()
+        .map(|g| clamp_cell_gap(g.0))
+        .unwrap_or(DEFAULT_CELL_GAP)
+}
 
 /// Process-wide live grid icon size (display px). Seeded from persisted
 /// settings at startup and updated by the toolbar size control; reading
@@ -102,19 +135,23 @@ pub fn clamp_icon_size(px: u32) -> u32 {
     px.clamp(ICON_SIZES[0], ICON_SIZES[ICON_SIZES.len() - 1])
 }
 
-/// Full cell width/height for a given icon size: the thumbnail slot
-/// plus label + padding. Used to derive `cols_per_row` from pane width.
-pub fn cell_width(icon_px: u32) -> f32 {
-    icon_px as f32 + CELL_PAD
+/// Full cell width/height for a given icon size and gap: the thumbnail
+/// slot plus label + padding, then `2 * gap` for the selection gutter on
+/// each axis. Adding the gutter to the stride (rather than insetting it
+/// out of a fixed cell) keeps the icon + label area — and so the label's
+/// clearance from the rounded selection border — constant as the gap
+/// changes. Used to derive `cols_per_row` from pane width.
+pub fn cell_width(icon_px: u32, gap: f32) -> f32 {
+    icon_px as f32 + CELL_PAD + 2.0 * gap
 }
 
-pub fn cell_height(icon_px: u32) -> f32 {
-    icon_px as f32 + CELL_LABEL_H
+pub fn cell_height(icon_px: u32, gap: f32) -> f32 {
+    icon_px as f32 + CELL_LABEL_H + 2.0 * gap
 }
 
-/// Columns that fit across `pane_width` at `icon_px`, at least 1.
-pub fn cols_per_row(pane_width: f32, icon_px: u32) -> usize {
-    ((pane_width / cell_width(icon_px)).floor() as usize).max(1)
+/// Columns that fit across `pane_width` at `icon_px` / `gap`, at least 1.
+pub fn cols_per_row(pane_width: f32, icon_px: u32, gap: f32) -> usize {
+    ((pane_width / cell_width(icon_px, gap)).floor() as usize).max(1)
 }
 
 /// Physical thumbnail fetch size (longest edge) for a grid display

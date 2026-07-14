@@ -47,6 +47,7 @@ const SETTINGS_TOP_ROW_HEIGHT: f32 = 28.0;
 pub enum SettingsCategory {
     Appearance,
     Files,
+    Performance,
     SearchDupes,
     Layout,
     Plugins,
@@ -59,6 +60,7 @@ impl SettingsCategory {
     pub const ALL: &'static [SettingsCategory] = &[
         SettingsCategory::Appearance,
         SettingsCategory::Files,
+        SettingsCategory::Performance,
         SettingsCategory::SearchDupes,
         SettingsCategory::Layout,
         SettingsCategory::Plugins,
@@ -71,6 +73,7 @@ impl SettingsCategory {
         match self {
             SettingsCategory::Appearance => "Appearance",
             SettingsCategory::Files => "Files",
+            SettingsCategory::Performance => "Performance",
             SettingsCategory::SearchDupes => "Search & Duplicates",
             SettingsCategory::Plugins => "Plugins",
             SettingsCategory::Layout => "Layout",
@@ -84,12 +87,13 @@ impl SettingsCategory {
         match self {
             SettingsCategory::Appearance => 0,
             SettingsCategory::Files => 1,
-            SettingsCategory::SearchDupes => 2,
-            SettingsCategory::Layout => 3,
-            SettingsCategory::Plugins => 4,
-            SettingsCategory::Shortcuts => 5,
-            SettingsCategory::Diagnostics => 6,
-            SettingsCategory::About => 7,
+            SettingsCategory::Performance => 2,
+            SettingsCategory::SearchDupes => 3,
+            SettingsCategory::Layout => 4,
+            SettingsCategory::Plugins => 5,
+            SettingsCategory::Shortcuts => 6,
+            SettingsCategory::Diagnostics => 7,
+            SettingsCategory::About => 8,
         }
     }
 }
@@ -97,6 +101,7 @@ impl SettingsCategory {
 pub fn category_from_arg(arg: Option<&str>) -> SettingsCategory {
     match arg.unwrap_or("appearance") {
         "files" => SettingsCategory::Files,
+        "performance" | "perf" => SettingsCategory::Performance,
         "search" | "duplicates" | "dupes" => SettingsCategory::SearchDupes,
         "layout" => SettingsCategory::Layout,
         "plugins" | "plugin" => SettingsCategory::Plugins,
@@ -182,6 +187,22 @@ fn persist_show_thumbnails(value: bool) {
     });
 }
 
+fn persist_folder_sizing(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        folder_sizing: Some(value),
+        ..existing
+    });
+}
+
+fn persist_file_detail_scan(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        file_detail_scan: Some(value),
+        ..existing
+    });
+}
+
 pub(crate) fn persist_view_mode(value: &str) {
     let existing = app_state::load();
     app_state::save(&AppState {
@@ -194,6 +215,14 @@ pub(crate) fn persist_icon_size(value: u32) {
     let existing = app_state::load();
     app_state::save(&AppState {
         icon_size: Some(crate::grid::clamp_icon_size(value)),
+        ..existing
+    });
+}
+
+fn persist_cell_gap(value: f32) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        cell_gap: Some(crate::grid::clamp_cell_gap(value)),
         ..existing
     });
 }
@@ -692,6 +721,7 @@ fn build_pages(
     vec![
         appearance_page(selection_picker.clone(), ant_trail_picker.clone()),
         files_page(home_hidden_count),
+        performance_page(),
         search_dupes_page(),
         layout_page(),
         plugins_page(),
@@ -1018,7 +1048,29 @@ fn appearance_page(
                     "The highlight behind selected files in the list and grid. \
                      Clear it to follow the theme's blue.",
                 ),
-            ),
+            )
+            .item(dropdown_setting_with(
+                "Icon spacing",
+                "Gap between the selection highlights in icon view. Wider spacing \
+                 lets the boxes breathe; None packs them edge-to-edge.",
+                &[
+                    ("0", "None"),
+                    ("2", "Tight"),
+                    ("4", "Default"),
+                    ("8", "Comfortable"),
+                    ("12", "Spacious"),
+                ],
+                &[],
+                || format!("{:.0}", crate::grid::clamp_cell_gap(
+                    app_state::load().cell_gap.unwrap_or(crate::grid::DEFAULT_CELL_GAP),
+                )),
+                |value, cx| {
+                    let g = value.parse::<f32>().unwrap_or(crate::grid::DEFAULT_CELL_GAP);
+                    persist_cell_gap(g);
+                    cx.set_global(crate::grid::CellGap(crate::grid::clamp_cell_gap(g)));
+                    cx.refresh_windows();
+                },
+            )),
         )
         .group(
             SettingGroup::new()
@@ -1092,6 +1144,63 @@ fn appearance_page(
         )
 }
 
+/// Performance-tuning toggles for the background work that costs the
+/// most on a slow disk / low-powered Mac. Both settings are live: they
+/// persist and update a process global so open windows react without a
+/// relaunch.
+fn performance_page() -> SettingPage {
+    SettingPage::new("Performance")
+        .icon(Icon::empty().path("icons/cpu.svg"))
+        .group(
+            SettingGroup::new()
+                .title("Background work")
+                // Quick Look previews vs. generic type icons. Moved here
+                // from Files because rendering real previews is one of the
+                // per-folder background costs (see `warm_*_viewport`).
+                .item(switch_setting(
+                    "Show file previews",
+                    "Draw photos, videos, and PDFs as their actual content in the file \
+                     list and grid. Off uses generic type icons \u{2014} lighter, since \
+                     Quick Look never runs.",
+                    |cx: &App| crate::thumbnails::show_thumbnails(cx),
+                    |val: bool, cx: &mut App| {
+                        persist_show_thumbnails(val);
+                        cx.set_global(crate::thumbnails::ShowThumbnails(val));
+                    },
+                ))
+                // The heaviest routine the app runs on a slow disk: a
+                // recursive walk per directory row, re-checked on every
+                // window activation. Off leaves folder rows with a dash in
+                // the Size column.
+                .item(switch_setting(
+                    "Calculate folder sizes",
+                    "Recursively total each folder so the Size column shows how big it is. \
+                     This walks the whole subtree in the background \u{2014} the biggest \
+                     disk cost on large folders. Off shows a dash for folder sizes.",
+                    |cx: &App| crate::folder_sizes::folder_sizing_enabled(cx),
+                    |val: bool, cx: &mut App| {
+                        persist_folder_sizing(val);
+                        cx.set_global(crate::folder_sizes::FolderSizingEnabled(val));
+                    },
+                ))
+                // Magic-byte sniffing (Format column) + Finder-tag xattr
+                // reads (tag dots) — the two remaining per-row disk costs on
+                // every folder load. Bundled into one switch.
+                .item(switch_setting(
+                    "Detect file types and tags",
+                    "Read each file's contents to name its type in the Format column and \
+                     read its Finder tags for the colour dots. Both are per-file disk \
+                     reads on every folder. Off falls back to types from the file \
+                     extension and hides tag dots.",
+                    |cx: &App| crate::prefetch::file_detail_scan_enabled(cx),
+                    |val: bool, cx: &mut App| {
+                        persist_file_detail_scan(val);
+                        cx.set_global(crate::prefetch::FileDetailScan(val));
+                    },
+                )),
+        )
+}
+
 fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
     // Description prefers the live count; the explanatory fallback
     // covers sandbox/CI runs where $HOME can't be read.
@@ -1116,18 +1225,6 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
                     description,
                     |_cx: &App| app_state::load().show_hidden.unwrap_or(false),
                     |val: bool, _cx: &mut App| persist_show_hidden(val),
-                ))
-                // Persists *and* updates the live process global, so flipping
-                // it repaints open windows at once (no relaunch).
-                .item(switch_setting(
-                    "Show thumbnails",
-                    "Preview photos, videos, and PDFs as their actual content in the \
-                     file list. Off shows generic type icons.",
-                    |cx: &App| crate::thumbnails::show_thumbnails(cx),
-                    |val: bool, cx: &mut App| {
-                        persist_show_thumbnails(val);
-                        cx.set_global(crate::thumbnails::ShowThumbnails(val));
-                    },
                 )),
         );
     // Sidebar special-folder root — only meaningful where OneDrive's

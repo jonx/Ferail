@@ -31,9 +31,13 @@ use crate::shell::Shell;
 /// file list (§11.4). More specific than `SHELL_CONTEXT`.
 pub const FAVORITES_CONTEXT: &str = "FerailleFavorites";
 
-/// Per-add fade-in duration (§2.2) and dedup-pulse flash duration.
+/// Per-add fade-in duration (§2.2), dedup-pulse flash, and the §3.2
+/// collapse-on-remove fade. `COLLAPSE_MS` must match the Shell's
+/// `FAV_COLLAPSE_MS` so the row is dropped from the entity exactly when
+/// its fade finishes.
 const APPEAR_MS: u64 = 150;
 const PULSE_MS: u64 = 450;
+const COLLAPSE_MS: u64 = 150;
 
 /// Which one-shot animation, if any, a row should play this frame.
 #[derive(Clone, Copy)]
@@ -43,6 +47,9 @@ enum RowAnim {
     Appear,
     /// Dedup-pulse flash, keyed by generation so a repeat re-triggers.
     Pulse(u32),
+    /// Fade + collapse on a favorite being removed (§3.2). The entity
+    /// keeps the row present for the animation window, then drops it.
+    Collapse,
 }
 
 /// Payload carried by a favorite-row drag (§4.2). Implements `Render`
@@ -93,6 +100,9 @@ pub struct FavoritesSection {
     appear: HashSet<FavoriteId>,
     /// Dedup-pulse generation per id (§2.2).
     pulse: HashMap<FavoriteId, u32>,
+    /// Ids being removed that should play the §3.2 collapse fade this
+    /// frame (still present in `favorites` until the fade finishes).
+    removing: HashSet<FavoriteId>,
 }
 
 impl FavoritesSection {
@@ -106,6 +116,7 @@ impl FavoritesSection {
         focus_handle: FocusHandle,
         appear: HashSet<FavoriteId>,
         pulse: HashMap<FavoriteId, u32>,
+        removing: HashSet<FavoriteId>,
     ) -> Self {
         Self {
             favorites,
@@ -117,6 +128,7 @@ impl FavoritesSection {
             focus_handle,
             appear,
             pulse,
+            removing,
         }
     }
 }
@@ -311,7 +323,11 @@ impl SidebarItem for FavoritesSection {
                     self.favorites[i - 1].sort_index
                 };
                 let after = f.sort_index;
-                let anim = if self.appear.contains(&f.id) {
+                let anim = if self.removing.contains(&f.id) {
+                    // Removal wins over add/pulse: a row toggled off mid-
+                    // fade should collapse, not keep fading in.
+                    RowAnim::Collapse
+                } else if self.appear.contains(&f.id) {
                     RowAnim::Appear
                 } else if let Some(seq) = self.pulse.get(&f.id).copied() {
                     RowAnim::Pulse(seq)
@@ -527,6 +543,43 @@ fn render_favorite_row(
             });
     }
 
+    // Tag favorites (§9): clicking runs a Finder-tag search in the active
+    // tab; a small context menu offers removal. Other non-path targets
+    // (saved search, reserved) fall through to the inert early-return.
+    if let FavoriteTarget::Tag(tag_name) = &fav.target {
+        let tag = tag_name.clone();
+        let fav_id = fav.id;
+        let shell_for_tag = shell.clone();
+        let shell_for_tagmenu = shell.clone();
+        row = row.on_click(move |_event, window, cx| {
+            if let Some(s) = shell_for_tag.upgrade() {
+                let tag = tag.clone();
+                s.update(cx, |shell, cx| {
+                    shell.focused_favorite = Some(fav_id);
+                    window.focus(&shell.favorites_focus, cx);
+                    shell.navigate_from_tag_favorite(tag, window, cx);
+                });
+            }
+        });
+        return apply_row_anim(
+            row.context_menu(move |menu, _window, cx| {
+                use crate::shell::DeleteFavorite;
+                // Stash the target so the bubbled DeleteFavorite action
+                // removes this row (with the §3.2 collapse + undo).
+                if let Some(s) = shell_for_tagmenu.upgrade() {
+                    s.update(cx, |shell, _| {
+                        shell.focused_favorite = Some(fav_id);
+                    });
+                }
+                menu.menu("Remove from Favorites", Box::new(DeleteFavorite))
+            })
+            .into_any_element(),
+            anim,
+            fav.id,
+            theme.primary,
+        );
+    }
+
     let Some(p) = path_for_click else {
         return apply_row_anim(row.into_any_element(), anim, fav.id, theme.primary);
     };
@@ -649,8 +702,35 @@ fn apply_row_anim(
                 )
                 .into_any_element()
         }
+        RowAnim::Collapse => {
+            let key: SharedString = format!("fav-collapse-{id}").into();
+            // Fade out and pull the rows below up (negative bottom margin
+            // easing to a full row height) so the removal reads as a
+            // collapse rather than a pop. The entity drops the row exactly
+            // when this finishes, so the tiny end-state snap is invisible.
+            div()
+                .w_full()
+                .overflow_hidden()
+                .child(row)
+                .with_animation(
+                    ElementId::Name(key),
+                    Animation::new(Duration::from_millis(COLLAPSE_MS))
+                        .with_easing(ease_out_quint()),
+                    |this, delta| {
+                        this.opacity(1.0 - delta)
+                            .mb(px(-FAV_ROW_COLLAPSE_H * delta))
+                    },
+                )
+                .into_any_element()
+        }
     }
 }
+
+/// Approximate rendered height (DIP at `ui_scale == 1`) of a favorite
+/// row, used only to drive the §3.2 collapse's negative-margin slide.
+/// An estimate is fine: the row is removed the instant the fade ends, so
+/// any small mismatch resolves while the row is already at zero opacity.
+const FAV_ROW_COLLAPSE_H: f32 = 28.0;
 
 /// Insertion-point drop gap between two favorite rows. Idle, it's a
 /// 4-DIP transparent strip; when a `FavoriteDragPayload` is dragged

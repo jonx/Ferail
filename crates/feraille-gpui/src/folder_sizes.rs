@@ -53,6 +53,25 @@ use crate::tasks::{TaskKind, TaskRegistry};
 /// staleness for fewer re-walks of big trees. Tune here, one place.
 const FOLDER_SIZE_TTL_SECS: i64 = 10 * 60;
 
+/// Process-wide master switch for the background folder-size walker
+/// (Settings → Performance). Recursively summing a directory tree is
+/// the heaviest routine the app runs on a slow disk, so this lets the
+/// user trade the Size column's folder totals for less background I/O.
+/// Seeded from persisted settings at startup; the callers that spawn a
+/// pass check it, and a Shell observer restarts/stops passes when it
+/// flips. Default on.
+#[derive(Clone, Copy)]
+pub struct FolderSizingEnabled(pub bool);
+
+impl gpui::Global for FolderSizingEnabled {}
+
+/// Whether the background folder-size walker is allowed to run.
+pub fn folder_sizing_enabled(cx: &gpui::App) -> bool {
+    cx.try_global::<FolderSizingEnabled>()
+        .map(|g| g.0)
+        .unwrap_or(true)
+}
+
 /// Snapshot used to seed the worker — `Send` copies of the bits it
 /// needs, like `PrefetchSeed`.
 struct SizeSeed {

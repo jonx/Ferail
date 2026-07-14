@@ -167,14 +167,34 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         }
     };
 
-    entries
+    let mut locations: Vec<WellKnownLocation> = entries
         .iter()
         .map(|&(label, sub, icon)| WellKnownLocation {
             label,
             path: sub.map_or_else(|| home.clone(), |s| home.join(s)),
             icon,
         })
-        .collect()
+        .collect();
+
+    // iCloud Drive (macOS): the ubiquity container root. Only surfaced
+    // when it actually exists — a user with iCloud Drive disabled has no
+    // such folder, and an unconditional dead row would mislead. This
+    // resolves once at startup (cached in `special_folders`), never on
+    // the render/hit-test path, so the single `exists()` is Prime-
+    // Directive-safe here.
+    #[cfg(target_os = "macos")]
+    {
+        let icloud = home.join("Library/Mobile Documents/com~apple~CloudDocs");
+        if icloud.is_dir() {
+            locations.push(WellKnownLocation {
+                label: "iCloud Drive",
+                path: icloud,
+                icon: "icons/nav/cloud.svg",
+            });
+        }
+    }
+
+    locations
 }
 
 /// Windows: resolve each Location via `SHGetKnownFolderPath` so the path

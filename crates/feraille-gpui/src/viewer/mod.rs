@@ -89,12 +89,15 @@ fn open_viewer_inner(
             title: Some(SharedString::from("Viewer")),
             ..Default::default()
         }),
-        // Create the window transparency-capable so the in-viewer "Transparent"
-        // toggle actually shows through (the macOS CAMetalLayer's transparency
-        // is fixed at creation; flipping it at runtime on an opaque window only
-        // changes the NSWindow, not the drawable). Normal mode keeps an opaque
-        // content background, so it looks identical until the toggle is on.
-        window_background: WindowBackgroundAppearance::Transparent,
+        // Open opaque, matching the default (toggle-off) state. The in-viewer
+        // "Transparent" toggle flips the backing live via
+        // `set_background_appearance`, which updates both the NSWindow and the
+        // CAMetalLayer's opacity (see `MetalRenderer::update_transparency`), so
+        // creating it transparent up front is unnecessary — and a permanently
+        // non-opaque backing makes the macOS fullscreen animation janky. Opaque
+        // by default keeps the fullscreen transition clean; the toggle grants
+        // see-through only when the user asks for it.
+        window_background: WindowBackgroundAppearance::Opaque,
         ..Default::default()
     };
     let mut weak_view = None;

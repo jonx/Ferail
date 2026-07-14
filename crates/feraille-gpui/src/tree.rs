@@ -51,10 +51,18 @@ use crate::shell::Shell;
 /// stay at 16 — they're affordances, not icons.
 pub(crate) const SIDEBAR_ICON_PX: f32 = 24.0;
 
+/// Horizontal gutter (px) between the tree rows and the sidebar edges,
+/// so a selected row's rounded highlight reads as an inset pill rather
+/// than a full-bleed bar.
+const TREE_ROW_INSET: f32 = 6.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreeRowIcon {
     Folder,
     Volume,
+    /// A network mount (`is_local == false`). Drawn with a distinct
+    /// network glyph so remote shares read differently from local disks.
+    Network,
 }
 
 /// One indent-column of ancestry connector to draw left of a tree
@@ -335,7 +343,17 @@ impl SidebarItem for TreeSection {
         v_flex()
             .w_full()
             .child(header)
-            .child(v_flex().w_full().children(rows))
+            // Inset the tree rows with a small horizontal gutter so a
+            // selected row's rounded highlight floats clear of the
+            // sidebar edges (Finder-style) instead of running edge to
+            // edge. The rows stay `w_full` inside the padded box, so no
+            // row overflows and the connector guides shift with them.
+            .child(
+                v_flex()
+                    .w_full()
+                    .px(px(TREE_ROW_INSET))
+                    .children(rows),
+            )
     }
 }
 
@@ -557,6 +575,11 @@ fn render_tree_row(
             .icon_px(SIDEBAR_ICON_PX)
             .text_color(icon_color)
             .into_any_element(),
+        TreeRowIcon::Network => svg()
+            .path("icons/network.svg")
+            .icon_px(SIDEBAR_ICON_PX)
+            .text_color(icon_color)
+            .into_any_element(),
     };
     row = row.child(
         div()
@@ -632,10 +655,20 @@ fn render_tree_row(
             move |event, window, cx| {
                 if let Some(shell) = shell_for_label.upgrade() {
                     let modifiers = event.modifiers();
+                    let double = event.click_count() >= 2;
                     let path = path.clone();
                     shell.update(cx, |s, cx| {
                         if modifiers.platform {
                             s.open_path_in_new_tab(path, window, cx);
+                        } else if double && is_expandable {
+                            // Double-click a folder that has children:
+                            // toggle its fold state while keeping it the
+                            // selected/active row. The single-click that
+                            // opens the double already navigated to it, so
+                            // it stays highlighted; here we just fold or
+                            // unfold in place (the caret is the other way
+                            // to do this).
+                            s.toggle_tree_expand_node(label_node, cx);
                         } else {
                             s.navigate_node(label_node, cx);
                         }

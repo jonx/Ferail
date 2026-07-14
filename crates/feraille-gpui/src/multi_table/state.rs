@@ -1096,6 +1096,37 @@ where
         self.horizontal_scroll_handle.set_offset(offset);
     }
 
+    /// Auto-scroll the row list vertically when a drag hovers near the
+    /// top or bottom edge of the table — so a file dragged onto the list
+    /// can reach rows that are currently scrolled off-screen (the file
+    /// list's `ExternalPaths` drags drive this). Mirrors the horizontal
+    /// `scroll_table_by_col_resizing` edge-scroll, against the vertical
+    /// `UniformListScrollHandle`'s base offset.
+    fn scroll_list_by_drag(&mut self, mouse_position: Point<Pixels>) {
+        let bounds = self.bounds;
+        // Only act while the pointer is within the table's vertical span.
+        if mouse_position.y < bounds.top() || mouse_position.y > bounds.bottom() {
+            return;
+        }
+        // Height of the top/bottom hot zones, and per-move scroll step.
+        let edge = px(32.);
+        let step = px(14.);
+        let top_dist = mouse_position.y - bounds.top();
+        let bottom_dist = bounds.bottom() - mouse_position.y;
+        let scroll = self.vertical_scroll_handle.0.borrow();
+        let mut offset = scroll.base_handle.offset();
+        if top_dist < edge {
+            // Near the top: reveal earlier rows (offset.y toward 0).
+            offset.y = (offset.y + step).min(px(0.));
+        } else if bottom_dist < edge {
+            // Near the bottom: reveal later rows (offset.y more negative).
+            offset.y -= step;
+        } else {
+            return;
+        }
+        scroll.base_handle.set_offset(offset);
+    }
+
     /// Live column widths in display order (col_groups carry the
     /// drag-resized values; `delegate.columns[..].width` only holds
     /// the construction seed). Fork addition — backs column
@@ -1531,7 +1562,7 @@ where
                     true => this,
                     false => this.opacity(0.5),
                 })
-                .hover(|this| this.bg(cx.theme().secondary).opacity(7.))
+                .hover(|this| this.bg(cx.theme().secondary).opacity(0.7))
                 .active(|this| this.bg(cx.theme().secondary_active).opacity(1.))
                 .on_click(cx.listener(move |table, _, window, cx| {
                     // The whole header cell is now clickable for sort
@@ -1688,6 +1719,10 @@ where
     ) -> impl IntoElement {
         let view = cx.entity().clone();
         let horizontal_scroll_handle = self.horizontal_scroll_handle.clone();
+        // Whether the delegate wants a right-click menu on the header
+        // (column show/hide + reset for the file list). Computed up front
+        // so the chain can branch its element type once.
+        let has_header_menu = self.delegate.header_has_menu(cx);
 
         // Header leaf-column virtualization.
         //
@@ -1869,6 +1904,21 @@ where
                         }),
                     )),
             )
+            .map(|this| {
+                if has_header_menu {
+                    let view = view.clone();
+                    this.context_menu(
+                        move |menu, window: &mut Window, cx: &mut Context<PopupMenu>| {
+                            view.update(cx, |state, cx| {
+                                state.delegate_mut().header_context_menu(menu, window, cx)
+                            })
+                        },
+                    )
+                    .into_any_element()
+                } else {
+                    this.into_any_element()
+                }
+            })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2497,6 +2547,16 @@ where
                 let state = cx.entity();
                 move |bounds, _, cx| state.update(cx, |state, _| state.bounds = bounds)
             })
+            // Auto-scroll the row list when a file drag hovers near the
+            // top/bottom edge, so off-screen rows (folders) become
+            // reachable as drop targets. Keyed on `ExternalPaths` so
+            // column-reorder/resize drags don't trigger it.
+            .on_drag_move(cx.listener(
+                |this, e: &gpui::DragMoveEvent<gpui::ExternalPaths>, _window, cx| {
+                    this.scroll_list_by_drag(e.event.position);
+                    cx.notify();
+                },
+            ))
             .when(!window.is_inspector_picking(cx), |this| {
                 this.child(
                     div()

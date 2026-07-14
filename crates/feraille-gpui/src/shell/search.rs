@@ -70,21 +70,91 @@ fn resolve_spotlight(_engine: SearchEnginePref) -> bool {
 
 /// Worker body. Runs on the background executor; streams `SearchMsg`s
 /// back over `tx`. Picks Spotlight or the walker up front.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run_search_load(
     fs: Arc<NativeFs>,
     use_spotlight: bool,
     config: SearchConfig,
     root: PathBuf,
     needle: String,
+    tag: Option<String>,
     cancel: Arc<AtomicBool>,
     tx: async_channel::Sender<SearchMsg>,
 ) {
-    let error = if use_spotlight {
+    let error = if let Some(tag) = tag {
+        // Tag favorites (§9): a Spotlight `kMDItemUserTags` query. Finder
+        // tags are a macOS concept, so there is no walker fallback — a
+        // system without Spotlight simply returns no results.
+        run_tag_search(&fs, &config, &root, &tag, &cancel, &tx)
+    } else if use_spotlight {
         run_spotlight(&fs, &config, &root, &needle, &cancel, &tx)
     } else {
         run_walker(&fs, &config, &root, &needle, &cancel, &tx)
     };
     let _ = tx.send_blocking(SearchMsg::Done(error));
+}
+
+/// Stream files carrying the Finder tag `tag`, rooted at `root`, via a
+/// Spotlight metadata query. Reuses the same batch/apply path as the
+/// text search so the results render as an ordinary search surface.
+#[cfg(target_os = "macos")]
+fn run_tag_search(
+    fs: &NativeFs,
+    config: &SearchConfig,
+    root: &Path,
+    tag: &str,
+    cancel: &AtomicBool,
+    tx: &async_channel::Sender<SearchMsg>,
+) -> Option<EnumerationError> {
+    use feraille_shell_mac::{SpotlightScope, spotlight_search};
+    // Raw `mdfind` predicate (passed as the natural-language query, i.e.
+    // `name_only = false`). Escape embedded quotes so a crafted tag name
+    // can't break out of the predicate string.
+    let predicate = format!("kMDItemUserTags == \"{}\"cd", tag.replace('"', ""));
+    let res = spotlight_search(
+        SpotlightScope::Subtree(root.to_path_buf()),
+        &predicate,
+        false,
+        DEFAULT_SEARCH_BATCH,
+        cancel,
+        |found| {
+            let mut entries = Vec::with_capacity(found.len());
+            let mut paths = HashMap::with_capacity(found.len());
+            for path in found {
+                let Some(entry) = fs.file_entry_for_path(&path) else {
+                    continue;
+                };
+                if !config.include_hidden && entry.hidden {
+                    continue;
+                }
+                let entry = with_location(entry, &path, root);
+                paths.insert(entry.id, path);
+                entries.push(entry);
+            }
+            if !entries.is_empty()
+                && tx
+                    .send_blocking(SearchMsg::Batch(LoadBatch { entries, paths }))
+                    .is_err()
+            {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
+    );
+    // Spotlight unavailable ⇒ no tag results (tags need the index).
+    let _ = res;
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+fn run_tag_search(
+    _fs: &NativeFs,
+    _config: &SearchConfig,
+    _root: &Path,
+    _tag: &str,
+    _cancel: &AtomicBool,
+    _tx: &async_channel::Sender<SearchMsg>,
+) -> Option<EnumerationError> {
+    None
 }
 
 fn run_walker(
@@ -202,9 +272,47 @@ impl Shell {
             return;
         };
         let root = self.tabs[idx].current_dir.clone();
+        self.start_search_inner(tab_id, root, needle, None, notify_window, cx);
+    }
+
+    /// Launch a Finder-tag search (a Tag favorite was clicked, §9),
+    /// rooted at Home so results span the user's files without dredging
+    /// the whole system. Streams into the tab's listing like any search.
+    pub fn start_tag_search(
+        &mut self,
+        tab_id: TabId,
+        tag: String,
+        notify_window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        let tag = tag.trim().to_string();
+        if tag.is_empty() {
+            return;
+        }
+        let root = feraille_fs_native::home_dir();
+        self.start_search_inner(tab_id, root, tag.clone(), Some(tag), notify_window, cx);
+    }
+
+    /// Shared launch path for text (`tag = None`) and tag
+    /// (`tag = Some`) searches: bump the tab generation, cancel in-flight
+    /// workers, clear the listing, and stream results into the tab.
+    fn start_search_inner(
+        &mut self,
+        tab_id: TabId,
+        root: PathBuf,
+        needle: String,
+        tag: Option<String>,
+        notify_window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else {
+            return;
+        };
         let config = SearchConfig::load();
-        let use_spotlight = resolve_spotlight(config.engine);
-        let engine_label = if use_spotlight {
+        let use_spotlight = tag.is_some() || resolve_spotlight(config.engine);
+        let engine_label = if tag.is_some() {
+            "Tag"
+        } else if use_spotlight {
             "Spotlight"
         } else {
             "Subtree"
@@ -252,7 +360,7 @@ impl Shell {
         let (tx, rx) = async_channel::unbounded();
         cx.background_executor()
             .spawn(async move {
-                run_search_load(fs, use_spotlight, config, root, needle, cancel, tx);
+                run_search_load(fs, use_spotlight, config, root, needle, tag, cancel, tx);
             })
             .detach();
 
