@@ -59,6 +59,10 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Variant",
+    # run_elevated_self → ShellExecuteExW runas + wait; processes_using /
+    # force_close_processes → Restart Manager + OpenProcess/TerminateProcess
+    "Win32_System_RestartManager",
+    "Win32_System_Threading",
 ] }
 
 [target.'cfg(windows)'.dev-dependencies]

@@ -351,17 +351,16 @@ fallback). Remaining is the UX the system explorers have and we don't:
   context-menu verbs (`IContextMenu`) and WSL integration. The near-term
   behavior-breaking stubs (CF_HDROP clipboard, `WM_DEVICECHANGE` volume
   observer, text-naming modal) all shipped.
-- **Resilient file-op coping — Windows-native primitives** (the cross-platform
-  surface + macOS already landed; see docs/features/FILE_OPS.md). Implement on
-  the Windows box behind the existing `platform_shell` stubs:
-  `run_elevated_self` via `ShellExecuteExW` verb `"runas"` (UAC) +
-  wait-for-exit, so **Retry as administrator** works; `processes_using` via the
-  **Restart Manager** (`RmStartSession`/`RmRegisterResources`/`RmGetList`) to
-  name the process holding a locked file; `force_close_processes` via
-  `RmShutdown` (+ `TerminateProcess` fallback) for force-close-and-retry. Then
-  flip `elevation_available()` / `lock_diagnostics_available()` true and wire
-  the "See what's using it" / force-close buttons (the GPUI side already gates
-  on those bools). Linux follow-up: `pkexec` re-exec + `/proc/*/fd` lockers.
+- **Resilient file-op coping — Windows-native primitives.** ✅ *Shipped on
+  `windows-parity`* (`feraille-shell-win32/src/elevation.rs`): `run_elevated_self`
+  via `ShellExecuteExW` verb `"runas"` (UAC) + wait-for-exit powers **Retry as
+  administrator**; `processes_using` via the **Restart Manager**
+  (`RmStartSession`/`RmRegisterResources`/`RmGetList`) names the locking process;
+  `force_close_processes` via `RmShutdown` (+ `TerminateProcess` fallback) powers
+  the **"What's using it?" → "Close & retry"** toast flow. `elevation_available()`
+  / `lock_diagnostics_available()` return true on Windows; verified end-to-end
+  against a real exclusive lock. **Linux follow-up still open:** `pkexec` re-exec
+  for `run_elevated_self` + `/proc/*/fd` scan for `processes_using`.
 - Linux port ([docs/features/linux-port.md](docs/features/linux-port.md)):
   `feraille-gpui` now **builds and runs** on Linux (verified on WSL2 / Ubuntu
   24.04 under WSLg + lavapipe — launches a Wayland window, opens its XDG SQLite

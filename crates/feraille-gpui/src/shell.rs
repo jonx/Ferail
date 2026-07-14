@@ -592,6 +592,9 @@ pub(crate) struct TransferRetry {
     pub mode: file_ops::TransferMode,
     /// At least one failure is a bare permission denial — elevation may help.
     pub elevation_recoverable: bool,
+    /// The exact paths that failed as [`FileOpErrorKind::Locked`] (capped) —
+    /// the ones "What's using it?" diagnoses via the platform lock lookup.
+    pub locked: Vec<PathBuf>,
 }
 
 /// The transparent failure toast: the per-item "N of M · why" summary plus
@@ -608,6 +611,8 @@ pub(crate) fn transfer_failure_notification(
     use gpui_component::notification::Notification;
 
     let offer_admin = retry.elevation_recoverable && crate::platform_shell::elevation_available();
+    let offer_lock =
+        !retry.locked.is_empty() && crate::platform_shell::lock_diagnostics_available();
 
     // Primary action button (disables autohide): elevate when that can help,
     // otherwise a plain retry.
@@ -682,6 +687,23 @@ pub(crate) fn transfer_failure_notification(
                                 window,
                                 cx,
                             );
+                        });
+                        note.dismiss(window, cx);
+                    })),
+            );
+        }
+        // Locked items: name the holding processes (background lookup), then
+        // offer close-and-retry from the follow-up toast.
+        if offer_lock {
+            let r = secondary.clone();
+            row = row.child(
+                Button::new("whats-using-it")
+                    .label("What's using it?")
+                    .ghost()
+                    .small()
+                    .on_click(cx.listener(move |note, _, window, cx| {
+                        let _ = r.shell.update(cx, |shell, cx| {
+                            shell.inspect_locked_retry(r.clone(), window, cx);
                         });
                         note.dismiss(window, cx);
                     })),

@@ -25,6 +25,40 @@ The **prime directive** from [ARCHITECTURE.md](../ARCHITECTURE.md): the UI must 
 
 ---
 
+## 2.1 Status update — parity pass (2026-07-14)
+
+After absorbing the Mac progress (the July merges + `origin/aros-port`), a
+parity pass on the Windows box closed the last big Windows capability gap and
+fixed several latent Mac-authored assumptions:
+
+- **Resilient file-ops shipped** (`feraille-shell-win32/src/elevation.rs`). The
+  three "Chunk C" stubs are now real: `run_elevated_self` (`ShellExecuteExW`
+  verb `"runas"` UAC + wait) powers **Retry as administrator**; `processes_using`
+  (**Restart Manager**) names the process holding a locked file;
+  `force_close_processes` (`RmShutdown` + `TerminateProcess` fallback) powers a
+  new **"What's using it?" → "Close & retry"** toast. `elevation_available()` /
+  `lock_diagnostics_available()` return true on Windows. Verified end-to-end
+  against a real exclusive lock (named the holder, force-closed it, lock
+  released).
+- **`same_volume` got its real Windows arm** — volume serial via
+  `CreateFileW(0 access, BACKUP_SEMANTICS)` + `GetFileInformationByHandle`,
+  nearest-existing-ancestor walk (a drive-letter compare would lie under
+  junction-mounted volumes). Windows moves now take the rename fast path instead
+  of always copy+delete; the Mac-authored `move_renames_on_same_volume` test
+  passes on Windows.
+- **`recreate_symlink` got a real Windows arm** (`symlink_file`/`symlink_dir`
+  by resolved target kind).
+- **`video_mf` end-detection bug fixed** — a decode ERROR now fires the
+  `on_ended` callback (it set a flag nobody read, stalling playlist
+  auto-advance on a broken file).
+- **mpv verified on Windows** — the optional libmpv backend loads via
+  `LoadLibraryW` and plays real frames, matching the Mac; native Media
+  Foundation video (`video_mf.rs`) also confirmed after the viewer refactor.
+
+Still remaining on Windows: reserved-name/char input validation, pasteboard
+volume-identity, the two Ferail-only capabilities (§6b B.4 shell verbs, B.5
+WSL), and the `\\?\` verbatim prefix leaking into a couple of display strings.
+
 ## 2.0 Status update — `windows-parity` branch (2026-06-23)
 
 The port was first built/run **natively on Windows** (not just cross-checked

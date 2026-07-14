@@ -50,10 +50,39 @@ headless screenshots → Windows polish.
   (shinchiro 2026-06-07 dev build) for runtime verification of the mpv backend
   on Windows; point Settings → Plugins there.
 
+- **Windows "Chunk C" resilient file-ops shipped** — the last big Windows
+  capability gap. New `feraille-shell-win32/src/elevation.rs`:
+  - `run_elevated_self`: `ShellExecuteExW` verb `"runas"` (UAC), wait on the
+    returned process handle, return its exit code. `Err("cancelled")` on
+    `ERROR_CANCELLED` to match the macOS osascript contract. Args are re-quoted
+    with `CommandLineToArgvW` rules (unit-tested) so descriptor paths with
+    spaces round-trip to the elevated child's `std::env::args`.
+  - `processes_using`: Restart Manager (`RmStartSession` →
+    `RmRegisterResources` → `RmGetList`), RAII `RmSession` that always
+    `RmEndSession`s. Returns empty on any failure — it's a diagnostic list, not
+    control flow, so "don't know" and "none" render the same.
+  - `force_close_processes`: graceful `RmShutdown(RmForceShutdown)` (delivers
+    WM_CLOSE / service-stop) keyed by (pid, start-time) so a recycled pid can't
+    hit an innocent process, then `TerminateProcess` for survivors.
+  - GPUI wiring: `TransferRetry` carries the capped locked paths; the failure
+    toast grows a **"What's using it?"** button (only when
+    `lock_diagnostics_available()`), which runs the RM scan on the background
+    executor, names the holders, and offers **"Close & retry"**. Mac/Linux keep
+    the stub bools (false), so the button never shows there.
+  - Verified end-to-end with an exclusive-locked file: named the holder
+    (PowerShell pid), force-closed it, confirmed the lock released. The
+    `examples/lockers.rs` smoke harness stays in the crate.
+
 ## With more time, I would
 
 - Add a Windows `file_id` arm to dupes.rs (`GetFileInformationByHandle`
   nFileIndex) so NTFS hard links collapse to one occupant like unix.
+- Drive the "What's using it?" toast through the screenshot harness — it needs
+  a real locked-file transfer failure, which isn't headlessly simulable today;
+  the primitives underneath are verified via the example instead.
+- Linux resilient-ops: `pkexec` re-exec for `run_elevated_self` + a
+  `/proc/*/fd` scan for `processes_using` (the shell-linux stubs are still
+  false/empty).
 
 ---
 

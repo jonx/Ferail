@@ -772,12 +772,24 @@ impl Shell {
                                     .failed
                                     .iter()
                                     .any(|f| f.kind.is_elevation_recoverable());
+                                // The exact locked paths (not top-level
+                                // sources): the lock lookup needs the file the
+                                // OS actually refused. Capped — a thousand
+                                // locked items would all name the same app.
+                                let locked: Vec<PathBuf> = outcome
+                                    .failed
+                                    .iter()
+                                    .filter(|f| f.kind.is_lock())
+                                    .take(16)
+                                    .map(|f| f.path.clone())
+                                    .collect();
                                 let retry = crate::shell::TransferRetry {
                                     shell: weak.clone(),
                                     sources: retry_sources,
                                     dest: dest.clone(),
                                     mode: *effective,
                                     elevation_recoverable,
+                                    locked,
                                 };
                                 window.push_notification(
                                     crate::shell::transfer_failure_notification(summary, retry),
@@ -904,6 +916,138 @@ impl Shell {
                 Err(e) => {
                     window.push_notification(
                         error_notification(format!("Retry as administrator failed: {e}")),
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// "What's using it?" — name the processes holding the locked items, then
+    /// offer close-and-retry from a follow-up toast. The Restart Manager scan
+    /// enumerates every process (seconds, not millis), so it runs on the
+    /// background executor (Prime Directive).
+    pub(crate) fn inspect_locked_retry(
+        &mut self,
+        retry: crate::shell::TransferRetry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::Sizable as _;
+        use gpui_component::button::Button;
+        use gpui_component::notification::Notification;
+
+        let locked = retry.locked.clone();
+        let win = window.window_handle();
+        cx.spawn(async move |_this, cx| {
+            let holders = cx
+                .background_executor()
+                .spawn(async move {
+                    // Dedupe by pid — one app usually holds several items.
+                    let mut seen: Vec<crate::platform_shell::LockingProcess> = Vec::new();
+                    for path in &locked {
+                        for lp in crate::platform_shell::processes_using(path) {
+                            if !seen.iter().any(|s| s.pid == lp.pid) {
+                                seen.push(lp);
+                            }
+                        }
+                    }
+                    seen.sort_by(|a, b| a.name.cmp(&b.name));
+                    seen
+                })
+                .await;
+
+            let _ = win.update(cx, |_, window, cx| {
+                if holders.is_empty() {
+                    // Whatever held it let go since the failure.
+                    let r = retry.clone();
+                    let note =
+                        Notification::info("No process is holding these files anymore").action(
+                            move |_, _, cx| {
+                                let r = r.clone();
+                                Button::new("retry-after-lock").label("Retry").small().on_click(
+                                    cx.listener(move |note, _, window, cx| {
+                                        let _ = r.shell.update(cx, |shell, cx| {
+                                            shell.spawn_transfer_op(
+                                                r.sources.clone(),
+                                                r.dest.clone(),
+                                                r.mode,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                        note.dismiss(window, cx);
+                                    }),
+                                )
+                            },
+                        );
+                    window.push_notification(note, cx);
+                    return;
+                }
+                let names = holders
+                    .iter()
+                    .map(|h| h.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let pids: Vec<u32> = holders.iter().map(|h| h.pid).collect();
+                let r = retry.clone();
+                let note = Notification::warning(format!("In use by {names}")).action(
+                    move |_, _, cx| {
+                        let r = r.clone();
+                        let pids = pids.clone();
+                        Button::new("close-and-retry")
+                            .label("Close & retry")
+                            .small()
+                            .on_click(cx.listener(move |note, _, window, cx| {
+                                let _ = r.shell.update(cx, |shell, cx| {
+                                    shell.force_close_then_retry(
+                                        r.clone(),
+                                        pids.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                                note.dismiss(window, cx);
+                            }))
+                    },
+                );
+                window.push_notification(note, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Close the named processes (graceful, then forced), then re-run the
+    /// failed items. Blocking close runs on the background executor.
+    pub(crate) fn force_close_then_retry(
+        &mut self,
+        retry: crate::shell::TransferRetry,
+        pids: Vec<u32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let win = window.window_handle();
+        cx.spawn(async move |_this, cx| {
+            let closed = cx
+                .background_executor()
+                .spawn(async move { crate::platform_shell::force_close_processes(&pids) })
+                .await;
+            let _ = win.update(cx, |_, window, cx| match closed {
+                Ok(()) => {
+                    let _ = retry.shell.update(cx, |shell, cx| {
+                        shell.spawn_transfer_op(
+                            retry.sources.clone(),
+                            retry.dest.clone(),
+                            retry.mode,
+                            window,
+                            cx,
+                        );
+                    });
+                }
+                Err(e) => {
+                    window.push_notification(
+                        error_notification(format!("Couldn't close the apps: {e}")),
                         cx,
                     );
                 }

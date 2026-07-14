@@ -2223,39 +2223,12 @@ mod win_tests {
 
 // ---------------------------------------------------------------------------
 // Privilege escalation + locked-file diagnostics (resilient file operations).
-//
-// STUBS for now. Chunk C (on the Windows box) implements:
-//   - run_elevated_self  -> ShellExecuteExW verb "runas" (UAC) + wait + exit code
-//   - processes_using     -> Restart Manager (RmStartSession/RmRegisterResources/RmGetList)
-//   - force_close_processes -> RmShutdown, with a TerminateProcess fallback
-// See docs/features/windows-port.md.
+// Real Win32 implementations in elevation.rs: ShellExecuteExW "runas" +
+// Restart Manager. See docs/features/windows-port.md.
 // ---------------------------------------------------------------------------
 
-/// A process holding a file open. Identical shape in every shell crate.
-#[derive(Clone, Debug)]
-pub struct LockingProcess {
-    pub pid: u32,
-    pub name: String,
-}
-
-pub fn elevation_available() -> bool {
-    // Chunk C: true on Windows once the runas re-exec lands.
-    false
-}
-
-pub fn run_elevated_self(_args: &[String]) -> Result<i32, String> {
-    Err("elevation not implemented on Windows yet (Chunk C: ShellExecuteEx runas)".into())
-}
-
-pub fn lock_diagnostics_available() -> bool {
-    // Chunk C: true on Windows once Restart Manager lookup lands.
-    false
-}
-
-pub fn processes_using(_path: &std::path::Path) -> Vec<LockingProcess> {
-    Vec::new()
-}
-
-pub fn force_close_processes(_pids: &[u32]) -> Result<(), String> {
-    Err("force-close not implemented on Windows yet (Chunk C: RmShutdown)".into())
-}
+mod elevation;
+pub use elevation::{
+    elevation_available, force_close_processes, lock_diagnostics_available, processes_using,
+    run_elevated_self, LockingProcess,
+};
