@@ -14,7 +14,8 @@
 # NOT auto-mask app icons. Get this wrong and the tile renders oversized and overflows the
 # Dock selection box (which is exactly what the old hand-cut tile did — 887x846, off-centre):
 #   canvas 1024x1024 · tile (rounded body) 824x824 (80.5%) · 100px margin each side ·
-#   corner radius 185.4px (= 0.225 x 824) with CONTINUOUS (squircle) corners.
+#   CONTINUOUS (squircle) corners at RAD=278 (Apple's nominal radius is 185.4 = 0.225 x 824;
+#   we cut ~50% rounder on purpose — picked by eye, the spec value read too square here).
 #   Unlike the macaron generator this was adapted from, we do NOT approximate the corner with a
 #   circular arc: a circular arc is tangent-continuous but has a curvature *jump* where it joins
 #   the straight edge, which reads as a subtle kink at Dock sizes. Instead we cut Apple's
@@ -42,7 +43,9 @@ command -v iconutil >/dev/null 2>&1 || { echo "need iconutil (macOS)" >&2; exit 
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 T=824; SS=4; TS=$((T*SS))        # tile side, supersample factor, supersampled canvas
-RAD=185.4                        # nominal corner radius (0.225 x 824); edge-break point
+RAD=278                          # corner radius / edge-break point. Apple's nominal spec is
+                                 # 185.4 (0.225 x 824), but that read too square on this art;
+                                 # +50% was picked by eye from a 185/213/241/278 comparison.
 SMOOTH=0.6                       # figma corner-smoothing (Apple's continuous-corner value)
 G=40                             # overscan margin cropped off each side (see step 2)
 
