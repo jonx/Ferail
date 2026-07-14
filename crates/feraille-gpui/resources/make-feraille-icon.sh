@@ -14,9 +14,14 @@
 # NOT auto-mask app icons. Get this wrong and the tile renders oversized and overflows the
 # Dock selection box (which is exactly what the old hand-cut tile did — 887x846, off-centre):
 #   canvas 1024x1024 · tile (rounded body) 824x824 (80.5%) · 100px margin each side ·
-#   corner radius 185.4px (= 0.225 x 824), continuous/squircle corners (we approximate
-#   with a circular arc — indistinguishable at Dock sizes).
-#   Refs: Apple HIG "App icons"; Apple Developer Forums thread 670578.
+#   corner radius 185.4px (= 0.225 x 824) with CONTINUOUS (squircle) corners.
+#   Unlike the macaron generator this was adapted from, we do NOT approximate the corner with a
+#   circular arc: a circular arc is tangent-continuous but has a curvature *jump* where it joins
+#   the straight edge, which reads as a subtle kink at Dock sizes. Instead we cut Apple's
+#   continuous corner via figma corner-smoothing (s=0.6): the curvature eases into the edges so
+#   the round blends seamlessly into the sides. The straight edges break at the same 185.4px
+#   point as the circular version, so the tile footprint (and thus the margins) is unchanged.
+#   Refs: Apple HIG "App icons"; Apple Developer Forums thread 670578; figma corner smoothing.
 #
 # Two ImageMagick traps this script works around (both cost real time to rediscover):
 #   - a Gray-colorspace mask silently collapses the DstIn result to grayscale and drops
@@ -36,8 +41,42 @@ command -v magick   >/dev/null 2>&1 || { echo "need ImageMagick (magick)" >&2; e
 command -v iconutil >/dev/null 2>&1 || { echo "need iconutil (macOS)" >&2; exit 1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-T=824; SS=4; RSS=741.6            # tile side, supersample, radius*SS (185.4 * 4)
+T=824; SS=4; TS=$((T*SS))        # tile side, supersample factor, supersampled canvas
+RAD=185.4                        # nominal corner radius (0.225 x 824); edge-break point
+SMOOTH=0.6                       # figma corner-smoothing (Apple's continuous-corner value)
 CROPL=9                          # source columns shaved off the LEFT edge (see step 2)
+
+# figma corner-smoothing: emit the squircle SVG path (T-space, equal corners). Ported from
+# figma-squircle; s=SMOOTH, and the base radius is RAD/(1+s) so the straight edges break at
+# exactly RAD (matching the old circular footprint). Verified pixel-identical to the reference.
+squircle_path() {
+  awk -v W="$T" -v s="$SMOOTH" -v RAD="$RAD" '
+    function rad(x){return x*PI/180}
+    function tn(x){return sin(x)/cos(x)}
+    BEGIN{
+      PI=atan2(0,-1); r=RAD/(1+s);
+      p=(1+s)*r; arc=90*(1-s); al=sin(rad(arc/2))*r*sqrt(2);
+      alpha=(90-arc)/2; beta=45*s; p3=r*tn(rad(beta/2));
+      c=p3*cos(rad(alpha)); d=c*tn(rad(alpha)); b=(p-al-c-d)/3; a=2*b;
+      ab=a+b; abc=a+b+c; bc=b+c; H=W;
+      printf "M %.4f 0 ", W-p;
+      printf "c %.4f 0 %.4f 0 %.4f %.4f ", a, ab, abc, d;
+      printf "a %.4f %.4f 0 0 1 %.4f %.4f ", r, r, al, al;
+      printf "c %.4f %.4f %.4f %.4f %.4f %.4f ", d, c, d, bc, d, abc;
+      printf "L %.4f %.4f ", W, H-p;
+      printf "c 0 %.4f 0 %.4f %.4f %.4f ", a, ab, -d, abc;
+      printf "a %.4f %.4f 0 0 1 %.4f %.4f ", r, r, -al, al;
+      printf "c %.4f %.4f %.4f %.4f %.4f %.4f ", -c, d, -bc, d, -abc, d;
+      printf "L %.4f %.4f ", p, H;
+      printf "c %.4f 0 %.4f 0 %.4f %.4f ", -a, -ab, -abc, -d;
+      printf "a %.4f %.4f 0 0 1 %.4f %.4f ", r, r, -al, -al;
+      printf "c %.4f %.4f %.4f %.4f %.4f %.4f ", -d, -c, -d, -bc, -d, -abc;
+      printf "L 0 %.4f ", p;
+      printf "c 0 %.4f 0 %.4f %.4f %.4f ", -a, -ab, d, -abc;
+      printf "a %.4f %.4f 0 0 1 %.4f %.4f ", r, r, al, -al;
+      printf "c %.4f %.4f %.4f %.4f %.4f %.4f Z", c, -d, bc, -d, abc, -d;
+    }'
+}
 
 # 1. If the source has an opaque white background (a fresh full-bleed render), lift it to
 #    transparency with a connected flood-fill from the four corners — this preserves any
@@ -60,9 +99,11 @@ SW="$(magick identify -format '%w' "$TMP/tile.png")"; SH="$(magick identify -for
 magick "$TMP/tile.png" -crop "$((SW-CROPL))x${SH}+${CROPL}+0" +repage \
   -resize "${T}x${T}!" "$TMP/art.png"
 
-# 3. Anti-aliased circular rounded-rect mask at radius 185.4 (drawn 4x, downsampled).
-magick -size "$((T*SS))x$((T*SS))" xc:none -fill white \
-  -draw "roundRectangle 0,0 $((T*SS-1)),$((T*SS-1)) $RSS,$RSS" \
+# 3. Anti-aliased continuous-corner (squircle) mask, drawn at SSx supersample then downsampled.
+#    Interior opaque white, exterior transparent, so the shape lives in the alpha channel that
+#    step 4's DstIn samples.
+magick -size "${TS}x${TS}" xc:none -fill white \
+  -draw "scale $SS $SS path '$(squircle_path)'" \
   -filter Lanczos -resize "${T}x${T}" "$TMP/mask.png"
 
 # 4. Clip the art to the tile (mask forced to sRGB — see header note). Apple's squircle is
