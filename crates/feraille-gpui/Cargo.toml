@@ -120,6 +120,10 @@ winresource = "0.1"
 # `Box<dyn FsBackend>` working.
 feraille-core.workspace = true
 feraille-fs-native.workspace = true
+# assets test: rasterize every bundled chrome SVG through the same usvg/resvg
+# path gpui uses, to catch malformed/empty glyphs that silently don't draw.
+# Already in the compiled graph (via gpui), so this adds no build cost.
+resvg = "0.45"
 
 [lib]
 path = "src/lib.rs"

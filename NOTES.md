@@ -73,6 +73,36 @@ headless screenshots → Windows polish.
     (PowerShell pid), force-closed it, confirmed the lock released. The
     `examples/lockers.rs` smoke harness stays in the crate.
 
+- **Linux file-type icons shipped** (`feraille_fs_native::fetch_icon_rgba`
+  Linux arm). Pipeline: `xdg-mime` shared-mime-info → candidate icon names
+  (specific, `type-subtype`, `*-x-generic`) → `freedesktop-icons` theme lookup
+  (GTK theme via gsettings, hicolor cascade) → rasterize PNG (`image`) or SVG
+  (`resvg`, un-premultiplied to honour the straight-RGBA contract). All four
+  deps were already compiled in the graph (via gpui), so no build-cost. Cached
+  per-kind/extension one level up in gpui's `IconCache`, so MIME+theme
+  resolution runs once per file type, never on the render path. Verified in
+  WSL2: dumped real theme glyphs to PNG (`examples/icon_dump.rs`) — correct
+  document + folder glyphs. Note: WSL2's Adwaita is stripped of per-type MIME
+  icons, so every file type falls to the generic there (correct freedesktop
+  behaviour — Nautilus does the same on that box); a full desktop theme gives
+  distinct glyphs.
+
+- **Icon-drawing tests added** (answering the AROS "chrome icons don't draw"
+  report):
+  - fs-native `icon_tests`: `fetch_icon_rgba` returns a well-formed, non-empty,
+    correctly-sized icon for a text file + directory (mac/windows always;
+    linux tolerates None when no theme installed).
+  - gpui `assets::tests`: (1) every SVG we ship rasterizes non-empty through
+    the same usvg/resvg path gpui uses; (2) every icon path the app actually
+    draws (~85, curated from the `svg().path("icons/…")` call sites) resolves
+    via the composite asset source and rasterizes non-empty.
+  - **Diagnostic finding for AROS:** both gpui asset tests PASS, so every drawn
+    icon is a valid, non-empty SVG that usvg/resvg rasterizes fine. The AROS
+    "chrome icons not drawn" symptom is therefore NOT a bad/missing/empty asset
+    — it's in the `gpui_aros` renderer's monochrome-SVG-sprite path (zed-aros
+    fork), which feraille tests can't cover and I can't repro from this box.
+    Next step for AROS lives in zed-aros/crates/gpui_aros, not here.
+
 ## With more time, I would
 
 - Add a Windows `file_id` arm to dupes.rs (`GetFileInformationByHandle`

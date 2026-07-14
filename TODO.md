@@ -368,11 +368,17 @@ fallback). Remaining is the UX the system explorers have and we don't:
   tested: volumes (`/proc/self/mountinfo` + `statvfs`), trash (freedesktop
   spec), download-provenance / MoTW (`user.xdg.origin.url`), plain-text
   clipboard (`arboard`), and Open With (freedesktop MIME + `.desktop` scan).
-  Remaining shell stubs to fill with real XDG portal / freedesktop work: the
-  file-URL clipboard (`text/uri-list`), file-type icons (icon-theme lookup),
+  Also done: **file-type icons** (`fetch_icon_rgba` — shared-mime-info MIME
+  detection → freedesktop icon-theme lookup → PNG/SVG rasterization via
+  `image`/`resvg`; cached per-kind, off the render path). Verified in WSL2 by
+  dumping real theme glyphs to PNG (a document glyph for text, a distinct
+  folder glyph) and by a smoke test; type-specific glyphs resolve where the
+  theme ships them (WSL2's stripped Adwaita falls to the generic, same as
+  Nautilus there). Remaining shell stubs to fill with real XDG portal /
+  freedesktop work: the file-URL clipboard (`text/uri-list`),
   thumbnails/previews (XDG thumbnail cache), and the dark/volume/power observers
-  (D-Bus / udisks2 / logind). These need a real desktop (icon themes, mounts,
-  session events) to verify meaningfully — best paired with the next item.
+  (D-Bus / udisks2 / logind). These need a real desktop (mounts, session
+  events) to verify meaningfully — best paired with the next item.
 - Linux headless screenshots: implement `render_to_image` in `gpui_wgpu`
   (offscreen render target + `copy_texture_to_buffer` readback, BGRA/RGBA) and
   wire it through both `gpui_linux` window backends (Wayland + X11), mirroring

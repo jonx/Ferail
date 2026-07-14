@@ -77,6 +77,12 @@ under `cfg(not)`):
   **run on any host** (`cargo test -p feraille-shell-linux` passes on macOS).
 - **`prevent_idle_sleep`** — RAII `SleepBlocker` owning a `systemd-inhibit
   --what=idle` child; dropping it releases the lock.
+- **File-type icons** (`feraille_fs_native::fetch_icon_rgba`, not a shell fn) —
+  shared-mime-info MIME detection (`xdg-mime`) → freedesktop icon-theme lookup
+  (`freedesktop-icons`, GTK theme via gsettings, hicolor cascade) → PNG/SVG
+  rasterization (`image` / `resvg`, straight RGBA). Cached per-kind one level up
+  in `IconCache`, never on the render path. Verified in WSL2 by dumping real
+  theme glyphs to PNG (`examples/icon_dump.rs`) + a smoke test.
 
 **Deliberately still stubbed — these need a running Linux desktop to get right,
 not just to compile** (so they're the first things to do *on* a Linux box, not
