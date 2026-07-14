@@ -103,6 +103,20 @@ headless screenshots → Windows polish.
     fork), which feraille tests can't cover and I can't repro from this box.
     Next step for AROS lives in zed-aros/crates/gpui_aros, not here.
 
+- **Linux content thumbnails shipped** (`feraille_shell_linux::
+  fetch_quick_look_thumbnail`). Rides the shared freedesktop thumbnail cache
+  (`$XDG_CACHE_HOME/thumbnails/{normal,large,x-large,xx-large}/<md5(file-uri)>
+  .png`) so a thumbnail Nautilus already made returns instantly, and one we make
+  is reusable. Miss/stale (source newer than cached PNG) → regenerate with
+  `gdk-pixbuf-thumbnailer` (writes the spec `Thumb::*` tEXt chunks) → decode PNG
+  (`image`) → straight RGBA8 (same contract as `fetch_icon_rgba`). MD5 keying
+  locked to the freedesktop spec vector by a unit test (my first guess at the
+  vector was wrong — `md5sum` gave the ground truth `d40775e…`). v1 = images
+  (gdk-pixbuf); video/PDF need totem/evince or the Tumbler D-Bus dispatcher.
+  New Linux deps `md-5` + `image` were tiny / already compiled. Verified in
+  WSL2: generated a real 256×256 thumbnail that populated the shared cache
+  (`examples/thumb_dump.rs`).
+
 ## With more time, I would
 
 - Add a Windows `file_id` arm to dupes.rs (`GetFileInformationByHandle`

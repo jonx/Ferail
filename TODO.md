@@ -374,11 +374,13 @@ fallback). Remaining is the UX the system explorers have and we don't:
   dumping real theme glyphs to PNG (a document glyph for text, a distinct
   folder glyph) and by a smoke test; type-specific glyphs resolve where the
   theme ships them (WSL2's stripped Adwaita falls to the generic, same as
-  Nautilus there). Remaining shell stubs to fill with real XDG portal /
-  freedesktop work: the file-URL clipboard (`text/uri-list`),
-  thumbnails/previews (XDG thumbnail cache), and the dark/volume/power observers
-  (D-Bus / udisks2 / logind). These need a real desktop (mounts, session
-  events) to verify meaningfully — best paired with the next item.
+  Nautilus there). Also done: **thumbnails** (`fetch_quick_look_thumbnail` —
+  shared freedesktop cache keyed by `md5(file-uri)`, `gdk-pixbuf-thumbnailer`
+  generation on miss/stale; images in v1, video/PDF via totem/evince/Tumbler as
+  a follow-up). Remaining shell stubs to fill with real XDG portal / freedesktop
+  work: the file-URL clipboard (`text/uri-list`), and the dark/volume/power
+  observers (D-Bus / udisks2 / logind). These need a real desktop (mounts,
+  session events) to verify meaningfully — best paired with the next item.
 - Linux headless screenshots: implement `render_to_image` in `gpui_wgpu`
   (offscreen render target + `copy_texture_to_buffer` readback, BGRA/RGBA) and
   wire it through both `gpui_linux` window backends (Wayland + X11), mirroring

@@ -92,9 +92,15 @@ blind from a Mac):
   (`text/uri-list` *and* GNOME's `x-special/gnome-copied-files`), which a
   single `wl-copy`/`xclip` shell-out can't offer; wants a native multi-type
   clipboard client. Wrong target = silent no-op on paste.
-- **`fetch_quick_look_thumbnail`** — the freedesktop cache is keyed by
-  **MD5 of the `file://` URI**; a hand-rolled hash that's subtly wrong just
-  always-misses. Verify against real cache filenames on a Linux box.
+- ~~**`fetch_quick_look_thumbnail`**~~ — **done.** Rides the shared freedesktop
+  thumbnail cache (`$XDG_CACHE_HOME/thumbnails/{normal,large,x-large,xx-large}/
+  <md5(file-uri)>.png`), regenerating with `gdk-pixbuf-thumbnailer` on a miss or
+  stale entry (source newer than the cached PNG). The MD5 keying is locked to
+  the freedesktop spec vector by a unit test, so we hit the same cache Nautilus
+  writes. v1 covers gdk-pixbuf-loadable formats (images); video/PDF thumbnails
+  need their own thumbnailers (totem/evince) or the Tumbler D-Bus dispatcher —
+  a follow-up. Verified in WSL2: generated a real 256×256 thumbnail and it
+  populated the shared cache (`examples/thumb_dump.rs`).
 - **Theme / volume / power observers** — async D-Bus signal subscriptions
   (`ashpd`/`zbus`) bridged into the sync callback API; signal match rules and
   the runtime-thread bridge need live testing.

@@ -22,3 +22,5 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 # copy_to_clipboard — plain-text clipboard over Wayland + X11.
 arboard = "3"
+image = { version = "0.25", default-features = false, features = ["png"] }
+md-5 = "0.11.0"

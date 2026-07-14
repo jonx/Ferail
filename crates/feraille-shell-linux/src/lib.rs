@@ -706,11 +706,106 @@ pub fn show_quick_look(_paths: &[&Path]) -> Result<(), String> {
     Err("show_quick_look: not available on Linux".into())
 }
 
-/// Fetch a thumbnail as `(rgba_or_png_bytes, width, height)`. Real impl: reuse
-/// the freedesktop thumbnail cache (`$XDG_CACHE_HOME/thumbnails`), else
-/// generate via gdk-pixbuf / Tumbler. Stub.
+/// Fetch a content thumbnail as straight RGBA8 `(bytes, width, height)` — the
+/// same contract as `fetch_icon_rgba` (the gpui side swaps to BGRA when it
+/// builds the `RenderImage`).
+///
+/// Rides the **shared freedesktop thumbnail cache** (`$XDG_CACHE_HOME/
+/// thumbnails/{normal,large,x-large,xx-large}/<md5(file-uri)>.png`) so a
+/// thumbnail Nautilus already generated returns instantly from disk — and a
+/// thumbnail we generate is reusable by other file managers. On a miss (or a
+/// stale entry — the source is newer than the cached PNG) it regenerates with
+/// `gdk-pixbuf-thumbnailer`, which writes the spec `Thumb::*` tEXt chunks.
+///
+/// v1 covers what gdk-pixbuf loads (images). Video poster frames and PDF first
+/// pages need their own thumbnailers (totem/evince) or the Tumbler D-Bus
+/// service that dispatches to all registered thumbnailers — a follow-up; those
+/// simply return `None` here and fall back to the type icon.
+///
+/// Off the render path (the gpui thumbnail warmer runs this on the background
+/// pool), so the process spawn + disk I/O are Prime-Directive-safe.
+#[cfg(target_os = "linux")]
+pub fn fetch_quick_look_thumbnail(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let (bucket, dim) = thumb_bucket(size_px);
+    let digest = thumb_md5(&file_uri(path));
+    let cache_path = thumbnails_cache_dir()?
+        .join(bucket)
+        .join(format!("{digest}.png"));
+
+    // Reuse the cached PNG when it is at least as new as the source. This is a
+    // cheaper stand-in for the spec's `Thumb::MTime` tEXt comparison: editing
+    // the source bumps its mtime past the old thumbnail, forcing a regen.
+    let fresh = cache_path
+        .metadata()
+        .and_then(|m| m.modified())
+        .ok()
+        .zip(meta.modified().ok())
+        .is_some_and(|(thumb_mtime, src_mtime)| thumb_mtime >= src_mtime);
+
+    if !fresh {
+        std::fs::create_dir_all(cache_path.parent()?).ok()?;
+        let ok = std::process::Command::new("gdk-pixbuf-thumbnailer")
+            .arg("-s")
+            .arg(dim.to_string())
+            .arg(path)
+            .arg(&cache_path)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok || !cache_path.exists() {
+            return None;
+        }
+    }
+    decode_png_rgba(&cache_path)
+}
+#[cfg(not(target_os = "linux"))]
 pub fn fetch_quick_look_thumbnail(_path: &Path, _size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     None
+}
+
+/// The freedesktop thumbnail cache root (`$XDG_CACHE_HOME/thumbnails`, else
+/// `~/.cache/thumbnails`).
+#[cfg(target_os = "linux")]
+fn thumbnails_cache_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
+    Some(base.join("thumbnails"))
+}
+
+/// Map a requested pixel size to the freedesktop cache bucket and its longest
+/// edge (`normal`=128, `large`=256, `x-large`=512, `xx-large`=1024).
+#[cfg(target_os = "linux")]
+fn thumb_bucket(size_px: u32) -> (&'static str, u32) {
+    match size_px {
+        0..=128 => ("normal", 128),
+        129..=256 => ("large", 256),
+        257..=512 => ("x-large", 512),
+        _ => ("xx-large", 1024),
+    }
+}
+
+/// Lowercase-hex MD5 of the file URI — the freedesktop thumbnail cache key.
+#[cfg(target_os = "linux")]
+fn thumb_md5(uri: &str) -> String {
+    use md5::{Digest, Md5};
+    let mut h = Md5::new();
+    h.update(uri.as_bytes());
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Decode a PNG to straight RGBA8 `(bytes, w, h)`.
+#[cfg(target_os = "linux")]
+fn decode_png_rgba(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
+    let img = image::open(path).ok()?;
+    let rgba = img.to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    Some((rgba.into_raw(), w, h))
 }
 
 // =============================================================
@@ -1189,6 +1284,28 @@ mod tests {
             file_uri(Path::new("/tmp/Résumé.pdf")),
             "file:///tmp/R%C3%A9sum%C3%A9.pdf"
         );
+    }
+
+    // The thumbnail cache key must match what other file managers compute, or
+    // we always-miss the shared cache. This is the canonical vector from the
+    // freedesktop Thumbnail Managing Standard.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn thumb_md5_matches_freedesktop_spec_vector() {
+        assert_eq!(
+            thumb_md5("file:///home/jens/photo/me.png"),
+            "d40775e596682f2a16d1b834c221c0a2"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn thumb_bucket_maps_sizes_to_freedesktop_dirs() {
+        assert_eq!(thumb_bucket(96), ("normal", 128));
+        assert_eq!(thumb_bucket(128), ("normal", 128));
+        assert_eq!(thumb_bucket(129), ("large", 256));
+        assert_eq!(thumb_bucket(512), ("x-large", 512));
+        assert_eq!(thumb_bucket(1024), ("xx-large", 1024));
     }
 }
 
