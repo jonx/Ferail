@@ -48,11 +48,13 @@ fn mdfind_args(scope: &SpotlightScope, needle: &str, name_only: bool) -> Vec<Str
 }
 
 /// True when Spotlight querying is usable on this system (the `mdfind`
-/// binary exists and runs). Cheap probe — callers use it to decide
-/// whether to route a global search to Spotlight or fall back to the
-/// built-in recursive walker.
+/// binary exists and runs). Callers use it to decide whether to route a
+/// global search to Spotlight or fall back to the built-in recursive
+/// walker. NOT cheap: `.output()` forks, execs, and waits for the child
+/// — worker-thread only.
 #[cfg(target_os = "macos")]
 pub fn spotlight_available() -> bool {
+    feraille_core::path_guard::assert_off_ui_thread("spotlight_available");
     std::process::Command::new("mdfind")
         .arg("-help")
         .output()

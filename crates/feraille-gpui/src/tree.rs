@@ -535,8 +535,16 @@ fn render_tree_row(
             .items_center()
             .justify_center()
             .text_color(theme.muted_foreground)
-            .child(if is_expanded { "\u{25BC}" } else { "\u{25B6}" })
-            .text_size(px(9.0))
+            .child(
+                gpui::svg()
+                    .path(if is_expanded {
+                        "icons/nav/disclosure-down.svg"
+                    } else {
+                        "icons/nav/disclosure-right.svg"
+                    })
+                    .icon_px(9.0)
+                    .text_color(theme.muted_foreground),
+            )
             .on_click(move |_, _window, cx| {
                 // Caret toggles expand-collapse only. Suppress
                 // bubbling so the row's navigate handler doesn't run

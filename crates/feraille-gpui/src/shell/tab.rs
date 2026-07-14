@@ -99,6 +99,13 @@ impl ToolResultSurface {
         }
     }
 
+    pub fn search_mode_mut(&mut self) -> Option<&mut SearchMode> {
+        match &mut self.mode {
+            ToolResultMode::Search(search) => Some(search),
+            _ => None,
+        }
+    }
+
     pub fn dupe_mode(&self) -> Option<&DupeViewMode> {
         match &self.mode {
             ToolResultMode::Duplicates(dupes) => Some(dupes),

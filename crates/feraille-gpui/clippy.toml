@@ -1,0 +1,23 @@
+# Prime Directive tripwires (docs/ARCHITECTURE.md#prime-directive).
+#
+# This file lives in the UI crate (not the workspace root) on purpose:
+# clippy resolves its config per-crate, so only feraille-gpui — where
+# these calls can freeze every open window when the target sits on a
+# spun-down external drive or a network mount — sees the ban. Worker
+# crates (feraille-fs-native, feraille-shell-mac, …) do blocking I/O by
+# design and stay unrestricted. The lint is DENIED via this crate's
+# Cargo.toml [lints.clippy].
+#
+# A legitimate use here (CLI paths, worker-thread bodies, the
+# sanctioned wrapper itself) carries `#[allow(clippy::disallowed_methods)]`
+# plus a comment saying why it is off the UI thread. Never silence the
+# lint crate-wide; the per-site allow IS the review marker.
+
+disallowed-methods = [
+    { path = "std::fs::canonicalize", reason = "stats every component; blocks for seconds on slow media. Use crate::shell::canonicalize_for_identity from a background task (Prime Directive)" },
+    { path = "std::path::Path::canonicalize", reason = "stats every component; blocks for seconds on slow media. Use crate::shell::canonicalize_for_identity from a background task (Prime Directive)" },
+    { path = "std::process::Command::output", reason = "forks and BLOCKS waiting for the child. Run on the background executor (Prime Directive)" },
+    { path = "std::process::Command::status", reason = "forks and BLOCKS waiting for the child. Run on the background executor (Prime Directive)" },
+    { path = "notify::Watcher::watch", reason = "notify's FSEvents watch() canonicalizes internally (blocks on sleeping drives). Go through crate::fs_watcher::FsWatcher, whose worker thread owns the notify watcher" },
+    { path = "notify::Watcher::unwatch", reason = "watch-set mutation belongs to the fs-watcher worker thread. Go through crate::fs_watcher::FsWatcher" },
+]

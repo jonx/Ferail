@@ -2173,6 +2173,13 @@ pub fn video_overlay_set_paused(id: u64, paused: bool) {
 pub fn video_overlay_set_paused(_id: u64, _paused: bool) {}
 
 #[cfg(windows)]
+pub fn video_overlay_set_muted(id: u64, muted: bool) {
+    video_mf::video_overlay_set_muted(id, muted)
+}
+#[cfg(not(windows))]
+pub fn video_overlay_set_muted(_id: u64, _muted: bool) {}
+
+#[cfg(windows)]
 pub fn video_overlay_restart(id: u64) {
     video_mf::video_overlay_restart(id)
 }

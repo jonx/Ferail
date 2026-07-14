@@ -53,6 +53,11 @@ pub fn run_gui(args: screenshot::Args) {
     let settings_page = args.settings;
 
     app.run(move |cx| {
+        // Arm the Prime Directive's debug-build tripwire: from here on,
+        // known-blocking filesystem/shell entry points panic if they
+        // ever run on this (the UI) thread. See
+        // `feraille_core::path_guard::assert_off_ui_thread`.
+        feraille_core::path_guard::mark_ui_thread();
         gpui_component::init(cx);
         crate::shell::init(cx);
         // Replace the dock / About icon. Has to happen after gpui

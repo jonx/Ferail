@@ -348,7 +348,7 @@ impl ProcessState {
         }
         if let Some(w) = self.watcher.borrow_mut().as_mut() {
             for dir in dirs {
-                let _ = w.watch(&dir);
+                w.watch(&dir);
             }
         }
     }

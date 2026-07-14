@@ -29,6 +29,12 @@ use crate::tasks::TaskKind;
 
 /// Streamed search result, mirroring the directory loader's `LoadMsg`.
 pub(super) enum SearchMsg {
+    /// The engine the worker actually resolved to, sent before the
+    /// first batch. Engine resolution probes for `mdfind` (a blocking
+    /// process spawn), so it happens on the worker — the UI shows an
+    /// optimistic label until this corrects it (Prime Directive:
+    /// launching a search must not block on the probe).
+    Engine(&'static str),
     Batch(LoadBatch),
     Done(Option<EnumerationError>),
 }
@@ -69,11 +75,12 @@ fn resolve_spotlight(_engine: SearchEnginePref) -> bool {
 }
 
 /// Worker body. Runs on the background executor; streams `SearchMsg`s
-/// back over `tx`. Picks Spotlight or the walker up front.
+/// back over `tx`. Resolves Spotlight-vs-walker HERE, not at launch:
+/// `resolve_spotlight` shells out to probe `mdfind` (a synchronous
+/// process spawn+wait), which must never run on the UI thread.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_search_load(
     fs: Arc<NativeFs>,
-    use_spotlight: bool,
     config: SearchConfig,
     root: PathBuf,
     needle: String,
@@ -85,10 +92,13 @@ pub(super) fn run_search_load(
         // Tag favorites (§9): a Spotlight `kMDItemUserTags` query. Finder
         // tags are a macOS concept, so there is no walker fallback — a
         // system without Spotlight simply returns no results.
+        let _ = tx.send_blocking(SearchMsg::Engine("Tag"));
         run_tag_search(&fs, &config, &root, &tag, &cancel, &tx)
-    } else if use_spotlight {
+    } else if resolve_spotlight(config.engine) {
+        let _ = tx.send_blocking(SearchMsg::Engine("Spotlight"));
         run_spotlight(&fs, &config, &root, &needle, &cancel, &tx)
     } else {
+        let _ = tx.send_blocking(SearchMsg::Engine("Subtree"));
         run_walker(&fs, &config, &root, &needle, &cancel, &tx)
     };
     let _ = tx.send_blocking(SearchMsg::Done(error));
@@ -308,14 +318,17 @@ impl Shell {
         let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else {
             return;
         };
+        // `load()` reads the memoized in-memory AppState — no disk. The
+        // engine itself resolves on the worker (probing for `mdfind`
+        // spawns a process); this label is the optimistic guess shown
+        // until the worker's `SearchMsg::Engine` confirms/corrects it.
         let config = SearchConfig::load();
-        let use_spotlight = tag.is_some() || resolve_spotlight(config.engine);
         let engine_label = if tag.is_some() {
             "Tag"
-        } else if use_spotlight {
-            "Spotlight"
-        } else {
+        } else if matches!(config.engine, SearchEnginePref::Walker) {
             "Subtree"
+        } else {
+            "Spotlight"
         };
 
         // Treat the search like a fresh load on this tab: bump the
@@ -360,7 +373,7 @@ impl Shell {
         let (tx, rx) = async_channel::unbounded();
         cx.background_executor()
             .spawn(async move {
-                run_search_load(fs, use_spotlight, config, root, needle, tag, cancel, tx);
+                run_search_load(fs, config, root, needle, tag, cancel, tx);
             })
             .detach();
 
@@ -395,6 +408,19 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         match msg {
+            SearchMsg::Engine(label) => {
+                // Worker-resolved engine (it owns the mdfind probe).
+                // Corrects the optimistic label the launch path showed.
+                if let Some(mode) = self
+                    .tabs
+                    .get_mut(idx)
+                    .and_then(|tab| tab.tool_result.as_mut())
+                    .and_then(|surface| surface.search_mode_mut())
+                {
+                    mode.engine_label = label;
+                    cx.notify();
+                }
+            }
             SearchMsg::Batch(batch) => self.apply_search_batch_in_tab(idx, batch, cx),
             SearchMsg::Done(error) => {
                 let result_count = self.tabs[idx].table.read(cx).delegate().entries.len();

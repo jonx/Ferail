@@ -11,6 +11,43 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 
 ## Status
 
+- **Sidebar + chrome polish pass, 2026-07-14 (verified live).** After the icon
+  fix below, a round of AROS-specific UI fixes, all confirmed on a booted screenshot:
+  - **Font-glyph tofu boxes replaced by SVG icons.** The disclosure triangles
+    (`\u{25B6}`/`\u{25BC}`) in the Favorites/Recents section headers and the tree-row
+    carets, plus the filter placeholder's return symbol (`\u{23CE}`), rendered as
+    tofu on AROS — IBM Plex Sans has no geometric-shapes/symbol glyphs and the AROS
+    font stack has no fallback. Carets are now `nav/disclosure-{right,down}.svg`
+    (new assets); the filter placeholder uses the word "Enter" on AROS.
+  - **Window title.** The OS title bar is drawn by Intuition's topaz bitmap font
+    (ASCII only), so the `\u{2014}` em-dash separator was garbage. AROS uses " - ".
+  - **AROS-appropriate sidebar Locations.** The Unix "home + Desktop/Documents/
+    Downloads" scheme listed folders that don't exist on a stock AROS volume
+    (and clicking a missing one tripped a `posixc` open() fault). AROS now lists
+    System (`SYS:`), Ram Disk (`RAM:`), and the standard `SYS:` drawers
+    (Prefs/Utilities/Tools/Storage) that actually exist, filtered by `exists()`.
+    (`feraille-fs-native/src/paths.rs`.)
+  - **Volumes as drives.** The Volumes section was empty on AROS (`list_volumes`
+    had no arm). It now surfaces the default mounts — `SYS:`, `RAM:`, `MacRO:`,
+    `MacRW:` — probed by `exists()` (no `Work:`-style named volume, which would pop
+    the AmigaOS insert-media requester). (`feraille-fs-native/src/volumes.rs`.)
+  - **Open — tree expand freezes the app.** Expanding the Browse › Home tree row
+    (recursive `SYS:` child enumeration) hangs the app (no crash dialog, no trap in
+    the log — a freeze, not a bus fault). Likely the same AROS metadata-walker
+    frontier as the gated folder-size walker (emul-handler `DoExamineNext`) or a
+    dos read_dir stall. Tree connector lines (issue: "Home should draw lines")
+    are unverified as a result — they only appear once a node is expanded.
+  - **Open — `posixc.library __open` bus-faults on a missing path.** Clicking a
+    nonexistent folder (the old phantom `Downloads`) bus-faulted a worker thread
+    inside `posixc __open` (Error 0x80000002) rather than returning ENOENT. The
+    Locations fix removes the common trigger, but this is a latent landmine (any
+    typed bad path). The real fix is hardening `posixc __open` in aros-upstream.
+- **Chrome / bundled SVG icons now draw, 2026-07-14.** The long-standing "icons
+  don't render on AROS" bug is fixed: rust-embed was in debug filesystem-passthrough
+  mode, so the icon SVG bytes were never in the binary (one-line `debug-embed`
+  feature fix). Also added an AROS-only diagnostic sink (`obs::init` bridges the
+  `log` crate into `MacRW:feraille-log.txt`) that made it findable. Full writeup:
+  the "Chrome / bundled SVG icons" section below.
 - **Rebuilt + re-verified on-device, 2026-07-13.** Both AROS binaries rebuild
   from clean after two regressions were fixed:
   - `aros-aarch64/hosted/rust/compat/include/{endian.h,sys/ioctl.h}` — the host
@@ -204,10 +241,50 @@ Legend: ✅ works · 🟡 partial/unverified · ❌ absent.
 | Drag & drop | ❌ | needs Intuition/Workbench drag |
 | Multi-window / tabs | 🟡 | single window verified; multi untested |
 
-### Chrome / bundled SVG icons don't draw — diagnosis (2026-07-14)
+### Chrome / bundled SVG icons don't draw — RESOLVED (2026-07-14)
 
-Symptom: **most icons in the main window don't draw on AROS** — the toolbar /
-sidebar / command glyphs *and* the Lucide file-type fallback glyphs (the
+Fixed live on booted AROS. Every icon now draws (toolbar, sidebar nav, window
+buttons, sort chevrons, per-row folder icons); the `could not find asset` error
+count went from 2041/frame to 0.
+
+**Root cause: `rust-embed` was in debug filesystem-passthrough mode, so the SVG
+bytes were never in the AROS binary.** Both icon bundles are `#[derive(RustEmbed)]`:
+feraille's `LocalAssets` (`crates/feraille-gpui/src/assets.rs`, `#[folder = "resources"]`)
+and the upstream `gpui_component_assets::Assets` (`#[folder = "assets"]`). Neither
+enabled rust-embed's `debug-embed` feature. Without it a **debug** build does not
+embed the files; it reads them from `$CARGO_MANIFEST_DIR/{resources,assets}/...`
+on the host filesystem at runtime. That path exists on macOS (so `assets::tests`
+and every desktop build pass) but not inside booted AROS, so `FeraAssets::load`
+returned `Ok(None)` for every icon and gpui's `svg()` element drew nothing. The
+`C:Feraille` in the image is a debug build (`link-aros.sh` `PROFILE=debug`), which
+is exactly the profile rust-embed skips embedding in; a release build would have
+masked the bug. The alpha-mask the ranked causes below argued about was never
+produced, because the SVG source bytes were never found.
+
+**Fix (one line):** add `debug-embed` to feraille-gpui's `rust-embed` feature list
+(`crates/feraille-gpui/Cargo.toml`). rust-embed is feature-unified across the
+graph, so the single flag also makes `gpui_component_assets` embed.
+
+**How it was found — the AROS diagnostic channel had to be built first.** The
+obvious step ("boot AROS and grep the run log") could not work: on AROS no app
+output reaches the aros-ctl log at all. gpui's `.log_err()` routes through the
+`log` crate facade, which is a no-op until a logger is installed, and nothing
+installs one on AROS (the desktop binary does; the `feraille_aros_main` entry does
+not). Feraille's own `eprintln!` does not reach the host log either, because AROS
+routes a shell command's stderr to the AROS console, not the host fd 2 that
+aros-ctl captures. So `obs::init()` now (AROS-only) installs a `log::Log` bridge
+and mirrors every diagnostic line into `MacRW:feraille-log.txt` (host-shared,
+readable as `~/AROS/Shared/feraille-log.txt`) — the same host-durable trick the
+panic hook uses for `feraille-panic.txt`. With it, the `could not find asset`
+lines were visible on the first frame and named the cause. Any future AROS-side
+gpui diagnosis reads that file.
+
+> The investigation below is kept for the record. It chased the render path
+> (scale_factor / atlas / tint), but the actual cause was upstream: the assets
+> were never embedded, so nothing downstream of asset load was ever reached.
+
+Symptom (original): **most icons in the main window don't draw on AROS** — the
+toolbar / sidebar / command glyphs *and* the Lucide file-type fallback glyphs (the
 `739c9b2` fallback that kicks in because `fetch_icon_rgba` is a stub on AROS).
 This is **separate from** the "native file icons" row above (that's the
 `icon.library` shell stub); it's the bundled-SVG render path.

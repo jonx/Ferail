@@ -472,6 +472,18 @@ pub fn video_overlay_set_paused(id: u64, paused: bool) {
     });
 }
 
+/// Mute / unmute the engine's audio. `IMFMediaEngine::SetMuted` leaves the
+/// playback clock running, so a muted stream keeps advancing silently.
+pub fn video_overlay_set_muted(id: u64, muted: bool) {
+    PLAYERS.with(|p| {
+        if let Some(player) = p.borrow().get(&id) {
+            unsafe {
+                let _ = player.engine.SetMuted(muted.into());
+            }
+        }
+    });
+}
+
 pub fn video_overlay_restart(id: u64) {
     PLAYERS.with(|p| {
         if let Some(player) = p.borrow().get(&id) {

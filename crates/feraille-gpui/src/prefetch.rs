@@ -243,7 +243,11 @@ fn run_worker(
         let cached_desc = (!force)
             .then(|| cached.as_ref().and_then(|r| r.description.clone()))
             .flatten();
-        let (magic_label, description) = match (cached_label, cached_desc) {
+        // Track whether the description had to be derived this pass (vs.
+        // served from the DB cache) — only a fresh derive does the extra
+        // audio-tag read, since the cache already holds the media line.
+        let desc_was_cached = cached_desc.is_some();
+        let (magic_label, mut description) = match (cached_label, cached_desc) {
             (Some(l), Some(d)) => (l, d),
             (cached_l, cached_d) => {
                 let info = detect_magic_info(&seed.path);
@@ -257,6 +261,21 @@ fn run_worker(
                 (label, desc)
             }
         };
+
+        // Audio files: replace the generic magic description ("MPEG audio,
+        // layer III") with the rich media line ("MP3 · stereo · 44.1 kHz ·
+        // 192 kbps · 03:24"). Only on a fresh derive — the cached value is
+        // already this line (both magic and media descriptions persist to
+        // the same `description` field), so a revisit never re-reads tags.
+        // lofty reads only the header/tag regions, not the whole file.
+        if !desc_was_cached && crate::video_poster::is_lofty_audio(&seed.path) {
+            if let Some(media_desc) = feraille_fs_native::media::read_media_tags(&seed.path)
+                .map(|t| t.description())
+                .filter(|d| !d.is_empty())
+            {
+                description = media_desc;
+            }
+        }
 
         // Determine quarantine state.
         let (quarantined, agent, iso, where_from) =

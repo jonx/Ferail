@@ -91,6 +91,9 @@ impl VideoStream for NativeStream {
     fn set_paused(&mut self, paused: bool) {
         crate::platform_shell::video_overlay_set_paused(self.id, paused);
     }
+    fn set_muted(&mut self, muted: bool) {
+        crate::platform_shell::video_overlay_set_muted(self.id, muted);
+    }
     fn seek(&mut self, seconds: f64) {
         crate::platform_shell::video_overlay_seek(self.id, seconds);
     }

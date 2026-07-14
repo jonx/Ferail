@@ -231,6 +231,32 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     }
     general = general.text_if("Where", feraille_fs_native::paths::display_path(path));
 
+    // ---- Media (audio tags + properties) ----
+    // Files only, and only when lofty recognizes the container as audio — the
+    // reader returns `None` for everything else, so this section simply doesn't
+    // appear for non-media files (the `filter(!rows.is_empty())` below drops an
+    // empty section). Reading tags is native I/O, which is fine here: `gather`
+    // already runs on the background executor, never the paint path.
+    let mut media = InfoSection::new("Media");
+    if target == InfoTarget::File {
+        if let Some(t) = fsn::media::read_media_tags(path) {
+            media = media
+                .text_if("Title", t.title.clone())
+                .text_if("Artist", t.artist.clone())
+                .text_if("Album", t.album.clone())
+                .text_if("Genre", t.genre.clone())
+                .text_if("Year", t.year.map(|y| y.to_string()).unwrap_or_default())
+                .text_if("Track", t.track_label())
+                .text_if("Disc", t.disc_label())
+                .text_if("Duration", t.duration_label())
+                .text_if("Format", t.codec.clone())
+                .text_if("Channels", t.channels_label())
+                .text_if("Sample rate", t.sample_rate_label())
+                .text_if("Bit depth", t.bit_depth_label())
+                .text_if("Bit rate", t.bitrate_label());
+        }
+    }
+
     // ---- Attributes ----
     let mut attributes = InfoSection::new("Attributes");
     if let Some(s) = &stat {
@@ -307,7 +333,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
         }
     }
 
-    let sections = [general, attributes, permissions, volume]
+    let sections = [general, media, attributes, permissions, volume]
         .into_iter()
         .filter(|s| !s.rows.is_empty())
         .collect();

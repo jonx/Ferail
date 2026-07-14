@@ -16,6 +16,16 @@ publish = false
 level = "warn"
 check-cfg = ['cfg(target_os, values("aros"))']
 
+# Prime Directive enforcement (docs/ARCHITECTURE.md#prime-directive):
+# the workspace-root clippy.toml disallows the syscalls most likely to
+# freeze the UI thread (canonicalize, blocking process waits, raw
+# notify watch registration). Denied here — in the UI crate — so every
+# use must either go through the sanctioned wrapper or carry a visible
+# `#[allow(clippy::disallowed_methods)]` with a why-this-is-off-thread
+# justification. Run `cargo clippy -p feraille-gpui` before finishing.
+[lints.clippy]
+disallowed_methods = "deny"
+
 [features]
 # Compile in the optional mpv video provider (libmpv, loaded at runtime from
 # the path set in Settings). Off by default so a stock build needs nothing.
@@ -23,6 +33,11 @@ mpv = ["dep:feraille-video-mpv"]
 
 [dependencies]
 anyhow.workspace = true
+# Bridge gpui's `.log_err()` (the `log`-crate facade) into the AROS MacRW
+# diagnostic sink — see obs.rs. On booted AROS nothing installs a `log`
+# backend, so those swallowed failures (e.g. `paint_svg`) vanish. Same major
+# as gpui_util's transitive use, so we stay single-copy in the graph.
+log = "0.4"
 gpui.workspace = true
 gpui_platform.workspace = true
 gpui-component.workspace = true
@@ -30,7 +45,13 @@ gpui-component-assets.workspace = true
 # Phase 1 (next-level plan): bundle our own SVG icons alongside
 # the upstream gpui-component icon pack. Same major as the upstream
 # crate uses so we stay single-copy in the graph.
-rust-embed = { version = "8.7", features = ["interpolate-folder-path", "include-exclude"] }
+# `debug-embed`: without it rust-embed reads assets from the host filesystem
+# (CARGO_MANIFEST_DIR) at runtime in debug builds instead of embedding them.
+# That path doesn't exist inside booted AROS, so every icon SVG lookup returned
+# None and no chrome/nav glyph drew. rust-embed is feature-unified across the
+# graph, so this one flag also makes gpui_component_assets embed. The AROS
+# `C:Feraille` is a debug build; this is what puts the SVG bytes in the binary.
+rust-embed = { version = "8.7", features = ["interpolate-folder-path", "include-exclude", "debug-embed"] }
 # Phase 5.b: file-system change events. notify ships its own
 # platform-specific watcher (FSEvents on macOS, inotify on Linux,
 # ReadDirectoryChangesW on Windows). Pinned to the same major as

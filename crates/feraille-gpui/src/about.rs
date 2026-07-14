@@ -212,9 +212,14 @@ fn website_row(url: &'static str) -> impl IntoElement {
                 .text_scale_xs()
                 .underline()
                 .child(url)
-                .on_click(move |_: &ClickEvent, _window, _cx| {
+                .on_click(move |_: &ClickEvent, _window, cx| {
                     let target = format!("https://{url}");
-                    crate::platform_shell::open_url(&target);
+                    // LaunchServices resolution can stall — worker, not
+                    // UI thread (Prime Directive).
+                    cx.background_spawn(async move {
+                        crate::platform_shell::open_url(&target);
+                    })
+                    .detach();
                 }),
         )
 }

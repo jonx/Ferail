@@ -23,7 +23,37 @@ pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
     if buf.len() >= 4 && buf.starts_with(&[0x1a, 0x45, 0xdf, 0xa3]) {
         return Some(sniff_mkv(buf));
     }
+    // ASF (WMA/WMV): the 16-byte header-object GUID, stored little-endian.
+    if buf.len() >= 16 && buf.starts_with(&ASF_HEADER_GUID) {
+        return Some(sniff_asf(buf));
+    }
     None
+}
+
+/// ASF header-object GUID (`75B22630-668E-11CF-A6D9-00AA0062CE6C`) in the
+/// little-endian byte order ASF stores it.
+const ASF_HEADER_GUID: [u8; 16] = [
+    0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62, 0xCE, 0x6C,
+];
+
+/// ASF: distinguish WMA (audio) from WMV (video) by scanning the header for
+/// the stream-type GUIDs. Both share the container, so this is how the label
+/// is decided; without a match (e.g. the stream header sits past the 4 KB
+/// read) it stays a generic "Windows Media".
+fn sniff_asf(buf: &[u8]) -> MagicInfo {
+    // Stream-type GUIDs, little-endian as stored.
+    const AUDIO_GUID: [u8; 16] = [
+        0x40, 0x9E, 0x69, 0xF8, 0x4D, 0x5B, 0xCF, 0x11, 0xA8, 0xFD, 0x00, 0x80, 0x5F, 0x5C, 0x44,
+        0x2B,
+    ];
+    const VIDEO_GUID: [u8; 16] = [
+        0xC0, 0xEF, 0x19, 0xBC, 0x4D, 0x5B, 0xCF, 0x11, 0xA8, 0xFD, 0x00, 0x80, 0x5F, 0x5C, 0x44,
+        0x2B,
+    ];
+    let mut info = MagicInfo::new(MagicType::Asf);
+    info.has_audio = buf.windows(16).any(|w| w == AUDIO_GUID);
+    info.has_video = buf.windows(16).any(|w| w == VIDEO_GUID);
+    info
 }
 
 /// MP4/MOV box structure. Recurses (in a flat loop) through container
@@ -64,6 +94,19 @@ fn sniff_mp4(buf: &[u8]) -> MagicInfo {
         } else {
             pos += box_size.max(8);
         }
+    }
+
+    // An audio-only MPEG-4 file is an M4A/AAC/ALAC track (Apple Music, iTunes)
+    // — label it as audio, not "MP4 video", so the Format column is right and
+    // it doesn't trip the mismatch alert against a `.m4a`/`.m4b` extension.
+    // The `ftyp` brand is the strong signal; the handler-box scan (`soun` but
+    // no `vide`) covers files that declare a generic brand.
+    let audio_brand = matches!(brand, b"M4A " | b"M4B " | b"M4P ");
+    if audio_brand || (info.has_audio && !info.has_video) {
+        info.magic_type = MagicType::M4a;
+        info.has_audio = true;
+        info.has_video = false;
+        return info;
     }
 
     if !info.has_video && !info.has_audio {

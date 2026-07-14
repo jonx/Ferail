@@ -43,6 +43,9 @@ pub mod recents_section;
 pub mod redact;
 pub mod report;
 pub mod reset_db;
+// The headless screenshot driver is a CLI path with no live UI to
+// freeze — the Prime Directive syscall lint doesn't apply to it.
+#[allow(clippy::disallowed_methods)]
 pub mod screenshot;
 pub mod selection_colors;
 pub mod setting_panel;
@@ -60,6 +63,7 @@ pub mod thumbnails;
 pub mod tool_results;
 pub mod trail;
 pub mod tree;
+pub mod video_poster;
 pub mod viewer;
 pub mod window_cascade;
 

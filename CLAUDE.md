@@ -23,7 +23,10 @@ Win32-specific shape.
 
 ## Prime Directive
 
-The UI must never stop.
+The UI must never stop. **This is non-negotiable** — it outranks feature
+completeness, code brevity, and every convenience. Full doctrine, the
+compliant pattern, and the enforcement machinery:
+[Architecture § Prime Directive](docs/ARCHITECTURE.md#prime-directive).
 
 Paint, render, hover, hit-test, scroll, resize, keyboard input, text input,
 selection, and modal drawing are read-only and nonblocking. They must not:
@@ -37,9 +40,24 @@ selection, and modal drawing are read-only and nonblocking. They must not:
 - Build context menus by touching filesystem or shell state.
 - Allocate heavily in row-by-row hot render paths.
 
-Expensive work is scheduled from semantic events, runs off the UI thread
-where possible, and reports back through GPUI entity/update boundaries. If a
-result arrives after the user moved on, drop it.
+The same applies to **action/click handlers and subscriptions** — they run
+on the UI thread too. Any call that can touch a disk or the shell blocks
+for *seconds* on a spun-down external drive or network mount, even ones
+that look free on a local SSD: `Path::exists`, `metadata`, `canonicalize`,
+`read_dir`, `notify`'s `Watcher::watch()` (canonicalizes internally),
+NSWorkspace/LaunchServices lookups, xattr reads.
+
+Expensive or possibly-blocking work is scheduled from semantic events, runs
+on `cx.background_executor()` (or a worker thread), and reports back through
+GPUI entity/update boundaries, guarded by a generation counter and a cancel
+flag. If a result arrives after the user moved on, drop it.
+`Shell::load_path_for_tab` is the canonical example — copy its shape.
+
+Debug builds enforce this at runtime (`feraille_core::path_guard`): path
+resolution during render panics, and known-blocking `feraille-fs-native`
+entry points panic when called on the UI thread. **Never fix a guard panic
+by removing the guard** — move the work off-thread. When you add a new
+blocking entry point, add `assert_off_ui_thread` to it.
 
 ## Architecture Invariants
 
@@ -127,6 +145,9 @@ in Architecture. If it is not done, put it in TODO.
 Before finishing code changes:
 
 - Run `cargo check` for the touched binary or workspace as appropriate.
+- Run `cargo clippy -p feraille-gpui` when the change touches that crate —
+  the `disallowed_methods` deny is part of Prime Directive enforcement; a
+  hit means move the call off-thread, not silence the lint.
 - Run `cargo test` unless the change is docs-only.
 - For UI changes, render at least one screenshot with
   `cargo run --bin feraille-gpui -- --screenshot ...` and inspect it.

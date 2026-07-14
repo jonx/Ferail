@@ -53,6 +53,7 @@ mod virtual_list;
 pub use column::*;
 pub use data_table::*;
 pub use delegate::*;
+pub(crate) use loading::Loading;
 pub use state::*;
 pub use table::*;
 pub(crate) use virtual_list::{VirtualListScrollHandle, v_virtual_list};

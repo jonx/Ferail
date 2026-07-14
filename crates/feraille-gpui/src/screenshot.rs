@@ -125,6 +125,10 @@ pub struct Args {
     /// Open the task panel pre-populated with two representative
     /// tasks. Lands in Stage 5.
     pub simulate_task_panel: bool,
+    /// Force the file pane into the slow-load skeleton state (the view
+    /// a spun-down external drive shows after
+    /// `SLOW_LOAD_INDICATOR_DELAY`), labeled with the given name.
+    pub simulate_slow_load: Option<String>,
     /// `Some(_)` opens the keyboard-shortcuts help overlay with
     /// the given filter text pre-populated (empty string = open
     /// with no filter). Lands in Stage 9.
@@ -258,6 +262,7 @@ pub fn parse_args() -> Args {
                 );
             }
             "--simulate-task-panel" => args.simulate_task_panel = true,
+            "--simulate-slow-load" => args.simulate_slow_load = iter.next(),
             "--shortcuts-help" => args.shortcuts_help = Some(String::new()),
             "--shortcuts-help-filter" => args.shortcuts_help = iter.next(),
             "--ui-scale" => args.ui_scale = iter.next().and_then(|s| s.parse().ok()),
@@ -335,6 +340,7 @@ OPTIONS
   --simulate-toast <text>  Push an error toast. Lands in Stage 5.
   --simulate-progress <p>  Force-show the progress strip. Lands in Stage 5.
   --simulate-task-panel    Open task panel with fixtures. Lands in Stage 5.
+  --simulate-slow-load <name>  Force the slow-device skeleton loading view.
   --shortcuts-help[-filter] Open keyboard help overlay. Lands in Stage 9.
   --ui-scale <factor>      Apply UI zoom. Lands in Stage 9.
   --disk-usage <path>      Render disk-usage treemap. Lands in Stage 7.
@@ -563,6 +569,8 @@ pub fn run(args: Args) -> Result<()> {
                 })
                 .expect("failed to open window for screenshot");
 
+            let simulate_slow_load = shell_args.simulate_slow_load.clone();
+            let shell_for_late_flags = shell_entity.clone();
             if let Some(shell) = shell_entity {
                 shell_args.apply(&shell, &handle, cx).await;
             }
@@ -575,6 +583,25 @@ pub fn run(args: Args) -> Result<()> {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(2500))
                 .await;
+
+            // Slow-device skeleton: force the state the slow-load
+            // timer sets when a first batch is overdue (real path:
+            // Shell::load_path_for_tab). Exercises the genuine
+            // loading()/render_loading render branch — only the
+            // trigger is simulated, since a screenshot run can't spin
+            // down a disk. Applied HERE, after the settle window: the
+            // tab's real load lands during it, and its first batch
+            // would (correctly) clear a flag set any earlier.
+            if let (Some(label), Some(shell)) = (simulate_slow_load, shell_for_late_flags) {
+                let _ = shell.update(cx, |s, cx| {
+                    let table = s.active_tab().table.clone();
+                    table.update(cx, |state, cx| {
+                        state.delegate_mut().slow_load = Some(label.into());
+                        state.refresh(cx);
+                    });
+                    cx.notify();
+                });
+            }
 
             let img = capture_window(&handle, cx).expect("screenshot capture failed");
 
@@ -646,6 +673,7 @@ struct ShellArgs {
     simulate_toast: Option<String>,
     simulate_progress: Option<f32>,
     simulate_task_panel: bool,
+    simulate_slow_load: Option<String>,
     shortcuts_help: Option<String>,
     splitter: Option<f32>,
     scroll: Option<f32>,
@@ -682,6 +710,7 @@ impl From<&Args> for ShellArgs {
             simulate_toast: a.simulate_toast.clone(),
             simulate_progress: a.simulate_progress,
             simulate_task_panel: a.simulate_task_panel,
+            simulate_slow_load: a.simulate_slow_load.clone(),
             shortcuts_help: a.shortcuts_help.clone(),
             splitter: a.splitter,
             scroll: a.scroll,

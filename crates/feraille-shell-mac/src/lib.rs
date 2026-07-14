@@ -1052,6 +1052,15 @@ pub fn video_overlay_set_paused(id: u64, paused: bool) {
 #[cfg(not(target_os = "macos"))]
 pub fn video_overlay_set_paused(_id: u64, _paused: bool) {}
 
+/// Mute/unmute a live video overlay's audio. Main-thread only; stale ids no-op.
+#[cfg(target_os = "macos")]
+pub fn video_overlay_set_muted(id: u64, muted: bool) {
+    video_overlay::set_muted(id, muted);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn video_overlay_set_muted(_id: u64, _muted: bool) {}
+
 /// Seek a live video overlay to the start and resume (loop). Main-thread
 /// only; stale ids no-op.
 #[cfg(target_os = "macos")]

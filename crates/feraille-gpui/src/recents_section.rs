@@ -125,12 +125,16 @@ impl SidebarItem for RecentsSection {
                     .items_center()
                     .justify_center()
                     .text_color(theme.muted_foreground)
-                    .text_size(px(9.0))
-                    .child(if section_collapsed {
-                        "\u{25B6}"
-                    } else {
-                        "\u{25BC}"
-                    }),
+                    .child(
+                        gpui::svg()
+                            .path(if section_collapsed {
+                                "icons/nav/disclosure-right.svg"
+                            } else {
+                                "icons/nav/disclosure-down.svg"
+                            })
+                            .icon_px(9.0)
+                            .text_color(theme.muted_foreground),
+                    ),
             )
             .child(div().flex_1().child("Recents"))
             .on_click(move |_, _window, cx| {

@@ -1216,7 +1216,11 @@ impl Shell {
         let Some((_, _, path)) = self.action_entries_visible_order(cx).into_iter().next() else {
             return;
         };
-        crate::platform_shell::open_terminal(&path);
+        // Process spawn — worker, not UI thread (Prime Directive).
+        cx.background_spawn(async move {
+            crate::platform_shell::open_terminal(&path);
+        })
+        .detach();
     }
 
     /// Sidebar/tree/breadcrumb "Open Terminal Here". Resolves the
@@ -1226,12 +1230,16 @@ impl Shell {
         &mut self,
         _: &OpenTerminalAtContext,
         _: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(path) = self.context_target.take() else {
             return;
         };
-        crate::platform_shell::open_terminal(&path);
+        // Process spawn — worker, not UI thread (Prime Directive).
+        cx.background_spawn(async move {
+            crate::platform_shell::open_terminal(&path);
+        })
+        .detach();
     }
 
     /// Sidebar volume menu "Eject". Unmounts and ejects the right-
@@ -2692,8 +2700,12 @@ impl Shell {
         // showing matches Spacebar's "open/dismiss" Mac feel.
         #[cfg(target_os = "macos")]
         {
-            let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
-            let _ = crate::platform_shell::show_quick_look(&refs);
+            // qlmanage spawn — worker, not UI thread (Prime Directive).
+            cx.background_spawn(async move {
+                let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
+                let _ = crate::platform_shell::show_quick_look(&refs);
+            })
+            .detach();
         }
         #[cfg(not(target_os = "macos"))]
         {

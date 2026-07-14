@@ -744,7 +744,12 @@ impl Shell {
                                     cx,
                                 );
                             }
-                            crate::platform_shell::open_url(url);
+                            // LaunchServices resolution can stall —
+                            // worker, not UI thread (Prime Directive).
+                            cx.background_spawn(async move {
+                                crate::platform_shell::open_url(url);
+                            })
+                            .detach();
                         }),
                 );
             }
@@ -3123,7 +3128,12 @@ impl Render for Shell {
             // so an appearance flip doesn't silently reset text scaling.
             self.apply_ui_zoom(cx);
             // Keep native window chrome in step with the theme flip.
-            crate::platform_shell::set_app_appearance(is_dark);
+            // Deferred: render itself must not mutate AppKit state
+            // (Prime Directive) — this runs on the main thread right
+            // after the pass instead.
+            cx.defer(move |_| {
+                crate::platform_shell::set_app_appearance(is_dark);
+            });
         }
         let weak = cx.weak_entity();
         let locations_menu = self.build_locations_menu(weak.clone(), cx);

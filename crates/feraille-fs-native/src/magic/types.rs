@@ -60,6 +60,11 @@ pub enum MagicType {
     Wav,
     Flac,
     Ogg,
+    Aiff,
+    M4a,
+    /// Advanced Systems Format — the container for WMA (audio) and WMV
+    /// (video). `has_audio`/`has_video` distinguish them.
+    Asf,
     // Data / Text containers
     Json,
     Xml,
@@ -158,6 +163,9 @@ impl MagicType {
             MagicType::Wav => "WAV audio",
             MagicType::Flac => "FLAC audio",
             MagicType::Ogg => "Ogg audio",
+            MagicType::Aiff => "AIFF audio",
+            MagicType::M4a => "M4A audio",
+            MagicType::Asf => "Windows Media",
 
             // Data
             MagicType::Json => "JSON",
@@ -527,13 +535,34 @@ impl MagicInfo {
                 }
             }
 
+            // Windows Media (ASF): WMA when the header carries an audio
+            // stream, WMV when it carries a video stream. lofty can't parse
+            // ASF, so there are no channel/rate facts to add here — the label
+            // alone is enough to keep the file out of the "Binary" bucket (and
+            // its false disguise alert).
+            MagicType::Asf => {
+                let label = match (self.has_video, self.has_audio) {
+                    (true, _) => "Windows Media Video",
+                    (false, true) => "Windows Media Audio",
+                    (false, false) => "Windows Media",
+                };
+                parts.push(label.into());
+            }
+
             // Audio
-            MagicType::Mp3 | MagicType::Wav | MagicType::Flac | MagicType::Ogg => {
+            MagicType::Mp3
+            | MagicType::Wav
+            | MagicType::Flac
+            | MagicType::Ogg
+            | MagicType::Aiff
+            | MagicType::M4a => {
                 let kind = match self.magic_type {
                     MagicType::Mp3 => "MP3",
                     MagicType::Wav => "WAV",
                     MagicType::Flac => "FLAC",
                     MagicType::Ogg => "Ogg Vorbis",
+                    MagicType::Aiff => "AIFF",
+                    MagicType::M4a => "M4A",
                     _ => "audio",
                 };
                 parts.push(kind.into());

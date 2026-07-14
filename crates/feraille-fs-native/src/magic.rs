@@ -57,6 +57,7 @@ pub fn detect_magic(path: &Path) -> Option<&'static str> {
 /// skipped silently when it fails (the header-only classification
 /// remains).
 pub fn detect_magic_info(path: &Path) -> Option<MagicInfo> {
+    feraille_core::path_guard::assert_off_ui_thread("detect_magic_info");
     let mut header = [0u8; HEADER_BYTES];
     let n_header = read_header(path, &mut header)?;
     let mut info = sniff_bytes_info(&header[..n_header]);
@@ -367,6 +368,72 @@ mod tests {
             info.description(),
             "ELF \u{b7} 64-bit \u{b7} relocatable \u{b7} ARM64 \u{b7} AROS"
         );
+    }
+
+    #[test]
+    fn aiff_form_with_comm_chunk() {
+        // FORM..AIFF with a COMM chunk: 2 channels, 88200 frames, 16-bit,
+        // 44100 Hz. The sample rate is the 80-bit extended float whose
+        // canonical bytes for 44100.0 are 40 0E AC 44 00 00 00 00 00 00.
+        let mut buf = vec![0u8; 38];
+        buf[0..4].copy_from_slice(b"FORM");
+        buf[8..12].copy_from_slice(b"AIFF");
+        buf[12..16].copy_from_slice(b"COMM");
+        buf[16..20].copy_from_slice(&18u32.to_be_bytes()); // chunk size
+        buf[20..22].copy_from_slice(&2u16.to_be_bytes()); // channels
+        buf[22..26].copy_from_slice(&88_200u32.to_be_bytes()); // sample frames
+        buf[26..28].copy_from_slice(&16u16.to_be_bytes()); // sample size
+        buf[28..38].copy_from_slice(&[0x40, 0x0E, 0xAC, 0x44, 0, 0, 0, 0, 0, 0]);
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::Aiff);
+        assert_eq!(info.channels, Some(2));
+        assert_eq!(info.sample_rate, Some(44_100));
+        assert_eq!(info.duration_secs, Some(2));
+        assert_eq!(info.description(), "AIFF \u{b7} stereo \u{b7} 44.1 kHz \u{b7} 00:02");
+    }
+
+    #[test]
+    fn aifc_form_is_also_aiff() {
+        // The compressed variant declares form type AIFC.
+        let mut buf = vec![0u8; 12];
+        buf[0..4].copy_from_slice(b"FORM");
+        buf[8..12].copy_from_slice(b"AIFC");
+        assert_eq!(sniff_bytes_info(&buf).magic_type, MagicType::Aiff);
+    }
+
+    #[test]
+    fn m4a_audio_only_mp4_not_video() {
+        // An `ftyp` box with the M4A brand: audio, not "MP4 video".
+        let mut buf = vec![0u8; 24];
+        buf[0..4].copy_from_slice(&16u32.to_be_bytes()); // ftyp box size
+        buf[4..8].copy_from_slice(b"ftyp");
+        buf[8..12].copy_from_slice(b"M4A "); // brand (trailing space)
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::M4a);
+        assert!(info.has_audio && !info.has_video);
+        assert_eq!(detect_magic_info_label(&info), "M4A audio");
+    }
+
+    #[test]
+    fn wma_asf_audio_detected_not_binary() {
+        // ASF header GUID at offset 0, with the audio stream-type GUID later
+        // in the header — a WMA. Must be "Windows Media Audio", not "Binary".
+        let header = [
+            0x30u8, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11, 0xA6, 0xD9, 0x00, 0xAA, 0x00, 0x62,
+            0xCE, 0x6C,
+        ];
+        let audio_guid = [
+            0x40u8, 0x9E, 0x69, 0xF8, 0x4D, 0x5B, 0xCF, 0x11, 0xA8, 0xFD, 0x00, 0x80, 0x5F, 0x5C,
+            0x44, 0x2B,
+        ];
+        let mut buf = vec![0u8; 128];
+        buf[..16].copy_from_slice(&header);
+        buf[64..80].copy_from_slice(&audio_guid);
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::Asf);
+        assert!(info.has_audio && !info.has_video);
+        assert_eq!(detect_magic_info_label(&info), "Windows Media");
+        assert_eq!(info.description(), "Windows Media Audio");
     }
 
     #[test]

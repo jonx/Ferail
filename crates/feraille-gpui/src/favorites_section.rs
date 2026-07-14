@@ -235,12 +235,16 @@ impl SidebarItem for FavoritesSection {
                     .items_center()
                     .justify_center()
                     .text_color(theme.muted_foreground)
-                    .text_size(px(9.0))
-                    .child(if section_collapsed {
-                        "\u{25B6}"
-                    } else {
-                        "\u{25BC}"
-                    }),
+                    .child(
+                        gpui::svg()
+                            .path(if section_collapsed {
+                                "icons/nav/disclosure-right.svg"
+                            } else {
+                                "icons/nav/disclosure-down.svg"
+                            })
+                            .icon_px(9.0)
+                            .text_color(theme.muted_foreground),
+                    ),
             )
             .child(div().flex_1().child("Favorites"))
             .child(plus_button)
@@ -394,6 +398,12 @@ fn render_favorite_row(
     active_path: Option<&std::path::Path>,
     cx: &App,
 ) -> AnyElement {
+    // Row builders can run during layout/prepaint, outside the scope of
+    // `Shell::render`'s own guard — re-enter it so a favorites icon
+    // cache miss returns the blank placeholder instead of a synchronous
+    // NSWorkspace fetch (same parity as tree.rs / file_list.rs row
+    // builders; the sidebar's background icon warm fills the cache).
+    let _render_guard = feraille_core::path_guard::enter_render();
     let theme = cx.theme();
     let label = fav.effective_label();
     let row_key: SharedString = format!("fav-row-{index}").into();

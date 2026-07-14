@@ -31,6 +31,14 @@ pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
         return Some(sniff_wav(buf));
     }
 
+    // AIFF / AIFF-C: the IFF `FORM` container with an `AIFF` (uncompressed)
+    // or `AIFC` (compressed) form type. Without this, uncompressed AIFF has
+    // no recognizable leading signature and falls through to "Binary" — which
+    // then trips the format-mismatch alert against the `.aiff` extension.
+    if buf.len() >= 12 && buf.starts_with(b"FORM") && matches!(&buf[8..12], b"AIFF" | b"AIFC") {
+        return Some(sniff_aiff(buf));
+    }
+
     if buf.len() >= 35 && buf.starts_with(b"OggS") {
         return Some(sniff_ogg(buf));
     }
@@ -186,6 +194,60 @@ fn sniff_wav(buf: &[u8]) -> MagicInfo {
         pos = pos.saturating_add(advance);
     }
     info
+}
+
+/// AIFF: walk the big-endian IFF chunks for `COMM`, which carries channel
+/// count, sample-frame count, and the sample rate as an 80-bit IEEE-754
+/// extended float. Duration is `numSampleFrames / sampleRate`.
+fn sniff_aiff(buf: &[u8]) -> MagicInfo {
+    let mut info = MagicInfo::new(MagicType::Aiff);
+    let mut pos = 12;
+    while pos + 8 <= buf.len() {
+        let id = &buf[pos..pos + 4];
+        let size =
+            u32::from_be_bytes([buf[pos + 4], buf[pos + 5], buf[pos + 6], buf[pos + 7]]) as usize;
+        // COMM: numChannels(i16) frames(u32) sampleSize(i16) sampleRate(f80)
+        if id == b"COMM" && pos + 8 + 18 <= buf.len() {
+            let d = &buf[pos + 8..];
+            info.channels = Some(u16::from_be_bytes([d[0], d[1]]) as u8);
+            let frames = u32::from_be_bytes([d[2], d[3], d[4], d[5]]);
+            let sr = extended_f80_to_u32(&d[8..18]);
+            if sr > 0 {
+                info.sample_rate = Some(sr);
+                info.duration_secs = Some(frames / sr);
+            }
+            break;
+        }
+        // Chunks are padded to an even byte count.
+        let advance = 8usize.saturating_add(size).saturating_add(size & 1);
+        if advance <= 8 {
+            break;
+        }
+        pos = pos.saturating_add(advance);
+    }
+    info
+}
+
+/// Decode an 80-bit IEEE-754 extended-precision float (big-endian, as AIFF
+/// stores the sample rate) to a rounded `u32`. Sample rates are always small
+/// positive normals, so the sign and the subnormal/NaN cases collapse to 0.
+fn extended_f80_to_u32(b: &[u8]) -> u32 {
+    if b.len() < 10 {
+        return 0;
+    }
+    let exponent = (((b[0] & 0x7f) as u32) << 8) | b[1] as u32; // 15-bit, bias 16383
+    let mantissa = u64::from_be_bytes([b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9]]);
+    if exponent == 0 || exponent == 0x7fff {
+        return 0; // zero / subnormal / inf / NaN — not a real rate
+    }
+    // value = mantissa * 2^(exponent - 16383 - 63); the mantissa's top bit is
+    // the explicit integer part of the extended format.
+    let value = mantissa as f64 * 2f64.powi(exponent as i32 - 16383 - 63);
+    if value.is_finite() && value > 0.0 {
+        value.round() as u32
+    } else {
+        0
+    }
 }
 
 /// Ogg page header followed by Vorbis identification packet:

@@ -1225,6 +1225,10 @@ pub fn video_overlay_remove(_id: u64) {}
 /// Pause / resume.
 pub fn video_overlay_set_paused(_id: u64, _paused: bool) {}
 
+/// Mute / unmute. Stub: the Linux shell has no native player (mpv handles
+/// audio + mute when selected).
+pub fn video_overlay_set_muted(_id: u64, _muted: bool) {}
+
 /// Restart from the beginning.
 pub fn video_overlay_restart(_id: u64) {}
 

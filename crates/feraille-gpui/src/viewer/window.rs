@@ -91,6 +91,15 @@ const CHROME_AUTOHIDE: Duration = Duration::from_millis(2500);
 /// poster unless the mpv backend (broad set below) is active. [mac]
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov"];
 
+/// How long an open video stream gets to deliver its first frame before
+/// the stage declares the file undecodable. Corrupt files (recovery
+/// debris, foreign bytes under a video extension) open a stream that
+/// never produces a frame — without a deadline they'd show a blank stage
+/// with no explanation. Healthy files measure well under this even on
+/// removable media; a frame arriving later self-heals (the message is
+/// computed from live state, not latched).
+const VIDEO_DECODE_DEADLINE: Duration = Duration::from_secs(5);
+
 /// Containers mpv plays that the built-in player can't — only treated as
 /// video when the mpv backend is selected (otherwise they'd open as a
 /// Quick Look poster image, e.g. a 3GP showing as a still). Not exhaustive
@@ -100,6 +109,20 @@ const MPV_VIDEO_EXTS: &[&str] = &[
     "ts", "mts", "m2ts", "vob", "ogv", "ogm", "divx", "rm", "rmvb", "f4v", "mxf", "dv", "qt",
     "amv", "nsv", "y4m", "h264", "hevc", "av1",
 ];
+
+/// Audio the built-in (AVFoundation / Media Foundation) player decodes —
+/// routed to the playback path for *any* backend, like [`VIDEO_EXTS`]. These
+/// are the mainstream, natively-supported containers/codecs.
+const AUDIO_EXTS: &[&str] = &[
+    "mp3", "m4a", "m4b", "aac", "aiff", "aif", "aifc", "wav", "caf", "flac", "alac",
+];
+
+/// Audio only the mpv backend can decode — treated as playable only when the
+/// mpv provider is selected (the native players lack these codecs: WMA is
+/// proprietary, and Vorbis/Opus/FLAC/APE/… aren't in AVFoundation). Mirrors
+/// [`MPV_VIDEO_EXTS`]: without mpv these stay a static cover/poster.
+const MPV_AUDIO_EXTS: &[&str] =
+    &["ogg", "oga", "opus", "wma", "ape", "wv", "mpc", "tta", "dsf", "dff", "mka"];
 
 /// `M:SS` (or `H:MM:SS` past an hour) for the seek-bar time labels.
 fn fmt_time(secs: f64) -> String {
@@ -511,22 +534,10 @@ enum SeekTarget {
 /// Read the persisted video-provider choice once at viewer construction —
 /// settings I/O must never touch the render path. `Some(path)` selects the
 /// mpv provider (effective only in an `mpv`-feature build); `None` keeps the
-/// built-in player.
+/// built-in player. Shared with the thumbnail poster fallback, which gates
+/// on the same preference.
 fn resolve_mpv_pref() -> Option<PathBuf> {
-    // The mpv provider only exists in an `mpv`-feature build. Without it the
-    // saved preference is unhonourable, so refuse it here — otherwise the
-    // broad mpv container set (MKV/AVI/3GP…) would be treated as displayable
-    // video and mis-routed to the native player, which can't decode it.
-    if !cfg!(feature = "mpv") {
-        return None;
-    }
-    let st = crate::app_state::load();
-    (st.video_backend.as_deref() == Some("mpv")).then(|| {
-        PathBuf::from(
-            st.mpv_path
-                .unwrap_or_else(|| super::backend_native::default_mpv_path().to_string()),
-        )
-    })
+    crate::video_poster::resolve_mpv_pref()
 }
 
 pub struct ViewerWindow {
@@ -606,6 +617,11 @@ pub struct ViewerWindow {
     /// `RenderImage` and drawn like any image. `None` until the first
     /// frame lands — the Quick Look poster stands in until then.
     video_frame_image: Option<Arc<RenderImage>>,
+    /// When the current video stream was opened. A stream that has
+    /// produced no frame [`VIDEO_DECODE_DEADLINE`] after this is treated
+    /// as undecodable (corrupt file / audio-only impostor) and the stage
+    /// says so instead of sitting on a blank poster forever.
+    video_opened_at: Option<std::time::Instant>,
     /// Monotonic counter bumped on every new pulled frame; keys the
     /// rotated-frame cache so a rotation re-uses the last rotate.
     video_frame_seq: u64,
@@ -785,6 +801,7 @@ impl ViewerWindow {
             video_adjust_native: false,
             video_enhance_applied: VideoEnhance::default(),
             video_frame_image: None,
+            video_opened_at: None,
             video_frame_seq: 0,
             video_rotated: None,
             video_frames_to_drop: Vec::new(),
@@ -940,7 +957,7 @@ impl ViewerWindow {
         let epoch = self.playback.bump();
         // Video entries advance on their own end-of-playback event,
         // not the interval timer — a 4-minute clip plays through.
-        if self.playback.playing && !self.current_is_video() {
+        if self.playback.playing && !self.current_is_playable() {
             self.arm_timer(epoch, cx);
         }
         cx.notify();
@@ -964,12 +981,63 @@ impl ViewerWindow {
             || (self.mpv_pref.is_some() && MPV_VIDEO_EXTS.contains(&ext.as_str()))
     }
 
+    /// Whether `path` should play as audio for the *active* backend: the
+    /// natively-decodable formats always, plus the mpv-only set when the mpv
+    /// backend is selected. An audio file opens a real playback stream (same
+    /// backend seam as video) but has no picture frames — the stage shows its
+    /// cover art while the transport drives sound.
+    fn is_audio_path(&self, path: &std::path::Path) -> bool {
+        let Some(ext) = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+        else {
+            return false;
+        };
+        AUDIO_EXTS.contains(&ext.as_str())
+            || (self.mpv_pref.is_some() && MPV_AUDIO_EXTS.contains(&ext.as_str()))
+    }
+
+    /// True when the current video stream has been open past
+    /// [`VIDEO_DECODE_DEADLINE`] without ever delivering a frame — the
+    /// signature of an undecodable file (a corrupt recovery artifact, or
+    /// foreign bytes under a video extension). Computed from live state,
+    /// never latched: a late first frame simply makes this false again.
+    ///
+    /// Audio streams legitimately never deliver a frame, so they are excluded
+    /// — a playing song must not be branded "undecodable".
+    fn video_undecodable(&self) -> bool {
+        self.current_is_video()
+            && self.video_overlay.is_some()
+            && self.video_frame_image.is_none()
+            && self
+                .video_opened_at
+                .is_some_and(|t| t.elapsed() >= VIDEO_DECODE_DEADLINE)
+    }
+
     /// True when the *current* entry plays as video (slideshow advance is
     /// then driven by the video's end, not the interval timer).
     fn current_is_video(&self) -> bool {
         self.current()
             .map(|e| self.is_video_path(&e.path))
             .unwrap_or(false)
+    }
+
+    /// True when the current entry plays as audio (a stream + transport, but
+    /// no video frames — the stage shows cover art).
+    fn current_is_audio(&self) -> bool {
+        self.current()
+            .map(|e| self.is_audio_path(&e.path))
+            .unwrap_or(false)
+    }
+
+    /// True when the current entry opens a playback stream at all — video or
+    /// audio. Gates the shared machinery: stream open/teardown, the transport
+    /// (play/pause, mute, seek), and self-driven slideshow advance. Frame
+    /// *rendering* stays on [`current_is_video`](Self::current_is_video); this
+    /// is everything that is about *playback*, not pixels.
+    fn current_is_playable(&self) -> bool {
+        self.current_is_video() || self.current_is_audio()
     }
 
     /// Render-time overlay sync, change-detected like `sync_title`:
@@ -986,10 +1054,12 @@ impl ViewerWindow {
         if self.sim_video_panel {
             return; // screenshot fixture: no live stream
         }
+        // Open a stream for anything playable — video or audio. Audio rides
+        // the same backend seam; it just yields sound and no frames.
         let want = self
             .current()
             .map(|e| e.path.clone())
-            .filter(|p| self.is_video_path(p));
+            .filter(|p| self.is_video_path(p) || self.is_audio_path(p));
         match (&want, &self.video_overlay) {
             (None, None) => {}
             (None, Some(_)) => self.teardown_video(),
@@ -1039,10 +1109,19 @@ impl ViewerWindow {
             // Fresh open auto-plays.
             self.video_paused = false;
             self.video_dims = (0.0, 0.0);
+            self.video_opened_at = Some(std::time::Instant::now());
+            // Opening an audio file is an explicit ask to *hear* it, so it
+            // autoplays unmuted — unlike video, which stays muted-by-default
+            // so stacked viewers never all blare at once. Once audio unmutes
+            // the window, the mute button drives it from there.
+            if self.is_audio_path(&path) {
+                self.video_muted = false;
+            }
             self.video_overlay = Some((stream, path));
             self.video_enhance_applied = enhance;
             // A freshly opened stream is unmuted; apply the window's mute
-            // toggle (muted by default) so audio only plays when opted in.
+            // toggle so audio only plays when opted in (video) or right away
+            // (audio, just unmuted above).
             if let Some((stream, _)) = &mut self.video_overlay {
                 stream.set_muted(self.video_muted);
             }
@@ -1076,6 +1155,7 @@ impl ViewerWindow {
         // Dropping the stream tears the underlying player down (the
         // backend's `Drop` does the native remove / mpv teardown).
         drop(self.video_overlay.take());
+        self.video_opened_at = None;
         // Retire the on-screen frame + its rotated cache so their atlas
         // textures are evicted on the next render.
         if let Some(img) = self.video_frame_image.take() {
@@ -1351,7 +1431,7 @@ impl ViewerWindow {
         }
         self.playback.playing = playing;
         let epoch = self.playback.bump();
-        if playing && !self.current_is_video() {
+        if playing && !self.current_is_playable() {
             self.arm_timer(epoch, cx);
         }
         cx.notify();
@@ -1690,7 +1770,7 @@ impl ViewerWindow {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.current_is_video() {
+        if self.current_is_playable() {
             self.toggle_video_paused(cx);
         } else {
             let playing = self.playback.playing;
@@ -1878,7 +1958,7 @@ impl ViewerWindow {
         self.prefetch_neighbors(cx);
         self.schedule_process(cx);
         let epoch = self.playback.bump();
-        if self.playback.playing && !self.current_is_video() {
+        if self.playback.playing && !self.current_is_playable() {
             self.arm_timer(epoch, cx);
         }
         cx.notify();
@@ -2208,8 +2288,12 @@ impl ViewerWindow {
             .unwrap_or_else(|| "\u{2014}".to_string());
         let actual = self.stage.mode == ZoomMode::Actual;
         let name = self.current().map(|e| e.name.clone()).unwrap_or_default();
-        // Custom video transport + window state (native controls hidden).
+        // Custom video/audio transport + window state (native controls
+        // hidden). `is_playable` shows the play/pause + mute + loop + seek for
+        // audio too; `is_video` keeps the frame-step buttons video-only (a
+        // "frame" is meaningless for an audio stream).
         let is_video = self.current_is_video();
+        let is_playable = self.current_is_video() || self.current_is_audio();
         let video_paused = self.video_paused;
         let video_muted = self.video_muted;
         let video_loop = self.video_loop;
@@ -2333,16 +2417,19 @@ impl ViewerWindow {
                         })),
                 )
             })
-            // Video transport (native controls are hidden so they work
-            // at any rotation): play/pause, mute + a loop toggle.
-            .when(is_video, |bar| {
+            // Video/audio transport (native controls are hidden so they work
+            // at any rotation): play/pause, mute + a loop toggle. Shown for
+            // any playable stream; the frame-step buttons are video-only.
+            .when(is_playable, |bar| {
                 let loop_entity = entity.clone();
-                bar.child(
-                    Button::new("viewer-video-step-back")
-                        .label("\u{2212}1f")
-                        .small()
-                        .on_click(cx.listener(|this, _, _, cx| this.step_video(-1, cx))),
-                )
+                bar.when(is_video, |bar| {
+                    bar.child(
+                        Button::new("viewer-video-step-back")
+                            .label("\u{2212}1f")
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.step_video(-1, cx))),
+                    )
+                })
                 .child(
                     Button::new("viewer-video-play")
                         .icon(gpui_component::Icon::empty().path(if video_paused {
@@ -2353,14 +2440,17 @@ impl ViewerWindow {
                         .small()
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_video_paused(cx))),
                 )
-                .child(
-                    Button::new("viewer-video-step-fwd")
-                        .label("+1f")
-                        .small()
-                        .on_click(cx.listener(|this, _, _, cx| this.step_video(1, cx))),
-                )
-                // Audio mute toggle. Muted by default — sound is opt-in per
-                // window, so stacked viewers never all play at once.
+                .when(is_video, |bar| {
+                    bar.child(
+                        Button::new("viewer-video-step-fwd")
+                            .label("+1f")
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.step_video(1, cx))),
+                    )
+                })
+                // Audio mute toggle. For video it's muted by default (opt-in
+                // per window); an audio file opens unmuted (see
+                // `open_video_stream`). Either way this drives it live.
                 .child(
                     Button::new("viewer-video-mute")
                         .icon(gpui_component::Icon::empty().path(if video_muted {
@@ -2535,6 +2625,21 @@ impl ViewerWindow {
         if self.current_is_video() {
             if let Some(child) = self.video_stage(stage_w, stage_h) {
                 return area.child(child);
+            }
+            // The stream opened but has produced no frame past the
+            // deadline: the file's video is undecodable (corrupt bytes
+            // under a video extension, or an audio-only impostor). Say so
+            // — the poster below is blank for exactly these files, and a
+            // silently empty stage reads as "the viewer is broken". A
+            // frame that still arrives clears this on its own (the poll
+            // tick notifies and `video_stage` wins above).
+            if self.video_undecodable() {
+                return area.flex().items_center().justify_center().child(
+                    div()
+                        .text_scale_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Can't decode this video"),
+                );
             }
         }
         match state {
@@ -3048,8 +3153,9 @@ impl ViewerWindow {
                     Playback::interval_label(self.playback.interval_secs)
                 ))
             })
-            // Seek bar (with In/Out cues) + elapsed/total for the video.
-            .when(self.current_is_video(), |this| {
+            // Seek bar (with In/Out cues) + elapsed/total for the video or
+            // audio stream.
+            .when(self.current_is_playable(), |this| {
                 let (cur, dur) = self.video_position;
                 this.child(fmt_time(cur))
                     .child(self.seek_bar(cx))

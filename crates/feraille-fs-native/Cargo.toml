@@ -6,11 +6,20 @@ license.workspace = true
 repository.workspace = true
 description = "Cross-platform std::fs implementation of feraille-core::FsBackend"
 
+# "aros" is a custom-JSON target (branch aros-port); register its target_os
+# value so host builds don't warn on the paths.rs / volumes.rs cfg arms.
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(target_os, values("aros"))']
+
 [dependencies]
 feraille-core.workspace = true
 feraille-disk-usage.workspace = true
 xxhash-rust.workspace = true
 blake3.workspace = true
+# Embedded-tag / audio-property reader for the media module. Cross-platform
+# pure Rust, so it lives in the shared dependency table, not a target block.
+lofty.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # Win32 bindings for drive enumeration + volume info. Same version as

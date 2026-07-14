@@ -332,11 +332,14 @@ pub struct SettingsView {
     /// live `AntTrailColor` global and persists each change, so the file
     /// list and grid recolor at once.
     ant_trail_picker: Entity<ColorPickerState>,
-    /// The Diagnostics page's health report, computed once when the settings
-    /// window opens (same one-time-I/O-in-`new` pattern as
-    /// `home_hidden_count`). Reopening Settings re-runs the checks. `Rc` so the
-    /// per-frame page-render closures can share it cheaply.
-    diagnostics: std::rc::Rc<crate::diagnostics::Report>,
+    /// The Diagnostics page's health report. `None` while the checks run
+    /// on the background executor (kicked off by `new`; the page shows
+    /// "Running health checks…" meanwhile). The checks open the metadata
+    /// DB and write a disk probe — real I/O that must not run on the UI
+    /// thread when Cmd+, opens the window (Prime Directive). Reopening
+    /// Settings re-runs them. `Rc` so the per-frame page-render closures
+    /// can share the report cheaply.
+    diagnostics: Option<std::rc::Rc<crate::diagnostics::Report>>,
 }
 
 impl SettingsView {
@@ -384,12 +387,36 @@ impl SettingsView {
         )
         .detach();
 
+        // Diagnostics checks (metadata-DB open, config reads, a
+        // Full-Disk-Access probe write) and the home hidden-item count
+        // (a full `read_dir($HOME)` + per-entry stat) are real I/O —
+        // computed off-thread and applied when they land, so opening
+        // Settings never blocks on them. The pages render placeholders
+        // until then.
+        cx.spawn(async move |this, cx| {
+            let (report, hidden_count) = cx
+                .background_executor()
+                .spawn(async move {
+                    (
+                        crate::diagnostics::run_checks(),
+                        count_home_hidden_items(),
+                    )
+                })
+                .await;
+            let _ = this.update(cx, |this: &mut Self, cx| {
+                this.diagnostics = Some(std::rc::Rc::new(report));
+                this.home_hidden_count = hidden_count;
+                cx.notify();
+            });
+        })
+        .detach();
+
         Self {
             category: initial,
-            home_hidden_count: count_home_hidden_items(),
+            home_hidden_count: None,
             selection_picker,
             ant_trail_picker,
-            diagnostics: std::rc::Rc::new(crate::diagnostics::run_checks()),
+            diagnostics: None,
         }
     }
 }
@@ -441,7 +468,7 @@ impl Render for SettingsView {
                 self.home_hidden_count,
                 &self.selection_picker,
                 &self.ant_trail_picker,
-                &self.diagnostics,
+                self.diagnostics.clone(),
             ))
             .default_selected_index(SelectIndex {
                 page_ix: self.category.page_index(),
@@ -716,7 +743,7 @@ fn build_pages(
     home_hidden_count: Option<usize>,
     selection_picker: &Entity<ColorPickerState>,
     ant_trail_picker: &Entity<ColorPickerState>,
-    diagnostics: &std::rc::Rc<crate::diagnostics::Report>,
+    diagnostics: Option<std::rc::Rc<crate::diagnostics::Report>>,
 ) -> Vec<SettingPage> {
     vec![
         appearance_page(selection_picker.clone(), ant_trail_picker.clone()),
@@ -726,17 +753,31 @@ fn build_pages(
         layout_page(),
         plugins_page(),
         shortcuts_page(),
-        diagnostics_page(diagnostics.clone()),
+        diagnostics_page(diagnostics),
         about_page(),
     ]
 }
 
 /// The Diagnostics page: the health-check report grouped by area, the recent
-/// activity trail, and a "Copy report" button. The report is computed once in
-/// [`SettingsView::new`]; this only renders it. `feraille --doctor` prints the
-/// same report from a terminal.
-fn diagnostics_page(report: std::rc::Rc<crate::diagnostics::Report>) -> SettingPage {
+/// activity trail, and a "Copy report" button. The report is computed on the
+/// background executor (kicked off by [`SettingsView::new`]); `None` here
+/// means it hasn't landed yet and the page shows a placeholder. This only
+/// renders it. `feraille --doctor` prints the same report from a terminal.
+fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> SettingPage {
     use crate::diagnostics::Status;
+
+    let Some(report) = report else {
+        return SettingPage::new("Diagnostics")
+            .icon(Icon::empty().path("icons/activity.svg"))
+            .group(
+                SettingGroup::new().item(SettingItem::render(move |_o, _w, cx| {
+                    div()
+                        .text_scale_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Running health checks\u{2026}")
+                })),
+            );
+    };
 
     let mut page = SettingPage::new("Diagnostics").icon(Icon::empty().path("icons/activity.svg"));
 

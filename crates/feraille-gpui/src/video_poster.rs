@@ -1,0 +1,360 @@
+//! Content thumbnails Quick Look can't produce on its own: video poster
+//! frames and embedded audio cover art.
+//!
+//! macOS's `QLThumbnailGenerator` only thumbnails what AVFoundation can
+//! decode — it refuses whole container families (AVI, WMV/ASF, MKV, …)
+//! instantly, so a folder of DivX rips shows nothing but type glyphs. When
+//! the user has selected the mpv video provider (Settings → Plugins), the
+//! same libmpv that plays those files in the viewer can also pull one frame
+//! for a thumbnail. [`fetch_content_thumbnail`] is the single fetch every
+//! thumbnail warm path goes through: Quick Look first (it is near-free for
+//! anything the OS caches), then embedded cover art for audio files, then
+//! the mpv poster fallback for video files.
+//!
+//! The cover-art step is what makes album art show in the preview pane and
+//! the icon grid on **every** platform: macOS Quick Look already digs the
+//! embedded picture out of an audio file, but the Windows/Linux shell has no
+//! equivalent, so there we read it directly with `lofty`
+//! (`feraille_fs_native::media::read_cover_art`) and decode it here. Because
+//! this is the shared choke point, one path lights up previews and grid
+//! thumbnails alike, through the same cache and BGRA render path.
+//!
+//! Prime-directive shape: [`fetch_content_thumbnail`] (Quick Look + cover
+//! art, bounded blocking) keeps the background pool's existing contract,
+//! but poster decodes must NOT park pool tasks — a folder of 90 rips would
+//! queue minutes of serialized mpv work, and a convoy of blocked pool
+//! threads starves prefetch/folder-sizes/timers until navigation itself
+//! stops responding (the exact freeze this design replaced). So posters
+//! run on **one dedicated OS thread**: `fetch_content_thumbnail` answers
+//! [`Fetched::NeedsPoster`] and the caller *awaits* [`fetch_poster`], which
+//! queues a job and yields — no pool thread is held while the worker
+//! churns. The single worker also means one libmpv instance at a time, and
+//! a file libmpv can't decode costs one bounded deadline before it is
+//! negative-cached by [`crate::thumbnails::ThumbnailCache`].
+
+use std::path::{Path, PathBuf};
+
+/// One resolved thumbnail: straight RGBA8 bytes + dimensions, the shape
+/// `ThumbnailCache::insert` expects.
+pub type ThumbPayload = (Vec<u8>, u32, u32);
+
+/// Outcome of the synchronous fetch tier.
+pub enum Fetched {
+    /// Resolved here (Quick Look hit, embedded cover art, or nothing left
+    /// to try) — `None` means "no thumbnail", which callers negative-cache.
+    Done(Option<ThumbPayload>),
+    /// A video the mpv poster worker should decode: `await`
+    /// [`fetch_poster`] for the result. Only returned when the mpv
+    /// provider is actually configured, so a build/setup without mpv never
+    /// queues dead jobs.
+    NeedsPoster,
+}
+
+/// Video containers/streams worth handing to the mpv poster fallback —
+/// the viewer's built-in set plus its broad mpv container set. Quick Look
+/// already succeeds for the AVFoundation-friendly ones, so membership here
+/// only matters after it returned nothing.
+const POSTER_VIDEO_EXTS: &[&str] = &[
+    "mp4", "m4v", "mov", "mkv", "webm", "avi", "flv", "wmv", "asf", "mpg", "mpeg", "mpe", "m2v",
+    "mpv", "3gp", "3g2", "ts", "mts", "m2ts", "vob", "ogv", "ogm", "divx", "rm", "rmvb", "f4v",
+    "mxf", "dv", "qt", "amv", "nsv", "y4m", "h264", "hevc", "av1",
+];
+
+/// Whether `path`'s extension marks it as a video the poster fallback
+/// could decode. Case-insensitive, like every other extension gate.
+pub fn is_poster_candidate(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .is_some_and(|e| POSTER_VIDEO_EXTS.contains(&e.as_str()))
+}
+
+/// Audio extensions whose containers `lofty` can read embedded cover art
+/// from. A subset of the app's audio-icon set (`icons.rs`) — WMA is omitted
+/// because lofty doesn't parse ASF. Case-insensitive, like every other gate.
+const AUDIO_COVER_EXTS: &[&str] = &[
+    "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "aiff", "aif", "aifc", "wav", "ape",
+    "wv", "mpc",
+];
+
+/// Whether `path`'s extension marks it as an audio file `lofty` can read —
+/// used both to probe for embedded cover art here and to gate the rich
+/// media description in the prefetch worker. Gating on the extension keeps
+/// us from opening every non-audio file with lofty just to find nothing.
+pub(crate) fn is_lofty_audio(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .is_some_and(|e| AUDIO_COVER_EXTS.contains(&e.as_str()))
+}
+
+/// The synchronous content-thumbnail tier: Quick Look, then embedded audio
+/// cover art. Bounded blocking — background pool only. Videos Quick Look
+/// refuses are NOT decoded here: they come back as [`Fetched::NeedsPoster`]
+/// so the caller can `await` [`fetch_poster`] without parking a pool thread
+/// behind the (slow, serialized) mpv worker.
+pub fn fetch_content_thumbnail(path: &Path, size_px: u32) -> Fetched {
+    if let Some(hit) = crate::platform_shell::fetch_quick_look_thumbnail(path, size_px) {
+        return Fetched::Done(Some(hit));
+    }
+    if is_lofty_audio(path) {
+        // Quick Look came up empty (or this platform has none) — pull the
+        // cover straight out of the tag. `None` when the file carries no
+        // picture, in which case an audio file simply shows its type glyph.
+        return Fetched::Done(fetch_audio_cover(path, size_px));
+    }
+    if is_poster_candidate(path) && resolve_mpv_pref().is_some() {
+        return Fetched::NeedsPoster;
+    }
+    Fetched::Done(None)
+}
+
+/// Await the mpv poster frame for a [`Fetched::NeedsPoster`] file. Queues
+/// the job on the dedicated poster worker thread and yields until it is
+/// done — safe to await from a pooled task (no thread is held).
+pub async fn fetch_poster(path: PathBuf, size_px: u32) -> Option<ThumbPayload> {
+    let (tx, rx) = async_channel::bounded(1);
+    enqueue_poster(PosterJob { path, size_px, tx });
+    rx.recv().await.ok().flatten()
+}
+
+/// Fully synchronous variant for one-shot CLI use (`feraille thumb`): same
+/// tiers, but the poster decodes right on the calling thread instead of
+/// through the worker queue. Never call this from the app's executors.
+pub fn fetch_content_thumbnail_blocking(path: &Path, size_px: u32) -> Option<ThumbPayload> {
+    match fetch_content_thumbnail(path, size_px) {
+        Fetched::Done(r) => r,
+        Fetched::NeedsPoster => poster_decode(path, size_px),
+    }
+}
+
+/// One queued poster request; the answer travels back over a one-shot
+/// async channel so the requesting task awaits instead of blocking.
+struct PosterJob {
+    path: PathBuf,
+    size_px: u32,
+    tx: async_channel::Sender<Option<ThumbPayload>>,
+}
+
+/// The poster work queue, drained **newest-first** by one dedicated OS
+/// thread (spawned on first use).
+///
+/// LIFO is the queue policy, deliberately: navigating to a new folder
+/// pushes its rows on top, so the view the user is looking at thumbnails
+/// first, while jobs for rows browsed away from sink to the bottom and
+/// still complete eventually — their results are cached for the next
+/// visit. Nothing is ever *cancelled*: a dropped job would resolve to
+/// `None` at its awaiting call site and be negative-cached as "this file
+/// has no thumbnail", permanently wrong. Finishing stale jobs is bounded,
+/// cheap background churn on this one thread; unlike blocked pool threads
+/// it can never stall the rest of the app. Serializing on one thread also
+/// bounds mpv to a single instance at a time.
+struct PosterQueue {
+    jobs: std::sync::Mutex<std::collections::VecDeque<PosterJob>>,
+    ready: std::sync::Condvar,
+}
+
+fn poster_queue() -> &'static PosterQueue {
+    use std::sync::OnceLock;
+    static QUEUE: OnceLock<PosterQueue> = OnceLock::new();
+    QUEUE.get_or_init(|| {
+        std::thread::Builder::new()
+            .name("feraille-poster".into())
+            .spawn(|| {
+                let q = poster_queue();
+                loop {
+                    let job = {
+                        let mut jobs = q.jobs.lock().unwrap_or_else(|e| e.into_inner());
+                        loop {
+                            match jobs.pop_back() {
+                                Some(job) => break job,
+                                None => {
+                                    jobs = q
+                                        .ready
+                                        .wait(jobs)
+                                        .unwrap_or_else(|e| e.into_inner());
+                                }
+                            }
+                        }
+                    };
+                    let result = poster_decode(&job.path, job.size_px);
+                    // Capacity-1 channel, sole send — try_send can't fail
+                    // except when the requester is gone, which is fine.
+                    let _ = job.tx.try_send(result);
+                }
+            })
+            .expect("spawn poster worker thread");
+        PosterQueue {
+            jobs: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            ready: std::sync::Condvar::new(),
+        }
+    })
+}
+
+fn enqueue_poster(job: PosterJob) {
+    let q = poster_queue();
+    q.jobs
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push_back(job);
+    q.ready.notify_one();
+}
+
+/// Read the embedded cover art for an audio `path` and decode + shrink it to
+/// fit within `size_px` on its longest edge (aspect preserved). Returns
+/// RGBA8 + dimensions, or `None` when there is no cover or the picture bytes
+/// won't decode. Blocking — background pool only.
+fn fetch_audio_cover(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    let encoded = feraille_fs_native::media::read_cover_art(path)?;
+    // The image crate sniffs the format from the bytes (cover art is almost
+    // always JPEG or PNG, both in our decoder feature set).
+    let decoded = image::load_from_memory(&encoded).ok()?;
+    // `thumbnail` is a fast box filter that fits the image inside the square
+    // without cropping or distorting a non-square cover.
+    let rgba = decoded.thumbnail(size_px, size_px).to_rgba8();
+    let (w, h) = rgba.dimensions();
+    Some((rgba.into_raw(), w, h))
+}
+
+/// Read the persisted video-provider choice: `Some(libmpv hint path)` when
+/// the user picked the mpv provider in Settings → Plugins, `None` for the
+/// built-in player. Refused outright in a build without the `mpv` feature,
+/// where the preference is unhonourable — otherwise the viewer would route
+/// the broad mpv container set (MKV/AVI/3GP…) to the native player, which
+/// can't decode it. `app_state::load` is served from an in-memory cache
+/// after first read, so this is cheap enough for per-fetch use.
+pub fn resolve_mpv_pref() -> Option<PathBuf> {
+    if !cfg!(feature = "mpv") {
+        return None;
+    }
+    let st = crate::app_state::load();
+    (st.video_backend.as_deref() == Some("mpv")).then(|| {
+        PathBuf::from(
+            st.mpv_path
+                .unwrap_or_else(|| crate::viewer::backend_native::default_mpv_path().to_string()),
+        )
+    })
+}
+
+/// Decode one representative frame of `path` with libmpv and shrink it to
+/// `size_px` (longest edge). `None` when libmpv can't be loaded or the file
+/// yields no decodable video within the deadline (corrupt files open fine
+/// but never produce a frame). Runs on the poster worker thread (or the
+/// caller's own thread via the `_blocking` CLI variant) — never on the
+/// pool.
+#[cfg(feature = "mpv")]
+fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
+    use std::time::Duration;
+
+    use feraille_core::video::{VideoEnhance, VideoStream};
+
+    /// How long an open stream gets to produce its first frame before the
+    /// file is declared undecodable. Healthy files measure 0.3–3.7s to
+    /// first frame even on removable media; corrupt ones never deliver.
+    const FIRST_FRAME_DEADLINE: Duration = Duration::from_secs(5);
+    /// Grace for the post-seek frame. The seek lands mid-stream, so this
+    /// is a decode away — much shorter than the cold open.
+    const SEEK_FRAME_DEADLINE: Duration = Duration::from_secs(2);
+    /// Where the poster is taken from. A few seconds in skips the black
+    /// lead-in / encoder logo most rips open with; mpv clamps a seek past
+    /// the end of a shorter clip, so this is safe for any duration.
+    const POSTER_SEEK_SECS: f64 = 3.0;
+
+    fn pull_frame(
+        stream: &mut dyn VideoStream,
+        deadline: Duration,
+    ) -> Option<(u32, u32, Vec<u8>)> {
+        let t0 = std::time::Instant::now();
+        loop {
+            if let Some(frame) = stream.copy_frame() {
+                return Some(frame);
+            }
+            if t0.elapsed() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    }
+
+    let hint = resolve_mpv_pref()?;
+    let backend = feraille_video_mpv::backend(&hint)?;
+    let mut stream = backend.open(path, Box::new(|| {}), VideoEnhance::default())?;
+    stream.set_muted(true);
+
+    // The first frame proves the file decodes at all; then hop past the
+    // lead-in and prefer the frame there, falling back to the first when
+    // the seek lands nothing before its (short) deadline.
+    let first = pull_frame(stream.as_mut(), FIRST_FRAME_DEADLINE)?;
+    stream.seek(POSTER_SEEK_SECS);
+    let frame = pull_frame(stream.as_mut(), SEEK_FRAME_DEADLINE).unwrap_or(first);
+    Some(shrink_poster(frame, size_px))
+}
+
+/// Without the `mpv` feature [`fetch_content_thumbnail`] never answers
+/// `NeedsPoster` (the pref resolves to `None`), so this is only reachable
+/// through the blocking CLI variant — and correctly finds nothing.
+#[cfg(not(feature = "mpv"))]
+fn poster_decode(_path: &Path, _size_px: u32) -> Option<ThumbPayload> {
+    None
+}
+
+/// Convert one mpv frame (tightly packed BGRA) into the straight-RGBA
+/// thumbnail payload, downscaled so the longest edge is `size_px` (never
+/// upscaled). Alpha is forced opaque — the sw render path's alpha channel
+/// is unspecified for plain video and a transparent thumbnail would paint
+/// as an empty slot.
+#[cfg(feature = "mpv")]
+fn shrink_poster((w, h, mut bgra): (u32, u32, Vec<u8>), size_px: u32) -> (Vec<u8>, u32, u32) {
+    for px in bgra.chunks_exact_mut(4) {
+        px.swap(0, 2);
+        px[3] = 0xFF;
+    }
+    let long = w.max(h);
+    if long <= size_px {
+        return (bgra, w, h);
+    }
+    let scale = size_px as f32 / long as f32;
+    let nw = ((w as f32 * scale).round() as u32).max(1);
+    let nh = ((h as f32 * scale).round() as u32).max(1);
+    match image::RgbaImage::from_raw(w, h, bgra) {
+        Some(img) => (
+            image::imageops::thumbnail(&img, nw, nh).into_raw(),
+            nw,
+            nh,
+        ),
+        // Dimension mismatch can't happen for a frame we just packed, but
+        // never panic on a background worker over a thumbnail.
+        None => (Vec::new(), 0, 0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poster_candidates_by_extension_case_insensitive() {
+        assert!(is_poster_candidate(Path::new("/x/clip.avi")));
+        assert!(is_poster_candidate(Path::new("/x/CLIP.AVI")));
+        assert!(is_poster_candidate(Path::new("/x/clip.wmv")));
+        assert!(is_poster_candidate(Path::new("/x/clip.mkv")));
+        assert!(!is_poster_candidate(Path::new("/x/photo.jpg")));
+        assert!(!is_poster_candidate(Path::new("/x/noext")));
+    }
+
+    #[cfg(feature = "mpv")]
+    #[test]
+    fn shrink_poster_swaps_channels_and_caps_longest_edge() {
+        // 4×2 frame of one BGRA pixel value; alpha deliberately 0.
+        let bgra = [10u8, 20, 30, 0].repeat(8);
+        let (rgba, w, h) = super::shrink_poster((4, 2, bgra.clone()), 96);
+        // Under the cap: untouched dims, swapped channels, opaque alpha.
+        assert_eq!((w, h), (4, 2));
+        assert_eq!(&rgba[..4], &[30, 20, 10, 0xFF]);
+
+        // Over the cap: longest edge shrinks to it, aspect kept.
+        let big = [10u8, 20, 30, 0].repeat(200 * 100);
+        let (_, w, h) = super::shrink_poster((200, 100, big), 96);
+        assert_eq!((w, h), (96, 48));
+    }
+}

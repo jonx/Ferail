@@ -426,6 +426,16 @@ pub struct FileListDelegate {
     /// `drag_snapshot`, plus when folder sizes stream in.
     pub cached_total_size: std::cell::Cell<Option<u64>>,
     pub cached_selected_size: std::cell::Cell<Option<u64>>,
+    /// `Some(folder name)` while a *slow* directory load is in flight —
+    /// set by `Shell`'s slow-load timer when the first enumeration batch
+    /// hasn't landed after `SLOW_LOAD_INDICATOR_DELAY` (a spun-down
+    /// external drive, a cold network mount). Flips the table into its
+    /// skeleton loading view with a "Reading '<name>'…" line, replacing
+    /// the previous directory's stale (and still-clickable) rows.
+    /// Cleared by `clear()` / `replace_entries()`, which every load
+    /// exit path funnels through. Deliberately NOT set at load start:
+    /// fast local navigations would flash a skeleton every click.
+    pub slow_load: Option<SharedString>,
 }
 
 /// See [`FileListDelegate::drag_snapshot`].
@@ -490,6 +500,7 @@ impl FileListDelegate {
             drag_snapshot: None,
             cached_total_size: std::cell::Cell::new(None),
             cached_selected_size: std::cell::Cell::new(None),
+            slow_load: None,
         }
     }
 
@@ -678,6 +689,7 @@ impl FileListDelegate {
 
     pub fn clear(&mut self) {
         self.invalidate_drag_snapshot();
+        self.slow_load = None;
         self.entries.clear();
         self.paths.clear();
         self.heats.clear();
@@ -695,6 +707,7 @@ impl FileListDelegate {
         heats: Vec<f32>,
     ) {
         self.invalidate_drag_snapshot();
+        self.slow_load = None;
         self.entries = entries;
         self.paths = paths;
         self.heats = heats;
@@ -819,7 +832,14 @@ impl FileListDelegate {
                 let rgba = cx
                     .background_executor()
                     .spawn(async move {
-                        crate::platform_shell::fetch_quick_look_thumbnail(&fetch_path, size_px)
+                        match crate::video_poster::fetch_content_thumbnail(&fetch_path, size_px) {
+                            crate::video_poster::Fetched::Done(r) => r,
+                            // Awaiting yields this pool thread; the decode
+                            // runs on the dedicated poster worker.
+                            crate::video_poster::Fetched::NeedsPoster => {
+                                crate::video_poster::fetch_poster(fetch_path, size_px).await
+                            }
+                        }
                     })
                     .await;
                 if table
@@ -1690,6 +1710,42 @@ impl TableDelegate for FileListDelegate {
                     .text_scale_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child("This folder is empty."),
+            )
+    }
+
+    /// Swap the whole table body for the loading view while a slow
+    /// device (spun-down external drive, cold network mount) is waking
+    /// up. Also removes the previous directory's stale rows from the
+    /// screen — they belong to the path the breadcrumb no longer shows
+    /// and must not stay clickable.
+    fn loading(&self, _cx: &App) -> bool {
+        self.slow_load.is_some()
+    }
+
+    /// The built-in pulsing skeleton rows (the in-pane "still working"
+    /// signal — the status bar runs its indeterminate stripe in
+    /// parallel) topped with a line naming what we're waiting on.
+    fn render_loading(
+        &mut self,
+        size: gpui_component::Size,
+        _window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let label = self
+            .slow_load
+            .clone()
+            .unwrap_or_else(|| SharedString::from("…"));
+        gpui_component::v_flex()
+            .size_full()
+            .child(crate::multi_table::Loading::new().size(size))
+            .child(
+                gpui_component::h_flex()
+                    .w_full()
+                    .justify_center()
+                    .py_4()
+                    .text_scale_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("Reading \u{201c}{label}\u{201d}\u{2026}")),
             )
     }
 }

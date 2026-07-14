@@ -6,6 +6,7 @@
 pub mod commands;
 pub mod entry_info;
 pub mod favorites;
+pub mod media;
 pub mod name_hazards;
 pub mod navigation;
 pub mod node_store;
@@ -227,6 +228,12 @@ fn formats_compatible(kind: &str, magic: &str) -> bool {
         if k.contains(ext) && magic_keywords.iter().any(|kw| m.contains(kw)) {
             return true;
         }
+    }
+    // Windows Media: `.wma`/`.wmv`/`.asf` all live in the one ASF container,
+    // which the detector labels "Windows Media [Audio|Video]". Treat them as
+    // agreeing so an ordinary WMA/WMV isn't flagged as a content mismatch.
+    if matches!(k.as_str(), "wma" | "wmv" | "asf") && m.contains("windows media") {
+        return true;
     }
     false
 }

@@ -14,7 +14,8 @@ All new product work belongs in `crates/feraille-gpui`.
 
 ## Prime Directive
 
-The UI must never stop.
+The UI must never stop. This rule is non-negotiable; every other design
+choice in the app bends around it.
 
 Painting, rendering, hit testing, hover, selection, scrolling, text
 input, keyboard input, resize, and modal drawing must not perform I/O.
@@ -26,6 +27,61 @@ can block.
 The hot path may only read already-cached app state, update small
 in-memory interaction state, draw placeholders, and enqueue work through
 a constant-time scheduler.
+
+The rule extends beyond render code: **semantic event handlers (action
+handlers, click handlers, subscriptions) run on the UI thread too**, and
+a single blocking syscall there freezes every open window. A call that
+returns in microseconds on a local SSD can take *seconds* against a
+spun-down external drive, a cold network mount, or a cloud placeholder —
+so "it's fast on my machine" is never an argument. Calls that look
+innocent but block on slow media include:
+
+- `Path::exists` / `metadata` / `canonicalize` / `read_dir` — all stat.
+- `notify`'s FSEvents `Watcher::watch()` — canonicalizes the path
+  internally (this froze navigation onto sleeping drives until watch
+  registration moved to the `fs-watcher` worker thread).
+- NSWorkspace / LaunchServices lookups, xattr reads, Quick Look.
+
+### The compliant pattern
+
+Every feature that touches the filesystem follows the same shape (see
+`Shell::load_path_for_tab` for the canonical example):
+
+1. A semantic event (navigation, refresh, selection) **schedules** work;
+   it never performs it.
+2. The work runs on `cx.background_executor()` (or a dedicated worker
+   thread), carrying a generation counter and a cooperative cancel flag.
+3. Results stream back through entity updates
+   (`this.update(cx, …)`) — the only place UI state mutates.
+4. A result that arrives after the user moved on (generation mismatch,
+   tab closed, path changed) is **dropped**, not applied.
+5. If the work might be slow, the UI shows cached/placeholder state
+   immediately and upgrades when results land (e.g. the file pane's
+   skeleton loading view appears only after `SLOW_LOAD_INDICATOR_DELAY`
+   without a first batch — fast loads never flash it).
+
+### Enforcement
+
+The directive is enforced by the program, not just this document —
+`feraille_core::path_guard` holds two debug-build tripwires:
+
+- **Render guard**: render implementations hold a `RenderPathGuard`;
+  resolving a NodeId to a path while one is alive panics
+  (`assert_path_resolution_allowed`).
+- **UI-thread guard**: `boot::run_gui` marks the UI thread at startup
+  (`mark_ui_thread`), and known-blocking entry points in
+  `feraille-fs-native` call `assert_off_ui_thread` — running one on the
+  UI thread panics in debug builds with a pointer back to this section.
+- **Lint wall**: `crates/feraille-gpui/clippy.toml` disallows the
+  syscalls most likely to freeze the UI (`canonicalize`, blocking
+  `Command::output`/`status`, raw `notify` watch registration) and the
+  crate denies `clippy::disallowed_methods`. A legitimate off-thread
+  use carries a per-site `#[allow]` with a justification comment — that
+  annotation is the review marker.
+
+When one of these fires, the fix is never to remove the guard: move the
+work to the background executor and report back through an entity
+update. When you add a new blocking entry point, add the assert to it.
 
 ## Crate Boundaries
 
@@ -160,9 +216,11 @@ Columns are Name, Size, Format, and Modified. Columns can be sorted,
 resized, and reordered. Cell rendering is keyed by column id so moved
 columns keep headers and content aligned.
 
-The preview pane shows the current selection's media (Quick Look thumbnail
-or inline highlighted text) plus the name and a "Get Info" button. The dense
-attribute rows it used to carry now live in the Get Info popup.
+The preview pane shows the current selection's media (a content thumbnail —
+Quick Look, embedded audio cover art, or an mpv video poster frame; see
+docs/features/PREVIEW.md — or inline highlighted text) plus the name and a
+"Get Info" button. The dense attribute rows it used to carry now live in the
+Get Info popup.
 
 Get Info opens a standalone, resizable, movable window (`crate::entry_info`)
 via the `GetInfo` command (Cmd+I, context menu, toolbar) — not a modal, so

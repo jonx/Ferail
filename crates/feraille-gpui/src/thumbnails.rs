@@ -4,11 +4,14 @@
 //! this cache vends the *actual* rendered thumbnail of a file —
 //! photo, video poster frame, PDF first page — keyed by full path.
 //!
-//! Pixels come from `QLThumbnailGenerator` (see
+//! Pixels come from [`crate::video_poster::fetch_content_thumbnail`]:
+//! `QLThumbnailGenerator` first (see
 //! `feraille_shell_mac::fetch_quick_look_thumbnail`), which reads the
 //! system-wide Quick Look thumbnail cache, so most hits return
 //! instantly from disk rather than re-rendering — the same path Finder
-//! rides.
+//! rides — then embedded cover art for audio files, then, for videos
+//! Quick Look refuses (AVI/WMV/MKV…), an mpv poster frame when the mpv
+//! provider is selected.
 //!
 //! ## Prime-directive shape
 //!
@@ -77,18 +80,18 @@ pub const THUMB_PREVIEW_PX: u32 = 128;
 /// in a couple of viewport-heights, well under this.
 const CACHE_CAP: usize = 512;
 
-/// Whether `entry` is the kind of file worth asking Quick Look about.
-/// Generic data files (archives, binaries, plain text) thumbnail to
-/// something indistinguishable from their type icon, so we leave those
-/// on the icon path and spend Quick Look only where it pays off:
-/// images, video poster frames, and PDF first pages.
+/// Whether `entry` is the kind of file worth asking the content fetch
+/// about. Generic data files (archives, binaries, plain text) thumbnail
+/// to something indistinguishable from their type icon, so we leave those
+/// on the icon path and spend the fetch only where it pays off: images,
+/// video poster frames, audio cover art, and PDF first pages.
 pub fn is_thumbnailable(entry: &FileEntry) -> bool {
     if !matches!(entry.kind, EntryKind::File) {
         return false;
     }
     if matches!(
         file_type_icon(entry).tint,
-        FileTypeTint::Image | FileTypeTint::Video
+        FileTypeTint::Image | FileTypeTint::Video | FileTypeTint::Audio
     ) {
         return true;
     }

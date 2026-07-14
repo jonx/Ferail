@@ -14,7 +14,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::platform_shell::fetch_quick_look_thumbnail;
 use gpui::{App, AsyncApp, RenderImage};
 use image::{Frame, RgbaImage};
 use smallvec::SmallVec;
@@ -109,11 +108,23 @@ pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) 
         let p_for_bg = path.clone();
         let result = cx
             .background_executor()
-            .spawn(async move { fetch_quick_look_thumbnail(&p_for_bg, PREVIEW_PX) })
+            .spawn(async move { fetch_preview_thumbnail(p_for_bg).await })
             .await;
         apply_result(weak, path, result, cx).await;
     })
     .detach();
+}
+
+/// The preview pane's 512 px content fetch: the synchronous tier (Quick
+/// Look / cover art) right here on the pool, or an awaited poster-worker
+/// decode for videos Quick Look refuses — never a blocked pool thread.
+async fn fetch_preview_thumbnail(path: PathBuf) -> Option<(Vec<u8>, u32, u32)> {
+    match crate::video_poster::fetch_content_thumbnail(&path, PREVIEW_PX) {
+        crate::video_poster::Fetched::Done(r) => r,
+        crate::video_poster::Fetched::NeedsPoster => {
+            crate::video_poster::fetch_poster(path, PREVIEW_PX).await
+        }
+    }
 }
 
 /// Warm the preview cache for `path` from a non-`Shell` entity — the
@@ -147,7 +158,7 @@ pub fn warm<T: 'static>(
         let p_for_bg = path.clone();
         let result = cx
             .background_executor()
-            .spawn(async move { fetch_quick_look_thumbnail(&p_for_bg, PREVIEW_PX) })
+            .spawn(async move { fetch_preview_thumbnail(p_for_bg).await })
             .await;
         let state = match result {
             Some((rgba, w, h)) => PreviewState::Loaded(Arc::new(build_render_image(rgba, w, h))),

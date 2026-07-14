@@ -1144,13 +1144,20 @@ impl Shell {
 /// yields the bare app name. The app name is always present so the
 /// Windows Alt+Tab / taskbar entry is never blank.
 fn window_title_for(dir: &Path) -> String {
+    // The OS title bar is drawn by the host's native title font. On AROS
+    // that is the Intuition topaz bitmap font (ASCII only), which renders the
+    // em-dash as garbage — use a plain hyphen there.
+    #[cfg(target_os = "aros")]
+    const SEP: &str = " - ";
+    #[cfg(not(target_os = "aros"))]
+    const SEP: &str = " \u{2014} ";
     match dir.file_name() {
         Some(name) if !name.is_empty() => {
             // Finder-parity leaf: a folder stored with `:` titles as `/` on macOS.
             let shown =
                 feraille_fs_native::paths::display_leaf(name.to_string_lossy().as_ref())
                     .into_owned();
-            format!("{shown} \u{2014} Feraille")
+            format!("{shown}{SEP}Feraille")
         }
         _ => {
             // A root with no leaf (e.g. `C:\`): show the clean display form,
@@ -1159,7 +1166,7 @@ fn window_title_for(dir: &Path) -> String {
             if path.is_empty() {
                 "Feraille".to_string()
             } else {
-                format!("{path} \u{2014} Feraille")
+                format!("{path}{SEP}Feraille")
             }
         }
     }
@@ -1305,6 +1312,15 @@ const ICON_WARM_INTERVAL: Duration = Duration::from_millis(16);
 /// because the next render re-checks the interval and flushes.
 const SPLITTER_PERSIST_INTERVAL: Duration = Duration::from_millis(500);
 
+/// How long a fresh navigation may go without its first enumeration
+/// batch before the pane flips into the skeleton loading view
+/// (`FileListDelegate::slow_load`). Local disks answer in a few
+/// milliseconds and never show it; a spun-down external drive or cold
+/// network mount takes seconds and gets in-pane feedback instead of
+/// the previous directory's stale rows. Showing it with no delay
+/// would flash a skeleton on every ordinary navigation.
+const SLOW_LOAD_INDICATOR_DELAY: Duration = Duration::from_millis(300);
+
 const SIDEBAR_COLLAPSED_WIDTH: f32 = 48.0;
 const SIDEBAR_MIN_WIDTH: f32 = 160.0;
 const SIDEBAR_MAX_WIDTH: f32 = 400.0;
@@ -1375,7 +1391,7 @@ impl Shell {
         // Each visible tab registers its directory; watcher events are
         // fanned out to every matching tab in every live window.
         if let Some(w) = process.watcher.borrow_mut().as_mut() {
-            let _ = w.watch(&start);
+            w.watch(&start);
         }
         let show_hidden = persisted.show_hidden.unwrap_or(false);
         // Seed the live thumbnail toggle from persisted settings so the
@@ -1992,8 +2008,13 @@ impl Shell {
         // when the user switches tabs. The closure captures `tab_id`
         // so only this tab's enumeration is re-triggered.
         let filter_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Filter \u{2026}  \u{23CE} to search subfolders")
+            // The return symbol U+23CE has no glyph in the AROS font stack
+            // (renders as a tofu box); use a plain word there.
+            #[cfg(target_os = "aros")]
+            let placeholder = "Filter \u{2026}  Enter to search subfolders";
+            #[cfg(not(target_os = "aros"))]
+            let placeholder = "Filter \u{2026}  \u{23CE} to search subfolders";
+            InputState::new(window, cx).placeholder(placeholder)
         });
         let filter_subscription = cx.subscribe_in(&filter_input, window, {
             let filter_input = filter_input.clone();
@@ -3368,11 +3389,14 @@ impl Shell {
             paths: HashMap::new(),
         });
 
-        // Point the watcher at the new directory. Errors (path
-        // doesn't exist, watcher saturated) are non-fatal — the
-        // user still gets the listing; they just lose live updates.
+        // Point the watcher at the new directory. This only queues a
+        // command — the OS registration (which can block on a
+        // spun-down drive; notify's FSEvents `watch()` canonicalizes
+        // the path) happens on the watcher's worker thread. Failures
+        // there (path doesn't exist, watcher saturated) are non-fatal:
+        // the user still gets the listing; they just lose live updates.
         if let Some(w) = self.process.watcher.borrow_mut().as_mut() {
-            let _ = w.watch(&path);
+            w.watch(&path);
         }
         // Drop watches no live tab shows anymore (this navigation may
         // have been the last reference to the previous directory).
@@ -3422,6 +3446,48 @@ impl Shell {
                     break;
                 }
             }
+        })
+        .detach();
+
+        // Slow-device feedback (docs/ARCHITECTURE.md#prime-directive): if
+        // the first batch is still missing after the delay — an
+        // external drive spinning up, a cold network mount — swap the
+        // pane to the skeleton loading view. The status bar's
+        // indeterminate stripe is already running (the Enumeration
+        // task above); this adds the in-pane signal and retires the
+        // previous directory's stale, still-clickable rows.
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(SLOW_LOAD_INDICATOR_DELAY)
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) else {
+                    return;
+                };
+                let tab = &this.tabs[idx];
+                // Only a fresh navigation still waiting for its first
+                // batch qualifies: a superseded generation belongs to
+                // a navigation the user already left, and an in-place
+                // reload (`load_staging`) keeps its live rows visible
+                // by design.
+                if tab.load_generation != generation
+                    || !tab.load_pending_first_batch
+                    || tab.load_staging.is_some()
+                {
+                    return;
+                }
+                let label = tab
+                    .current_dir
+                    .file_name()
+                    .map(|n| {
+                        feraille_fs_native::paths::display_leaf(&n.to_string_lossy()).into_owned()
+                    })
+                    .unwrap_or_else(|| tab.current_dir.to_string_lossy().into_owned());
+                this.tabs[idx].table.update(cx, |state, cx| {
+                    state.delegate_mut().slow_load = Some(label.into());
+                    state.refresh(cx);
+                });
+            });
         })
         .detach();
         cx.notify();
@@ -3961,7 +4027,14 @@ impl Shell {
                     .map(|(path, size)| {
                         let fetch_path = path.clone();
                         let handle = cx.background_executor().spawn(async move {
-                            crate::platform_shell::fetch_quick_look_thumbnail(&fetch_path, size)
+                            match crate::video_poster::fetch_content_thumbnail(&fetch_path, size) {
+                                crate::video_poster::Fetched::Done(r) => r,
+                                // Awaiting yields this pool thread; the
+                                // decode runs on the poster worker.
+                                crate::video_poster::Fetched::NeedsPoster => {
+                                    crate::video_poster::fetch_poster(fetch_path, size).await
+                                }
+                            }
                         });
                         (path, size, handle)
                     })

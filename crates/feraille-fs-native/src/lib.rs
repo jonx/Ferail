@@ -22,6 +22,7 @@ mod dupes;
 pub mod file_ops;
 mod icons;
 mod magic;
+pub mod media;
 pub mod paths;
 mod search;
 pub mod stat_info;
@@ -137,6 +138,7 @@ impl NativeFs {
         cancel: &AtomicBool,
         mut on_batch: impl FnMut(Vec<FileEntry>),
     ) -> Option<EnumerationError> {
+        feraille_core::path_guard::assert_off_ui_thread("NativeFs::enumerate_streaming");
         let read_dir = match std::fs::read_dir(path) {
             Ok(rd) => rd,
             Err(e) => return Some(map_io_error(&e)),
@@ -667,6 +669,7 @@ pub struct VolumeInfo {
 /// "cheap" capacity keys.
 #[cfg(target_os = "macos")]
 pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
+    feraille_core::path_guard::assert_off_ui_thread("volume_info_for_path");
     use objc2::msg_send;
     use objc2::msg_send_id;
     use objc2::rc::Retained;

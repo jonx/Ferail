@@ -352,6 +352,23 @@ pub fn set_paused(id: u64, paused: bool) {
     });
 }
 
+/// Mute or unmute a live player's audio. `AVPlayer` exposes a `muted`
+/// property (`setMuted:` takes a BOOL); toggling it leaves playback and the
+/// playhead untouched, so a muted video/song keeps advancing silently.
+/// Main-thread only; stale ids no-op.
+pub fn set_muted(id: u64, muted: bool) {
+    if MainThreadMarker::new().is_none() {
+        return;
+    }
+    OVERLAYS.with(|m| {
+        if let Some(entry) = m.borrow().get(&id) {
+            unsafe {
+                let _: () = msg_send![&*entry.player, setMuted: muted];
+            }
+        }
+    });
+}
+
 /// Seek the player back to the start and resume — used to loop the
 /// current video. Main-thread only; stale ids no-op.
 pub fn restart(id: u64) {

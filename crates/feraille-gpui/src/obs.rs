@@ -38,6 +38,22 @@ pub fn init() {
 
     install_panic_hook();
     print_startup_banner();
+
+    // On booted AROS a shell command's stderr goes to the AROS console, not the
+    // host process, so `eprintln!` never reaches the `aros-ctl` log. And gpui's
+    // `.log_err()` (e.g. the swallowed `paint_svg` failure) routes through the
+    // `log` crate, which is a no-op until a logger is installed — nothing
+    // installs one on AROS. Bridge the `log` facade into the MacRW file sink so
+    // both are actually observable on the host (~/AROS/Shared/feraille-log.txt).
+    #[cfg(target_os = "aros")]
+    {
+        let _ = log::set_logger(&AROS_LOGGER)
+            .map(|()| log::set_max_level(log::LevelFilter::Trace));
+        line(
+            "info",
+            format_args!("MacRW:feraille-log.txt sink open; `log` crate bridged"),
+        );
+    }
 }
 
 pub fn elapsed_secs() -> f64 {
@@ -48,8 +64,65 @@ pub fn elapsed_secs() -> f64 {
 }
 
 pub fn line(level: &str, args: std::fmt::Arguments) {
-    eprintln!("[+{:7.3}s][{}] {}", elapsed_secs(), level, args);
+    let msg = format!("[+{:7.3}s][{}] {}", elapsed_secs(), level, args);
+    eprintln!("{msg}");
+    #[cfg(target_os = "aros")]
+    aros_sink(&msg);
 }
+
+/// AROS-only host-visible diagnostic sink. Appends each line to
+/// `MacRW:feraille-log.txt` — the host-shared volume, readable on macOS as
+/// `~/AROS/Shared/feraille-log.txt`. Truncated on first write each boot. This
+/// is the same host-durable trick the panic hook uses (`feraille-panic.txt`),
+/// needed because AROS stderr never reaches the `aros-ctl` log.
+#[cfg(target_os = "aros")]
+pub fn aros_sink(msg: &str) {
+    use std::io::Write;
+    static SINK: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
+    let cell = SINK.get_or_init(|| {
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open("MacRW:feraille-log.txt")
+            .ok();
+        Mutex::new(f)
+    });
+    let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(file) = guard.as_mut() {
+        let _ = writeln!(file, "{msg}");
+        let _ = file.flush();
+    }
+}
+
+/// Forwards the `log` crate facade into [`line`] (stderr + the MacRW sink).
+/// Installed only on AROS; on the desktop the app's own binary owns logging.
+#[cfg(target_os = "aros")]
+struct ArosLogger;
+
+#[cfg(target_os = "aros")]
+impl log::Log for ArosLogger {
+    fn enabled(&self, _: &log::Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, record: &log::Record) {
+        line(
+            "log",
+            format_args!(
+                "{} {}: {}",
+                record.level(),
+                record.target(),
+                record.args()
+            ),
+        );
+    }
+
+    fn flush(&self) {}
+}
+
+#[cfg(target_os = "aros")]
+static AROS_LOGGER: ArosLogger = ArosLogger;
 
 pub fn breadcrumb(args: std::fmt::Arguments) {
     let entry = format!("[+{:7.3}s] {}", elapsed_secs(), args);

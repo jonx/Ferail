@@ -183,11 +183,11 @@ fn run_disk_usage_cli(args: &[String]) -> Result<i32> {
 
 /// `feraille thumb <path> [--out <png>] [--size N]`
 ///
-/// Calls `platform_shell::fetch_quick_look_thumbnail` (which runs the
-/// full thumbnail / preview-handler pipeline on Windows; macOS
-/// `qlmanage -t` shell-out on Mac) and writes the result as a PNG.
-/// Useful for testing the preview pipeline without launching the GUI
-/// and for scripting (batch thumbnail extraction).
+/// Calls `video_poster::fetch_content_thumbnail` — the same fetch every
+/// in-app thumbnail warm path uses (Quick Look first, then the mpv
+/// poster fallback for videos) — and writes the result as a PNG. Useful
+/// for testing the preview pipeline without launching the GUI and for
+/// scripting (batch thumbnail extraction).
 fn run_thumb_cli(args: &[String]) -> Result<i32> {
     let mut out: Option<PathBuf> = None;
     let mut size: u32 = 512;
@@ -237,7 +237,7 @@ fn run_thumb_cli(args: &[String]) -> Result<i32> {
     };
     let out = out.unwrap_or_else(|| PathBuf::from("thumb.png"));
 
-    match feraille_gpui::platform_shell::fetch_quick_look_thumbnail(&path, size) {
+    match feraille_gpui::video_poster::fetch_content_thumbnail_blocking(&path, size) {
         Some((rgba, w, h)) => {
             let buf = image::RgbaImage::from_raw(w, h, rgba)
                 .ok_or_else(|| anyhow::anyhow!("thumbnail RGBA dimensions don't match"))?;
@@ -256,6 +256,8 @@ fn run_thumb_cli(args: &[String]) -> Result<i32> {
 }
 
 fn print_disk_usage(fs: &NativeFs, path: &Path, top: usize, descend_packages: bool) -> Result<()> {
+    // CLI utility path — no UI thread to freeze.
+    #[allow(clippy::disallowed_methods)]
     let root = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let root_id = fs.id_for_path(&root);
     let cancel = AtomicBool::new(false);

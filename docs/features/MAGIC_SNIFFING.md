@@ -44,6 +44,18 @@ when possible. That lets the detector refine generic ZIP into Office/JAR/APK
 types and fill central-directory facts such as entry count and single-root
 folder.
 
+Audio coverage: MP3 (bare frame or ID3-tagged), FLAC, WAV, Ogg, **AIFF/AIFF-C**
+(the `FORM`…`AIFF` container, sample rate decoded from its 80-bit extended
+float), **M4A/AAC/ALAC** (an audio-only MPEG-4 `ftyp`, detected by brand or an
+audio-only handler-box scan so it reads as "M4A audio" rather than "MP4 video"),
+and **WMA/WMV** (the ASF container, split into "Windows Media Audio"/"Video" by
+its stream-type GUIDs). Recognizing these keeps container audio out of the
+"Binary" bucket, which otherwise trips the disguise alert against a media
+extension. Note that rich per-file tag/property facts (title, bitrate, cover
+art) come from `lofty` via the media-tags path, not this detector — see
+[MEDIA-TAGS.md](MEDIA-TAGS.md); ASF is the one common audio container lofty
+can't parse, so a `.wma` shows only its detector label with no tag facts.
+
 The public split is intentional:
 
 - `detect_magic(path)` returns only a display label.

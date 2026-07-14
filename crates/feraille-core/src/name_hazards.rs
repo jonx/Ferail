@@ -28,7 +28,10 @@ pub enum HazardKind {
     Bidi,
     /// A non-ASCII letter that mimics an ASCII/Latin one (homoglyph).
     Homoglyph,
-    /// A combining diacritical mark riding on the previous character.
+    /// A combining diacritical mark with nothing sensible to combine with:
+    /// riding on whitespace/punctuation/nothing, or stacked Zalgo-style.
+    /// Marks on a letter are ordinary accents (macOS stores names in NFD,
+    /// so every "é" on disk is `e` + U+0301) and are not flagged.
     CombiningMark,
 }
 
@@ -97,10 +100,25 @@ pub fn analyze(name: &str) -> Vec<NameSegment> {
     };
 
     let mixed = mixed_script_flags(&chars);
+    // Combining-mark context: a mark is anchored (benign) when it rides on a
+    // letter and at most one other mark already sits on that base — the NFD
+    // shapes real accents take (Vietnamese stacks two, e.g. "ế"). Anything
+    // else — a mark on whitespace/punctuation/nothing, or a Zalgo pile — is
+    // stray and stays flagged.
+    let mut base_is_letter = false;
+    let mut stacked_marks = 0usize;
     for (i, &c) in chars.iter().enumerate() {
         let in_lead = i < lead_end;
         let in_trail = i >= trail_start && trail_start < chars.len();
-        match classify(c, in_lead, in_trail, mixed[i]) {
+        let mark_anchored = if is_combining_mark(c as u32) {
+            stacked_marks += 1;
+            base_is_letter && stacked_marks <= 2
+        } else {
+            base_is_letter = c.is_alphabetic();
+            stacked_marks = 0;
+            false
+        };
+        match classify(c, in_lead, in_trail, mixed[i], mark_anchored) {
             Some(seg) => {
                 flush(&mut plain, &mut out);
                 out.push(seg);
@@ -144,11 +162,24 @@ fn mixed_script_flags(chars: &[char]) -> Vec<bool> {
     flags
 }
 
+/// True for the common combining diacritical ranges (an approximation
+/// without a Unicode DB).
+fn is_combining_mark(cp: u32) -> bool {
+    matches!(cp, 0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F)
+}
+
 /// Classify a single character. `in_lead`/`in_trail` mark the leading and
 /// trailing whitespace zones so a normal interior space stays plain.
 /// `in_mixed_token` gates the homoglyph check (see
-/// [`mixed_script_flags`]).
-fn classify(c: char, in_lead: bool, in_trail: bool, in_mixed_token: bool) -> Option<NameSegment> {
+/// [`mixed_script_flags`]). `mark_anchored` is true when a combining mark
+/// rides on a letter as an ordinary accent (see [`analyze`]).
+fn classify(
+    c: char,
+    in_lead: bool,
+    in_trail: bool,
+    in_mixed_token: bool,
+    mark_anchored: bool,
+) -> Option<NameSegment> {
     let cp = c as u32;
 
     // Bidirectional controls — the headline trick (reverses gpj.exe ⇒ exe.jpg).
@@ -181,14 +212,18 @@ fn classify(c: char, in_lead: bool, in_trail: bool, in_mixed_token: bool) -> Opt
         }
         return None; // a plain interior space is fine
     }
-    // Combining marks (common ranges; an approximation without a Unicode DB).
-    if matches!(cp, 0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0xFE20..=0xFE2F)
-    {
+    // Combining marks: an accent on a letter is ordinary NFD text (kept in
+    // the plain run so it shapes with its base, e.g. "congé"); only stray
+    // marks — on whitespace/punctuation/nothing, or Zalgo stacks — flag.
+    if is_combining_mark(cp) {
+        if mark_anchored {
+            return None;
+        }
         return Some(hazard(
             c,
             HazardKind::CombiningMark,
-            format!("Combining mark (U+{cp:04X})"),
-            None,
+            format!("Stray combining mark (U+{cp:04X})"),
+            Some(visible_codepoint(cp)),
         ));
     }
     // Homoglyphs — non-ASCII letters that mimic an ASCII one, flagged
@@ -399,6 +434,32 @@ mod tests {
     fn mixed_token_still_flagged() {
         // Cyrillic 'о' hidden inside a Latin word — the actual attack.
         assert!(has_hazards("inv\u{043E}ice.pdf"));
+    }
+
+    #[test]
+    fn nfd_accents_are_clean() {
+        // macOS stores names in NFD: "congé" arrives as "conge\u{301}".
+        assert!(!has_hazards("Lorraine conge\u{301}.txt"));
+        // The mark stays inside the plain run so it shapes with its base.
+        let segs = analyze("conge\u{301}.txt");
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].text, "conge\u{301}.txt");
+        // Vietnamese stacks two marks per letter: "ế" = e + circumflex + acute.
+        assert!(!has_hazards("tie\u{302}\u{301}ng.txt"));
+        // Precomposed (NFC) input was never flagged and still isn't.
+        assert!(!has_hazards("Lorraine congé.txt"));
+    }
+
+    #[test]
+    fn stray_combining_marks_flagged() {
+        // A mark riding on a space — nothing legitimate combines there.
+        assert!(analyze("inv \u{0301}oice.pdf")
+            .iter()
+            .any(|s| s.hazard == Some(HazardKind::CombiningMark)));
+        // A mark at the very start of the name.
+        assert!(has_hazards("\u{0301}virus.exe"));
+        // A Zalgo pile: three-plus marks on one base.
+        assert!(has_hazards("z\u{0300}\u{0301}\u{0302}alg.txt"));
     }
 
     #[test]

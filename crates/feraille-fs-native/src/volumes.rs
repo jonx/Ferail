@@ -407,7 +407,42 @@ fn statvfs_bytes(path: &str) -> (Option<u64>, Option<u64>) {
     (total, avail)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+/// AROS volumes for the sidebar's Volumes section. AROS has no `/proc/mounts`
+/// or `/Volumes` to enumerate, and iterating the DOS device list needs
+/// dos.library FFI we don't bind yet, so probe the volumes a stock hosted
+/// AROS mounts by default and keep the ones that resolve. `exists()` stats
+/// (never `open()`s), so this can't trip the posixc open() fault. Colon-
+/// terminated AROS volume names double as their root path.
+#[cfg(target_os = "aros")]
+pub fn list_volumes() -> Vec<VolumeInfo> {
+    // Only volumes/assigns that resolve without a "Please insert volume"
+    // requester: SYS:/RAM: are always mounted; MacRO:/MacRW: are assigns that
+    // fail cleanly when absent. A stock named volume like Work: would pop the
+    // AmigaOS insert-media requester when unmounted, so it is intentionally out.
+    const CANDIDATES: &[(&str, &str)] = &[
+        ("System", "SYS:"),
+        ("Ram Disk", "RAM:"),
+        ("Mac (read-only)", "MacRO:"),
+        ("Mac (read/write)", "MacRW:"),
+    ];
+    CANDIDATES
+        .iter()
+        .filter(|(_, path)| std::path::Path::new(path).exists())
+        .map(|&(name, path)| VolumeInfo {
+            name: name.to_string(),
+            path: std::path::PathBuf::from(path),
+            total_bytes: None,
+            available_bytes: None,
+            is_local: true,
+            is_removable: false,
+            format: None,
+            bsd_device: None,
+            device_id: None,
+        })
+        .collect()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "aros", windows)))]
 pub fn list_volumes() -> Vec<VolumeInfo> {
     Vec::new()
 }

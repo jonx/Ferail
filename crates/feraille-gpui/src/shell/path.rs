@@ -35,6 +35,9 @@ pub fn parse_breadcrumb_path(raw: &str) -> PathBuf {
 /// path; run it at init, on the background executor, or inside an
 /// already-async load.
 pub fn canonicalize_for_identity(path: PathBuf) -> PathBuf {
+    // The one sanctioned wrapper around the raw canonicalize the lint
+    // bans — every other call site goes through this fn, off-thread.
+    #[allow(clippy::disallowed_methods)]
     std::fs::canonicalize(&path).unwrap_or(path)
 }
 

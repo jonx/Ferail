@@ -51,15 +51,33 @@ Stale provider results are dropped at apply time by checking the active
 selection/request. Some providers still run to completion after they become
 stale; cooperative cancellation is the remaining architecture gap.
 
-## Quick Look Thumbnail Provider
+## Content Thumbnail Provider
 
 `preview.rs` requests a 512 px thumbnail on a worker and stores it in an LRU
-cache. It is used for:
+cache. The fetch is `video_poster::fetch_content_thumbnail` — Quick Look
+first, then embedded cover art for audio, then an mpv poster frame for
+videos Quick Look refuses. It is used for:
 
 - images,
 - PDFs,
 - videos,
+- audio files with embedded cover art,
 - other file types Quick Look can render.
+
+Quick Look only thumbnails what AVFoundation decodes; whole container
+families (AVI, WMV/ASF, MKV, …) come back empty instantly. When the user has
+selected the mpv video provider (Settings → Plugins), the fallback decodes
+one frame with libmpv on a **dedicated poster worker thread** — pooled
+tasks await the result rather than blocking, so a folder of 90 rips can
+never starve the background pool (prefetch, folder sizes, timers) the way
+a blocking convoy would. The queue drains newest-first: the folder being
+looked at thumbnails first, and jobs for rows browsed away from still
+finish and stay cached for the next visit. Files that don't decode cost
+one bounded deadline and are negative-cached. Audio cover art is read with
+`lofty` (`feraille_fs_native::media::read_cover_art`), which is what makes
+album art work on Windows/Linux where there is no Quick Look. Every
+thumbnail surface (list rows, icon grid, this pane, `feraille thumb`) rides
+the same fetch.
 
 The thumbnail is intentionally a preview-pane poster, not the full viewer. The
 viewer has its own loader and playback path.

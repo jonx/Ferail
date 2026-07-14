@@ -170,15 +170,26 @@ fallback). Remaining is the UX the system explorers have and we don't:
   **multi-item Get Info**; real Windows/Linux gather (unix `stat_info` already
   yields perms/dates; NSURL/volume-format reads are macOS-only).
 - Preview-pane providers (Quick Look image/PDF/media, inline text + markdown,
-  and scroll-chaining all ship): audio **waveform / video thumbnail strip**
-  beyond the QL poster, **archive/package summaries**, and per-provider
-  cancellation tokens (today stale results are dropped at apply, not cancelled
-  mid-read). Add an explicit cloud-placeholder state before reads that may
-  fault remote content in.
+  scroll-chaining, and now lofty-backed audio tags + cover art all ship — see
+  [docs/features/MEDIA-TAGS.md](docs/features/MEDIA-TAGS.md)): audio
+  **waveform / video thumbnail strip** beyond the QL poster,
+  **archive/package summaries**, and per-provider cancellation tokens (today
+  stale results are dropped at apply, not cancelled mid-read). Add an explicit
+  cloud-placeholder state before reads that may fault remote content in.
+  - **Audio waveform** — a SoundCloud-style peak view styled to the app's look
+    (theme tokens, house stroke), shown in the preview stage for audio. lofty
+    reads tags but not samples, so decode peak buckets off-thread with
+    `symphonia`, cache them like previews, and paint bars through the existing
+    preview-cache/staleness machinery. Design note in
+    [MEDIA-TAGS.md](docs/features/MEDIA-TAGS.md#deferred-waveform-preview).
 - Viewer follow-ups ([docs/features/VIEWER.md](docs/features/VIEWER.md)): swap
   the `qlmanage` shell-out for `QLThumbnailGenerator`; pinch-to-zoom; live
-  playlist sync via the watcher (skip deleted entries); audio-file playback; a
-  watchdog for eligible-but-unplayable videos stalling auto-advance; slideshow
+  playlist sync via the watcher (skip deleted entries); **audio-file playback**
+  ships ([MEDIA-TAGS.md](docs/features/MEDIA-TAGS.md#in-viewer-audio-playback) —
+  cover on the stage + play/pause/mute/loop/seek, autoplay unmuted, via the
+  active backend; native mute now real (`AVPlayer setMuted:` /
+  `IMFMediaEngine::SetMuted`); follow-up: an audible-output pass on a real run);
+  a watchdog for eligible-but-unplayable videos stalling auto-advance; slideshow
   transitions once the animation-budget review lands. Video frame surface ships
   — follow-ups: per-frame copy on a `CVDisplayLink` background pull if 4K60
   shows cost, precise/scrubbing seek (`seekToTime:` tolerance-zero), volume
@@ -257,6 +268,25 @@ fallback). Remaining is the UX the system explorers have and we don't:
   now, but several still drop stale results at apply rather than cancelling).
 - Move remaining expensive metadata reads off synchronous UI paths (preview
   generation, large-folder bookkeeping).
+- **Prime Directive — known remaining UI-thread I/O** (from the 2026-07 audit;
+  the enforcement layers — `path_guard::assert_off_ui_thread`, the
+  `disallowed-methods` clippy deny in feraille-gpui — are live, these are the
+  surviving violations):
+  - `Shell::new` runs `last_dir.is_dir()` + `canonicalize_for_identity` on the
+    UI thread at **every window open** (shell.rs ~1373). A persisted last-dir
+    on a spun-down drive freezes Cmd+N for seconds. Needs an async window-boot
+    step: open at a placeholder immediately, resolve/canonicalize on the
+    background executor, then navigate.
+  - Grid-view icon warm (`warm_grid_viewport`) does one synchronous NSWorkspace
+    `iconForFile:` per uncached viewport folder in a post-paint `App::defer`
+    on the main thread. Move the RGBA fetch to the background executor like
+    the file-thumbnail path right next to it.
+  - `app_state::save()` writes config synchronously on the main thread on each
+    user toggle (create_dir + write + rename; local disk, ms-scale). Debounce
+    onto the background executor.
+  - NSPasteboard reads/writes in copy/cut/paste handlers run on the main
+    thread. Fast (no per-path stat — handlers pre-collect cached `is_dir`),
+    listed for strict-compliance completeness only.
 - Audit render paths for accidental `PathBuf` resolution or filesystem calls;
   keep resolution behind the filesystem / native-shell boundaries.
 - Add slow-path tests or fixtures for slow folders, network volumes, cloud

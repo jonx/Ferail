@@ -225,7 +225,35 @@ pub fn well_known_locations() -> Vec<WellKnownLocation> {
 ///
 /// macOS / Unix: `home_dir()` joined with the standard subfolder name (or
 /// `home_dir()` itself for "Home"). `mode` is Windows-only and ignored here.
-#[cfg(not(windows))]
+/// AROS: the Unix "home joined with Desktop/Documents/Downloads" scheme does
+/// not apply — those drawers do not exist on a stock AROS volume, and
+/// navigating into a missing path currently trips a `posixc.library` open()
+/// fault. List the always-present system roots plus any standard `SYS:`
+/// drawers that actually exist, filtered so a dead row can never be clicked.
+/// The mounted volumes themselves surface separately via [`crate::list_volumes`]
+/// (the sidebar's Volumes section). `mode` is Windows-only and ignored.
+#[cfg(target_os = "aros")]
+pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocation> {
+    let candidates: &[(&'static str, &'static str, &'static str)] = &[
+        ("System", "SYS:", "icons/nav/drive.svg"),
+        ("Ram Disk", "RAM:", "icons/nav/drive.svg"),
+        ("Prefs", "SYS:Prefs", "icons/nav/folder.svg"),
+        ("Utilities", "SYS:Utilities", "icons/nav/folder.svg"),
+        ("Tools", "SYS:Tools", "icons/nav/folder.svg"),
+        ("Storage", "SYS:Storage", "icons/nav/folder.svg"),
+    ];
+    candidates
+        .iter()
+        .filter(|(_, path, _)| std::path::Path::new(path).exists())
+        .map(|&(label, path, icon)| WellKnownLocation {
+            label,
+            path: PathBuf::from(path),
+            icon,
+        })
+        .collect()
+}
+
+#[cfg(all(not(windows), not(target_os = "aros")))]
 pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocation> {
     let home = home_dir();
     let entries: &[(&'static str, Option<&'static str>, &'static str)] = {
