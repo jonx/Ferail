@@ -204,6 +204,47 @@ Legend: ✅ works · 🟡 partial/unverified · ❌ absent.
 | Drag & drop | ❌ | needs Intuition/Workbench drag |
 | Multi-window / tabs | 🟡 | single window verified; multi untested |
 
+### Chrome / bundled SVG icons don't draw — diagnosis (2026-07-14)
+
+Symptom: **most icons in the main window don't draw on AROS** — the toolbar /
+sidebar / command glyphs *and* the Lucide file-type fallback glyphs (the
+`739c9b2` fallback that kicks in because `fetch_icon_rgba` is a stub on AROS).
+This is **separate from** the "native file icons" row above (that's the
+`icon.library` shell stub); it's the bundled-SVG render path.
+
+Traced from the Windows box against the pinned gpui (the AROS fork isn't
+checked out there, so this is a read of the *shared* code + feraille-level
+tests, not an AROS repro):
+
+- **Not a bad asset.** A feraille test rasterizes every icon the app draws
+  (`assets::tests` in `feraille-gpui`) through the same `usvg`/`resvg` path gpui
+  uses — all pass, non-empty masks. So every glyph is a valid SVG.
+- **Not the rasterizer.** `SvgRenderer::render_alpha_mask` →
+  `render_pixmap` is pure Rust (`usvg` + `resvg`/`tiny_skia`) and produces an
+  **A8 alpha mask**, exactly like text glyphs. The AROS smoke test already
+  renders glyphs/gradients/quads through tiny-skia, so the mask is produced
+  fine on AROS too.
+- **So the failure is in `gpui_aros`'s paint path**, downstream of the mask:
+  `elements/svg.rs` calls `window.paint_svg(bounds, …, color, …).log_err()`,
+  which builds a `MonochromeSprite` (A8 atlas sample tinted by the element's
+  text color) — the *same* primitive kind as text glyphs. The error is
+  **swallowed into a log line**, so:
+
+  **First step on the Mac: grep the AROS run log for the `paint_svg` failure.**
+  `render_alpha_mask` bails with *"can't render at a zero size"* when
+  `params.size` (bounds × `window.scale_factor()`) collapses — the leading
+  hypothesis, since a bad AROS `scale_factor()` would zero the icon size while
+  text (font-point sized) still renders. If the log is silent, the mask is
+  reaching the atlas and the bug is in how `gpui_aros` uploads/draws
+  `PrimitiveBatch::MonochromeSprites` for SVG-sourced masks vs. glyph-sourced
+  ones (atlas texture kind, sampling, or the tint color resolving to the
+  background). Compare the two in the `gpui_aros` renderer.
+
+  Ranked causes: (1) `window.scale_factor()` / bounds → zero device size for
+  icons; (2) monochrome-atlas allocation failing for icon-sized (24 px+) masks
+  where glyph-sized ones fit; (3) the `MonochromeSprite` tint color resolving
+  wrong on AROS. All three live in `gpui_aros`, not in feraille.
+
 ### Roadmap (rough order)
 
 1. **Make `gpui_aros` native-shell-complete** — menus, `asl.library` file
