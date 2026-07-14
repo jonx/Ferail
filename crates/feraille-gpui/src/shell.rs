@@ -1153,7 +1153,9 @@ fn window_title_for(dir: &Path) -> String {
             format!("{shown} \u{2014} Feraille")
         }
         _ => {
-            let path = dir.to_string_lossy();
+            // A root with no leaf (e.g. `C:\`): show the clean display form,
+            // never the canonicalized `\\?\C:\`.
+            let path = feraille_fs_native::paths::display_path(dir);
             if path.is_empty() {
                 "Feraille".to_string()
             } else {

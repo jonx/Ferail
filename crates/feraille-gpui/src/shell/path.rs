@@ -63,7 +63,10 @@ pub fn path_segments(path: &Path) -> Vec<(String, PathBuf)> {
                 let mut root_str: OsString = pending_prefix.take().unwrap_or_default();
                 root_str.push(std::path::MAIN_SEPARATOR_STR);
                 accum = PathBuf::from(root_str);
-                let label = accum.to_string_lossy().into_owned();
+                // Navigation keeps the real (possibly `\\?\`-verbatim) path;
+                // the label is the clean display form so a canonicalized root
+                // never shows as `\\?\C:\`.
+                let label = feraille_fs_native::paths::display_path(&accum);
                 out.push((label, accum.clone()));
             }
             Component::Normal(s) => {

@@ -34,6 +34,32 @@ pub fn display_leaf(raw: &str) -> Cow<'_, str> {
     Cow::Borrowed(raw)
 }
 
+/// Convert a *whole* path to its user-facing string form, stripping the
+/// Windows extended-length (`\\?\`) prefix that must never reach the user's
+/// eyes.
+///
+/// `std::fs::canonicalize` returns verbatim paths on Windows (the file list
+/// navigates with them because the shell/trash APIs are fed the stripped form
+/// elsewhere), so a raw `to_string_lossy()` in a window title, breadcrumb root,
+/// or Get Info "Where" row leaks `\\?\C:\…`. This normalizes it:
+/// `\\?\C:\x` → `C:\x`, `\\?\UNC\srv\share\x` → `\\srv\share\x`. Non-verbatim
+/// paths and every non-Windows path are returned unchanged. Whole-path, unlike
+/// the leaf-only [`display_leaf`]; the two compose (strip the prefix here, swap
+/// per-leaf separators there).
+pub fn display_path(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if let Some(rest) = s.strip_prefix(r"\\?\") {
+            if let Some(unc) = rest.strip_prefix(r"UNC\") {
+                return format!(r"\\{unc}");
+            }
+            return rest.to_string();
+        }
+    }
+    s.into_owned()
+}
+
 /// Inverse of [`display_leaf`]: convert a *typed* (display-form) filename leaf
 /// to the bytes to write on disk.
 ///
@@ -369,6 +395,31 @@ mod leaf_tests {
         // Off macOS the colon/slash have their normal meaning; no swap.
         assert_eq!(display_leaf("a:b"), "a:b");
         assert_eq!(on_disk_leaf("a:b"), "a:b");
+    }
+
+    use std::path::Path;
+
+    #[test]
+    fn display_path_leaves_plain_paths_unchanged() {
+        // A path with no verbatim prefix round-trips as-is on every platform.
+        let p = Path::new(if cfg!(windows) { r"C:\Users\me\file.txt" } else { "/home/me/file.txt" });
+        assert_eq!(display_path(p), p.to_string_lossy());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn display_path_strips_verbatim_disk_prefix() {
+        assert_eq!(display_path(Path::new(r"\\?\C:\Source\feraille")), r"C:\Source\feraille");
+        assert_eq!(display_path(Path::new(r"\\?\C:\")), r"C:\");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn display_path_rewrites_verbatim_unc_prefix() {
+        assert_eq!(
+            display_path(Path::new(r"\\?\UNC\server\share\dir")),
+            r"\\server\share\dir"
+        );
     }
 }
 

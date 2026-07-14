@@ -755,7 +755,7 @@ impl DiskUsageView {
         let title = if self.host == ToolHostContext::Docked {
             "Disk Usage".to_string()
         } else {
-            self.root_path.to_string_lossy().into_owned()
+            feraille_fs_native::paths::display_path(&self.root_path)
         };
         let scanned = humanize_bytes(self.stats.bytes_scanned);
         let files = self.stats.files_scanned;
@@ -1971,7 +1971,7 @@ pub fn open_existing_window(
         titlebar: Some(TitlebarOptions {
             title: Some(SharedString::from(format!(
                 "Disk Usage \u{2014} {}",
-                root.display()
+                feraille_fs_native::paths::display_path(&root)
             ))),
             ..Default::default()
         }),

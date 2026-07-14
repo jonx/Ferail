@@ -229,7 +229,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     if let Some(app) = default_app {
         general = general.text_if("Application", app);
     }
-    general = general.text_if("Where", path.display().to_string());
+    general = general.text_if("Where", feraille_fs_native::paths::display_path(path));
 
     // ---- Attributes ----
     let mut attributes = InfoSection::new("Attributes");
