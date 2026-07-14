@@ -53,6 +53,17 @@ own commit on the `windows-parity` branch:
   the explicit toggle on smaller windows.
 - **make_alias_in / pick_folder / eject_volume** implemented (IShellLink in a
   dest dir; `IFileOpenDialog` + `FOS_PICKFOLDERS`; dismount + `IOCTL_STORAGE_EJECT_MEDIA`).
+- **Eject All + external-disk detection** (Finder-parity eject, cross-platform).
+  `list_volumes` now probes each drive with a zero-access `CreateFileW` +
+  `IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS` (physical disk number → the `device_id`
+  grouping key that drives the "Eject All / this volume only" prompt) and
+  `IOCTL_STORAGE_QUERY_PROPERTY` (USB bus type → external SSDs/HDDs that report
+  as `DRIVE_FIXED` are now ejectable, matching Finder). `eject_device` dismounts
+  every partition of a disk before the single `IOCTL_STORAGE_EJECT_MEDIA`.
+  `volume_busy_processes` (the "why won't it eject" holder list) is still a
+  Windows stub — needs Restart Manager or an `NtQuerySystemInformation` handle
+  walk; empty means "unknown", so the eject-failure toast falls back to the raw
+  error.
 - **Sidebar Locations resolve via `SHGetKnownFolderPath`** so OneDrive-moved
   Documents/Pictures/etc. point at the real path (was a literal
   `%USERPROFILE%\Pictures` that "Folder not found"-ed on most OneDrive boxes).

@@ -92,8 +92,16 @@ blind from a Mac):
 - **Theme / volume / power observers** — async D-Bus signal subscriptions
   (`ashpd`/`zbus`) bridged into the sync callback API; signal match rules and
   the runtime-thread bridge need live testing.
-- **`eject_volume`, trash, `open_with_candidates`, video** — udisks2 /
-  freedesktop-trash / MIME-association parsing / GStreamer respectively.
+- **`eject_volume` / `eject_device`** — implemented via `udisksctl unmount` +
+  `power-off` (plain `umount` fallback for udisks-less setups). `eject_device`
+  is Finder's "Eject All": unmount every partition of a disk, then power the
+  drive down once its last filesystem is gone. The partition→disk grouping key
+  (`VolumeInfo::device_id`, e.g. `sdb1` → `sdb`) is resolved through sysfs in
+  `feraille-fs-native::list_volumes`; `volume_busy_processes` (the failed-eject
+  holder list) scans `/proc/<pid>/{fd,cwd}` like `lsof`. Still needs live
+  testing on a real removable device.
+- **trash, `open_with_candidates`, video** — freedesktop-trash /
+  MIME-association parsing / GStreamer respectively.
 
 > **Verify Linux code from any host.** `cargo check` doesn't link, so the real
 > arms type-check (and the Linux-gated unit tests compile) on a Mac/Windows box:

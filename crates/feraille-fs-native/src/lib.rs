@@ -646,6 +646,13 @@ pub struct VolumeInfo {
     pub format: Option<String>,
     /// BSD device node (e.g. "/dev/disk3s1s1"). Same availability as `format`.
     pub bsd_device: Option<String>,
+    /// Opaque whole-device grouping key: volumes with the same `device_id`
+    /// are partitions/containers of one physical device, so ejecting one
+    /// should offer to eject the others (Finder's "eject all" prompt).
+    /// macOS: the whole-disk BSD name ("disk4"); Windows: the physical
+    /// disk number(s) ("disk3"); Linux: the parent block device ("sdb").
+    /// `None` when unknown or for network mounts — never grouped.
+    pub device_id: Option<String>,
 }
 
 /// Look up a volume's metadata for the volume root at `path` (e.g.
@@ -743,6 +750,14 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
         };
 
         let (format, bsd_device) = crate::stat_info::volume_fs_info(path);
+        // Group by the whole-disk BSD name so the eject flow can find the
+        // other volumes of a multi-partition external device. Local disks
+        // only — an SMB `f_mntfromname` is a URL, not a disk node.
+        let device_id = if is_local {
+            bsd_device.as_deref().and_then(volumes::whole_disk_bsd)
+        } else {
+            None
+        };
         Some(VolumeInfo {
             path: path.to_path_buf(),
             name,
@@ -752,6 +767,7 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
             is_removable,
             format,
             bsd_device,
+            device_id,
         })
     }
 }

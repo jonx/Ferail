@@ -325,6 +325,32 @@ pub fn eject_volume(_path: &std::path::Path) -> Result<(), String> {
     Err("eject is macOS-only in this build".into())
 }
 
+/// Unmount every volume on the physical device backing
+/// `volume_paths[0]` and eject the device (Finder's "Eject All").
+/// Synchronous — callers run this on a worker. Non-macOS: error.
+#[cfg(target_os = "macos")]
+pub fn eject_device(volume_paths: &[&std::path::Path]) -> Result<(), String> {
+    file_ops::eject_device(volume_paths)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn eject_device(_volume_paths: &[&std::path::Path]) -> Result<(), String> {
+    Err("eject is macOS-only in this build".into())
+}
+
+/// Names of processes holding files open on the volume at `path` — the
+/// "why won't it eject" answer for a failed eject. Synchronous —
+/// callers run this on a worker. Non-macOS: empty.
+#[cfg(target_os = "macos")]
+pub fn volume_busy_processes(path: &std::path::Path) -> Vec<String> {
+    file_ops::volume_busy_processes(path)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn volume_busy_processes(_path: &std::path::Path) -> Vec<String> {
+    Vec::new()
+}
+
 /// Make a Finder-resolvable alias file pointing at `target`.
 /// Synchronous — callers run this on a worker.
 #[cfg(target_os = "macos")]

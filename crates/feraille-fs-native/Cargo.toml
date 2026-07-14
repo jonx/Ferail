@@ -25,6 +25,12 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Gdi",
     # fetch_icon_rgba (icons.rs) needs CoInitializeEx
     "Win32_System_Com",
+    # probe_volume_device (volumes.rs) → CreateFileW (whose signature pulls
+    # Win32_Security) + DeviceIoControl + the disk-extents / storage-property
+    # IOCTLs behind the eject-all grouping key.
+    "Win32_Security",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
 ] }
 
 # stat_info.rs reads ownership / mode / timestamps via libc on ALL unix
