@@ -11,6 +11,39 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 
 ## Status
 
+- **The crash family was posixc, not emul-handler — fixed, 2026-07-16
+  (verified live).** The "tree expand freezes the app" hang, the emul-handler
+  `DoExamineNext` bus fault that kept the folder-size walker gated
+  (UPSTREAM-NOTES item 36), the "`posixc __open` bus-faults on a missing
+  path" landmine, and the "opening a second window traps" finding were all
+  one bug: `posixc.library`'s per-opener fd table (`__fdesc.c`) had **no
+  locking**, while every Rust std thread shares the opener's context. A
+  racing table grow handed workers freed fdescs (→ garbage DOS filehandles
+  inside ExNext packets → the *handler* trapped at `DoExamineNext+0`);
+  unlocked `AllocPooled`/`FreePooled` corrupted the shared pool (→ wild
+  faults like `Write` → `dopacket` → `AddTail(NULL)`); non-atomic
+  find-then-claim let two threads take the same fd (and `__getfdslot` then
+  `close()`d the sibling's live handle). Depending on what got hit the
+  symptom was a containment requester, a freeze, or a silent deadend
+  reboot. Fixed in aros-upstream `crash-containment` (`d702d708`,
+  "T-FDLOCK"): a `SignalSemaphore` in `PosixCIntBase` — shared for reads,
+  exclusive for mutation and pool ops, atomic find+claim in
+  `open`/`opendir`/`pipe`/`dup`/`dup2`/`fcntl(F_DUPFD)`, geometric table
+  growth. Rebuild `compiler-posixc`; no Feraille relink needed. Verified:
+  - **Folder-size walker un-gated and working** — the full recursive
+    concurrent walk over `SYS:` (494.6 MB, 30 top-level entries) completes;
+    the Size column populates (`screenshots/aros-walker-sizes.png`).
+  - **Tree expand works** — `SYS:` and `SYS:Classes` expansion (the
+    previously deterministic OS-reboot repro) runs clean, connector lines
+    draw.
+  - **Second window works** — Settings opens as a real second Intuition
+    window, fully rendered and interactive, and About (now an in-window
+    modal) renders (`screenshots/aros-settings-window.png`).
+  - **Open — a rarer silent deadend reboot survives the fix**, seen ~twice
+    under boot-time walker + window churn; no kernel trap, no panic file,
+    app log truncated mid-write. `rom/exec/alert.c` now logs every Alert to
+    the host log unconditionally (same commit) so the next repro
+    self-identifies; multi-cycle soaks since the fix have run clean.
 - **Sidebar + chrome polish pass, 2026-07-14 (verified live).** After the icon
   fix below, a round of AROS-specific UI fixes, all confirmed on a booted screenshot:
   - **Font-glyph tofu boxes replaced by SVG icons.** The disclosure triangles
@@ -229,17 +262,18 @@ Legend: ✅ works · 🟡 partial/unverified · ❌ absent.
 | Ant Trail, favorites, undo, SQLite metadata | ✅ | SQLite proven; UI paths unverified |
 | Command palette (Cmd+K) | 🟡 | GPUI-drawn (works); no native menu bar |
 | Code/syntax preview (tree-sitter) | 🟡 | grammars build; render path unverified |
+| Folder sizes (recursive walker) | ✅ | un-gated 2026-07-16 after the posixc fd-table fix; full `SYS:` walk verified live |
 | Icon grid / native file icons | ❌ | needs `icon.library` (shell stub) |
-| Thumbnails | ❌ | needs shell + image decode + walker (gated) |
+| Thumbnails | ❌ | needs shell + image decode |
 | Reveal in Workbench | ❌ | needs `workbench.library` (shell stub) |
-| Native menu bar | ❌ | `gpui_aros` `set_menus` stub → Intuition menus |
-| Native file requesters | ❌ | `gpui_aros` → `asl.library` |
+| Native menu bar | ✅ | gadtools strip from gpui `set_menus`; verified live (About/Settings picks work) |
+| Native file requesters | 🟡 | `asl.library` wired in `gpui_aros` (`prompt_for_paths`); unverified on device |
 | Media viewer (mpv) | ❌ | `feraille-video-mpv` is a macOS backend |
 | Quick Look previews | ❌ | macOS-only; AROS-way = `datatypes.library` |
 | Spotlight / indexed search | ❌ | macOS-only; no AROS equivalent yet |
 | Tags, quarantine "where from" | ❌ | macOS-only; AROS-way = **filenote** comment |
 | Drag & drop | ❌ | needs Intuition/Workbench drag |
-| Multi-window / tabs | 🟡 | single window verified; multi untested |
+| Multi-window / tabs | ✅ | Settings opens as a real second Intuition window (2026-07-16); About is an in-window modal |
 
 ### Chrome / bundled SVG icons don't draw — RESOLVED (2026-07-14)
 
