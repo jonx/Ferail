@@ -193,6 +193,8 @@ fn breadcrumbs() -> &'static Mutex<VecDeque<String>> {
 }
 
 fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
+    use std::fmt::Write as _;
+
     let backtrace = std::backtrace::Backtrace::force_capture();
     let backtrace_text = format!("{backtrace}");
     let full = std::env::var_os("FERAILLE_FULL_BACKTRACE").is_some()
@@ -200,28 +202,58 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
             .and_then(|v| v.into_string().ok())
             .map(|v| v == "full")
             .unwrap_or(false);
-    eprintln!();
-    eprintln!("==================== Feraille (gpui) Crash ====================");
-    eprintln!("time      : +{:.3}s", elapsed_secs());
-    eprintln!("thread    : {thread_name}");
-    eprintln!("location  : {location}");
-    eprintln!("message   : {payload}");
-    eprintln!();
-    dump_breadcrumbs_for_panic();
-    eprintln!();
+    let mut r = String::with_capacity(4096);
+    let _ = writeln!(r);
+    let _ = writeln!(
+        r,
+        "==================== Feraille (gpui) Crash ===================="
+    );
+    let _ = writeln!(r, "time      : +{:.3}s", elapsed_secs());
+    let _ = writeln!(r, "thread    : {thread_name}");
+    let _ = writeln!(r, "location  : {location}");
+    let _ = writeln!(r, "message   : {payload}");
+    let _ = writeln!(r);
+    dump_breadcrumbs_for_panic(&mut r);
+    let _ = writeln!(r);
     if full {
-        eprintln!("backtrace :");
-        eprintln!("{backtrace_text}");
+        let _ = writeln!(r, "backtrace :");
+        let _ = writeln!(r, "{backtrace_text}");
     } else {
-        eprintln!("relevant frames:");
-        print_compact_backtrace(&backtrace_text);
-        eprintln!("hint      : set FERAILLE_FULL_BACKTRACE=1 for the full raw backtrace");
+        let _ = writeln!(r, "relevant frames:");
+        write_compact_backtrace(&mut r, &backtrace_text);
+        let _ = writeln!(
+            r,
+            "hint      : set FERAILLE_FULL_BACKTRACE=1 for the full raw backtrace"
+        );
     }
-    eprintln!("===============================================================");
-    eprintln!();
+    let _ = writeln!(
+        r,
+        "==============================================================="
+    );
+
+    eprintln!("{r}");
+
+    // On AROS, stderr is lost (console-bound) and with panic=abort the whole
+    // OS may reboot before anything drains — persist the report to the
+    // host-shared volume with a dedicated file handle. Deliberately NOT the
+    // shared aros_sink: the panicking thread may hold its (non-reentrant)
+    // mutex, and a deadlocked panic hook reports nothing at all.
+    #[cfg(target_os = "aros")]
+    {
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("MacRW:feraille-panic.txt")
+        {
+            let _ = writeln!(f, "{r}");
+            let _ = f.flush();
+        }
+    }
 }
 
-fn print_compact_backtrace(backtrace: &str) {
+fn write_compact_backtrace(out: &mut String, backtrace: &str) {
+    use std::fmt::Write as _;
     let mut printed = 0usize;
     let mut pending_frame: Option<&str> = None;
     for line in backtrace.lines() {
@@ -243,32 +275,33 @@ fn print_compact_backtrace(backtrace: &str) {
             || line.contains("gpui/src/app/context.rs");
         if relevant {
             if let Some(frame) = pending_frame.take() {
-                eprintln!("    {frame}");
+                let _ = writeln!(out, "    {frame}");
                 printed += 1;
             }
-            eprintln!("    {line}");
+            let _ = writeln!(out, "    {line}");
             printed += 1;
         }
         if printed >= 28 {
-            eprintln!("    ... compacted ...");
+            let _ = writeln!(out, "    ... compacted ...");
             return;
         }
     }
     if printed == 0 {
-        eprintln!("    <no Feraille/GPUI frames found>");
+        let _ = writeln!(out, "    <no Feraille/GPUI frames found>");
     }
 }
 
-fn dump_breadcrumbs_for_panic() {
+fn dump_breadcrumbs_for_panic(out: &mut String) {
+    use std::fmt::Write as _;
     let guard = breadcrumbs().lock().unwrap_or_else(|e| e.into_inner());
     if guard.is_empty() {
-        eprintln!("breadcrumbs:");
-        eprintln!("    <none>");
+        let _ = writeln!(out, "breadcrumbs:");
+        let _ = writeln!(out, "    <none>");
         return;
     }
-    eprintln!("breadcrumbs:");
+    let _ = writeln!(out, "breadcrumbs:");
     for (idx, entry) in guard.iter().enumerate() {
-        eprintln!("    {:>2}. {entry}", idx + 1);
+        let _ = writeln!(out, "    {:>2}. {entry}", idx + 1);
     }
 }
 
