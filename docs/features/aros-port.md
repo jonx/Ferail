@@ -39,11 +39,30 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
   - **Second window works** — Settings opens as a real second Intuition
     window, fully rendered and interactive, and About (now an in-window
     modal) renders (`screenshots/aros-settings-window.png`).
-  - **Open — a rarer silent deadend reboot survives the fix**, seen ~twice
-    under boot-time walker + window churn; no kernel trap, no panic file,
-    app log truncated mid-write. `rom/exec/alert.c` now logs every Alert to
-    the host log unconditionally (same commit) so the next repro
-    self-identifies; multi-cycle soaks since the fix have run clean.
+  - **The residual "silent reboot" is also fixed (2026-07-16, verified by a
+    40-cycle soak — previous builds died by cycle 15).** It was two stacked
+    problems, unmasked one at a time with forensics added along the way
+    (exec `Alert()`/`ShutdownA()` host-log breadcrumbs, a truncation-proof
+    `tail -F` host-log sidecar, and a panic hook that persists to
+    `MacRW:feraille-panic.txt` — the documented panic file had never
+    actually been implemented):
+    1. `graft/aros-host-conf.sh` clobbered `AROS_HOST_MEMORY` with the
+       conf's `memory 256`, so every boot ran a 256 MB guest → Rust OOM
+       panics under walker load. Env now beats conf (aros-aarch64
+       `8ed01e5`), and the conf says `memory 1280`.
+    2. `eprintln!` **panics** when stderr fails, and the AROS boot-console
+       handler fails partial writes after minutes of TRACE flood
+       (`notify-rs poll loop: failed printing to stderr`). With
+       `panic=abort` one lost log line became BRK → trap → deadend →
+       ColdReboot of the whole OS. `obs.rs` now writes stderr
+       non-panicking and the AROS `log` bridge defaults to Info
+       (`FERAILLE_LOG_TRACE=1` restores the firehose).
+  - **Open (minor) — closing the last window leaves a windowless process.**
+    On macOS the app keeps running without windows by design; on AROS
+    there is no Dock to reopen from, so closing the main window strands a
+    live `C:Feraille` with no UI (`ERROR gpui::app: window not found` on
+    later events). Decide: quit-on-last-window-close on AROS, or reopen
+    via a commodities/Exchange-style broker.
 - **Sidebar + chrome polish pass, 2026-07-14 (verified live).** After the icon
   fix below, a round of AROS-specific UI fixes, all confirmed on a booted screenshot:
   - **Font-glyph tofu boxes replaced by SVG icons.** The disclosure triangles
