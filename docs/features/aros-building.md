@@ -201,10 +201,15 @@ C:Feraille --theme dark --width 780 --height 560
 ```
 
 Driving it under automation: `graft/aros-ctl type/click/key/shot` (input
-travels the same HIDD path as real events). Crash forensics: the wrapper
-installs a panic hook that writes reports to `MacRW:feraille-panic.txt`
-(≈ `~/AROS/Shared/` on the host) — with panic=abort the OS dies before
-stderr reaches anything durable.
+travels the same HIDD path as real events). Crash forensics: `obs.rs`'s
+panic hook appends the crash report (message, location, breadcrumbs,
+backtrace) to `MacRW:feraille-panic.txt` (≈ `~/AROS/Shared/` on the host)
+— with panic=abort the abort cascades into a deadend + ColdReboot whose
+bootstrap re-exec truncates the host log, so stderr never survives. The
+`log`-crate bridge similarly lands in `MacRW:feraille-log.txt`. When
+chasing a reboot that leaves neither, capture the host log with a
+truncation-proof reader (`tail -n +1 -F /tmp/aros-window.log > sidecar`) —
+exec's Alert() and ShutdownA() leave breadcrumbs there.
 
 ## 8. Test suites
 
