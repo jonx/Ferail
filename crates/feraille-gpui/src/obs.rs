@@ -47,11 +47,19 @@ pub fn init() {
     // both are actually observable on the host (~/AROS/Shared/feraille-log.txt).
     #[cfg(target_os = "aros")]
     {
-        let _ = log::set_logger(&AROS_LOGGER)
-            .map(|()| log::set_max_level(log::LevelFilter::Trace));
+        // Info by default: at Trace, cosmic_text shapes and notify rescans
+        // flood both sinks (tens of lines per frame — real I/O cost, and the
+        // volume that used to overflow the boot console). FERAILLE_LOG_TRACE=1
+        // restores the firehose for icon/text debugging sessions.
+        let max = if std::env::var_os("FERAILLE_LOG_TRACE").is_some() {
+            log::LevelFilter::Trace
+        } else {
+            log::LevelFilter::Info
+        };
+        let _ = log::set_logger(&AROS_LOGGER).map(|()| log::set_max_level(max));
         line(
             "info",
-            format_args!("MacRW:feraille-log.txt sink open; `log` crate bridged"),
+            format_args!("MacRW:feraille-log.txt sink open; `log` crate bridged (max={max})"),
         );
     }
 }
@@ -65,9 +73,19 @@ pub fn elapsed_secs() -> f64 {
 
 pub fn line(level: &str, args: std::fmt::Arguments) {
     let msg = format!("[+{:7.3}s][{}] {}", elapsed_secs(), level, args);
-    eprintln!("{msg}");
+    stderr_line(&msg);
     #[cfg(target_os = "aros")]
     aros_sink(&msg);
+}
+
+/// Non-panicking stderr write. `eprintln!` panics when stderr fails, and on
+/// AROS the boot-console handler does fail partial writes under sustained
+/// output — with panic=abort that cascaded into a whole-OS deadend reboot
+/// (the "spontaneous silent reboot": notify-rs TRACE spam → eprintln! →
+/// "failed printing to stderr" panic). Diagnostics must never kill the app.
+pub fn stderr_line(msg: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{msg}");
 }
 
 /// AROS-only host-visible diagnostic sink. Appends each line to
@@ -173,9 +191,9 @@ fn print_startup_banner() {
     let pid = std::process::id();
     let wall = wall_clock_iso();
 
-    eprintln!(
+    stderr_line(&format!(
         "--- Feraille (gpui) {version} ({profile}, {target}) pid={pid} log>={LOG_THRESHOLD} {wall} ---",
-    );
+    ));
     line("info", format_args!("cwd: {cwd}"));
     if args.is_empty() {
         line("info", format_args!("args: <none>"));
@@ -194,6 +212,27 @@ fn breadcrumbs() -> &'static Mutex<VecDeque<String>> {
 
 fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
     use std::fmt::Write as _;
+
+    // Persist the essential facts FIRST, before anything that can fail. A
+    // panic inside this hook aborts immediately (panic-in-hook cannot
+    // unwind), and on this port Backtrace::force_capture() is the prime
+    // suspect — reports were lost entirely when it came before the write.
+    #[cfg(target_os = "aros")]
+    {
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("MacRW:feraille-panic.txt")
+        {
+            let _ = writeln!(
+                f,
+                "PANIC +{:.3}s thread '{thread_name}' at {location}: {payload}",
+                elapsed_secs()
+            );
+            let _ = f.flush();
+        }
+    }
 
     let backtrace = std::backtrace::Backtrace::force_capture();
     let backtrace_text = format!("{backtrace}");
@@ -231,7 +270,7 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
         "==============================================================="
     );
 
-    eprintln!("{r}");
+    stderr_line(&r);
 
     // On AROS, stderr is lost (console-bound) and with panic=abort the whole
     // OS may reboot before anything drains — persist the report to the
