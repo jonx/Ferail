@@ -11,12 +11,39 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 
 ## Status
 
-- **The crash family was posixc, not emul-handler — fixed, 2026-07-16
-  (verified live).** The "tree expand freezes the app" hang, the emul-handler
+> **Correction, 2026-07-17.** The claim below that the posixc fix closed the
+> *whole* crash family was **wrong**, and the folder-size walker has been
+> re-gated. Under real (human, mouse-driven) use the app still bus-faults on
+> ordinary navigation once the walker runs — `Error 0x80000002`, contained
+> Guru, `Module kernel Segment 1 .text Offset 0x1AA0`, task `C:Feraille` —
+> and a separate hang shows the AROS exec thread pinned at 100% CPU spinning
+> in the kernel's `sigprocmask` interrupt-mask path with every task parked in
+> `WAIT`. **Current real state: only About and Settings are reliable; most
+> navigation freezes within a few clicks.**
+>
+> Two verification failures produced the bad claim, both worth remembering:
+> 1. The soak harness only checked `crash=none`. A livelock *and* a contained
+>    Guru both leave `state=running crash=none`, so it scored a frozen,
+>    dead-on-screen app as a pass for 40 cycles.
+> 2. Synthetic input (`aros-ctl click`) does not reproduce the failure at all
+>    — 24 scripted rounds pass clean while a human freezes it in a few
+>    clicks. Injected clicks teleport the pointer; they generate none of the
+>    `IDCMP_MOUSEMOVE`/hover-repaint traffic real mouse motion does. **Until
+>    the harness can drive real pointer motion, on-device claims need a human
+>    at the mouse.**
+>
+> The posixc fd-table race documented below was real and is genuinely fixed
+> (it is an objectively unlocked shared table); it simply was not the whole
+> story. UPSTREAM-NOTES item 36 is re-opened.
+
+- **The posixc fd-table race — fixed, 2026-07-16 (but see the correction
+  above: this did NOT close the crash family).** The "tree expand freezes the
+  app" hang, the emul-handler
   `DoExamineNext` bus fault that kept the folder-size walker gated
   (UPSTREAM-NOTES item 36), the "`posixc __open` bus-faults on a missing
-  path" landmine, and the "opening a second window traps" finding were all
-  one bug: `posixc.library`'s per-opener fd table (`__fdesc.c`) had **no
+  path" landmine, and the "opening a second window traps" finding were
+  *attributed* to one bug: `posixc.library`'s per-opener fd table
+  (`__fdesc.c`) had **no
   locking**, while every Rust std thread shares the opener's context. A
   racing table grow handed workers freed fdescs (→ garbage DOS filehandles
   inside ExNext packets → the *handler* trapped at `DoExamineNext+0`);
@@ -30,12 +57,14 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
   exclusive for mutation and pool ops, atomic find+claim in
   `open`/`opendir`/`pipe`/`dup`/`dup2`/`fcntl(F_DUPFD)`, geometric table
   growth. Rebuild `compiler-posixc`; no Feraille relink needed. Verified:
-  - **Folder-size walker un-gated and working** — the full recursive
-    concurrent walk over `SYS:` (494.6 MB, 30 top-level entries) completes;
-    the Size column populates (`screenshots/aros-walker-sizes.png`).
-  - **Tree expand works** — `SYS:` and `SYS:Classes` expansion (the
-    previously deterministic OS-reboot repro) runs clean, connector lines
-    draw.
+  - ~~**Folder-size walker un-gated and working**~~ — **FALSIFIED, re-gated
+    2026-07-17.** One walk of `SYS:` did complete (494.6 MB, Size column
+    populated, `screenshots/aros-walker-sizes.png`) — but under real use the
+    walk bus-faults the app and, because it starts on every listing, it broke
+    all navigation. One green run is not evidence of a fixed race.
+  - **Tree expand** — `SYS:` and `SYS:Classes` expansion ran clean under
+    scripted input (the previously deterministic OS-reboot repro no longer
+    reboots). Unverified under real mouse use; treat as provisional.
   - **Second window works** — Settings opens as a real second Intuition
     window, fully rendered and interactive, and About (now an in-window
     modal) renders (`screenshots/aros-settings-window.png`).
@@ -270,7 +299,7 @@ Legend: ✅ works · 🟡 partial/unverified · ❌ absent.
 
 | Feature | AROS | Notes / where the work is |
 |---|---|---|
-| Boot, window, dark theme, navigation, file list | ✅ | verified live (`SYS:` listing) |
+| Boot, window, dark theme, navigation, file list | 🟡 | renders correctly, but navigation freezes within a few clicks under real mouse use (2026-07-17) |
 | Keyboard / mouse / wheel | ✅ | `gpui_aros` input |
 | Clipboard (text) | ✅ | `clipboard.device` via `gpui_aros` |
 | Never-block UI | ✅ | GPUI + std-thread dispatcher |
@@ -281,7 +310,7 @@ Legend: ✅ works · 🟡 partial/unverified · ❌ absent.
 | Ant Trail, favorites, undo, SQLite metadata | ✅ | SQLite proven; UI paths unverified |
 | Command palette (Cmd+K) | 🟡 | GPUI-drawn (works); no native menu bar |
 | Code/syntax preview (tree-sitter) | 🟡 | grammars build; render path unverified |
-| Folder sizes (recursive walker) | ✅ | un-gated 2026-07-16 after the posixc fd-table fix; full `SYS:` walk verified live |
+| Folder sizes (recursive walker) | ❌ | re-gated 2026-07-17: the walk bus-faults the app under real use and broke all navigation |
 | Icon grid / native file icons | ❌ | needs `icon.library` (shell stub) |
 | Thumbnails | ❌ | needs shell + image decode |
 | Reveal in Workbench | ❌ | needs `workbench.library` (shell stub) |
