@@ -11,6 +11,12 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 
 ## Status
 
+> **Handover, 2026-07-17:** the full state of the stability work (root-cause
+> preemption fix, the pthread/posixc/gpui_aros fix stack, the one diagnosed
+> in-flight bug, build foot-guns, and the on-device test harnesses) is in
+> [`aros-aarch64/graft/HANDOVER-2026-07-17.md`](../../../aros-aarch64/graft/HANDOVER-2026-07-17.md).
+> Start there before touching AROS stability.
+
 > **Correction, 2026-07-17.** The claim below that the posixc fix closed the
 > *whole* crash family was **wrong**, and the folder-size walker has been
 > re-gated. Under real (human, mouse-driven) use the app still bus-faults on
