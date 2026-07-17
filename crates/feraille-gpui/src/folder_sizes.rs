@@ -113,12 +113,18 @@ pub fn start(
     force: bool,
     cx: &mut gpui::Context<Shell>,
 ) {
-    // AROS: previously gated off — the concurrent walk crashed the OS with
-    // emul-handler DoExamineNext bus faults. Root cause was not the handler
-    // but posixc.library's unlocked shared fd table (a racing table grow
-    // handed workers freed fdescs, i.e. garbage DOS filehandles inside
-    // ExNext packets). Fixed in aros-upstream posixc (T-FDLOCK, 2026-07-16);
-    // the walker runs on AROS again since.
+    // AROS: RE-GATED 2026-07-17. The recursive du walk still bus-faults the
+    // Feraille task under hosted AROS (`Error 0x80000002`, contained Guru),
+    // and because it starts on *every* directory listing it made ordinary
+    // navigation unusable: click a folder -> walker spins up -> navigate
+    // away -> dead. posixc's unlocked fd table (T-FDLOCK, aros-upstream
+    // d702d708) was a real bug and had to be fixed, but it was NOT the whole
+    // story here — un-gating on that basis was premature. Folder sizes stay
+    // "--" on AROS until the walk itself is proven on-device; a missing
+    // nicety beats an unusable file list. See docs/features/aros-port.md.
+    if cfg!(target_os = "aros") {
+        return;
+    }
     // Snapshot the directory rows on the foreground executor. The
     // worker gets `Send` data only. Symlinks-to-directories are
     // `EntryKind::Symlink` and stay excluded — we never follow them.
