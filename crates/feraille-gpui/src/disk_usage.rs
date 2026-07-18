@@ -761,10 +761,27 @@ impl DiskUsageView {
         let files = self.stats.files_scanned;
         let folders = self.stats.dirs_scanned;
         let scanning = !self.scan_complete;
-        let summary = if self.scan_complete {
+        // A failed scan must say so — it used to store the error and
+        // render "0 files, 0 folders, 0 B", indistinguishable from an
+        // empty folder (this hid "canonicalize unsupported" on AROS).
+        let summary = if let Some(err) = &self.error {
+            let why = match err {
+                feraille_core::EnumerationError::PermissionDenied => {
+                    "permission denied".to_string()
+                }
+                feraille_core::EnumerationError::NotFound => "folder not found".to_string(),
+                feraille_core::EnumerationError::Other(msg) => msg.clone(),
+            };
+            format!("Scan failed \u{2014} {why}")
+        } else if self.scan_complete {
             format!("{files} files, {folders} folders, {scanned}")
         } else {
             format!("Scanning\u{2026} {files} files, {scanned}")
+        };
+        let summary_color = if self.error.is_some() {
+            theme.danger
+        } else {
+            theme.muted_foreground
         };
         // Phase 6 follow-on: header action buttons are icon-only.
         // Each one carries a tooltip with the human-readable name
@@ -861,7 +878,7 @@ impl DiskUsageView {
                             .min_w_0()
                             .truncate()
                             .text_scale_xs()
-                            .text_color(theme.muted_foreground)
+                            .text_color(summary_color)
                             .child(SharedString::from(summary)),
                     )
                     .child(

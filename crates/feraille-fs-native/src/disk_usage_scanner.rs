@@ -70,10 +70,13 @@ impl NativeFs {
         mut on_batch: impl FnMut(Vec<DiskUsageFact>),
         mut on_progress: impl FnMut(DiskUsageStats),
     ) -> Option<EnumerationError> {
-        let canonical_root = match fs::canonicalize(root) {
-            Ok(p) => p,
-            Err(e) => return Some(map_io_error(&e)),
-        };
+        // Canonicalize so firmlink twins and `..`-laden roots land on one
+        // identity — but fall back to the path as given where the platform
+        // can't (AROS's std stubs `canonicalize` as Unsupported; killing
+        // the scan here made Disk Usage report "0 files" for every root).
+        // A genuinely unreadable root is still caught by the read_dir
+        // probe just below.
+        let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
         // Up-front check that the root is a directory we can read; mirrors
         // enumerate_streaming so callers see the same error class.
         match fs::read_dir(&canonical_root) {
