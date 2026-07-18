@@ -17,7 +17,30 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
 > [`aros-aarch64/graft/HANDOVER-2026-07-17.md`](../../../aros-aarch64/graft/HANDOVER-2026-07-17.md).
 > Start there before touching AROS stability.
 
-> **Correction, 2026-07-17.** The claim below that the posixc fix closed the
+> **Update, 2026-07-18 — supersedes the correction below.** The dominant
+> systemic freeze mechanism is found and fixed: hosted darwin delivered the
+> scheduler's preemption ticks (process-directed SIGALRM) to arbitrary host
+> threads and `core_IRQ` dropped them, so a CPU-bound task ran forever and
+> starved the UI, timer.device, and the guest clock (measured: **0** ticks
+> reached the AROS thread in 10 s under load). Fixed by forwarding
+> mis-delivered ticks thread-directed (`pthread_kill`), plus the
+> pthread/posixc/gpui_aros fix stack — full story in the handover. This is
+> the root cause of the *reproducible scheduler-starvation freezes*; folder
+> walking, tree unfolding, and long-paint stalls do not yet have enough
+> human-use coverage to rule out independent bugs. Post-fix: boot,
+> navigation, scrolling, Settings, and About survive 10+ rounds of scripted
+> scroll+nav stress at ~1–10 % CPU (previously froze in seconds). The one
+> known remaining crasher is in the *diagnostic* SIGINFO stack-scanner
+> (`core_DiagSemCandidates` dereferencing an unreadable saved reg-frame,
+> Guru `kernel .text+0x1B3C` under real mouse use); **fixed 2026-07-18**
+> (aros-upstream `816da226`, range-aware guards, fallible-diagnostics) and
+> validated: 89 SIGINFO dumps into heavy paint traffic, 90 unreadable
+> frames skipped by the guards, zero traps, app alive. Human-mouse soak
+> still pending. The correction below is kept
+> for its verification lessons — its "only About and Settings are reliable"
+> snapshot predates the preemption fix.
+
+> **Correction, 2026-07-17** *(superseded by the 2026-07-18 update above).* The claim below that the posixc fix closed the
 > *whole* crash family was **wrong**, and the folder-size walker has been
 > re-gated. Under real (human, mouse-driven) use the app still bus-faults on
 > ordinary navigation once the walker runs — `Error 0x80000002`, contained
@@ -305,7 +328,7 @@ Legend: ✅ works · 🟡 partial/unverified · ❌ absent.
 
 | Feature | AROS | Notes / where the work is |
 |---|---|---|
-| Boot, window, dark theme, navigation, file list | 🟡 | renders correctly, but navigation freezes within a few clicks under real mouse use (2026-07-17) |
+| Boot, window, dark theme, navigation, file list | 🟡 | stable under scripted scroll+nav stress since the 2026-07-18 preemption fix; real-mouse use still hits the diag-scanner Guru (guards added, pending human validation) |
 | Keyboard / mouse / wheel | ✅ | `gpui_aros` input |
 | Clipboard (text) | ✅ | `clipboard.device` via `gpui_aros` |
 | Never-block UI | ✅ | GPUI + std-thread dispatcher |
