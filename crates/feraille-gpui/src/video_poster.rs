@@ -145,10 +145,26 @@ pub fn fetch_content_thumbnail(path: &Path, size_px: u32) -> Fetched {
         // picture, in which case an audio file simply shows its type glyph.
         return Fetched::Done(fetch_audio_cover(path, size_px));
     }
-    if is_poster_candidate(path) && resolve_mpv_pref().is_some() {
+    if is_poster_candidate(path) && poster_provider_available() {
         return Fetched::NeedsPoster;
     }
     Fetched::Done(None)
+}
+
+/// Is there a poster decoder on this platform? Desktop: the mpv provider
+/// (feature + user preference). AROS: the `C:FFThumb` helper from the
+/// native ffmpeg port (aros-aarch64 `hosted/ffmpeg/ffthumb.c`), probed
+/// once — deployed alongside FFViewX, absent on minimal boot images.
+fn poster_provider_available() -> bool {
+    #[cfg(target_os = "aros")]
+    {
+        static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *AVAILABLE.get_or_init(|| std::fs::metadata("C:FFThumb").is_ok())
+    }
+    #[cfg(not(target_os = "aros"))]
+    {
+        resolve_mpv_pref().is_some()
+    }
 }
 
 /// Await the mpv poster frame for a [`Fetched::NeedsPoster`] file. Queues
@@ -284,7 +300,7 @@ pub fn resolve_mpv_pref() -> Option<PathBuf> {
 /// but never produce a frame). Runs on the poster worker thread (or the
 /// caller's own thread via the `_blocking` CLI variant) — never on the
 /// pool.
-#[cfg(feature = "mpv")]
+#[cfg(all(feature = "mpv", not(target_os = "aros")))]
 fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
     use std::time::Duration;
 
@@ -335,9 +351,119 @@ fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
 /// Without the `mpv` feature [`fetch_content_thumbnail`] never answers
 /// `NeedsPoster` (the pref resolves to `None`), so this is only reachable
 /// through the blocking CLI variant — and correctly finds nothing.
-#[cfg(not(feature = "mpv"))]
+#[cfg(all(not(feature = "mpv"), not(target_os = "aros")))]
 fn poster_decode(_path: &Path, _size_px: u32) -> Option<ThumbPayload> {
     None
+}
+
+/// AROS poster decoder: shell out to `C:FFThumb` (the native ffmpeg port's
+/// headless one-frame thumbnailer, aros-aarch64 `hosted/ffmpeg/ffthumb.c`)
+/// and read back the PPM it writes to `T:` (RAM-backed). The decoder runs
+/// in ITS OWN process — the same crash-isolation qlmanage gives macOS,
+/// which matters here because the h264/hevc decoders still fault on this
+/// target. Runs on the dedicated poster worker thread; the child blocking
+/// blocks only that worker, same contract as the mpv path.
+#[cfg(target_os = "aros")]
+fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Frames FFThumb skips before taking the poster — past the black
+    /// fade-in most clips open with (the mpv path seeks 3s for the same
+    /// reason; frame-skipping avoids a seek through the custom AVIO).
+    const POSTER_SKIP_FRAMES: u32 = 8;
+
+    // RAM: (always mounted), NOT `T:` — the T assign only exists once the
+    // full startup-sequence ran, and referencing a missing assign pops a
+    // DOS "please insert volume" requester over the app.
+    static SEQ: AtomicU32 = AtomicU32::new(0);
+    // Normalize the unix-join artifact before the string reaches the AROS
+    // shell: `MacRW:/x` (PathBuf::join output) means "parent of the device
+    // root" to DOS, and unlike fs-pal calls (whose cstr() fixes this up)
+    // Command args pass through verbatim.
+    let arg_path = {
+        let s = path.to_string_lossy();
+        match s.find(":/") {
+            Some(i) => format!("{}:{}", &s[..i], &s[i + 2..]),
+            None => s.into_owned(),
+        }
+    };
+    let tmp = format!("RAM:feraille-poster-{}.ppm", SEQ.fetch_add(1, Ordering::Relaxed));
+    let out = match std::process::Command::new("C:FFThumb")
+        .arg(&arg_path)
+        .arg(&tmp)
+        .arg(size_px.to_string())
+        .arg(POSTER_SKIP_FRAMES.to_string())
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            crate::log_info!(95, "ffthumb: spawn failed for {}: {e}", path.display());
+            return None;
+        }
+    };
+    // Exit code + a parseable PPM are the success signal — stdout capture
+    // is unreliable through the AROS process pal (observed empty even on
+    // success), and read_ppm_rgba validates the payload anyway.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let ok = out.status.success();
+    let payload = if ok { read_ppm_rgba(Path::new(&tmp)) } else { None };
+    crate::log_info!(
+        95,
+        "ffthumb: {} -> status={:?} ok={ok} payload={} ({})",
+        path.display(),
+        out.status.code(),
+        payload.is_some(),
+        stdout.trim()
+    );
+    let _ = std::fs::remove_file(&tmp);
+    payload
+}
+
+/// Minimal binary-PPM (P6, maxval 255) reader for FFThumb's output.
+/// Whitespace/comment-tolerant header, then w*h RGB triples → RGBA.
+#[cfg(target_os = "aros")]
+fn read_ppm_rgba(path: &Path) -> Option<ThumbPayload> {
+    let bytes = std::fs::read(path).ok()?;
+    if !bytes.starts_with(b"P6") {
+        return None;
+    }
+    let mut pos = 2usize;
+    let mut fields = [0u32; 3]; // width, height, maxval
+    for field in fields.iter_mut() {
+        // skip whitespace and `#` comments
+        loop {
+            match bytes.get(pos)? {
+                b'#' => {
+                    while *bytes.get(pos)? != b'\n' {
+                        pos += 1;
+                    }
+                }
+                c if c.is_ascii_whitespace() => pos += 1,
+                _ => break,
+            }
+        }
+        let mut v: u32 = 0;
+        while let Some(c) = bytes.get(pos) {
+            if !c.is_ascii_digit() {
+                break;
+            }
+            v = v.saturating_mul(10).saturating_add((c - b'0') as u32);
+            pos += 1;
+        }
+        *field = v;
+    }
+    let (w, h, maxval) = (fields[0], fields[1], fields[2]);
+    if w == 0 || h == 0 || maxval != 255 {
+        return None;
+    }
+    pos += 1; // the single whitespace byte after maxval
+    let need = (w as usize).checked_mul(h as usize)?.checked_mul(3)?;
+    let rgb = bytes.get(pos..pos + need)?;
+    let mut rgba = Vec::with_capacity(need / 3 * 4);
+    for px in rgb.chunks_exact(3) {
+        rgba.extend_from_slice(&[px[0], px[1], px[2], 0xFF]);
+    }
+    Some((rgba, w, h))
 }
 
 /// Convert one mpv frame (tightly packed BGRA) into the straight-RGBA
