@@ -73,9 +73,17 @@ pub fn elapsed_secs() -> f64 {
 
 pub fn line(level: &str, args: std::fmt::Arguments) {
     let msg = format!("[+{:7.3}s][{}] {}", elapsed_secs(), level, args);
-    stderr_line(&msg);
+    // On AROS, routine logs must NOT touch stderr: stderr is the boot
+    // console, the console lives on its own Intuition screen, and a write
+    // can yank that screen in front of the app's (observed 2026-07-21 —
+    // every `navigate:` line swapped screens mid-click, which reads as
+    // "the listview stopped updating" and eats the next clicks). The
+    // MacRW file sink is the log surface there; stderr stays for panics,
+    // where the app is dying anyway and surfacing the console is fine.
     #[cfg(target_os = "aros")]
     aros_sink(&msg);
+    #[cfg(not(target_os = "aros"))]
+    stderr_line(&msg);
 }
 
 /// Non-panicking stderr write. `eprintln!` panics when stderr fails, and on
