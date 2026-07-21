@@ -150,6 +150,31 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
     3 rounds of navigate-away-mid-walk, crash-free. It stays default-off
     behind `SetEnv FERAILLE_FOLDER_SIZES 1` (`folder_sizes.rs`) until it
     also survives a human soak.
+
+    The first walker-on human soak (2026-07-21) then flushed out three
+    more real bugs, all fixed + committed the same day:
+    1. **Priority livelock** — workers at pri -1 got zero CPU while the
+       task-strip spinner kept the pri-0 UI repainting: sizes never
+       applied, tasks never ended, navigation enumeration starved
+       ("listview doesn't update", "sizing never ends"). Workers now run
+       at pri 0 (zed-aros `5b92de3412`), relying on round-robin
+       time-slicing now that preemption works.
+    2. **stderr steals the display** — every log line popped the boot
+       console's screen over the app's; logs are file-only on AROS now
+       (`d8e8435`).
+    3. **Host-lock deadlock** — a guest task preempted mid-`getenv`
+       (emul-handler `localtime` under the stat storm) kept libc's
+       environ lock in its suspended context; cocoametal's per-tick
+       `getenv` then wedged the main thread, and `cm_pump_events`'s
+       `dispatch_sync` finished the three-way deadlock (0% CPU,
+       un-signalable). Fixed Windows-style with `USE_FORBID_LOCK` on
+       darwin (aros-upstream `061b4b98`) + a cached watchdog env probe
+       (aros-aarch64 `d15750f`). UPSTREAM-NOTES item 41.
+  - **Tree connector lines drew as boxes** — the CPU renderer collapsed
+    per-side border widths to a max-width outline stroke, so the
+    `border_l`+`border_b` elbows rendered as rectangles. Fixed with
+    per-edge strips for unequal widths (zed-aros `5b92de3412`); verified
+    on-device, `├` tees and leaf stubs draw correctly.
   - **Open — `posixc.library __open` bus-faults on a missing path.** Clicking a
     nonexistent folder (the old phantom `Downloads`) bus-faulted a worker thread
     inside `posixc __open` (Error 0x80000002) rather than returning ENOENT. The
