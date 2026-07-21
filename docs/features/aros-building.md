@@ -164,14 +164,22 @@ cd ~/Source/Feraille          # branch aros-port
 # 1. Type-check gate (fast; catches graph regressions):
 scripts/check-aros.sh
 
-# 2. Build the app staticlib (release; debug is huge and LoadSeg-slow):
+# 2+3. Build + link + deploy in one step (preferred -- it also guards
+#      against cargo's stale-std trap, see below):
+PROFILE=release crates/feraille-aros-app/build-aros.sh
+#    -> ~/aros-build/bin/darwin-aarch64/AROS/C/Feraille  (~70 MB)
+
+# ... or the two raw steps it wraps:
 cargo +nightly-2026-06-27 build --release -p feraille-aros-app \
   --target ../aros-aarch64/hosted/rust/aarch64-unknown-aros.json \
   -Zjson-target-spec -Zbuild-std=std,panic_abort
-
-# 3. Link the AROS command (collect-aros) and deploy into the boot image:
 PROFILE=release crates/feraille-aros-app/link-aros.sh
-#    -> ~/aros-build/bin/darwin-aarch64/AROS/C/Feraille  (~70 MB)
+
+# STALE-STD TRAP: cargo does NOT fingerprint the rust-src symlink's
+# sources. After editing anything in ~/Source/rust-aros, a raw cargo
+# build reuses the stale libstd rlib in ~0.5s and your change silently
+# never ships. build-aros.sh detects source-newer-than-rlib and clears
+# target/<triple>/release/{.fingerprint/std-*,deps/libstd-*} first.
 
 # 4. Strip (mandatory — LoadSeg relocates the whole ET_REL; debug info
 #    turns seconds into minutes):

@@ -141,12 +141,15 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
     had no arm). It now surfaces the default mounts — `SYS:`, `RAM:`, `MacRO:`,
     `MacRW:` — probed by `exists()` (no `Work:`-style named volume, which would pop
     the AmigaOS insert-media requester). (`feraille-fs-native/src/volumes.rs`.)
-  - **Open — tree expand freezes the app.** Expanding the Browse › Home tree row
-    (recursive `SYS:` child enumeration) hangs the app (no crash dialog, no trap in
-    the log — a freeze, not a bus fault). Likely the same AROS metadata-walker
-    frontier as the gated folder-size walker (emul-handler `DoExamineNext`) or a
-    dos read_dir stall. Tree connector lines (issue: "Home should draw lines")
-    are unverified as a result — they only appear once a node is expanded.
+  - ~~**Open — tree expand freezes the app.**~~ **RESOLVED 2026-07-21** — was
+    the scheduler-starvation family in a mask. Retested after the preemption +
+    diag-scanner fixes: Browse › Home unfolds fine (boot/C/Classes…, nested
+    `boot › darwin` too), no freeze, no trap, tree connector lines draw.
+    Same session: the **folder-size walker survives on AROS now** — full
+    `SYS:` pass (30 folders, 497.3 MB total, every Size cell filled) plus
+    3 rounds of navigate-away-mid-walk, crash-free. It stays default-off
+    behind `SetEnv FERAILLE_FOLDER_SIZES 1` (`folder_sizes.rs`) until it
+    also survives a human soak.
   - **Open — `posixc.library __open` bus-faults on a missing path.** Clicking a
     nonexistent folder (the old phantom `Downloads`) bus-faulted a worker thread
     inside `posixc __open` (Error 0x80000002) rather than returning ENOENT. The
@@ -218,6 +221,14 @@ checkouts are by design, mirroring the `[patch]` sections in `Cargo.toml`.
   RAWKEY → keymap.library → gpui `Keystroke` → re-render). Proof:
   `screenshots/aros-gpui-window.png`, `aros-gpui-bigstack-key.png`,
   `aros-gpui-final.png`.
+- **Keyboard shortcuts use Ctrl on AROS, not the Amiga/Command keys.**
+  Feraille's catalogue binds `secondary-…` and gpui's `secondary` token
+  resolves to Cmd only on macOS, Ctrl everywhere else; `gpui_aros` maps the
+  Amiga keys to gpui's `platform` modifier (deliberately, see
+  `modifiers_from_qualifier` in `gpui_aros/src/input.rs`). So e.g. Disk
+  Usage is **Ctrl+Shift+D** on AROS. For synthetic input the chord is
+  `aros-ctl key 59 1 2; key 56 1 3; key 2 1 3` + releases (CM_MOD_SHIFT=1,
+  CM_MOD_CONTROL=2).
 - **Stack is the sharp edge**: AROS shells launch commands with tens-of-KB
   stacks; gpui's dispatch/layout recursion overflows that, and in AROS's
   single address space the overflow corrupts *neighboring* tasks

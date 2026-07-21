@@ -44,6 +44,17 @@ use crate::multi_table::TableState;
 use crate::shell::{Shell, TabId};
 use crate::tasks::{TaskKind, TaskRegistry};
 
+/// AROS soak switch for the gate in [`start`]: `SetEnv FERAILLE_FOLDER_SIZES 1`
+/// (any non-empty value except `0`) before launch enables the walker.
+/// Read once — the env can't change mid-run, and `start` runs on the UI
+/// thread where we keep even cheap syscalls out of the per-navigation path.
+fn aros_walker_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("FERAILLE_FOLDER_SIZES").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 /// How long a cached folder size is trusted before a revisit
 /// recomputes it. This is the lazy safety net for deep *external*
 /// changes the folder's own mtime can't reveal (an in-app mutation
@@ -113,16 +124,18 @@ pub fn start(
     force: bool,
     cx: &mut gpui::Context<Shell>,
 ) {
-    // AROS: RE-GATED 2026-07-17. The recursive du walk still bus-faults the
-    // Feraille task under hosted AROS (`Error 0x80000002`, contained Guru),
-    // and because it starts on *every* directory listing it made ordinary
-    // navigation unusable: click a folder -> walker spins up -> navigate
-    // away -> dead. posixc's unlocked fd table (T-FDLOCK, aros-upstream
-    // d702d708) was a real bug and had to be fixed, but it was NOT the whole
-    // story here — un-gating on that basis was premature. Folder sizes stay
-    // "--" on AROS until the walk itself is proven on-device; a missing
-    // nicety beats an unusable file list. See docs/features/aros-port.md.
-    if cfg!(target_os = "aros") {
+    // AROS: RE-GATED 2026-07-17, runtime-unlockable since 2026-07-21. The
+    // recursive du walk bus-faulted the Feraille task under hosted AROS
+    // (`Error 0x80000002`, contained Guru), and because it starts on *every*
+    // directory listing it made ordinary navigation unusable. posixc's
+    // unlocked fd table (T-FDLOCK, aros-upstream d702d708) was a real bug
+    // but NOT the whole story — that un-gate was premature. The 2026-07-18
+    // preemption + diag-scanner fixes are the likelier real story, so the
+    // gate is now a runtime switch: `SetEnv FERAILLE_FOLDER_SIZES 1` before
+    // launch enables the walker on AROS for soak testing without a rebuild.
+    // Default stays OFF until it survives a human soak; a missing nicety
+    // beats an unusable file list. See docs/features/aros-port.md.
+    if cfg!(target_os = "aros") && !aros_walker_enabled() {
         return;
     }
     // Snapshot the directory rows on the foreground executor. The
