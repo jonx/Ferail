@@ -81,6 +81,39 @@ const AUDIO_COVER_EXTS: &[&str] = &[
 /// used both to probe for embedded cover art here and to gate the rich
 /// media description in the prefetch worker. Gating on the extension keeps
 /// us from opening every non-audio file with lofty just to find nothing.
+/// Raster formats the bundled `image` crate is compiled with (Cargo
+/// features: png/jpeg/gif/webp/bmp/tiff) — the same decoder set the
+/// viewer's `decode_raster` relies on. Case-insensitive.
+const RASTER_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif"];
+
+fn is_bundled_raster(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .is_some_and(|e| RASTER_EXTS.contains(&e.as_str()))
+}
+
+/// Decode + downscale an image file to a `size_px`-bounded RGBA thumbnail.
+/// Blocking (file read + decode) — background pool only, same contract as
+/// the Quick Look tier above.
+fn fetch_raster_thumbnail(path: &Path, size_px: u32) -> Option<ThumbPayload> {
+    let bytes = std::fs::read(path).ok()?;
+    let decoded = image::load_from_memory(&bytes).ok()?;
+    let (w, h) = (decoded.width(), decoded.height());
+    let longest = w.max(h).max(1);
+    let decoded = if longest > size_px {
+        let scale = size_px as f64 / longest as f64;
+        let nw = ((w as f64 * scale).round() as u32).max(1);
+        let nh = ((h as f64 * scale).round() as u32).max(1);
+        decoded.resize_exact(nw, nh, image::imageops::FilterType::Triangle)
+    } else {
+        decoded
+    };
+    let rgba = decoded.into_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    Some((rgba.into_raw(), w, h))
+}
+
 pub(crate) fn is_lofty_audio(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -96,6 +129,15 @@ pub(crate) fn is_lofty_audio(path: &Path) -> bool {
 pub fn fetch_content_thumbnail(path: &Path, size_px: u32) -> Fetched {
     if let Some(hit) = crate::platform_shell::fetch_quick_look_thumbnail(path, size_px) {
         return Fetched::Done(Some(hit));
+    }
+    // Pure-Rust raster tier: platforms without Quick Look (AROS, Windows,
+    // Linux stubs return None above) still get real image thumbnails via
+    // the bundled `image` crate — and on macOS this catches files
+    // Quick Look refuses.
+    if is_bundled_raster(path) {
+        if let Some(hit) = fetch_raster_thumbnail(path, size_px) {
+            return Fetched::Done(Some(hit));
+        }
     }
     if is_lofty_audio(path) {
         // Quick Look came up empty (or this platform has none) — pull the
