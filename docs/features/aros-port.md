@@ -382,7 +382,7 @@ Legend: ✅ works · 🟡 partial/unverified · ❌ absent.
 | Native menu bar | ✅ | gadtools strip from gpui `set_menus`; verified live (About/Settings picks work) |
 | Native file requesters | 🟡 | `asl.library` wired in `gpui_aros` (`prompt_for_paths`); unverified on device |
 | Media viewer (mpv) | ❌ | `feraille-video-mpv` is a macOS backend |
-| Quick Look previews | ❌ | macOS-only; AROS-way = `datatypes.library` |
+| Quick Look previews | 🟡 | qlmanage is macOS-only, but the tiers behind it now serve AROS: **images** via the pure-Rust `image`-crate raster tier (row icons + grid + preview pane, `screenshots/aros-image-preview.png`), **video posters** via `C:FFThumb` — the native-ffmpeg one-frame thumbnailer shelled out to like qlmanage (`screenshots/aros-video-poster.png`), **audio cover art** via lofty (platform-neutral). Missing: video *playback* (needs a `feraille-video-ffmpeg` `VideoBackend`), datatypes-based previews for Amiga-native formats (IFF etc.) |
 | Spotlight / indexed search | ❌ | macOS-only; no AROS equivalent yet |
 | Tags, quarantine "where from" | ❌ | macOS-only; AROS-way = **filenote** comment |
 | Drag & drop | ❌ | needs Intuition/Workbench drag |
