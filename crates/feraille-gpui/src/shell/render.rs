@@ -127,12 +127,14 @@ impl Shell {
     fn tool_result_breadcrumb_summary(&self) -> Option<String> {
         let surface = self.active_tab().tool_result.as_ref()?;
         match &surface.mode {
+            // Text only — the 🔍/⧉ pictographs here rendered as tofu boxes
+            // on fonts without them (AROS bundled font).
             super::tab::ToolResultMode::Search(search) => Some(format!(
-                "\u{1F50D} {}  \u{00B7}  {}",
+                "{}  \u{00B7}  {}",
                 search.needle, search.engine_label
             )),
             super::tab::ToolResultMode::Duplicates(dupe) => Some(format!(
-                "\u{29C9} {} duplicate group{} \u{00B7} {} reclaimable",
+                "{} duplicate group{} \u{00B7} {} reclaimable",
                 dupe.groups,
                 if dupe.groups == 1 { "" } else { "s" },
                 feraille_fs_native::humanize_bytes(dupe.wasted_bytes),

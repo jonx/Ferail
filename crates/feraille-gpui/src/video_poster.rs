@@ -419,6 +419,18 @@ fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
     payload
 }
 
+/// Viewer-window fallback: a big FFThumb frame for video files the raster
+/// tier can't decode. Bounded blocking (one spawn + decode) — background
+/// executor only; the viewer opens one file at a time so this can't convoy
+/// the pool the way batch poster jobs would.
+#[cfg(target_os = "aros")]
+pub fn ffthumb_full(path: &Path) -> Option<ThumbPayload> {
+    if !is_poster_candidate(path) || !poster_provider_available() {
+        return None;
+    }
+    poster_decode(path, 1024)
+}
+
 /// Minimal binary-PPM (P6, maxval 255) reader for FFThumb's output.
 /// Whitespace/comment-tolerant header, then w*h RGB triples → RGBA.
 #[cfg(target_os = "aros")]

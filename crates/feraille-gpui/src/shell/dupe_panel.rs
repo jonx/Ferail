@@ -14,7 +14,7 @@
 //! trash worker as `on_move_to_trash`, then prunes the model and rebuilds the
 //! card list from what survived.
 
-use crate::text::TextScale as _;
+use crate::text::{IconScale as _, TextScale as _};
 use std::{
     ops::Range,
     path::{Path, PathBuf},
@@ -233,13 +233,21 @@ impl Shell {
                 .cursor_pointer()
                 .hover(|this| this.bg(theme.secondary))
                 .on_click(cx.listener(move |this, _, _, cx| this.dupe_toggle_group(group_no, cx)))
-                .child(div().w(px(14.0)).text_color(theme.muted_foreground).child(
-                    if group.expanded {
-                        "\u{25BE}"
-                    } else {
-                        "\u{25B8}"
-                    },
-                ))
+                // SVG disclosure (same asset as the sidebar tree), not the
+                // ▾/▸ text glyphs — the AROS-bundled font lacks them and
+                // drew tofu boxes.
+                .child(
+                    div().w(px(14.0)).flex().items_center().child(
+                        gpui::svg()
+                            .path(if group.expanded {
+                                "icons/nav/disclosure-down.svg"
+                            } else {
+                                "icons/nav/disclosure-right.svg"
+                            })
+                            .icon_px(9.0)
+                            .text_color(theme.muted_foreground),
+                    ),
+                )
                 .child(
                     div()
                         .text_scale_sm()
@@ -387,7 +395,14 @@ impl Shell {
                             .truncate()
                             .text_scale_xs()
                             .text_color(theme.muted_foreground)
-                            .child(format!("{location}{note}")),
+                            // Middle-truncated (macOS-style): with a deep
+                            // path the LAST folders are what tell two
+                            // duplicates apart, so keep both ends visible
+                            // instead of tail-ellipsizing the useful half.
+                            .child(super::loading::middle_truncate_path(
+                                &format!("{location}{note}"),
+                                42,
+                            )),
                     );
                 body = body.child(row);
             }

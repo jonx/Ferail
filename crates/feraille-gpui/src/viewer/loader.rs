@@ -183,6 +183,13 @@ pub fn decode_full_res(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     {
         return Some(frame);
     }
+    // AROS: videos go through C:FFThumb (native ffmpeg) — same frame the
+    // preview pane shows, at a viewer-worthy edge. Without this the viewer
+    // said "No preview available" for files whose pane thumbnail worked.
+    #[cfg(target_os = "aros")]
+    if let Some(frame) = crate::video_poster::ffthumb_full(path) {
+        return Some(frame);
+    }
     // Quick Look fallback for non-raster formats (HEIC, PDF, video).
     // A cold request above QL's on-demand size ceiling can return nil,
     // so fall back to a smaller, always-generatable size rather than
