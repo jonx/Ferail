@@ -14,7 +14,11 @@ use std::sync::Arc;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Selectable, Sizable, WindowExt as _, button::Button, checkbox::Checkbox, h_flex,
+    ActiveTheme, Selectable, Sizable, WindowExt as _,
+    button::Button,
+    checkbox::Checkbox,
+    h_flex,
+    menu::{DropdownMenu as _, PopupMenuItem},
     v_flex,
 };
 
@@ -2276,7 +2280,7 @@ impl ViewerWindow {
 
     // -- render pieces --------------------------------------------
 
-    fn toolbar(&mut self, cx: &mut Context<Self>) -> Div {
+    fn toolbar(&mut self, window: &Window, cx: &mut Context<Self>) -> Div {
         let count = self.playlist.len();
         let counter = format!("{} / {}", (self.index + 1).min(count), count);
         let zoom_label = self
@@ -2299,8 +2303,204 @@ impl ViewerWindow {
         let video_loop = self.video_loop;
         let stay_on_top = self.stay_on_top;
         let transparent = self.transparent;
+        let has_item = self.current().is_some();
         let entity = cx.entity().clone();
         let t_entity = cx.entity().clone();
+
+        // ---- Width-tiered overflow --------------------------------------
+        // The bar keeps its fixed TOOLBAR_H (the stage/zoom maths and the
+        // fullscreen overlay depend on it), so a narrow window collapses
+        // whole clusters into a trailing "…" dropdown instead of wrapping.
+        // Widths are logical-px estimates at `ui_scale == 1` with the flex
+        // gap folded in, scaled by the window rem size so UI zoom counts.
+        // They only steer *when* a cluster folds — a few px of error just
+        // shrinks the flex_1 filename, which truncates gracefully.
+        const W_BASE: f32 = 300.0; // padding + prev/counter/next + name reserve + fullscreen
+        const W_AV_BASIC: f32 = 68.0; // media play/pause + mute (always inline)
+        const W_TOGGLES: f32 = 216.0; // "Stay on top" + "Transparent"
+        const W_SLIDESHOW: f32 = 88.0; // slideshow play + interval
+        const W_ACTIONS: f32 = 102.0; // rotate + adjust + trash
+        const W_ZOOM: f32 = 175.0; // − / % / + / 1:1 + separator
+        const W_AV_EXTRA_VIDEO: f32 = 164.0; // −1f / +1f / Loop
+        const W_AV_EXTRA_AUDIO: f32 = 68.0; // Loop only
+        const W_MENU: f32 = 34.0; // the "…" button itself
+
+        let scale = window.rem_size().as_f32() / crate::text::BASE_REM_PX;
+        let avail = window.viewport_size().width.as_f32();
+        let w_av_extra = if is_video {
+            W_AV_EXTRA_VIDEO
+        } else if is_playable {
+            W_AV_EXTRA_AUDIO
+        } else {
+            0.0
+        };
+        // First-to-collapse first: window toggles go before anything that
+        // acts on the current item; the media transport extras hold out
+        // longest since they're the point of a video window.
+        let tiers = [
+            W_TOGGLES,
+            W_SLIDESHOW,
+            if has_item { W_ACTIONS } else { 0.0 },
+            W_ZOOM,
+            w_av_extra,
+        ];
+        let mut need = W_BASE
+            + if is_playable { W_AV_BASIC } else { 0.0 }
+            + tiers.iter().sum::<f32>();
+        let mut hide = [false; 5];
+        if need * scale > avail {
+            need += W_MENU;
+            for (i, w) in tiers.iter().enumerate() {
+                if need * scale <= avail {
+                    break;
+                }
+                hide[i] = true;
+                need -= w;
+            }
+        }
+        let [hide_toggles, hide_slideshow, hide_actions, hide_zoom, hide_av_extra] = hide;
+        let overflow = hide.iter().any(|h| *h);
+
+        // The "…" menu mirrors the folded clusters, in bar order. Action-
+        // backed entries dispatch through the viewer focus handle so the
+        // keymap context (and menu shortcut hints) match the buttons;
+        // stateful ones (interval, loop, toggles) mutate the entity like
+        // their inline widgets.
+        let overflow_menu = overflow.then(|| {
+            let focus = self.focus_handle.clone();
+            let menu_entity = cx.entity().clone();
+            let playing = self.playback.playing;
+            let interval_secs = self.playback.interval_secs;
+            let adjust_open = self.adjust_panel_open;
+            Button::new("viewer-overflow")
+                .icon(gpui_component::Icon::empty().path("icons/ellipsis.svg"))
+                .small()
+                .tooltip("More")
+                .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |mut menu, _window, _cx| {
+                    menu = menu.action_context(focus.clone());
+                    let mut sep = false;
+                    if hide_slideshow {
+                        let e = menu_entity.clone();
+                        menu = menu
+                            .menu(
+                                if playing {
+                                    "Pause Slideshow"
+                                } else {
+                                    "Play Slideshow"
+                                },
+                                Box::new(ViewerTogglePlay),
+                            )
+                            .item(
+                                PopupMenuItem::new(format!(
+                                    "Slideshow Interval: {}",
+                                    Playback::interval_label(interval_secs)
+                                ))
+                                .on_click(move |_, _, cx| {
+                                    e.update(cx, |this, cx| this.cycle_interval(cx));
+                                }),
+                            );
+                        sep = true;
+                    }
+                    if hide_zoom {
+                        if sep {
+                            menu = menu.separator();
+                        }
+                        menu = menu
+                            .menu("Zoom In", Box::new(ViewerZoomIn))
+                            .menu("Zoom Out", Box::new(ViewerZoomOut))
+                            .menu(
+                                if actual { "Fit to Window" } else { "Actual Size" },
+                                Box::new(ViewerActualSize),
+                            );
+                        sep = true;
+                    }
+                    if hide_actions && has_item {
+                        if sep {
+                            menu = menu.separator();
+                        }
+                        menu = menu
+                            .menu("Rotate Clockwise", Box::new(ViewerRotateCw))
+                            .menu_with_check(
+                                "Adjust Colours",
+                                adjust_open,
+                                Box::new(ViewerToggleAdjust),
+                            )
+                            .menu(
+                                feraille_core::commands::TRASH_LABEL,
+                                Box::new(ViewerDelete),
+                            );
+                        sep = true;
+                    }
+                    if hide_av_extra && is_playable {
+                        if sep {
+                            menu = menu.separator();
+                        }
+                        if is_video {
+                            let e = menu_entity.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new("Back One Frame").on_click(move |_, _, cx| {
+                                    e.update(cx, |this, cx| this.step_video(-1, cx));
+                                }),
+                            );
+                            let e = menu_entity.clone();
+                            menu = menu.item(PopupMenuItem::new("Forward One Frame").on_click(
+                                move |_, _, cx| {
+                                    e.update(cx, |this, cx| this.step_video(1, cx));
+                                },
+                            ));
+                        }
+                        let e = menu_entity.clone();
+                        menu = menu.item(PopupMenuItem::new("Loop").checked(video_loop).on_click(
+                            move |_, _, cx| {
+                                e.update(cx, |this, cx| {
+                                    this.video_loop = !this.video_loop;
+                                    cx.notify();
+                                });
+                            },
+                        ));
+                        sep = true;
+                    }
+                    if hide_toggles {
+                        if sep {
+                            menu = menu.separator();
+                        }
+                        let e = menu_entity.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new("Stay on Top").checked(stay_on_top).on_click(
+                                move |_, window, cx| {
+                                    let on = !stay_on_top;
+                                    let ns_view = content_ns_view(window);
+                                    e.update(cx, |this, cx| {
+                                        this.stay_on_top = on;
+                                        if let Some(v) = ns_view {
+                                            crate::platform_shell::set_window_floating(v, on);
+                                        }
+                                        cx.notify();
+                                    });
+                                },
+                            ),
+                        );
+                        let e = menu_entity.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new("Transparent").checked(transparent).on_click(
+                                move |_, window, cx| {
+                                    let on = !transparent;
+                                    window.set_background_appearance(if on {
+                                        gpui::WindowBackgroundAppearance::Transparent
+                                    } else {
+                                        gpui::WindowBackgroundAppearance::Opaque
+                                    });
+                                    e.update(cx, |this, cx| {
+                                        this.transparent = on;
+                                        cx.notify();
+                                    });
+                                },
+                            ),
+                        );
+                    }
+                    menu
+                })
+        });
 
         h_flex()
             .h(px(TOOLBAR_H))
@@ -2330,59 +2530,65 @@ impl ViewerWindow {
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| this.step(1, cx))),
             )
-            .child(
-                Button::new("viewer-play")
-                    .icon(
-                        gpui_component::Icon::empty().path(if self.playback.playing {
-                            "icons/pause.svg"
-                        } else {
-                            "icons/play.svg"
-                        }),
+            .when(!hide_slideshow, |bar| {
+                bar.child(
+                    Button::new("viewer-play")
+                        .icon(
+                            gpui_component::Icon::empty().path(if self.playback.playing {
+                                "icons/pause.svg"
+                            } else {
+                                "icons/play.svg"
+                            }),
+                        )
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let playing = this.playback.playing;
+                            this.set_playing(!playing, cx);
+                        })),
+                )
+                .child(
+                    Button::new("viewer-interval")
+                        .label(Playback::interval_label(self.playback.interval_secs))
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.cycle_interval(cx))),
+                )
+            })
+            .when(!hide_zoom, |bar| {
+                bar.child(div().w(px(1.0)).h(px(20.0)).bg(cx.theme().border))
+                    .child(
+                        Button::new("viewer-zoom-out")
+                            .icon(gpui_component::Icon::empty().path("icons/minus.svg"))
+                            .small()
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.zoom_by(1.0 / ZOOM_STEP, cx)),
+                            ),
                     )
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let playing = this.playback.playing;
-                        this.set_playing(!playing, cx);
-                    })),
-            )
-            .child(
-                Button::new("viewer-interval")
-                    .label(Playback::interval_label(self.playback.interval_secs))
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| this.cycle_interval(cx))),
-            )
-            .child(div().w(px(1.0)).h(px(20.0)).bg(cx.theme().border))
-            .child(
-                Button::new("viewer-zoom-out")
-                    .icon(gpui_component::Icon::empty().path("icons/minus.svg"))
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| this.zoom_by(1.0 / ZOOM_STEP, cx))),
-            )
-            .child(
-                div()
-                    .text_scale_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .min_w(px(44.0))
-                    .text_center()
-                    .child(zoom_label),
-            )
-            .child(
-                Button::new("viewer-zoom-in")
-                    .icon(gpui_component::Icon::empty().path("icons/plus.svg"))
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| this.zoom_by(ZOOM_STEP, cx))),
-            )
-            .child(
-                Button::new("viewer-actual")
-                    .label(if actual { "Fit" } else { "1:1" })
-                    .small()
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.on_actual_size(&ViewerActualSize, window, cx)
-                    })),
-            )
+                    .child(
+                        div()
+                            .text_scale_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .min_w(px(44.0))
+                            .text_center()
+                            .child(zoom_label),
+                    )
+                    .child(
+                        Button::new("viewer-zoom-in")
+                            .icon(gpui_component::Icon::empty().path("icons/plus.svg"))
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.zoom_by(ZOOM_STEP, cx))),
+                    )
+                    .child(
+                        Button::new("viewer-actual")
+                            .label(if actual { "Fit" } else { "1:1" })
+                            .small()
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.on_actual_size(&ViewerActualSize, window, cx)
+                            })),
+                    )
+            })
             // Rotate the current item (image or video). View-only,
             // per-item — R / Shift-R do the same from the keyboard.
-            .when(self.current().is_some(), |bar| {
+            .when(has_item && !hide_actions, |bar| {
                 bar.child(
                     Button::new("viewer-rotate")
                         .icon(gpui_component::Icon::empty().path("icons/redo.svg"))
@@ -2422,7 +2628,7 @@ impl ViewerWindow {
             // any playable stream; the frame-step buttons are video-only.
             .when(is_playable, |bar| {
                 let loop_entity = entity.clone();
-                bar.when(is_video, |bar| {
+                bar.when(is_video && !hide_av_extra, |bar| {
                     bar.child(
                         Button::new("viewer-video-step-back")
                             .label("\u{2212}1f")
@@ -2440,7 +2646,7 @@ impl ViewerWindow {
                         .small()
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_video_paused(cx))),
                 )
-                .when(is_video, |bar| {
+                .when(is_video && !hide_av_extra, |bar| {
                     bar.child(
                         Button::new("viewer-video-step-fwd")
                             .label("+1f")
@@ -2461,59 +2667,65 @@ impl ViewerWindow {
                         .small()
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_video_muted(cx))),
                 )
-                .child(
-                    Checkbox::new("viewer-video-loop")
+                .when(!hide_av_extra, |bar| {
+                    bar.child(
+                        Checkbox::new("viewer-video-loop")
+                            .small()
+                            .label("Loop")
+                            .checked(video_loop)
+                            .on_click(move |checked, _window, app| {
+                                let on = *checked;
+                                loop_entity.update(app, |this, cx| {
+                                    this.video_loop = on;
+                                    cx.notify();
+                                });
+                            }),
+                    )
+                })
+            })
+            // Keep the viewer above other windows.
+            .when(!hide_toggles, |bar| {
+                bar.child(
+                    Checkbox::new("viewer-stay-on-top")
                         .small()
-                        .label("Loop")
-                        .checked(video_loop)
-                        .on_click(move |checked, _window, app| {
+                        .label("Stay on top")
+                        .checked(stay_on_top)
+                        .on_click(move |checked, window, app| {
                             let on = *checked;
-                            loop_entity.update(app, |this, cx| {
-                                this.video_loop = on;
+                            let ns_view = content_ns_view(window);
+                            entity.update(app, |this, cx| {
+                                this.stay_on_top = on;
+                                if let Some(v) = ns_view {
+                                    crate::platform_shell::set_window_floating(v, on);
+                                }
                                 cx.notify();
                             });
                         }),
                 )
             })
-            // Keep the viewer above other windows.
-            .child(
-                Checkbox::new("viewer-stay-on-top")
-                    .small()
-                    .label("Stay on top")
-                    .checked(stay_on_top)
-                    .on_click(move |checked, window, app| {
-                        let on = *checked;
-                        let ns_view = content_ns_view(window);
-                        entity.update(app, |this, cx| {
-                            this.stay_on_top = on;
-                            if let Some(v) = ns_view {
-                                crate::platform_shell::set_window_floating(v, on);
-                            }
-                            cx.notify();
-                        });
-                    }),
-            )
             // Transparent-window mode: see through the keyed video AND the
             // window background, so stacked viewer windows composite via the
             // OS window server (GPU). Pair with "Stay on top" to layer them.
-            .child(
-                Checkbox::new("viewer-transparent")
-                    .small()
-                    .label("Transparent")
-                    .checked(transparent)
-                    .on_click(move |checked, window, app| {
-                        let on = *checked;
-                        window.set_background_appearance(if on {
-                            gpui::WindowBackgroundAppearance::Transparent
-                        } else {
-                            gpui::WindowBackgroundAppearance::Opaque
-                        });
-                        t_entity.update(app, |this, cx| {
-                            this.transparent = on;
-                            cx.notify();
-                        });
-                    }),
-            )
+            .when(!hide_toggles, |bar| {
+                bar.child(
+                    Checkbox::new("viewer-transparent")
+                        .small()
+                        .label("Transparent")
+                        .checked(transparent)
+                        .on_click(move |checked, window, app| {
+                            let on = *checked;
+                            window.set_background_appearance(if on {
+                                gpui::WindowBackgroundAppearance::Transparent
+                            } else {
+                                gpui::WindowBackgroundAppearance::Opaque
+                            });
+                            t_entity.update(app, |this, cx| {
+                                this.transparent = on;
+                                cx.notify();
+                            });
+                        }),
+                )
+            })
             .child(
                 div()
                     .flex_1()
@@ -2524,6 +2736,8 @@ impl ViewerWindow {
                     .text_color(cx.theme().foreground)
                     .child(name),
             )
+            // Everything the narrow window folded away, in one place.
+            .when_some(overflow_menu, |bar, menu| bar.child(menu))
             .child(
                 Button::new("viewer-fullscreen")
                     .icon(gpui_component::Icon::empty().path("icons/maximize.svg"))
@@ -3447,7 +3661,7 @@ impl Render for ViewerWindow {
                             this.arm_autohide(cx);
                         }
                     }))
-                    .child(self.toolbar(cx))
+                    .child(self.toolbar(window, cx))
             });
             // Keep the status bar up through an active seek drag too, so it
             // can't vanish mid-scrub.
@@ -3480,7 +3694,7 @@ impl Render for ViewerWindow {
                     window, cx,
                 ))
         } else {
-            let toolbar = self.toolbar(cx);
+            let toolbar = self.toolbar(window, cx);
             let status = self.status_strip(cx);
             root.child(toolbar)
                 .child(stage_area)
