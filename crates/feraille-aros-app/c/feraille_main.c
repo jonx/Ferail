@@ -60,6 +60,18 @@ int main(int argc, char **argv)
         return 20;
     }
 
+    /* File-manager rule: never let DOS pop "Please insert volume ..."
+     * requesters over the app. A file manager probes paths and volumes as
+     * routine business (and third-party code we embed — sqlite's VFS path
+     * walk — probes garbage like "/System:"); with pr_WindowPtr = -1 DOS
+     * returns ERROR_DEVICE_NOT_MOUNTED instead of blocking the calling
+     * task on a system requester. Same convention as Directory Opus &
+     * every Amiga file manager. */
+    {
+        struct Process *me = (struct Process *)FindTask(0);
+        me->pr_WindowPtr = (APTR)-1;
+    }
+
     aros_argc = argc;
     aros_argv = argv;
     PutStr("[FERAILLE] booting (close the last window / Cmd+Q to exit)\n");

@@ -62,7 +62,11 @@ fn writer() -> &'static Sender<String> {
 
 fn write_atomic(contents: &str) {
     let Some(dir) = config_dir() else { return };
-    if !dir.exists() && std::fs::create_dir_all(&dir).is_err() {
+    // Component-wise mkdir: plain create_dir_all can't create
+    // `SYS:/.config/feraille` on AROS (emul-handler missing-parent IoErr
+    // bug, UPSTREAM-NOTES item 40) — which silently disabled ALL settings
+    // persistence there (column widths, theme, toggles reset every run).
+    if !dir.exists() && feraille_meta::create_dir_all_compat(&dir).is_err() {
         return;
     }
     // Temp + rename: a crash mid-write leaves either the old file or
