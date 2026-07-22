@@ -1605,15 +1605,19 @@ impl Shell {
                     .rounded(theme.radius)
                     // Subtle close affordance: muted grey by default, darkening
                     // to foreground on hover (plus a rounded highlight) — the
-                    // common tab-close convention. The svg has no explicit
-                    // color, so it inherits the div's cascaded text color (gpui
-                    // paints svg with `style.text.color`); `.hover` retints both.
-                    .text_color(theme.muted_foreground)
-                    .hover(|this| {
-                        this.text_color(theme.foreground)
-                            .bg(theme.accent.opacity(0.15))
-                    })
-                    .child(svg().path("icons/close.svg").icon_px(11.0))
+                    // common tab-close convention.
+                    .hover(|this| this.bg(theme.accent.opacity(0.15)))
+                    // Color set ON the svg, not just the parent div: the AROS
+                    // CPU renderer tints an SVG monochrome sprite from the
+                    // svg element's own text color and does NOT pick up the
+                    // parent's cascaded text color, so the inherited version
+                    // rendered a near-black X on the dark tab (invisible).
+                    .child(
+                        svg()
+                            .path("icons/close.svg")
+                            .icon_px(11.0)
+                            .text_color(theme.muted_foreground),
+                    )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         // Phase A+B+C: tabs own their own TableState,
                         // and closing the last tab closes the window

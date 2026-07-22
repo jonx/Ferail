@@ -241,6 +241,10 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         ("Utilities", "SYS:Utilities", "icons/nav/folder.svg"),
         ("Tools", "SYS:Tools", "icons/nav/folder.svg"),
         ("Storage", "SYS:Storage", "icons/nav/folder.svg"),
+        // The boot volume's Amiga Trashcan drawer — appears once something
+        // has been trashed (Move to Trash creates it). Per-volume trashcans
+        // for other volumes are reachable from those volumes' roots.
+        ("Trash", "SYS:Trashcan", "icons/nav/trash.svg"),
     ];
     candidates
         .iter()

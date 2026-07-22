@@ -467,7 +467,7 @@ pub fn trash_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "aros")))]
 pub fn trash_dirs() -> Vec<PathBuf> {
     Vec::new()
 }
@@ -618,7 +618,58 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
     Ok(None)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+/// AROS: the AmigaOS convention is a per-volume `Trashcan` drawer at the
+/// volume root (`SYS:Trashcan`, `RAM:Trashcan`, …). Wanderer treats it
+/// specially and empties it on request. We move the item into its OWN
+/// volume's Trashcan (an intra-volume rename — instant, and it never
+/// crosses devices), creating the drawer on first use. Returns the landed
+/// path so the UI can reveal it.
+#[cfg(target_os = "aros")]
+pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
+    let trashcan = aros_trashcan_for(path).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("no volume root for {}", path.display()),
+        )
+    })?;
+    std::fs::create_dir_all(&trashcan)?;
+    let name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "source has no file name")
+    })?;
+    // Collision-free landing name inside the Trashcan.
+    let mut dest = trashcan.join(name);
+    let mut n = 2u32;
+    while dest.exists() {
+        let base = name.to_string_lossy();
+        dest = trashcan.join(format!("{base}.{n}"));
+        n = n.saturating_add(1);
+    }
+    std::fs::rename(path, &dest)?;
+    Ok(Some(dest))
+}
+
+/// `DEV:Trashcan` for the volume `path` lives on. AROS paths are
+/// `DEV:rest`; the volume root is everything through the first `:`.
+#[cfg(target_os = "aros")]
+pub(crate) fn aros_trashcan_for(path: &Path) -> Option<PathBuf> {
+    let s = path.to_string_lossy();
+    let colon = s.find(':')?;
+    let dev = &s[..=colon]; // includes the ':'
+    Some(PathBuf::from(format!("{dev}Trashcan")))
+}
+
+/// AROS: the per-volume Trashcan drawers that exist, for Empty Trash.
+/// Probes the standard mounted volumes' roots.
+#[cfg(target_os = "aros")]
+pub fn trash_dirs() -> Vec<PathBuf> {
+    ["SYS:", "RAM:", "MacRW:", "Work:"]
+        .iter()
+        .map(|v| PathBuf::from(format!("{v}Trashcan")))
+        .filter(|p| p.is_dir())
+        .collect()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "aros", windows)))]
 pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
     // Conservative on other targets — refuse rather than silently delete.
     Err(std::io::Error::new(
@@ -642,6 +693,10 @@ pub struct VolumeInfo {
     pub total_bytes: Option<u64>,
     pub available_bytes: Option<u64>,
     pub is_local: bool,
+    /// "Can the user eject this?" in the Finder sense — removable or
+    /// ejectable media, external (non-internal) disks, disk images,
+    /// network mounts. Drives the sidebar ⏏ affordance and the
+    /// same-device eject-all grouping.
     pub is_removable: bool,
     /// Filesystem format (e.g. "apfs", "exfat"). `None` off macOS or when
     /// `statfs` failed. Populated for the Get Info panel's volume rows.
@@ -677,8 +732,9 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
     use objc2::ClassType;
     use objc2_foundation::{
         NSArray, NSString, NSURLResourceKey, NSURLVolumeAvailableCapacityKey,
-        NSURLVolumeIsLocalKey, NSURLVolumeIsRemovableKey, NSURLVolumeLocalizedNameKey,
-        NSURLVolumeTotalCapacityKey, NSURL,
+        NSURLVolumeIsEjectableKey, NSURLVolumeIsInternalKey, NSURLVolumeIsLocalKey,
+        NSURLVolumeIsRemovableKey, NSURLVolumeLocalizedNameKey, NSURLVolumeTotalCapacityKey,
+        NSURL,
     };
 
     let path_str = path.to_str()?;
@@ -693,12 +749,14 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
         // a count + a pointer to a contiguous block of `id`. Apple's
         // constants are immortal `&'static NSString` so the lifetime
         // is fine.
-        let key_ptrs: [*const NSURLResourceKey; 5] = [
+        let key_ptrs: [*const NSURLResourceKey; 7] = [
             NSURLVolumeLocalizedNameKey,
             NSURLVolumeTotalCapacityKey,
             NSURLVolumeAvailableCapacityKey,
             NSURLVolumeIsLocalKey,
             NSURLVolumeIsRemovableKey,
+            NSURLVolumeIsEjectableKey,
+            NSURLVolumeIsInternalKey,
         ];
         let keys: Retained<NSArray<NSURLResourceKey>> = msg_send_id![
             NSArray::<NSURLResourceKey>::class(),
@@ -741,7 +799,17 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
             })
             .unwrap_or_else(|| path_str.to_string());
         let is_local = lookup_bool(NSURLVolumeIsLocalKey).unwrap_or(true);
-        let is_removable = lookup_bool(NSURLVolumeIsRemovableKey).unwrap_or(false);
+        // Finder-parity "can the user eject this?". IsRemovableKey alone
+        // only covers removable *media* (SD cards, USB sticks) — an
+        // external USB/Thunderbolt HDD or SSD reports removable=false,
+        // ejectable=false, but internal=false, and disk images report
+        // ejectable=true. Any of the three signals means Finder draws
+        // the ⏏, so we match. A missing IsInternal answer counts as
+        // internal, so an inconclusive lookup never grows an eject
+        // button on the boot volume.
+        let is_removable = lookup_bool(NSURLVolumeIsRemovableKey).unwrap_or(false)
+            || lookup_bool(NSURLVolumeIsEjectableKey).unwrap_or(false)
+            || !lookup_bool(NSURLVolumeIsInternalKey).unwrap_or(true);
         // Skip capacity for non-local volumes — see fn doc.
         let (total_bytes, available_bytes) = if is_local {
             (
