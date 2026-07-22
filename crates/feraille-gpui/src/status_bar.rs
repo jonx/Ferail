@@ -245,9 +245,17 @@ fn humanize_secs(s: u64) -> String {
     if s < 60 {
         format!("{s}s")
     } else if s < 3600 {
-        format!("{}m {}s", s / 60, s % 60)
+        // Skip a zero remainder — rounded ETAs land on whole minutes
+        // and "51m" reads better than "51m 0s".
+        match (s / 60, s % 60) {
+            (m, 0) => format!("{m}m"),
+            (m, s) => format!("{m}m {s}s"),
+        }
     } else {
-        format!("{}h {}m", s / 3600, (s % 3600) / 60)
+        match (s / 3600, (s % 3600) / 60) {
+            (h, 0) => format!("{h}h"),
+            (h, m) => format!("{h}h {m}m"),
+        }
     }
 }
 

@@ -202,6 +202,18 @@ impl TaskRegistry {
         id
     }
 
+    /// Pretend `id` started `ago` in the past. Screenshot-fixture helper:
+    /// fixture tasks are begun and captured within one frame, so without
+    /// this they never clear [`SURFACE_DELAY`] and the panel renders
+    /// empty (and every elapsed column reads "0s"). No-op for stale ids.
+    pub fn backdate(&mut self, id: TaskId, ago: Duration) {
+        if let Some(t) = self.tasks.iter_mut().find(|t| t.id == id) {
+            if let Some(at) = Instant::now().checked_sub(ago) {
+                t.started_at = at;
+            }
+        }
+    }
+
     /// Update determinate progress for `id`. No-op for stale ids; flips
     /// the task to `Determinate` if it was `Indeterminate`.
     pub fn update(&mut self, id: TaskId, progress: f32) {

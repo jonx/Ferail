@@ -291,7 +291,13 @@ impl Shell {
             ),
             many => format!("{} items", many.len()),
         };
-        let base_label = format!("{verb} {noun}\u{2026}");
+        // "Moving “D4Mac” to “Backup”…" — the destination is part of the
+        // label so the task panel answers *where to* without a hover.
+        let dest_name = dest
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| dest.display().to_string());
+        let base_label = format!("{verb} {noun} to \u{201c}{dest_name}\u{201d}\u{2026}");
         let task_id = self.process.tasks.borrow_mut().begin_with_cancel(
             crate::tasks::TaskKind::FileOp,
             base_label.clone(),
@@ -317,9 +323,18 @@ impl Shell {
             let base_label = base_label.clone();
             let live_label = live_label.clone();
             cx.spawn(async move |_this, cx| {
-                let mut ema: f64 = 0.0;
-                let mut last_bytes: u64 = 0;
-                let mut last_t: Option<std::time::Instant> = None;
+                // Rolling window of (t, bytes_done) samples (~6 s at the
+                // 10 Hz tick). The displayed rate is the trimmed mean of
+                // the window's per-sample rates, refreshed only once per
+                // second: the progress bar stays 10 Hz-smooth, but the
+                // rate/ETA text doesn't twitch on every repaint, and
+                // one-tick extremes (instant-clone jumps, seek stalls)
+                // fall out in the trim instead of whipsawing the number.
+                let mut window: std::collections::VecDeque<(std::time::Instant, u64)> =
+                    std::collections::VecDeque::new();
+                let mut shown_rate: f64 = 0.0;
+                let mut shown_eta: Option<u64> = None;
+                let mut ticks: u32 = 0;
                 loop {
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(100))
@@ -331,40 +346,31 @@ impl Shell {
                     let bytes_done = prog.bytes_done();
                     let bytes_total = prog.bytes_total();
                     let now = std::time::Instant::now();
-                    // EMA throughput, but suppress the clone jump: a tick
-                    // that moved >10% of the whole op in one sample is an
-                    // instant clone, not a sustained rate — folding it in
-                    // would flash a nonsense "8 GB/s".
-                    if let Some(lt) = last_t {
-                        let dt = now.duration_since(lt).as_secs_f64();
-                        if dt > 0.0 {
-                            let delta = bytes_done.saturating_sub(last_bytes);
-                            let jump =
-                                bytes_total > 0 && (delta as f64) > 0.10 * bytes_total as f64;
-                            if !jump {
-                                let inst = delta as f64 / dt;
-                                ema = if ema == 0.0 {
-                                    inst
-                                } else {
-                                    0.6 * ema + 0.4 * inst
-                                };
-                            }
-                        }
+                    window.push_back((now, bytes_done));
+                    while window
+                        .front()
+                        .is_some_and(|(t, _)| now.duration_since(*t).as_secs_f64() > 6.0)
+                    {
+                        window.pop_front();
                     }
-                    last_bytes = bytes_done;
-                    last_t = Some(now);
-                    let eta = if ema > 1.0 && bytes_total > bytes_done {
-                        Some(((bytes_total - bytes_done) as f64 / ema) as u64)
-                    } else {
-                        None
-                    };
+                    ticks = ticks.wrapping_add(1);
+                    if ticks % 10 == 0 {
+                        shown_rate = trimmed_window_rate(&window);
+                        shown_eta = if shown_rate > 1.0 && bytes_total > bytes_done {
+                            Some(round_eta(
+                                ((bytes_total - bytes_done) as f64 / shown_rate) as u64,
+                            ))
+                        } else {
+                            None
+                        };
+                    }
                     let stats = crate::tasks::TransferStats {
                         bytes_done,
                         bytes_total,
                         items_done: prog.items_done(),
                         items_total: prog.items_total(),
-                        bytes_per_sec: ema,
-                        eta_secs: eta,
+                        bytes_per_sec: shown_rate,
+                        eta_secs: shown_eta,
                         current: prog.current().to_string(),
                     };
                     let planned = prog.planned();
@@ -401,6 +407,7 @@ impl Shell {
         let done_run = done.clone();
         let live_label_run = live_label.clone();
         let noun_run = noun.clone();
+        let dest_name_run = dest_name.clone();
         cx.spawn(async move |_this, cx| {
             let end_task = |cx: &mut AsyncApp| {
                 // Stop the sampler too, so a bailed-out op (plan error,
@@ -465,7 +472,9 @@ impl Shell {
             if mode == TransferMode::Auto {
                 let resolved = if all_same_pre { "Moving" } else { "Copying" };
                 if let Ok(mut g) = live_label_run.lock() {
-                    *g = format!("{resolved} {noun_run}\u{2026}");
+                    *g = format!(
+                        "{resolved} {noun_run} to \u{201c}{dest_name_run}\u{201d}\u{2026}"
+                    );
                 }
             }
             if let Some((avail, total)) = space {
@@ -2961,5 +2970,113 @@ impl Shell {
                 cx,
             );
         }
+    }
+}
+
+/// Windowed throughput for the transfer sampler: the mean of the
+/// window's per-sample instantaneous rates with the top and bottom 20%
+/// trimmed away. The trim is what keeps the displayed number level —
+/// an instant-clone jump (gigabytes landing in one tick) or a stalled
+/// tick (0 B/s while a drive seeks) lands in the discarded extremes
+/// instead of dragging the mean around. 0.0 while there aren't enough
+/// samples to say anything (the UI shows no rate while ramping).
+fn trimmed_window_rate(samples: &std::collections::VecDeque<(std::time::Instant, u64)>) -> f64 {
+    let mut rates: Vec<f64> = Vec::with_capacity(samples.len());
+    let mut prev: Option<&(std::time::Instant, u64)> = None;
+    for s in samples {
+        if let Some(p) = prev {
+            let dt = s.0.duration_since(p.0).as_secs_f64();
+            if dt > 0.0 {
+                rates.push(s.1.saturating_sub(p.1) as f64 / dt);
+            }
+        }
+        prev = Some(s);
+    }
+    if rates.is_empty() {
+        return 0.0;
+    }
+    rates.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let trim = rates.len() / 5;
+    let kept = &rates[trim..rates.len() - trim];
+    kept.iter().sum::<f64>() / kept.len() as f64
+}
+
+/// Round an ETA up to a coarser step the larger it is, so the countdown
+/// ticks calmly ("~51m" → "~50m") instead of flickering through every
+/// second ("~51m 21s" → "~51m 4s" → "~52m 40s"). Rounds *up* — an ETA
+/// that overshoots slightly reads better than one that hits zero while
+/// the transfer is still running.
+fn round_eta(secs: u64) -> u64 {
+    let step = if secs >= 600 {
+        60
+    } else if secs >= 120 {
+        10
+    } else if secs >= 30 {
+        5
+    } else {
+        1
+    };
+    secs.div_ceil(step) * step
+}
+
+#[cfg(test)]
+mod transfer_rate_tests {
+    use super::{round_eta, trimmed_window_rate};
+    use std::collections::VecDeque;
+    use std::time::{Duration, Instant};
+
+    /// Build a sample window from per-tick byte deltas, 100ms apart.
+    fn window_of(deltas: &[u64]) -> VecDeque<(Instant, u64)> {
+        let start = Instant::now() - Duration::from_secs(60);
+        let mut out = VecDeque::new();
+        let mut total = 0u64;
+        out.push_back((start, 0));
+        for (i, d) in deltas.iter().enumerate() {
+            total += d;
+            out.push_back((start + Duration::from_millis(100 * (i as u64 + 1)), total));
+        }
+        out
+    }
+
+    #[test]
+    fn steady_stream_reports_its_rate() {
+        // 5 MB per 100ms tick = 50 MB/s.
+        let w = window_of(&[5_000_000; 20]);
+        let r = trimmed_window_rate(&w);
+        assert!((r - 50_000_000.0).abs() < 1_000.0, "rate was {r}");
+    }
+
+    #[test]
+    fn one_tick_spike_is_trimmed_out() {
+        // A steady 50 MB/s stream with one 5 GB instant-clone tick —
+        // the spike must not drag the mean up.
+        let mut deltas = [5_000_000u64; 20];
+        deltas[10] = 5_000_000_000;
+        let r = trimmed_window_rate(&window_of(&deltas));
+        assert!((r - 50_000_000.0).abs() < 1_000.0, "rate was {r}");
+    }
+
+    #[test]
+    fn one_tick_stall_is_trimmed_out() {
+        let mut deltas = [5_000_000u64; 20];
+        deltas[7] = 0;
+        let r = trimmed_window_rate(&window_of(&deltas));
+        assert!((r - 50_000_000.0).abs() < 1_000.0, "rate was {r}");
+    }
+
+    #[test]
+    fn empty_and_single_sample_are_zero() {
+        assert_eq!(trimmed_window_rate(&VecDeque::new()), 0.0);
+        let one: VecDeque<_> = [(Instant::now(), 42u64)].into_iter().collect();
+        assert_eq!(trimmed_window_rate(&one), 0.0);
+    }
+
+    #[test]
+    fn eta_rounds_up_on_a_size_matched_step() {
+        assert_eq!(round_eta(7), 7); // <30s: exact
+        assert_eq!(round_eta(31), 35); // 5s steps
+        assert_eq!(round_eta(121), 130); // 10s steps
+        assert_eq!(round_eta(3_081), 3_120); // whole minutes
+        assert_eq!(round_eta(3_120), 3_120); // already on a step
     }
 }

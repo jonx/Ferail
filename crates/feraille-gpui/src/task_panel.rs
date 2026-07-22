@@ -171,6 +171,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
             .collect::<Vec<_>>();
         div()
             .id("task-panel-rows")
+            .w_full()
             .max_h(px(280.0))
             .overflow_y_scroll()
             .child(v_flex().w_full().children(rows))
@@ -258,7 +259,10 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
         // 28 leaves a 6-DIP visual gap.
         .bottom(px(28.0))
         .left(px(8.0))
-        .w(px(340.0))
+        // Wide enough that a transfer's full detail line ("5,423 of
+        // 6,964 items · 8.0 GB of 164.2 GB · 51.9 MB/s · ~51m") fits on
+        // one line instead of wrapping.
+        .w(px(430.0))
         .rounded(theme_radius)
         .border_1()
         .border_color(theme_border)
@@ -297,9 +301,17 @@ fn humanize_secs(s: u64) -> String {
     if s < 60 {
         format!("{}s", s)
     } else if s < 3600 {
-        format!("{}m {}s", s / 60, s % 60)
+        // Skip a zero remainder — rounded ETAs land on whole minutes
+        // and "51m" reads better than "51m 0s".
+        match (s / 60, s % 60) {
+            (m, 0) => format!("{m}m"),
+            (m, s) => format!("{m}m {s}s"),
+        }
     } else {
-        format!("{}h {}m", s / 3600, (s % 3600) / 60)
+        match (s / 3600, (s % 3600) / 60) {
+            (h, 0) => format!("{h}h"),
+            (h, m) => format!("{h}h {m}m"),
+        }
     }
 }
 

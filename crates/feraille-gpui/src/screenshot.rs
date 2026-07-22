@@ -1016,16 +1016,38 @@ impl ShellArgs {
             shell.update(cx, |s, cx| {
                 s.task_panel_open = true;
                 let mut reg = s.process.tasks.borrow_mut();
-                let _ = reg.begin(
-                    crate::tasks::TaskKind::Enumeration,
-                    "Indexing 12,318 entries\u{2026}",
-                    true,
+                // A long-running transfer with full stats — the richest
+                // row shape (rate, ETA, current file, cancel button) so
+                // the layout is exercised end to end. Backdated past
+                // SURFACE_DELAY or the one-frame capture renders an
+                // empty panel.
+                let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let transfer = reg.begin_with_cancel(
+                    crate::tasks::TaskKind::FileOp,
+                    "Moving \u{201c}D4Mac\u{201d} to \u{201c}Backup\u{201d}\u{2026}",
+                    flag,
                 );
-                let _ = reg.begin(
-                    crate::tasks::TaskKind::DiskUsage,
-                    "Computing disk usage for ~/Source\u{2026}",
-                    true,
+                reg.update(transfer, 0.05);
+                reg.update_transfer(
+                    transfer,
+                    crate::tasks::TransferStats {
+                        bytes_done: 8_589_934_592,
+                        bytes_total: 176_318_182_195,
+                        items_done: 5_423,
+                        items_total: 6_964,
+                        bytes_per_sec: 54_421_094.4,
+                        eta_secs: Some(3_081),
+                        current: "data.060".to_string(),
+                    },
                 );
+                reg.backdate(transfer, std::time::Duration::from_secs(224));
+                // An indeterminate ambient pass — the minimal row shape.
+                let sizing = reg.begin(
+                    crate::tasks::TaskKind::FolderSize,
+                    "Sizing 4 folders\u{2026}",
+                    false,
+                );
+                reg.backdate(sizing, std::time::Duration::from_secs(56));
                 // Seed the "Recent" history with a few representative
                 // finished tasks (one of each outcome) so the panel's
                 // history section renders in the screenshot.
