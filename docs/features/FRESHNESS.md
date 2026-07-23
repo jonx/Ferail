@@ -9,8 +9,9 @@ underlying tree changes, whether the change came from inside the app or from a
 3rd-party tool.
 
 This is the general model the codebase reaches for whenever a cached value is a
-function of an entire directory subtree (folder size now; item counts, duplicate
-sets, and clone-aware sizing later). Read it before adding another such cache.
+function of an entire directory subtree (folder size and recursive item counts
+now; duplicate sets and clone-aware sizing later). Read it before adding another
+such cache.
 
 ## The problem
 
@@ -119,9 +120,13 @@ disagree.
   the ancestor-invalidation service is the seam a recursive watcher would plug
   into — it would feed the same `invalidate_folder_size_ancestors`, and nothing
   downstream would change.
-- **Generalization.** Item counts and APFS clone-aware sizing
-  ([TODO.md](../../TODO.md)) are the next recursive aggregates; they should reuse
-  this model (cache keyed by path, mtime + TTL validity, ancestor invalidation
-  on mutation) rather than inventing a parallel one.
+- **Generalization.** Recursive **item counts** now ride this exact model: the
+  same walk that sums a folder's size also counts its files and sub-folders, both
+  cached in the `folder_sizes` row (`file_count` / `dir_count`) and rendered in
+  the Description column as "N files · M folders" (see
+  [MAGIC_DESCRIPTION.md](MAGIC_DESCRIPTION.md)). APFS clone-aware sizing
+  ([TODO.md](../../TODO.md)) is the next recursive aggregate and should reuse this
+  model (cache keyed by path, mtime + TTL validity, ancestor invalidation on
+  mutation) rather than inventing a parallel one.
 </content>
 </invoke>

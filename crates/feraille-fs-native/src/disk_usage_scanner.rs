@@ -322,7 +322,7 @@ impl NativeFs {
 /// failure). `cancel` is checked between dirents; on cancel returns
 /// the partial sum, which callers must treat as invalid (don't cache).
 pub fn recursive_size(root: &Path, cancel: &AtomicBool) -> u64 {
-    recursive_sizes(root, cancel).0
+    recursive_totals(root, cancel).apparent
 }
 
 /// [`recursive_size`]'s two-axis twin: returns
@@ -331,8 +331,39 @@ pub fn recursive_size(root: &Path, cancel: &AtomicBool) -> u64 {
 /// once; directories on a different device than `root` (mount points)
 /// are not entered.
 pub fn recursive_sizes(root: &Path, cancel: &AtomicBool) -> (u64, u64) {
-    let mut apparent: u64 = 0;
-    let mut allocated: u64 = 0;
+    let t = recursive_totals(root, cancel);
+    (t.apparent, t.allocated)
+}
+
+/// Recursive rollup of a directory subtree in a single walk: byte
+/// totals on both size axes **plus** item counts. `files` and `dirs`
+/// are recursive (the whole subtree) and exclude `root` itself — every
+/// regular file and every entered sub-directory found underneath.
+/// Symlinks are excluded from every field (never followed); hardlinked
+/// files count once; directories on a different device than `root`
+/// (mount points) are neither entered nor counted, matching the size
+/// axes exactly so a folder's counts and bytes always describe the same
+/// set of entries. On cancel, returns whatever was tallied before the
+/// stop — callers must treat a cancelled result as invalid (don't
+/// cache, don't display).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SubtreeTotals {
+    /// Sum of `metadata.len()` over every counted file — Finder "Size".
+    pub apparent: u64,
+    /// Sum of allocated (block) sizes — the "on disk" axis.
+    pub allocated: u64,
+    /// Regular files underneath (recursive).
+    pub files: u64,
+    /// Entered sub-directories underneath (recursive).
+    pub dirs: u64,
+}
+
+/// One-walk rollup behind [`recursive_size`] / [`recursive_sizes`] and
+/// the file list's folder-size worker (which also wants item counts for
+/// the Description column). See [`SubtreeTotals`] for the field
+/// semantics and the cancel contract.
+pub fn recursive_totals(root: &Path, cancel: &AtomicBool) -> SubtreeTotals {
+    let mut t = SubtreeTotals::default();
     let root_dev = fs::symlink_metadata(root)
         .ok()
         .as_ref()
@@ -342,7 +373,7 @@ pub fn recursive_sizes(root: &Path, cancel: &AtomicBool) -> (u64, u64) {
     let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         if cancel.load(Ordering::Relaxed) {
-            return (apparent, allocated);
+            return t;
         }
         let read_dir = match fs::read_dir(&dir) {
             Ok(rd) => rd,
@@ -350,7 +381,7 @@ pub fn recursive_sizes(root: &Path, cancel: &AtomicBool) -> (u64, u64) {
         };
         for dirent in read_dir.flatten() {
             if cancel.load(Ordering::Relaxed) {
-                return (apparent, allocated);
+                return t;
             }
             // Read the metadata captured during directory enumeration instead of
             // re-`stat`ing each path. This is not just faster: on Windows
@@ -374,12 +405,14 @@ pub fn recursive_sizes(root: &Path, cancel: &AtomicBool) -> (u64, u64) {
             if ft.is_dir() {
                 // Don't cross onto another filesystem (a mount point
                 // inside the walk would roll a whole other volume
-                // into this folder's number).
+                // into this folder's number). Uncounted as well as
+                // unentered, so the count matches the byte total.
                 if let (Some((dev, _, _)), Some(root_dev)) = (file_identity(&meta), root_dev) {
                     if dev != root_dev {
                         continue;
                     }
                 }
+                t.dirs = t.dirs.saturating_add(1);
                 stack.push(dirent.path());
             } else {
                 // Hardlinks count once (cp -al trees, Homebrew Cellar).
@@ -388,12 +421,13 @@ pub fn recursive_sizes(root: &Path, cancel: &AtomicBool) -> (u64, u64) {
                         continue;
                     }
                 }
-                apparent = apparent.saturating_add(meta.len());
-                allocated = allocated.saturating_add(allocated_size(&meta));
+                t.files = t.files.saturating_add(1);
+                t.apparent = t.apparent.saturating_add(meta.len());
+                t.allocated = t.allocated.saturating_add(allocated_size(&meta));
             }
         }
     }
-    (apparent, allocated)
+    t
 }
 
 /// `(st_dev, st_ino, st_nlink)` on Unix; `None` where the identity
@@ -547,6 +581,41 @@ mod tests {
         let tmp = fixture();
         let cancel = AtomicBool::new(false);
         assert_eq!(recursive_size(tmp.path(), &cancel), 60);
+    }
+
+    #[test]
+    fn recursive_totals_counts_files_and_dirs() {
+        // fixture: a.txt + sub/{b.txt, c.png} → 3 files, 1 sub-dir,
+        // 60 bytes. Counts are recursive and exclude the root itself.
+        let tmp = fixture();
+        let cancel = AtomicBool::new(false);
+        let t = recursive_totals(tmp.path(), &cancel);
+        assert_eq!(t.apparent, 60);
+        assert_eq!(t.files, 3);
+        assert_eq!(t.dirs, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_totals_hardlink_counts_once() {
+        // A second name for a.txt must not inflate the file count or
+        // the byte total — same dedup that protects the size axis.
+        let tmp = fixture();
+        let root = tmp.path();
+        fs::hard_link(root.join("a.txt"), root.join("a-link.txt")).unwrap();
+        let cancel = AtomicBool::new(false);
+        let t = recursive_totals(root, &cancel);
+        assert_eq!(t.apparent, 60);
+        assert_eq!(t.files, 3);
+        assert_eq!(t.dirs, 1);
+    }
+
+    #[test]
+    fn recursive_totals_cancel_returns_early() {
+        let tmp = fixture();
+        let cancel = AtomicBool::new(true);
+        let t = recursive_totals(tmp.path(), &cancel);
+        assert_eq!(t, SubtreeTotals::default());
     }
 
     #[cfg(unix)]

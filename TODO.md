@@ -149,6 +149,22 @@ relative to the daily value. Ordered by bang-for-buck.
     *sizes* together, since both go stale the same way. Pairs with the existing
     watcher items under Favorites (**Missing transitions**) and Responsiveness
     & Data Architecture (**NodeStore identity** → watcher events).
+- **Write per-directory subtotals through the folder-size walk (drill-down
+  reuse).** Today `recursive_totals` sums a subtree into one grand total and
+  keeps no per-directory breakdown, so sizing `Downloads` walks every descendant
+  but caches only the top-level rows; navigating *into* a subfolder then re-walks
+  it from scratch. Make the walk cache a `folder_sizes` row (size + counts) for
+  **every** directory it descends, keyed by each subdir's own path+mtime, so any
+  later drill-down into a just-sized tree is a pure cache hit. Requires turning
+  the current pre-order stack sum into a post-order accumulation (child totals
+  bubble up to parents) and multiplies DB writes from a handful per listing to
+  hundreds/thousands per top-level folder — batch them in one transaction and
+  weigh the write amplification against the drill-down win before committing.
+  Inherits the same deep-mtime staleness bound as the existing cache (a subdir
+  row is validated by its *own* mtime, so a deep external edit hides until TTL).
+  The counts columns and the shared cache contract are already in place (shipped
+  with the folder Description counts), so this is purely a walker change. Only
+  worth doing if drill-down re-walks prove noticeable on a slow disk.
 
 ## Search
 

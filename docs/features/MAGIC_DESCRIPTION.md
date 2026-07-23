@@ -10,6 +10,18 @@ shape.
 
 **Shipped (2026-05-15).**
 
+**Folder counts share the column (2026-07-22).** The column is content
+facts for *files*; for *folders* it now shows recursive item counts —
+"N files · M folders" (singular-aware; "Empty" for an empty tree). These
+come for free from the background folder-size walk (the same pass that
+sums a directory's recursive bytes now also counts its files and
+sub-folders), cached alongside the size in the `folder_sizes` row and
+formatted by `feraille_fs_native::folder_contents_summary`. The two never
+collide: a directory has no magic facts, so the prefetch worker leaves its
+description empty (and its apply only overwrites a *non-empty* value), while
+the folder-size worker owns folder descriptions. See
+[FRESHNESS.md](FRESHNESS.md) for the cache contract.
+
 **ELF OS-ABI + relocatable (2026-06-24).** The ELF parser now reads
 `e_ident[EI_OSABI]` (byte 7) into `MagicInfo::os: ElfOs` and flags
 `e_type == ET_REL` as `is_relocatable`. Named OSes (AROS, the BSDs,

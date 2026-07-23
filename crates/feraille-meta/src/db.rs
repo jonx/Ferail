@@ -31,7 +31,14 @@ use rusqlite::{params, Connection};
 /// `4` adds the `folder_sizes` table (recursive folder-size cache
 /// for the file list's Size column). Additive — `CREATE TABLE IF
 /// NOT EXISTS` covers the `3 → 4` migration.
-pub const DB_VERSION: u32 = 4;
+///
+/// `5` adds `folder_sizes.file_count` / `dir_count` (recursive item
+/// counts for the folder Description column). Additive `ALTER TABLE
+/// ... ADD COLUMN`; the same walk that computes the size fills them.
+/// The migration also clears any pre-existing rows once, since a v4
+/// row has no counts and would otherwise render "0 files" until its
+/// mtime/TTL forced a recompute — pure cache data, safe to drop.
+pub const DB_VERSION: u32 = 5;
 
 #[derive(Debug)]
 pub enum MetadataError {
@@ -172,6 +179,14 @@ pub struct FolderSizeRecord {
     /// file underneath, symlinks excluded. Finder "Size" semantics.
     pub size: u64,
     pub computed_at_unix: i64,
+    /// Recursive item counts from the same walk that produced `size`,
+    /// for the folder Description column ("N files in M folders"). Both
+    /// exclude the folder itself and describe exactly the entries `size`
+    /// summed. A v4 row migrated forward carries `0`/`0` only until the
+    /// folder is re-walked, but the 4 → 5 migration clears such rows so
+    /// this never surfaces (see [`DB_VERSION`]).
+    pub file_count: u64,
+    pub dir_count: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -340,7 +355,9 @@ impl MetadataDb {
                 path TEXT PRIMARY KEY,
                 mtime_unix INTEGER NOT NULL,
                 size INTEGER NOT NULL,
-                computed_at_unix INTEGER NOT NULL
+                computed_at_unix INTEGER NOT NULL,
+                file_count INTEGER NOT NULL DEFAULT 0,
+                dir_count INTEGER NOT NULL DEFAULT 0
             );
 
             -- Ant Trail folder-usage. `score` is computed at read time
@@ -417,6 +434,28 @@ impl MetadataDb {
         let _ = self
             .conn
             .execute("ALTER TABLE files ADD COLUMN description TEXT", []);
+        // v4 → v5 forward migration: folder_sizes gains recursive item
+        // counts. Probe for the columns rather than relying on the
+        // ADD-COLUMN error, so a crash between the two ALTERs still
+        // heals. When they're absent (an old v4 DB), add them and clear
+        // the count-less rows once — a fresh v5 DB already has the
+        // columns via the CREATE above, so this whole block is skipped
+        // and the cache survives every subsequent open.
+        let has_counts = self
+            .conn
+            .prepare("SELECT file_count, dir_count FROM folder_sizes LIMIT 0")
+            .is_ok();
+        if !has_counts {
+            let _ = self.conn.execute(
+                "ALTER TABLE folder_sizes ADD COLUMN file_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            let _ = self.conn.execute(
+                "ALTER TABLE folder_sizes ADD COLUMN dir_count INTEGER NOT NULL DEFAULT 0",
+                [],
+            );
+            let _ = self.conn.execute("DELETE FROM folder_sizes", []);
+        }
         Ok(())
     }
 
@@ -692,7 +731,7 @@ impl MetadataDb {
     /// the row is still valid.
     pub fn get_folder_size(&self, path: &str) -> Result<Option<FolderSizeRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT path, mtime_unix, size, computed_at_unix \
+            "SELECT path, mtime_unix, size, computed_at_unix, file_count, dir_count \
              FROM folder_sizes WHERE path = ?1",
         )?;
         match stmt.query_row(params![path], |row| {
@@ -701,6 +740,8 @@ impl MetadataDb {
                 mtime_unix: row.get(1)?,
                 size: row.get::<_, i64>(2)? as u64,
                 computed_at_unix: row.get(3)?,
+                file_count: row.get::<_, i64>(4)? as u64,
+                dir_count: row.get::<_, i64>(5)? as u64,
             })
         }) {
             Ok(r) => Ok(Some(r)),
@@ -714,13 +755,15 @@ impl MetadataDb {
     pub fn upsert_folder_size(&self, rec: &FolderSizeRecord) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO folder_sizes \
-               (path, mtime_unix, size, computed_at_unix) \
-             VALUES (?1, ?2, ?3, ?4)",
+               (path, mtime_unix, size, computed_at_unix, file_count, dir_count) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 rec.path,
                 rec.mtime_unix,
                 rec.size as i64,
                 rec.computed_at_unix,
+                rec.file_count as i64,
+                rec.dir_count as i64,
             ],
         )?;
         Ok(())
@@ -1190,11 +1233,15 @@ mod tests {
             mtime_unix: 100,
             size: 12_345,
             computed_at_unix: 100,
+            file_count: 7,
+            dir_count: 2,
         })
         .unwrap();
         let r = db.get_folder_size("/dir").unwrap().unwrap();
         assert_eq!(r.mtime_unix, 100);
         assert_eq!(r.size, 12_345);
+        assert_eq!(r.file_count, 7);
+        assert_eq!(r.dir_count, 2);
 
         // Recompute after the folder changed — whole-row replace.
         db.upsert_folder_size(&FolderSizeRecord {
@@ -1202,11 +1249,15 @@ mod tests {
             mtime_unix: 200,
             size: 99,
             computed_at_unix: 200,
+            file_count: 1,
+            dir_count: 0,
         })
         .unwrap();
         let r = db.get_folder_size("/dir").unwrap().unwrap();
         assert_eq!(r.mtime_unix, 200);
         assert_eq!(r.size, 99);
+        assert_eq!(r.file_count, 1);
+        assert_eq!(r.dir_count, 0);
     }
 
     #[test]
@@ -1217,6 +1268,8 @@ mod tests {
             mtime_unix: 100,
             size: 42,
             computed_at_unix: 100,
+            file_count: 3,
+            dir_count: 1,
         })
         .unwrap();
         assert!(db.get_folder_size("/dir").unwrap().is_some());
@@ -1234,6 +1287,8 @@ mod tests {
             mtime_unix: 100,
             size: 1,
             computed_at_unix: 100,
+            file_count: 0,
+            dir_count: 0,
         })
         .unwrap();
         db.reset(ResetScope::Caches).unwrap();

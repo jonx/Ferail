@@ -28,7 +28,7 @@ mod search;
 pub mod stat_info;
 mod volumes;
 pub mod xattr_info;
-pub use disk_usage_scanner::{recursive_size, DEFAULT_DU_BATCH};
+pub use disk_usage_scanner::{recursive_size, recursive_totals, SubtreeTotals, DEFAULT_DU_BATCH};
 pub use dupes::{
     clone_dedup, DupeFact, DupeHashCache, DupeMember, DupeOpts, DupeStats, DEFAULT_DUPE_BATCH,
     PARTIAL_HASH_BYTES,
@@ -987,6 +987,39 @@ pub fn humanize_bytes(bytes: u64) -> String {
     }
 }
 
+/// One-line summary of a folder's recursive contents for the file
+/// list's Description column, e.g. `"1,204 files · 88 folders"`. Both
+/// counts come from the same walk that computed the folder's recursive
+/// size, so they describe exactly the entries that total covers. Counts
+/// are grouped with thousands separators and singularised ("1 file");
+/// a folder with only files or only sub-folders drops the empty half,
+/// and a truly empty folder returns `"Empty"`.
+pub fn folder_contents_summary(file_count: u64, dir_count: u64) -> String {
+    fn part(n: u64, singular: &str, plural: &str) -> String {
+        format!("{} {}", group_thousands(n), if n == 1 { singular } else { plural })
+    }
+    match (file_count, dir_count) {
+        (0, 0) => "Empty".to_string(),
+        (f, 0) => part(f, "file", "files"),
+        (0, d) => part(d, "folder", "folders"),
+        (f, d) => format!("{} \u{b7} {}", part(f, "file", "files"), part(d, "folder", "folders")),
+    }
+}
+
+/// Render `n` with `,` thousands separators (`12345` → `"12,345"`).
+fn group_thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let len = digits.len();
+    let mut out = String::with_capacity(len + len / 3);
+    for (i, ch) in digits.char_indices() {
+        if i > 0 && (len - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1025,6 +1058,37 @@ mod tests {
         assert_eq!(humanize_bytes(1024), "1.0 KB");
         assert_eq!(humanize_bytes(1024 * 1024), "1.0 MB");
         assert_eq!(humanize_bytes(4_404_019), "4.2 MB");
+    }
+
+    #[test]
+    fn folder_contents_summary_cases() {
+        // Empty folder — distinct from "we couldn't count".
+        assert_eq!(folder_contents_summary(0, 0), "Empty");
+        // Singular vs plural, and the one-sided drops.
+        assert_eq!(folder_contents_summary(1, 0), "1 file");
+        assert_eq!(folder_contents_summary(3, 0), "3 files");
+        assert_eq!(folder_contents_summary(0, 1), "1 folder");
+        assert_eq!(folder_contents_summary(0, 5), "5 folders");
+        // Both halves, joined with the column's ` · ` separator.
+        assert_eq!(
+            folder_contents_summary(128, 12),
+            "128 files \u{b7} 12 folders"
+        );
+        // Thousands grouping on large trees.
+        assert_eq!(
+            folder_contents_summary(1_204, 88),
+            "1,204 files \u{b7} 88 folders"
+        );
+    }
+
+    #[test]
+    fn group_thousands_boundaries() {
+        assert_eq!(group_thousands(0), "0");
+        assert_eq!(group_thousands(7), "7");
+        assert_eq!(group_thousands(999), "999");
+        assert_eq!(group_thousands(1_000), "1,000");
+        assert_eq!(group_thousands(12_345), "12,345");
+        assert_eq!(group_thousands(1_234_567), "1,234,567");
     }
 
     #[test]

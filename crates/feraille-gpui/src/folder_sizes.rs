@@ -35,7 +35,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use feraille_core::{EntryKind, NodeId};
-use feraille_fs_native::{NativeFs, humanize_bytes, recursive_size};
+use feraille_fs_native::{
+    folder_contents_summary, humanize_bytes, recursive_totals, NativeFs, SubtreeTotals,
+};
 use feraille_meta::{FolderSizeRecord, MetadataDb};
 use gpui::Entity;
 
@@ -94,10 +96,14 @@ struct SizeSeed {
 }
 
 /// One resolved folder size. Keyed by `NodeId`, not row index —
-/// rows can re-sort while the walk is in flight.
+/// rows can re-sort while the walk is in flight. Carries the recursive
+/// item counts from the same walk so the apply can fill the folder's
+/// Description column ("N files · M folders") alongside the Size.
 struct SizeRow {
     node: NodeId,
     size: u64,
+    file_count: u64,
+    dir_count: u64,
 }
 
 /// Spawn a folder-size pass over the current entries of `table`.
@@ -259,6 +265,8 @@ fn run_worker(
                 hits.push(SizeRow {
                     node: seed.node,
                     size: rec.size,
+                    file_count: rec.file_count,
+                    dir_count: rec.dir_count,
                 })
             }
             _ => misses.push(seed),
@@ -272,7 +280,12 @@ fn run_worker(
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        let size = recursive_size(&seed.path, &cancel);
+        let SubtreeTotals {
+            apparent: size,
+            files,
+            dirs,
+            ..
+        } = recursive_totals(&seed.path, &cancel);
         // A cancelled walk returns a partial sum — neither cacheable
         // nor showable.
         if cancel.load(Ordering::Relaxed) {
@@ -285,6 +298,8 @@ fn run_worker(
                     mtime_unix: seed.mtime_unix,
                     size,
                     computed_at_unix: now_unix(),
+                    file_count: files,
+                    dir_count: dirs,
                 });
             }
         }
@@ -292,6 +307,8 @@ fn run_worker(
             .send_blocking(vec![SizeRow {
                 node: seed.node,
                 size,
+                file_count: files,
+                dir_count: dirs,
             }])
             .is_err()
         {
@@ -302,9 +319,13 @@ fn run_worker(
 
 /// Apply resolved sizes to the live `FileEntry` rows, matched by
 /// `NodeId`. Rows that vanished (re-enumeration, filter) skip
-/// silently. Sets both `size` (so Size-sorting orders folders
-/// correctly) and the pre-formatted `display_size` (per the
-/// no-alloc-on-paint contract).
+/// silently. Sets `size` (so Size-sorting orders folders correctly),
+/// the pre-formatted `display_size`, and the folder's `display_description`
+/// with the recursive item counts (per the no-alloc-on-paint contract —
+/// both strings are formatted here, not during render). Only folders
+/// carry a count description; the prefetch worker leaves directory
+/// descriptions empty (dirs have no magic facts), so the two never
+/// fight over the same field.
 fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<SizeRow>) {
     // Sizes change → the status bar's cached totals are stale.
     delegate.invalidate_drag_snapshot();
@@ -318,6 +339,7 @@ fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<SizeRow>) {
             } else {
                 humanize_bytes(row.size)
             };
+            e.display_description = folder_contents_summary(row.file_count, row.dir_count);
         }
     }
 }
@@ -354,10 +376,18 @@ pub(crate) fn folder_size_cached(
             }
         }
     }
-    let size = recursive_size(path, cancel);
+    let SubtreeTotals {
+        apparent: size,
+        files,
+        dirs,
+        ..
+    } = recursive_totals(path, cancel);
     if cancel.load(Ordering::Relaxed) {
         return size;
     }
+    // Write through the full record — this shares the `folder_sizes`
+    // cache with the file-list worker, so the counts must land too or a
+    // later cache hit there would read this row as "0 files".
     if let Some(db) = db {
         if let Ok(guard) = db.lock() {
             let _ = guard.upsert_folder_size(&FolderSizeRecord {
@@ -365,6 +395,8 @@ pub(crate) fn folder_size_cached(
                 mtime_unix,
                 size,
                 computed_at_unix: now_unix(),
+                file_count: files,
+                dir_count: dirs,
             });
         }
     }
