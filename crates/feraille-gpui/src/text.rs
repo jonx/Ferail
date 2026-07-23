@@ -91,3 +91,21 @@ pub trait IconScale: Styled + Sized {
 }
 
 impl<T: Styled + Sized> IconScale for T {}
+
+/// Extension mirroring gpui's [`Styled::truncate`] but eliding the
+/// **middle** of the text (Finder-style) instead of the end, so a
+/// filename keeps both its start and its extension visible: a long
+/// "Screen Recording 2026-06-12 at 22.20.44.mov" reads as
+/// "Screen Recording 2026-…22.20.44.mov" rather than losing ".mov" off
+/// the right edge. Truncation is pixel-accurate (gpui's
+/// `TextOverflow::TruncateMiddle`), measured by the text renderer — no
+/// per-row allocation or measurement on the paint path, so it's safe in
+/// the dense list. Use for filename cells; end-truncation (`.truncate()`)
+/// still fits paths and free-form text where the tail is expendable.
+pub trait TruncateMiddle: Styled + Sized {
+    fn truncate_middle(self) -> Self {
+        self.overflow_hidden().whitespace_nowrap().text_ellipsis_middle()
+    }
+}
+
+impl<T: Styled + Sized> TruncateMiddle for T {}

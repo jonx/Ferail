@@ -8,7 +8,7 @@
 //! rendered live from `mtime_unix` so its relative label keeps counting
 //! (pure arithmetic, bounded to visible rows — still nonblocking).
 
-use crate::text::{IconScale as _, TextScale as _};
+use crate::text::{IconScale as _, TextScale as _, TruncateMiddle as _};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -1138,7 +1138,9 @@ impl TableDelegate for FileListDelegate {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .truncate()
+                        // Finder-style middle ellipsis: keep the name's start
+                        // AND its extension when the column is too narrow.
+                        .truncate_middle()
                         .child(SharedString::from(display_name.clone()))
                 };
                 // Inline tag chips — 6-DIP coloured dots after the
