@@ -1013,45 +1013,34 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Only act when the active view genuinely holds focus. The
-        // shell root sees key events bubbling up from descendants
-        // (e.g. the toolbar filter input); those must not typeahead.
         let grid = matches!(self.active_tab().view_mode, crate::grid::ViewMode::Grid);
         // `contains_focused`, not `is_focused`: clicking a row moves window
         // focus to the table's own handle (a descendant of the shell root),
         // and typing right after a click must still typeahead. Exact-match
         // checking silently disabled typeahead after any click — found on
-        // the AROS port, but latent on every platform. The filter input is
-        // not a descendant of either handle, so it stays excluded.
-        let focused = if grid {
+        // the AROS port, but latent on every platform.
+        let view_focused = if grid {
             self.active_tab().grid_focus.contains_focused(window, cx)
         } else {
             self.focus_handle.contains_focused(window, cx)
         };
-        if !focused {
-            return;
-        }
+        // A focused text input outranks the view: the toolbar filter, or a
+        // modal name prompt (New Folder / Rename / favorite label) that
+        // renders inside a Root layer `contains_focused` counts as part of
+        // the shell subtree. `has_focused_input` (Root's own tracking)
+        // catches every gpui-component input wherever it sits in the tree.
+        let input_focused = window.has_focused_input(cx);
 
-        // Command/Control/Function chords are not typeahead input.
-        // (`key_char` is already None for most of them, but Function
-        // keys can carry a char — belt and suspenders.)
-        let m = &event.keystroke.modifiers;
-        if m.platform || m.control || m.function {
-            return;
-        }
-        // `key_char` is the character that would have been typed (None
-        // for Cmd-S etc.). Accept only a single, non-control glyph.
-        let Some(ch) = event
-            .keystroke
-            .key_char
-            .as_deref()
-            .and_then(|s| s.chars().next().filter(|c| !c.is_control() && s.chars().count() == 1))
-        else {
+        // Precedence is a pure function so it's unit-testable without a
+        // window — see `typeahead_char` and its tests.
+        let Some(ch) = typeahead_char(
+            input_focused,
+            view_focused,
+            &event.keystroke.modifiers,
+            event.keystroke.key_char.as_deref(),
+        ) else {
             return;
         };
-        // Lowercase for case-insensitive matching (first scalar is
-        // enough for the ASCII + common-accent names we match against).
-        let ch = ch.to_lowercase().next().unwrap_or(ch);
 
         if self.typeahead_advance(ch, grid, cx) {
             // Consumed — don't let the character fall through to any
@@ -1152,3 +1141,112 @@ impl Shell {
 /// this long after the previous one starts a fresh prefix rather than
 /// extending the old one (Finder uses roughly this).
 const TYPEAHEAD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(750);
+
+/// Decide whether a printable key-down should drive type-to-select, and
+/// with what character — the precedence rules of [`Shell::on_typeahead_key`]
+/// as a pure function so they're unit-testable without a window.
+///
+/// Order matters:
+/// 1. **A focused text input wins outright** (`input_focused`). The
+///    filter and the modal name prompts (New Folder / Rename / favorite
+///    label) own every printable key; if typeahead consumed one it would
+///    `stop_propagation` and the character would never reach the input's
+///    IME — on macOS that reads as "typing does nothing" in those fields.
+///    This is the guard for that regression.
+/// 2. The active list/grid must actually hold focus (`view_focused`,
+///    descendant-aware) — the shell root also sees keys bubbling from
+///    unrelated descendants.
+/// 3. Modifier chords (Cmd/Ctrl/Fn) are commands, not text.
+/// 4. Only a single, non-control glyph counts; it's lowercased for
+///    case-insensitive prefix matching.
+///
+/// Returns the match character, or `None` to bow out.
+fn typeahead_char(
+    input_focused: bool,
+    view_focused: bool,
+    modifiers: &gpui::Modifiers,
+    key_char: Option<&str>,
+) -> Option<char> {
+    if input_focused || !view_focused {
+        return None;
+    }
+    if modifiers.platform || modifiers.control || modifiers.function {
+        return None;
+    }
+    let s = key_char?;
+    let ch = s
+        .chars()
+        .next()
+        .filter(|c| !c.is_control() && s.chars().count() == 1)?;
+    Some(ch.to_lowercase().next().unwrap_or(ch))
+}
+
+#[cfg(test)]
+mod typeahead_tests {
+    use super::typeahead_char;
+    use gpui::Modifiers;
+
+    fn plain() -> Modifiers {
+        Modifiers::default()
+    }
+
+    #[test]
+    fn typeahead_yields_to_focused_input() {
+        // THE REGRESSION GUARD. A focused text field (filter or a modal
+        // name prompt like New Folder / Rename) must win over the view,
+        // even when the view "contains" that field's focus — otherwise
+        // typeahead's stop_propagation eats the character and typing into
+        // the field silently does nothing on macOS.
+        assert_eq!(
+            typeahead_char(true, true, &plain(), Some("h")),
+            None,
+            "a focused input must suppress typeahead even while the view contains focus"
+        );
+    }
+
+    #[test]
+    fn typeahead_fires_when_view_focused_and_no_input() {
+        // The AROS-port fix this regression came from: after clicking a
+        // row, the view contains focus and typing must still typeahead.
+        assert_eq!(typeahead_char(false, true, &plain(), Some("p")), Some('p'));
+    }
+
+    #[test]
+    fn typeahead_lowercases_for_case_insensitive_match() {
+        assert_eq!(typeahead_char(false, true, &plain(), Some("P")), Some('p'));
+    }
+
+    #[test]
+    fn typeahead_needs_the_view_focused() {
+        assert_eq!(typeahead_char(false, false, &plain(), Some("p")), None);
+    }
+
+    #[test]
+    fn typeahead_ignores_modifier_chords() {
+        let cmd = Modifiers {
+            platform: true,
+            ..Default::default()
+        };
+        assert_eq!(typeahead_char(false, true, &cmd, Some("p")), None);
+        let ctrl = Modifiers {
+            control: true,
+            ..Default::default()
+        };
+        assert_eq!(typeahead_char(false, true, &ctrl, Some("p")), None);
+        let func = Modifiers {
+            function: true,
+            ..Default::default()
+        };
+        assert_eq!(typeahead_char(false, true, &func, Some("\u{f700}")), None);
+    }
+
+    #[test]
+    fn typeahead_ignores_control_and_multichar() {
+        // No printable char (arrows, Enter → None key_char).
+        assert_eq!(typeahead_char(false, true, &plain(), None), None);
+        // A control scalar is not text.
+        assert_eq!(typeahead_char(false, true, &plain(), Some("\u{7f}")), None);
+        // Multi-scalar IME strings aren't single-key typeahead.
+        assert_eq!(typeahead_char(false, true, &plain(), Some("ab")), None);
+    }
+}
