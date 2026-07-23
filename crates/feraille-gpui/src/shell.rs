@@ -1944,14 +1944,31 @@ impl Shell {
                     // their live state). app_state::save is cached +
                     // write-behind — no I/O on this thread.
                     TableEvent::MoveColumn(..) | TableEvent::ColumnWidthsChanged(..) => {
-                        let spec = {
-                            let state = table.read(cx);
+                        let spec = table.update(cx, |state, _| {
+                            // Fold the live (just-dragged / just-moved) widths
+                            // back into the delegate's own column set. The table
+                            // rebuilds its column groups from THESE delegate
+                            // widths on every `refresh()` — including the
+                            // refreshes a background folder-size / prefetch batch
+                            // triggers — while a drag only updates the transient
+                            // col_groups. Without this write-back an in-flight
+                            // worker snaps a resized (or reordered) column
+                            // straight back to its construction width, and the
+                            // change only "sticks" once the workers stop. Index-
+                            // aligned: delegate.columns[ix] ↔ col_widths()[ix]
+                            // (a move reorders both), the invariant columns_spec
+                            // already relies on.
+                            let widths = state.col_widths();
+                            let delegate = state.delegate_mut();
+                            for (col, w) in delegate.columns.iter_mut().zip(widths.iter()) {
+                                col.width = *w;
+                            }
                             crate::file_list::columns_spec(
-                                &state.delegate().columns,
-                                &state.delegate().hidden_columns,
-                                Some(&state.col_widths()),
+                                &delegate.columns,
+                                &delegate.hidden_columns,
+                                None,
                             )
-                        };
+                        });
                         let mut s = app_state::load();
                         s.list_columns = Some(spec);
                         app_state::save(&s);
