@@ -4,9 +4,13 @@ Notable changes to Feraille, newest first. This tracks what you'd notice as a
 user; the full detail lives in the git history. Dependency-pin bumps are logged
 separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
-No tagged releases yet (pre-1.0) — **Unreleased** is the current work.
+**Unreleased** collects work not yet in a tagged build.
 
 ## Unreleased
+
+## 0.1.0 — 2026-07-24
+
+First signed & notarized macOS build.
 
 - **Folder contents at a glance** — folders now show their recursive item counts
   ("1,204 files · 88 folders") in the Description column.
