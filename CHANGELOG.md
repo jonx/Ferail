@@ -1,0 +1,52 @@
+# Changelog
+
+Notable changes to Feraille, newest first. This tracks what you'd notice as a
+user; the full detail lives in the git history. Dependency-pin bumps are logged
+separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
+
+No tagged releases yet (pre-1.0) — **Unreleased** is the current work.
+
+## Unreleased
+
+- **Folder contents at a glance** — folders now show their recursive item counts
+  ("1,204 files · 88 folders") in the Description column.
+- **Easier favorites** — "Add to Favorites" is now in the File menu, and you can
+  drag a folder straight onto an empty Favorites list (it's a proper drop zone
+  now).
+- **Tidier viewer** — the viewer toolbar folds into a "…" menu when the window is
+  too narrow to fit every button.
+- **Fixed:** typing a name into the New Folder / Rename dialogs now works — those
+  fields were silently ignoring keystrokes.
+
+## 2026-07 — More platforms, steadier on slow drives
+
+- **Runs on AROS** — Feraille now boots on AROS (aarch64) with menus, previews,
+  and disk usage.
+- **Windows & Linux caught up** — resilient file operations with clear errors
+  when a file is busy, OneDrive/Trash/Open-With integration, native video, and
+  Finder-style "Eject All" everywhere.
+- **Image previews without macOS** — a built-in thumbnail renderer means previews
+  work off macOS too.
+- **Calmer on slow media** — spun-down drives and network mounts no longer freeze
+  the window.
+
+## 2026-06 — Viewer, video, search & disk usage
+
+- **Media viewer** — images and video with zoom/pan, rotation, slideshow,
+  In/Out cues, one-click enhance, and transparent stacking windows.
+- **Icon (grid) view** and a Finder-style drag with real thumbnails and
+  spring-loaded folders.
+- **Find things** — recursive + Spotlight search and a duplicate finder, each in
+  its own tab.
+- **Disk Usage** — treemap with a Top-N panel and HTML export.
+- **Richer previews** — inline text/code with syntax highlighting and formatted
+  markdown.
+- **Command palette** (Cmd+K) and a keyboard-shortcuts overlay.
+
+## 2026-05 — The core explorer
+
+- Rebuilt on a new rendering foundation, then filled in the essentials:
+  **multi-window tabs, a curated Favorites sidebar, sortable columns, copy /
+  move / trash with progress and undo, Get Info, and background folder sizes.**
+- Started as a native macOS file explorer with real icons, magic-byte file
+  detection, quarantine badges, and drag-out to Finder.
