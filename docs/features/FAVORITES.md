@@ -37,9 +37,9 @@ A favorite can be created from many entry points. All of them funnel into one in
 
 **Right-click context menu — "Add to Favorites."** Available on any folder row in the file list, any node in the tree, any breadcrumb segment, and on the current-folder header. If the target is *already* a favorite, the menu item reads "Remove from Favorites" instead (it's a toggle). See §5.
 
-**Keyboard shortcut.** With a folder selected in the file list or tree, `Cmd+T` (or your chosen binding) toggles it as a favorite. Same toggle semantics as the context menu.
+**Keyboard shortcut.** With a folder selected in the file list or tree, `Cmd+D` toggles it as a favorite (mirrors Finder's "Add to Sidebar" muscle memory; `Cmd+T` is taken by New Tab). Same toggle semantics as the context menu.
 
-**Menu bar.** `File → Add to Favorites` (and its toggle twin), operating on the current selection or current folder. Shows the keyboard shortcut via Kbd.
+**Menu bar.** `File → Add to Favorites`, bound to the same `ToggleFavoriteForTarget` (Cmd+D) command, operating on the current selection or current folder. This is the discoverable entry point for users who don't know the shortcut. Static wording "Add to Favorites"; on an already-favorited target it removes (toggle).
 
 **Drag onto the Feraille dock icon** — optional, later. Dropping a folder on the dock icon could open it; holding a modifier could favorite it. Low priority.
 
@@ -270,6 +270,8 @@ Two favorites can have the same `display_name` (e.g. two different folders both 
 
 ### 11.7 Empty state
 If the user has zero favorites, the Favorites section shows a quiet empty state: a single muted line like "Drag folders here for quick access." The section header still shows. Don't hide the section entirely — that hides the affordance for ever getting a first favorite.
+
+The empty-state line **is itself the drop target**, not just a caption — with no rows there are no inter-row insertion gaps (§4.3), so without this a folder dragged onto an empty section would have nowhere to land. It renders as a dashed-outline drop well with a faint fill so it reads as "put something here" at rest (not only mid-drag), and `drag_over` deepens the fill; a drop routes through the same validate-off-thread-then-add path as the gaps, inserting the first favorite at a valid mid-slot (`-INF`/`+INF` bounds). Implemented in `favorites_section.rs::add_dropped_folders`, shared with the inter-row gaps.
 
 ### 11.8 Section collapse
 The Favorites section header is collapsible (disclosure triangle), like Locations and the tree. Collapsed/expanded state persists. Collapsing doesn't affect the favorites themselves or the §5 indicators elsewhere.

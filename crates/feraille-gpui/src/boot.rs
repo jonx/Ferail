@@ -14,7 +14,8 @@ use crate::{
         ClearRecents, CloseTab, CloseWindow, CopyPath, DeleteImmediately, EmptyTrash,
         FindDuplicates, FocusFilter, GoHome, MoveToTrash, NavigateBack, NavigateForward,
         NavigateParent, NewFolder, NewTab, OpenDiskUsage, OpenSelected, OpenSettings, Refresh,
-        RenameSelected, RevealInFinder, Shell, ShowDesktop, ToggleHidden, TogglePreview,
+        RenameSelected, RevealInFinder, Shell, ShowDesktop, ToggleFavoriteForTarget, ToggleHidden,
+        TogglePreview,
     },
 };
 use feraille_core::commands::{CommandId, find};
@@ -380,6 +381,14 @@ fn install_app_menus(cx: &mut App) {
                     ),
                     RevealInFinder,
                 ),
+                MenuItem::separator(),
+                // Favorites (docs/features/FAVORITES.md). The Cmd+D toggle
+                // acts on the selected folder, else the current folder —
+                // the menu-bar twin of the row context menu's "Add to
+                // Favorites", so the command is discoverable without
+                // knowing the shortcut. Wording matches the context menu;
+                // on an already-favorited target it removes (toggle).
+                MenuItem::action("Add to Favorites", ToggleFavoriteForTarget),
                 MenuItem::separator(),
                 MenuItem::action(
                     title("file.move_to_trash", feraille_core::commands::TRASH_LABEL),

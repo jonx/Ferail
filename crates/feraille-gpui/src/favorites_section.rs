@@ -285,14 +285,41 @@ impl SidebarItem for FavoritesSection {
 
         let body: AnyElement = if self.favorites.is_empty() {
             // §11.7 empty state. Muted, slightly indented so it reads
-            // as guidance rather than a clickable row.
+            // as guidance rather than a clickable row. It is ALSO the
+            // drop target the text advertises: with no rows there are no
+            // inter-row gaps, so without this a folder dragged onto an
+            // empty section would have nowhere to land. `-INF`/`+INF`
+            // bounds place the first favorite at a valid mid-slot.
+            let shell = self.shell.clone();
+            let accent = theme.sidebar_accent.opacity(0.6);
             div()
-                .pl_4()
-                .pr_2()
+                .id("favorites-empty-drop")
+                .flex()
+                .items_center()
+                // A comfortable drop zone, not just the text's line box —
+                // the empty section is the only place to drop the first
+                // favorite, so the target should be easy to hit. The
+                // resting dashed outline + faint fill mark it as a drop
+                // well at all times (not only mid-drag), so it reads as
+                // "put something here"; `drag_over` then deepens the fill.
+                .min_h(px(40.0))
+                .mx_2()
+                .px_2()
                 .py_1()
+                .rounded_md()
+                .border_1()
+                .border_dashed()
+                .border_color(theme.sidebar_border)
+                .bg(theme.sidebar_accent.opacity(0.35))
                 .text_scale_xs()
                 .text_color(theme.muted_foreground.opacity(0.85))
                 .child("Drag folders here for quick access.")
+                .drag_over::<ExternalPaths>(move |style, _payload, _window, _cx| {
+                    style.bg(accent)
+                })
+                .on_drop(move |paths: &ExternalPaths, _window, cx| {
+                    add_dropped_folders(paths, f64::NEG_INFINITY, f64::INFINITY, &shell, cx);
+                })
                 .into_any_element()
         } else {
             let icons = self.icons.clone();
@@ -782,62 +809,76 @@ fn render_drop_gap(
                 }
             }
         })
-        .on_drop(move |paths: &ExternalPaths, _window, cx| {
-            // Drag-to-add (§4.3, §2.3): folder paths dropped from the
-            // file list, tree, breadcrumb, or Finder land here. Only
-            // folders can be favorited.
-            //
-            // Prime directive: canonicalize + is_dir are stat calls —
-            // a 50-item drop from a network volume could block the UI
-            // for seconds. Validate the whole batch on a worker, then
-            // apply the surviving folders in drop order on completion.
-            let Some(shell) = shell_for_external.upgrade() else {
-                return;
-            };
-            let collected: Vec<_> = paths.paths().to_vec();
-            if collected.is_empty() {
-                return;
+        .on_drop({
+            let shell = shell_for_external.clone();
+            move |paths: &ExternalPaths, _window, cx| {
+                add_dropped_folders(paths, before, after, &shell, cx);
             }
-            let shell_weak = shell.downgrade();
-            cx.spawn(async move |cx| {
-                let (valid, rejected): (Vec<std::path::PathBuf>, usize) = cx
-                    .background_executor()
-                    .spawn(async move {
-                        let mut valid = Vec::with_capacity(collected.len());
-                        let mut rejected = 0usize;
-                        for raw in collected {
-                            let canonical = crate::shell::canonicalize_for_identity(raw);
-                            if canonical.is_dir() {
-                                valid.push(canonical);
-                            } else {
-                                rejected += 1;
-                            }
-                        }
-                        (valid, rejected)
-                    })
-                    .await;
-                if rejected > 0 {
-                    // Toast needs a Window we don't have in a drop
-                    // closure; log-only until iter 11 routes this
-                    // through an action (pre-existing limitation).
-                    crate::log_warn!(90, "favorites drop: rejected {rejected} non-folder item(s)");
-                }
-                let Some(shell) = shell_weak.upgrade() else {
-                    return;
-                };
-                shell.update(cx, |shell, cx| {
-                    let mut cursor = before;
-                    let upper = after;
-                    for canonical in valid {
-                        let slot = feraille_core::favorites::fractional_between(cursor, upper);
-                        shell.process.favorites.update(cx, |f, cx| {
-                            f.add_path_at(canonical.clone(), FavoriteKind::Folder, slot, cx);
-                        });
-                        cursor = slot;
-                    }
-                });
-            })
-            .detach();
         })
         .into_any_element()
+}
+
+/// Drag-to-add (§4.3, §2.3): favorite folders dropped from the file
+/// list, tree, breadcrumb, or Finder. Only folders can be favorited;
+/// the surviving folders are inserted in drop order at fractional slots
+/// between `before` and `after` (`-INF` / `+INF` for the ends, so an
+/// empty section drops at a valid mid-slot).
+///
+/// Prime directive: `canonicalize` + `is_dir` are stat calls — a
+/// 50-item drop from a network volume could block the UI for seconds.
+/// The whole batch is validated on a worker, then the survivors are
+/// applied on completion. Shared by the inter-row gaps and the
+/// empty-state placeholder so both honour the "Drag folders here"
+/// affordance identically.
+fn add_dropped_folders(
+    paths: &ExternalPaths,
+    before: f64,
+    after: f64,
+    shell: &WeakEntity<Shell>,
+    cx: &mut App,
+) {
+    let collected: Vec<_> = paths.paths().to_vec();
+    if collected.is_empty() {
+        return;
+    }
+    let shell_weak = shell.clone();
+    cx.spawn(async move |cx| {
+        let (valid, rejected): (Vec<std::path::PathBuf>, usize) = cx
+            .background_executor()
+            .spawn(async move {
+                let mut valid = Vec::with_capacity(collected.len());
+                let mut rejected = 0usize;
+                for raw in collected {
+                    let canonical = crate::shell::canonicalize_for_identity(raw);
+                    if canonical.is_dir() {
+                        valid.push(canonical);
+                    } else {
+                        rejected += 1;
+                    }
+                }
+                (valid, rejected)
+            })
+            .await;
+        if rejected > 0 {
+            // Toast needs a Window we don't have in a drop closure;
+            // log-only until iter 11 routes this through an action
+            // (pre-existing limitation).
+            crate::log_warn!(90, "favorites drop: rejected {rejected} non-folder item(s)");
+        }
+        let Some(shell) = shell_weak.upgrade() else {
+            return;
+        };
+        shell.update(cx, |shell, cx| {
+            let mut cursor = before;
+            let upper = after;
+            for canonical in valid {
+                let slot = feraille_core::favorites::fractional_between(cursor, upper);
+                shell.process.favorites.update(cx, |f, cx| {
+                    f.add_path_at(canonical.clone(), FavoriteKind::Folder, slot, cx);
+                });
+                cursor = slot;
+            }
+        });
+    })
+    .detach();
 }
