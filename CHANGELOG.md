@@ -13,10 +13,15 @@ No tagged releases yet (pre-1.0) — **Unreleased** is the current work.
 - **Easier favorites** — "Add to Favorites" is now in the File menu, and you can
   drag a folder straight onto an empty Favorites list (it's a proper drop zone
   now).
+- **Filenames truncate in the middle** — long names in the list keep their start
+  and their extension visible ("Annual Board Meeting…approved).pdf"), Finder-style,
+  instead of losing the end.
 - **Tidier viewer** — the viewer toolbar folds into a "…" menu when the window is
   too narrow to fit every button.
 - **Fixed:** typing a name into the New Folder / Rename dialogs now works — those
   fields were silently ignoring keystrokes.
+- **Fixed:** resizing a column while a folder is still loading now sticks — the
+  width no longer snapped back while background work was running.
 
 ## 2026-07 — More platforms, steadier on slow drives
 
