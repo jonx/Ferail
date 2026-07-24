@@ -735,6 +735,15 @@ dependencies = [
 
 [[package]]
 name = "bit-set"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0481a0e032742109b1133a095184ee93d88f3dc9e0d28a5d033dc77a073f44f"
+dependencies = [
+ "bit-vec 0.7.0",
+]
+
+[[package]]
+name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3"
@@ -750,6 +759,12 @@ checksum = "34ddef2995421ab6a5c779542c81ee77c115206f4ad9d5a8e05f4ff49716a3dd"
 dependencies = [
  "bit-vec 0.9.1",
 ]
+
+[[package]]
+name = "bit-vec"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2c54ff287cfc0a34f38a6b832ea1bd8e448a330b3e40a50859e6488bee07f22"
 
 [[package]]
 name = "bit-vec"
@@ -800,7 +815,7 @@ dependencies = [
  "arrayvec",
  "cc",
  "cfg-if",
- "constant_time_eq",
+ "constant_time_eq 0.4.2",
  "cpufeatures 0.3.0",
 ]
 
@@ -940,11 +955,30 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "bzip2"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49ecfb22d906f800d4fe833b6282cf4dc1c298f5057ca0b5445e5c209735ca47"
+dependencies = [
+ "bzip2-sys",
+]
+
+[[package]]
+name = "bzip2"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3a53fac24f34a81bc9954b5d6cfce0c21e18ec6959f44f56e8e90e4bb7c346c"
 dependencies = [
  "libbz2-rs-sys",
+]
+
+[[package]]
+name = "bzip2-sys"
+version = "0.1.13+1.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "225bff33b2141874fe80d71e07d6eec4f85c5c216453dd96388240f96e1acc14"
+dependencies = [
+ "cc",
+ "pkg-config",
 ]
 
 [[package]]
@@ -1224,7 +1258,7 @@ version = "0.4.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce2548391e9c1929c21bf6aa2680af86fe4c1b33e6cea9ac1cfeec0bd11218cf"
 dependencies = [
- "bzip2",
+ "bzip2 0.6.1",
  "compression-core",
  "deflate64",
  "flate2",
@@ -1281,6 +1315,12 @@ dependencies = [
  "once_cell",
  "tiny-keccak",
 ]
+
+[[package]]
+name = "constant_time_eq"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
 name = "constant_time_eq"
@@ -1482,6 +1522,21 @@ checksum = "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "crc"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5eb8a2a1cd12ab0d987a5d5e825195d372001a4094a0376319d5a0ad71c1ba0d"
+dependencies = [
+ "crc-catalog",
+]
+
+[[package]]
+name = "crc-catalog"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
 
 [[package]]
 name = "crc32fast"
@@ -2056,8 +2111,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "feraille-archive"
+version = "0.1.0"
+dependencies = [
+ "feraille-core",
+]
+
+[[package]]
 name = "feraille-aros-app"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "feraille-gpui",
  "getrandom 0.3.4",
@@ -2065,29 +2127,32 @@ dependencies = [
 
 [[package]]
 name = "feraille-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "uuid",
 ]
 
 [[package]]
 name = "feraille-design"
-version = "0.0.1"
+version = "0.1.0"
 
 [[package]]
 name = "feraille-disk-usage"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "feraille-core",
 ]
 
 [[package]]
 name = "feraille-fs-native"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "blake3",
+ "bzip2 0.6.1",
+ "feraille-archive",
  "feraille-core",
  "feraille-disk-usage",
+ "flate2",
  "freedesktop-icons",
  "image",
  "libc",
@@ -2097,20 +2162,25 @@ dependencies = [
  "objc2-foundation 0.2.2",
  "plist",
  "resvg",
+ "sevenz-rust",
+ "tar",
  "trash",
  "windows 0.58.0",
  "xattr 1.6.1",
  "xdg-mime",
  "xxhash-rust",
+ "xz2",
+ "zip",
 ]
 
 [[package]]
 name = "feraille-gpui"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
  "fast_image_resize",
+ "feraille-archive",
  "feraille-core",
  "feraille-design",
  "feraille-disk-usage",
@@ -2140,7 +2210,7 @@ dependencies = [
 
 [[package]]
 name = "feraille-meta"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "feraille-core",
  "rusqlite",
@@ -2149,14 +2219,14 @@ dependencies = [
 
 [[package]]
 name = "feraille-shell-aros"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "feraille-shell-linux",
 ]
 
 [[package]]
 name = "feraille-shell-linux"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arboard",
  "feraille-core",
@@ -2167,7 +2237,7 @@ dependencies = [
 
 [[package]]
 name = "feraille-shell-mac"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "block2 0.5.1",
  "feraille-core",
@@ -2181,7 +2251,7 @@ dependencies = [
 
 [[package]]
 name = "feraille-shell-win32"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "feraille-core",
  "image",
@@ -2192,7 +2262,7 @@ dependencies = [
 
 [[package]]
 name = "feraille-video-mpv"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "feraille-core",
 ]
@@ -2210,10 +2280,21 @@ dependencies = [
 
 [[package]]
 name = "filetime"
-version = "0.2.29"
+version = "0.2.26"
 dependencies = [
  "cfg-if",
  "libc",
+]
+
+[[package]]
+name = "filetime_creation"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c25b5d475550e559de5b0c0084761c65325444e3b6c9e298af9cefe7a9ef3a5f"
+dependencies = [
+ "cfg-if",
+ "filetime",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2759,6 +2840,7 @@ dependencies = [
  "foreign-types",
  "futures",
  "futures-concurrency",
+ "getrandom 0.2.17",
  "getrandom 0.3.4",
  "gpui_macros 0.1.0",
  "gpui_shared_string",
@@ -4219,6 +4301,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "lzma-rust"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5baab2bbbd7d75a144d671e9ff79270e903957d92fb7386fd39034c709bd2661"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
+name = "lzma-sys"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fda04ab3764e6cde78b9974eec4f779acaba7c4e84b36eca3cf77c581b85d27"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "mac"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4581,21 +4683,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "nt-time"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2de419e64947cd8830e66beb584acc3fb42ed411d103e3c794dda355d1b374b5"
+dependencies = [
+ "chrono",
+ "time",
+]
+
+[[package]]
 name = "ntapi"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3b335231dfd352ffb0f8017f3b6027a4917f7df785ea2143d8af2adc66980ae"
 dependencies = [
  "winapi",
-]
-
-[[package]]
-name = "nu-ansi-term"
-version = "0.50.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
-dependencies = [
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6766,6 +6869,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "sevenz-rust"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26482cf1ecce4540dc782fc70019eba89ffc4d87b3717eb5ec524b5db6fdefef"
+dependencies = [
+ "bit-set 0.6.0",
+ "byteorder",
+ "crc",
+ "filetime_creation",
+ "js-sys",
+ "lzma-rust",
+ "nt-time",
+ "sha2",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "sha1"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest 0.10.7",
+]
+
+[[package]]
 name = "sha1_smol"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6780,15 +6911,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
-]
-
-[[package]]
-name = "sharded-slab"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
-dependencies = [
- "lazy_static",
 ]
 
 [[package]]
@@ -7132,7 +7254,6 @@ dependencies = [
  "log",
  "rayon",
  "tracing",
- "ztracing",
 ]
 
 [[package]]
@@ -7346,6 +7467,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr 1.6.1",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7416,15 +7548,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "thread_local"
-version = "1.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
-dependencies = [
- "cfg-if",
 ]
 
 [[package]]
@@ -7729,32 +7852,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
 dependencies = [
  "once_cell",
- "valuable",
-]
-
-[[package]]
-name = "tracing-log"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
-dependencies = [
- "log",
- "once_cell",
- "tracing-core",
-]
-
-[[package]]
-name = "tracing-subscriber"
-version = "0.3.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb7f578e5945fb242538965c2d0b04418d38ec25c79d160cd279bf0731c8d319"
-dependencies = [
- "nu-ansi-term",
- "sharded-slab",
- "smallvec",
- "thread_local",
- "tracing-core",
- "tracing-log",
 ]
 
 [[package]]
@@ -8407,12 +8504,6 @@ dependencies = [
  "num-traits",
  "wasm-bindgen",
 ]
-
-[[package]]
-name = "valuable"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "value-bag"
@@ -10024,6 +10115,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
+name = "xz2"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "388c44dc09d76f1536602ead6d325eb532f5c122f17782bd57fb47baeeb767e2"
+dependencies = [
+ "lzma-sys",
+]
+
+[[package]]
 name = "y4m"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10391,25 +10491,23 @@ version = "2.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fabe6324e908f85a1c52063ce7aa26b68dcb7eb6dbc83a2d148403c9bc3eba50"
 dependencies = [
+ "aes",
  "arbitrary",
+ "bzip2 0.5.2",
+ "constant_time_eq 0.3.1",
  "crc32fast",
  "crossbeam-utils",
  "displaydoc",
  "flate2",
+ "getrandom 0.3.4",
+ "hmac",
  "indexmap",
  "memchr",
+ "pbkdf2",
+ "sha1",
  "thiserror 2.0.18",
+ "zeroize",
  "zopfli",
-]
-
-[[package]]
-name = "zlog"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "collections",
- "log",
 ]
 
 [[package]]
@@ -10429,20 +10527,6 @@ dependencies = [
  "log",
  "simd-adler32",
 ]
-
-[[package]]
-name = "ztracing"
-version = "0.1.0"
-dependencies = [
- "tracing",
- "tracing-subscriber",
- "zlog",
- "ztracing_macro",
-]
-
-[[package]]
-name = "ztracing_macro"
-version = "0.1.0"
 
 [[package]]
 name = "zune-core"

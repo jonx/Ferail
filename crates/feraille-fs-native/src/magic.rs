@@ -72,6 +72,21 @@ pub fn detect_magic_info(path: &Path) -> Option<MagicInfo> {
                 file_size,
             );
         }
+    } else if info.magic_type == MagicType::SevenZip {
+        // 7z keeps its file list in a footer we can read without inflating
+        // payloads, so the Description gains a count / root / encrypted flag
+        // the same way ZIP does. Best-effort — a failure (e.g. a header-
+        // encrypted archive with no counts) leaves the bare "7-Zip archive"
+        // label, and `read_summary` still reports `encrypted` in that case.
+        // Other archive families are intentionally *not* enriched here: gzip
+        // /bzip2/xz single members have a trivial count of one, and tar-family
+        // counts would require streaming the whole archive (the bounded-read
+        // cost guard — see `archive::read_summary`).
+        if let Ok(s) = crate::archive::read_summary(path) {
+            info.file_count = info.file_count.or(s.file_count);
+            info.zip_root = info.zip_root.take().or(s.root);
+            info.is_encrypted |= s.encrypted;
+        }
     }
     Some(info)
 }

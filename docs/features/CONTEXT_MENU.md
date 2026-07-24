@@ -18,7 +18,8 @@ into the window's chain at startup ([crates/feraille-shell-mac/src/services.rs](
   Open Terminal Here (folders), Pin / Remove from Favorites.
 - List pane (per-row): full Finder-equivalent — Open, Open With submenu,
   Reveal in Finder, Get Info, Quick Look, Rename, Duplicate, Make Alias,
-  Compress, Copy Path, Open Terminal Here (folders), Share…, Tags row
+  Compress, Compress As (tar.gz/bz2/xz submenu), Extract (archive rows only),
+  Copy Path, Open Terminal Here (folders), Share…, Tags row
   (7 colours), Move to Trash.
 - List pane (background): right-click empty area shows New Folder, Reveal
   in Finder, Refresh, Show Hidden Files toggle.
@@ -42,7 +43,14 @@ Slow operations run on workers and report back through
 `AppEvent::FileOpComplete`:
 
 - Duplicate (`feraille_shell_mac::duplicate_path`)
-- Compress (`/usr/bin/ditto -c -k --sequesterRsrc --keepParent`)
+- Compress / Compress As / Extract — the pure-Rust archive engine
+  (`feraille_fs_native::{create_archive, extract_archive}`, backed by the
+  `feraille-archive` model crate; zip / tar-family / gzip-bzip2-xz, plus 7z
+  read/extract). The GPUI shell no longer shells out to `/usr/bin/ditto`, so
+  every platform shares one path. Extract is offered only for archive rows
+  (lexical extension check, precomputed at right-click) and picks a smart
+  destination off-thread — extract in place when the archive has a single
+  root folder, otherwise a `" 2"`-deduped wrapper named after the archive.
 
 Synchronous-but-fast Cocoa hops:
 
@@ -85,8 +93,9 @@ from a single place, and reusing it for both:
 Every command is classified by how it behaves across a multi-selection:
 
 1. **Batch** — one operation over the whole set (Compress → one archive,
-   Move to Trash → one batch op, Tags → applied to all). Always shown; a
-   large count is the point, so it is never guarded.
+   Extract → one op per selected archive, Move to Trash → one batch op,
+   Tags → applied to all). Always shown; a large count is the point, so it
+   is never guarded.
 2. **FanOut** — invoked once per file (Open, Quick Look, Reveal in Finder,
    Get Info, Open in New Tab, Duplicate, Make Alias). Always shown, but the
    handler iterates over the resolved set.

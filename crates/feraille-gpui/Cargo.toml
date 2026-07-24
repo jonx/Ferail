@@ -103,6 +103,7 @@ feraille-fs-native.workspace = true
 feraille-design.workspace = true
 feraille-meta.workspace = true
 feraille-disk-usage.workspace = true
+feraille-archive.workspace = true
 
 # Platform shell — one impl per target OS. The crate's `pub fn`
 # surface mirrors between the two so `crate::platform_shell` (in

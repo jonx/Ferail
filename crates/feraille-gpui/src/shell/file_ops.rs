@@ -2807,9 +2807,47 @@ impl Shell {
         );
     }
 
-    pub(super) fn on_compress(
+    /// One-click Compress → a ZIP next to the selection (Finder shape).
+    pub(super) fn on_compress(&mut self, _: &Compress, window: &mut Window, cx: &mut Context<Self>) {
+        self.compress_selection_as(feraille_archive::Format::Zip, window, cx);
+    }
+
+    pub(super) fn on_compress_targz(
         &mut self,
-        _: &Compress,
+        _: &CompressTarGz,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.compress_selection_as(feraille_archive::Format::TarGz, window, cx);
+    }
+
+    pub(super) fn on_compress_tarbz2(
+        &mut self,
+        _: &CompressTarBz2,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.compress_selection_as(feraille_archive::Format::TarBz2, window, cx);
+    }
+
+    pub(super) fn on_compress_tarxz(
+        &mut self,
+        _: &CompressTarXz,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.compress_selection_as(feraille_archive::Format::TarXz, window, cx);
+    }
+
+    /// Compress the action target set into a single `format` archive next to
+    /// the first target — `<name>.<ext>` for one item, `Archive.<ext>` for
+    /// many, `" 2"`-deduped on collision (Finder naming). Runs on the
+    /// `create_archive` engine off-thread; this replaces the macOS `ditto`
+    /// shell-out so every platform shares one code path (and gains levels /
+    /// password support for free later).
+    pub(super) fn compress_selection_as(
+        &mut self,
+        format: feraille_archive::Format,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2837,14 +2875,181 @@ impl Shell {
         } else {
             format!("Created archive from {count} items")
         };
+
+        /// `parent/<stem>.<ext>`, deduped with a `" 2"`, `" 3"`… suffix.
+        fn pick_archive_name(
+            parent: &std::path::Path,
+            paths: &[PathBuf],
+            format: feraille_archive::Format,
+        ) -> Option<PathBuf> {
+            let ext = format.canonical_extension();
+            let stem = if paths.len() == 1 {
+                paths[0]
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Archive".to_string())
+            } else {
+                "Archive".to_string()
+            };
+            for n in 1..=9999 {
+                let name = if n == 1 {
+                    format!("{stem}.{ext}")
+                } else {
+                    format!("{stem} {n}.{ext}")
+                };
+                let candidate = parent.join(&name);
+                if !candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+            None
+        }
+
         self.spawn_file_op(
             cur,
             move || {
+                let parent = paths[0]
+                    .parent()
+                    .ok_or_else(|| format!("no parent directory for {}", paths[0].display()))?
+                    .to_path_buf();
+                let output = pick_archive_name(&parent, &paths, format)
+                    .ok_or_else(|| "exhausted archive index range".to_string())?;
                 let targets: Vec<&std::path::Path> =
                     paths.iter().map(|path| path.as_path()).collect();
-                crate::platform_shell::compress_paths(&targets).map(|path| vec![path])
+                let progress = feraille_fs_native::file_ops::TransferProgress::new();
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                feraille_fs_native::create_archive(
+                    format,
+                    &targets,
+                    &output,
+                    feraille_fs_native::CreateOptions::default(),
+                    &progress,
+                    &cancel,
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(vec![output])
             },
             "Compress",
+            Some(task_label),
+            FileOpSuccessToast::IfSurfaced(success),
+            FileOpUndo::RemoveCreatedResult,
+            window,
+            cx,
+        );
+    }
+
+    /// Extract the selected archive(s) into the current folder. Each archive's
+    /// table of contents is read off-thread to pick a smart destination —
+    /// extract in place when the archive has a single root folder that does not
+    /// already exist, wrap in a `" 2"`-deduped folder named after the archive
+    /// otherwise. Encrypted archives fail here with a clear message; the
+    /// password flow lives in the archive workbench (Phase B).
+    pub(super) fn on_extract(&mut self, _: &Extract, window: &mut Window, cx: &mut Context<Self>) {
+        // Archive subset of the action targets — lexical extension check, no
+        // I/O on the UI thread (Prime Directive).
+        let paths: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(feraille_archive::Format::is_archive_path)
+            })
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let cur = self.active_tab().current_dir.clone();
+        let dest_dir = cur.clone();
+        let count = paths.len();
+        let task_label = if count == 1 {
+            let name = paths[0]
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("archive");
+            format!("Extracting {name}")
+        } else {
+            format!("Extracting {count} archives")
+        };
+        let success = if count == 1 {
+            "Extracted archive".to_string()
+        } else {
+            format!("Extracted {count} archives")
+        };
+
+        // Choose the containing folder for one archive and extract into it,
+        // returning the top-level path(s) created (for undo / reveal).
+        fn extract_one_archive(
+            archive: &std::path::Path,
+            parent: &std::path::Path,
+        ) -> Result<Vec<PathBuf>, String> {
+            let progress = feraille_fs_native::file_ops::TransferProgress::new();
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            let toc = feraille_fs_native::read_archive_toc(archive, None).map_err(|e| e.to_string())?;
+            let opts = feraille_fs_native::ExtractOptions {
+                password: None,
+                overwrite: false,
+            };
+
+            // Extract in place only when the archive is single-rooted AND that
+            // root does not already exist in `parent`; any collision falls back
+            // to a fresh wrapper folder so we never merge into existing content.
+            let in_place_root = toc.single_root().and_then(|root| {
+                let candidate = parent.join(root);
+                (!candidate.exists()).then_some(candidate)
+            });
+            let (dest, created): (PathBuf, Vec<PathBuf>) = match in_place_root {
+                Some(root_path) => (parent.to_path_buf(), vec![root_path]),
+                None => {
+                    let dest = unique_dir(parent, &archive_stem(archive));
+                    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+                    (dest.clone(), vec![dest])
+                }
+            };
+            feraille_fs_native::extract_archive(archive, &dest, opts, &progress, &cancel)
+                .map_err(|e| e.to_string())?;
+            Ok(created)
+        }
+
+        /// The archive filename with its format suffix removed
+        /// (`photos.tar.gz` → `photos`), for naming a wrapper folder.
+        fn archive_stem(archive: &std::path::Path) -> String {
+            let leaf = archive
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if let Some(fmt) = feraille_archive::Format::from_path(&leaf) {
+                let dot_ext = format!(".{}", fmt.canonical_extension());
+                if let Some(stripped) = leaf.to_ascii_lowercase().strip_suffix(&dot_ext) {
+                    return leaf[..stripped.len()].to_string();
+                }
+            }
+            leaf
+        }
+
+        /// `parent/stem`, or `parent/stem 2`, `parent/stem 3`, … if taken.
+        fn unique_dir(parent: &std::path::Path, stem: &str) -> PathBuf {
+            let base = if stem.is_empty() { "Extracted" } else { stem };
+            let mut candidate = parent.join(base);
+            let mut n = 2;
+            while candidate.exists() {
+                candidate = parent.join(format!("{base} {n}"));
+                n += 1;
+            }
+            candidate
+        }
+
+        self.spawn_file_op(
+            cur,
+            move || {
+                let mut created = Vec::new();
+                for archive in &paths {
+                    created.extend(extract_one_archive(archive, &dest_dir)?);
+                }
+                Ok(created)
+            },
+            "Extract",
             Some(task_label),
             FileOpSuccessToast::IfSurfaced(success),
             FileOpUndo::RemoveCreatedResult,

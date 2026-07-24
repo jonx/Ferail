@@ -164,6 +164,17 @@ actions!(
         Duplicate,
         MakeAlias,
         Compress,
+        /// Extract the selected archive(s) into the current folder. Reads
+        /// each archive's table of contents off-thread to choose a smart
+        /// destination — extract in place when the archive has one root
+        /// folder, wrap in a folder named after the archive otherwise.
+        Extract,
+        /// "Compress As" format variants — the one-click `Compress` makes a
+        /// ZIP; these create the selected tar-family format instead, through
+        /// the same `create_archive` engine.
+        CompressTarGz,
+        CompressTarBz2,
+        CompressTarXz,
         // Phase 6 (next-level): right-click context menus on the
         // sidebar / breadcrumb / file-pane background. These four
         // actions all operate on `Shell::context_target` instead

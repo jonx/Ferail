@@ -202,6 +202,11 @@ impl Render for DragBadge {
 pub struct TargetCap {
     pub kind: EntryKind,
     pub is_quarantined: bool,
+    /// Whether this row is a file whose name looks like a supported archive.
+    /// Lexical (extension-only) and precomputed at right-click staging time,
+    /// so the menu decides whether to offer Extract without any I/O on
+    /// menu-open (Prime Directive).
+    pub is_archive: bool,
 }
 
 impl From<&FileEntry> for TargetCap {
@@ -209,6 +214,8 @@ impl From<&FileEntry> for TargetCap {
         TargetCap {
             kind: e.kind,
             is_quarantined: e.is_quarantined,
+            is_archive: matches!(e.kind, EntryKind::File)
+                && feraille_archive::Format::is_archive_path(&e.name),
         }
     }
 }
@@ -290,6 +297,13 @@ impl Availability {
 /// subset, so "any" is the right quantifier.
 fn avail_any_quarantined(t: &MenuTargets) -> bool {
     t.any(|c| c.is_quarantined)
+}
+
+/// Bulk rule: at least one target is an archive file — offer Extract, which
+/// acts on the archive subset (mixed selections extract only their archives),
+/// mirroring how Clear Quarantine acts on the quarantined subset.
+fn avail_any_archive(t: &MenuTargets) -> bool {
+    t.any(|c| c.is_archive)
 }
 
 /// Anchor rule: the right-clicked (else lead) row is a folder — for
@@ -1399,8 +1413,9 @@ impl TableDelegate for FileListDelegate {
         cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
         use crate::shell::{
-            BulkRenameSelected, ClearQuarantine, Compress, CopyPath, DeleteImmediately, Duplicate,
-            GetInfo, MakeAlias, MoveToTrash,
+            BulkRenameSelected, ClearQuarantine, Compress, CompressTarBz2, CompressTarGz,
+            CompressTarXz, CopyPath, DeleteImmediately, Duplicate, Extract, GetInfo, MakeAlias,
+            MoveToTrash,
             OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
             OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
             OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook,
@@ -1468,6 +1483,7 @@ impl TableDelegate for FileListDelegate {
         let show_terminal = Availability::When(avail_anchor_dir).allows(t);
         let show_favorites = Availability::When(avail_anchor_dir).allows(t);
         let show_clear_quarantine = Availability::When(avail_any_quarantined).allows(t);
+        let show_extract = Availability::When(avail_any_archive).allows(t);
         let show_single_only = Availability::SingleOnly.allows(t);
         // Bulk complement of the SingleOnly Rename: pattern rename over
         // the whole resolved set (docs/features/BULK_RENAME.md).
@@ -1521,10 +1537,25 @@ impl TableDelegate for FileListDelegate {
                 Box::new(BulkRenameSelected),
             );
         }
+        // "Compress As" submenu — the alternative formats to the one-click
+        // ZIP. Built here (deref cx → &mut App, like the Tags/Open-With
+        // submenus below) so it can be attached in menu order.
+        let compress_as_submenu = PopupMenu::build(window, cx, |m, _w, _c| {
+            m.menu("TAR.GZ", Box::new(CompressTarGz))
+                .menu("TAR.BZ2", Box::new(CompressTarBz2))
+                .menu("TAR.XZ", Box::new(CompressTarXz))
+        });
         let mut menu = menu
             .menu("Duplicate", Box::new(Duplicate))
             .menu("Make Alias", Box::new(MakeAlias))
-            .menu("Compress", Box::new(Compress));
+            .menu("Compress", Box::new(Compress))
+            .item(PopupMenuItem::submenu("Compress As", compress_as_submenu));
+        if show_extract {
+            // Capability command: shown when any target is an archive
+            // (docs/features/CONTEXT_MENU.md). `Shell::on_extract` acts on
+            // the archive subset and chooses a smart destination per archive.
+            menu = menu.menu("Extract", Box::new(Extract));
+        }
         if show_clear_quarantine {
             // Capability command (docs/features/CONTEXT_MENU.md): show when
             // ANY row in the resolved target set carries the

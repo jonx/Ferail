@@ -17,6 +17,7 @@ use std::time::UNIX_EPOCH;
 
 use feraille_core::{EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId};
 
+pub mod archive;
 mod disk_usage_scanner;
 mod dupes;
 pub mod file_ops;
@@ -28,6 +29,12 @@ mod search;
 pub mod stat_info;
 mod volumes;
 pub mod xattr_info;
+pub use archive::{
+    create_archive, extract_all as extract_archive,
+    extract_entries as extract_archive_entries, read_summary as read_archive_summary,
+    read_toc as read_archive_toc, ArchiveError, ArchiveSummary, CreateOptions, ExtractOptions,
+    ExtractOutcome, SkipReason, SkippedEntry,
+};
 pub use disk_usage_scanner::{recursive_size, recursive_totals, SubtreeTotals, DEFAULT_DU_BATCH};
 pub use dupes::{
     clone_dedup, DupeFact, DupeHashCache, DupeMember, DupeOpts, DupeStats, DEFAULT_DUPE_BATCH,

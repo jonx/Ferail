@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/feraille-archive",
     "crates/feraille-core",
     "crates/feraille-design",
     "crates/feraille-disk-usage",
@@ -25,6 +26,7 @@ homepage = "https://github.com/jonx/Feraille"
 authors = ["John Knipper <code@jkn.me>"]
 
 [workspace.dependencies]
+feraille-archive      = { path = "crates/feraille-archive" }
 feraille-core         = { path = "crates/feraille-core" }
 feraille-design       = { path = "crates/feraille-design" }
 feraille-disk-usage   = { path = "crates/feraille-disk-usage" }

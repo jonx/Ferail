@@ -41,6 +41,7 @@ fn action_for_command(id: feraille_core::commands::CommandId) -> Option<Box<dyn 
         "file.duplicate" => Box::new(Duplicate),
         "file.make_alias" => Box::new(MakeAlias),
         "file.compress" => Box::new(Compress),
+        "file.extract" => Box::new(Extract),
         "file.rename" | "selection.start_rename" => Box::new(RenameSelected),
         "file.quick_look" => Box::new(QuickLook),
         "file.open_in_new_tab" => Box::new(OpenInNewTab),

@@ -15,8 +15,29 @@ check-cfg = ['cfg(target_os, values("aros"))']
 [dependencies]
 feraille-core.workspace = true
 feraille-disk-usage.workspace = true
+feraille-archive.workspace = true
 xxhash-rust.workspace = true
 blake3.workspace = true
+
+# Archive codec layer (crates/feraille-fs-native/src/archive). Pure-Rust
+# codecs, all platforms — Feraille no longer shells out to `ditto` for
+# compression. Formats and their read/write capabilities are declared in
+# feraille-archive::Format; this is where the bytes actually move.
+# - zip: read + write, AES password (aes-crypto), deflate + bzip2 members.
+# - tar: the uncompressed archive container; combined with the stream codecs
+#   below for .tar.gz / .tar.bz2 / .tar.xz.
+# - flate2: gzip stream (already transitive; pinned here explicitly).
+# - bzip2 0.6: bzip2 stream — pure-Rust libbz2-rs-sys backend (no C).
+# - xz2: xz/LZMA stream — links liblzma (C) via lzma-sys; the one C edge,
+#   accepted like the app's other C deps (mpv, tree-sitter). Read/decode is
+#   also available pure-Rust if a static binary later needs to drop it.
+# - sevenz-rust: 7z read/extract only (no write path exposed in v1).
+zip = { version = "2", default-features = false, features = ["deflate", "bzip2", "aes-crypto"] }
+tar = "0.4"
+flate2 = "1"
+bzip2 = "0.6"
+xz2 = "0.1"
+sevenz-rust = "0.6"
 # Embedded-tag / audio-property reader for the media module. Cross-platform
 # pure Rust, so it lives in the shared dependency table, not a target block.
 lofty.workspace = true

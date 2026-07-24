@@ -325,14 +325,15 @@ pub struct MagicInfo {
     pub has_macros: bool,
     pub is_encrypted: bool,
 
-    // ZIP central-directory facts (filled from the tail-4-KB pass for
-    // ZIP-based types).
-    /// Total number of entries reported by the End-of-Central-Directory
-    /// record. `None` when the CD couldn't be parsed.
+    // Archive table-of-contents facts. Filled from the tail-4-KB central-
+    // directory pass for ZIP-based types, and from `archive::read_summary`
+    // for 7z (which reads its footer directory just as cheaply).
+    /// Total number of entries in the archive. `None` when the directory
+    /// couldn't be read.
     pub file_count: Option<u32>,
-    /// Single-root-folder name when every CD entry sits under the same
-    /// top-level directory. `None` means we either didn't walk the CD
-    /// or the archive is flat / multi-rooted.
+    /// Single-root-folder name when every entry sits under the same
+    /// top-level directory. `None` means flat / multi-rooted / unread.
+    /// Named `zip_root` for history; it now serves any archive format.
     pub zip_root: Option<String>,
 
     // Image
@@ -463,7 +464,18 @@ impl MagicInfo {
                 }
             }
             MagicType::Rar => parts.push("RAR archive".into()),
-            MagicType::SevenZip => parts.push("7-Zip archive".into()),
+            MagicType::SevenZip => {
+                parts.push("7-Zip archive".into());
+                if self.is_encrypted {
+                    parts.push("encrypted".into());
+                }
+                if let Some(n) = self.file_count {
+                    parts.push(format!("{n} files"));
+                }
+                if let Some(root) = self.zip_root.as_deref() {
+                    parts.push(format!("root: {root}"));
+                }
+            }
             MagicType::Tar => parts.push("TAR archive".into()),
             MagicType::Gzip => parts.push("GZIP archive".into()),
             MagicType::Xz => parts.push("XZ archive".into()),
@@ -704,6 +716,23 @@ mod tests {
         assert!(desc.contains("44.1 kHz"));
         assert!(desc.contains("192 kbps"));
         assert!(desc.contains("03:24"));
+    }
+
+    #[test]
+    fn sevenz_description_renders_count_root_and_encrypted() {
+        let mut info = MagicInfo::new(MagicType::SevenZip);
+        info.file_count = Some(12);
+        info.zip_root = Some("project".to_string());
+        info.is_encrypted = true;
+        assert_eq!(
+            info.description(),
+            "7-Zip archive \u{b7} encrypted \u{b7} 12 files \u{b7} root: project"
+        );
+        // A bare 7z (no facts read) still renders the plain label.
+        assert_eq!(
+            MagicInfo::new(MagicType::SevenZip).description(),
+            "7-Zip archive"
+        );
     }
 
     #[test]

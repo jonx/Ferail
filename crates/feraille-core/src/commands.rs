@@ -718,6 +718,12 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::Context,
         shortcuts: &[],
     },
+    CommandSpec {
+        id: CommandId("file.extract"),
+        title: "Extract",
+        category: Category::Context,
+        shortcuts: &[],
+    },
     // Stage C — Finder colour tags. `file.set_tag` fires with a
     // [`CommandPayload::Tag(Some(color))`] for the seven canonical
     // colours; `file.clear_tags` strips every tag in one shot.
