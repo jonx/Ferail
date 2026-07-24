@@ -51,11 +51,13 @@ mod tests {
 
     #[test]
     fn capability_matrix_marks_read_only_formats() {
+        // "Read-only" means no in-place entry editing — only zip is editable.
         assert!(!Format::Zip.capabilities().is_read_only());
         assert!(Format::SevenZ.capabilities().is_read_only());
-        // Tar can be created fresh, so it is not "read only" even though it
-        // cannot be edited in place.
-        assert!(!Format::Tar.capabilities().is_read_only());
+        assert!(Format::Tar.capabilities().is_read_only());
+        // …but tar and 7z can still be *created* fresh.
+        assert!(Format::Tar.capabilities().can_create);
+        assert!(Format::SevenZ.capabilities().can_create);
         assert!(!Format::Tar.capabilities().can_edit_in_place);
         assert!(!Format::TarGz.capabilities().can_edit_in_place);
         // Only zip supports both a password and in-place editing.

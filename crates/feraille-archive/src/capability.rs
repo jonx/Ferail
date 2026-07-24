@@ -38,12 +38,13 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    /// True when the archive can be modified at all (created or edited). A
-    /// format that is browse+extract only is "read-only" for the workbench —
-    /// the view shows this via disabled create/modify controls and a
-    /// read-only breadcrumb label.
+    /// True when entries cannot be added to or removed from an *existing*
+    /// archive of this format — the workbench presents it as read-only (its
+    /// add/remove controls disabled, a read-only breadcrumb) even if the
+    /// format can still be created fresh. Only zip is editable in place;
+    /// tar-family and 7z are read-only here despite being creatable.
     pub fn is_read_only(self) -> bool {
-        !self.can_create && !self.can_edit_in_place
+        !self.can_edit_in_place
     }
 }
 
@@ -62,12 +63,13 @@ impl Format {
                 supports_levels: true,
             },
 
-            // 7z: we read and extract (incl. AES-encrypted), but expose no
-            // write path in v1 — read-only for editing.
+            // 7z: read, extract (incl. AES-encrypted), and create fresh via
+            // `sevenz-rust`'s writer. No in-place edit (read-only in the
+            // workbench). Create-time password/levels are a later addition.
             Format::SevenZ => Capabilities {
                 can_browse: true,
                 can_extract: true,
-                can_create: false,
+                can_create: true,
                 can_edit_in_place: false,
                 supports_password: true,
                 supports_levels: false,
@@ -114,10 +116,11 @@ impl Format {
     pub fn creatable_multi_file() -> &'static [Format] {
         &[
             Format::Zip,
+            Format::SevenZ,
+            Format::Tar,
             Format::TarGz,
             Format::TarBz2,
             Format::TarXz,
-            Format::Tar,
         ]
     }
 }

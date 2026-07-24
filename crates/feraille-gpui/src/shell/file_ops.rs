@@ -2839,6 +2839,24 @@ impl Shell {
         self.compress_selection_as(feraille_archive::Format::TarXz, window, cx);
     }
 
+    pub(super) fn on_compress_sevenz(
+        &mut self,
+        _: &CompressSevenZ,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.compress_selection_as(feraille_archive::Format::SevenZ, window, cx);
+    }
+
+    pub(super) fn on_compress_tar(
+        &mut self,
+        _: &CompressTar,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.compress_selection_as(feraille_archive::Format::Tar, window, cx);
+    }
+
     /// Compress the action target set into a single `format` archive next to
     /// the first target — `<name>.<ext>` for one item, `Archive.<ext>` for
     /// many, `" 2"`-deduped on collision (Finder naming). Runs on the
@@ -2938,17 +2956,43 @@ impl Shell {
         );
     }
 
-    /// Extract the selected archive(s) into the current folder. Each archive's
-    /// table of contents is read off-thread to pick a smart destination —
-    /// extract in place when the archive has a single root folder that does not
-    /// already exist, wrap in a `" 2"`-deduped folder named after the archive
-    /// otherwise. Encrypted archives fail here with a clear message; the
-    /// password flow lives in the archive workbench (Phase B).
+    /// Extract Here — unpack the selected archive(s) into the current folder.
     pub(super) fn on_extract(&mut self, _: &Extract, window: &mut Window, cx: &mut Context<Self>) {
-        // Archive subset of the action targets — lexical extension check, no
-        // I/O on the UI thread (Prime Directive).
-        let paths: Vec<PathBuf> = self
-            .action_entries_visible_order(cx)
+        let paths = self.gather_archive_targets(cx);
+        let cur = self.active_tab().current_dir.clone();
+        self.spawn_extract_into(paths, cur, window, cx);
+    }
+
+    /// Extract To… — pick a destination folder from a native modal, then
+    /// extract there. The picker is a blocking nested run-loop that must run
+    /// with no `App` borrow held, so it goes inside a spawned task (mirrors
+    /// `Shell::locate_favorite`); the extraction is dispatched back on the
+    /// window once a folder is chosen.
+    pub(super) fn on_extract_to(
+        &mut self,
+        _: &ExtractTo,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths = self.gather_archive_targets(cx);
+        if paths.is_empty() {
+            return;
+        }
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(dest) = crate::platform_shell::pick_folder() else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.spawn_extract_into(paths, dest, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// The archive subset of the action targets — lexical extension check, no
+    /// I/O on the UI thread (Prime Directive).
+    fn gather_archive_targets(&mut self, cx: &mut Context<Self>) -> Vec<PathBuf> {
+        self.action_entries_visible_order(cx)
             .into_iter()
             .map(|(_, _, path)| path)
             .filter(|p| {
@@ -2956,12 +3000,24 @@ impl Shell {
                     .and_then(|s| s.to_str())
                     .is_some_and(feraille_archive::Format::is_archive_path)
             })
-            .collect();
+            .collect()
+    }
+
+    /// Extract each archive in `paths` into `dest_parent`, off-thread. Each
+    /// archive's table of contents picks a smart destination — extract in place
+    /// when it has a single root folder that isn't already taken, otherwise a
+    /// `" 2"`-deduped wrapper named after the archive. Encrypted archives fail
+    /// with a clear message (the password flow lives in the workbench).
+    fn spawn_extract_into(
+        &mut self,
+        paths: Vec<PathBuf>,
+        dest_parent: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if paths.is_empty() {
             return;
         }
-        let cur = self.active_tab().current_dir.clone();
-        let dest_dir = cur.clone();
         let count = paths.len();
         let task_label = if count == 1 {
             let name = paths[0]
@@ -2978,8 +3034,6 @@ impl Shell {
             format!("Extracted {count} archives")
         };
 
-        // Choose the containing folder for one archive and extract into it,
-        // returning the top-level path(s) created (for undo / reveal).
         fn extract_one_archive(
             archive: &std::path::Path,
             parent: &std::path::Path,
@@ -2991,10 +3045,6 @@ impl Shell {
                 password: None,
                 overwrite: false,
             };
-
-            // Extract in place only when the archive is single-rooted AND that
-            // root does not already exist in `parent`; any collision falls back
-            // to a fresh wrapper folder so we never merge into existing content.
             let in_place_root = toc.single_root().and_then(|root| {
                 let candidate = parent.join(root);
                 (!candidate.exists()).then_some(candidate)
@@ -3041,11 +3091,11 @@ impl Shell {
         }
 
         self.spawn_file_op(
-            cur,
+            dest_parent.clone(),
             move || {
                 let mut created = Vec::new();
                 for archive in &paths {
-                    created.extend(extract_one_archive(archive, &dest_dir)?);
+                    created.extend(extract_one_archive(archive, &dest_parent)?);
                 }
                 Ok(created)
             },

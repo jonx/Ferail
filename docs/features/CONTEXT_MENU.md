@@ -18,7 +18,8 @@ into the window's chain at startup ([crates/feraille-shell-mac/src/services.rs](
   Open Terminal Here (folders), Pin / Remove from Favorites.
 - List pane (per-row): full Finder-equivalent — Open, Open With submenu,
   Reveal in Finder, Get Info, Quick Look, Rename, Duplicate, Make Alias,
-  Compress, Compress As (tar.gz/bz2/xz submenu), Extract (archive rows only),
+  Compress (submenu: ZIP / 7-Zip / TAR ▸ Gzip·Bzip2·XZ·Uncompressed),
+  Extract (archive rows only; submenu: Extract Here / Extract To…),
   Copy Path, Open Terminal Here (folders), Share…, Tags row
   (7 colours), Move to Trash.
 - List pane (background): right-click empty area shows New Folder, Reveal
@@ -43,14 +44,17 @@ Slow operations run on workers and report back through
 `AppEvent::FileOpComplete`:
 
 - Duplicate (`feraille_shell_mac::duplicate_path`)
-- Compress / Compress As / Extract — the pure-Rust archive engine
+- Compress / Extract — the pure-Rust archive engine
   (`feraille_fs_native::{create_archive, extract_archive}`, backed by the
-  `feraille-archive` model crate; zip / tar-family / gzip-bzip2-xz, plus 7z
-  read/extract). The GPUI shell no longer shells out to `/usr/bin/ditto`, so
-  every platform shares one path. Extract is offered only for archive rows
-  (lexical extension check, precomputed at right-click) and picks a smart
-  destination off-thread — extract in place when the archive has a single
-  root folder, otherwise a `" 2"`-deduped wrapper named after the archive.
+  `feraille-archive` model crate). Creates zip / 7z / tar / tar.gz / tar.bz2 /
+  tar.xz; extracts all of those plus gzip/bzip2/xz single members. The GPUI
+  shell no longer shells out to `/usr/bin/ditto`, so every platform shares one
+  path. Extract is offered only for archive rows (lexical extension check,
+  precomputed at right-click); "Extract Here" targets the current folder and
+  "Extract To…" a native folder picker (run inside a spawned task so its nested
+  run-loop holds no `App` borrow). Both pick a smart destination off-thread —
+  extract in place when the archive has a single root folder, otherwise a
+  `" 2"`-deduped wrapper named after the archive.
 
 Synchronous-but-fast Cocoa hops:
 

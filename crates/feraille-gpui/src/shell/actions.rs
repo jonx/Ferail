@@ -164,14 +164,18 @@ actions!(
         Duplicate,
         MakeAlias,
         Compress,
-        /// Extract the selected archive(s) into the current folder. Reads
-        /// each archive's table of contents off-thread to choose a smart
-        /// destination — extract in place when the archive has one root
-        /// folder, wrap in a folder named after the archive otherwise.
+        /// Extract the selected archive(s) **here** — into the current folder.
+        /// Reads each archive's table of contents off-thread to choose a smart
+        /// destination: extract in place when the archive has one root folder,
+        /// wrap in a folder named after the archive otherwise.
         Extract,
-        /// "Compress As" format variants — the one-click `Compress` makes a
-        /// ZIP; these create the selected tar-family format instead, through
-        /// the same `create_archive` engine.
+        /// Extract the selected archive(s) into a folder chosen from a native
+        /// picker (same smart in-place/wrap logic, rooted at the choice).
+        ExtractTo,
+        /// Format variants under the "Compress" submenu. The engine's
+        /// `create_archive` produces each; the plain `Compress` makes a ZIP.
+        CompressSevenZ,
+        CompressTar,
         CompressTarGz,
         CompressTarBz2,
         CompressTarXz,

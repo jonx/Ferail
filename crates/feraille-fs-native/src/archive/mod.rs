@@ -416,6 +416,8 @@ pub fn create_archive(
         single::create(format, &items, output, opts, progress, cancel)?;
     } else if format.is_tar_family() {
         tarball::create(format, &items, output, opts, progress, cancel)?;
+    } else if format == Format::SevenZ {
+        sevenz::create(&items, output, opts, progress, cancel)?;
     } else {
         zip_codec::create(&items, output, opts, progress, cancel)?;
     }

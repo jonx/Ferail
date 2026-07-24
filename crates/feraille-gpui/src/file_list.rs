@@ -1413,9 +1413,9 @@ impl TableDelegate for FileListDelegate {
         cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
         use crate::shell::{
-            BulkRenameSelected, ClearQuarantine, Compress, CompressTarBz2, CompressTarGz,
-            CompressTarXz, CopyPath, DeleteImmediately, Duplicate, Extract, GetInfo, MakeAlias,
-            MoveToTrash,
+            BulkRenameSelected, ClearQuarantine, Compress, CompressSevenZ, CompressTar,
+            CompressTarBz2, CompressTarGz, CompressTarXz, CopyPath, DeleteImmediately, Duplicate,
+            Extract, ExtractTo, GetInfo, MakeAlias, MoveToTrash,
             OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
             OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
             OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook,
@@ -1537,24 +1537,36 @@ impl TableDelegate for FileListDelegate {
                 Box::new(BulkRenameSelected),
             );
         }
-        // "Compress As" submenu — the alternative formats to the one-click
-        // ZIP. Built here (deref cx → &mut App, like the Tags/Open-With
-        // submenus below) so it can be attached in menu order.
-        let compress_as_submenu = PopupMenu::build(window, cx, |m, _w, _c| {
-            m.menu("TAR.GZ", Box::new(CompressTarGz))
-                .menu("TAR.BZ2", Box::new(CompressTarBz2))
-                .menu("TAR.XZ", Box::new(CompressTarXz))
+        // Single "Compress" submenu grouping every creatable format. The tar
+        // variants nest under a "TAR" group so they aren't each prefixed a
+        // redundant "TAR.". Built here (deref cx → &mut App, like the
+        // Tags/Open-With submenus below) so they attach in menu order.
+        let tar_submenu = PopupMenu::build(window, cx, |m, _w, _c| {
+            m.menu("Gzip", Box::new(CompressTarGz))
+                .menu("Bzip2", Box::new(CompressTarBz2))
+                .menu("XZ", Box::new(CompressTarXz))
+                .separator()
+                .menu("Uncompressed", Box::new(CompressTar))
+        });
+        let compress_submenu = PopupMenu::build(window, cx, move |m, _w, _c| {
+            m.menu("ZIP", Box::new(Compress))
+                .menu("7-Zip", Box::new(CompressSevenZ))
+                .item(PopupMenuItem::submenu("TAR", tar_submenu))
         });
         let mut menu = menu
             .menu("Duplicate", Box::new(Duplicate))
             .menu("Make Alias", Box::new(MakeAlias))
-            .menu("Compress", Box::new(Compress))
-            .item(PopupMenuItem::submenu("Compress As", compress_as_submenu));
+            .item(PopupMenuItem::submenu("Compress", compress_submenu));
         if show_extract {
             // Capability command: shown when any target is an archive
-            // (docs/features/CONTEXT_MENU.md). `Shell::on_extract` acts on
-            // the archive subset and chooses a smart destination per archive.
-            menu = menu.menu("Extract", Box::new(Extract));
+            // (docs/features/CONTEXT_MENU.md). "Extract Here" unpacks into the
+            // current folder; "Extract To…" opens a folder picker first. Both
+            // choose a smart destination per archive.
+            let extract_submenu = PopupMenu::build(window, cx, |m, _w, _c| {
+                m.menu("Extract Here", Box::new(Extract))
+                    .menu("Extract To\u{2026}", Box::new(ExtractTo))
+            });
+            menu = menu.item(PopupMenuItem::submenu("Extract", extract_submenu));
         }
         if show_clear_quarantine {
             // Capability command (docs/features/CONTEXT_MENU.md): show when

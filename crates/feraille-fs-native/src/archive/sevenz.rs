@@ -9,7 +9,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use feraille_archive::{ArchiveEntry, Toc};
 
-use super::{ArchiveError, ArchiveSummary, ExtractOptions, ExtractOutcome, Selection};
+use super::{
+    ArchiveError, ArchiveSummary, CreateOptions, ExtractOptions, ExtractOutcome, PlannedItem,
+    Selection,
+};
 use crate::file_ops::TransferProgress;
 
 fn password_of(password: Option<&str>) -> sevenz_rust::Password {
@@ -113,6 +116,35 @@ pub(super) fn extract(
     }
     walk.map_err(map_sz_err)?;
     Ok(outcome)
+}
+
+pub(super) fn create(
+    items: &[PlannedItem],
+    output: &Path,
+    _opts: CreateOptions<'_>,
+    progress: &TransferProgress,
+    cancel: &AtomicBool,
+) -> Result<(), ArchiveError> {
+    // Create-time password / level are not wired yet (the capability matrix
+    // notes this); v1 uses the writer's default LZMA2 chain.
+    let mut writer = sevenz_rust::SevenZWriter::create(output).map_err(map_sz_err)?;
+    for item in items {
+        super::check_cancel(cancel)?;
+        let entry = sevenz_rust::SevenZArchiveEntry::from_path(&item.abs, item.rel.clone());
+        if item.is_dir {
+            writer
+                .push_archive_entry(entry, None::<std::fs::File>)
+                .map_err(map_sz_err)?;
+        } else {
+            progress.note_current(&item.abs);
+            let file = std::fs::File::open(&item.abs)?;
+            writer.push_archive_entry(entry, Some(file)).map_err(map_sz_err)?;
+            progress.add_bytes(item.size);
+            progress.add_items(1);
+        }
+    }
+    writer.finish().map_err(ArchiveError::Io)?;
+    Ok(())
 }
 
 fn map_sz_err(e: sevenz_rust::Error) -> ArchiveError {

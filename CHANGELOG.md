@@ -10,11 +10,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 - **Archive support (compress & extract)** — right-click **Extract** on any
   `.zip`, `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`, `.gz`, `.bz2`, `.xz`,
-  or `.7z` to unpack it. Extraction lands in place when the archive holds a
+  or `.7z`, then **Extract Here** (into the current folder) or **Extract To…**
+  (pick a destination). Extraction lands in place when the archive holds a
   single top-level folder, or in a new folder named after the archive
   otherwise — and it's safe against malicious archive paths (no writing outside
-  the destination). **Compress** now offers a **Compress As** submenu for
-  tar.gz / tar.bz2 / tar.xz alongside the default ZIP, powered by a new built-in
+  the destination). **Compress** is now a submenu offering **ZIP**, **7-Zip**,
+  and **TAR** (Gzip / Bzip2 / XZ / uncompressed), powered by a new built-in
   archive engine (no more shelling out to `ditto`), so it works the same on
   every platform.
 - **Richer 7-Zip descriptions** — `.7z` files now show their file count, root

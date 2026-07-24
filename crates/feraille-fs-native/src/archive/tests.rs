@@ -548,6 +548,46 @@ fn sevenz_round_trips_and_enriches_description() {
 }
 
 #[test]
+fn sevenz_create_round_trips_through_extract() {
+    let src = TempDir::new("src-7zc");
+    make_tree(src.path());
+    let arc = TempFile::new("made.7z");
+    let input = src.path().join("project");
+    let (progress, cancel) = rig();
+    create_archive(
+        Format::SevenZ,
+        &[input.as_path()],
+        arc.path(),
+        CreateOptions::default(),
+        &progress,
+        &cancel,
+    )
+    .unwrap();
+
+    let toc = read_toc(arc.path(), None).unwrap();
+    assert_eq!(toc.single_root(), Some("project"));
+    assert!(toc.file_count() >= 2);
+
+    let out = TempDir::new("out-7zc");
+    let (p2, c2) = rig();
+    extract_all(
+        arc.path(),
+        out.path(),
+        ExtractOptions {
+            overwrite: true,
+            ..Default::default()
+        },
+        &p2,
+        &c2,
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(out.path().join("project/readme.md")).unwrap(),
+        "# hi"
+    );
+}
+
+#[test]
 fn single_member_create_rejects_multiple_inputs() {
     let src = TempDir::new("src-multi");
     make_tree(src.path());
