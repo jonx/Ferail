@@ -1415,7 +1415,7 @@ impl TableDelegate for FileListDelegate {
         use crate::shell::{
             BulkRenameSelected, ClearQuarantine, Compress, CompressSevenZ, CompressTar,
             CompressTarBz2, CompressTarGz, CompressTarXz, CopyPath, DeleteImmediately, Duplicate,
-            Extract, ExtractTo, GetInfo, MakeAlias, MoveToTrash,
+            Extract, ExtractTo, GetInfo, MakeAlias, MoveToTrash, OpenAsArchive,
             OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
             OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
             OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook,
@@ -1566,7 +1566,9 @@ impl TableDelegate for FileListDelegate {
                 m.menu("Extract Here", Box::new(Extract))
                     .menu("Extract To\u{2026}", Box::new(ExtractTo))
             });
-            menu = menu.item(PopupMenuItem::submenu("Extract", extract_submenu));
+            menu = menu
+                .item(PopupMenuItem::submenu("Extract", extract_submenu))
+                .menu("Open as Archive", Box::new(OpenAsArchive));
         }
         if show_clear_quarantine {
             // Capability command (docs/features/CONTEXT_MENU.md): show when

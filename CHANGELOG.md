@@ -18,6 +18,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   and **TAR** (Gzip / Bzip2 / XZ / uncompressed), powered by a new built-in
   archive engine (no more shelling out to `ditto`), so it works the same on
   every platform.
+- **Browse inside archives** — right-click an archive → **Open as Archive** to
+  open a contents view (like Disk Usage): see every file and folder without
+  extracting, then **Extract Selected** (cherry-pick) or **Extract All**.
+  Formats that can't be edited in place (tar, 7z) are marked read-only.
 - **Richer 7-Zip descriptions** — `.7z` files now show their file count, root
   folder, and whether they're encrypted in the Description column, the same way
   ZIPs already did.

@@ -2747,6 +2747,68 @@ impl Shell {
         .detach();
     }
 
+    /// Open the first selected archive in the embedded workbench view.
+    pub fn on_open_archive(
+        &mut self,
+        _: &OpenAsArchive,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let archive = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .find(|p| {
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(feraille_archive::Format::is_archive_path)
+            });
+        if let Some(archive) = archive {
+            self.dock_archive_view(archive, cx);
+        }
+    }
+
+    /// Build the archive view for `archive` and dock it as the active tab's
+    /// tool-result surface, cancelling the tab's directory-load work (mirrors
+    /// `dock_disk_usage_view`). The tab stays rooted at `current_dir`.
+    fn dock_archive_view(&mut self, archive: PathBuf, cx: &mut Context<Self>) {
+        let Some(format) = archive
+            .file_name()
+            .and_then(|s| s.to_str())
+            .and_then(feraille_archive::Format::from_path)
+        else {
+            return;
+        };
+        let shell_weak = cx.weak_entity();
+        let view = cx.new(|cx| {
+            let mut v = crate::archive::ArchiveView::new(archive.clone(), format, cx);
+            v.set_shell(shell_weak);
+            v
+        });
+
+        let tab_id = self.active_tab().id;
+        let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else {
+            return;
+        };
+        if let Some(cancel) = self.tabs[idx].load_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(cancel) = self.tabs[idx].folder_size_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(cancel) = self.tabs[idx].prefetch_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        if let Some(previous) = self.tabs[idx].load_task.take() {
+            self.process.tasks.borrow_mut().end(previous);
+        }
+        self.tabs[idx].load_generation = self.tabs[idx].load_generation.wrapping_add(1);
+        self.tabs[idx].load_staging = None;
+        self.tabs[idx].dupe_groups.clear();
+        self.tabs[idx].tool_result = Some(ToolResultSurface::archive(archive, view));
+        cx.notify();
+    }
+
     pub fn on_open_disk_usage(
         &mut self,
         _: &OpenDiskUsage,

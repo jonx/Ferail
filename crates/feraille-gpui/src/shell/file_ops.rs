@@ -3008,7 +3008,7 @@ impl Shell {
     /// when it has a single root folder that isn't already taken, otherwise a
     /// `" 2"`-deduped wrapper named after the archive. Encrypted archives fail
     /// with a clear message (the password flow lives in the workbench).
-    fn spawn_extract_into(
+    pub(crate) fn spawn_extract_into(
         &mut self,
         paths: Vec<PathBuf>,
         dest_parent: PathBuf,
@@ -3098,6 +3098,67 @@ impl Shell {
                     created.extend(extract_one_archive(archive, &dest_parent)?);
                 }
                 Ok(created)
+            },
+            "Extract",
+            Some(task_label),
+            FileOpSuccessToast::IfSurfaced(success),
+            FileOpUndo::RemoveCreatedResult,
+            window,
+            cx,
+        );
+    }
+
+    /// Cherry-pick extraction (used by the archive workbench): extract the
+    /// given `entries` of `archive` into a fresh `" 2"`-deduped folder named
+    /// after the archive, under `dest_parent`. Off-thread through
+    /// `spawn_file_op`, so it gets a task row / toast / undo like every other
+    /// file op.
+    pub(crate) fn extract_archive_entries_into(
+        &mut self,
+        archive: PathBuf,
+        entries: Vec<String>,
+        dest_parent: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+        let count = entries.len();
+        let plural = if count == 1 { "" } else { "s" };
+        let task_label = format!("Extracting {count} item{plural}");
+        let success = format!("Extracted {count} item{plural}");
+        self.spawn_file_op(
+            dest_parent.clone(),
+            move || {
+                let stem = archive
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Extracted".to_string());
+                let mut dest = dest_parent.join(&stem);
+                let mut n = 2;
+                while dest.exists() {
+                    dest = dest_parent.join(format!("{stem} {n}"));
+                    n += 1;
+                }
+                std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+                let entry_refs: Vec<&str> = entries.iter().map(|s| s.as_str()).collect();
+                let progress = feraille_fs_native::file_ops::TransferProgress::new();
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                let opts = feraille_fs_native::ExtractOptions {
+                    password: None,
+                    overwrite: false,
+                };
+                feraille_fs_native::extract_archive_entries(
+                    &archive,
+                    &dest,
+                    &entry_refs,
+                    opts,
+                    &progress,
+                    &cancel,
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(vec![dest])
             },
             "Extract",
             Some(task_label),

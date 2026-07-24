@@ -78,6 +78,19 @@ impl ToolResultSurface {
         }
     }
 
+    pub fn archive(archive: PathBuf, view: Entity<crate::archive::ArchiveView>) -> Self {
+        Self {
+            mode: ToolResultMode::Archive(ArchiveMode { archive, view }),
+        }
+    }
+
+    pub fn archive_mode(&self) -> Option<&ArchiveMode> {
+        match &self.mode {
+            ToolResultMode::Archive(a) => Some(a),
+            _ => None,
+        }
+    }
+
     pub fn handle_host_event<C: AppContext>(
         &self,
         event: crate::tool_results::ToolHostEvent,
@@ -88,7 +101,10 @@ impl ToolResultSurface {
                 du.view
                     .update(cx, |view, cx| view.handle_host_event(event, cx));
             }
-            ToolResultMode::Search(_) | ToolResultMode::Duplicates(_) => {}
+            // Archive/search/duplicates don't react to host-context changes.
+            ToolResultMode::Search(_)
+            | ToolResultMode::Duplicates(_)
+            | ToolResultMode::Archive(_) => {}
         }
     }
 
@@ -126,6 +142,7 @@ pub enum ToolResultMode {
     Search(SearchMode),
     Duplicates(DupeViewMode),
     DiskUsage(DiskUsageMode),
+    Archive(ArchiveMode),
 }
 
 #[derive(Clone)]
@@ -135,6 +152,17 @@ pub struct DiskUsageMode {
     /// Stateful treemap/results view hosted inside the tab. The same view
     /// type is still usable in a standalone window.
     pub view: Entity<crate::disk_usage::DiskUsageView>,
+}
+
+/// State for the archive workbench surface. The tab keeps its `current_dir`
+/// (the folder the archive lives in) for navigation and Back; the pane body
+/// is the archive contents view.
+#[derive(Clone)]
+pub struct ArchiveMode {
+    /// The archive file being browsed.
+    pub archive: PathBuf,
+    /// The embedded contents/extraction view.
+    pub view: Entity<crate::archive::ArchiveView>,
 }
 
 /// State for a search result surface. The tab still has a

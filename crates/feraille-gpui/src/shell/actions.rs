@@ -172,6 +172,9 @@ actions!(
         /// Extract the selected archive(s) into a folder chosen from a native
         /// picker (same smart in-place/wrap logic, rooted at the choice).
         ExtractTo,
+        /// Open the selected archive in the embedded workbench view (browse
+        /// contents, cherry-pick extract).
+        OpenAsArchive,
         /// Format variants under the "Compress" submenu. The engine's
         /// `create_archive` produces each; the plain `Compress` makes a ZIP.
         CompressSevenZ,

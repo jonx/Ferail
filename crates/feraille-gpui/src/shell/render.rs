@@ -140,6 +140,12 @@ impl Shell {
                 feraille_fs_native::humanize_bytes(dupe.wasted_bytes),
             )),
             super::tab::ToolResultMode::DiskUsage(_) => Some("Disk Usage".to_string()),
+            super::tab::ToolResultMode::Archive(am) => Some(
+                am.archive
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Archive".to_string()),
+            ),
         }
     }
 
@@ -777,6 +783,14 @@ impl Shell {
             .map(|surface| &surface.mode)
         {
             return du.view.clone().into_any_element();
+        }
+        if let Some(super::tab::ToolResultMode::Archive(am)) = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .map(|surface| &surface.mode)
+        {
+            return am.view.clone().into_any_element();
         }
         match self.active_tab().view_mode {
             crate::grid::ViewMode::List => DataTable::new(&self.active_tab().table)
@@ -3394,6 +3408,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_edit_breadcrumb))
             .on_action(cx.listener(Self::on_shortcuts_help))
             .on_action(cx.listener(Self::on_open_disk_usage))
+            .on_action(cx.listener(Self::on_open_archive))
             .on_action(cx.listener(Self::on_close_tool_result))
             .on_action(cx.listener(Self::on_pop_out_disk_usage))
             .on_action(cx.listener(Self::on_find_duplicates))

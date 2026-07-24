@@ -13,6 +13,7 @@
 pub mod about;
 pub mod ant_trail;
 pub mod app_icon;
+pub mod archive;
 pub mod app_state;
 pub mod assets;
 pub mod boot;

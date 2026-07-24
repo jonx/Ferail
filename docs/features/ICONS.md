@@ -136,11 +136,12 @@ from `tint_color` against the theme's chart palette.
 | `file/pdf.svg` | In-house (`file` + "PDF" text) | Document → `chart_4` | `.pdf` (glyph override) |
 | `file/html.svg` | In-house (`file` + globe) | Code → `chart_5` | `.html` / `.htm` (glyph override) |
 | `file/spreadsheet.svg` | Lucide `file-spreadsheet` | Document → `chart_4` | csv, tsv, xls(x), ods, numbers (override) |
-| *(folder)* `icons/folder.svg` | **Upstream** Lucide `folder` | Folder → `primary` | directory kind |
+| *(folder)* `icons/folder.svg` | **Upstream** Lucide `folder` | Folder → `primary` | directory kind; also directory rows in the archive workbench (`archive.rs`) |
 
 > Directories render the **upstream** `folder.svg` here, *not* the local
 > `nav/folder.svg` the New Folder button uses — two near-identical folders at
-> different stroke weights.
+> different stroke weights. The archive workbench's directory rows reuse the
+> same directory-kind `folder.svg` (a type indicator, not a command glyph).
 
 ## Sidebar Locations (well-known folders)
 

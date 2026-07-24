@@ -139,6 +139,9 @@ pub struct Args {
     /// Open the Disk Usage window at this path and render its
     /// treemap headless. Lands in Stage 7.
     pub disk_usage: Option<PathBuf>,
+    /// Open the archive workbench on this archive file and render its
+    /// contents view headless.
+    pub archive: Option<PathBuf>,
     /// Treemap recursion depth for `--disk-usage`. Default 4.
     pub disk_usage_depth: u32,
     /// Coloring mode for `--disk-usage`. `category` (default) or
@@ -177,6 +180,7 @@ pub struct Args {
 
 pub fn parse_args() -> Args {
     let mut args = Args {
+        archive: None,
         disk_usage_depth: 4,
         disk_usage_coloring: "category".to_string(),
         ..Args::default()
@@ -267,6 +271,7 @@ pub fn parse_args() -> Args {
             "--shortcuts-help-filter" => args.shortcuts_help = iter.next(),
             "--ui-scale" => args.ui_scale = iter.next().and_then(|s| s.parse().ok()),
             "--disk-usage" => args.disk_usage = iter.next().map(PathBuf::from),
+            "--archive" => args.archive = iter.next().map(PathBuf::from),
             "--du-depth" => {
                 if let Some(n) = iter.next().and_then(|s| s.parse().ok()) {
                     args.disk_usage_depth = n;
@@ -344,6 +349,7 @@ OPTIONS
   --shortcuts-help[-filter] Open keyboard help overlay. Lands in Stage 9.
   --ui-scale <factor>      Apply UI zoom. Lands in Stage 9.
   --disk-usage <path>      Render disk-usage treemap. Lands in Stage 7.
+  --archive <path>         Render the archive workbench for <path>.
   --du-depth <N>           Treemap recursion depth (default 4).
   --du-coloring <mode>     'category' (default) or 'depth'.
   --settings <page>        Open Settings instead of Shell.
@@ -378,6 +384,7 @@ pub fn run(args: Args) -> Result<()> {
     let theme_mode = args.theme;
     let settings_page = args.settings.clone();
     let disk_usage_root = args.disk_usage.clone();
+    let archive_target = args.archive.clone();
     let viewer_target = args.viewer.clone();
     let viewer_adjust = args.viewer_adjust;
     let viewer_adjust_video = args.viewer_adjust_video;
@@ -412,6 +419,7 @@ pub fn run(args: Args) -> Result<()> {
         let settings_page = settings_page.clone();
         let shell_args = shell_args.clone();
         let disk_usage_root = disk_usage_root.clone();
+        let archive_target = archive_target.clone();
         let viewer_target = viewer_target.clone();
         cx.spawn(async move |cx| {
             // Headless capture: `Window::render_to_image` samples an offscreen
@@ -456,6 +464,20 @@ pub fn run(args: Args) -> Result<()> {
                             crate::disk_usage::DiskUsageView::new(
                                 canonical, fs, tasks, None, None, cx,
                             )
+                        });
+                        cx.new(|cx| gpui_component::Root::new(view, window, cx))
+                    } else if let Some(arc) = archive_target.clone() {
+                        // Headless archive workbench: render the contents view
+                        // straight into the frame (no owning Shell, so the
+                        // extract buttons are inert — fine for a screenshot).
+                        let canonical = std::fs::canonicalize(&arc).unwrap_or(arc.clone());
+                        let format = canonical
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .and_then(feraille_archive::Format::from_path)
+                            .unwrap_or(feraille_archive::Format::Zip);
+                        let view = cx.new(|cx| {
+                            crate::archive::ArchiveView::new(canonical, format, cx)
                         });
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if let Some(target) = viewer_target.clone() {
