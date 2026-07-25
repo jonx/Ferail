@@ -176,6 +176,57 @@ pub(super) fn create(
     Ok(())
 }
 
+/// Append `items` to an existing zip in place. Uses the zip crate's
+/// `new_append`, which rewrites only the central directory rather than
+/// re-encoding the entries already in the archive.
+///
+/// Names already present are skipped: zip permits duplicates, but a second
+/// record with the same name shadows the first rather than replacing it, and
+/// extraction (which refuses to clobber) would then write the *original*
+/// bytes — the opposite of what "add this file" means.
+pub(super) fn append(
+    archive: &Path,
+    items: &[super::PlannedItem],
+    opts: CreateOptions<'_>,
+    progress: &TransferProgress,
+    cancel: &AtomicBool,
+) -> Result<super::AddOutcome, ArchiveError> {
+    let existing: std::collections::HashSet<String> = read_toc(archive, None)?
+        .entries
+        .into_iter()
+        .map(|e| e.path.trim_end_matches('/').to_string())
+        .collect();
+
+    let file = std::fs::OpenOptions::new().read(true).write(true).open(archive)?;
+    let mut zw = zip::ZipWriter::new_append(file).map_err(map_zip_err)?;
+    let entry_opts = entry_options(opts);
+    let mut outcome = super::AddOutcome::default();
+
+    for item in items {
+        super::check_cancel(cancel)?;
+        if existing.contains(item.rel.trim_end_matches('/')) {
+            // Directories that already exist are not worth reporting — only
+            // files the user expected to land.
+            if !item.is_dir {
+                outcome.skipped_existing.push(item.rel.clone());
+            }
+            continue;
+        }
+        if item.is_dir {
+            zw.add_directory(&item.rel, entry_opts).map_err(map_zip_err)?;
+        } else {
+            zw.start_file(&item.rel, entry_opts).map_err(map_zip_err)?;
+            progress.note_current(&item.abs);
+            let src = File::open(&item.abs)?;
+            super::copy_stream(src, &mut zw, progress, cancel)?;
+            progress.add_items(1);
+            outcome.added += 1;
+        }
+    }
+    zw.finish().map_err(map_zip_err)?;
+    Ok(outcome)
+}
+
 fn map_zip_err(e: ZipError) -> ArchiveError {
     match e {
         ZipError::Io(io) => ArchiveError::Io(io),

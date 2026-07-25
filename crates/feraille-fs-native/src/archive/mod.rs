@@ -424,6 +424,45 @@ pub fn create_archive(
     Ok(output.to_path_buf())
 }
 
+/// What an [`add_to_archive`] call did.
+#[derive(Debug, Default)]
+pub struct AddOutcome {
+    /// Number of files written into the archive.
+    pub added: u64,
+    /// Entry paths that were already present and therefore left alone — a
+    /// duplicate name would shadow the original rather than replace it, so we
+    /// skip and report instead of silently corrupting the archive's meaning.
+    pub skipped_existing: Vec<String>,
+}
+
+/// Add `inputs` to an **existing** archive, in place.
+///
+/// Only formats whose capability row allows in-place editing are accepted
+/// (zip today). Tar-family archives are append-only streams with no central
+/// directory and 7z has no incremental write path, so those return an error
+/// rather than silently rewriting the whole file behind the user's back.
+pub fn add_to_archive(
+    archive: &Path,
+    inputs: &[&Path],
+    opts: CreateOptions<'_>,
+    progress: &TransferProgress,
+    cancel: &AtomicBool,
+) -> Result<AddOutcome, ArchiveError> {
+    feraille_core::path_guard::assert_off_ui_thread("archive::add_to_archive");
+    let format = format_of(archive)?;
+    if !format.capabilities().can_edit_in_place {
+        return Err(ArchiveError::Codec(format!(
+            "{} archives can't be modified in place",
+            format.label()
+        )));
+    }
+
+    let (items, total_bytes) = plan_inputs(inputs)?;
+    let file_count = items.iter().filter(|i| !i.is_dir).count() as u64;
+    progress.begin_transfer(total_bytes, file_count);
+    zip_codec::append(archive, &items, opts, progress, cancel)
+}
+
 /// Walk `inputs` into a flat list of planned entries. Uses `symlink_metadata`
 /// (no follow) so symlinks are classified and skipped rather than traversed.
 fn plan_inputs(inputs: &[&Path]) -> Result<(Vec<PlannedItem>, u64), ArchiveError> {

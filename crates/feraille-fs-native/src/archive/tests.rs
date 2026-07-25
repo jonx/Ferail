@@ -658,3 +658,103 @@ fn create_with_level_and_password_honours_options() {
         );
     }
 }
+
+#[test]
+fn add_to_zip_appends_and_skips_existing_names() {
+    let src = TempDir::new("src-add");
+    make_tree(src.path());
+    let arc = TempFile::new("addable.zip");
+    let input = src.path().join("project");
+    let (p0, c0) = rig();
+    create_archive(
+        Format::Zip,
+        &[input.as_path()],
+        arc.path(),
+        CreateOptions::default(),
+        &p0,
+        &c0,
+    )
+    .unwrap();
+    let before = read_toc(arc.path(), None).unwrap().file_count();
+
+    // A genuinely new file lands.
+    let extra_dir = TempDir::new("extra");
+    let extra = extra_dir.path().join("notes.txt");
+    fs::write(&extra, b"appended").unwrap();
+    let (p1, c1) = rig();
+    let outcome = super::add_to_archive(
+        arc.path(),
+        &[extra.as_path()],
+        CreateOptions::default(),
+        &p1,
+        &c1,
+    )
+    .unwrap();
+    assert_eq!(outcome.added, 1);
+    assert!(outcome.skipped_existing.is_empty());
+
+    let toc = read_toc(arc.path(), None).unwrap();
+    assert_eq!(toc.file_count(), before + 1);
+    assert!(toc.entries.iter().any(|e| e.path == "notes.txt"));
+
+    // Adding the same name again is refused, not duplicated.
+    let (p2, c2) = rig();
+    let outcome = super::add_to_archive(
+        arc.path(),
+        &[extra.as_path()],
+        CreateOptions::default(),
+        &p2,
+        &c2,
+    )
+    .unwrap();
+    assert_eq!(outcome.added, 0);
+    assert_eq!(outcome.skipped_existing, vec!["notes.txt".to_string()]);
+    assert_eq!(read_toc(arc.path(), None).unwrap().file_count(), before + 1);
+
+    // The appended content survives a real extraction.
+    let out = TempDir::new("out-add");
+    let (p3, c3) = rig();
+    extract_all(
+        arc.path(),
+        out.path(),
+        ExtractOptions {
+            overwrite: true,
+            ..Default::default()
+        },
+        &p3,
+        &c3,
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(out.path().join("notes.txt")).unwrap(),
+        "appended"
+    );
+}
+
+#[test]
+fn add_to_tar_is_refused() {
+    let src = TempDir::new("src-addtar");
+    make_tree(src.path());
+    let arc = TempFile::new("nope.tar.gz");
+    let input = src.path().join("project");
+    let (p0, c0) = rig();
+    create_archive(
+        Format::TarGz,
+        &[input.as_path()],
+        arc.path(),
+        CreateOptions::default(),
+        &p0,
+        &c0,
+    )
+    .unwrap();
+    let (p1, c1) = rig();
+    let err = super::add_to_archive(
+        arc.path(),
+        &[input.as_path()],
+        CreateOptions::default(),
+        &p1,
+        &c1,
+    )
+    .unwrap_err();
+    assert!(matches!(err, ArchiveError::Codec(_)), "got {err:?}");
+}

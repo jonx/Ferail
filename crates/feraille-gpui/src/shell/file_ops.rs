@@ -12,6 +12,10 @@ pub(crate) enum TransferMode {
     Auto,
 }
 
+/// Callback run on the UI thread after a successful archive operation, for
+/// surfaces whose state the directory reload doesn't refresh.
+pub type ArchiveOpDone = Box<dyn FnOnce(&mut Shell, &mut Context<Shell>) + 'static>;
+
 impl Shell {
     /// Cmd+C — write the selection's file URLs to the pasteboard.
     pub(super) fn on_copy_files(
@@ -2861,6 +2865,66 @@ impl Shell {
         self.compress_selection_as(feraille_archive::Format::Tar, window, cx);
     }
 
+    /// Add dropped files to an existing archive, in place. Only reachable for
+    /// formats the capability matrix marks editable (zip); `on_done` lets the
+    /// archive workbench re-read its table of contents once the entries land.
+    pub(crate) fn add_to_archive_from(
+        &mut self,
+        archive: PathBuf,
+        sources: Vec<PathBuf>,
+        password: Option<String>,
+        on_done: Option<ArchiveOpDone>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if sources.is_empty() {
+            return;
+        }
+        let count = sources.len();
+        let plural = if count == 1 { "" } else { "s" };
+        let name = archive
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "archive".to_string());
+        let reload = archive
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.active_tab().current_dir.clone());
+        self.spawn_archive_op(
+            reload,
+            move |progress, cancel| {
+                let targets: Vec<&std::path::Path> =
+                    sources.iter().map(|p| p.as_path()).collect();
+                let opts = feraille_fs_native::CreateOptions {
+                    level: Default::default(),
+                    password: password.as_deref(),
+                };
+                let outcome =
+                    feraille_fs_native::add_to_archive(&archive, &targets, opts, progress, cancel)
+                        .map_err(|e| e.to_string())?;
+                // Names already in the archive are skipped rather than
+                // shadowed — say so instead of reporting a clean success.
+                if !outcome.skipped_existing.is_empty() && outcome.added == 0 {
+                    return Err(format!(
+                        "Already in the archive: {}",
+                        outcome.skipped_existing.join(", ")
+                    ));
+                }
+                Ok(Vec::new())
+            },
+            "Add to archive",
+            format!("Adding {count} item{plural} to {name}"),
+            FileOpSuccessToast::IfSurfaced(format!("Added {count} item{plural} to {name}")),
+            // The archive is modified in place, so there is nothing created to
+            // remove; undoing an add would mean rewriting the archive without
+            // those entries, which the engine can't do yet.
+            FileOpUndo::None,
+            on_done,
+            window,
+            cx,
+        );
+    }
+
     /// Open the New Archive dialog over the current selection.
     pub(super) fn on_new_archive(
         &mut self,
@@ -2877,6 +2941,9 @@ impl Shell {
     }
 
     /// Create `output` from `sources` with the dialog's chosen options.
+    // Every input is a distinct choice the dialog collected; bundling them
+    // into a struct would only move the same fields one level down.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn create_archive_from(
         &mut self,
         sources: Vec<PathBuf>,
@@ -2918,6 +2985,7 @@ impl Shell {
                 if count == 1 { "" } else { "s" }
             )),
             FileOpUndo::RemoveCreatedResult,
+            None,
             window,
             cx,
         );
@@ -3015,6 +3083,7 @@ impl Shell {
             task_label,
             FileOpSuccessToast::IfSurfaced(success),
             FileOpUndo::RemoveCreatedResult,
+            None,
             window,
             cx,
         );
@@ -3102,6 +3171,11 @@ impl Shell {
         task_label: String,
         success_toast: FileOpSuccessToast,
         undo: FileOpUndo,
+        // Runs on the UI thread after a successful, non-cancelled op — used
+        // by surfaces that must refresh state the directory reload doesn't
+        // cover (e.g. the archive workbench re-reading its table of contents
+        // after entries were added).
+        on_success: Option<ArchiveOpDone>,
         window: &Window,
         cx: &mut Context<Self>,
     ) {
@@ -3222,6 +3296,9 @@ impl Shell {
                     };
                     if error.is_none() && !cancelled {
                         undo.push(this, created_for_undo);
+                        if let Some(done) = on_success {
+                            done(this, cx);
+                        }
                     }
                     cx.notify();
                     surfaced
@@ -3362,6 +3439,7 @@ impl Shell {
             task_label,
             FileOpSuccessToast::IfSurfaced(success),
             FileOpUndo::RemoveCreatedResult,
+            None,
             window,
             cx,
         );
@@ -3422,6 +3500,7 @@ impl Shell {
             task_label,
             FileOpSuccessToast::IfSurfaced(success),
             FileOpUndo::RemoveCreatedResult,
+            None,
             window,
             cx,
         );

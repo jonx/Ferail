@@ -30,10 +30,10 @@ pub mod stat_info;
 mod volumes;
 pub mod xattr_info;
 pub use archive::{
-    create_archive, extract_all as extract_archive,
+    add_to_archive, create_archive, extract_all as extract_archive,
     extract_entries as extract_archive_entries, read_summary as read_archive_summary,
-    read_toc as read_archive_toc, ArchiveError, ArchiveSummary, CreateOptions, ExtractOptions,
-    ExtractOutcome, SkipReason, SkippedEntry,
+    read_toc as read_archive_toc, AddOutcome, ArchiveError, ArchiveSummary, CreateOptions,
+    ExtractOptions, ExtractOutcome, SkipReason, SkippedEntry,
 };
 pub use disk_usage_scanner::{recursive_size, recursive_totals, SubtreeTotals, DEFAULT_DU_BATCH};
 pub use dupes::{

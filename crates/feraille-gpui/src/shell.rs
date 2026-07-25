@@ -45,6 +45,7 @@ mod dock;
 mod dupe_panel;
 mod dupes;
 mod file_ops;
+pub use file_ops::ArchiveOpDone;
 mod loading;
 mod path;
 mod render;

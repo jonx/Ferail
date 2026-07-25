@@ -22,6 +22,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   pick the format (ZIP / 7-Zip / TAR.GZ / TAR.BZ2 / TAR.XZ / TAR), the
   compression level (Store / Fast / Normal / Maximum), and an optional password,
   instead of taking the one-click defaults.
+- **Add files to a zip by dropping them in** — drag files from Finder or the file
+  list onto an open archive to add them in place (ZIP only; formats that can't be
+  edited show no drop target). Names already in the archive are reported rather
+  than silently duplicated.
 - **Browse inside archives** — right-click an archive → **Open as Archive** to
   open a contents view (like Disk Usage): see every file and folder without
   extracting, then **Extract Selected** (cherry-pick) or **Extract All**.

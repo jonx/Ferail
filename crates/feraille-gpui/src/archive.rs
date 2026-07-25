@@ -198,6 +198,32 @@ impl ArchiveView {
         });
     }
 
+    /// Add files dropped from Finder or the file list into this archive.
+    /// Only wired up for formats the capability matrix marks editable.
+    fn add_dropped(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        if paths.is_empty() || !self.caps.can_edit_in_place {
+            return;
+        }
+        let Some(shell) = self.shell.clone() else {
+            return;
+        };
+        let archive = self.archive_path.clone();
+        let password = self.password.clone();
+        // Re-read the table of contents once the entries have landed, so the
+        // list shows them without the user reopening the archive.
+        let this = cx.entity().downgrade();
+        let refresh: crate::shell::ArchiveOpDone = Box::new(move |_shell, cx| {
+            let _ = this.update(cx, |this: &mut ArchiveView, cx| {
+                let password = this.password.clone();
+                this.selected.clear();
+                this.start_load(password, cx);
+            });
+        });
+        let _ = shell.update(cx, |shell, scx| {
+            shell.add_to_archive_from(archive, paths, password, Some(refresh), window, scx);
+        });
+    }
+
     // -- rendering ----------------------------------------------------------
 
     fn header(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -489,11 +515,29 @@ impl Render for ArchiveView {
             ArchiveLoad::Loaded(_) => self.entry_list(cx),
         };
 
+        // Editable formats (zip) accept dropped files straight into the
+        // archive; read-only ones show no drop affordance at all, so the
+        // capability is discoverable rather than a silent no-op.
+        let editable = self.caps.can_edit_in_place;
+
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context(ARCHIVE_CONTEXT)
             .size_full()
             .bg(bg)
+            .when(editable, |this| {
+                this.drag_over::<ExternalPaths>(|style, _, _, cx| {
+                    style
+                        .border_2()
+                        .border_color(cx.theme().accent)
+                        .bg(cx.theme().accent.opacity(0.08))
+                })
+                .on_drop(cx.listener(
+                    |this, paths: &ExternalPaths, window, cx| {
+                        this.add_dropped(paths.paths().to_vec(), window, cx);
+                    },
+                ))
+            })
             .child(header)
             .children(locked_strip)
             .child(body)
