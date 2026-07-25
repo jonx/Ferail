@@ -812,7 +812,7 @@ impl Shell {
         use crate::thumbnails::THUMB_PX;
         use feraille_core::EntryKind;
         use gpui::ExternalPaths;
-        use gpui_component::menu::ContextMenuExt as _;
+        use crate::multi_table::LiveContextMenuExt as _;
         use smallvec::SmallVec;
         use std::sync::Arc;
 
@@ -1268,7 +1268,25 @@ impl Shell {
                                 },
                             )
                         })
-                        .context_menu(move |menu, window, cx| {
+                        .live_context_menu(
+                            {
+                                // Same revision source as the list: an open
+                                // grid menu picks up late Open With candidates
+                                // instead of being stuck with the placeholder.
+                                let weak_rev = weak_menu.clone();
+                                move |cx: &gpui::App| {
+                                    use crate::multi_table::TableDelegate as _;
+                                    weak_rev
+                                        .upgrade()
+                                        .map(|shell_ent| {
+                                            let shell = shell_ent.read(cx);
+                                            let table = shell.active_tab().table.read(cx);
+                                            table.delegate().context_menu_revision(cx)
+                                        })
+                                        .unwrap_or(0)
+                                }
+                            },
+                            move |menu, window, cx| {
                             // Same right-click menu the table uses, reached
                             // through the shared TableState delegate — so
                             // icons mode gets Rename, Open With, tags, Trash,
@@ -1293,7 +1311,8 @@ impl Shell {
                                     tbl.delegate_mut().context_menu(i, menu, window, cx)
                                 })
                             })
-                        });
+                            },
+                        );
                     row_el = row_el.child(cell);
                 }
                 out.push(row_el.into_any_element());

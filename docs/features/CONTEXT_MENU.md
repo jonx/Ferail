@@ -105,6 +105,25 @@ from a single place, and reusing it for both:
   `--context-menu-row N` (docs/features/SCREENSHOTS.md) captures the
   first-right-click case headlessly.
 
+#### Content that can't be fetched on the UI thread
+
+Some menu content — "Open With" candidates, most obviously — comes from a
+blocking shell query that the [Prime Directive](../ARCHITECTURE.md#prime-directive)
+forbids on the UI thread, and the menu builder is synchronous. The rule is:
+
+- The builder reads **only caches** (`open_with_warm`, the per-row caps). On a
+  miss it shows a disabled "loading" item and kicks the off-thread fetch.
+- When that fetch reports back it bumps `FileListDelegate::menu_revision`, and
+  the **open menu rebuilds itself** around the real data
+  (`multi_table::context_menu`, a fork of gpui-component's element — see
+  [GPUI-UPSTREAM.md §4b](../GPUI-UPSTREAM.md)).
+
+So warming is a latency optimisation and nothing more: a cold right-click
+shows the same menu a warm one does, a beat later. Never gate a command's
+*existence* on a cache being populated — gate it on the caps, which are
+projected from rows already in memory. Bump `menu_revision` only for real
+content changes; a rebuild resets the menu's hover/keyboard highlight.
+
 #### Three command archetypes
 
 Every command is classified by how it behaves across a multi-selection:

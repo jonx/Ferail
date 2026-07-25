@@ -43,6 +43,7 @@ use gpui::App;
 
 mod actions;
 mod column;
+pub mod context_menu;
 mod data_table;
 mod delegate;
 mod loading;
@@ -51,6 +52,7 @@ mod table;
 mod virtual_list;
 
 pub use column::*;
+pub use context_menu::LiveContextMenuExt;
 pub use data_table::*;
 pub use delegate::*;
 pub(crate) use loading::Loading;

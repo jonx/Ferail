@@ -444,14 +444,25 @@ pub struct FileListDelegate {
     /// triggered on selection-lead changes and on a cache-miss menu
     /// build. The menu builder reads ONLY this cache (prime
     /// directive: no shell queries at menu-open time); a miss shows
-    /// a disabled placeholder for that one open, exactly like
-    /// Finder's "Fetching…" when LaunchServices is slow.
+    /// a disabled "loading" placeholder, exactly like Finder's
+    /// "Fetching…" under a slow LaunchServices — and, when the fetch
+    /// lands, `menu_revision` ticks and the open menu rebuilds with the
+    /// real apps in it. The cache is a latency optimisation, never a
+    /// correctness requirement.
     ///
     /// Dispatch handlers (`Shell::open_with_slot`) resolve slot
     /// indices against this same cache so the app at slot N when
     /// the menu was BUILT is the app that opens — re-fetching at
     /// dispatch could reorder candidates and launch the wrong app.
     pub open_with_warm: Option<(PathBuf, Vec<crate::platform_shell::OpenWithCandidate>)>,
+    /// Bumped whenever something the context menu *renders* changes after the
+    /// menu may already be open — today, `open_with_warm` landing. The table
+    /// polls it through `TableDelegate::context_menu_revision` and rebuilds
+    /// the open menu, so a cold cache costs the user a beat rather than a
+    /// menu that is permanently missing its Open With apps for that open.
+    /// Bump it only for real content changes: a rebuild resets the menu's
+    /// hover/keyboard highlight.
+    pub menu_revision: u64,
     /// The user's active column sort, recorded by `perform_sort` /
     /// `apply_sort`. `None` = natural (name-ascending) order. Read
     /// by the folder-size worker so late-arriving sizes can re-apply
@@ -568,6 +579,7 @@ impl FileListDelegate {
             selected_set: HashSet::new(),
             lead: None,
             open_with_warm: None,
+            menu_revision: 0,
             current_sort,
             sort_state,
             shell_focus,
@@ -1642,6 +1654,10 @@ impl TableDelegate for FileListDelegate {
         if is_name { px(46.0) } else { px(0.0) }
     }
 
+    fn context_menu_revision(&self, _cx: &App) -> u64 {
+        self.menu_revision
+    }
+
     fn header_has_menu(&self, _cx: &App) -> bool {
         true
     }
@@ -1740,10 +1756,12 @@ impl TableDelegate for FileListDelegate {
         // Open With candidates come from the `open_with_warm` cache,
         // populated off-thread on selection-lead changes (see
         // `Shell::warm_open_with_for_row`). On a cache miss — e.g.
-        // a direct right-click on a row that was never selected —
-        // we show a disabled placeholder this one time, kick the
-        // warm fetch, and the next open has the real submenu. Same
-        // UX as Finder's "Fetching…" under a slow LaunchServices.
+        // a direct right-click on a row that was never selected — we
+        // kick the warm fetch and show a disabled "loading" item; when
+        // the fetch reports back it bumps `menu_revision`, and THIS menu
+        // rebuilds around the real candidates without the user having to
+        // close and reopen it. Same UX as Finder's "Fetching…" under a
+        // slow LaunchServices.
         let target_path = self
             .entries
             .get(row_ix)
@@ -1945,11 +1963,11 @@ impl TableDelegate for FileListDelegate {
                 // Cache warm but LaunchServices offered nothing: omit the
                 // submenu entirely (pre-existing behavior for empty sets).
                 Some(_) => {}
-                // Cache miss — the warm fetch was kicked above; show a
-                // disabled placeholder for this one open.
+                // Cache miss — the warm fetch was kicked above, and its
+                // arrival rebuilds this menu in place. Placeholder until then.
                 None => {
                     menu = menu
-                        .item(PopupMenuItem::new("Open With (indexing\u{2026})").disabled(true));
+                        .item(PopupMenuItem::new("Open With (loading\u{2026})").disabled(true));
                 }
             }
         }
@@ -2125,7 +2143,11 @@ pub fn spawn_open_with_warm(
             .spawn(async move { crate::platform_shell::open_with_candidates(&fetch_path) })
             .await;
         let _ = weak.update(cx, |state, cx| {
-            state.delegate_mut().open_with_warm = Some((path, candidates));
+            let delegate = state.delegate_mut();
+            delegate.open_with_warm = Some((path, candidates));
+            // Tell an already-open context menu its Open With submenu just
+            // became real (see `multi_table::context_menu`).
+            delegate.menu_revision = delegate.menu_revision.wrapping_add(1);
             cx.notify();
         });
     })

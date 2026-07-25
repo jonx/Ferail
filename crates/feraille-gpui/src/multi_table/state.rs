@@ -1,7 +1,7 @@
 use std::{ops::Range, rc::Rc, time::Duration};
 
 use gpui::{
-    AppContext, Axis, Bounds, ClickEvent, Context, Div, DragMoveEvent, EventEmitter, FocusHandle,
+    App, AppContext, Axis, Bounds, ClickEvent, Context, Div, DragMoveEvent, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, ListSizingBehavior, Modifiers, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
     StatefulInteractiveElement as _, Styled, Task, TextRun, UniformListScrollHandle, Window, div,
@@ -18,6 +18,7 @@ use super::actions::{
     Cancel, SelectDown, SelectFirst, SelectLast, SelectNextColumn, SelectPageDown, SelectPageUp,
     SelectPrevColumn, SelectUp,
 };
+use super::context_menu::LiveContextMenuExt as _;
 use super::virtual_list::VirtualListScrollHandle;
 use super::*;
 
@@ -475,6 +476,22 @@ where
         cx.emit(TableEvent::SelectRow(row_ix));
         cx.emit(TableEvent::RightClickedRow(None));
         cx.notify();
+    }
+
+    /// Mirror the semantic lead onto the primitive's focus overlay without
+    /// pretending the user clicked: `right_clicked_row` survives.
+    ///
+    /// Fork addition. The Shell mirrors its lead row here after *every*
+    /// selection mutation — including the one a right-click itself causes.
+    /// Plain `set_selected_row` clears `right_clicked_row`, which would
+    /// leave the open context menu not knowing which row it belongs to;
+    /// harmless while a menu was built exactly once, fatal now that it can
+    /// rebuild (see [`super::context_menu`]) — the rebuild would produce an
+    /// empty menu and the popup would vanish mid-use.
+    pub fn mirror_lead_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        let right_clicked = self.right_clicked_row;
+        self.set_selected_row(row_ix, cx);
+        self.right_clicked_row = right_clicked;
     }
 
     /// Clear the selected-row focus overlay. Used when the semantic
@@ -2467,18 +2484,28 @@ where
             .size_full()
             .overflow_hidden()
             .child(self.render_table_header(left_columns_count, window, cx))
-            .context_menu({
-                let view = cx.entity().clone();
-                move |this, window: &mut Window, cx: &mut Context<PopupMenu>| {
-                    if let Some(row_ix) = view.read(cx).right_clicked_row {
-                        view.update(cx, |menu, cx| {
-                            menu.delegate_mut().context_menu(row_ix, this, window, cx)
-                        })
-                    } else {
-                        this
+            // Fork's own context-menu element, not gpui-component's: an open
+            // row menu must pick up content that could only be fetched
+            // off-thread (see `multi_table::context_menu`). The revision
+            // closure is what tells it something changed.
+            .live_context_menu(
+                {
+                    let view = cx.entity().clone();
+                    move |cx: &App| view.read(cx).delegate.context_menu_revision(cx)
+                },
+                {
+                    let view = cx.entity().clone();
+                    move |this, window: &mut Window, cx: &mut Context<PopupMenu>| {
+                        if let Some(row_ix) = view.read(cx).right_clicked_row {
+                            view.update(cx, |menu, cx| {
+                                menu.delegate_mut().context_menu(row_ix, this, window, cx)
+                            })
+                        } else {
+                            this
+                        }
                     }
-                }
-            })
+                },
+            )
             .map(|this| {
                 if rows_count == 0 {
                     this.children(empty_view)

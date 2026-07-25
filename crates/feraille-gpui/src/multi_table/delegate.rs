@@ -105,6 +105,18 @@ pub trait TableDelegate: Sized + 'static {
         menu
     }
 
+    /// Content revision for the row context menu. While a menu is open the
+    /// table polls this each frame and rebuilds the menu whenever the value
+    /// changes, so data that could only be fetched off-thread (see
+    /// [`super::context_menu`]) lands in the menu the user is already
+    /// looking at. Bump it when — and only when — menu *content* changes;
+    /// a rebuild drops the menu's hover/keyboard highlight. Default `0`
+    /// means "content is fixed once built".
+    fn context_menu_revision(&self, cx: &App) -> u64 {
+        let _ = cx;
+        0
+    }
+
     /// Whether this delegate wants a context menu on the column header
     /// (right-click). Default `false` — the header is inert.
     fn header_has_menu(&self, cx: &App) -> bool {

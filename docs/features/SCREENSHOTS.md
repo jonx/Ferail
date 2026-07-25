@@ -178,8 +178,12 @@ cargo run --bin feraille-gpui -- \
 With no `--select-*` flag this captures the case that used to differ from every
 later right-click: a freshly loaded folder, nothing selected, menu built from
 scratch. Add `--select-rows 1,2` to capture the multi-selection form instead
-(bulk "Rename N Items…", no single-only commands). The row must be on screen —
-the click point comes from the laid-out row geometry.
+(bulk "Rename N Items…", no single-only commands). List view only, and the row
+must be on screen — the click point comes from the laid-out row geometry.
+
+Because the click is real, the capture also exercises the menu's async fill-in:
+"Open With" starts as a disabled placeholder and the open menu rebuilds itself
+once the off-thread LaunchServices fetch lands.
 
 ### Disk-usage treemap, depth-limited, coloured by depth
 

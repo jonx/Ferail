@@ -333,7 +333,10 @@ impl Shell {
                 let needs_set = table.read(cx).selected_row() != Some(row);
                 if needs_set {
                     table.update(cx, |state, cx| {
-                        state.set_selected_row(row, cx);
+                        // Lead mirror, not a click: keep the table's
+                        // right-clicked row so an open context menu can
+                        // still rebuild itself against it.
+                        state.mirror_lead_row(row, cx);
                     });
                     // The list view auto-scrolls via `set_selected_row`,
                     // but the grid's `uniform_list` rides its own
