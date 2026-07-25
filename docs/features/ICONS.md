@@ -233,6 +233,21 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 The preview pane also draws a plain-div **resize grip** (rounded pill) under
 the thumbnail — pure chrome, not an icon asset.
 
+### Archive workbench ([archive.rs](../../crates/feraille-gpui/src/archive.rs) + the Name cell in [file_list.rs](../../crates/feraille-gpui/src/file_list.rs))
+
+The workbench renders through the normal file table, so it inherits that
+table's icon set. The one addition is the tree disclosure caret on folder rows.
+
+| Surface | Icon path | Origin |
+| --- | --- | --- |
+| Tree caret (collapsed / expanded) | `icons/chevron-right.svg` / `icons/chevron-down.svg` ↑ | **Upstream** Lucide |
+| Directory rows | `icons/folder.svg` ↑ | Upstream Lucide (the directory-*kind* glyph, shared with the file list) |
+
+> The caret deliberately uses the **upstream** chevrons, not the local
+> `nav/chevron-*.svg` pair: those are the Back / Forward *command* glyphs, and
+> the command→icon mapping stays ~1:1. A disclosure caret is a state
+> affordance, not a command.
+
 ### Viewer window ([viewer/window.rs](../../crates/feraille-gpui/src/viewer/window.rs))
 
 | Command | Icon path | Origin |

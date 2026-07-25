@@ -2755,15 +2755,14 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Any file is a candidate: the extension may say nothing (a .docx or
+        // .jar is a zip underneath), so the workbench probes the content
+        // off-thread and reports plainly if it isn't openable.
         let archive = self
             .action_entries_visible_order(cx)
             .into_iter()
-            .map(|(_, _, path)| path)
-            .find(|p| {
-                p.file_name()
-                    .and_then(|s| s.to_str())
-                    .is_some_and(feraille_archive::Format::is_archive_path)
-            });
+            .find(|(_, entry, _)| !matches!(entry.kind, feraille_core::EntryKind::Directory))
+            .map(|(_, _, path)| path);
         if let Some(archive) = archive {
             self.dock_archive_view(archive, window, cx);
         }
@@ -2772,22 +2771,26 @@ impl Shell {
     /// Build the archive view for `archive` and dock it as the active tab's
     /// tool-result surface, cancelling the tab's directory-load work (mirrors
     /// `dock_disk_usage_view`). The tab stays rooted at `current_dir`.
+    /// Open a specific archive in the workbench, bypassing the selection.
+    /// Used by the screenshot harness; the context action goes through
+    /// `on_open_archive`.
+    pub fn open_archive_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.dock_archive_view(path, window, cx);
+    }
+
     fn dock_archive_view(
         &mut self,
         archive: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(format) = archive
-            .file_name()
-            .and_then(|s| s.to_str())
-            .and_then(feraille_archive::Format::from_path)
-        else {
-            return;
-        };
+        // The view renders through this tab's own table, so archive rows get
+        // the real columns/selection/sort; it resolves the format itself,
+        // off-thread, from extension-or-content.
+        let table = self.active_tab().table.clone();
         let shell_weak = cx.weak_entity();
         let view = cx.new(|cx| {
-            let mut v = crate::archive::ArchiveView::new(archive.clone(), format, window, cx);
+            let mut v = crate::archive::ArchiveView::new(archive.clone(), table, window, cx);
             v.set_shell(shell_weak);
             v
         });
@@ -5561,6 +5564,31 @@ impl Shell {
     /// User activated a row (double-click or Enter). For directories
     /// we navigate into them; for files we hand off to the OS opener.
     pub fn activate_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        // Archive rows are virtual: they have no on-disk path, and the
+        // fallback below would otherwise synthesize `current_dir/<name>` and
+        // try to open a file that doesn't exist. Activating a folder opens it
+        // in the tree instead; files do nothing until in-archive preview lands.
+        {
+            let table = self.active_tab().table.clone();
+            let toggle = {
+                let t = table.read(cx);
+                let del = t.delegate();
+                del.is_archive_mode()
+                    .then(|| {
+                        del.archive_path_for_row(row_ix)
+                            .map(str::to_string)
+                            .zip(del.archive_view.clone())
+                    })
+                    .flatten()
+            };
+            if let Some((path, view)) = toggle {
+                let _ = view.update(cx, |v, cx| v.toggle_expanded(&path, cx));
+                return;
+            }
+            if table.read(cx).delegate().is_archive_mode() {
+                return;
+            }
+        }
         let path_and_kind = self
             .active_tab()
             .table

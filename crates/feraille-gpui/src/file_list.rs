@@ -22,7 +22,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     App, AppContext as _, Context, Div, ExternalPaths, FontWeight, InteractiveElement, IntoElement,
     ParentElement, Pixels, Point, Render, RenderImage, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled, Window, div, img, px, svg,
+    StatefulInteractiveElement as _, Styled, WeakEntity, Window, div, img, px, svg,
 };
 use gpui_component::{
     ActiveTheme,
@@ -327,6 +327,14 @@ fn avail_anchor_file(t: &MenuTargets) -> bool {
 /// always sees the user-visible subset, no per-cell skipping.
 pub struct FileListDelegate {
     pub entries: Vec<FileEntry>,
+    /// Tree metadata for archive rows, parallel to `entries` (same shape as
+    /// `tags` / `heats`). **Empty for ordinary directory listings**, which is
+    /// what keeps this addition inert for normal browsing: the Name cell only
+    /// draws indentation and a disclosure caret when a row has an entry here.
+    pub archive_rows: Vec<feraille_archive::TreeRow>,
+    /// The workbench that owns those rows, so a caret click can toggle the
+    /// folder open. `None` whenever `archive_rows` is empty.
+    pub archive_view: Option<WeakEntity<crate::archive::ArchiveView>>,
     pub columns: Vec<Column>,
     /// Columns the user has hidden (header right-click → uncheck). Kept
     /// out of `columns` — the table only ever sees the visible set, so
@@ -453,6 +461,7 @@ pub struct FileListDelegate {
 }
 
 /// See [`FileListDelegate::drag_snapshot`].
+#[derive(Default)]
 struct DragSnapshot {
     /// Visible-order paths of the whole selection — the real OS drag
     /// payload. Rows still clone this into their `ExternalPaths`
@@ -482,6 +491,8 @@ impl FileListDelegate {
             split_persisted_columns(crate::app_state::load().list_columns.as_deref());
         Self {
             entries: Vec::new(),
+            archive_rows: Vec::new(),
+            archive_view: None,
             // Next-level Phase 1: Magic-driven `Format` column
             // replaces the duplicate Kind + Magic columns. The Format
             // cell prefers magic-detected text, falls back to the
@@ -570,6 +581,12 @@ impl FileListDelegate {
     /// cached, else the workspace type icon), per the UI_NONBLOCKING
     /// contract.
     fn build_drag_snapshot(&self, cx: &gpui::App) -> DragSnapshot {
+        // Nothing to hand another app: archive entries have no path until
+        // they're extracted. (Dragging them *out* needs lazy NSFilePromise
+        // materialization — deliberately deferred.)
+        if self.is_archive_mode() {
+            return DragSnapshot::default();
+        }
         let want_thumb = show_thumbnails(cx);
         let mut paths: Vec<PathBuf> = Vec::with_capacity(self.selected_set.len());
         let mut icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]> = smallvec![];
@@ -722,6 +739,9 @@ impl FileListDelegate {
     ) {
         self.invalidate_drag_snapshot();
         self.slow_load = None;
+        // A normal directory load leaves archive mode behind.
+        self.archive_rows.clear();
+        self.archive_view = None;
         self.entries = entries;
         self.paths = paths;
         self.heats = heats;
@@ -761,6 +781,103 @@ impl FileListDelegate {
 
     pub fn path_for_entry(&self, id: NodeId) -> Option<PathBuf> {
         self.paths.get(&id).cloned()
+    }
+
+    /// Show the contents of an archive instead of a directory listing.
+    ///
+    /// `entries` are synthesized rows (no on-disk path — the `paths` map is
+    /// deliberately left empty, so `path_for_entry` returns `None` and every
+    /// path-dependent affordance degrades to its "unknown" branch), and
+    /// `rows` carries the tree metadata the Name cell draws.
+    ///
+    /// Sorting is *not* applied here: the tree's own folders-first order is
+    /// the meaningful one until the user clicks a header, at which point
+    /// `apply_effective_sort` takes over like any other listing.
+    pub fn replace_archive_entries(
+        &mut self,
+        entries: Vec<FileEntry>,
+        rows: Vec<feraille_archive::TreeRow>,
+        view: WeakEntity<crate::archive::ArchiveView>,
+    ) {
+        debug_assert_eq!(entries.len(), rows.len());
+        self.invalidate_drag_snapshot();
+        self.slow_load = None;
+        let n = entries.len();
+        self.entries = entries;
+        self.archive_rows = rows;
+        self.archive_view = Some(view);
+        self.paths = HashMap::new();
+        self.heats = vec![0.0; n];
+        self.tags = vec![Vec::new(); n];
+        self.is_favorited = vec![false; n];
+        self.menu_targets = MenuTargets::default();
+    }
+
+    /// Whether the delegate is currently showing archive contents.
+    pub fn is_archive_mode(&self) -> bool {
+        !self.archive_rows.is_empty()
+    }
+
+    /// The archive path behind a row, when in archive mode.
+    pub fn archive_path_for_row(&self, row_ix: usize) -> Option<&str> {
+        self.archive_rows.get(row_ix).map(|r| r.path.as_str())
+    }
+
+    /// Indent + disclosure caret for an archive row. `None` for ordinary
+    /// directory listings, which keeps the Name cell unchanged for them.
+    ///
+    /// The caret is a fixed 12-DIP box (an affordance pinned to a fixed-size
+    /// slot, one of the documented `px` exceptions) so names stay aligned
+    /// whether or not a row can expand.
+    fn archive_tree_affordance(
+        &self,
+        row_ix: usize,
+        cx: &mut Context<TableState<Self>>,
+    ) -> Option<gpui::AnyElement> {
+        let row = self.archive_rows.get(row_ix)?;
+        const INDENT_PER_LEVEL: f32 = 14.0;
+        const CARET_BOX: f32 = 12.0;
+        let indent = row.depth as f32 * INDENT_PER_LEVEL;
+        let muted = cx.theme().muted_foreground;
+
+        let caret: gpui::AnyElement = if row.expandable {
+            let path = row.path.clone();
+            let view = self.archive_view.clone();
+            let glyph = if row.expanded {
+                "icons/chevron-down.svg"
+            } else {
+                "icons/chevron-right.svg"
+            };
+            div()
+                .id(("archive-caret", row_ix))
+                .w(px(CARET_BOX))
+                .h(px(CARET_BOX))
+                .flex_shrink_0()
+                .cursor_pointer()
+                .child(svg().path(glyph).icon_px(CARET_BOX).text_color(muted))
+                .on_click(move |_, _window, app| {
+                    if let Some(view) = view.as_ref() {
+                        let path = path.clone();
+                        let _ = view.update(app, |v, cx| v.toggle_expanded(&path, cx));
+                    }
+                })
+                .into_any_element()
+        } else {
+            // Files and childless folders: keep the slot so names line up.
+            div()
+                .w(px(CARET_BOX))
+                .h(px(CARET_BOX))
+                .flex_shrink_0()
+                .into_any_element()
+        };
+
+        Some(
+            gpui_component::h_flex()
+                .flex_shrink_0()
+                .child(div().w(px(indent)).flex_shrink_0())
+                .child(caret)
+                .into_any_element(),
+        )
     }
 
     /// Fetch Quick Look thumbnails for the thumbnailable rows in
@@ -1188,6 +1305,10 @@ impl TableDelegate for FileListDelegate {
                 } else {
                     div().w(px(0.0)).h(px(12.0)).into_any_element()
                 };
+                // Archive rows only: depth indent + a disclosure caret for
+                // folders. Ordinary listings have no `archive_rows`, so this
+                // is `None` and the cell is byte-for-byte what it was.
+                let tree_affordance = self.archive_tree_affordance(row_ix, cx);
                 div()
                     .id(("file-row-name", row_ix))
                     .flex()
@@ -1195,6 +1316,7 @@ impl TableDelegate for FileListDelegate {
                     .gap_2()
                     .text_scale_sm()
                     .text_color(cx.theme().foreground)
+                    .children(tree_affordance)
                     .child(icon_wrapper)
                     .child(name_child)
                     .child(chips)
@@ -1278,13 +1400,17 @@ impl TableDelegate for FileListDelegate {
             // the label ("4 seconds ago") stays live; the shell's relative-
             // time tick repaints on a cadence so it counts up even while the
             // user is idle.
+            // A non-positive stamp means "unknown", not 1970 — some archive
+            // formats simply don't record per-entry times. Render nothing
+            // rather than a misleading epoch date.
             "modified" => div()
                 .text_scale_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child(SharedString::from(feraille_core::humanize_mtime(
-                    entry.mtime_unix,
-                    feraille_core::now_unix(),
-                )))
+                .child(SharedString::from(if entry.mtime_unix > 0 {
+                    feraille_core::humanize_mtime(entry.mtime_unix, feraille_core::now_unix())
+                } else {
+                    String::new()
+                }))
                 .into_any_element(),
             // Description: rich facts from the magic-byte parse,
             // populated lazily by the prefetch worker. Empty string
@@ -1412,6 +1538,13 @@ impl TableDelegate for FileListDelegate {
         window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
+        // Archive rows are virtual — Trash / Rename / Get Info / Open With
+        // would all act on a path that doesn't exist. Offer nothing until the
+        // in-archive command set (extract selected, preview) is built out;
+        // the workbench's own toolbar carries the real verbs.
+        if self.is_archive_mode() {
+            return menu;
+        }
         use crate::shell::{
             BulkRenameSelected, ClearQuarantine, Compress, CompressSevenZ, CompressTar,
             CompressTarBz2, CompressTarGz, CompressTarXz, CopyPath, DeleteImmediately, Duplicate,

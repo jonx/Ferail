@@ -758,3 +758,57 @@ fn add_to_tar_is_refused() {
     .unwrap_err();
     assert!(matches!(err, ArchiveError::Codec(_)), "got {err:?}");
 }
+
+#[test]
+fn probe_detects_zip_containers_by_content_not_extension() {
+    // A file whose extension says nothing about being an archive — the
+    // shape of every .docx/.xlsx/.jar/.apk — must still open as a zip.
+    let disguised = TempFile::new("report.docx");
+    build_zip(
+        disguised.path(),
+        &[
+            ("[Content_Types].xml", b"<xml/>"),
+            ("word/document.xml", b"<w/>"),
+        ],
+    );
+    assert_eq!(super::probe_format(disguised.path()), Some(Format::Zip));
+    // And the whole read path works through it, not just detection.
+    let toc = read_toc(disguised.path(), None).unwrap();
+    assert_eq!(toc.file_count(), 2);
+
+    // A genuinely non-archive file is reported as such rather than opened
+    // as an empty archive.
+    let plain = TempFile::new("notes.txt");
+    fs::write(plain.path(), b"just some text, definitely not a zip").unwrap();
+    assert_eq!(super::probe_format(plain.path()), None);
+    assert!(matches!(
+        read_toc(plain.path(), None),
+        Err(ArchiveError::UnsupportedFormat)
+    ));
+}
+
+#[test]
+fn zip_entries_carry_real_modification_times() {
+    // Guards the DOS-timestamp conversion: a freshly written zip must report a
+    // time close to now, not the epoch (which is what the Modified column
+    // showed before the conversion existed).
+    let tf = TempFile::new("stamped.zip");
+    build_zip(tf.path(), &[("a.txt", b"hi")]);
+    let toc = read_toc(tf.path(), None).unwrap();
+    let stamp = toc.entries[0].mtime_unix.expect("zip records a timestamp");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    // DOS timestamps have 2-second granularity and no timezone; allow a wide
+    // window (a day) so the assertion is about "decoded sanely", not clock skew.
+    let skew = (now - stamp).abs();
+    assert!(
+        skew < 86_400,
+        "decoded {stamp} is {skew}s from now ({now}) — conversion looks wrong"
+    );
+    // Pin the arithmetic itself against a known value: the DOS epoch
+    // (1980-01-01T00:00:00Z) is 315_532_800 in unix seconds.
+    let dos_epoch = zip::DateTime::try_from_msdos(0b0000000_0001_00001, 0).unwrap();
+    assert_eq!(super::zip_codec::dos_datetime_to_unix(dos_epoch), Some(315_532_800));
+}

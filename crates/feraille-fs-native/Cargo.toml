@@ -32,7 +32,10 @@ blake3.workspace = true
 #   accepted like the app's other C deps (mpv, tree-sitter). Read/decode is
 #   also available pure-Rust if a static binary later needs to drop it.
 # - sevenz-rust: 7z read/extract only (no write path exposed in v1).
-zip = { version = "2", default-features = false, features = ["deflate", "bzip2", "aes-crypto"] }
+# "time" makes the writer stamp entries with the real current time; without it
+# every archive we create records the 1980 DOS epoch. The `time` crate is
+# already in the graph, so this costs no new dependency.
+zip = { version = "2", default-features = false, features = ["deflate", "bzip2", "aes-crypto", "time"] }
 tar = "0.4"
 flate2 = "1"
 bzip2 = "0.6"

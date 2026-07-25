@@ -20,11 +20,13 @@ pub mod capability;
 pub mod entry;
 pub mod format;
 pub mod safety;
+pub mod tree;
 
 pub use capability::Capabilities;
 pub use entry::{ArchiveEntry, Toc};
 pub use format::{CompressionLevel, Format};
 pub use safety::{safe_relative_path, UnsafePath};
+pub use tree::{ArchiveTree, TreeRow};
 
 #[cfg(test)]
 mod tests {

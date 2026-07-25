@@ -30,7 +30,7 @@ pub mod stat_info;
 mod volumes;
 pub mod xattr_info;
 pub use archive::{
-    add_to_archive, create_archive, extract_all as extract_archive,
+    add_to_archive, create_archive, extract_all as extract_archive, probe_format as probe_archive_format,
     extract_entries as extract_archive_entries, read_summary as read_archive_summary,
     read_toc as read_archive_toc, AddOutcome, ArchiveError, ArchiveSummary, CreateOptions,
     ExtractOptions, ExtractOutcome, SkipReason, SkippedEntry,
@@ -968,7 +968,7 @@ pub fn cloud_synced_locations() -> std::collections::HashMap<PathBuf, CloudState
         .collect()
 }
 
-fn describe_kind(kind: EntryKind, name: &str) -> String {
+pub fn describe_kind(kind: EntryKind, name: &str) -> String {
     match kind {
         EntryKind::Directory => "Folder".to_string(),
         EntryKind::Symlink => "Symlink".to_string(),

@@ -26,10 +26,15 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   list onto an open archive to add them in place (ZIP only; formats that can't be
   edited show no drop target). Names already in the archive are reported rather
   than silently duplicated.
-- **Browse inside archives** — right-click an archive → **Open as Archive** to
-  open a contents view (like Disk Usage): see every file and folder without
-  extracting, then **Extract Selected** (cherry-pick) or **Extract All**.
-  Formats that can't be edited in place (tar, 7z) are marked read-only.
+- **Browse inside archives** — right-click a file → **Open as Archive** to open
+  its contents (like Disk Usage): a real, sortable file list with the usual
+  columns, expandable folders, and a filter box — so a 5000-file archive opens
+  as one folder to drill into, not 5000 rows. Then **Extract Selected**
+  (a selected folder brings its whole subtree) or **Extract All**. It works on
+  anything that *is* an archive underneath, even without the extension —
+  `.docx`, `.xlsx`, `.pptx`, `.jar`, `.apk` — and says so plainly when a file
+  isn't one. Formats that can't be edited in place (tar, 7z) are marked
+  read-only.
 - **Richer 7-Zip descriptions** — `.7z` files now show their file count, root
   folder, and whether they're encrypted in the Description column, the same way
   ZIPs already did.

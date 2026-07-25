@@ -4,13 +4,26 @@
 //! `tool_result` seam (docs/features/TOOL_RESULTS.md) and closed the same way
 //! as the other tool results.
 //!
-//! Phase B foundation: browse (read-only) + Extract All / Extract Selected.
-//! The table of contents is read **off the UI thread** (Prime Directive) via
-//! `feraille_fs_native::read_archive_toc`; render only reads the cached result.
-//! Editing (add/remove entries), the create dialog, password entry, and
-//! drag-in land in later slices.
+//! # Rows are the real file list
+//!
+//! The contents render through the tab's ordinary [`FileListDelegate`] +
+//! `DataTable`, not a bespoke list, so archive rows inherit the app's columns,
+//! selection model, sort, striping and row lines for free. What makes them
+//! archive rows is that the delegate's `paths` map is left **empty** (their
+//! `path_for_entry` is `None`, so every path-dependent affordance degrades to
+//! its "unknown" branch) and a parallel `archive_rows` vector carries the tree
+//! metadata the Name cell draws.
+//!
+//! # Tree, not a flat dump
+//!
+//! A real archive is deep — a macOS app bundle runs to thousands of entries —
+//! so [`feraille_archive::ArchiveTree`] indexes the flat table of contents and
+//! this view projects only the levels the user has expanded.
+//!
+//! All I/O (format probe, table-of-contents read) happens on the background
+//! executor; render only reads cached state (Prime Directive).
 
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use gpui::prelude::FluentBuilder as _;
@@ -22,11 +35,14 @@ use gpui_component::{
     v_flex, ActiveTheme, Disableable, Sizable,
 };
 
-use feraille_archive::{ArchiveEntry, Capabilities, Format, Toc};
+use feraille_archive::{ArchiveTree, Capabilities, Format, Toc, TreeRow};
+use feraille_core::{EntryKind, FileEntry, NodeId};
 use feraille_fs_native::ArchiveError;
 
+use crate::file_list::FileListDelegate;
 use crate::shell::Shell;
-use crate::text::{IconScale as _, TextScale as _};
+use crate::text::TextScale as _;
+use crate::multi_table::{DataTable, TableState};
 
 /// Key context for the archive pane (keymap bindings hang off this).
 pub const ARCHIVE_CONTEXT: &str = "Archive";
@@ -34,7 +50,7 @@ pub const ARCHIVE_CONTEXT: &str = "Archive";
 /// The off-thread load state of the archive's table of contents.
 enum ArchiveLoad {
     Loading,
-    Loaded(Toc),
+    Loaded(Box<Toc>),
     /// The archive's *listing itself* is encrypted (7z header encryption), so
     /// nothing can be shown until a password is supplied. `error` is set after
     /// a rejected attempt.
@@ -44,21 +60,24 @@ enum ArchiveLoad {
 
 pub struct ArchiveView {
     archive_path: PathBuf,
-    format: Format,
-    caps: Capabilities,
+    /// Resolved off-thread — by extension when it names a format, otherwise by
+    /// content, so a `.docx` / `.jar` / `.apk` opens as the zip it is.
+    format: Option<Format>,
     load: ArchiveLoad,
-    /// Indices into `Toc::entries` the user has selected for cherry-pick
-    /// extraction.
-    selected: BTreeSet<usize>,
-    /// Weak handle to the owning shell — used to run extraction through
-    /// `Shell::spawn_archive_op` (tasks / progress / cancel / toast / undo /
-    /// reload) rather than duplicating that machinery here.
+    /// Folder index over the flat table of contents.
+    tree: ArchiveTree,
+    /// Archive paths of the folders the user has opened.
+    expanded: HashSet<String>,
+    /// Stable synthetic ids so selection survives expand/collapse.
+    ids: std::collections::HashMap<String, NodeId>,
+    next_id: u64,
+    /// Filter text typed into the workbench's own search box.
+    filter_input: Entity<InputState>,
+    filter: String,
+    /// The tab's table — the archive rows are pushed into its delegate.
+    table: Entity<TableState<FileListDelegate>>,
     shell: Option<WeakEntity<Shell>>,
-    /// Password entry for encrypted archives, created eagerly so `render`
-    /// never has to build state.
     password_input: Entity<InputState>,
-    /// The password the user supplied, once accepted. Threaded into every
-    /// extraction from this view.
     password: Option<String>,
     focus_handle: FocusHandle,
 }
@@ -66,18 +85,35 @@ pub struct ArchiveView {
 impl ArchiveView {
     pub fn new(
         archive_path: PathBuf,
-        format: Format,
+        table: Entity<TableState<FileListDelegate>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let password_input =
             cx.new(|cx| InputState::new(window, cx).masked(true).placeholder("Password"));
+        let filter_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter contents\u{2026}"));
+        // Re-project on every keystroke in the filter box.
+        cx.subscribe(&filter_input, |this: &mut Self, input, ev, cx| {
+            if matches!(ev, gpui_component::input::InputEvent::Change) {
+                this.filter = input.read(cx).value().to_string();
+                this.project_rows(cx);
+                cx.notify();
+            }
+        })
+        .detach();
+
         let mut view = Self {
             archive_path,
-            format,
-            caps: format.capabilities(),
+            format: None,
             load: ArchiveLoad::Loading,
-            selected: BTreeSet::new(),
+            tree: ArchiveTree::default(),
+            expanded: HashSet::new(),
+            ids: std::collections::HashMap::new(),
+            next_id: 1,
+            filter_input,
+            filter: String::new(),
+            table,
             shell: None,
             password_input,
             password: None,
@@ -91,12 +127,31 @@ impl ArchiveView {
         self.shell = Some(shell);
     }
 
-    /// Schedule the TOC read on the background executor and apply the result
-    /// through an entity update (the only place view state mutates).
+    fn caps(&self) -> Option<Capabilities> {
+        self.format.map(|f| f.capabilities())
+    }
+
+    /// Probe the format and read the table of contents on the background
+    /// executor, then apply the result through an entity update.
     fn start_load(&mut self, password: Option<String>, cx: &mut Context<Self>) {
         let path = self.archive_path.clone();
         let attempt = password.clone();
         cx.spawn(async move |this, cx| {
+            let probe = {
+                let path = path.clone();
+                cx.background_executor()
+                    .spawn(async move { feraille_fs_native::probe_archive_format(&path) })
+                    .await
+            };
+            let Some(format) = probe else {
+                let _ = this.update(cx, |this, cx| {
+                    this.load = ArchiveLoad::Failed(
+                        "This file isn't an archive Feraille can open.".to_string(),
+                    );
+                    cx.notify();
+                });
+                return;
+            };
             let result = cx
                 .background_executor()
                 .spawn(async move {
@@ -104,11 +159,21 @@ impl ArchiveView {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                this.format = Some(format);
                 match result {
                     Ok(toc) => {
-                        // Keep the accepted password for extraction.
                         this.password = password;
-                        this.load = ArchiveLoad::Loaded(toc);
+                        this.tree = ArchiveTree::build(&toc);
+                        // Open the single root folder straight away — an
+                        // archive with one wrapper directory should not greet
+                        // the user with a single collapsed row.
+                        if let Some(root) = toc.single_root() {
+                            if this.tree.is_dir(root) {
+                                this.expanded.insert(root.to_string());
+                            }
+                        }
+                        this.load = ArchiveLoad::Loaded(Box::new(toc));
+                        this.project_rows(cx);
                     }
                     Err(ArchiveError::PasswordRequired) => {
                         this.load = ArchiveLoad::NeedsPassword { error: None }
@@ -126,17 +191,87 @@ impl ArchiveView {
         .detach();
     }
 
+    /// Stable id per archive path, so the selection set survives re-projection.
+    fn id_for(&mut self, path: &str) -> NodeId {
+        if let Some(id) = self.ids.get(path) {
+            return *id;
+        }
+        let id = NodeId::from_raw(self.next_id).expect("nonzero");
+        self.next_id += 1;
+        self.ids.insert(path.to_string(), id);
+        id
+    }
+
+    /// Push the currently visible tree rows into the tab's file-list delegate.
+    fn project_rows(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.load, ArchiveLoad::Loaded(_)) {
+            return;
+        }
+        let rows: Vec<TreeRow> = if self.filter.trim().is_empty() {
+            self.tree.visible_rows(&self.expanded)
+        } else {
+            self.tree.matching_rows(self.filter.trim())
+        };
+        let entries: Vec<FileEntry> = rows
+            .iter()
+            .map(|row| {
+                let id = self.id_for(&row.path);
+                let size = row.size.unwrap_or(0);
+                FileEntry {
+                    id,
+                    name: row.name.clone(),
+                    display_name: row.name.clone(),
+                    name_has_hazards: false,
+                    kind: if row.is_dir {
+                        EntryKind::Directory
+                    } else {
+                        EntryKind::File
+                    },
+                    size,
+                    mtime_unix: row.mtime_unix.unwrap_or(0),
+                    display_size: if row.is_dir {
+                        String::new()
+                    } else {
+                        feraille_fs_native::humanize_bytes(size)
+                    },
+                    display_kind: feraille_fs_native::describe_kind(
+                        if row.is_dir { EntryKind::Directory } else { EntryKind::File },
+                        &row.name,
+                    ),
+                    display_magic: String::new(),
+                    display_description: String::new(),
+                    is_quarantined: false,
+                    quarantine: None,
+                    hidden: false,
+                }
+            })
+            .collect();
+
+        let weak = cx.entity().downgrade();
+        self.table.update(cx, |table, cx| {
+            table
+                .delegate_mut()
+                .replace_archive_entries(entries, rows, weak);
+            cx.notify();
+        });
+    }
+
+    /// Open / close a folder row.
+    pub fn toggle_expanded(&mut self, path: &str, cx: &mut Context<Self>) {
+        if !self.expanded.remove(path) {
+            self.expanded.insert(path.to_string());
+        }
+        self.project_rows(cx);
+        cx.notify();
+    }
+
     /// Whether the archive's *contents* are encrypted while its listing was
-    /// readable (the zip case: entry names are public, data is not). Extraction
-    /// is gated until a password is supplied.
+    /// readable (the zip case). Extraction is gated until a password is given.
     fn locked_contents(&self) -> bool {
         self.password.is_none()
             && matches!(&self.load, ArchiveLoad::Loaded(toc) if toc.needs_password)
     }
 
-    /// Apply the typed password. When the listing itself was encrypted we
-    /// re-read the table of contents (which validates it immediately);
-    /// otherwise we just record it and let extraction use it.
     fn submit_password(&mut self, cx: &mut Context<Self>) {
         let typed = self.password_input.read(cx).value().to_string();
         if typed.is_empty() {
@@ -152,14 +287,6 @@ impl ArchiveView {
         }
     }
 
-    fn toggle_row(&mut self, i: usize, cx: &mut Context<Self>) {
-        if !self.selected.remove(&i) {
-            self.selected.insert(i);
-        }
-        cx.notify();
-    }
-
-    /// Destination for extraction: the folder the archive lives in.
     fn dest_parent(&self) -> Option<PathBuf> {
         self.archive_path.parent().map(|p| p.to_path_buf())
     }
@@ -175,33 +302,48 @@ impl ArchiveView {
         });
     }
 
+    /// Extract the rows selected in the file list. A selected folder brings its
+    /// whole subtree (the engine's selection matches directory prefixes), so a
+    /// collapsed folder extracts entirely without expanding it first.
     fn extract_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let ArchiveLoad::Loaded(toc) = &self.load else {
-            return;
-        };
-        if self.selected.is_empty() {
+        let paths = self.selected_archive_paths(cx);
+        if paths.is_empty() {
             return;
         }
-        let entries: Vec<String> = self
-            .selected
-            .iter()
-            .filter_map(|&i| toc.entries.get(i))
-            .map(|e| e.path.clone())
-            .collect();
         let (Some(shell), Some(parent)) = (self.shell.clone(), self.dest_parent()) else {
             return;
         };
         let archive = self.archive_path.clone();
         let password = self.password.clone();
         let _ = shell.update(cx, |shell, scx| {
-            shell.extract_archive_entries_into(archive, entries, parent, password, window, scx);
+            shell.extract_archive_entries_into(archive, paths, parent, password, window, scx);
         });
     }
 
+    /// Archive paths behind the delegate's current selection.
+    fn selected_archive_paths(&self, cx: &App) -> Vec<String> {
+        let table = self.table.read(cx);
+        let del = table.delegate();
+        del.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| del.selected_set.contains(&e.id))
+            .filter_map(|(i, _)| del.archive_path_for_row(i).map(str::to_string))
+            .collect()
+    }
+
+    fn selection_count(&self, cx: &App) -> usize {
+        let table = self.table.read(cx);
+        let del = table.delegate();
+        del.entries
+            .iter()
+            .filter(|e| del.selected_set.contains(&e.id))
+            .count()
+    }
+
     /// Add files dropped from Finder or the file list into this archive.
-    /// Only wired up for formats the capability matrix marks editable.
     fn add_dropped(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
-        if paths.is_empty() || !self.caps.can_edit_in_place {
+        if paths.is_empty() || !self.caps().is_some_and(|c| c.can_edit_in_place) {
             return;
         }
         let Some(shell) = self.shell.clone() else {
@@ -209,13 +351,10 @@ impl ArchiveView {
         };
         let archive = self.archive_path.clone();
         let password = self.password.clone();
-        // Re-read the table of contents once the entries have landed, so the
-        // list shows them without the user reopening the archive.
         let this = cx.entity().downgrade();
         let refresh: crate::shell::ArchiveOpDone = Box::new(move |_shell, cx| {
             let _ = this.update(cx, |this: &mut ArchiveView, cx| {
                 let password = this.password.clone();
-                this.selected.clear();
                 this.start_load(password, cx);
             });
         });
@@ -233,33 +372,36 @@ impl ArchiveView {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let label = self.format.map(|f| f.label()).unwrap_or("Archive");
 
         let subtitle = match &self.load {
-            ArchiveLoad::Loading => "Reading…".to_string(),
-            ArchiveLoad::NeedsPassword { .. } => "Encrypted".to_string(),
+            ArchiveLoad::Loading => "Reading\u{2026}".to_string(),
+            ArchiveLoad::NeedsPassword { .. } => format!("{label} \u{00b7} encrypted"),
             ArchiveLoad::Failed(_) => "Unreadable".to_string(),
             ArchiveLoad::Loaded(toc) => {
                 let files = toc.file_count();
                 let size = toc
                     .total_uncompressed()
-                    .map(|b| format!(" · {}", feraille_fs_native::humanize_bytes(b)))
+                    .map(|b| format!(" \u{00b7} {}", feraille_fs_native::humanize_bytes(b)))
                     .unwrap_or_default();
-                let encrypted = if toc.needs_password { " · encrypted" } else { "" };
+                let encrypted = if toc.needs_password {
+                    " \u{00b7} encrypted"
+                } else {
+                    ""
+                };
                 format!(
-                    "{} · {files} file{}{size}{encrypted}",
-                    self.format.label(),
+                    "{label} \u{00b7} {files} file{}{size}{encrypted}",
                     if files == 1 { "" } else { "s" }
                 )
             }
         };
 
-        let selected_count = self.selected.len();
-        // Extraction stays disabled while the archive's contents are still
-        // locked — better than letting the op fail on every entry.
+        let selected = self.selection_count(cx);
         let can_extract = matches!(self.load, ArchiveLoad::Loaded(_))
-            && self.caps.can_extract
+            && self.caps().is_some_and(|c| c.can_extract)
             && !self.locked_contents();
-        let read_only = self.caps.is_read_only();
+        let read_only = self.caps().is_some_and(|c| c.is_read_only());
+        let loaded = matches!(self.load, ArchiveLoad::Loaded(_));
 
         h_flex()
             .w_full()
@@ -293,15 +435,18 @@ impl ArchiveView {
                         .child("Read-only"),
                 )
             })
+            .when(loaded, |this| {
+                this.child(div().w(px(200.0)).child(Input::new(&self.filter_input).small()))
+            })
             .child(
                 Button::new("archive-extract-selected")
-                    .label(if selected_count > 0 {
-                        format!("Extract {selected_count} Selected")
+                    .label(if selected > 0 {
+                        format!("Extract {selected} Selected")
                     } else {
                         "Extract Selected".to_string()
                     })
                     .small()
-                    .disabled(!can_extract || selected_count == 0)
+                    .disabled(!can_extract || selected == 0)
                     .on_click(cx.listener(|this, _, window, cx| this.extract_selected(window, cx))),
             )
             .child(
@@ -314,15 +459,7 @@ impl ArchiveView {
             .into_any_element()
     }
 
-    /// Password entry row: masked field + Unlock. Used full-pane when the
-    /// listing itself is encrypted, and as a strip under the header when only
-    /// the contents are.
-    fn password_form(
-        &self,
-        prompt: &str,
-        error: Option<&str>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn password_form(&self, prompt: &str, error: Option<&str>, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         v_flex()
             .gap_1()
@@ -370,102 +507,6 @@ impl ArchiveView {
             )
             .into_any_element()
     }
-
-    fn entry_list(&self, cx: &mut Context<Self>) -> AnyElement {
-        let ArchiveLoad::Loaded(toc) = &self.load else {
-            return div().into_any_element();
-        };
-        let count = toc.entries.len();
-        let theme = cx.theme();
-        let selected_bg = theme.accent;
-        let hover_bg = theme.muted;
-        let muted = theme.muted_foreground;
-        let weak = cx.weak_entity();
-
-        uniform_list("archive-entries", count, move |range, _window, app| {
-            let _guard = feraille_core::path_guard::enter_render();
-            let Some(ent) = weak.upgrade() else {
-                return Vec::new();
-            };
-            let this = ent.read(app);
-            let ArchiveLoad::Loaded(toc) = &this.load else {
-                return Vec::new();
-            };
-            range
-                .filter_map(|i| toc.entries.get(i).map(|e| (i, e)))
-                .map(|(i, entry)| {
-                    let selected = this.selected.contains(&i);
-                    row(i, entry, selected, selected_bg, hover_bg, muted, weak.clone())
-                })
-                .collect()
-        })
-        .flex_1()
-        .into_any_element()
-    }
-}
-
-/// One archive-entry row: indented by depth, leaf name + size, click toggles
-/// selection.
-fn row(
-    i: usize,
-    entry: &ArchiveEntry,
-    selected: bool,
-    selected_bg: Hsla,
-    hover_bg: Hsla,
-    muted: Hsla,
-    weak: WeakEntity<ArchiveView>,
-) -> AnyElement {
-    let indent = entry.depth() as f32 * 14.0;
-    let size = if entry.is_dir {
-        String::new()
-    } else {
-        entry
-            .uncompressed_size
-            .map(feraille_fs_native::humanize_bytes)
-            .unwrap_or_default()
-    };
-
-    h_flex()
-        .id(("archive-row", i))
-        .w_full()
-        .px_3()
-        .py_1()
-        .gap_2()
-        .items_center()
-        .cursor_pointer()
-        .when(selected, |d| d.bg(selected_bg.opacity(0.22)))
-        .hover(|d| d.bg(hover_bg))
-        .on_click(move |_, _, app| {
-            let _ = weak.update(app, |this, cx| this.toggle_row(i, cx));
-        })
-        .child(div().w(px(indent)).flex_none())
-        // Fixed-width type slot: folder glyph for directories, blank for files
-        // so the name column stays aligned.
-        .child(div().w(px(16.0)).flex_none().when(entry.is_dir, |d| {
-            d.child(
-                // Directory-kind icon (upstream Lucide `folder`), matching the
-                // file list — NOT the local nav/folder.svg New Folder glyph.
-                svg()
-                    .path("icons/folder.svg")
-                    .icon_px(14.0)
-                    .text_color(muted),
-            )
-        }))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_scale_sm()
-                .child(entry.leaf().to_string()),
-        )
-        .child(
-            div()
-                .text_scale_xs()
-                .text_color(muted)
-                .child(size),
-        )
-        .into_any_element()
 }
 
 impl Render for ArchiveView {
@@ -474,9 +515,8 @@ impl Render for ArchiveView {
         let bg = theme.background;
         let border = theme.border;
         let header = self.header(cx);
+        let editable = self.caps().is_some_and(|c| c.can_edit_in_place);
 
-        // Contents-only encryption (zip): the listing renders, but a password
-        // strip sits between the header and the rows until it is supplied.
         let locked_strip = self.locked_contents().then(|| {
             let form = self.password_form(
                 "This archive's contents are encrypted. Enter its password to extract.",
@@ -493,7 +533,7 @@ impl Render for ArchiveView {
         });
 
         let body = match &self.load {
-            ArchiveLoad::Loading => self.centered_message("Reading archive…", cx),
+            ArchiveLoad::Loading => self.centered_message("Reading archive\u{2026}", cx),
             ArchiveLoad::NeedsPassword { error } => {
                 let error = error.clone();
                 let form = self.password_form(
@@ -509,16 +549,15 @@ impl Render for ArchiveView {
                     .child(form)
                     .into_any_element()
             }
-            ArchiveLoad::Failed(e) => {
-                self.centered_message(format!("Couldn't read this archive: {e}"), cx)
-            }
-            ArchiveLoad::Loaded(_) => self.entry_list(cx),
+            ArchiveLoad::Failed(e) => self.centered_message(e.clone(), cx),
+            // The contents ARE the app's normal file table — columns,
+            // selection, sort and row lines all come from it.
+            ArchiveLoad::Loaded(_) => DataTable::new(&self.table)
+                .bordered(false)
+                .stripe(true)
+                .small()
+                .into_any_element(),
         };
-
-        // Editable formats (zip) accept dropped files straight into the
-        // archive; read-only ones show no drop affordance at all, so the
-        // capability is discoverable rather than a silent no-op.
-        let editable = self.caps.can_edit_in_place;
 
         v_flex()
             .track_focus(&self.focus_handle)
@@ -532,11 +571,9 @@ impl Render for ArchiveView {
                         .border_color(cx.theme().accent)
                         .bg(cx.theme().accent.opacity(0.08))
                 })
-                .on_drop(cx.listener(
-                    |this, paths: &ExternalPaths, window, cx| {
-                        this.add_dropped(paths.paths().to_vec(), window, cx);
-                    },
-                ))
+                .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                    this.add_dropped(paths.paths().to_vec(), window, cx);
+                }))
             })
             .child(header)
             .children(locked_strip)

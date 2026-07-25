@@ -115,6 +115,49 @@ pub fn format_of(path: &Path) -> Result<Format, ArchiveError> {
     Format::from_path(&name).ok_or(ArchiveError::UnsupportedFormat)
 }
 
+/// Work out how to open `path` as an archive, by extension first and by
+/// content second.
+///
+/// The extension is authoritative when it names a format we support (it also
+/// distinguishes `.tar.gz` from a bare `.gz`, which magic bytes cannot). When
+/// it says nothing — `.docx`, `.xlsx`, `.pptx`, `.jar`, `.apk`, `.ipa`, or a
+/// file with no extension at all — we sniff the header, because every one of
+/// those is a zip container underneath and is perfectly browsable.
+///
+/// Returns `None` for anything we can't open, so the caller can say so plainly
+/// rather than showing an empty archive. Blocking (reads the file header), so
+/// it runs off the UI thread like the rest of this module.
+pub fn probe_format(path: &Path) -> Option<Format> {
+    feraille_core::path_guard::assert_off_ui_thread("archive::probe_format");
+    if let Ok(format) = format_of(path) {
+        return Some(format);
+    }
+    // Content fallback: the magic table already classifies the zip-based
+    // document and app-package containers.
+    let info = crate::magic::detect_magic_info(path)?;
+    use crate::magic::MagicType;
+    match info.magic_type {
+        // Every OOXML document, JAR, APK and plain zip is a zip container.
+        MagicType::Zip
+        | MagicType::ZipEncrypted
+        | MagicType::DocWord
+        | MagicType::DocWordMacro
+        | MagicType::DocExcel
+        | MagicType::DocExcelMacro
+        | MagicType::DocPowerPoint
+        | MagicType::DocPowerPointMacro
+        | MagicType::AppJar
+        | MagicType::AppApk => Some(Format::Zip),
+        MagicType::SevenZip => Some(Format::SevenZ),
+        MagicType::Tar => Some(Format::Tar),
+        MagicType::Gzip => Some(Format::Gzip),
+        MagicType::Xz => Some(Format::Xz),
+        MagicType::Bzip2 => Some(Format::Bzip2),
+        // Recognised as an archive, but not one this engine can read.
+        _ => None,
+    }
+}
+
 /// Read the full table of contents of `archive`.
 ///
 /// `password` is used for encrypted zip/7z; pass `None` first and retry with a
@@ -123,7 +166,9 @@ pub fn format_of(path: &Path) -> Result<Format, ArchiveError> {
 /// this belongs off the UI thread.
 pub fn read_toc(archive: &Path, password: Option<&str>) -> Result<Toc, ArchiveError> {
     feraille_core::path_guard::assert_off_ui_thread("archive::read_toc");
-    match format_of(archive)? {
+    // Content-aware: a `.docx` has no archive extension but is a zip.
+    let format = probe_format(archive).ok_or(ArchiveError::UnsupportedFormat)?;
+    match format {
         Format::Zip => zip_codec::read_toc(archive, password),
         Format::SevenZ => sevenz::read_toc(archive, password),
         f if f.is_tar_family() => tarball::read_toc(archive, f),
@@ -262,7 +307,8 @@ fn dispatch_extract(
     progress: &TransferProgress,
     cancel: &AtomicBool,
 ) -> Result<ExtractOutcome, ArchiveError> {
-    match format_of(archive)? {
+    let format = probe_format(archive).ok_or(ArchiveError::UnsupportedFormat)?;
+    match format {
         Format::Zip => zip_codec::extract(archive, dest, sel, opts, progress, cancel),
         Format::SevenZ => sevenz::extract(archive, dest, sel, opts, progress, cancel),
         f if f.is_tar_family() => tarball::extract(archive, f, dest, sel, opts, progress, cancel),

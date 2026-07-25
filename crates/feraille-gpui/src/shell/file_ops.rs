@@ -2455,6 +2455,10 @@ impl Shell {
         self.on_bulk_rename_selected(&BulkRenameSelected, window, cx);
     }
 
+    pub fn trigger_open_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_open_archive(&OpenAsArchive, window, cx);
+    }
+
     pub fn trigger_new_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.on_new_archive(&NewArchive, window, cx);
     }

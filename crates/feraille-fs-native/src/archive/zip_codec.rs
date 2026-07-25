@@ -40,9 +40,9 @@ pub(super) fn read_toc(archive: &Path, _password: Option<&str>) -> Result<Toc, A
             is_dir: entry.is_dir(),
             uncompressed_size: Some(entry.size()),
             compressed_size: Some(entry.compressed_size()),
-            // Per-entry mtime decoding (DOS date/time → unix) is deferred; the
-            // browse view falls back to a blank Modified cell until then.
-            mtime_unix: None,
+            // DOS date/time → unix seconds, so the Modified column shows the
+            // real date instead of the epoch.
+            mtime_unix: entry.last_modified().and_then(dos_datetime_to_unix),
             encrypted,
         });
     }
@@ -62,6 +62,27 @@ pub(super) fn read_summary(archive: &Path) -> Result<ArchiveSummary, ArchiveErro
         encrypted: toc.needs_password,
         total_uncompressed: toc.total_uncompressed(),
     })
+}
+
+/// Convert a zip DOS timestamp to unix seconds.
+///
+/// The zip crate's own `OffsetDateTime` conversion sits behind its `time`
+/// feature, which we don't enable, so we do the civil-date arithmetic here
+/// (Howard Hinnant's `days_from_civil`). DOS timestamps carry no timezone; like
+/// every other zip tool we read them as UTC.
+pub(super) fn dos_datetime_to_unix(dt: zip::DateTime) -> Option<i64> {
+    let (y, m, d) = (dt.year() as i64, dt.month() as i64, dt.day() as i64);
+    if m == 0 || d == 0 {
+        return None; // DOS "unset" timestamp
+    }
+    let y_adj = if m <= 2 { y - 1 } else { y };
+    let era = if y_adj >= 0 { y_adj } else { y_adj - 399 } / 400;
+    let yoe = y_adj - era * 400;
+    let mp = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + dt.hour() as i64 * 3_600 + dt.minute() as i64 * 60 + dt.second() as i64)
 }
 
 /// Whether a unix mode marks a symlink (`S_IFLNK`).

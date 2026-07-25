@@ -387,7 +387,6 @@ pub fn run(args: Args) -> Result<()> {
     let theme_mode = args.theme;
     let settings_page = args.settings.clone();
     let disk_usage_root = args.disk_usage.clone();
-    let archive_target = args.archive.clone();
     let viewer_target = args.viewer.clone();
     let viewer_adjust = args.viewer_adjust;
     let viewer_adjust_video = args.viewer_adjust_video;
@@ -422,7 +421,6 @@ pub fn run(args: Args) -> Result<()> {
         let settings_page = settings_page.clone();
         let shell_args = shell_args.clone();
         let disk_usage_root = disk_usage_root.clone();
-        let archive_target = archive_target.clone();
         let viewer_target = viewer_target.clone();
         cx.spawn(async move |cx| {
             // Headless capture: `Window::render_to_image` samples an offscreen
@@ -467,20 +465,6 @@ pub fn run(args: Args) -> Result<()> {
                             crate::disk_usage::DiskUsageView::new(
                                 canonical, fs, tasks, None, None, cx,
                             )
-                        });
-                        cx.new(|cx| gpui_component::Root::new(view, window, cx))
-                    } else if let Some(arc) = archive_target.clone() {
-                        // Headless archive workbench: render the contents view
-                        // straight into the frame (no owning Shell, so the
-                        // extract buttons are inert — fine for a screenshot).
-                        let canonical = std::fs::canonicalize(&arc).unwrap_or(arc.clone());
-                        let format = canonical
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .and_then(feraille_archive::Format::from_path)
-                            .unwrap_or(feraille_archive::Format::Zip);
-                        let view = cx.new(|cx| {
-                            crate::archive::ArchiveView::new(canonical, format, window, cx)
                         });
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if let Some(target) = viewer_target.clone() {
@@ -689,6 +673,7 @@ struct ShellArgs {
     new_folder: bool,
     bulk_rename: bool,
     new_archive: bool,
+    archive: Option<PathBuf>,
     expand: Vec<PathBuf>,
     // Stage-deferred flags. Recorded so the apply step can emit a
     // single "stage X not yet wired" log warning per use, rather
@@ -730,6 +715,7 @@ impl From<&Args> for ShellArgs {
             new_folder: a.new_folder,
             bulk_rename: a.bulk_rename,
             new_archive: a.new_archive,
+            archive: a.archive.clone(),
             expand: a.expand.clone(),
             properties: a.properties,
             edit_mode: a.edit_mode,
@@ -1029,6 +1015,17 @@ impl ShellArgs {
                         s.select_row_indices(&[0, 1, 2, 3], cx);
                     }
                     s.trigger_bulk_rename(window, cx);
+                });
+            });
+        }
+        if let Some(arc) = self.archive.clone() {
+            // Drive the real path: select the archive row in its folder and
+            // dispatch the same action the context menu does, so the capture
+            // exercises the shipping code rather than a bespoke harness view.
+            let canonical = std::fs::canonicalize(&arc).unwrap_or(arc.clone());
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    s.open_archive_path(canonical, window, cx);
                 });
             });
         }
