@@ -400,6 +400,33 @@ where
         cx.notify();
     }
 
+    /// Window-space centre of row `row_ix`, derived from the body list's
+    /// last-laid-out bounds + scroll offset. `None` before the first
+    /// layout, or when the row is scrolled out of the viewport.
+    ///
+    /// Exists for the screenshot harness (`--context-menu-row`), which
+    /// synthesises a real right-click at this point: the row context menu
+    /// is built by a mouse-event listener, so nothing short of an actual
+    /// `MouseDown` can capture it headlessly.
+    pub fn row_center(&self, row_ix: usize) -> Option<Point<Pixels>> {
+        let state = self.vertical_scroll_handle.0.borrow();
+        let list = state.base_handle.bounds();
+        if list.size.width <= Pixels::ZERO || list.size.height <= Pixels::ZERO {
+            return None;
+        }
+        let row_height = self.options.size.table_row_height();
+        let y = list.origin.y
+            + state.base_handle.offset().y
+            + row_height * row_ix as f32
+            + row_height / 2.;
+        if y < list.origin.y || y > list.origin.y + list.size.height {
+            return None;
+        }
+        // Left-ish of the Name column: past the disclosure/icon gutter,
+        // well clear of the vertical scrollbar on the right edge.
+        Some(gpui::point(list.origin.x + px(80.), y))
+    }
+
     // Scroll to the column at the given index.
     pub fn scroll_to_col(&mut self, col_ix: usize, cx: &mut Context<Self>) {
         let col_ix = col_ix.saturating_sub(self.fixed_left_cols_count());

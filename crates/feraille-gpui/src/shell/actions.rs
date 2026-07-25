@@ -99,6 +99,9 @@ actions!(
         /// Pop the active docked Disk Usage surface into a standalone
         /// window. No-op for other result types.
         PopOutDiskUsage,
+        /// Move the docked archive workbench into its own window, so it can sit
+        /// beside Finder (or another Feraille window) for drag-and-drop.
+        PopOutArchive,
         /// Find duplicate files under the active tab's directory and show
         /// them grouped in the tab (docs/features/DUPLICATES.md).
         FindDuplicates,

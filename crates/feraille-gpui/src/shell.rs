@@ -2009,11 +2009,6 @@ impl Shell {
                             // when the click replaced selection
                             // to that unselected row.
                             this.context_row = if row_was_selected { None } else { Some(r) };
-                            // Stage the resolved target caps so the
-                            // menu about to build gates bulk commands
-                            // (Clear Quarantine) on the whole set, not
-                            // just row `r`.
-                            this.push_menu_targets(r, cx);
                         } else {
                             this.context_row = None;
                         }
@@ -2245,8 +2240,9 @@ impl Shell {
     ///
     /// Read-only (`&self`): the caller decides whether to consume
     /// `context_row`. `action_entries_visible_order` takes it (one-shot
-    /// dispatch); `build_menu_targets` peeks it so the menu is built
-    /// against the identical set the handler will later act on.
+    /// dispatch). Its menu-side twin is `file_list::resolve_menu_targets`,
+    /// which resolves the same set from the clicked row + selection when
+    /// the menu builds.
     fn resolve_targets(
         &self,
         context_row: Option<usize>,
@@ -2272,42 +2268,6 @@ impl Shell {
     fn action_entries_visible_order(&mut self, cx: &App) -> Vec<(usize, FileEntry, PathBuf)> {
         let context_row = self.context_row.take();
         self.resolve_targets(context_row, cx)
-    }
-
-    /// Project the resolved target set into the capability snapshot the
-    /// context menu gates on, plus the clicked row as the single
-    /// `anchor` for "…from Here" commands. Peeks `context_row` (set just
-    /// before this runs) WITHOUT consuming it, so menu visibility and the
-    /// later handler agree by construction. Model/cache-only — the path
-    /// resolution it inherits reads cached snapshots, no filesystem.
-    fn build_menu_targets(&self, clicked_row: usize, cx: &App) -> crate::file_list::MenuTargets {
-        let caps = self
-            .resolve_targets(self.context_row, cx)
-            .into_iter()
-            .map(|(_, entry, _)| crate::file_list::TargetCap::from(&entry))
-            .collect();
-        let anchor = self
-            .active_tab()
-            .table
-            .read(cx)
-            .delegate()
-            .entries
-            .get(clicked_row)
-            .map(crate::file_list::TargetCap::from);
-        crate::file_list::MenuTargets { caps, anchor }
-    }
-
-    /// Stage the menu-target caps into the active tab's delegate so the
-    /// next `context_menu` build gates against the whole resolved set.
-    /// Called from both right-click sites (list rows and the icons grid)
-    /// right after `context_row` is set. No `refresh` — this only feeds
-    /// the menu about to open, not the painted rows.
-    fn push_menu_targets(&mut self, clicked_row: usize, cx: &mut Context<Self>) {
-        let targets = self.build_menu_targets(clicked_row, cx);
-        let table = self.active_tab().table.clone();
-        table.update(cx, |state, _| {
-            state.delegate_mut().menu_targets = targets;
-        });
     }
 
     fn on_navigate_back(&mut self, _: &NavigateBack, _: &mut Window, cx: &mut Context<Self>) {
@@ -2784,16 +2744,28 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The view renders through this tab's own table, so archive rows get
-        // the real columns/selection/sort; it resolves the format itself,
-        // off-thread, from extension-or-content.
-        let table = self.active_tab().table.clone();
+        // The workbench owns its own table (so it can be popped out later) and
+        // resolves the format itself, off-thread, from extension-or-content.
+        let process = self.process.clone();
+        let focus = self.focus_handle.clone();
         let shell_weak = cx.weak_entity();
         let view = cx.new(|cx| {
-            let mut v = crate::archive::ArchiveView::new(archive.clone(), table, window, cx);
+            let mut v =
+                crate::archive::ArchiveView::new(archive.clone(), process, focus, window, cx);
             v.set_shell(shell_weak);
             v
         });
+        self.dock_archive_entity(archive, view, cx);
+    }
+
+    /// Dock an existing archive view into the active tab — used both by a fresh
+    /// open and by a standalone window docking itself back.
+    pub(crate) fn dock_archive_entity(
+        &mut self,
+        archive: PathBuf,
+        view: Entity<crate::archive::ArchiveView>,
+        cx: &mut Context<Self>,
+    ) {
 
         let tab_id = self.active_tab().id;
         let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else {
@@ -2814,8 +2786,61 @@ impl Shell {
         self.tabs[idx].load_generation = self.tabs[idx].load_generation.wrapping_add(1);
         self.tabs[idx].load_staging = None;
         self.tabs[idx].dupe_groups.clear();
-        self.tabs[idx].tool_result = Some(ToolResultSurface::archive(archive, view));
+        let surface = ToolResultSurface::archive(archive, view);
+        surface.handle_host_event(ToolHostEvent::HostChanged(ToolHostContext::Docked), cx);
+        self.tabs[idx].tool_result = Some(surface);
         cx.notify();
+    }
+
+    fn archive_dock_owner(&self, cx: &mut Context<Self>) -> crate::archive::ArchiveDockOwner {
+        let weak: WeakEntity<Self> = cx.weak_entity();
+        Rc::new(move |archive, view, cx| {
+            if let Some(s) = weak.upgrade() {
+                s.update(cx, move |this, cx| {
+                    this.dock_archive_entity(archive, view, cx);
+                });
+            }
+        })
+    }
+
+    /// Move the docked archive workbench into its own window. Side-by-side with
+    /// Finder is what makes dragging files *into* an archive practical.
+    pub(super) fn pop_out_active_archive(&mut self, cx: &mut Context<Self>) {
+        let Some(tab::ToolResultMode::Archive(am)) = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .map(|surface| &surface.mode)
+        else {
+            return;
+        };
+        let archive = am.archive.clone();
+        let view = am.view.clone();
+        let dock_owner = self.archive_dock_owner(cx);
+        match crate::archive::open_existing_window(
+            archive.clone(),
+            view.clone(),
+            Some(dock_owner),
+            cx,
+        ) {
+            Ok(_) => {
+                ToolResultSurface::archive(archive, view)
+                    .handle_host_event(ToolHostEvent::HostChanged(ToolHostContext::Windowed), cx);
+                self.close_active_tool_result(cx);
+            }
+            Err(e) => {
+                crate::log_warn!(90, "archive: pop-out failed: {e:?}");
+            }
+        }
+    }
+
+    fn on_pop_out_archive(
+        &mut self,
+        _: &PopOutArchive,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pop_out_active_archive(cx);
     }
 
     pub fn on_open_disk_usage(

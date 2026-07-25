@@ -34,7 +34,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   anything that *is* an archive underneath, even without the extension —
   `.docx`, `.xlsx`, `.pptx`, `.jar`, `.apk` — and says so plainly when a file
   isn't one. Formats that can't be edited in place (tar, 7z) are marked
-  read-only.
+  read-only. The workbench can also be **popped out into its own window** (and
+  docked back), like Disk Usage — handy for dragging files into an archive with
+  Finder open beside it.
 - **Richer 7-Zip descriptions** — `.7z` files now show their file count, root
   folder, and whether they're encrypted in the Description column, the same way
   ZIPs already did.

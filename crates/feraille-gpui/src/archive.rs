@@ -40,9 +40,14 @@ use feraille_core::{EntryKind, FileEntry, NodeId};
 use feraille_fs_native::ArchiveError;
 
 use crate::file_list::FileListDelegate;
+use crate::multi_table::{DataTable, TableEvent, TableState};
 use crate::shell::Shell;
 use crate::text::TextScale as _;
-use crate::multi_table::{DataTable, TableState};
+use crate::tool_results::{ToolHostContext, ToolHostEvent};
+
+/// Callback a standalone archive window uses to dock itself back into a tab.
+/// Mirrors `disk_usage::DockOwner`.
+pub type ArchiveDockOwner = std::rc::Rc<dyn Fn(PathBuf, Entity<ArchiveView>, &mut App)>;
 
 /// Key context for the archive pane (keymap bindings hang off this).
 pub const ARCHIVE_CONTEXT: &str = "Archive";
@@ -74,8 +79,15 @@ pub struct ArchiveView {
     /// Filter text typed into the workbench's own search box.
     filter_input: Entity<InputState>,
     filter: String,
-    /// The tab's table — the archive rows are pushed into its delegate.
+    /// This view's **own** table. Owning it (rather than borrowing the tab's)
+    /// is what lets the workbench move between a docked tab and a standalone
+    /// window without either host losing its listing.
     table: Entity<TableState<FileListDelegate>>,
+    /// Kept alive for the lifetime of the view — dropping it stops selection.
+    _table_sub: Subscription,
+    /// Where this view currently lives, and how to dock it back when windowed.
+    host: ToolHostContext,
+    dock_owner: Option<ArchiveDockOwner>,
     shell: Option<WeakEntity<Shell>>,
     password_input: Entity<InputState>,
     password: Option<String>,
@@ -85,10 +97,71 @@ pub struct ArchiveView {
 impl ArchiveView {
     pub fn new(
         archive_path: PathBuf,
-        table: Entity<TableState<FileListDelegate>>,
+        process: std::rc::Rc<crate::process_state::ProcessState>,
+        shell_focus: FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // The workbench builds its own table so it can be hosted either way.
+        let delegate = FileListDelegate::new(
+            process.fs.clone(),
+            process.icons.clone(),
+            process.thumbnails.clone(),
+            process.tasks.clone(),
+            process.cut_marker.clone(),
+            process.list_sort.clone(),
+            shell_focus,
+        );
+        let table = cx.new(|cx| {
+            TableState::new(delegate, window, cx)
+                .col_selectable(false)
+                .col_movable(true)
+                .col_resizable(true)
+        });
+        // No Shell to route gestures through when windowed, so handle the
+        // table's own events here.
+        let table_sub = cx.subscribe_in(
+            &table,
+            window,
+            |this: &mut Self, table, event: &TableEvent, _window, cx| match event {
+                TableEvent::RowClicked {
+                    row_ix,
+                    modifiers,
+                    click_count,
+                } => {
+                    if *click_count >= 2 {
+                        // Double-click opens a folder rather than "opening" a
+                        // file that has no path on disk.
+                        let path = table
+                            .read(cx)
+                            .delegate()
+                            .archive_path_for_row(*row_ix)
+                            .map(str::to_string);
+                        if let Some(path) = path {
+                            this.toggle_expanded(&path, cx);
+                            return;
+                        }
+                    }
+                    let modifiers = *modifiers;
+                    let row_ix = *row_ix;
+                    table.update(cx, |t, cx| {
+                        t.delegate_mut().apply_click_gesture(row_ix, modifiers);
+                        cx.notify();
+                    });
+                    cx.notify();
+                }
+                TableEvent::LeadMoved { row_ix, modifiers } => {
+                    let modifiers = *modifiers;
+                    let row_ix = *row_ix;
+                    table.update(cx, |t, cx| {
+                        t.delegate_mut().apply_click_gesture(row_ix, modifiers);
+                        cx.notify();
+                    });
+                    cx.notify();
+                }
+                _ => {}
+            },
+        );
         let password_input =
             cx.new(|cx| InputState::new(window, cx).masked(true).placeholder("Password"));
         let filter_input =
@@ -114,6 +187,9 @@ impl ArchiveView {
             filter_input,
             filter: String::new(),
             table,
+            _table_sub: table_sub,
+            host: ToolHostContext::Docked,
+            dock_owner: None,
             shell: None,
             password_input,
             password: None,
@@ -125,6 +201,28 @@ impl ArchiveView {
 
     pub fn set_shell(&mut self, shell: WeakEntity<Shell>) {
         self.shell = Some(shell);
+    }
+
+    pub fn set_dock_owner(&mut self, dock_owner: Option<ArchiveDockOwner>, cx: &mut Context<Self>) {
+        self.dock_owner = dock_owner;
+        cx.notify();
+    }
+
+    pub fn handle_host_event(&mut self, event: ToolHostEvent, cx: &mut Context<Self>) {
+        match event {
+            ToolHostEvent::HostChanged(context) => self.host = context,
+        }
+        cx.notify();
+    }
+
+    /// The workbench's table, so the shell can read counts for the status bar.
+    pub fn table(&self) -> &Entity<TableState<FileListDelegate>> {
+        &self.table
+    }
+
+    /// The archive this view is showing — the shell needs it to re-dock.
+    pub fn archive_path(&self) -> &std::path::Path {
+        &self.archive_path
     }
 
     fn caps(&self) -> Option<Capabilities> {
@@ -449,6 +547,28 @@ impl ArchiveView {
                     .disabled(!can_extract || selected == 0)
                     .on_click(cx.listener(|this, _, window, cx| this.extract_selected(window, cx))),
             )
+            .when(
+                self.host == ToolHostContext::Windowed && self.dock_owner.is_some(),
+                |this| {
+                    let dock = self.dock_owner.clone();
+                    let path = self.archive_path.clone();
+                    this.child(
+                        Button::new("archive-dock")
+                            .small()
+                            .icon(gpui_component::Icon::empty().path("icons/minimize.svg"))
+                            .tooltip("Dock in tab")
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                let view = cx.entity().clone();
+                                let app: &mut App = std::borrow::BorrowMut::borrow_mut(cx);
+                                let (dock, path) = (dock.clone(), path.clone());
+                                if let Some(dock) = dock {
+                                    app.defer(move |cx| dock(path, view, cx));
+                                }
+                                window.remove_window();
+                            })),
+                    )
+                },
+            )
             .child(
                 Button::new("archive-extract-all")
                     .label("Extract All")
@@ -579,4 +699,35 @@ impl Render for ArchiveView {
             .children(locked_strip)
             .child(body)
     }
+}
+
+/// Open `view` in its own window (the pop-out half of dock/undock).
+///
+/// A separate window is what makes dragging *into* an archive practical:
+/// Finder or a second Feraille window can sit alongside it. Mirrors
+/// [`crate::disk_usage::open_existing_window`].
+pub fn open_existing_window(
+    archive: PathBuf,
+    view: Entity<ArchiveView>,
+    dock_owner: Option<ArchiveDockOwner>,
+    cx: &mut App,
+) -> Result<WindowHandle<gpui_component::Root>, anyhow::Error> {
+    view.update(cx, |view, cx| view.set_dock_owner(dock_owner, cx));
+    let opts = WindowOptions {
+        window_bounds: Some(WindowBounds::centered(size(px(900.0), px(640.0)), cx)),
+        titlebar: Some(TitlebarOptions {
+            title: Some(SharedString::from(format!(
+                "Archive \u{2014} {}",
+                archive
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            ))),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let handle =
+        cx.open_window(opts, |window, cx| cx.new(|cx| gpui_component::Root::new(view, window, cx)))?;
+    Ok(handle)
 }

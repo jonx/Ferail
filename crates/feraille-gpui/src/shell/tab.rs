@@ -101,10 +101,13 @@ impl ToolResultSurface {
                 du.view
                     .update(cx, |view, cx| view.handle_host_event(event, cx));
             }
-            // Archive/search/duplicates don't react to host-context changes.
-            ToolResultMode::Search(_)
-            | ToolResultMode::Duplicates(_)
-            | ToolResultMode::Archive(_) => {}
+            ToolResultMode::Archive(a) => {
+                a.view
+                    .update(cx, |view, cx| view.handle_host_event(event, cx));
+            }
+            // Search and duplicates render through the tab and have no
+            // windowed form, so host changes mean nothing to them.
+            ToolResultMode::Search(_) | ToolResultMode::Duplicates(_) => {}
         }
     }
 

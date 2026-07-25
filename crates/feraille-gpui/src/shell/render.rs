@@ -156,6 +156,7 @@ impl Shell {
                 .as_ref()
                 .map(|surface| &surface.mode),
             Some(super::tab::ToolResultMode::DiskUsage(_))
+                | Some(super::tab::ToolResultMode::Archive(_))
         )
     }
 
@@ -1287,10 +1288,6 @@ impl Shell {
                                     .unwrap_or(false);
                                 this.apply_row_right_click(i, cx);
                                 this.context_row = if was_selected { None } else { Some(i) };
-                                // Same target-set staging as the list
-                                // path so the grid menu gates bulk
-                                // commands on the whole selection.
-                                this.push_menu_targets(i, cx);
                                 let table = this.active_tab().table.clone();
                                 table.update(cx, |tbl, cx| {
                                     tbl.delegate_mut().context_menu(i, menu, window, cx)
@@ -3067,13 +3064,23 @@ impl Shell {
         }
         if self.active_tab().tool_result.is_some() {
             if self.active_tool_result_can_pop_out() {
+                // One button, two surfaces — dispatch the action that matches
+                // whichever tool currently owns the pane.
+                let is_archive = matches!(
+                    self.active_tab().tool_result.as_ref().map(|s| &s.mode),
+                    Some(super::tab::ToolResultMode::Archive(_))
+                );
                 row = row.child(
                     Button::new("tool-result-pop-out")
                         .small()
                         .icon(gpui_component::Icon::empty().path("icons/maximize.svg"))
                         .tooltip("Open in window")
-                        .on_click(cx.listener(|_, _, window, cx| {
-                            window.dispatch_action(Box::new(PopOutDiskUsage), cx);
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            if is_archive {
+                                window.dispatch_action(Box::new(PopOutArchive), cx);
+                            } else {
+                                window.dispatch_action(Box::new(PopOutDiskUsage), cx);
+                            }
                         })),
                 );
             }
@@ -3283,6 +3290,31 @@ impl Render for Shell {
         // a network mount, so it never runs on the paint path.
         let free_bytes = self.active_tab().volume_free_bytes;
         let volume_name = self.active_tab().volume_name.clone();
+        // A docked archive workbench owns its own table, so the tab's delegate
+        // is (correctly) empty — read the counts from the archive's table
+        // instead, or the status bar would report "Empty folder" while the
+        // pane is showing an archive's contents.
+        let (entry_count, total_size, selected_count, selected_size) = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .and_then(|s| s.archive_mode())
+            .map(|am| {
+                let table = am.view.read(cx).table();
+                let del = table.read(cx).delegate();
+                let sel: Vec<&feraille_core::FileEntry> = del
+                    .entries
+                    .iter()
+                    .filter(|e| del.selected_set.contains(&e.id))
+                    .collect();
+                (
+                    del.entries.len(),
+                    del.entries.iter().map(|e| e.size).sum::<u64>(),
+                    sel.len(),
+                    sel.iter().map(|e| e.size).sum::<u64>(),
+                )
+            })
+            .unwrap_or((entry_count, total_size, selected_count, selected_size));
         let metrics = crate::status_bar::StatusMetrics {
             entries: entry_count,
             selected_count,
@@ -3409,6 +3441,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_shortcuts_help))
             .on_action(cx.listener(Self::on_open_disk_usage))
             .on_action(cx.listener(Self::on_open_archive))
+            .on_action(cx.listener(Self::on_pop_out_archive))
             .on_action(cx.listener(Self::on_close_tool_result))
             .on_action(cx.listener(Self::on_pop_out_disk_usage))
             .on_action(cx.listener(Self::on_find_duplicates))

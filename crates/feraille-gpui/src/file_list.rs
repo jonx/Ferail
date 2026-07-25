@@ -267,6 +267,49 @@ impl MenuTargets {
     }
 }
 
+/// Resolve the rows a context command will target, from the row the user
+/// right-clicked plus the selection as it stands *at that instant*.
+///
+/// This is the menu-side twin of `Shell::resolve_targets` and must agree
+/// with it row for row (spec §2.4): a right-click **inside** the selection
+/// targets the whole set; a right-click on an unselected row targets only
+/// that row — because the click collapses the selection onto it before any
+/// command dispatches.
+///
+/// Deliberately a pure function of `(entries, selected, row_ix)` rather
+/// than a snapshot staged ahead of time: gpui-component builds the menu in
+/// a `window.defer` callback that is queued *before* the table's
+/// `RightClickedRow` event reaches the Shell, so anything the Shell stages
+/// from that event arrives one right-click too late — which is what left
+/// the first menu after a folder load missing every gated command
+/// (Rename, Copy Path, Extract, Open With, …).
+///
+/// Cache-only (row caps project from the already-loaded `FileEntry`), so
+/// it is safe on the menu-build path under the prime directive.
+pub fn resolve_menu_targets(
+    entries: &[FileEntry],
+    selected: &HashSet<NodeId>,
+    row_ix: usize,
+) -> MenuTargets {
+    let Some(clicked) = entries.get(row_ix) else {
+        return MenuTargets::default();
+    };
+    let anchor = TargetCap::from(clicked);
+    let caps = if selected.contains(&clicked.id) {
+        entries
+            .iter()
+            .filter(|e| selected.contains(&e.id))
+            .map(TargetCap::from)
+            .collect()
+    } else {
+        vec![anchor]
+    };
+    MenuTargets {
+        caps,
+        anchor: Some(anchor),
+    }
+}
+
 /// Availability rule for a context command whose visibility depends on
 /// the resolved selection (docs/features/CONTEXT_MENU.md). Commands that
 /// always apply to a group — whether as one batch op (Compress, Trash)
@@ -409,14 +452,6 @@ pub struct FileListDelegate {
     /// the menu was BUILT is the app that opens — re-fetching at
     /// dispatch could reorder candidates and launch the wrong app.
     pub open_with_warm: Option<(PathBuf, Vec<crate::platform_shell::OpenWithCandidate>)>,
-    /// Capabilities of the rows the next context-menu command will
-    /// target, pushed by `Shell::push_menu_targets` on every row
-    /// right-click before `context_menu` builds. Lets bulk commands gate
-    /// on the WHOLE resolved target set — e.g. Clear Quarantine shows
-    /// when ANY selected row is quarantined — instead of just the
-    /// physically-clicked row. Reset on `clear`/`replace_entries` so a
-    /// stale set can't gate a freshly loaded folder.
-    pub menu_targets: MenuTargets,
     /// The user's active column sort, recorded by `perform_sort` /
     /// `apply_sort`. `None` = natural (name-ascending) order. Read
     /// by the folder-size worker so late-arriving sizes can re-apply
@@ -517,7 +552,6 @@ impl FileListDelegate {
             is_favorited: Vec::new(),
             selected_set: HashSet::new(),
             lead: None,
-            menu_targets: MenuTargets::default(),
             open_with_warm: None,
             current_sort,
             sort_state,
@@ -726,7 +760,6 @@ impl FileListDelegate {
         self.heats.clear();
         self.tags.clear();
         self.is_favorited.clear();
-        self.menu_targets = MenuTargets::default();
         // selected_set / lead are NodeId-keyed and reconciled by
         // Shell against the new model; not cleared here.
     }
@@ -747,7 +780,6 @@ impl FileListDelegate {
         self.heats = heats;
         self.tags = vec![Vec::new(); self.entries.len()];
         self.is_favorited = vec![false; self.entries.len()];
-        self.menu_targets = MenuTargets::default();
         self.apply_effective_sort();
         // selected_set / lead are NodeId-keyed; reconciliation is
         // Shell's job (see `refresh_file_list_selection`).
@@ -810,12 +842,50 @@ impl FileListDelegate {
         self.heats = vec![0.0; n];
         self.tags = vec![Vec::new(); n];
         self.is_favorited = vec![false; n];
-        self.menu_targets = MenuTargets::default();
     }
 
     /// Whether the delegate is currently showing archive contents.
     pub fn is_archive_mode(&self) -> bool {
         !self.archive_rows.is_empty()
+    }
+
+    /// Apply a plain / Cmd / Shift click to this delegate's own selection.
+    ///
+    /// The Shell drives selection for tab listings through its richer path
+    /// (`apply_row_click_gesture`), which also moves the preview pane and warms
+    /// the Open With cache. A **windowed** archive workbench has no Shell to
+    /// route through, so it needs the core gesture on its own — this is that
+    /// core, and nothing else calls it.
+    pub fn apply_click_gesture(&mut self, row_ix: usize, modifiers: gpui::Modifiers) {
+        let Some(id) = self.entries.get(row_ix).map(|e| e.id) else {
+            return;
+        };
+        let cmd = modifiers.secondary();
+        if modifiers.shift {
+            // Range from the current lead to the clicked row (inclusive).
+            let lead_ix = self
+                .lead
+                .and_then(|lead| self.entries.iter().position(|e| e.id == lead));
+            let (lo, hi) = match lead_ix {
+                Some(l) if l <= row_ix => (l, row_ix),
+                Some(l) => (row_ix, l),
+                None => (row_ix, row_ix),
+            };
+            if !cmd {
+                self.selected_set.clear();
+            }
+            for e in &self.entries[lo..=hi] {
+                self.selected_set.insert(e.id);
+            }
+        } else if cmd {
+            if !self.selected_set.remove(&id) {
+                self.selected_set.insert(id);
+            }
+        } else {
+            self.selected_set.clear();
+            self.selected_set.insert(id);
+        }
+        self.lead = Some(id);
     }
 
     /// The archive path behind a row, when in archive mode.
@@ -1612,7 +1682,12 @@ impl TableDelegate for FileListDelegate {
         // handler will act on), routed through `Availability`. Anchor
         // rules use the clicked/lead row; `SingleOnly` and capability
         // rules use the whole set. See docs/features/CONTEXT_MENU.md.
-        let t = &self.menu_targets;
+        //
+        // Resolved HERE, at build time, from the delegate's own mirrored
+        // selection — not from a snapshot the Shell stages on right-click,
+        // which lands a frame too late (see `resolve_menu_targets`).
+        let targets = resolve_menu_targets(&self.entries, &self.selected_set, row_ix);
+        let t = &targets;
         let show_slideshow = Availability::When(avail_anchor_file).allows(t);
         let show_terminal = Availability::When(avail_anchor_dir).allows(t);
         let show_favorites = Availability::When(avail_anchor_dir).allows(t);
@@ -1713,8 +1788,8 @@ impl TableDelegate for FileListDelegate {
             // ANY row in the resolved target set carries the
             // Mark-of-the-Web, matching `Shell::on_clear_quarantine`, which
             // strips it from the quarantined subset. Reads the caps
-            // `push_menu_targets` staged at right-click time — no xattr
-            // query at menu-open time. Right-clicking the clean file in a
+            // projected from the loaded rows — no xattr query at
+            // menu-open time. Right-clicking the clean file in a
             // mixed selection now offers the command too, instead of hiding
             // it based on the single clicked row.
             menu = menu.separator().menu(
@@ -2445,14 +2520,16 @@ mod sort_tests {
 mod menu_targets_tests {
     use super::{
         Availability, MenuTargets, TargetCap, avail_anchor_dir, avail_anchor_file,
-        avail_any_quarantined,
+        avail_any_quarantined, resolve_menu_targets,
     };
-    use feraille_core::EntryKind;
+    use feraille_core::{EntryKind, FileEntry, NodeId};
+    use std::collections::HashSet;
 
     fn cap(is_quarantined: bool) -> TargetCap {
         TargetCap {
             kind: EntryKind::File,
             is_quarantined,
+            is_archive: false,
         }
     }
 
@@ -2460,7 +2537,41 @@ mod menu_targets_tests {
         TargetCap {
             kind: EntryKind::Directory,
             is_quarantined: false,
+            is_archive: false,
         }
+    }
+
+    fn entry(id: u64, name: &str, kind: EntryKind) -> FileEntry {
+        FileEntry {
+            id: NodeId::from_raw(id).unwrap(),
+            name: name.into(),
+            display_name: name.into(),
+            name_has_hazards: false,
+            kind,
+            size: 0,
+            mtime_unix: 0,
+            display_size: String::new(),
+            display_kind: String::new(),
+            display_magic: String::new(),
+            display_description: String::new(),
+            is_quarantined: false,
+            quarantine: None,
+            hidden: false,
+        }
+    }
+
+    fn rows() -> Vec<FileEntry> {
+        vec![
+            entry(1, "notes.txt", EntryKind::File),
+            entry(2, "bundle.zip", EntryKind::File),
+            entry(3, "sub", EntryKind::Directory),
+        ]
+    }
+
+    fn selection(ids: &[u64]) -> HashSet<NodeId> {
+        ids.iter()
+            .map(|id| NodeId::from_raw(*id).unwrap())
+            .collect()
     }
 
     fn targets(caps: Vec<TargetCap>) -> MenuTargets {
@@ -2472,6 +2583,53 @@ mod menu_targets_tests {
             caps: vec![anchor],
             anchor: Some(anchor),
         }
+    }
+
+    /// The regression this resolver exists for: right-clicking a row in a
+    /// freshly loaded folder — nothing selected yet, nothing staged by any
+    /// earlier click — must still resolve that row, so the gated commands
+    /// (Rename, Copy Path, Extract, Open With) appear on the FIRST menu,
+    /// not only on the second. Before, the caps arrived a right-click late
+    /// and the first menu after a view switch was silently short.
+    #[test]
+    fn clicked_row_resolves_with_no_selection() {
+        let t = resolve_menu_targets(&rows(), &selection(&[]), 1);
+        assert!(t.is_single());
+        assert!(t.any(|c| c.is_archive));
+        assert!(Availability::SingleOnly.allows(&t));
+        assert!(Availability::When(avail_anchor_file).allows(&t));
+    }
+
+    /// Right-click on a row OUTSIDE the current selection targets just
+    /// that row — matching the click that collapses the selection onto it
+    /// (spec §2.4), so the menu and the later handler agree.
+    #[test]
+    fn click_outside_selection_targets_only_that_row() {
+        let t = resolve_menu_targets(&rows(), &selection(&[1, 3]), 1);
+        assert!(t.is_single());
+        assert!(t.any(|c| c.is_archive));
+    }
+
+    /// Right-click INSIDE the selection keeps the whole set, in visible
+    /// order, with the clicked row as the anchor.
+    #[test]
+    fn click_inside_selection_targets_whole_set() {
+        let t = resolve_menu_targets(&rows(), &selection(&[1, 3]), 2);
+        assert_eq!(t.len(), 2);
+        assert!(t.is_multi());
+        assert!(!Availability::SingleOnly.allows(&t));
+        // Anchor is the clicked folder, so folder-anchored commands show
+        // even though the set also holds a file.
+        assert!(Availability::When(avail_anchor_dir).allows(&t));
+    }
+
+    /// A row index past the end (a menu built against a list that shrank
+    /// under it) resolves to nothing rather than the wrong row.
+    #[test]
+    fn out_of_range_row_resolves_empty() {
+        let t = resolve_menu_targets(&rows(), &selection(&[1]), 9);
+        assert!(t.is_empty());
+        assert!(t.anchor.is_none());
     }
 
     /// The reported bug: a mixed selection (one quarantined, one clean)

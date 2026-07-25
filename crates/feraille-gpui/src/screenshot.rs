@@ -174,6 +174,12 @@ pub struct Args {
     /// exists outside a live drag). Uses placeholder coloured tiles
     /// for the item images.
     pub drag_ghost: Option<usize>,
+    /// Right-click row N in the active tab's file list — a real
+    /// `MouseDown` through the window's event path — so the row context
+    /// menu builds exactly as it does for a user and can be captured.
+    /// Nothing else opens it: the menu lives in a mouse-event listener,
+    /// not behind an action.
+    pub context_menu_row: Option<usize>,
     /// Render the favorite icon-picker window
     /// ([`crate::favorite_icon_picker`]) instead of the shell, so the
     /// Lucide glyph grid can be captured headlessly.
@@ -221,6 +227,9 @@ pub fn parse_args() -> Args {
             "--view" => args.view = iter.next().map(|s| crate::grid::ViewMode::from_str(&s)),
             "--select-row" => args.select_row = iter.next().and_then(|s| s.parse().ok()),
             "--select-name" => args.select_name = iter.next(),
+            "--context-menu-row" => {
+                args.context_menu_row = iter.next().and_then(|s| s.parse().ok())
+            }
             "--breadcrumb" => args.breadcrumb = iter.next(),
             "--keys" => args.keys = iter.next(),
             "--select-rows" => {
@@ -664,6 +673,7 @@ struct ShellArgs {
     select_row: Option<usize>,
     select_name: Option<String>,
     select_rows: Vec<usize>,
+    context_menu_row: Option<usize>,
     view: Option<crate::grid::ViewMode>,
     breadcrumb: Option<String>,
     keys: Option<String>,
@@ -706,6 +716,7 @@ impl From<&Args> for ShellArgs {
             select_row: a.select_row,
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
+            context_menu_row: a.context_menu_row,
             view: a.view,
             breadcrumb: a.breadcrumb.clone(),
             keys: a.keys.clone(),
@@ -984,6 +995,58 @@ impl ShellArgs {
             shell.update(cx, |s, cx| {
                 crate::file_list::apply_sort(&s.active_tab().table, &col, asc, cx);
             });
+        }
+        if let Some(row) = self.context_menu_row {
+            // Right-click a row for real: the context menu is built by a
+            // MouseDown listener (gpui-component's `ContextMenu` element),
+            // so there is no action to dispatch — only an actual click
+            // opens it. Wait for the streamed enumeration first, since the
+            // click point is derived from the laid-out row geometry.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(700))
+                .await;
+            let point = shell.read_with(cx, |s, cx| {
+                s.active_tab().table.read(cx).row_center(row)
+            });
+            match point {
+                Some(position) => {
+                    let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                        // Move first: the menu's listener gates on its
+                        // hitbox being hovered, and hover follows the last
+                        // mouse position (a preceding `--keys` would
+                        // otherwise leave the window in keyboard mode).
+                        let _ = window.dispatch_event(
+                            gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                                position,
+                                modifiers: gpui::Modifiers::default(),
+                                pressed_button: None,
+                            }),
+                            cx,
+                        );
+                    });
+                    // Let that frame paint so the hitbox hit-test sees the
+                    // new mouse position, then click.
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(200))
+                        .await;
+                    let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                        let _ = window.dispatch_event(
+                            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                                button: gpui::MouseButton::Right,
+                                position,
+                                modifiers: gpui::Modifiers::default(),
+                                click_count: 1,
+                                first_mouse: false,
+                            }),
+                            cx,
+                        );
+                    });
+                }
+                None => crate::log_warn!(
+                    90,
+                    "--context-menu-row {row}: row not laid out / out of view"
+                ),
+            }
         }
         if self.rename {
             let _ = cx.update_window((*handle).into(), |_, window, cx| {
