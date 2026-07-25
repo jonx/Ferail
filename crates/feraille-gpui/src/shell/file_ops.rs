@@ -2923,9 +2923,9 @@ impl Shell {
             None
         }
 
-        self.spawn_file_op(
+        self.spawn_archive_op(
             cur,
-            move || {
+            move |progress, cancel| {
                 let parent = paths[0]
                     .parent()
                     .ok_or_else(|| format!("no parent directory for {}", paths[0].display()))?
@@ -2934,21 +2934,19 @@ impl Shell {
                     .ok_or_else(|| "exhausted archive index range".to_string())?;
                 let targets: Vec<&std::path::Path> =
                     paths.iter().map(|path| path.as_path()).collect();
-                let progress = feraille_fs_native::file_ops::TransferProgress::new();
-                let cancel = std::sync::atomic::AtomicBool::new(false);
                 feraille_fs_native::create_archive(
                     format,
                     &targets,
                     &output,
                     feraille_fs_native::CreateOptions::default(),
-                    &progress,
-                    &cancel,
+                    progress,
+                    cancel,
                 )
                 .map_err(|e| e.to_string())?;
                 Ok(vec![output])
             },
             "Compress",
-            Some(task_label),
+            task_label,
             FileOpSuccessToast::IfSurfaced(success),
             FileOpUndo::RemoveCreatedResult,
             window,
@@ -2960,7 +2958,7 @@ impl Shell {
     pub(super) fn on_extract(&mut self, _: &Extract, window: &mut Window, cx: &mut Context<Self>) {
         let paths = self.gather_archive_targets(cx);
         let cur = self.active_tab().current_dir.clone();
-        self.spawn_extract_into(paths, cur, window, cx);
+        self.spawn_extract_into(paths, cur, None, window, cx);
     }
 
     /// Extract To… — pick a destination folder from a native modal, then
@@ -2983,7 +2981,7 @@ impl Shell {
                 return;
             };
             let _ = this.update_in(cx, |this, window, cx| {
-                this.spawn_extract_into(paths, dest, window, cx);
+                this.spawn_extract_into(paths, dest, None, window, cx);
             });
         })
         .detach();
@@ -3008,10 +3006,197 @@ impl Shell {
     /// when it has a single root folder that isn't already taken, otherwise a
     /// `" 2"`-deduped wrapper named after the archive. Encrypted archives fail
     /// with a clear message (the password flow lives in the workbench).
+    /// Run an archive operation (compress / extract) on a worker with a **live
+    /// progress bar and a working cancel button**.
+    ///
+    /// `spawn_file_op` is the right tool for ops that finish in a blink
+    /// (duplicate, alias): it registers a non-cancellable task and reports only
+    /// start/end. Archive work is different — a multi-gigabyte tarball can run
+    /// for minutes — so this variant mirrors `spawn_transfer_op`: the worker
+    /// bumps lock-free counters on `TransferProgress` while a ~10 Hz foreground
+    /// sampler reads them and drives the task row (fraction, bytes, rate, ETA,
+    /// current entry). The work is never slowed by drawing its own progress,
+    /// and the task panel's cancel button flips the `AtomicBool` the codec
+    /// checks between entries and buffers.
+    ///
+    /// Cancelling leaves whatever was already written in place (extraction is
+    /// not transactional); the task ends quietly rather than raising an error
+    /// toast, since the user asked for it.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_archive_op(
+        &mut self,
+        reload_path: PathBuf,
+        op: impl FnOnce(
+                &feraille_fs_native::file_ops::TransferProgress,
+                &AtomicBool,
+            ) -> Result<Vec<PathBuf>, String>
+            + Send
+            + 'static,
+        failure_label: &'static str,
+        task_label: String,
+        success_toast: FileOpSuccessToast,
+        undo: FileOpUndo,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        use std::sync::atomic::Ordering as AtomicOrdering;
+        use std::time::{Duration, Instant};
+
+        let process = self.process.clone();
+        let win = window.window_handle();
+        let weak = cx.weak_entity();
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let prog = Arc::new(feraille_fs_native::file_ops::TransferProgress::new());
+        // Set once the op returns, so the sampler stops touching a finished task.
+        let done = Arc::new(AtomicBool::new(false));
+
+        let task_id = self.process.tasks.borrow_mut().begin_with_cancel(
+            crate::tasks::TaskKind::FileOp,
+            task_label,
+            cancel.clone(),
+        );
+
+        // Foreground sampler on its own clock (see `spawn_transfer_op` for the
+        // reasoning behind the trimmed rolling-window rate).
+        {
+            let weak = cx.weak_entity();
+            let prog = prog.clone();
+            let done = done.clone();
+            cx.spawn(async move |_this, cx| {
+                let mut window: std::collections::VecDeque<(Instant, u64)> =
+                    std::collections::VecDeque::new();
+                let mut shown_rate: f64 = 0.0;
+                let mut shown_eta: Option<u64> = None;
+                let mut ticks: u32 = 0;
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(100))
+                        .await;
+                    if done.load(AtomicOrdering::Relaxed) {
+                        break;
+                    }
+                    let bytes_done = prog.bytes_done();
+                    let bytes_total = prog.bytes_total();
+                    let now = Instant::now();
+                    window.push_back((now, bytes_done));
+                    while window
+                        .front()
+                        .is_some_and(|(t, _)| now.duration_since(*t).as_secs_f64() > 6.0)
+                    {
+                        window.pop_front();
+                    }
+                    ticks = ticks.wrapping_add(1);
+                    if ticks % 10 == 0 {
+                        shown_rate = trimmed_window_rate(&window);
+                        shown_eta = if shown_rate > 1.0 && bytes_total > bytes_done {
+                            Some(round_eta(
+                                ((bytes_total - bytes_done) as f64 / shown_rate) as u64,
+                            ))
+                        } else {
+                            None
+                        };
+                    }
+                    let stats = crate::tasks::TransferStats {
+                        bytes_done,
+                        bytes_total,
+                        items_done: prog.items_done(),
+                        items_total: prog.items_total(),
+                        bytes_per_sec: shown_rate,
+                        eta_secs: shown_eta,
+                        current: prog.current().to_string(),
+                    };
+                    let Some(shell) = weak.upgrade() else { break };
+                    shell.update(cx, |this, cx| {
+                        let mut reg = this.process.tasks.borrow_mut();
+                        // Formats without an up-front total (tar streams, 7z)
+                        // leave `bytes_total` at 0 and stay indeterminate.
+                        if bytes_total > 0 {
+                            reg.update(task_id, bytes_done as f32 / bytes_total as f32);
+                        }
+                        reg.update_transfer(task_id, stats);
+                        drop(reg);
+                        cx.notify();
+                    });
+                }
+            })
+            .detach();
+        }
+
+        cx.spawn(async move |_this, cx| {
+            let prog_for_op = prog.clone();
+            let cancel_for_op = cancel.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { op(&prog_for_op, &cancel_for_op) })
+                .await;
+            done.store(true, AtomicOrdering::Relaxed);
+
+            let cancelled = cancel.load(AtomicOrdering::Relaxed);
+            let created = result.as_ref().ok().cloned().unwrap_or_default();
+            let error = result.as_ref().err().cloned();
+
+            let surfaced = if let Some(shell) = weak.upgrade() {
+                let created_for_undo = created.clone();
+                shell.update(cx, move |this, cx| {
+                    let surfaced = {
+                        let mut reg = this.process.tasks.borrow_mut();
+                        match (&error, cancelled) {
+                            // User-requested stop: end quietly, no error toast.
+                            (_, true) => {
+                                reg.end(task_id);
+                                false
+                            }
+                            (Some(message), false) => {
+                                reg.end_failed(task_id, message.clone());
+                                false
+                            }
+                            (None, false) => reg.end_and_was_surfaced(task_id),
+                        }
+                    };
+                    if error.is_none() && !cancelled {
+                        undo.push(this, created_for_undo);
+                    }
+                    cx.notify();
+                    surfaced
+                })
+            } else {
+                false
+            };
+
+            match result {
+                Ok(_) => {
+                    Shell::broadcast_reload_for_process(&process, vec![reload_path], cx);
+                    if let FileOpSuccessToast::IfSurfaced(message) = success_toast {
+                        if surfaced && !cancelled {
+                            let _ = win.update(cx, |_, window, cx| {
+                                use gpui_component::notification::Notification;
+                                window.push_notification(Notification::success(message), cx);
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    // A cancel still reloads: partial output is on disk.
+                    if cancelled {
+                        Shell::broadcast_reload_for_process(&process, vec![reload_path], cx);
+                        return;
+                    }
+                    crate::log_warn!(90, "{failure_label} failed: {e}");
+                    let _ = win.update(cx, |_, window, cx| {
+                        window.push_notification(file_op_error_notification(failure_label, &e), cx);
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
     pub(crate) fn spawn_extract_into(
         &mut self,
         paths: Vec<PathBuf>,
         dest_parent: PathBuf,
+        password: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3037,12 +3222,14 @@ impl Shell {
         fn extract_one_archive(
             archive: &std::path::Path,
             parent: &std::path::Path,
+            password: Option<&str>,
+            progress: &feraille_fs_native::file_ops::TransferProgress,
+            cancel: &AtomicBool,
         ) -> Result<Vec<PathBuf>, String> {
-            let progress = feraille_fs_native::file_ops::TransferProgress::new();
-            let cancel = std::sync::atomic::AtomicBool::new(false);
-            let toc = feraille_fs_native::read_archive_toc(archive, None).map_err(|e| e.to_string())?;
+            let toc = feraille_fs_native::read_archive_toc(archive, password)
+                .map_err(|e| e.to_string())?;
             let opts = feraille_fs_native::ExtractOptions {
-                password: None,
+                password,
                 overwrite: false,
             };
             let in_place_root = toc.single_root().and_then(|root| {
@@ -3057,7 +3244,7 @@ impl Shell {
                     (dest.clone(), vec![dest])
                 }
             };
-            feraille_fs_native::extract_archive(archive, &dest, opts, &progress, &cancel)
+            feraille_fs_native::extract_archive(archive, &dest, opts, progress, cancel)
                 .map_err(|e| e.to_string())?;
             Ok(created)
         }
@@ -3090,17 +3277,23 @@ impl Shell {
             candidate
         }
 
-        self.spawn_file_op(
+        self.spawn_archive_op(
             dest_parent.clone(),
-            move || {
+            move |progress, cancel| {
                 let mut created = Vec::new();
                 for archive in &paths {
-                    created.extend(extract_one_archive(archive, &dest_parent)?);
+                    created.extend(extract_one_archive(
+                        archive,
+                        &dest_parent,
+                        password.as_deref(),
+                        progress,
+                        cancel,
+                    )?);
                 }
                 Ok(created)
             },
             "Extract",
-            Some(task_label),
+            task_label,
             FileOpSuccessToast::IfSurfaced(success),
             FileOpUndo::RemoveCreatedResult,
             window,
@@ -3118,6 +3311,7 @@ impl Shell {
         archive: PathBuf,
         entries: Vec<String>,
         dest_parent: PathBuf,
+        password: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3128,9 +3322,9 @@ impl Shell {
         let plural = if count == 1 { "" } else { "s" };
         let task_label = format!("Extracting {count} item{plural}");
         let success = format!("Extracted {count} item{plural}");
-        self.spawn_file_op(
+        self.spawn_archive_op(
             dest_parent.clone(),
-            move || {
+            move |progress, cancel| {
                 let stem = archive
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned())
@@ -3143,10 +3337,8 @@ impl Shell {
                 }
                 std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
                 let entry_refs: Vec<&str> = entries.iter().map(|s| s.as_str()).collect();
-                let progress = feraille_fs_native::file_ops::TransferProgress::new();
-                let cancel = std::sync::atomic::AtomicBool::new(false);
                 let opts = feraille_fs_native::ExtractOptions {
-                    password: None,
+                    password: password.as_deref(),
                     overwrite: false,
                 };
                 feraille_fs_native::extract_archive_entries(
@@ -3154,14 +3346,14 @@ impl Shell {
                     &dest,
                     &entry_refs,
                     opts,
-                    &progress,
-                    &cancel,
+                    progress,
+                    cancel,
                 )
                 .map_err(|e| e.to_string())?;
                 Ok(vec![dest])
             },
             "Extract",
-            Some(task_label),
+            task_label,
             FileOpSuccessToast::IfSurfaced(success),
             FileOpUndo::RemoveCreatedResult,
             window,

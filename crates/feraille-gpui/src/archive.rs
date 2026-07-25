@@ -15,7 +15,12 @@ use std::path::PathBuf;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::{button::Button, h_flex, v_flex, ActiveTheme, Disableable, Sizable};
+use gpui_component::{
+    button::Button,
+    h_flex,
+    input::{Input, InputState},
+    v_flex, ActiveTheme, Disableable, Sizable,
+};
 
 use feraille_archive::{ArchiveEntry, Capabilities, Format, Toc};
 use feraille_fs_native::ArchiveError;
@@ -30,9 +35,10 @@ pub const ARCHIVE_CONTEXT: &str = "Archive";
 enum ArchiveLoad {
     Loading,
     Loaded(Toc),
-    /// Encrypted archive whose listing needs a password (prompt is a later
-    /// slice — for now the view explains the situation).
-    NeedsPassword,
+    /// The archive's *listing itself* is encrypted (7z header encryption), so
+    /// nothing can be shown until a password is supplied. `error` is set after
+    /// a rejected attempt.
+    NeedsPassword { error: Option<String> },
     Failed(String),
 }
 
@@ -45,14 +51,27 @@ pub struct ArchiveView {
     /// extraction.
     selected: BTreeSet<usize>,
     /// Weak handle to the owning shell — used to run extraction through
-    /// `Shell::spawn_file_op` (tasks / toast / undo / reload) rather than
-    /// duplicating that machinery here.
+    /// `Shell::spawn_archive_op` (tasks / progress / cancel / toast / undo /
+    /// reload) rather than duplicating that machinery here.
     shell: Option<WeakEntity<Shell>>,
+    /// Password entry for encrypted archives, created eagerly so `render`
+    /// never has to build state.
+    password_input: Entity<InputState>,
+    /// The password the user supplied, once accepted. Threaded into every
+    /// extraction from this view.
+    password: Option<String>,
     focus_handle: FocusHandle,
 }
 
 impl ArchiveView {
-    pub fn new(archive_path: PathBuf, format: Format, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        archive_path: PathBuf,
+        format: Format,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let password_input =
+            cx.new(|cx| InputState::new(window, cx).masked(true).placeholder("Password"));
         let mut view = Self {
             archive_path,
             format,
@@ -60,9 +79,11 @@ impl ArchiveView {
             load: ArchiveLoad::Loading,
             selected: BTreeSet::new(),
             shell: None,
+            password_input,
+            password: None,
             focus_handle: cx.focus_handle(),
         };
-        view.start_load(cx);
+        view.start_load(None, cx);
         view
     }
 
@@ -72,23 +93,63 @@ impl ArchiveView {
 
     /// Schedule the TOC read on the background executor and apply the result
     /// through an entity update (the only place view state mutates).
-    fn start_load(&mut self, cx: &mut Context<Self>) {
+    fn start_load(&mut self, password: Option<String>, cx: &mut Context<Self>) {
         let path = self.archive_path.clone();
+        let attempt = password.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { feraille_fs_native::read_archive_toc(&path, None) })
+                .spawn(async move {
+                    feraille_fs_native::read_archive_toc(&path, attempt.as_deref())
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.load = match result {
-                    Ok(toc) => ArchiveLoad::Loaded(toc),
-                    Err(ArchiveError::PasswordRequired) => ArchiveLoad::NeedsPassword,
-                    Err(e) => ArchiveLoad::Failed(e.to_string()),
-                };
+                match result {
+                    Ok(toc) => {
+                        // Keep the accepted password for extraction.
+                        this.password = password;
+                        this.load = ArchiveLoad::Loaded(toc);
+                    }
+                    Err(ArchiveError::PasswordRequired) => {
+                        this.load = ArchiveLoad::NeedsPassword { error: None }
+                    }
+                    Err(ArchiveError::WrongPassword) => {
+                        this.load = ArchiveLoad::NeedsPassword {
+                            error: Some("Incorrect password — try again.".to_string()),
+                        }
+                    }
+                    Err(e) => this.load = ArchiveLoad::Failed(e.to_string()),
+                }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Whether the archive's *contents* are encrypted while its listing was
+    /// readable (the zip case: entry names are public, data is not). Extraction
+    /// is gated until a password is supplied.
+    fn locked_contents(&self) -> bool {
+        self.password.is_none()
+            && matches!(&self.load, ArchiveLoad::Loaded(toc) if toc.needs_password)
+    }
+
+    /// Apply the typed password. When the listing itself was encrypted we
+    /// re-read the table of contents (which validates it immediately);
+    /// otherwise we just record it and let extraction use it.
+    fn submit_password(&mut self, cx: &mut Context<Self>) {
+        let typed = self.password_input.read(cx).value().to_string();
+        if typed.is_empty() {
+            return;
+        }
+        if matches!(self.load, ArchiveLoad::NeedsPassword { .. }) {
+            self.load = ArchiveLoad::Loading;
+            cx.notify();
+            self.start_load(Some(typed), cx);
+        } else {
+            self.password = Some(typed);
+            cx.notify();
+        }
     }
 
     fn toggle_row(&mut self, i: usize, cx: &mut Context<Self>) {
@@ -108,8 +169,9 @@ impl ArchiveView {
             return;
         };
         let archive = self.archive_path.clone();
+        let password = self.password.clone();
         let _ = shell.update(cx, |shell, scx| {
-            shell.spawn_extract_into(vec![archive], parent, window, scx);
+            shell.spawn_extract_into(vec![archive], parent, password, window, scx);
         });
     }
 
@@ -130,8 +192,9 @@ impl ArchiveView {
             return;
         };
         let archive = self.archive_path.clone();
+        let password = self.password.clone();
         let _ = shell.update(cx, |shell, scx| {
-            shell.extract_archive_entries_into(archive, entries, parent, window, scx);
+            shell.extract_archive_entries_into(archive, entries, parent, password, window, scx);
         });
     }
 
@@ -147,7 +210,7 @@ impl ArchiveView {
 
         let subtitle = match &self.load {
             ArchiveLoad::Loading => "Reading…".to_string(),
-            ArchiveLoad::NeedsPassword => "Encrypted".to_string(),
+            ArchiveLoad::NeedsPassword { .. } => "Encrypted".to_string(),
             ArchiveLoad::Failed(_) => "Unreadable".to_string(),
             ArchiveLoad::Loaded(toc) => {
                 let files = toc.file_count();
@@ -155,12 +218,21 @@ impl ArchiveView {
                     .total_uncompressed()
                     .map(|b| format!(" · {}", feraille_fs_native::humanize_bytes(b)))
                     .unwrap_or_default();
-                format!("{} · {files} file{}{size}", self.format.label(), if files == 1 { "" } else { "s" })
+                let encrypted = if toc.needs_password { " · encrypted" } else { "" };
+                format!(
+                    "{} · {files} file{}{size}{encrypted}",
+                    self.format.label(),
+                    if files == 1 { "" } else { "s" }
+                )
             }
         };
 
         let selected_count = self.selected.len();
-        let can_extract = matches!(self.load, ArchiveLoad::Loaded(_)) && self.caps.can_extract;
+        // Extraction stays disabled while the archive's contents are still
+        // locked — better than letting the op fail on every entry.
+        let can_extract = matches!(self.load, ArchiveLoad::Loaded(_))
+            && self.caps.can_extract
+            && !self.locked_contents();
         let read_only = self.caps.is_read_only();
 
         h_flex()
@@ -213,6 +285,47 @@ impl ArchiveView {
                     .disabled(!can_extract)
                     .on_click(cx.listener(|this, _, window, cx| this.extract_all(window, cx))),
             )
+            .into_any_element()
+    }
+
+    /// Password entry row: masked field + Unlock. Used full-pane when the
+    /// listing itself is encrypted, and as a strip under the header when only
+    /// the contents are.
+    fn password_form(
+        &self,
+        prompt: &str,
+        error: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        v_flex()
+            .gap_1()
+            .child(
+                div()
+                    .text_scale_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(prompt.to_string()),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(div().w(px(220.0)).child(Input::new(&self.password_input).small()))
+                    .child(
+                        Button::new("archive-unlock")
+                            .label("Unlock")
+                            .small()
+                            .on_click(cx.listener(|this, _, _window, cx| this.submit_password(cx))),
+                    ),
+            )
+            .when_some(error, |this, err| {
+                this.child(
+                    div()
+                        .text_scale_xs()
+                        .text_color(theme.danger)
+                        .child(err.to_string()),
+                )
+            })
             .into_any_element()
     }
 
@@ -333,13 +446,43 @@ impl Render for ArchiveView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let bg = theme.background;
+        let border = theme.border;
         let header = self.header(cx);
+
+        // Contents-only encryption (zip): the listing renders, but a password
+        // strip sits between the header and the rows until it is supplied.
+        let locked_strip = self.locked_contents().then(|| {
+            let form = self.password_form(
+                "This archive's contents are encrypted. Enter its password to extract.",
+                None,
+                cx,
+            );
+            div()
+                .w_full()
+                .px_3()
+                .py_2()
+                .border_b_1()
+                .border_color(border)
+                .child(form)
+        });
+
         let body = match &self.load {
             ArchiveLoad::Loading => self.centered_message("Reading archive…", cx),
-            ArchiveLoad::NeedsPassword => self.centered_message(
-                "This archive is encrypted — password support is coming soon.",
-                cx,
-            ),
+            ArchiveLoad::NeedsPassword { error } => {
+                let error = error.clone();
+                let form = self.password_form(
+                    "This archive is encrypted. Enter its password to view the contents.",
+                    error.as_deref(),
+                    cx,
+                );
+                v_flex()
+                    .flex_1()
+                    .size_full()
+                    .items_center()
+                    .justify_center()
+                    .child(form)
+                    .into_any_element()
+            }
             ArchiveLoad::Failed(e) => {
                 self.centered_message(format!("Couldn't read this archive: {e}"), cx)
             }
@@ -352,6 +495,7 @@ impl Render for ArchiveView {
             .size_full()
             .bg(bg)
             .child(header)
+            .children(locked_strip)
             .child(body)
     }
 }

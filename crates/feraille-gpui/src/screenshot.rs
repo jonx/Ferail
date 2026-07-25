@@ -477,7 +477,7 @@ pub fn run(args: Args) -> Result<()> {
                             .and_then(feraille_archive::Format::from_path)
                             .unwrap_or(feraille_archive::Format::Zip);
                         let view = cx.new(|cx| {
-                            crate::archive::ArchiveView::new(canonical, format, cx)
+                            crate::archive::ArchiveView::new(canonical, format, window, cx)
                         });
                         cx.new(|cx| gpui_component::Root::new(view, window, cx))
                     } else if let Some(target) = viewer_target.clone() {

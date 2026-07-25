@@ -2751,7 +2751,7 @@ impl Shell {
     pub fn on_open_archive(
         &mut self,
         _: &OpenAsArchive,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let archive = self
@@ -2764,14 +2764,19 @@ impl Shell {
                     .is_some_and(feraille_archive::Format::is_archive_path)
             });
         if let Some(archive) = archive {
-            self.dock_archive_view(archive, cx);
+            self.dock_archive_view(archive, window, cx);
         }
     }
 
     /// Build the archive view for `archive` and dock it as the active tab's
     /// tool-result surface, cancelling the tab's directory-load work (mirrors
     /// `dock_disk_usage_view`). The tab stays rooted at `current_dir`.
-    fn dock_archive_view(&mut self, archive: PathBuf, cx: &mut Context<Self>) {
+    fn dock_archive_view(
+        &mut self,
+        archive: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(format) = archive
             .file_name()
             .and_then(|s| s.to_str())
@@ -2781,7 +2786,7 @@ impl Shell {
         };
         let shell_weak = cx.weak_entity();
         let view = cx.new(|cx| {
-            let mut v = crate::archive::ArchiveView::new(archive.clone(), format, cx);
+            let mut v = crate::archive::ArchiveView::new(archive.clone(), format, window, cx);
             v.set_shell(shell_weak);
             v
         });
