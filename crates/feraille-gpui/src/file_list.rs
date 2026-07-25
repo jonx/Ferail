@@ -495,6 +495,21 @@ pub struct FileListDelegate {
     pub slow_load: Option<SharedString>,
 }
 
+/// Drag payload for entries inside an archive.
+///
+/// Archive entries have no path on disk, so they can't ride `ExternalPaths`
+/// (which is what reaches Finder). Within Feraille we own both ends, so we
+/// carry the *coordinates* instead — which archive, which entries — and the
+/// drop target extracts them. Dragging to Finder still needs lazy
+/// NSFilePromise materialization in gpui's mac layer and is unaffected by this.
+#[derive(Clone, Debug)]
+pub struct ArchiveEntryDrag {
+    pub archive: PathBuf,
+    /// Stored entry paths; a directory brings its whole subtree on extract.
+    pub entries: Vec<String>,
+    pub password: Option<String>,
+}
+
 /// See [`FileListDelegate::drag_snapshot`].
 #[derive(Default)]
 struct DragSnapshot {
@@ -849,6 +864,43 @@ impl FileListDelegate {
         !self.archive_rows.is_empty()
     }
 
+    /// Build the drag payload for an archive row: the whole selection when the
+    /// pressed row is part of it, otherwise just that row (mirroring the
+    /// file-list rule).
+    fn archive_drag_for_row(
+        &self,
+        row_ix: usize,
+        row_is_selected: bool,
+        cx: &gpui::App,
+    ) -> Option<ArchiveEntryDrag> {
+        let view = self.archive_view.as_ref()?;
+        let (archive, password) = view
+            .upgrade()
+            .map(|v| {
+                let v = v.read(cx);
+                (v.archive_path().to_path_buf(), v.password_for_drag())
+            })?;
+        let entries: Vec<String> = if row_is_selected {
+            self.archive_rows
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| {
+                    self.entries
+                        .get(*i)
+                        .is_some_and(|e| self.selected_set.contains(&e.id))
+                })
+                .map(|(_, r)| r.path.clone())
+                .collect()
+        } else {
+            vec![self.archive_rows.get(row_ix)?.path.clone()]
+        };
+        (!entries.is_empty()).then_some(ArchiveEntryDrag {
+            archive,
+            entries,
+            password,
+        })
+    }
+
     /// Apply a plain / Cmd / Shift click to this delegate's own selection.
     ///
     /// The Shell drives selection for tab listings through its richer path
@@ -1147,6 +1199,24 @@ impl TableDelegate for FileListDelegate {
                             paths: paths.paths().to_vec(),
                         });
                     }),
+                )
+                // Twin target for entries dragged out of an archive window.
+                .drag_over::<ArchiveEntryDrag>(|style, _, _, cx| {
+                    style
+                        .border_1()
+                        .border_color(cx.theme().accent)
+                        .bg(cx.theme().accent.opacity(0.10))
+                })
+                .on_drop(
+                    cx.listener(move |_state, drag: &ArchiveEntryDrag, _window, cx| {
+                        cx.stop_propagation();
+                        cx.emit(TableEvent::ArchiveDrop {
+                            row_ix,
+                            archive: drag.archive.clone(),
+                            entries: drag.entries.clone(),
+                            password: drag.password.clone(),
+                        });
+                    }),
                 );
         }
         if kind_is_dir && heat > 0.0 && crate::ant_trail::enabled(cx) {
@@ -1176,6 +1246,31 @@ impl TableDelegate for FileListDelegate {
         // selection; pressing an unselected row drags just that row.
         if let Some(entry) = self.entries.get(row_ix) {
             let row_is_selected = self.selected_set.contains(&entry.id);
+            // Archive rows carry archive coordinates rather than paths.
+            if self.is_archive_mode() {
+                if let Some(drag) = self.archive_drag_for_row(row_ix, row_is_selected, cx) {
+                    let count = drag.entries.len();
+                    let names: SmallVec<[SharedString; GHOST_STACK_CAP]> = drag
+                        .entries
+                        .iter()
+                        .take(GHOST_STACK_CAP)
+                        .map(|p| {
+                            SharedString::from(
+                                p.rsplit('/').next().unwrap_or(p.as_str()).to_string(),
+                            )
+                        })
+                        .collect();
+                    return row.on_drag(drag, move |_d, offset, _window, cx| {
+                        cx.new(|_| DragBadge {
+                            names: names.clone(),
+                            icons: smallvec![],
+                            count,
+                            offset,
+                        })
+                    });
+                }
+                return row;
+            }
             if row_is_selected {
                 // Shared snapshot for the whole selection: built once
                 // per selection/model change, reused by every selected

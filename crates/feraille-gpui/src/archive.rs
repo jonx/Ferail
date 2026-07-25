@@ -215,6 +215,12 @@ impl ArchiveView {
         cx.notify();
     }
 
+    /// Password to carry in a drag payload, so a drop can extract encrypted
+    /// entries without re-prompting.
+    pub fn password_for_drag(&self) -> Option<String> {
+        self.password.clone()
+    }
+
     /// The workbench's table, so the shell can read counts for the status bar.
     pub fn table(&self) -> &Entity<TableState<FileListDelegate>> {
         &self.table

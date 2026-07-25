@@ -36,7 +36,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   isn't one. Formats that can't be edited in place (tar, 7z) are marked
   read-only. The workbench can also be **popped out into its own window** (and
   docked back), like Disk Usage — handy for dragging files into an archive with
-  Finder open beside it.
+  Finder open beside it. You can also **drag entries out of an archive** onto a
+  folder row or another Feraille window to extract them there (dragging to
+  Finder itself is still to come).
 - **Richer 7-Zip descriptions** — `.7z` files now show their file count, root
   folder, and whether they're encrypted in the Description column, the same way
   ZIPs already did.

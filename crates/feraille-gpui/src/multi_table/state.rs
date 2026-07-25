@@ -64,6 +64,16 @@ pub enum TableEvent {
         row_ix: usize,
         paths: Vec<std::path::PathBuf>,
     },
+    /// Entries dragged out of an archive workbench were dropped on a folder
+    /// row. Fork addition, twin of [`TableEvent::ExternalDrop`]: the payload
+    /// carries archive coordinates rather than paths, because the entries have
+    /// no path on disk until the host extracts them.
+    ArchiveDrop {
+        row_ix: usize,
+        archive: std::path::PathBuf,
+        entries: Vec<String>,
+        password: Option<String>,
+    },
     /// A drag is currently hovering over this folder row (fork
     /// addition). Emitted continuously while an `ExternalPaths` drag is
     /// over the row so the host can spring-load (drill into the folder

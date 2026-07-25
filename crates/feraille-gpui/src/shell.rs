@@ -1982,6 +1982,25 @@ impl Shell {
                         // with the icon grid's folder-cell drop.
                         this.drop_onto_folder_row(*row_ix, paths.clone(), window, cx);
                     }
+                    TableEvent::ArchiveDrop {
+                        row_ix,
+                        archive,
+                        entries,
+                        password,
+                    } => {
+                        // Extract the dragged entries into the folder they
+                        // were dropped on.
+                        if let Some(dest) = this.path_for_row(*row_ix, cx) {
+                            this.extract_archive_entries_into(
+                                archive.clone(),
+                                entries.clone(),
+                                dest,
+                                password.clone(),
+                                window,
+                                cx,
+                            );
+                        }
+                    }
                     TableEvent::DragHover { row_ix } => {
                         // Spring-load: after a short dwell over a folder
                         // row, drill into it so the user can drop deeper

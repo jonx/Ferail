@@ -3599,6 +3599,24 @@ impl Render for Shell {
                         let dest = this.active_tab().current_dir.clone();
                         this.handle_external_drop(paths.paths().to_vec(), dest, window, cx);
                     }))
+                    // Entries dragged out of an archive workbench land in this
+                    // tab's folder.
+                    .drag_over::<crate::file_list::ArchiveEntryDrag>(|style, _, _, cx| {
+                        style.bg(cx.theme().accent.opacity(0.06))
+                    })
+                    .on_drop(cx.listener(
+                        |this, drag: &crate::file_list::ArchiveEntryDrag, window, cx| {
+                            let dest = this.active_tab().current_dir.clone();
+                            this.extract_archive_entries_into(
+                                drag.archive.clone(),
+                                drag.entries.clone(),
+                                dest,
+                                drag.password.clone(),
+                                window,
+                                cx,
+                            );
+                        },
+                    ))
                     .child(file_body);
                 // The preview pane is hidden by default; whenever it's visible
                 // the user explicitly turned it on (Cmd+P / View menu), so
