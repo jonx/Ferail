@@ -80,17 +80,30 @@ touch, or hidden for one it would (the Clear-Quarantine-on-a-mixed-pair
 bug). The GPUI shell guarantees this by resolving the target set **once**,
 from a single place, and reusing it for both:
 
-- `Shell::resolve_targets(context_row, …)` is the single resolver:
+- `Shell::resolve_targets(context_row, …)` resolves the **dispatch** set:
   `context_row` (right-click on an unselected row) → the whole visible
-  selection → the lead row. `action_entries_visible_order` *consumes*
-  `context_row` for one-shot dispatch; `build_menu_targets` *peeks* it so
-  the menu is built against the identical set the handler will act on.
-- On every row right-click, `Shell::push_menu_targets` stages a
-  `MenuTargets` snapshot (`Vec<TargetCap>` capability caps + a single
-  `anchor`) into the `FileListDelegate`. The gpui-component context menu
-  builds in a deferred closure (next frame), so the staged caps are always
-  fresh by menu-build time. Both the list and the icons-grid right-click
-  sites stage it.
+  selection → the lead row. `action_entries_visible_order` consumes
+  `context_row` for one-shot dispatch.
+- `file_list::resolve_menu_targets(entries, selected, row_ix)` resolves the
+  **menu** set, and must agree with it row for row: clicked row inside the
+  selection → the whole set; outside → that row alone (because the click
+  collapses the selection onto it). It returns the `MenuTargets` snapshot
+  the menu gates on — `Vec<TargetCap>` capability caps + a single `anchor`
+  — projected from the already-loaded `FileEntry`s, so it stays cache-only.
+- It runs **when the menu builds**, from the delegate's own mirrored
+  selection, not from a snapshot staged ahead of time. That is not a style
+  choice: gpui-component builds the menu inside a `window.defer` callback
+  queued from its mouse-down listener, and that listener is registered
+  *after* the row's (so it runs first in the bubble phase). The deferred
+  build therefore lands **before** the table's `RightClickedRow` event ever
+  reaches the Shell. Anything the Shell stages from that event is one
+  right-click late — which is exactly what made the first menu after a
+  folder load silently drop every gated command (Rename, Copy Path,
+  Extract, Open as Archive, Open With) until you right-clicked a second
+  time. Both right-click sites (list rows and the icons grid) go through
+  the same delegate builder, so both get the fix.
+  `--context-menu-row N` (docs/features/SCREENSHOTS.md) captures the
+  first-right-click case headlessly.
 
 #### Three command archetypes
 
@@ -111,7 +124,7 @@ Quarantine = any target quarantined; Open Terminal Here / Favorites =
 anchor is a folder; Slideshow from Here = anchor is a file).
 
 Visibility is expressed with the `Availability` type and evaluated against
-the staged `MenuTargets`:
+the resolved `MenuTargets`:
 
 ```rust
 enum Availability {

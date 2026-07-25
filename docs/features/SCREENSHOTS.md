@@ -58,7 +58,9 @@ scratch). If a committed doc needs to reference an image, copy it into
 - **Live input simulation** — `--breadcrumb <text>` (enters Cmd+L edit mode and
   *types* through the completion provider), `--keys "<gpui keystrokes>"`
   (dispatched through the real window key path; `pause` token waits out async UI
-  between keys).
+  between keys), `--context-menu-row N` (synthesises a real mouse-move +
+  right-click over row N, so the row context menu builds exactly as it does for
+  a user — it lives in a mouse-event listener, so no action can open it).
 - **Panels & overlays** — `--preview`, `--properties` (Get Info),
   `--rename`, `--new-folder`, `--shortcuts-help[-filter]`, `--simulate-toast`,
   `--simulate-progress`, `--simulate-task-panel`.
@@ -164,6 +166,20 @@ cargo run --bin feraille-gpui -- \
 The 2500 ms pre-capture wait lets the background metadata gather land before the
 popup is sampled. Without a `--select-*` flag, `--properties` targets the folder
 itself.
+
+### Row context menu, on the *first* right-click after a load
+
+```sh
+cargo run --bin feraille-gpui -- \
+  --screenshot screenshots/context-menu-first-right-click.png \
+  --navigate ~/Downloads --context-menu-row 2
+```
+
+With no `--select-*` flag this captures the case that used to differ from every
+later right-click: a freshly loaded folder, nothing selected, menu built from
+scratch. Add `--select-rows 1,2` to capture the multi-selection form instead
+(bulk "Rename N Items…", no single-only commands). The row must be on screen —
+the click point comes from the laid-out row geometry.
 
 ### Disk-usage treemap, depth-limited, coloured by depth
 
