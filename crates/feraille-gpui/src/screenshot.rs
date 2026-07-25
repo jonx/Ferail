@@ -117,6 +117,8 @@ pub struct Args {
     /// the current selection, seeding the first four rows when no
     /// `--select-rows` provided one.
     pub bulk_rename: bool,
+    /// Open the New Archive dialog over the current selection.
+    pub new_archive: bool,
     /// Push a fake toast with the given message. Lands in Stage 5.
     pub simulate_toast: Option<String>,
     /// Show the footer progress strip: <0 → indeterminate, ≥0 →
@@ -257,6 +259,7 @@ pub fn parse_args() -> Args {
             "--inline-rename" => args.inline_rename = true,
             "--new-folder" => args.new_folder = true,
             "--bulk-rename" => args.bulk_rename = true,
+            "--new-archive" => args.new_archive = true,
             "--simulate-toast" => args.simulate_toast = iter.next(),
             "--simulate-progress" => {
                 args.simulate_progress = Some(
@@ -685,6 +688,7 @@ struct ShellArgs {
     rename: bool,
     new_folder: bool,
     bulk_rename: bool,
+    new_archive: bool,
     expand: Vec<PathBuf>,
     // Stage-deferred flags. Recorded so the apply step can emit a
     // single "stage X not yet wired" log warning per use, rather
@@ -725,6 +729,7 @@ impl From<&Args> for ShellArgs {
             rename: a.rename || a.inline_rename,
             new_folder: a.new_folder,
             bulk_rename: a.bulk_rename,
+            new_archive: a.new_archive,
             expand: a.expand.clone(),
             properties: a.properties,
             edit_mode: a.edit_mode,
@@ -946,6 +951,7 @@ impl ShellArgs {
             || self.select_name.is_some()
             || !self.select_rows.is_empty()
             || self.bulk_rename
+            || self.new_archive
         {
             // Selection flags resolve against the loaded entry list,
             // but `navigate` streams its enumeration — give the
@@ -1023,6 +1029,17 @@ impl ShellArgs {
                         s.select_row_indices(&[0, 1, 2, 3], cx);
                     }
                     s.trigger_bulk_rename(window, cx);
+                });
+            });
+        }
+        if self.new_archive {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    // Seed a small selection so the dialog has sources.
+                    if self.select_rows.is_empty() {
+                        s.select_row_indices(&[0, 1], cx);
+                    }
+                    s.trigger_new_archive(window, cx);
                 });
             });
         }

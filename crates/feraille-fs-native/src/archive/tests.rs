@@ -605,3 +605,56 @@ fn single_member_create_rejects_multiple_inputs() {
     .unwrap_err();
     assert!(matches!(err, ArchiveError::Codec(_)), "got {err:?}");
 }
+
+#[test]
+fn create_with_level_and_password_honours_options() {
+    // Guards the New Archive dialog's contract: the CreateOptions it builds
+    // (level + password) must reach the codec and be readable back.
+    let src = TempDir::new("src-opts");
+    make_tree(src.path());
+    let input = src.path().join("project");
+
+    // Maximum compression + a password → encrypted, and refuses to extract
+    // without it.
+    let secured = TempFile::new("opts.zip");
+    let (p1, c1) = rig();
+    create_archive(
+        Format::Zip,
+        &[input.as_path()],
+        secured.path(),
+        CreateOptions {
+            level: feraille_archive::CompressionLevel::Maximum,
+            password: Some("pw"),
+        },
+        &p1,
+        &c1,
+    )
+    .unwrap();
+    assert!(read_toc(secured.path(), None).unwrap().needs_password);
+
+    // Store level → entries are not deflated, so the archive is at least as
+    // large as its contents.
+    let stored = TempFile::new("store.zip");
+    let (p2, c2) = rig();
+    create_archive(
+        Format::Zip,
+        &[input.as_path()],
+        stored.path(),
+        CreateOptions {
+            level: feraille_archive::CompressionLevel::Store,
+            password: None,
+        },
+        &p2,
+        &c2,
+    )
+    .unwrap();
+    let toc = read_toc(stored.path(), None).unwrap();
+    assert!(!toc.needs_password);
+    for e in toc.entries.iter().filter(|e| !e.is_dir) {
+        assert_eq!(
+            e.compressed_size, e.uncompressed_size,
+            "Store level must not compress {}",
+            e.path
+        );
+    }
+}

@@ -18,6 +18,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   and **TAR** (Gzip / Bzip2 / XZ / uncompressed), powered by a new built-in
   archive engine (no more shelling out to `ditto`), so it works the same on
   every platform.
+- **New Archive dialog** — "New Archive…" in the Compress menu opens a dialog to
+  pick the format (ZIP / 7-Zip / TAR.GZ / TAR.BZ2 / TAR.XZ / TAR), the
+  compression level (Store / Fast / Normal / Maximum), and an optional password,
+  instead of taking the one-click defaults.
 - **Browse inside archives** — right-click an archive → **Open as Archive** to
   open a contents view (like Disk Usage): see every file and folder without
   extracting, then **Extract Selected** (cherry-pick) or **Extract All**.

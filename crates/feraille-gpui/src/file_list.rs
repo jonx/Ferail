@@ -1415,6 +1415,7 @@ impl TableDelegate for FileListDelegate {
         use crate::shell::{
             BulkRenameSelected, ClearQuarantine, Compress, CompressSevenZ, CompressTar,
             CompressTarBz2, CompressTarGz, CompressTarXz, CopyPath, DeleteImmediately, Duplicate,
+            NewArchive,
             Extract, ExtractTo, GetInfo, MakeAlias, MoveToTrash, OpenAsArchive,
             OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
             OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
@@ -1552,6 +1553,10 @@ impl TableDelegate for FileListDelegate {
             m.menu("ZIP", Box::new(Compress))
                 .menu("7-Zip", Box::new(CompressSevenZ))
                 .item(PopupMenuItem::submenu("TAR", tar_submenu))
+                // One-click entries above use sensible defaults; this opens the
+                // dialog for format + compression level + password.
+                .separator()
+                .menu("New Archive\u{2026}", Box::new(NewArchive))
         });
         let mut menu = menu
             .menu("Duplicate", Box::new(Duplicate))

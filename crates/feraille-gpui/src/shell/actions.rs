@@ -177,6 +177,9 @@ actions!(
         OpenAsArchive,
         /// Format variants under the "Compress" submenu. The engine's
         /// `create_archive` produces each; the plain `Compress` makes a ZIP.
+        /// Open the New Archive dialog over the selection (format, compression
+        /// level, and optional password) instead of one-click compressing.
+        NewArchive,
         CompressSevenZ,
         CompressTar,
         CompressTarGz,

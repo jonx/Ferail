@@ -2451,6 +2451,10 @@ impl Shell {
         self.on_bulk_rename_selected(&BulkRenameSelected, window, cx);
     }
 
+    pub fn trigger_new_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_new_archive(&NewArchive, window, cx);
+    }
+
     pub fn trigger_new_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.on_new_folder(&NewFolder, window, cx);
     }
@@ -2855,6 +2859,68 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         self.compress_selection_as(feraille_archive::Format::Tar, window, cx);
+    }
+
+    /// Open the New Archive dialog over the current selection.
+    pub(super) fn on_new_archive(
+        &mut self,
+        _: &NewArchive,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let sources: Vec<PathBuf> = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+        crate::archive_create::open_dialog(sources, window, cx);
+    }
+
+    /// Create `output` from `sources` with the dialog's chosen options.
+    pub(crate) fn create_archive_from(
+        &mut self,
+        sources: Vec<PathBuf>,
+        output: PathBuf,
+        format: feraille_archive::Format,
+        level: feraille_archive::CompressionLevel,
+        password: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = sources.len();
+        let name = output
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "archive".to_string());
+        let reload = output
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.active_tab().current_dir.clone());
+        self.spawn_archive_op(
+            reload,
+            move |progress, cancel| {
+                let targets: Vec<&std::path::Path> =
+                    sources.iter().map(|path| path.as_path()).collect();
+                let opts = feraille_fs_native::CreateOptions {
+                    level,
+                    password: password.as_deref(),
+                };
+                feraille_fs_native::create_archive(
+                    format, &targets, &output, opts, progress, cancel,
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(vec![output])
+            },
+            "Create archive",
+            format!("Creating {name}"),
+            FileOpSuccessToast::IfSurfaced(format!(
+                "Created {name} from {count} item{}",
+                if count == 1 { "" } else { "s" }
+            )),
+            FileOpUndo::RemoveCreatedResult,
+            window,
+            cx,
+        );
     }
 
     /// Compress the action target set into a single `format` archive next to

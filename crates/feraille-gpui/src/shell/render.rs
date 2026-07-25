@@ -3445,6 +3445,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_duplicate))
             .on_action(cx.listener(Self::on_make_alias))
             .on_action(cx.listener(Self::on_compress))
+            .on_action(cx.listener(Self::on_new_archive))
             .on_action(cx.listener(Self::on_compress_sevenz))
             .on_action(cx.listener(Self::on_compress_tar))
             .on_action(cx.listener(Self::on_compress_targz))
