@@ -32,7 +32,7 @@ use gpui_component::{
     button::Button,
     h_flex,
     input::{Input, InputState},
-    v_flex, ActiveTheme, Disableable, Sizable,
+    v_flex, ActiveTheme, Disableable, ElementExt as _, Sizable,
 };
 
 use feraille_archive::{ArchiveTree, Capabilities, Format, Toc, TreeRow};
@@ -42,12 +42,16 @@ use feraille_fs_native::ArchiveError;
 use crate::file_list::FileListDelegate;
 use crate::multi_table::{DataTable, TableEvent, TableState};
 use crate::shell::Shell;
-use crate::text::TextScale as _;
+use crate::text::{TextScale as _, TruncateMiddle as _};
 use crate::tool_results::{ToolHostContext, ToolHostEvent};
 
 /// Callback a standalone archive window uses to dock itself back into a tab.
 /// Mirrors `disk_usage::DockOwner`.
 pub type ArchiveDockOwner = std::rc::Rc<dyn Fn(PathBuf, Entity<ArchiveView>, &mut App)>;
+
+/// Narrower than this and the header hides its filter box so the archive's
+/// name keeps a usable share of the row.
+const FILTER_MIN_WIDTH: f32 = 620.0;
 
 /// Key context for the archive pane (keymap bindings hang off this).
 pub const ARCHIVE_CONTEXT: &str = "Archive";
@@ -91,6 +95,9 @@ pub struct ArchiveView {
     shell: Option<WeakEntity<Shell>>,
     password_input: Entity<InputState>,
     password: Option<String>,
+    /// Rounded pane width, captured at prepaint. Lets the header drop its
+    /// lower-priority controls before they crush the archive's name.
+    host_width: Option<f32>,
     focus_handle: FocusHandle,
 }
 
@@ -193,6 +200,7 @@ impl ArchiveView {
             shell: None,
             password_input,
             password: None,
+            host_width: None,
             focus_handle: cx.focus_handle(),
         };
         view.start_load(None, cx);
@@ -212,6 +220,17 @@ impl ArchiveView {
         match event {
             ToolHostEvent::HostChanged(context) => self.host = context,
         }
+        cx.notify();
+    }
+
+    /// Record the pane width. Guarded so an unchanged width doesn't notify —
+    /// prepaint runs every frame and an unconditional notify would loop.
+    fn update_host_width(&mut self, width: f32, cx: &mut Context<Self>) {
+        let next = width.round();
+        if self.host_width == Some(next) {
+            return;
+        }
+        self.host_width = Some(next);
         cx.notify();
     }
 
@@ -519,9 +538,21 @@ impl ArchiveView {
                 v_flex()
                     .flex_1()
                     .min_w_0()
-                    .child(div().text_scale_md().child(name))
+                    // Filenames truncate in the middle (house style — keeps the
+                    // start and the extension); the subtitle is free-form, so
+                    // its tail is expendable. Without these the text wrapped a
+                    // character per line once the pane got narrow.
                     .child(
                         div()
+                            .w_full()
+                            .truncate_middle()
+                            .text_scale_md()
+                            .child(name),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .truncate()
                             .text_scale_xs()
                             .text_color(theme.muted_foreground)
                             .child(subtitle),
@@ -539,8 +570,16 @@ impl ArchiveView {
                         .child("Read-only"),
                 )
             })
-            .when(loaded, |this| {
-                this.child(div().w(px(200.0)).child(Input::new(&self.filter_input).small()))
+            // Below this the filter box would leave the name a few pixels, so
+            // drop it: the name and the extract verbs matter more, and the
+            // pane can always be widened (or popped out) to filter.
+            .when(loaded && self.host_width.unwrap_or(f32::MAX) >= FILTER_MIN_WIDTH, |this| {
+                this.child(
+                    div()
+                        .w(px(180.0))
+                        .flex_shrink_0()
+                        .child(Input::new(&self.filter_input).small()),
+                )
             })
             .child(
                 Button::new("archive-extract-selected")
@@ -685,11 +724,17 @@ impl Render for ArchiveView {
                 .into_any_element(),
         };
 
+        let view = cx.entity().clone();
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context(ARCHIVE_CONTEXT)
             .size_full()
             .bg(bg)
+            .on_prepaint(move |bounds, _, cx| {
+                view.update(cx, |this, cx| {
+                    this.update_host_width(f32::from(bounds.size.width), cx);
+                });
+            })
             .when(editable, |this| {
                 this.drag_over::<ExternalPaths>(|style, _, _, cx| {
                     style
