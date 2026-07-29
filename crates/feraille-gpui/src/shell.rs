@@ -3262,9 +3262,9 @@ impl Shell {
         window.refresh();
     }
 
-    /// Open the selected row's path in a new tab (context-menu
-    /// command). Falls back to the active tab's current dir when
-    /// nothing is selected.
+    /// Open the selected folder(s) in a new tab (context-menu command).
+    /// Only folders can seed a tab, so file targets are dropped; falls back
+    /// to the active tab's current dir when nothing is targeted.
     fn on_open_in_new_tab(
         &mut self,
         _: &OpenInNewTab,
@@ -3279,26 +3279,27 @@ impl Shell {
             self.open_path_in_new_tab(path, window, cx);
             return;
         }
-        if targets.len() == 1 {
-            self.open_path_in_new_tab(targets[0].2.clone(), window, cx);
-            return;
-        }
-        // FanOut: a tab per folder (Finder's "Open in New Tabs"); files
-        // can't anchor a folder tab, so they're skipped.
+        // FanOut: a tab per folder (Finder's "Open in New Tabs"); a tab is a
+        // folder view, so files can't anchor one and are skipped — matching
+        // the menu, which hides the item on a file anchor
+        // (`file_list::avail_anchor_dir`). A file-only target set is a no-op.
         let folders: Vec<PathBuf> = targets
             .into_iter()
             .filter(|(_, e, _)| matches!(e.kind, EntryKind::Directory))
             .map(|(_, _, p)| p)
             .collect();
-        if folders.is_empty() {
+        let count = folders.len();
+        if count == 0 {
             return;
         }
-        let count = folders.len();
-        let plural = if count == 1 { "tab" } else { "tabs" };
+        if count == 1 {
+            self.open_path_in_new_tab(folders[0].clone(), window, cx);
+            return;
+        }
         self.confirm_fanout(
             count,
             "Open in New Tabs?",
-            format!("Open {count} folders in new {plural}?"),
+            format!("Open {count} folders in new tabs?"),
             "Open",
             window,
             cx,

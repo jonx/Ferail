@@ -16,7 +16,8 @@ into the window's chain at startup ([crates/feraille-shell-mac/src/services.rs](
 
 - File tree (sidebar): Open, Reveal in Finder, Quick Look, Copy Path,
   Open Terminal Here (folders), Pin / Remove from Favorites.
-- List pane (per-row): full Finder-equivalent — Open, Open With submenu,
+- List pane (per-row): full Finder-equivalent — Open, Open in New Tab
+  (folders), Open With submenu,
   Reveal in Finder, Get Info, Quick Look, Rename, Duplicate, Make Alias,
   Compress (submenu: ZIP / 7-Zip / TAR ▸ Gzip·Bzip2·XZ·Uncompressed),
   Extract (archive rows only; submenu: Extract Here / Extract To…),
@@ -133,14 +134,17 @@ Every command is classified by how it behaves across a multi-selection:
    Tags → applied to all). Always shown; a large count is the point, so it
    is never guarded.
 2. **FanOut** — invoked once per file (Open, Quick Look, Reveal in Finder,
-   Get Info, Open in New Tab, Duplicate, Make Alias). Always shown, but the
-   handler iterates over the resolved set.
+   Get Info, Duplicate, Make Alias). Always shown, but the handler iterates
+   over the resolved set. Open in New Tab fans out too, but is *also*
+   anchor-gated (below) — a tab is a folder view, so it only exists for a
+   folder anchor and its handler drops file targets from the set.
 3. **SingleOnly** — meaningful only for one file (Copy Path, Rename, Open
    With). Hidden once more than one row is targeted.
 
 Plus **capability / anchor** rules that don't fit a count (Clear
-Quarantine = any target quarantined; Open Terminal Here / Favorites =
-anchor is a folder; Slideshow from Here = anchor is a file).
+Quarantine = any target quarantined; Open Terminal Here / Favorites /
+Open in New Tab = anchor is a folder; Slideshow from Here = anchor is a
+file).
 
 Visibility is expressed with the `Availability` type and evaluated against
 the resolved `MenuTargets`:

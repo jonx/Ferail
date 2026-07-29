@@ -1804,6 +1804,9 @@ impl TableDelegate for FileListDelegate {
         let show_slideshow = Availability::When(avail_anchor_file).allows(t);
         let show_terminal = Availability::When(avail_anchor_dir).allows(t);
         let show_favorites = Availability::When(avail_anchor_dir).allows(t);
+        // A tab is a folder view: only a folder anchor can seed one, so the
+        // item hides on a file row instead of opening a tab that can't list.
+        let show_new_tab = Availability::When(avail_anchor_dir).allows(t);
         let show_clear_quarantine = Availability::When(avail_any_quarantined).allows(t);
         let show_extract = Availability::When(avail_any_archive).allows(t);
         let show_single_only = Availability::SingleOnly.allows(t);
@@ -1818,9 +1821,11 @@ impl TableDelegate for FileListDelegate {
             "Add to Favorites"
         };
 
+        let mut menu = menu.menu("Open", Box::new(OpenSelected));
+        if show_new_tab {
+            menu = menu.menu("Open in New Tab", Box::new(OpenInNewTab));
+        }
         let mut menu = menu
-            .menu("Open", Box::new(OpenSelected))
-            .menu("Open in New Tab", Box::new(OpenInNewTab))
             .separator()
             .menu("Get Info", Box::new(GetInfo))
             .menu("Quick Look", Box::new(QuickLook));
