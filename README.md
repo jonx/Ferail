@@ -59,6 +59,8 @@ The full tour with a picture per feature lives in
 | ![Disk Usage](docs/images/tour-disk-usage.png) | ![Duplicates](docs/images/tour-dupes.png) | ![Bulk rename](docs/images/tour-bulk-rename.png) |
 | **Icon grid** | **Media viewer + live grading** | **Command palette** |
 | ![Icon grid](docs/images/tour-grid.png) | ![Viewer](docs/images/tour-viewer.png) | ![Palette](docs/images/tour-palette.png) |
+| **Archives, browsed in place** | **Ant Trail visit heat** | **Content-derived descriptions** |
+| ![Archive workbench](docs/images/tour-archive.png) | ![Ant Trail](docs/images/tour-ant-trail.png) | ![Magic descriptions](docs/images/tour-magic.png) |
 
 And the ones a screenshot can't show: sticky zoom that carries your zoom and pan
 to the next file; chroma-keyed transparent video windows you can stack over your

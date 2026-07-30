@@ -32,6 +32,44 @@ that rule.
   deceptive-filename highlighter that catches `раypal.exe`-style
   homoglyph tricks without flagging normal Cyrillic/Greek names.
 
+## Descriptions — what a file *is*, not what it claims
+
+![Magic descriptions](images/tour-magic.png)
+
+Every file is identified by its **bytes, not its extension**, and the
+facts land in a Description column: image dimensions, audio channels /
+sample rate / bitrate / duration, archive entry counts and root folder,
+Mach-O and ELF architecture. Folders share the column with recursive
+item counts. When the content and the extension disagree the row is
+flagged — above, `Holiday Photo.jpg` is really a ZIP, and says so.
+([magic description](features/MAGIC_DESCRIPTION.md) ·
+[magic sniffing](features/MAGIC_SNIFFING.md))
+
+## Archives — open them like folders
+
+![Archive workbench](images/tour-archive.png)
+
+Open a `.zip`, `.7z` or `.tar.*` in place and browse it as a real
+sortable list — expandable folders, the usual columns, a filter box — so
+a 5000-entry archive opens as one folder to drill into instead of 5000
+rows. Extract everything or just the selection (a selected folder brings
+its subtree), drag files in to add them, drag entries out to extract
+them. It works on anything that *is* an archive underneath, even without
+the extension — `.docx`, `.jar`, `.apk` — and formats that can't be
+edited in place are marked read-only. The workbench pops out into its
+own window, like Disk Usage.
+
+## Ant Trail — the app learns where you go
+
+![Ant Trail](images/tour-ant-trail.png)
+
+Visit counts are recorded per folder and heat-tint the rows you actually
+use — above, the darkest rows are the most-visited projects — while a
+Recents section keeps them one click away. Recency and heat are separate,
+so clearing Recents doesn't erase how often you visit a folder. Both the
+tint and the Recents list have master switches, and the base colour is
+configurable in Settings → Appearance. ([ant trail](features/ANT_TRAIL.md))
+
 ## Icon grid — the same folder, visual
 
 ![Icon grid](images/tour-grid.png)
@@ -127,9 +165,6 @@ page with a privacy-redacted "copy report" for bug reports.
 
 ## The quiet features you'll feel
 
-- **Ant Trail** — the app learns the folders you visit; heat tints them
-  in the list and a Recents section keeps them one click away.
-  ([ant trail](features/ANT_TRAIL.md))
 - **Dock drawer** — park the whole window against a screen edge; it
   slides away and comes back on an edge-slam, floating over every Space.
   ([dock](features/DOCK.md))
