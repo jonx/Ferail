@@ -12,10 +12,10 @@ use crate::{
     settings::{SettingsView, category_from_arg},
     shell::{
         ClearRecents, CloseTab, CloseWindow, CopyPath, DeleteImmediately, EmptyTrash,
-        FindDuplicates, FocusFilter, GoHome, MoveToTrash, NavigateBack, NavigateForward,
-        NavigateParent, NewFolder, NewTab, OpenDiskUsage, OpenSelected, OpenSettings, Refresh,
-        RenameSelected, RevealInFinder, Shell, ShowDesktop, ToggleFavoriteForTarget, ToggleHidden,
-        TogglePreview,
+        FindDuplicates, FocusFilter, GoHome, GoToFolder, MoveToTrash, NavigateBack,
+        NavigateForward, NavigateParent, NewFolder, NewTab, OpenDiskUsage, OpenSelected,
+        OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell, ShowDesktop,
+        ToggleFavoriteForTarget, ToggleHidden, TogglePreview,
     },
 };
 use feraille_core::commands::{CommandId, find};
@@ -34,7 +34,6 @@ use gpui_component::Theme;
 //                       window (shells, viewers, tool windows) above
 //                       other apps'. See `bring_all_to_front`.
 actions!(app, [Quit, OpenAbout, NewWindow, BringAllToFront]);
-
 
 pub fn run_gui(args: screenshot::Args) {
     // Windows shell: assign our own AppUserModelID so the taskbar
@@ -64,6 +63,7 @@ pub fn run_gui(args: screenshot::Args) {
         // Replace the dock / About icon. Has to happen after gpui
         // has built its NSApplication — calling from `main()` panics
         // ("Ivar platform not found on class NSApplication").
+
         let icon_result = crate::platform_shell::set_app_icon_from_png_bytes(
             crate::app_icon::PNG,
         );
@@ -201,6 +201,25 @@ pub fn run_gui(args: screenshot::Args) {
             open_shell_window(cx);
         });
 
+        // Cmd+G → Go to Folder with nothing open. A focused Shell
+        // handles the action itself (its element listener wins the
+        // bubble phase and stops propagation); this global fallback
+        // only runs when the action reached nobody. It acts *only* at
+        // zero windows — the state where the menu-bar item is the
+        // user's single entry point — so the Go prompt still works
+        // after the last window closed. It opens a window and shows
+        // the prompt in it, navigating that window's own tab rather
+        // than stacking a second one on a folder the user never asked
+        // for.
+        cx.on_action(|_: &GoToFolder, cx| {
+            if !cx.windows().is_empty() {
+                return;
+            }
+            open_shell_window_then(cx, |shell, window, cx| {
+                shell.open_go_to_folder_prompt(false, window, cx);
+            });
+        });
+
         // Window ▸ Bring All to Front. App-level like NewWindow: the
         // menu item must fire no matter which window (or none) is key.
         cx.on_action(|_: &BringAllToFront, cx| {
@@ -303,6 +322,39 @@ fn open_shell_window_sized(cx: &mut App, size_hint: Option<(f32, f32)>) {
             cx.new(|cx| gpui_component::Root::new(view, window, cx))
         }) {
             crate::log_error!(90, "could not open main window: {e}");
+        }
+    })
+    .detach();
+}
+
+/// Open a new Shell window and run `after` against its Shell once the
+/// window (and its `Root`, which hosts dialogs and notifications)
+/// exists. Backs the zero-window Cmd+G path: there is no Shell to
+/// dispatch to, so we make one and hand it the prompt.
+fn open_shell_window_then(
+    cx: &mut App,
+    after: impl FnOnce(&mut Shell, &mut Window, &mut Context<Shell>) + 'static,
+) {
+    let opts = WindowOptions {
+        window_bounds: Some(WindowBounds::centered(size(px(1180.0), px(760.0)), cx)),
+        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
+        ..Default::default()
+    };
+    cx.spawn(async move |cx| {
+        match cx.open_window(opts, |window, cx| {
+            let process = crate::process_state::process_state(cx);
+            let view = cx.new(|cx| Shell::new(process, window, cx));
+            cx.new(|cx| gpui_component::Root::new(view, window, cx))
+        }) {
+            Ok(handle) => {
+                let _ = handle.update(cx, |root, window, cx| {
+                    let Ok(shell) = root.view().clone().downcast::<Shell>() else {
+                        return;
+                    };
+                    shell.update(cx, |shell, cx| after(shell, window, cx));
+                });
+            }
+            Err(e) => crate::log_error!(90, "could not open window: {e}"),
         }
     })
     .detach();
@@ -418,6 +470,9 @@ fn install_app_menus(cx: &mut App) {
                 MenuItem::action(title("go.parent", "Enclosing Folder"), NavigateParent),
                 MenuItem::separator(),
                 MenuItem::action(title("go.home", "Home"), GoHome),
+                MenuItem::separator(),
+                // Ellipsis: opens the path prompt (macOS HIG).
+                MenuItem::action(title("go.go_to_folder", "Go to Folder\u{2026}"), GoToFolder),
                 MenuItem::separator(),
                 // Ellipsis: opens a confirmation dialog (macOS HIG).
                 MenuItem::action(

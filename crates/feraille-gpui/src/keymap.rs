@@ -21,13 +21,13 @@ use crate::shell::{
     self, ClearFilter, CloseTab, CloseToolResult, CloseWindow, CopyFiles, CopyPath, CursorDown,
     CursorDownExtend, CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp,
     CursorUpExtend, CutFiles, DeleteImmediately, EditBreadcrumb, EmptyTrash, FindDuplicates,
-    FocusFilter, GetInfo,
-    GoHome, GridDown, GridDownExtend, GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp,
-    GridUpExtend, MovePasteFiles, MoveToTrash, NavigateBack, NavigateForward, NavigateParent,
-    NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings,
-    OpenViewer, PageDown, PageDownExtend, PageUp, PageUpExtend, PasteFiles, PopOutDiskUsage,
-    PrevTab, QuickLook, Refresh, RenameSelected, ReopenClosedTab, RevealInFinder, SelectAll,
-    ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn, ZoomOut, ZoomReset,
+    FocusFilter, GetInfo, GoHome, GoToFolder, GridDown, GridDownExtend, GridLeft, GridLeftExtend,
+    GridRight, GridRightExtend, GridUp, GridUpExtend, MovePasteFiles, MoveToTrash, NavigateBack,
+    NavigateForward, NavigateParent, NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab,
+    OpenSelected, OpenSettings, OpenViewer, PageDown, PageDownExtend, PageUp, PageUpExtend,
+    PasteFiles, PopOutDiskUsage, PrevTab, QuickLook, Refresh, RenameSelected, ReopenClosedTab,
+    RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn, ZoomOut,
+    ZoomReset,
 };
 use crate::viewer::window::{
     VIEWER_CONTEXT, ViewerActualSize, ViewerDelete, ViewerDismiss, ViewerLeft, ViewerNext,
@@ -225,6 +225,10 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "go.forward" => cx.bind_keys([KeyBinding::new(kb_str, NavigateForward, ctx)]),
         "go.parent" => cx.bind_keys([KeyBinding::new(kb_str, NavigateParent, ctx)]),
         "go.home" => cx.bind_keys([KeyBinding::new(kb_str, GoHome, ctx)]),
+        // No context: Cmd+G has to reach the App-level fallback in
+        // `boot` when no Shell window is open (the process stays
+        // resident at zero windows), the same way Cmd+N does.
+        "go.go_to_folder" => cx.bind_keys([KeyBinding::new(kb_str, GoToFolder, None)]),
 
         // -- Selection --------------------------------------------
         "selection.activate" => cx.bind_keys([KeyBinding::new(kb_str, OpenSelected, ctx)]),

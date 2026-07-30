@@ -59,7 +59,10 @@ use loading::{
     LoadBatch, LoadMsg, dir_has_subdir, error_copy, middle_truncate_path,
     run_directory_load_streaming, run_tree_children_load,
 };
-pub use path::{canonicalize_for_identity, parse_breadcrumb_path, path_segments};
+pub use path::{
+    canonicalize_for_identity, parse_breadcrumb_path, parse_pasted_path, path_segments,
+    resolve_go_to_target,
+};
 pub use tab::{ClosedTab, HistoryEntry, Tab, TabId, ToolResultSurface};
 
 /// Callback the disk-usage view invokes to re-root the dock owner at a
@@ -2619,6 +2622,142 @@ impl Shell {
     /// Cmd+Shift+H — navigate the active tab to the home directory.
     fn on_go_home(&mut self, _: &GoHome, _: &mut Window, cx: &mut Context<Self>) {
         self.navigate(home_dir(), cx);
+    }
+
+    /// Cmd+G — open the "Go to Folder" prompt.
+    pub fn on_go_to_folder(&mut self, _: &GoToFolder, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_go_to_folder_prompt(true, window, cx);
+    }
+
+    /// The Go to Folder modal: a single path field pre-filled with the
+    /// active tab's directory and selected on open, so a paste replaces
+    /// it outright while an edit still starts from somewhere real. It
+    /// carries the same background folder autocomplete as the Cmd+L
+    /// breadcrumb (`crate::path_complete`). Enter or the **Go** button
+    /// commits.
+    ///
+    /// `in_new_tab` is true for the ordinary invocation — the typed
+    /// folder lands in a new tab beside the current one, leaving what
+    /// the user was looking at intact. The window that `boot` opens
+    /// *because* nothing was open passes false: its lone tab is a blank
+    /// stand-in, so it navigates in place instead of stacking a second.
+    pub fn open_go_to_folder_prompt(
+        &mut self,
+        in_new_tab: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use gpui_component::dialog::DialogFooter;
+
+        crate::trail::command("Go to Folder");
+        let current = self.active_tab().current_dir.to_string_lossy().into_owned();
+        let input = cx.new(|cx| {
+            let mut state = InputState::new(window, cx).placeholder("/path/to/folder");
+            state.lsp.completion_provider =
+                Some(Rc::new(crate::path_complete::PathCompletionProvider));
+            state
+        });
+        input.update(cx, |state, cx| {
+            state.set_value(current, window, cx);
+        });
+        // One commit path shared by Enter (the dialog's `on_ok`) and the
+        // Go button, so the two can't drift.
+        let shell = cx.entity();
+        let commit = {
+            let input = input.clone();
+            Rc::new(move |window: &mut Window, cx: &mut App| {
+                let raw = input.read(cx).value().to_string();
+                if raw.trim().is_empty() {
+                    // Nothing typed: close without navigating.
+                    return;
+                }
+                shell.update(cx, |this, cx| {
+                    this.go_to_pasted_path(raw, in_new_tab, window, cx);
+                });
+            })
+        };
+        let dialog_input = input.clone();
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input = dialog_input.clone();
+            let commit_enter = commit.clone();
+            let commit_click = commit.clone();
+            dialog
+                .title("Go to Folder")
+                .child(Input::new(&input).small())
+                // A `Dialog` only draws buttons it's given a footer for;
+                // `button_props` alone renders nothing. Cancel first,
+                // Go primary — Esc and Enter are the keyboard twins.
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            Button::new("go-to-folder-cancel")
+                                .label("Cancel")
+                                .small()
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("go-to-folder-go")
+                                .label("Go")
+                                .primary()
+                                .small()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    commit_click(window, cx);
+                                }),
+                        ),
+                )
+                .on_ok(move |_, window, cx: &mut App| {
+                    commit_enter(window, cx);
+                    true
+                })
+        });
+        // Focus + select-all on the next frame, once the dialog and its
+        // input are mounted — doing it synchronously wouldn't stick.
+        // Same shape as `open_text_prompt`.
+        window.on_next_frame(move |window, cx| {
+            input.read(cx).focus_handle(cx).focus(window, cx);
+            window.dispatch_action(Box::new(gpui_component::input::SelectAll), cx);
+        });
+    }
+
+    /// Commit a Go to Folder entry. Resolution — canonicalisation plus
+    /// the "is this a file?" probe — is filesystem work, so it runs on
+    /// the background executor and only the result comes back to the
+    /// UI thread (Prime Directive). A path that names a *file* opens
+    /// its enclosing folder, which is what a copied full path from a
+    /// terminal or a chat message usually is; a path that doesn't
+    /// resolve at all is handed to navigation unchanged so the pane's
+    /// existing enumeration error reports it.
+    pub fn go_to_pasted_path(
+        &mut self,
+        raw: String,
+        in_new_tab: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let typed = path::parse_pasted_path(&raw);
+        crate::log_info!(90, "go to folder: {raw:?} -> {}", typed.display());
+        let win = window.window_handle();
+        let shell = cx.weak_entity();
+        cx.spawn(async move |_, cx| {
+            let target = cx
+                .background_executor()
+                .spawn(async move { path::resolve_go_to_target(typed) })
+                .await;
+            let _ = win.update(cx, |_, window, cx| {
+                let Some(shell) = shell.upgrade() else {
+                    return;
+                };
+                shell.update(cx, |this, cx| {
+                    if in_new_tab {
+                        this.open_path_in_new_tab(target, window, cx);
+                    } else {
+                        this.navigate(target, cx);
+                    }
+                });
+            });
+        })
+        .detach();
     }
 
     /// Cmd+L: open breadcrumb edit mode. Pre-fills the input with

@@ -89,6 +89,13 @@ actions!(
         /// anchored to the context row and auto-playing.
         SlideshowFromHere,
         GoHome,
+        /// Cmd+G — open the "Go to Folder" prompt: a modal path box
+        /// pre-filled with the current folder and selected, so a paste
+        /// replaces it. Committing opens the path in a new tab (a new
+        /// window when the app is running with none open). Cmd+L's
+        /// breadcrumb edit is the in-place twin — it retargets the
+        /// *current* tab instead.
+        GoToFolder,
         EditBreadcrumb,
         ShortcutsHelp,
         OpenDiskUsage,

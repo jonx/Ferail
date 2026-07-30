@@ -119,6 +119,8 @@ pub struct Args {
     pub bulk_rename: bool,
     /// Open the New Archive dialog over the current selection.
     pub new_archive: bool,
+    /// Open the Go to Folder prompt (Cmd+G).
+    pub go_to_folder: bool,
     /// Push a fake toast with the given message. Lands in Stage 5.
     pub simulate_toast: Option<String>,
     /// Show the footer progress strip: <0 → indeterminate, ≥0 →
@@ -269,6 +271,7 @@ pub fn parse_args() -> Args {
             "--new-folder" => args.new_folder = true,
             "--bulk-rename" => args.bulk_rename = true,
             "--new-archive" => args.new_archive = true,
+            "--go-to-folder" => args.go_to_folder = true,
             "--simulate-toast" => args.simulate_toast = iter.next(),
             "--simulate-progress" => {
                 args.simulate_progress = Some(
@@ -353,6 +356,7 @@ OPTIONS
   --bulk-rename            Open the bulk-rename dialog over the selection
                            (seeds rows 0-3 when --select-rows is absent).
   --edit-mode              Open breadcrumb edit mode. Lands in Stage 9.
+  --go-to-folder           Open the Go to Folder prompt (Cmd+G).
   --mac-chrome             N/A in the GPUI shell (native chrome already).
   --simulate-toast <text>  Push an error toast. Lands in Stage 5.
   --simulate-progress <p>  Force-show the progress strip. Lands in Stage 5.
@@ -683,6 +687,7 @@ struct ShellArgs {
     new_folder: bool,
     bulk_rename: bool,
     new_archive: bool,
+    go_to_folder: bool,
     archive: Option<PathBuf>,
     expand: Vec<PathBuf>,
     // Stage-deferred flags. Recorded so the apply step can emit a
@@ -726,6 +731,7 @@ impl From<&Args> for ShellArgs {
             new_folder: a.new_folder,
             bulk_rename: a.bulk_rename,
             new_archive: a.new_archive,
+            go_to_folder: a.go_to_folder,
             archive: a.archive.clone(),
             expand: a.expand.clone(),
             properties: a.properties,
@@ -910,6 +916,15 @@ impl ShellArgs {
             let _ = cx.update_window((*handle).into(), |_, window, cx| {
                 shell.update(cx, |s, cx| {
                     s.open_shortcuts_help(initial_filter, window, cx);
+                });
+            });
+        }
+        // Before `--keys` so a capture can drive the prompt with real
+        // keystrokes (`--go-to-folder --keys enter`).
+        if self.go_to_folder {
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    s.open_go_to_folder_prompt(true, window, cx);
                 });
             });
         }

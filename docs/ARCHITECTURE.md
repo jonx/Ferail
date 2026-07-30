@@ -350,6 +350,16 @@ cargo run --bin feraille-gpui -- --reset-db <scope>
 The command catalogue lives in `feraille-core` so menus, shortcuts,
 settings, and future command-palette work share one identity layer.
 
+Most shortcuts bind under `SHELL_CONTEXT`, so they only fire when a
+Shell window has focus. A command that must still work when the process
+is resident with **zero windows** — `window.new_window` (Cmd+N),
+`go.go_to_folder` (Cmd+G) — binds with no context and pairs the
+Shell-level handler with an App-level `cx.on_action` fallback in
+`boot`. Element handlers win the bubble phase and stop propagation, so
+the fallback only runs when the action reached no window; it checks
+`cx.windows().is_empty()` before opening one, which keeps it inert
+while a window (or a dialog inside one) owns the key.
+
 ## macOS Privacy (TCC) And Bundling
 
 A directory read that hits macOS privacy protection comes back as

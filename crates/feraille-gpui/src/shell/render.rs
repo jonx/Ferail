@@ -3456,6 +3456,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_prev_tab))
             .on_action(cx.listener(Self::on_quick_look))
             .on_action(cx.listener(Self::on_go_home))
+            .on_action(cx.listener(Self::on_go_to_folder))
             .on_action(cx.listener(Self::on_edit_breadcrumb))
             .on_action(cx.listener(Self::on_shortcuts_help))
             .on_action(cx.listener(Self::on_open_disk_usage))

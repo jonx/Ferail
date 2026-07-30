@@ -529,6 +529,18 @@ const CATALOGUE: &[CommandSpec] = &[
         shortcuts: &[Shortcut::primary_shift("H")],
     },
     CommandSpec {
+        // Finder's "Go to Folder" on a shorter chord: a modal path box
+        // pre-filled with the current folder and fully selected, so a
+        // paste replaces it outright and typing edits it. Enter (or the
+        // Go button) opens the path in a new tab of the current window —
+        // or in a new window when none is open. The ellipsis flags the
+        // dialog (macOS HIG), same as Clear Recents below.
+        id: CommandId("go.go_to_folder"),
+        title: "Go to Folder\u{2026}",
+        category: Category::Go,
+        shortcuts: &[Shortcut::primary("G")],
+    },
+    CommandSpec {
         // Forget every folder in Recents. The trailing ellipsis flags
         // the confirmation dialog (it also resets Ant Trail heat — the
         // two share one visit log). No default shortcut: destructive and
