@@ -17,14 +17,24 @@ cargo run --bin ferail-gpui
 ```
 
 Ferail has a Windows predecessor, `Ferail-Win32` — a separate, older codebase
-(local checkout: `../Ferail-win32`; same GitHub repo, `master` branch). If you
-have it, inspect it before redesigning a feature the user says worked better in
-the Windows version. Copy intent and lessons, not Win32-specific shape.
+in its own GitHub repo, `jonx/Ferail-win32` (local checkout: `../Ferail-win32`,
+branch `master`). If you have it, inspect it before redesigning a feature the
+user says worked better in the Windows version. Copy intent and lessons, not
+Win32-specific shape.
 
 **Name history:** this app was called *Feraille* until 2026-07-30, when it took
 over the predecessor's name and the predecessor became *Ferail-Win32*. Anything
 older than that commit — git history, branch names, external links — says
 Feraille and means this app.
+
+The GitHub repos were renamed the same day: this app is now `jonx/Ferail` (was
+`jonx/Feraille`, which still redirects), and the predecessor is
+`jonx/Ferail-win32` (was `jonx/Ferail`). So a pre-rename link to
+`github.com/jonx/Ferail` meant the *Windows* app and now means this one. Never
+create a new repo named `Feraille` — that silently kills the redirect. The
+local directory moved `~/Source/Feraille` → `~/Source/Ferail`, and old Claude
+Code transcripts were rewritten to match, so sessions predating the rename
+still show the new path.
 
 ## Prime Directive
 
