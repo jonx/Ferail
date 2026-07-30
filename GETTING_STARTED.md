@@ -6,7 +6,7 @@ already build Rust projects, skip to [Build & run](#3-build--run).
 > **Where Ferail runs today.** macOS is the primary, daily-driver platform.
 > Windows builds and runs natively with broad parity (verified on-device).
 > Linux builds and runs but is an early port. See the
-> [Platform status](README.md#platform-status) table for the honest breakdown —
+> [Current status](README.md#current-status) table for the honest breakdown —
 > this guide flags the per-platform steps as you go.
 
 There is no `cargo install` and no prebuilt download: `gpui` / `gpui-component`
@@ -142,7 +142,7 @@ sign with a real identity:
 CODESIGN_IDENTITY="Developer ID Application: …" scripts/bundle-mac.sh
 ```
 
-### macOS permissions {#macos-permissions}
+### macOS permissions
 
 macOS gates the protected folders (Desktop, Documents, Downloads, removable
 volumes, network volumes, cloud providers) behind its privacy system (TCC).

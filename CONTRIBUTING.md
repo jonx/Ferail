@@ -1,10 +1,11 @@
 # Contributing to Ferail
 
 Thanks for your interest in Ferail. This is a cross-platform native file
-manager written in Rust on [GPUI](https://www.gpui.rs/) — macOS and Windows
-today (macOS leads; the Windows port is in progress), with Linux possibly
-later. The bar for changes is correctness, responsiveness, and respect for the
-architecture's one rule.
+manager written in Rust on [GPUI](https://www.gpui.rs/). macOS is the primary
+platform; Windows has broad native parity, Linux builds and runs as an early
+port, and AROS is a research port — the per-platform breakdown is in the
+[Current status](README.md#current-status) table. The bar for changes is
+correctness, responsiveness, and respect for the architecture's one rule.
 
 **AI-generated pull requests are welcome.** Ferail is mostly "vibe-coded" —
 written largely through AI pair-programming — and contributions made the same
@@ -24,10 +25,11 @@ A change that blocks the UI thread will not be merged, however small.
 ## Where code goes
 
 - New product work belongs in `crates/ferail-gpui`.
-- Domain logic belongs in `ferail-core`, `ferail-fs-native`,
-  `ferail-meta`, or `ferail-disk-usage` whenever it can stay UI-free.
+- Domain logic belongs in `ferail-core`, `ferail-fs-native`, `ferail-meta`,
+  `ferail-disk-usage`, or `ferail-archive` whenever it can stay UI-free.
+- Shared visual tokens (color, spacing, typography) belong in `ferail-design`,
+  not at call sites.
 - `ferail-shell-mac` owns AppKit/Cocoa integration and does not paint UI.
-- The old soft-rendered stack under `crates/_archive/` is reference only.
 
 See the [crate boundary rules](docs/ARCHITECTURE.md#crate-boundaries) before
 adding cross-crate dependencies.

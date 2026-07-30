@@ -32,38 +32,40 @@ Per Apache-2.0 §4(d), the upstream attribution notices are preserved below.
   bundled icon assets. <https://github.com/longbridge/gpui-component>
   Copyright © 2024–2025 Longbridge. Licensed under Apache-2.0.
 
-### Transitive GPL-3.0 components (via gpui → sum_tree)
+### GPL-3.0 watch item (gpui → sum_tree)
 
-Although `gpui` itself is Apache-2.0, a default build currently links three
-small **GPL-3.0-or-later** crates from the Zed repository through a single
-non-optional dependency edge:
+**The current build contains no GPL-licensed code.** This section records a
+resolved upstream issue that is worth re-checking whenever the `gpui` pin moves.
 
-```
-gpui → sum_tree → ztracing → { zlog, ztracing_macro }
-```
+Earlier `gpui` revisions reached three small **GPL-3.0-or-later** crates from
+the Zed repository through a single non-optional dependency edge —
+`gpui → sum_tree → ztracing → { zlog, ztracing_macro }` — which would have
+placed copyleft obligations on any redistributed binary, despite `gpui` itself
+being Apache-2.0.
 
-These supply `#[instrument]` tracing macros that are compiled in but **no-op at
-runtime** in non-Zed builds (the `ztracing` cfg is never enabled). They are
-recorded here for completeness, because GPL-3.0 object code linked into a
-*redistributed binary* carries copyleft obligations on that binary.
+That edge is gone from the revision pinned here: `sum_tree` now depends on the
+ordinary MIT/Apache-2.0 `tracing` crate, and `ztracing`, `zlog`, and
+`ztracing_macro` appear nowhere in [`Cargo.lock`](Cargo.lock). A binary built
+from this tree links no GPL-3.0 object code.
 
-- **ztracing**, **zlog**, **ztracing_macro** — from the Zed editor project.
-  <https://github.com/zed-industries/zed> Licensed under GPL-3.0-or-later.
+It stays recorded rather than deleted because the upstream inconsistency is
+still tracked as open at <https://github.com/zed-industries/zed/issues/55470>.
+Two consequences worth knowing:
 
-Ferail does **not** currently distribute prebuilt binaries: the published
-source references these crates via pinned git dependencies but does not itself
-redistribute their code, so the MIT/Apache-2.0 grant on Ferail's own source is
-unaffected. The upstream license inconsistency (Apache-2.0 `sum_tree` depending
-on GPL-3.0 `ztracing`) is tracked at
-<https://github.com/zed-industries/zed/issues/55470>. If a redistributable
-binary is shipped before that is resolved upstream, this single dependency edge
-is severed by a local patch so the binary remains MIT/Apache.
+- When bumping the `gpui` pin, re-check `Cargo.lock` for `ztracing`, `zlog`,
+  and `ztracing_macro`. Their absence is what keeps a redistributable binary
+  MIT/Apache.
+- If the edge ever returns before upstream settles, it can be severed by a
+  local patch of that one dependency.
+
+Ferail publishes source rather than prebuilt binaries today, so the
+MIT/Apache-2.0 grant on Ferail's own source is unaffected either way.
 
 ---
 
 ## Icon artwork
 
-Ferail embeds ~41 SVG glyphs in `crates/ferail-gpui/resources/icons/` and
+Ferail embeds 53 SVG glyphs in `crates/ferail-gpui/resources/icons/` and
 references the `gpui-component-assets` icon bundle at runtime. Their provenance
 and per-glyph mapping are catalogued in
 [docs/features/ICONS.md](docs/features/ICONS.md).

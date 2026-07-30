@@ -136,8 +136,12 @@ The active app is `ferail-gpui`. Domain logic lives in UI-free crates.
 | `ferail-shell-mac` | AppKit/Cocoa integration — no painting |
 | `ferail-shell-win32` | Windows shell integration |
 | `ferail-shell-linux` | Linux (freedesktop) shell integration |
+| `ferail-shell-aros` | AROS shell integration (research port) |
 | `ferail-meta` | SQLite-backed metadata, layout, and Ant Trail persistence |
 | `ferail-disk-usage` | Pure disk-usage model, aggregation, treemap layout, HTML export |
+| `ferail-archive` | Pure archive model — format identity, capability matrix, TOC entries (codecs live in `ferail-fs-native`) |
+| `ferail-video-mpv` | Optional libmpv video provider for the viewer (`--features mpv`) |
+| `ferail-aros-app` | Ferail as an AROS `C:` command (research port) |
 | `ferail-design` | Shared design tokens (color, spacing, typography) |
 
 Crate-boundary rules:
@@ -152,6 +156,7 @@ Crate-boundary rules:
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Source of truth for crate boundaries, data model, scheduling. |
 | [docs/features/](docs/features/README.md) | Deep design notes per feature. |
 | [TODO.md](TODO.md) | Open work and roadmap. |
+| [CHANGELOG.md](CHANGELOG.md) | What changed, newest first. |
 | [CLAUDE.md](CLAUDE.md) | Operating manual for AI/human contributors. |
 
 ## Contributing
