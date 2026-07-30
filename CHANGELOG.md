@@ -8,6 +8,8 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.2.0 — 2026-07-30
+
 - **Archive support (compress & extract)** — right-click **Extract** on any
   `.zip`, `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz`, `.gz`, `.bz2`, `.xz`,
   or `.7z`, then **Extract Here** (into the current folder) or **Extract To…**

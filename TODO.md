@@ -362,8 +362,19 @@ fallback). Remaining is the UX the system explorers have and we don't:
 
 - Rework the app icon to macOS conventions and generate the iconset (the bundle
   script already builds `.icns` from a PNG source; the icon *art* is the gap).
-- Add code signing / notarization flow for sharing builds outside the dev
-  machine (the bundle does ad-hoc / Developer-ID `codesign` today).
+- Bundle an **LGPL** libmpv inside the `.app` so mpv playback works out of the
+  box (deferred from 0.2.0, which ships with mpv off and loaded from a user's
+  own install). Homebrew's libmpv chain is **GPL-3.0** — its ffmpeg is built
+  with x264/x265 — so it cannot ship inside an MIT/Apache DMG without making
+  the whole binary GPL. The viable path: build ffmpeg
+  `--disable-gpl --disable-nonfree` plus mpv's LGPL option (only the *encoders*
+  are GPL; the H.264/HEVC/AV1/VP9 **decoders** are LGPL, and decoding is all the
+  viewer needs), relocate the ~47-dylib / 60 MB closure into
+  `Contents/Frameworks/` with `install_name_tool`, sign the nested dylibs
+  inside-out *before* the outer bundle (`bundle-mac.sh` signs only the app
+  today, so notarization would fail), probe the bundle ahead of Homebrew in
+  `default_mpv_path()`, and add the LGPL notices plus a corresponding-source
+  offer (an ongoing obligation on every rebuild).
 - Visual polish still missing from the GPUI shell: vibrancy/materials, titlebar
   hit testing, sharper row density, empty/error illustrations, animation-budget
   review.
