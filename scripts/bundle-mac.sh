@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# bundle-mac.sh — assemble a Feraille.app bundle so macOS treats Feraille
+# bundle-mac.sh — assemble a Ferail.app bundle so macOS treats Ferail
 # as a real signed app and shows the automatic TCC consent prompts
-# ("Feraille would like to access files in your Documents folder") instead
+# ("Ferail would like to access files in your Documents folder") instead
 # of just failing with EPERM.
 #
 # Why this is needed: the consent prompt only appears for a code-signed
@@ -28,8 +28,8 @@ cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
 
 PROFILE="${PROFILE:-release}"
-BIN_NAME="feraille-gpui"
-APP_NAME="Feraille"
+BIN_NAME="ferail-gpui"
+APP_NAME="Ferail"
 IDENTITY="${CODESIGN_IDENTITY:--}" # "-" == ad-hoc
 
 # Pass extra cargo flags through, e.g. FEATURES="--features mpv".
@@ -63,14 +63,14 @@ cp "${REPO_ROOT}/packaging/macos/Info.plist" "${CONTENTS}/Info.plist"
 
 # Icon: prefer the checked-in macOS .icns so bundle output stays stable.
 # If it is missing, regenerate from the macOS PNG source as a best-effort
-# fallback. Windows keeps using resources/feraille.ico via build.rs.
-ICNS_SRC="${REPO_ROOT}/crates/feraille-gpui/resources/feraille-macos.icns"
-PNG_SRC="${REPO_ROOT}/crates/feraille-gpui/resources/feraille-macos.png"
+# fallback. Windows keeps using resources/ferail.ico via build.rs.
+ICNS_SRC="${REPO_ROOT}/crates/ferail-gpui/resources/ferail-macos.icns"
+PNG_SRC="${REPO_ROOT}/crates/ferail-gpui/resources/ferail-macos.png"
 if [[ -f "${ICNS_SRC}" ]]; then
-	cp "${ICNS_SRC}" "${RES_DIR}/feraille.icns"
-	echo "==> Copied Resources/feraille.icns"
+	cp "${ICNS_SRC}" "${RES_DIR}/ferail.icns"
+	echo "==> Copied Resources/ferail.icns"
 elif [[ -f "${PNG_SRC}" ]] && command -v iconutil >/dev/null 2>&1; then
-	ICONSET="$(mktemp -d)/feraille.iconset"
+	ICONSET="$(mktemp -d)/ferail.iconset"
 	mkdir -p "${ICONSET}"
 	for size in 16 32 64 128 256 512; do
 		sips -z "${size}" "${size}" "${PNG_SRC}" \
@@ -79,8 +79,8 @@ elif [[ -f "${PNG_SRC}" ]] && command -v iconutil >/dev/null 2>&1; then
 		sips -z "${dbl}" "${dbl}" "${PNG_SRC}" \
 			--out "${ICONSET}/icon_${size}x${size}@2x.png" >/dev/null 2>&1 || true
 	done
-	if iconutil -c icns "${ICONSET}" -o "${RES_DIR}/feraille.icns" 2>/dev/null; then
-		echo "==> Wrote Resources/feraille.icns"
+	if iconutil -c icns "${ICONSET}" -o "${RES_DIR}/ferail.icns" 2>/dev/null; then
+		echo "==> Wrote Resources/ferail.icns"
 	else
 		echo "warning: iconutil failed; bundle has no icon" >&2
 	fi
@@ -101,7 +101,7 @@ echo "==> Signing (identity: ${IDENTITY})"
 #     consent prompts don't need it, and re-signs stay fast. (This is NOT
 #     the sandbox either way — a file manager needs broad file access.)
 if [[ "${HARDENED:-0}" == "1" ]]; then
-	ENTITLEMENTS="${REPO_ROOT}/packaging/macos/Feraille.entitlements"
+	ENTITLEMENTS="${REPO_ROOT}/packaging/macos/Ferail.entitlements"
 	codesign --force --options runtime --timestamp \
 		--entitlements "${ENTITLEMENTS}" \
 		--sign "${IDENTITY}" "${APP_DIR}"

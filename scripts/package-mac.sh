@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
 # package-mac.sh — produce a distributable, signed + notarized + stapled
-# Feraille DMG for direct (non-App-Store) macOS distribution.
+# Ferail DMG for direct (non-App-Store) macOS distribution.
 #
 # Pipeline (see docs and Apple's notarization guide):
-#   1. Build the release binary and assemble Feraille.app via bundle-mac.sh,
+#   1. Build the release binary and assemble Ferail.app via bundle-mac.sh,
 #      signing it with a Developer ID identity under the hardened runtime
 #      (HARDENED=1) so Apple will notarize it.
 #   2. Pack the .app into a DMG (with an /Applications drop link).
@@ -38,7 +38,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
 
-APP_NAME="Feraille"
+APP_NAME="Ferail"
 APPLE_DEV_ID="${APPLE_DEV_ID:-Developer ID Application: John Knipper (C43N3NG7Z5)}"
 APPLE_TEAM_ID="${APPLE_TEAM_ID:-C43N3NG7Z5}"
 APPLE_NOTARY_PROFILE="${APPLE_NOTARY_PROFILE:-D4Mac}"
@@ -122,4 +122,4 @@ spctl -a -t open --context context:primary-signature -vvv "${DMG_PATH}" || true
 echo
 echo "Done. Distributable DMG (app + DMG both stapled):"
 echo "  ${DMG_PATH}"
-echo "Verify the app inside with:  spctl -a -vvv /Volumes/.../Feraille.app"
+echo "Verify the app inside with:  spctl -a -vvv /Volumes/.../Ferail.app"

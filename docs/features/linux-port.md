@@ -1,4 +1,4 @@
-# Feraille — Linux port handoff
+# Ferail — Linux port handoff
 
 A self-contained orientation for starting the Linux port from a Linux machine.
 Assumes you've worked on (or read about) the macOS side recently — if not, read
@@ -10,13 +10,13 @@ so skim it too.
 
 This doc covers:
 
-1. What Feraille is, in one minute.
+1. What Ferail is, in one minute.
 2. The current state of the Linux port (scaffold landed — a lot already comes
    for free).
 3. Workspace map — where every kind of work lives.
 4. The `platform_shell` indirection — and the **one change that makes the app
    compile on Linux at all**.
-5. macOS assumptions in `feraille-gpui` that need cfg-gating for Linux.
+5. macOS assumptions in `ferail-gpui` that need cfg-gating for Linux.
 6. The Linux shell surface — each function mapped to the freedesktop / D-Bus /
    XDG mechanism you'll likely reach for.
 7. What "Linux" even means here, and where you can do the work (native Linux,
@@ -27,7 +27,7 @@ This doc covers:
 
 ---
 
-## 1. What Feraille is
+## 1. What Ferail is
 
 A fast file manager written in Rust, originally for macOS, built on Zed's
 [GPUI](https://github.com/zed-industries/zed) plus
@@ -61,8 +61,8 @@ freedesktop specifications.
 ## 2. State of the Linux port
 
 **The compile scaffold has landed, plus a first batch of real shell impls.**
-`feraille-shell-linux` exists, the
-`#[cfg(target_os = "linux")] pub use feraille_shell_linux as platform_shell`
+`ferail-shell-linux` exists, the
+`#[cfg(target_os = "linux")] pub use ferail_shell_linux as platform_shell`
 arm is wired, and the crate is in the workspace — so the *surface* the Linux
 build needs is in place. The deterministic, verifiable functions are now
 implemented for real (real arm under `cfg(target_os = "linux")`, no-op twin
@@ -74,10 +74,10 @@ under `cfg(not)`):
   `system_is_dark` (gsettings v1), `open_with_app` (`gio launch` / exec).
 - **`compress_paths`** — `.zip` via the `zip` crate, lifted verbatim from the
   (platform-neutral) win32 impl. Because it's not target-gated, its tests
-  **run on any host** (`cargo test -p feraille-shell-linux` passes on macOS).
+  **run on any host** (`cargo test -p ferail-shell-linux` passes on macOS).
 - **`prevent_idle_sleep`** — RAII `SleepBlocker` owning a `systemd-inhibit
   --what=idle` child; dropping it releases the lock.
-- **File-type icons** (`feraille_fs_native::fetch_icon_rgba`, not a shell fn) —
+- **File-type icons** (`ferail_fs_native::fetch_icon_rgba`, not a shell fn) —
   shared-mime-info MIME detection (`xdg-mime`) → freedesktop icon-theme lookup
   (`freedesktop-icons`, GTK theme via gsettings, hicolor cascade) → PNG/SVG
   rasterization (`image` / `resvg`, straight RGBA). Cached per-kind one level up
@@ -109,7 +109,7 @@ blind from a Mac):
   is Finder's "Eject All": unmount every partition of a disk, then power the
   drive down once its last filesystem is gone. The partition→disk grouping key
   (`VolumeInfo::device_id`, e.g. `sdb1` → `sdb`) is resolved through sysfs in
-  `feraille-fs-native::list_volumes`; `volume_busy_processes` (the failed-eject
+  `ferail-fs-native::list_volumes`; `volume_busy_processes` (the failed-eject
   holder list) scans `/proc/<pid>/{fd,cwd}` like `lsof`. Still needs live
   testing on a real removable device.
 - **trash, `open_with_candidates`, video** — freedesktop-trash /
@@ -117,7 +117,7 @@ blind from a Mac):
 
 > **Verify Linux code from any host.** `cargo check` doesn't link, so the real
 > arms type-check (and the Linux-gated unit tests compile) on a Mac/Windows box:
-> `cargo check --target x86_64-unknown-linux-gnu -p feraille-shell-linux --tests`
+> `cargo check --target x86_64-unknown-linux-gnu -p ferail-shell-linux --tests`
 > (after `rustup target add x86_64-unknown-linux-gnu`). This catches API/typing
 > mistakes long before you reach a Linux machine — but it does **not** run the
 > code or exercise D-Bus/`xdg-open`; that still needs a real Linux session (§7).
@@ -127,12 +127,12 @@ or compiles:
 
 **Already free / cross-platform** (no Linux-specific code needed):
 
-- `feraille-core`, `feraille-disk-usage`, `feraille-design` — zero platform
+- `ferail-core`, `ferail-disk-usage`, `ferail-design` — zero platform
   deps; compile and behave identically.
-- `feraille-meta` — SQLite via `rusqlite` with the `bundled` feature compiles
+- `ferail-meta` — SQLite via `rusqlite` with the `bundled` feature compiles
   from source with any C compiler; works on Linux out of the box (you just need
   `cc`/`gcc`).
-- `feraille-fs-native` — **already compiles on Linux.** Several functions have a
+- `ferail-fs-native` — **already compiles on Linux.** Several functions have a
   `cfg(not(any(target_os = "macos", windows)))` catch-all arm giving generic
   Unix behavior (e.g. `entry_is_hidden` → dot-prefix). `std::fs` enumeration,
   the magic-detection table, the disk-usage scanner, and the cross-platform
@@ -146,8 +146,8 @@ or compiles:
 **Not yet done — your work ahead** (rough priority order):
 
 1. **Make it compile.** *Scaffold done* — the `platform_shell` Linux arm and a
-   stub `feraille-shell-linux` exist (§4). Two unguarded direct
-   `feraille_shell_mac::` call sites still bypass the alias and **will fail the
+   stub `ferail-shell-linux` exist (§4). Two unguarded direct
+   `ferail_shell_mac::` call sites still bypass the alias and **will fail the
    Linux build** until routed through `platform_shell` or cfg-gated:
    `entry_info.rs` `set_hidden_extension` (≈L480) and `toggle_tag` (≈L488).
    (`search.rs`'s `spotlight_available` is already `cfg(target_os = "macos")`-
@@ -157,14 +157,14 @@ or compiles:
    common first-run failure on Linux.
 3. **Fill in real shell implementations** (§6) — clipboard, trash, reveal,
    open-with, dark-mode, volume enumeration. Each is small and isolated.
-4. **Conditionalize macOS assumptions** in `feraille-gpui` that compile but
+4. **Conditionalize macOS assumptions** in `ferail-gpui` that compile but
    behave wrong on Linux (§5).
 5. **Add Linux-native UX:** freedesktop Trash, `user.xdg.origin.url` as the
    "where did this download come from" provenance signal, `.desktop`-based
    Open With, XDG thumbnail cache reuse.
 
 The multi-window + tabs spec
-([feraille-windows-instances-tabs-spec.md](feraille-windows-instances-tabs-spec.md))
+([ferail-windows-instances-tabs-spec.md](ferail-windows-instances-tabs-spec.md))
 is OS-agnostic — it'll work on Linux once the platform layer is caught up.
 
 ---
@@ -173,22 +173,22 @@ is OS-agnostic — it'll work on Linux once the platform layer is caught up.
 
 ```text
 crates/
-├── feraille-core           Domain types, command catalogue, NodeId/FileEntry,
+├── ferail-core           Domain types, command catalogue, NodeId/FileEntry,
 │                           NodeStore. Zero platform deps.
-├── feraille-design         Shared visual constants. `TextTokens` is now the
+├── ferail-design         Shared visual constants. `TextTokens` is now the
 │                           live type scale (see ARCHITECTURE Typography).
-├── feraille-disk-usage     Pure disk-usage model + treemap layout. No I/O.
-├── feraille-fs-native      std::fs backend + icons, magic detection,
+├── ferail-disk-usage     Pure disk-usage model + treemap layout. No I/O.
+├── ferail-fs-native      std::fs backend + icons, magic detection,
 │                           disk-usage scanner, xattr. Already has generic
 │                           cfg(not(any(macos, windows))) arms — specialize
 │                           them to cfg(target_os = "linux") for real impls.
-├── feraille-meta           SQLite-backed metadata store. rusqlite bundled.
-├── feraille-shell-mac      macOS platform shell — AppKit/Cocoa/NSWorkspace.
-├── feraille-shell-win32    Windows platform shell — Win32 via `windows` 0.58.
+├── ferail-meta           SQLite-backed metadata store. rusqlite bundled.
+├── ferail-shell-mac      macOS platform shell — AppKit/Cocoa/NSWorkspace.
+├── ferail-shell-win32    Windows platform shell — Win32 via `windows` 0.58.
 │                           (Smaller, newer crate — the best scaffold to copy.)
-├── feraille-shell-linux    ⟵ DOES NOT EXIST YET. You create this. Freedesktop
+├── ferail-shell-linux    ⟵ DOES NOT EXIST YET. You create this. Freedesktop
 │                           / D-Bus / XDG integration. Your home base.
-└── feraille-gpui           The app. Views, actions, tasks, sidebar, file
+└── ferail-gpui           The app. Views, actions, tasks, sidebar, file
                             list, preview, tabs, multi-window. All platform
                             coupling goes through `platform_shell::*`.
 ```
@@ -197,40 +197,40 @@ crates/
 
 | Kind of work | Crate | File pattern |
 |---|---|---|
-| Native shell API (clipboard, trash, dark-mode, reveal, open-with) | `feraille-shell-linux` (new) | New `src/<topic>.rs`, re-exported via `lib.rs` |
-| Filesystem (icons, volumes, trash, provenance xattr) | `feraille-fs-native` | Specialize the `cfg(not(any(target_os = "macos", windows)))` arm, or add a `cfg(target_os = "linux")` arm next to it |
-| UI / view tree changes | `feraille-gpui` | Same file you'd touch on Mac; gate platform diffs with `cfg`, or call into `platform_shell` |
-| Domain logic | `feraille-core` | Stays platform-agnostic; if you reach for `cfg` here, reconsider |
-| SQLite schema for Linux-specific state | `feraille-meta` | New table or extended one |
+| Native shell API (clipboard, trash, dark-mode, reveal, open-with) | `ferail-shell-linux` (new) | New `src/<topic>.rs`, re-exported via `lib.rs` |
+| Filesystem (icons, volumes, trash, provenance xattr) | `ferail-fs-native` | Specialize the `cfg(not(any(target_os = "macos", windows)))` arm, or add a `cfg(target_os = "linux")` arm next to it |
+| UI / view tree changes | `ferail-gpui` | Same file you'd touch on Mac; gate platform diffs with `cfg`, or call into `platform_shell` |
+| Domain logic | `ferail-core` | Stays platform-agnostic; if you reach for `cfg` here, reconsider |
+| SQLite schema for Linux-specific state | `ferail-meta` | New table or extended one |
 
 ---
 
 ## 4. The `platform_shell` indirection — and the one change that unblocks Linux
 
-gpui never calls `feraille_shell_mac::` or `feraille_shell_win32::` directly (or
+gpui never calls `ferail_shell_mac::` or `ferail_shell_win32::` directly (or
 *shouldn't* — see the two stragglers in §2 and §5). It calls
 `crate::platform_shell::X`. The alias is in
-[crates/feraille-gpui/src/lib.rs](../../crates/feraille-gpui/src/lib.rs) and
+[crates/ferail-gpui/src/lib.rs](../../crates/ferail-gpui/src/lib.rs) and
 **now has all three arms** (the Linux one landed with the stub scaffold):
 
 ```rust
 #[cfg(target_os = "macos")]
-pub use feraille_shell_mac as platform_shell;
+pub use ferail_shell_mac as platform_shell;
 #[cfg(windows)]
-pub use feraille_shell_win32 as platform_shell;
+pub use ferail_shell_win32 as platform_shell;
 #[cfg(target_os = "linux")]
-pub use feraille_shell_linux as platform_shell;
+pub use ferail_shell_linux as platform_shell;
 ```
 
 This was step one of the port and **it's done**. For the record, the wiring is:
 
-- [`crates/feraille-shell-linux`](../../crates/feraille-shell-linux) — the new
+- [`crates/ferail-shell-linux`](../../crates/ferail-shell-linux) — the new
   crate. Every function gpui reaches through the alias is present as a no-op /
   empty stub, with the canonical macOS signature. `lib.rs`'s module doc is the
   authoritative surface inventory; §6 below maps each entry to its real Linux
   mechanism.
-- [`crates/feraille-gpui/Cargo.toml`](../../crates/feraille-gpui/Cargo.toml) —
-  `[target.'cfg(target_os = "linux")'.dependencies] feraille-shell-linux` so the
+- [`crates/ferail-gpui/Cargo.toml`](../../crates/ferail-gpui/Cargo.toml) —
+  `[target.'cfg(target_os = "linux")'.dependencies] ferail-shell-linux` so the
   dep is pulled only on Linux (mirroring the mac/win32 target stanzas).
 - Root [`Cargo.toml`](../../Cargo.toml) — added to `members` and
   `[workspace.dependencies]`.
@@ -254,7 +254,7 @@ linux) — real-or-stub in each — so the alias keeps compiling on every target
 
 ---
 
-## 5. macOS assumptions in `feraille-gpui` that need cfg-gating for Linux
+## 5. macOS assumptions in `ferail-gpui` that need cfg-gating for Linux
 
 Cases where the code compiles for Linux (the stubs cover the call surface) but
 the *behavior* is wrong. Each needs a `#[cfg]` arm or a small redesign. Several
@@ -264,15 +264,15 @@ differ, be explicit with `cfg(target_os = "linux")`.
 
 | Site | macOS behavior | Linux behavior wanted |
 |---|---|---|
-| [main.rs](../../crates/feraille-gpui/src/main.rs) `run_gui` | Stays resident with zero windows (Finder model). | **Quit when the last window closes.** Re-add the `on_window_closed → cx.quit()` handler (shared with Windows under `cfg(not(target_os = "macos"))`). |
-| [main.rs](../../crates/feraille-gpui/src/main.rs) menu install | `install_app_menu(cx)` installs an NSApp menu bar. | No global menu bar on Linux. Use an in-window title-bar hamburger (same call as Windows) — drop the global menu. (Unity/appmenu exists but isn't worth targeting for v1.) |
-| [main.rs](../../crates/feraille-gpui/src/main.rs) titlebar options | Reserves the macOS traffic-light area on the left. | Linux uses client-side decorations with min/max/close on the **right** (GNOME, KDE). Need a CSD-appropriate title-bar layout — check what `gpui-component` already offers, and respect the compositor's preference where possible. |
-| Action labels "Reveal in Finder" / "Move to Trash" ([feraille-core/src/commands.rs](../../crates/feraille-core/src/commands.rs)) | Finder / Trash literal. | "Move to Trash" is fine (freedesktop calls it Trash). "Reveal in Finder" → **"Open Containing Folder"** / "Show in Files". Swap by cfg in the catalogue or a localized lookup. |
+| [main.rs](../../crates/ferail-gpui/src/main.rs) `run_gui` | Stays resident with zero windows (Finder model). | **Quit when the last window closes.** Re-add the `on_window_closed → cx.quit()` handler (shared with Windows under `cfg(not(target_os = "macos"))`). |
+| [main.rs](../../crates/ferail-gpui/src/main.rs) menu install | `install_app_menu(cx)` installs an NSApp menu bar. | No global menu bar on Linux. Use an in-window title-bar hamburger (same call as Windows) — drop the global menu. (Unity/appmenu exists but isn't worth targeting for v1.) |
+| [main.rs](../../crates/ferail-gpui/src/main.rs) titlebar options | Reserves the macOS traffic-light area on the left. | Linux uses client-side decorations with min/max/close on the **right** (GNOME, KDE). Need a CSD-appropriate title-bar layout — check what `gpui-component` already offers, and respect the compositor's preference where possible. |
+| Action labels "Reveal in Finder" / "Move to Trash" ([ferail-core/src/commands.rs](../../crates/ferail-core/src/commands.rs)) | Finder / Trash literal. | "Move to Trash" is fine (freedesktop calls it Trash). "Reveal in Finder" → **"Open Containing Folder"** / "Show in Files". Swap by cfg in the catalogue or a localized lookup. |
 | Spacebar → Quick Look | Pops the Quick Look panel. | No Quick Look on Linux. Spacebar should pop the in-app preview pane (already wired) or no-op. (GNOME's `sushi` is an optional shell-out, not a dependency.) |
-| Sidebar **Volumes** | `feraille-fs-native::list_volumes()` reads `/Volumes` / `mount`. | Enumerate from `/proc/self/mountinfo` (filter to user-meaningful mounts) or udisks2 / `GVolumeMonitor` for removable media + labels. Needs a Linux arm for `list_volumes`. |
-| Trash (`MoveToTrash`) | NSFileManager trash via shell-mac. | **freedesktop Trash spec** — `$XDG_DATA_HOME/Trash/{files,info}` plus per-volume `.Trash-<uid>` with `.trashinfo` records. The `trash` crate implements this; sits in `feraille-fs-native` next to the existing trash arms. |
-| Quarantine indicator (red shield) | `com.apple.quarantine` xattr ([feraille-fs-native/src/xattr_info.rs](../../crates/feraille-fs-native/src/xattr_info.rs)). | No exact equivalent. The closest is the freedesktop download-provenance xattr `user.xdg.origin.url` (+ `user.xdg.referrer.url`) that browsers set. Add a Linux arm to `fetch_quarantine_info`; relabel the UI as "downloaded from" provenance. |
-| Finder tags (color chips) | `com.apple.metadata:_kMDItemUserTags`. | **No portable Linux tag system.** Drop for v1 (recommended) or back via `feraille-meta` SQLite as private tags (no file-manager interop). |
+| Sidebar **Volumes** | `ferail-fs-native::list_volumes()` reads `/Volumes` / `mount`. | Enumerate from `/proc/self/mountinfo` (filter to user-meaningful mounts) or udisks2 / `GVolumeMonitor` for removable media + labels. Needs a Linux arm for `list_volumes`. |
+| Trash (`MoveToTrash`) | NSFileManager trash via shell-mac. | **freedesktop Trash spec** — `$XDG_DATA_HOME/Trash/{files,info}` plus per-volume `.Trash-<uid>` with `.trashinfo` records. The `trash` crate implements this; sits in `ferail-fs-native` next to the existing trash arms. |
+| Quarantine indicator (red shield) | `com.apple.quarantine` xattr ([ferail-fs-native/src/xattr_info.rs](../../crates/ferail-fs-native/src/xattr_info.rs)). | No exact equivalent. The closest is the freedesktop download-provenance xattr `user.xdg.origin.url` (+ `user.xdg.referrer.url`) that browsers set. Add a Linux arm to `fetch_quarantine_info`; relabel the UI as "downloaded from" provenance. |
+| Finder tags (color chips) | `com.apple.metadata:_kMDItemUserTags`. | **No portable Linux tag system.** Drop for v1 (recommended) or back via `ferail-meta` SQLite as private tags (no file-manager interop). |
 | Path separators in display strings | `/` (already native). | `/` is native on Linux too — *easier* than Windows. Still double-check no display string assumes a macOS-only convention. |
 | `--screenshot` headless harness | macOS `render_to_image` + icon install in `screenshot::run`. | Verify gpui's Linux backend supports `render_to_image` at our pinned rev. If not, you'll need an on-screen capture path like the Windows `capture_window_rgba` route. The icon-install call already routes through `platform_shell::set_app_icon_from_png_bytes` (make it a no-op on Linux — see §6). |
 
@@ -280,8 +280,8 @@ differ, be explicit with `cfg(target_os = "linux")`.
 
 ## 6. The Linux shell surface
 
-`feraille-shell-linux` must mirror the public `pub fn` surface of
-`feraille-shell-mac` (and `-win32`). Below is each function mapped to the Linux
+`ferail-shell-linux` must mirror the public `pub fn` surface of
+`ferail-shell-mac` (and `-win32`). Below is each function mapped to the Linux
 mechanism. **Strong recommendation:** lean on the
 [`ashpd`](https://crates.io/crates/ashpd) crate for XDG Desktop Portals
 (appearance/dark-mode, open-uri, file-chooser) and
@@ -295,7 +295,7 @@ thread** (prime directive).
 |---|---|
 | `clipboard_copy_file_urls` / `clipboard_read_file_urls` | Clipboard with a `text/uri-list` target carrying `file://` URIs. GNOME apps additionally use the `x-special/gnome-copied-files` target (`copy\nfile:///path\n…`) and KDE its own — write/read the common `text/uri-list` first, add the GNOME target for Nautilus interop. Wayland: `smithay-clipboard` or `wl-clipboard` shell-out; X11: raw selections or `xclip`. (Plain text `copy_to_clipboard` can use [`arboard`](https://crates.io/crates/arboard), but it doesn't do custom MIME targets well — file-URLs need lower-level access.) |
 | `start_volume_observer` | udisks2 `InterfacesAdded`/`InterfacesRemoved` D-Bus signals on `org.freedesktop.UDisks2` (via `zbus`), or `GVolumeMonitor` mount/unmount signals, or an inotify watch on `/proc/self/mountinfo`. Mirror the macOS callback contract. |
-| *(text-naming prompt — no Linux work needed)* | Already solved cross-platform: the shared `open_text_prompt` gpui modal in `feraille-gpui` handles rename + new-folder on every platform, and the native `prompt_for_text` shell stub was deleted (2026-06-20). Nothing to port here. |
+| *(text-naming prompt — no Linux work needed)* | Already solved cross-platform: the shared `open_text_prompt` gpui modal in `ferail-gpui` handles rename + new-folder on every platform, and the native `prompt_for_text` shell stub was deleted (2026-06-20). Nothing to port here. |
 
 ### The rest
 
@@ -312,10 +312,10 @@ thread** (prime directive).
 | `open_with_candidates(path)` / `open_with_app` | Resolve MIME via `xdg-mime query filetype` (or GIO), then enumerate handler `.desktop` files from the MIME associations (`mimeapps.list` + `applications/`). The `gio` CLI (`gio open`, `gio mime`) is the pragmatic shortcut; the proper path parses desktop entries (consider a `freedesktop`/`xdg` crate). |
 | `fetch_quick_look_thumbnail(path)` | **Reuse the freedesktop thumbnail cache first:** check `$XDG_CACHE_HOME/thumbnails/{normal,large}/<md5(canonical file:// URI)>.png`. On miss, generate (gdk-pixbuf for images, ffmpeg for video) or ask the `org.freedesktop.thumbnails.Thumbnailer1` (Tumbler) D-Bus service. Images-only via gdk-pixbuf is a fine v1. |
 | `show_quick_look(paths)` | No Quick Look. Route to the in-app preview pane, or `gio open` / GNOME `sushi` as an optional shell-out. |
-| `read_canonical_tags` / `toggle_tag` / `clear_tags` | No portable native tags. Back via `feraille-meta` SQLite (private), or drop for v1. |
+| `read_canonical_tags` / `toggle_tag` / `clear_tags` | No portable native tags. Back via `ferail-meta` SQLite (private), or drop for v1. |
 | `system_is_dark()` | Portal `org.freedesktop.portal.Settings.ReadOne("org.freedesktop.appearance", "color-scheme")` (1 = prefer-dark) via `ashpd::desktop::settings`. Fallback: `gsettings get org.gnome.desktop.interface color-scheme`. |
 | `start_system_theme_observer(cb)` | Subscribe to the portal `SettingChanged` signal for `org.freedesktop.appearance` / `color-scheme` (`ashpd` exposes a stream); fire the callback off-thread. |
-| `set_app_icon_from_png_bytes` | **No-op.** On Linux app identity/icon comes from a `.desktop` file + the Wayland `app_id` / X11 `WM_CLASS`, not a runtime swap. Ship a `feraille.desktop` and an icon in the hicolor theme instead. |
+| `set_app_icon_from_png_bytes` | **No-op.** On Linux app identity/icon comes from a `.desktop` file + the Wayland `app_id` / X11 `WM_CLASS`, not a runtime swap. Ship a `ferail.desktop` and an icon in the hicolor theme instead. |
 | `set_app_user_model_id(id)` | **No-op** (Windows taskbar concept). The Wayland `app_id` plays the grouping role; ensure gpui sets it to match the `.desktop` file's basename. |
 | `app_bundle_path()` | `None` (no bundle concept), or the install prefix if ever useful. |
 | `video_overlay_show` / `set_frame` / `remove` | GStreamer (`gstreamer` crate) or libmpv child surface floated over the viewer stage rect. Viewer-feature-sized; defer. See VIEWER.md. |
@@ -373,14 +373,14 @@ cover:
 |---|---|---|---|
 | **Native Linux** (or a Linux VM) | ✅ | ✅ | ✅ (needs working Vulkan — §8) |
 | **WSL2 on Windows** | ✅ genuine Linux kernel | ✅ | ⚠️ via WSLg; hardware Vulkan (Dozen) is experimental — falls back to **lavapipe** software Vulkan, which is fine for `--screenshot` but not smooth interactive use |
-| **macOS** (this repo's home) | ⚠️ only the *workspace-member* check below; cannot cross-compile `feraille-gpui` to Linux (Apple→Linux cross with the gpui native/Vulkan deps is impractical) | ✅ | ❌ — no Linux runtime; use a VM/remote box |
+| **macOS** (this repo's home) | ⚠️ only the *workspace-member* check below; cannot cross-compile `ferail-gpui` to Linux (Apple→Linux cross with the gpui native/Vulkan deps is impractical) | ✅ | ❌ — no Linux runtime; use a VM/remote box |
 
-**What "the workspace-member check" means on a Mac:** `feraille-shell-linux` and
-the `cfg(target_os = "linux")` arms in `feraille-fs-native` are plain Rust with
+**What "the workspace-member check" means on a Mac:** `ferail-shell-linux` and
+the `cfg(target_os = "linux")` arms in `ferail-fs-native` are plain Rust with
 no Linux-only deps, so they compile *as workspace members* on macOS
-(`cargo check -p feraille-shell-linux` is green today). That lets you write and
+(`cargo check -p ferail-shell-linux` is green today). That lets you write and
 type-check the entire stub surface and much of the real shell logic from the
-Mac. What you **cannot** do from the Mac is build `feraille-gpui` *for*
+Mac. What you **cannot** do from the Mac is build `ferail-gpui` *for*
 `target_os = "linux"` (its GPUI/Vulkan/Wayland deps don't cross-compile from
 Darwin) or run anything — so the moment you need to see pixels or exercise a
 real portal call, move to a Linux host.
@@ -388,8 +388,8 @@ real portal call, move to a Linux host.
 **Recommended split if you're starting from a Windows or Mac box:**
 
 1. Do the mechanical, type-checkable work anywhere: flesh out
-   `feraille-shell-linux`, add `fs-native` Linux arms, keep
-   `cargo check -p feraille-shell-linux` green.
+   `ferail-shell-linux`, add `fs-native` Linux arms, keep
+   `cargo check -p ferail-shell-linux` green.
 2. Stand up **one** real Linux environment for the run/screenshot loop — a
    **WSL2** instance (easiest if you're on Windows; `vulkaninfo` to see whether
    Dozen gives you a GPU, else set lavapipe for screenshots) or a **Linux VM /
@@ -397,7 +397,7 @@ real portal call, move to a Linux host.
    other platforms stays honest (§9).
 
 > Naming caveat: CLAUDE.md's porting rule "WSL features are not macOS v1
-> features" is about WSL as a *feature to support in the old Ferail* (browsing
+> features" is about WSL as a *feature to support in the old Ferail-Win32* (browsing
 > `\\wsl$` paths), **not** about using WSL2 as a build host for this port. The
 > two are unrelated; don't conflate them.
 
@@ -431,14 +431,14 @@ sudo apt install -y build-essential pkg-config cmake \
 vulkaninfo | head -n 20      # should print a device, not an error
 
 # 4. Clone and build
-git clone <your-feraille-remote> Feraille && cd Feraille
+git clone <your-ferail-remote> Ferail && cd Ferail
 cargo check --workspace --all-targets   # expect a platform_shell error first — see §4
 ```
 
 **What'll fail first, in rough order:**
 
-1. **`platform_shell` is undefined on Linux.** Compile error in `feraille-gpui`.
-   This is expected — fix it via §4 (create `feraille-shell-linux`, or the
+1. **`platform_shell` is undefined on Linux.** Compile error in `ferail-gpui`.
+   This is expected — fix it via §4 (create `ferail-shell-linux`, or the
    temporary win32-stub alias to see pixels) before anything else.
 2. **No Vulkan device → blank window or panic on launch.** Install
    `mesa-vulkan-drivers` (or vendor drivers); verify with `vulkaninfo`. In a VM,
@@ -457,8 +457,8 @@ cargo check --workspace --all-targets   # expect a platform_shell error first �
 
 ```sh
 cargo check --workspace --all-targets          # sanity at any point
-cargo run --bin feraille-gpui                   # run the shell
-cargo run --bin feraille-gpui -- --screenshot screenshots/linux-baseline.png
+cargo run --bin ferail-gpui                   # run the shell
+cargo run --bin ferail-gpui -- --screenshot screenshots/linux-baseline.png
 cargo test --workspace
 ```
 
@@ -467,9 +467,9 @@ cargo test --workspace
 - Screenshots go in the repo `screenshots/` folder, not `/tmp`.
 - Never run broad formatters (`cargo fmt --all`); the repo often has
   work-in-progress local changes.
-- New native code in `feraille-shell-linux`; new filesystem code as
-  `cfg(target_os = "linux")` arms in `feraille-fs-native`. Don't put D-Bus/XDG
-  calls in `feraille-gpui` directly — go through `platform_shell`.
+- New native code in `ferail-shell-linux`; new filesystem code as
+  `cfg(target_os = "linux")` arms in `ferail-fs-native`. Don't put D-Bus/XDG
+  calls in `ferail-gpui` directly — go through `platform_shell`.
 
 ---
 
@@ -485,9 +485,9 @@ So **CI or a teammate's machine is the gate** for Mac/Windows correctness. Push
 early; treat those signals as load-bearing.
 
 **Every new `platform_shell::X` surface now needs all three shell crates.** Add
-the real arm under `cfg(target_os = "linux")` in `feraille-shell-linux`, and a
-matching signature (real-or-stub) in `feraille-shell-mac` and
-`feraille-shell-win32`. The alias only resolves when every shell crate exposes
+the real arm under `cfg(target_os = "linux")` in `ferail-shell-linux`, and a
+matching signature (real-or-stub) in `ferail-shell-mac` and
+`ferail-shell-win32`. The alias only resolves when every shell crate exposes
 the symbol.
 
 **Mind the `cfg` traps — they're sharper with three platforms:**
@@ -499,24 +499,24 @@ the symbol.
   identical behavior; wrong when they differ.
 - `cfg(not(target_os = "macos"))` catches **Windows and Linux** — handy for the
   "everything that isn't the Finder model" cases (e.g. quit-on-last-window).
-- When you cfg-gate behavior in `feraille-gpui`, **write every arm you affect**
+- When you cfg-gate behavior in `ferail-gpui`, **write every arm you affect**
   so you're forced to think about the other platforms.
 
-**`feraille-fs-native` already has Linux arms via `cfg(not(any(target_os =
+**`ferail-fs-native` already has Linux arms via `cfg(not(any(target_os =
 "macos", windows)))`.** When you add real Linux behavior, decide: specialize
 that catch-all to `cfg(target_os = "linux")` (if the generic fallback no longer
 fits) or add a `cfg(target_os = "linux")` arm beside it. Don't silently change
 the catch-all's behavior for other Unixes you haven't tested.
 
 **The command catalogue is shared and platform-agnostic.**
-`crates/feraille-core/src/commands.rs` defines actions and shortcuts for all
+`crates/ferail-core/src/commands.rs` defines actions and shortcuts for all
 platforms. Gate the *handler*, not the catalogue entry, for a Linux-only action.
 `Shortcut::primary("X")` maps to Cmd on Mac and Ctrl on Windows/Linux — verify a
 chord doesn't collide with a compositor/WM global on your DE.
 
 **Things you can safely change from Linux** without Mac/Windows risk:
-`feraille-shell-linux`, `cfg(target_os = "linux")` arms anywhere, anything in
-`feraille-core` / `feraille-disk-usage` / `feraille-design` (no platform code by
+`ferail-shell-linux`, `cfg(target_os = "linux")` arms anywhere, anything in
+`ferail-core` / `ferail-disk-usage` / `ferail-design` (no platform code by
 design), and gpui code where you've added matching arms for the other targets.
 
 ---

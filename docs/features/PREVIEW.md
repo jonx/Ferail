@@ -1,6 +1,6 @@
 # Preview
 
-Feraille's preview pane is an async, cache-backed inspector for the current
+Ferail's preview pane is an async, cache-backed inspector for the current
 selection. It combines Finder-style Get Info details with lightweight content
 preview, and it never reads file content from paint.
 
@@ -74,9 +74,9 @@ a blocking convoy would. The queue drains newest-first: the folder being
 looked at thumbnails first, and jobs for rows browsed away from still
 finish and stay cached for the next visit. Files that don't decode cost
 one bounded deadline and are negative-cached. Audio cover art is read with
-`lofty` (`feraille_fs_native::media::read_cover_art`), which is what makes
+`lofty` (`ferail_fs_native::media::read_cover_art`), which is what makes
 album art work on Windows/Linux where there is no Quick Look. Every
-thumbnail surface (list rows, icon grid, this pane, `feraille thumb`) rides
+thumbnail surface (list rows, icon grid, this pane, `ferail thumb`) rides
 the same fetch.
 
 The thumbnail is intentionally a preview-pane poster, not the full viewer. The
@@ -97,7 +97,7 @@ Other text files are wrapped in a fenced code block tagged with the extension
 and rendered with syntax highlighting. The fence grows longer than any backtick
 run in the file so source content cannot break out of the fence.
 
-Feraille also registers extra highlight queries for gpui-component grammars that
+Ferail also registers extra highlight queries for gpui-component grammars that
 ship without highlight query text, including C, C++, C#, Bash, Swift, and CMake.
 
 ## Scrolling And Layout

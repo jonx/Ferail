@@ -1,9 +1,9 @@
 # File Search
 
-Today Feraille only has an *in-directory filter*: a case-insensitive substring
+Today Ferail only has an *in-directory filter*: a case-insensitive substring
 match over the rows already loaded for the current folder
-([file_list.rs](../../crates/feraille-gpui/src/file_list.rs), applied in the
-streaming load at [shell/loading.rs](../../crates/feraille-gpui/src/shell/loading.rs)).
+([file_list.rs](../../crates/ferail-gpui/src/file_list.rs), applied in the
+streaming load at [shell/loading.rs](../../crates/ferail-gpui/src/shell/loading.rs)).
 That is the right behavior for "narrow what I'm looking at" but it is not
 *search* — it never leaves the current directory and never consults an index.
 
@@ -46,7 +46,7 @@ pin → a Spotlight-backed live tab.
 | Tier | What | Engine | Scope |
 |---|---|---|---|
 | 0 | Filter the current listing | in-memory | current folder, loaded rows |
-| 1 | Recursive subtree walk | own walker (`feraille-fs-native`) | a chosen folder and below |
+| 1 | Recursive subtree walk | own walker (`ferail-fs-native`) | a chosen folder and below |
 | 2 | Global / indexed | OS index, falling back to Tier 1 | a volume or everything |
 
 Tiers compose, not replace. The same input box drives all three; the UI is
@@ -103,8 +103,8 @@ them. The GPUI layer picks a default and honors a user override.
 
 ## Tier 1 — recursive subtree walk (build first)
 
-A pure-function walker in `feraille-fs-native`, modeled directly on
-[`scan_disk_usage`](../../crates/feraille-fs-native/src/disk_usage_scanner.rs):
+A pure-function walker in `ferail-fs-native`, modeled directly on
+[`scan_disk_usage`](../../crates/ferail-fs-native/src/disk_usage_scanner.rs):
 same DFS stack, same `batch_size`, same `AtomicBool` cancel checked between
 dirents and at level boundaries, same throttled `on_progress`, same
 host-owns-the-thread contract.
@@ -173,6 +173,6 @@ shell crates return data only and paint no UI.
 
 ## Verification
 
-- `cargo check -p feraille-fs-native -p feraille-gpui`; `cargo test` for the
+- `cargo check -p ferail-fs-native -p ferail-gpui`; `cargo test` for the
   walker (match correctness, cancellation, stale-generation drop).
 - One screenshot of streaming results into the list.

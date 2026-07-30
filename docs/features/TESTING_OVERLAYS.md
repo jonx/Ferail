@@ -1,6 +1,6 @@
 # Testing And Debug Overlays
 
-Feraille has a screenshot CLI today and should grow a small set of debug
+Ferail has a screenshot CLI today and should grow a small set of debug
 overlays that make performance and async behavior visible.
 
 ## Status
@@ -14,8 +14,8 @@ Use the binary's headless screenshot mode — the full dev loop, flag families,
 and worked examples live in [SCREENSHOTS.md](SCREENSHOTS.md):
 
 ```sh
-cargo run --bin feraille-gpui -- \
-  --screenshot screenshots/feraille.png \
+cargo run --bin ferail-gpui -- \
+  --screenshot screenshots/ferail.png \
   --navigate . \
   --width 1400 --height 900
 ```

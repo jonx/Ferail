@@ -1,9 +1,9 @@
-# Feraille — Architecture and Decision Log
+# Ferail — Architecture and Decision Log
 
 Multi-iter spec work under the Slow AI method. Currently covers two specs:
 
-- `docs/features/feraille-selection-dnd-spec.md` (selection iter 1+2 landed; drag still pending) — below.
-- `docs/features/feraille-windows-instances-tabs-spec.md` (in progress) — top of file.
+- `docs/features/ferail-selection-dnd-spec.md` (selection iter 1+2 landed; drag still pending) — below.
+- `docs/features/ferail-windows-instances-tabs-spec.md` (in progress) — top of file.
 
 ---
 
@@ -26,7 +26,7 @@ headless screenshots → Windows polish.
 - **Patch-graph reconciliation is per-box local state.** The committed
   `[patch]` entries point at Mac-only sibling checkouts (`../zed-aros`,
   `../gpui-component-aros`). On the Windows box the zed patch is re-pointed at
-  `../zed-feraille-patch` (same rev + the D3D11 `render_to_image`), and the
+  `../zed-ferail-patch` (same rev + the D3D11 `render_to_image`), and the
   gpui-component / crates-io (stacker, filetime) patches are commented out —
   their deltas are inert off-AROS. Do not push Cargo.toml/Cargo.lock as-is.
   Open question for CI/other machines: publish the forks (TODO already tracks
@@ -51,7 +51,7 @@ headless screenshots → Windows polish.
   on Windows; point Settings → Plugins there.
 
 - **Windows "Chunk C" resilient file-ops shipped** — the last big Windows
-  capability gap. New `feraille-shell-win32/src/elevation.rs`:
+  capability gap. New `ferail-shell-win32/src/elevation.rs`:
   - `run_elevated_self`: `ShellExecuteExW` verb `"runas"` (UAC), wait on the
     returned process handle, return its exit code. `Err("cancelled")` on
     `ERROR_CANCELLED` to match the macOS osascript contract. Args are re-quoted
@@ -73,7 +73,7 @@ headless screenshots → Windows polish.
     (PowerShell pid), force-closed it, confirmed the lock released. The
     `examples/lockers.rs` smoke harness stays in the crate.
 
-- **Linux file-type icons shipped** (`feraille_fs_native::fetch_icon_rgba`
+- **Linux file-type icons shipped** (`ferail_fs_native::fetch_icon_rgba`
   Linux arm). Pipeline: `xdg-mime` shared-mime-info → candidate icon names
   (specific, `type-subtype`, `*-x-generic`) → `freedesktop-icons` theme lookup
   (GTK theme via gsettings, hicolor cascade) → rasterize PNG (`image`) or SVG
@@ -100,10 +100,10 @@ headless screenshots → Windows polish.
     icon is a valid, non-empty SVG that usvg/resvg rasterizes fine. The AROS
     "chrome icons not drawn" symptom is therefore NOT a bad/missing/empty asset
     — it's in the `gpui_aros` renderer's monochrome-SVG-sprite path (zed-aros
-    fork), which feraille tests can't cover and I can't repro from this box.
+    fork), which ferail tests can't cover and I can't repro from this box.
     Next step for AROS lives in zed-aros/crates/gpui_aros, not here.
 
-- **Linux content thumbnails shipped** (`feraille_shell_linux::
+- **Linux content thumbnails shipped** (`ferail_shell_linux::
   fetch_quick_look_thumbnail`). Rides the shared freedesktop thumbnail cache
   (`$XDG_CACHE_HOME/thumbnails/{normal,large,x-large,xx-large}/<md5(file-uri)>
   .png`) so a thumbnail Nautilus already made returns instantly, and one we make
@@ -299,7 +299,7 @@ for free, **including on video**.
 - The viewer's whole coupling to "a video player" is 9 free fns on the
   cfg-selected `platform_shell` crate (`video_overlay_*`): show / copy_frame
   / set_paused / seek / step / time / natural_size / restart / remove. All
-  frame-pull: decode → BGRA bytes → gpui `img`. `feraille-shell-mac` =
+  frame-pull: decode → BGRA bytes → gpui `img`. `ferail-shell-mac` =
   headless AVPlayer + `AVPlayerItemVideoOutput`; win32 = stubs.
 - libvlc fits the same pull model: `libvlc_video_set_format(mp,"RV32",w,h,
   pitch)` + `libvlc_video_set_callbacks(lock,unlock,display,opaque)` decode
@@ -330,8 +330,8 @@ for free, **including on video**.
   sharpen/denoise filter — including whether its params change live) decides
   raw-FFI vs `vlc-rs` before committing.
 - **Seam first, then VLC.** Phase 1: `VideoBackend`/`VideoStream` trait in
-  `feraille-core`; move the existing AVFoundation player behind it with no
-  behaviour change. Phase 2: `feraille-video-vlc` provider + a settings
+  `ferail-core`; move the existing AVFoundation player behind it with no
+  behaviour change. Phase 2: `ferail-video-vlc` provider + a settings
   toggle; route the popup colour grade to VLC `set_adjust` and the popup
   denoise/sharpen to VLC filters, so the **whole** adjustments popup applies
   to video, not just stills.
@@ -363,7 +363,7 @@ full path against a generated `testsrc` clip and **passed**:
   or re-open the stream as a fallback.
 
 ## Phase 1 outcome (2026-06-19) — provider seam landed, no behaviour change
-- `feraille_core::video` — `VideoBackend` (`open(path, on_ended) →
+- `ferail_core::video` — `VideoBackend` (`open(path, on_ended) →
   Box<dyn VideoStream>`) + `VideoStream` (copy_frame / set_paused / seek /
   step / time / natural_size). Platform-neutral, std-only. `set_adjust` is
   deliberately **not** here yet — it lands in Phase 2 with VLC so Phase 1
@@ -380,16 +380,16 @@ full path against a generated `testsrc` clip and **passed**:
   (`screenshots/viewer-video-seam.png`). Native video unchanged.
 
 ## Phase 2 outcome (2026-06-19) — VLC provider + Plugins settings landed
-- New crate `feraille-video-vlc` — hand-written libvlc FFI (no `vlc-rs`).
+- New crate `ferail-video-vlc` — hand-written libvlc FFI (no `vlc-rs`).
   `dlopen`s libvlccore then libvlc from the VLC.app; **format callbacks**
   decode at native resolution into a vmem `RV32`/BGRA buffer; end-of-clip via
   `libvlc_event_attach(EndReached)`; **live `set_adjust`** maps the bipolar
   grade to libvlc's 1.0-neutral ranges. `VLC_PLUGIN_PATH` is set internally
   from the settings path (the only mechanism libvlc accepts). One process-
   wide instance, cached in a thread_local (changing the path needs restart).
-- `feraille_core::video` — added `VideoAdjust` + `VideoStream::set_adjust`
+- `ferail_core::video` — added `VideoAdjust` + `VideoStream::set_adjust`
   (default `false`); `on_ended` is now `Send` (libvlc fires it off-thread).
-- `feraille-gpui` — `vlc` cargo feature (off by default; macOS-only optional
+- `ferail-gpui` — `vlc` cargo feature (off by default; macOS-only optional
   dep). AppState gained `video_backend` + `vlc_app_path`. Settings → **Plugins**
   page: a Player dropdown (Built-in / VLC) + an editable VLC.app path. The
   viewer resolves the choice once at open (`resolve_vlc_pref`, no settings I/O
@@ -398,7 +398,7 @@ full path against a generated `testsrc` clip and **passed**:
   per-frame CPU grade is skipped when the backend grades natively (VLC).
 - Verified: default build and `--features vlc` both compile warning-free;
   49 core + 67 gpui tests green; a **real libvlc integration test**
-  (`feraille-video-vlc`, decodes /tmp/vlc_probe.mp4, 2.3 s) passes; Plugins
+  (`ferail-video-vlc`, decodes /tmp/vlc_probe.mp4, 2.3 s) passes; Plugins
   settings render (`screenshots/settings-plugins.png`). Interactive VLC-in-
   viewer playback (select VLC, play any-format clip) is on the user — it needs
   a `--features vlc` build and writes to the live settings file.
@@ -482,14 +482,14 @@ All three tasks below shipped.
    new rows **VLC-video-only** (gated on `vlc_video`).
 
 Design note (user asked: should the plugin ship its own popup?): **No — one
-shared popup, capability-gated.** The seam (`feraille-core`/`feraille-video-vlc`)
+shared popup, capability-gated.** The seam (`ferail-core`/`ferail-video-vlc`)
 is deliberately gpui-free (architecture invariant) and plugin code must stay
 off the paint path (prime directive); a plugin-owned popup would break both and
 fork one gesture (E / right-click) into two UIs. The plugin contributes
 capabilities + the native impl; the viewer owns the UI and renders exactly the
 controls the active backend supports (today gated via `video_adjust_native`).
 
-Verification: `feraille-video-vlc` integration test passes against real libvlc
+Verification: `ferail-video-vlc` integration test passes against real libvlc
 with all four filters + the adjust path active; `--features vlc` and default
 both build; gpui tests pass. No headless screenshot of the new popup rows: they
 appear only during a live VLC decode (`video_adjust_native` true), which the
@@ -523,7 +523,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
 
 ## Plan (approved 2026-06-16)
 
-- **Neutral model in `feraille-core` (`entry_info.rs`):** an ordered list of
+- **Neutral model in `ferail-core` (`entry_info.rs`):** an ordered list of
   sections, each a list of typed rows. Platform-neutral contract; every OS
   fills the subset it can read, the UI consumes one shape. Row kinds cover
   read-only text, editable toggles (Locked/Invisible/…), tags + color label,
@@ -572,7 +572,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
 
 ## Outcome (landed 2026-06-16)
 
-- **Model** `feraille_core::entry_info` — neutral `EntryInfo`/sections/rows
+- **Model** `ferail_core::entry_info` — neutral `EntryInfo`/sections/rows
   + `PermMatrix`/`PermBits` (mode round-trip, octal, symbolic) + `Attr` +
   `EntryInfoEdit`. 4 unit tests.
 - **Reads** `fsn::stat_info` (lstat: owner/group via getpw/getgr, mode, dates,
@@ -615,7 +615,7 @@ Working the Slow AI loop: verify → plan → approve → layer → test → not
   lead selection changes via `sync_preview_info`. The "Get Info" button is
   gone — the preview shows the live, editable panel; Cmd+I opens the same
   content as the popup.
-- **Filename hazard surfacing.** New `feraille_core::name_hazards` splits a name
+- **Filename hazard surfacing.** New `ferail_core::name_hazards` splits a name
   into segments and flags leading/trailing/unusual whitespace, zero-width,
   control, bidi overrides, combining marks, and Cyrillic/Greek/fullwidth
   homoglyphs (curated confusable table — covers the "раypal"/RLO "gpj.exe"
@@ -973,10 +973,10 @@ Same-day follow-on to the file-ops arc; dnd-spec §3.5/§3.6.
 
 # 2026-06-13 file ops: copy/paste/move with progress + collisions (landed)
 
-Spec: `docs/features/FILE_OPS.md`. The biggest TODO gap — Feraille
+Spec: `docs/features/FILE_OPS.md`. The biggest TODO gap — Ferail
 can now actually manage files, not just browse them.
 
-- **Engine in `feraille-fs-native/src/file_ops.rs`** — pure,
+- **Engine in `ferail-fs-native/src/file_ops.rs`** — pure,
   synchronous, worker-thread: `plan_transfer` (walk + byte totals +
   top-level conflict scan, rejects copy-into-own-subtree),
   `run_copy`/`run_move` under one `CollisionPolicy`
@@ -1087,7 +1087,7 @@ Spec: `docs/features/VIEWER.md`. Six iterations, all green
 (`cargo clippy --workspace` zero, full test suite, screenshots
 `screenshots/viewer-window.png` / `viewer-preview-pane.png`).
 
-- **New module `feraille-gpui/src/viewer/`** in four layers: `loader`
+- **New module `ferail-gpui/src/viewer/`** in four layers: `loader`
   (full-res decode + byte-budget LRU), `stage` (pure zoom/pan
   geometry, zero gpui types), `window` (the entity), `playback`
   (slideshow epoch state). 27 new unit tests across the pure layers.
@@ -1140,7 +1140,7 @@ cached in the metadata DB, revalidated against the folder's mtime.
 - **Walker reuse, not a new walker.** `bundle_rolled_up_size` in the
   disk-usage scanner was already the exact cancel-aware, symlink-safe,
   error-absorbing DFS we needed; it's now `pub fn recursive_size` in
-  `feraille-fs-native` and the bundle path calls it.
+  `ferail-fs-native` and the bundle path calls it.
 - **Cache = `folder_sizes` table** (DB v3 → v4, additive): path PK,
   the folder's own `mtime_unix` at compute time, logical size,
   `computed_at_unix`. Validity check is `cached mtime == live mtime`,
@@ -1273,7 +1273,7 @@ within the strip.
 - **Sort restore deferred.** Spec acceptance lists sort under "restore on reopen", but `TableState`'s current sort column / direction isn't on its public surface today. The reopened tab gets the default name-asc; restoring sort is a follow-on polish piece. Filter and selection *do* restore.
 - **Selection restore is best-effort by spec design.** `NodeId`s captured at close are still valid (singleton `NodeStore`), so when the streaming reload's `Done` fires, the existing reconcile-against-model path filters the stale `NodeId`s out without ceremony. No new reconciliation code needed.
 - **Push happens at every close site**, not just `Cmd+W`. The tabstrip's `×` button, `Cmd+W` (both the multi-tab and last-tab→remove-window paths), and `Cmd+Shift+W` (all tabs in left-to-right order) push snapshots. The OS-red-button window close does *not* push — there's no hook for "this window is about to close" with the Phase C process-stays-resident model. Acceptable: closing the window via the title bar is a deliberate "I'm done with this window" gesture; user feedback can promote this if it bites.
-- **`ReopenClosedTab` action goes through the catalogue** (`file.reopen_closed_tab` in `feraille-core::commands`), not the keymap-extras list. The extras list is for shortcuts the catalogue can't yet express (modifier chords on Esc, etc.); a vanilla Cmd+Shift+T is exactly what the catalogue is for. Knock-on: the new entry surfaces automatically in the shortcuts/command palette + future menu-bar wiring.
+- **`ReopenClosedTab` action goes through the catalogue** (`file.reopen_closed_tab` in `ferail-core::commands`), not the keymap-extras list. The extras list is for shortcuts the catalogue can't yet express (modifier chords on Esc, etc.); a vanilla Cmd+Shift+T is exactly what the catalogue is for. Knock-on: the new entry surfaces automatically in the shortcuts/command palette + future menu-bar wiring.
 - **Cmd+Shift+T binds in `SHELL_CONTEXT`, not at the App level.** Requires an active window. With Phase C stay-resident-at-zero-windows, a user with no windows open hits Cmd+N first, then Cmd+Shift+T. Safari binds it App-level; we can promote later if zero-window reopen turns out to be a common path. Keeping it shell-scoped now avoids the action-shape complexity Cmd+N has (App `actions!` block, separate `cx.on_action` wiring).
 - **Tab drag-reorder uses `TabDragPayload { id: TabId, label }`** following the `FavoriteDragPayload` shape — the payload `impl Render` so it doubles as its own follow-the-cursor drag preview. Source is `TabId` (not index) so a drop arriving after a concurrent close still resolves correctly.
 - **Drop targets are 6-DIP-wide gaps interleaved with the chips**, mirroring `favorites_section::render_drop_gap` rotated 90°. Idle: invisible. `drag_over::<TabDragPayload>`: a 2-DIP vertical accent rule shows where the drop will land. Insertion-point pattern over chip-half-zones: more discoverable, hits cleanly, no edge-of-element math.
@@ -1314,7 +1314,7 @@ Process stays resident on zero windows (Finder / Safari model).
 - **Process stays resident at zero windows.** Removed the `cx.on_window_closed` handler that called `cx.quit()`. Quit only via `Cmd+Q` or app-menu Quit. Matches spec §1.2 / §2.2. The dock icon stays visible — Phase I will wire `applicationShouldHandleReopen` so clicking it with no windows open reopens a window.
 - **`Cmd+W` on the last tab closes the window**, via `window.remove_window()`. With the stay-resident default this is non-fatal. Same behavior on the tabstrip's `×` close button. Matches spec §3.4.
 - **Watcher / reload fan-out now tracks every live tab path in-process.** `FsWatcher` keeps a set of watched directories, and `ProcessState` keeps weak handles for live Shell windows so watcher events and file-op completions reload every matching tab in every window.
-- **Later: true OS-level singleton + launch-intent forwarding.** The current work shares one `ProcessState` inside a running process, but a second `feraille-gpui` process launched from CLI/Finder still needs the platform primary/secondary intent channel described in the spec.
+- **Later: true OS-level singleton + launch-intent forwarding.** The current work shares one `ProcessState` inside a running process, but a second `ferail-gpui` process launched from CLI/Finder still needs the platform primary/secondary intent channel described in the spec.
 - **`MergeAllWindows` / dock menu / cascade offsets deferred** to Phases F / K. Cmd+N opens centered windows; the user can drag them apart. Tear-off (Phase F) needs a position-near-cursor anyway, so cascade lives with that work.
 
 ### Outcome
@@ -1412,7 +1412,7 @@ Spec §2.3 wants a focus ring distinct from selection fill. The Table primitive 
 
 ## With more time, I would
 - Push modifier-aware clicks into gpui-component's TableEvent so other consumers (Disk Usage, settings tables) inherit the same model.
-- Add a `Selection` type in `feraille-core` so the model isn't shell-specific.
+- Add a `Selection` type in `ferail-core` so the model isn't shell-specific.
 - Build an integration test harness for selection that synthesizes ClickEvents with modifiers.
 
 ## Things to discuss in the walkthrough
@@ -1500,7 +1500,7 @@ exists to resolve the gating unknowns before any real integration:
     mpv's render update-callback rather than a fixed sleep.)
 
 Net: the architecture holds and the risky unknown is retired green. Next is
-Phase 1 — `feraille-video-mpv` to parity, then delete `feraille-video-vlc` +
+Phase 1 — `ferail-video-mpv` to parity, then delete `ferail-video-vlc` +
 the `vlc` feature + the reopen apparatus. Delete `spikes/mpv-probe/` once
 Phase 1 lands (binding decision now recorded here).
 
@@ -1523,13 +1523,13 @@ process is in scope (Windows-native, Chunk C).
 
 ## Two deviations from the plan letter (both to match existing conventions)
 
-1. **`FileOpError`/`FileOpErrorKind` live in `feraille-fs-native`, not
-   `feraille-core`.** The plan said core "beside `EnumerationError`", but core
+1. **`FileOpError`/`FileOpErrorKind` live in `ferail-fs-native`, not
+   `ferail-core`.** The plan said core "beside `EnumerationError`", but core
    deliberately uses `String` for paths and never imports `std::path` — a
    `PathBuf`-bearing error type doesn't belong there. fs-native is the engine's
    home and where the libc-based classifier must live anyway (errno values vary
    across unix flavours, so the classifier uses `libc::EACCES` etc., not
-   literals). gpui reaches them via `feraille_fs_native::file_ops::FileOpError`.
+   literals). gpui reaches them via `ferail_fs_native::file_ops::FileOpError`.
 2. **No serde.** The project persists settings as a hand-rolled `key=value`
    format; neither core, fs-native, nor gpui pull serde. So the Chunk B elevated-
    op descriptor will use the same hand-rolled line format, and the platform
@@ -1581,7 +1581,7 @@ process is in scope (Windows-native, Chunk C).
 
 Verified end-to-end on macOS (only the literal auth prompt is the manual step).
 
-- **Descriptor model + worker** (`crates/feraille-gpui/src/elevation.rs`):
+- **Descriptor model + worker** (`crates/ferail-gpui/src/elevation.rs`):
   `ElevatedOp { is_move, dest_dir, sources }` + `ElevatedResult`, NUL-separated
   encoding (robust against any path on unix; no serde). `--elevated-op
   <descriptor> --elevated-result <result>` CLI mode (dispatched in main.rs

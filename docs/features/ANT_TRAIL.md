@@ -1,15 +1,15 @@
 # Ant Trail
 
-Ant Trail is Ferail's folder-usage heat system. It tracks where the user
+Ant Trail is Ferail-Win32's folder-usage heat system. It tracks where the user
 actually goes and uses that signal to make navigation feel smarter.
 
 ## Status
 
 Shipped with follow-ups.
 
-Feraille currently has:
+Ferail currently has:
 
-- `AntTrail` logic in `feraille-core`.
+- `AntTrail` logic in `ferail-core`.
 - Process-wide path-based visit counts in `ProcessState`.
 - SQLite persistence in `MetadataDb.folder_usage`.
 - Startup hydration of visits and recents from the metadata DB.

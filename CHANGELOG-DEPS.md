@@ -23,7 +23,7 @@ selection, empty-range style leak) and dropdown/ComboBox fixes — all relevant
 to the preview pane and settings. Required source changes: 4 `flex_grow()` /
 `flex_shrink()` calls in the forked `multi_table` gained a mandatory `f32` arg
 (GPUI-UPSTREAM.md #3); `gpui` had to be pinned to mirror gpui-component's rev
-(GPUI-UPSTREAM.md #1). Verified: `cargo check -p feraille-gpui` + scoped tests
+(GPUI-UPSTREAM.md #1). Verified: `cargo check -p ferail-gpui` + scoped tests
 green; preview/table/markdown screenshots inspected.
 
 ## Baseline — initial pins

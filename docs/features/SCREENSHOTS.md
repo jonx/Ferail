@@ -1,11 +1,11 @@
 # Headless Screenshots — The Visual Dev Loop
 
-Feraille can render any UI state to a PNG without opening a visible window.
+Ferail can render any UI state to a PNG without opening a visible window.
 This is how we (human and AI) iterate on the UI: change code, render the exact
 state you care about off-screen, open the PNG, repeat. No manual click-paths,
 no screen-capture, no "works on my machine" mouse choreography.
 
-The harness lives in [`screenshot.rs`](../../crates/feraille-gpui/src/screenshot.rs).
+The harness lives in [`screenshot.rs`](../../crates/ferail-gpui/src/screenshot.rs).
 
 ← Back to [feature notes](README.md) · related: [TESTING_OVERLAYS.md](TESTING_OVERLAYS.md)
 
@@ -33,7 +33,7 @@ focus handle or a scan deadlocks, the render reflects it.
 ## Invocation
 
 ```sh
-cargo run --bin feraille-gpui -- --screenshot screenshots/<feature>.png [flags…]
+cargo run --bin ferail-gpui -- --screenshot screenshots/<feature>.png [flags…]
 ```
 
 Per [CLAUDE.md](../../CLAUDE.md), screenshots go in `screenshots/` (gitignored
@@ -76,7 +76,7 @@ by hand.
 ### Multi-tab session, second tab active, icon view, dark
 
 ```sh
-cargo run --bin feraille-gpui -- \
+cargo run --bin ferail-gpui -- \
   --screenshot screenshots/multitab-grid-dark.png \
   --theme dark --width 1400 --height 900 \
   --navigate ~/Documents \
@@ -90,9 +90,9 @@ touching the user's persisted default), all in dark theme.
 ### Recursive search → select a hit → show it in the preview pane
 
 ```sh
-cargo run --bin feraille-gpui -- \
+cargo run --bin ferail-gpui -- \
   --screenshot screenshots/subtree-search-preview.png \
-  --width 1200 --navigate ~/Source/Feraille \
+  --width 1200 --navigate ~/Source/Ferail \
   --search-subtree "Cargo.toml" \
   --select-name Cargo.toml --preview
 ```
@@ -104,7 +104,7 @@ parks the cursor on the first match, and opens the preview pane (needs
 ### Duplicate-finder card panel
 
 ```sh
-cargo run --bin feraille-gpui -- \
+cargo run --bin ferail-gpui -- \
   --screenshot screenshots/dupes-panel.png \
   --width 1300 --height 850 \
   --navigate ~/Downloads --dupe-panel
@@ -116,7 +116,7 @@ presentation regardless of the saved `DupePresentation` setting.
 ### Breadcrumb autocomplete, then drive it with the keyboard
 
 ```sh
-cargo run --bin feraille-gpui -- \
+cargo run --bin ferail-gpui -- \
   --screenshot screenshots/breadcrumb-pick.png \
   --navigate ~ \
   --breadcrumb "~/Doc" \
@@ -131,7 +131,7 @@ async accept-task settle, then `enter` to commit the highlighted completion.
 ### Command palette driven entirely by keyboard
 
 ```sh
-cargo run --bin feraille-gpui -- \
+cargo run --bin ferail-gpui -- \
   --screenshot screenshots/palette-run.png \
   --navigate ~/Documents \
   --shortcuts-help-filter "new folder" \
@@ -146,7 +146,7 @@ precisely so the keyboard can drive the open overlay.)
 ### Task panel with live + historical tasks
 
 ```sh
-cargo run --bin feraille-gpui -- \
+cargo run --bin ferail-gpui -- \
   --screenshot screenshots/task-panel.png \
   --navigate ~/Source --simulate-task-panel --simulate-progress 0.62
 ```
@@ -158,7 +158,7 @@ cancelled, failed — plus a determinate footer progress strip at 62%.
 ### Get Info on a specific row
 
 ```sh
-cargo run --bin feraille-gpui -- \
+cargo run --bin ferail-gpui -- \
   --screenshot screenshots/get-info.png \
   --navigate ~/Documents --select-name "Annual Report.pdf" --properties
 ```
@@ -170,7 +170,7 @@ itself.
 ### Row context menu, on the *first* right-click after a load
 
 ```sh
-cargo run --bin feraille-gpui -- \
+cargo run --bin ferail-gpui -- \
   --screenshot screenshots/context-menu-first-right-click.png \
   --navigate ~/Downloads --context-menu-row 2
 ```
@@ -188,7 +188,7 @@ once the off-thread LaunchServices fetch lands.
 ### Disk-usage treemap, depth-limited, coloured by depth
 
 ```sh
-cargo run --bin feraille-gpui -- \
+cargo run --bin ferail-gpui -- \
   --screenshot screenshots/du-source.png \
   --width 1400 --height 950 \
   --disk-usage ~/Source --du-depth 3 --du-coloring depth
@@ -200,7 +200,7 @@ into the frame.
 ### Viewer window with the colour/enhance panel open
 
 ```sh
-cargo run --bin feraille-gpui -- \
+cargo run --bin ferail-gpui -- \
   --screenshot screenshots/viewer-adjust.png \
   --viewer ~/Pictures --viewer-adjust
 ```
@@ -211,7 +211,7 @@ renders a one-entry playlist. `--viewer-adjust` opens the adjustments panel.
 ### Drag ghost in isolation
 
 ```sh
-cargo run --bin feraille-gpui -- \
+cargo run --bin ferail-gpui -- \
   --screenshot screenshots/drag-ghost.png --drag-ghost 4
 ```
 

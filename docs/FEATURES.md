@@ -1,10 +1,10 @@
-# Feraille — Feature Tour
+# Ferail — Feature Tour
 
 ← [README](../README.md) · [Getting started](../GETTING_STARTED.md) ·
 [Architecture](ARCHITECTURE.md) · [Design notes per feature](features/README.md)
 
 Everything the app does today, with pictures. Each section links to the
-deeper design note where one exists. If you only read one thing: Feraille
+deeper design note where one exists. If you only read one thing: Ferail
 is a file manager that **never blocks** — every feature below is built on
 that rule.
 
@@ -112,7 +112,7 @@ Windows/Linux path today). ([search](features/SEARCH.md))
 ![Command palette](images/tour-palette.png)
 
 Cmd+K opens a searchable overlay of every command and its shortcut —
-one identity layer (`feraille-core`'s command catalogue) drives the
+one identity layer (`ferail-core`'s command catalogue) drives the
 palette, the macOS menu bar, and the keybindings, so they can't drift
 apart.
 
@@ -139,7 +139,7 @@ page with a privacy-redacted "copy report" for bug reports.
 - **Undo that means it** — rename, bulk rename, move, copy, trash, and
   favorites edits are all reversible, with guards so an undo never
   overwrites something newer.
-- **CLI + headless screenshots** — `feraille magic`, `feraille du`, and
+- **CLI + headless screenshots** — `ferail magic`, `ferail du`, and
   a screenshot harness that renders any surface off-screen (it produced
   every image on this page).
 

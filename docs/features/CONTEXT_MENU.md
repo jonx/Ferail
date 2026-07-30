@@ -1,7 +1,7 @@
 # Context Menu
 
-Ferail used Win32 shell context menus and prewarming to avoid the first
-right-click feeling stuck. Feraille rebuilds the same outcome with Mac-native
+Ferail-Win32 used Win32 shell context menus and prewarming to avoid the first
+right-click feeling stuck. Ferail rebuilds the same outcome with Mac-native
 building blocks. macOS does not expose Finder's actual menu through any public
 API, so we compose a faithful equivalent from `NSWorkspace`,
 `NSSharingServicePicker`, `URLTagNamesKey`, and `qlmanage` / `ditto`.
@@ -10,7 +10,7 @@ API, so we compose a faithful equivalent from `NSWorkspace`,
 
 Done — broad parity with Finder's menu. Services / Quick Actions submenu now
 auto-populated by AppKit through a custom `ServicesAnchor` responder spliced
-into the window's chain at startup ([crates/feraille-shell-mac/src/services.rs](../../crates/feraille-shell-mac/src/services.rs)).
+into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](../../crates/ferail-shell-mac/src/services.rs)).
 
 ## Surfaces Covered
 
@@ -33,7 +33,7 @@ into the window's chain at startup ([crates/feraille-shell-mac/src/services.rs](
 Right-click sites build a [`MenuPlan`] of [`MenuPlanItem::Action`] /
 `Separator` / `Submenu` entries. Each `Action` carries a `CommandId` and
 optional `CommandPayload` (tag colour, Open With bundle path).
-[`feraille_shell_mac::show_context_menu`] turns the plan into an `NSMenu`,
+[`ferail_shell_mac::show_context_menu`] turns the plan into an `NSMenu`,
 runs it modally via `popUpMenuPositioningItem:`, and returns a `MenuPick`
 combining the chosen `CommandId` with whatever payload was attached.
 
@@ -44,10 +44,10 @@ reads the `SelectionSet` once per right-click.
 Slow operations run on workers and report back through
 `AppEvent::FileOpComplete`:
 
-- Duplicate (`feraille_shell_mac::duplicate_path`)
+- Duplicate (`ferail_shell_mac::duplicate_path`)
 - Compress / Extract — the pure-Rust archive engine
-  (`feraille_fs_native::{create_archive, extract_archive}`, backed by the
-  `feraille-archive` model crate). Creates zip / 7z / tar / tar.gz / tar.bz2 /
+  (`ferail_fs_native::{create_archive, extract_archive}`, backed by the
+  `ferail-archive` model crate). Creates zip / 7z / tar / tar.gz / tar.bz2 /
   tar.xz; extracts all of those plus gzip/bzip2/xz single members. The GPUI
   shell no longer shells out to `/usr/bin/ditto`, so every platform shares one
   path. Extract is offered only for archive rows (lexical extension check,
@@ -204,12 +204,12 @@ The plan is built from cached app state at right-click time; no I/O on
 hover. Open With's Launch Services query is the one synchronous Cocoa
 call still on the right-click path — it's typically <50 ms but a future
 iteration can move it to selection-change pre-warm with generation
-tokens (mirrors Ferail's `menu_preload.rs`) if real users hit a stutter.
+tokens (mirrors Ferail-Win32's `menu_preload.rs`) if real users hit a stutter.
 
 ## Windows Notes That Did Not Port
 
 - `IContextMenu`, `TrackPopupMenuEx`, PIDLs, shell extensions, and wait-
-  cursor suppression are Windows implementation details. Ferail's
+  cursor suppression are Windows implementation details. Ferail-Win32's
   `shell_pump.rs` state machine (1 ms slices interleaved with UI) is
   the right reference for any future async population work.
 - The lesson that did port: the first context menu must not make the

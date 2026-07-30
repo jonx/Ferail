@@ -1,4 +1,4 @@
-# Feraille Feature Notes
+# Ferail Feature Notes
 
 Deeper design notes and specifications for individual features. These complement
 the [architecture source of truth](../ARCHITECTURE.md) and the
@@ -44,8 +44,8 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [TOOL_RESULTS.md](TOOL_RESULTS.md) | Shipped with follow-ups | Shared tab-local result surface for Search, Duplicate Finder, and docked Disk Usage ships; pop-out/state migration remains open. |
 | [VIDEO-MPV.md](VIDEO-MPV.md) | Planned | Replace the mpv video backend with libmpv (live filters, alpha) and build an N-layer transparent-colour (chroma-key) compositor on top. Phase 0 spike gates it; nothing shipped yet. |
 | [VIEWER.md](VIEWER.md) | Shipped with follow-ups | Viewer window, playlist navigation, images, Quick Look fallback, mpv-backed video, slideshow, zoom, and controls ship; richer playback/playlist polish remains open. |
-| [feraille-selection-dnd-spec.md](feraille-selection-dnd-spec.md) | Partial | Selection, row drag, external file drops, and many acceptance points ship; edge auto-scroll and favorite-row drops remain open. |
-| [feraille-windows-instances-tabs-spec.md](feraille-windows-instances-tabs-spec.md) | Partial | Process/window state split, tabs, closed-tab undo, and shared caches are in place; full multi-window/tear-off completion remains open. |
+| [ferail-selection-dnd-spec.md](ferail-selection-dnd-spec.md) | Partial | Selection, row drag, external file drops, and many acceptance points ship; edge auto-scroll and favorite-row drops remain open. |
+| [ferail-windows-instances-tabs-spec.md](ferail-windows-instances-tabs-spec.md) | Partial | Process/window state split, tabs, closed-tab undo, and shared caches are in place; full multi-window/tear-off completion remains open. |
 | [linux-port.md](linux-port.md) | Partial port | The Linux shell crate compiles behind stubs; real clipboard/trash/open-with/volume/power/preview integrations remain open. |
 | [mac_port.md](mac_port.md) | Shipped with follow-ups | macOS is the primary implementation path; remaining items are mostly packaging, polish, and verification. |
 | [windows-port.md](windows-port.md) | Partial port | Windows shell surface has major compatibility work; shell-extension verbs, WSL integration, and some power/screenshot infrastructure remain open. |
@@ -82,9 +82,9 @@ keep the UI off the I/O path.
 
 - [FAVORITES.md](FAVORITES.md) — sidebar favorites/bookmarks model, drag-and-drop,
   and acceptance checklist.
-- [feraille-selection-dnd-spec.md](feraille-selection-dnd-spec.md) — node
+- [ferail-selection-dnd-spec.md](ferail-selection-dnd-spec.md) — node
   selection and drag-and-drop spec.
-- [feraille-windows-instances-tabs-spec.md](feraille-windows-instances-tabs-spec.md)
+- [ferail-windows-instances-tabs-spec.md](ferail-windows-instances-tabs-spec.md)
   — windows, instances, tabs, and closed-tab undo.
 - [ANT_TRAIL.md](ANT_TRAIL.md) — navigation history ("ant trail").
 - [CONTEXT_MENU.md](CONTEXT_MENU.md) — context menus and native action
@@ -115,7 +115,7 @@ keep the UI off the I/O path.
 ## Porting & verification
 
 - [windows-port.md](windows-port.md) — handoff notes and lessons from the
-  Windows `Ferail` predecessor.
+  Windows `Ferail-Win32` predecessor.
 - [linux-port.md](linux-port.md) — orientation for starting a Linux port:
   freedesktop/D-Bus/XDG mapping of the shell surface, and the first change that
   makes the app compile on Linux.

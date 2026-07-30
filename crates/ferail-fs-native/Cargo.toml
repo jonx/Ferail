@@ -1,0 +1,109 @@
+[package]
+name = "ferail-fs-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Cross-platform std::fs implementation of ferail-core::FsBackend"
+
+# "aros" is a custom-JSON target (branch aros-port); register its target_os
+# value so host builds don't warn on the paths.rs / volumes.rs cfg arms.
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(target_os, values("aros"))']
+
+[dependencies]
+ferail-core.workspace = true
+ferail-disk-usage.workspace = true
+ferail-archive.workspace = true
+xxhash-rust.workspace = true
+blake3.workspace = true
+
+# Archive codec layer (crates/ferail-fs-native/src/archive). Pure-Rust
+# codecs, all platforms — Ferail no longer shells out to `ditto` for
+# compression. Formats and their read/write capabilities are declared in
+# ferail-archive::Format; this is where the bytes actually move.
+# - zip: read + write, AES password (aes-crypto), deflate + bzip2 members.
+# - tar: the uncompressed archive container; combined with the stream codecs
+#   below for .tar.gz / .tar.bz2 / .tar.xz.
+# - flate2: gzip stream (already transitive; pinned here explicitly).
+# - bzip2 0.6: bzip2 stream — pure-Rust libbz2-rs-sys backend (no C).
+# - xz2: xz/LZMA stream — links liblzma (C) via lzma-sys; the one C edge,
+#   accepted like the app's other C deps (mpv, tree-sitter). Read/decode is
+#   also available pure-Rust if a static binary later needs to drop it.
+# - sevenz-rust: 7z read/extract only (no write path exposed in v1).
+# "time" makes the writer stamp entries with the real current time; without it
+# every archive we create records the 1980 DOS epoch. The `time` crate is
+# already in the graph, so this costs no new dependency.
+zip = { version = "2", default-features = false, features = ["deflate", "bzip2", "aes-crypto", "time"] }
+tar = "0.4"
+flate2 = "1"
+bzip2 = "0.6"
+xz2 = "0.1"
+sevenz-rust = "0.6"
+# Embedded-tag / audio-property reader for the media module. Cross-platform
+# pure Rust, so it lives in the shared dependency table, not a target block.
+lofty.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# Win32 bindings for drive enumeration + volume info. Same version as
+# ferail-shell-win32 to keep the dep graph tight.
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    # GetLogicalDrives, GetDriveTypeW, GetVolumeInformationW, GetDiskFreeSpaceExW
+    "Win32_Storage_FileSystem",
+    # CreateFileW takes SECURITY_ATTRIBUTES (same_volume's serial lookup)
+    "Win32_Security",
+    # move_to_trash → SHFileOperationW, icons → SHGetFileInfoW
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    # fetch_icon_rgba (icons.rs) needs CoInitializeEx
+    "Win32_System_Com",
+    # probe_volume_device (volumes.rs) → CreateFileW (whose signature pulls
+    # Win32_Security) + DeviceIoControl + the disk-extents / storage-property
+    # IOCTLs behind the eject-all grouping key.
+    "Win32_Security",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+] }
+
+# stat_info.rs reads ownership / mode / timestamps via libc on ALL unix
+# (lstat, getpwuid_r, chmod, localtime_r), and getuid() backs the per-volume
+# `.Trashes/<uid>` path on macOS — so libc is a unix-wide dep, not macOS-only.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+# xattr_info.rs reads download-provenance / quarantine xattrs on unix:
+# com.apple.quarantine on macOS, user.xdg.origin.url on Linux.
+xattr = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+freedesktop-icons = "0.4"
+image = { version = "0.25", default-features = false, features = ["png"] }
+resvg = "0.45"
+# move_to_trash → the freedesktop Trash spec (XDG Trash + per-volume
+# .Trash-<uid>). Pure-Rust freedesktop implementation, no D-Bus.
+trash = "5"
+xdg-mime = "0.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+plist = "1"
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", features = [
+    "NSString",
+    "NSGeometry",
+    "NSValue",
+    "NSURL",
+    "NSError",
+    "NSFileManager",
+    "NSArray",
+    "NSDictionary",
+] }
+objc2-app-kit = { version = "0.2", features = [
+    "NSWorkspace",
+    "NSImage",
+    "NSBitmapImageRep",
+    "NSImageRep",
+    "NSGraphics",
+    "NSGraphicsContext",
+] }

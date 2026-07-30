@@ -1,0 +1,61 @@
+[package]
+name = "ferail-shell-mac"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "macOS shell integration for Ferail (chrome, drag-drop, NSMenu)"
+
+[dependencies]
+# No direct use since the winit-era menu/drag/services/share surface was
+# deleted, but winit's objc2 feature unification still supplies AppKit
+# features (NSScreen, MainThreadMarker::new) this crate uses. Replace with
+# explicit objc2-app-kit/objc2-foundation features before dropping it.
+winit.workspace = true
+ferail-core.workspace = true
+png = "0.17"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.5", features = ["exception"] }
+block2 = "0.5"
+objc2-foundation = { version = "0.2", features = [
+    "NSURL",
+    "NSArray",
+    "NSGeometry",
+    "NSString",
+    "NSData",
+    "NSValue",
+    "NSDictionary",
+    "NSNotification",
+    "NSDistributedNotificationCenter",
+    "NSProcessInfo",
+] }
+objc2-app-kit = { version = "0.2", features = [
+    "NSWindow",
+    "NSResponder",
+    "NSView",
+    "NSPasteboard",
+    "NSPasteboardItem",
+    "NSDragging",
+    "NSDraggingItem",
+    "NSDraggingSession",
+    "NSEvent",
+    "NSApplication",
+    "NSAppearance",
+    "NSCell",
+    "NSImage",
+    "NSWorkspace",
+    "NSMenu",
+    "NSMenuItem",
+    "NSAlert",
+    "NSPanel",
+    "NSSavePanel",
+    "NSOpenPanel",
+    "NSButton",
+    "NSControl",
+    "NSTextField",
+    "NSText",
+    "NSResponder",
+    "NSView",
+] }
+raw-window-handle = "0.6"

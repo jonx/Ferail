@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>Feraille</string>
+	<string>Ferail</string>
 	<key>CFBundleExecutable</key>
-	<string>feraille-gpui</string>
+	<string>ferail-gpui</string>
 	<key>CFBundleIconFile</key>
-	<string>feraille</string>
+	<string>ferail</string>
 	<key>CFBundleIdentifier</key>
-	<string>me.jkn.feraille</string>
+	<string>me.jkn.ferail</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Feraille</string>
+	<string>Ferail</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -25,18 +25,18 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>11.0</string>
 	<key>NSDesktopFolderUsageDescription</key>
-	<string>Feraille needs access to your Desktop to browse and manage the files there.</string>
+	<string>Ferail needs access to your Desktop to browse and manage the files there.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
-	<string>Feraille needs access to your Documents to browse and manage the files there.</string>
+	<string>Ferail needs access to your Documents to browse and manage the files there.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
-	<string>Feraille needs access to your Downloads to browse and manage the files there.</string>
+	<string>Ferail needs access to your Downloads to browse and manage the files there.</string>
 	<key>NSFileProviderDomainUsageDescription</key>
-	<string>Feraille needs access to cloud storage providers to browse and manage their files.</string>
+	<string>Ferail needs access to cloud storage providers to browse and manage their files.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSNetworkVolumesUsageDescription</key>
-	<string>Feraille needs access to network volumes to browse and manage the files on them.</string>
+	<string>Ferail needs access to network volumes to browse and manage the files on them.</string>
 	<key>NSRemovableVolumesUsageDescription</key>
-	<string>Feraille needs access to removable volumes to browse and manage the files on them.</string>
+	<string>Ferail needs access to removable volumes to browse and manage the files on them.</string>
 </dict>
 </plist>

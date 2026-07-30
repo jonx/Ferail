@@ -48,7 +48,7 @@ that rev into ours.
 ## 2. Table events don't carry click `Modifiers` — forced a full table fork
 
 **Hit during:** original multi-select work; re-confirmed during the `c112e7b`
-bump (the fork is `crates/feraille-gpui/src/multi_table/`).
+bump (the fork is `crates/ferail-gpui/src/multi_table/`).
 
 gpui-component's `Table` emits row events (`SelectRow` etc.) that do **not**
 include the original click `Modifiers` (Cmd/Shift) or the modifier state at
@@ -135,7 +135,7 @@ close and reopen the menu. It makes a *cache* load-bearing for correctness,
 which is exactly backwards: prefetching should buy latency, never content.
 
 **Workaround:** a second small fork,
-`crates/feraille-gpui/src/multi_table/context_menu.rs` — upstream's element
+`crates/ferail-gpui/src/multi_table/context_menu.rs` — upstream's element
 plus a `revision: impl Fn(&App) -> u64` closure polled each frame while the
 menu is open. When the value changes, the builder re-runs and the open menu is
 replaced in place. `TableDelegate::context_menu_revision` plumbs it to the
@@ -234,7 +234,7 @@ previews is already in.
 ## 7. `gpui_windows` has no `Window::render_to_image` — headless capture needs a workaround
 
 **Hit during:** Windows port — the `--screenshot` CLI harness
-(`feraille-gpui/src/screenshot.rs`).
+(`ferail-gpui/src/screenshot.rs`).
 
 `gpui_macos` implements `Window::render_to_image` (MetalRenderer samples an
 offscreen target, so a *hidden* window can be captured). `gpui_windows` does
@@ -261,7 +261,7 @@ actually wired into the root `Cargo.toml`.
 
 With the patch active, the screenshot harness opens the window with
 `show: false` and captures via `render_to_image` — **truly headless, no flash**.
-The PrintWindow path (`feraille_shell_win32::capture_window_rgba` + off-screen
+The PrintWindow path (`ferail_shell_win32::capture_window_rgba` + off-screen
 move) remains as the fallback for builds without the patch.
 
 <!-- Add new findings above this line as the bump surfaces them. -->

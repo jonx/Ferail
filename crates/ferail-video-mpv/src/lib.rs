@@ -1,0 +1,17 @@
+//! mpv (libmpv) video provider for Ferail's viewer.
+//!
+//! The optional video provider behind the [`ferail_core::video`] seam,
+//! built on libmpv's **software render API**: frames are *pulled* by calling
+//! `mpv_render_context_render` into a BGRA buffer we own — the exact
+//! windowless model the viewer wants (`copy_frame → (w, h, BGRA)`).
+//!
+//! libmpv's filter chain is settable **live** (`vf` property), so colour
+//! grade, enhancement, and the
+//! transparent-colour key all compose into one runtime filtergraph with no
+//! stream re-open — which is also what a *live* chroma-key picker needs. The
+//! Phase 0 spike (`spikes/mpv-probe/`) verified SW render emits a real alpha
+//! channel from a `colorkey` filter, so keying lives in mpv's chain.
+
+mod imp;
+
+pub use imp::backend;

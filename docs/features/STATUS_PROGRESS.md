@@ -1,6 +1,6 @@
 # Status Progress
 
-Feraille presents background work through one process-wide task model. The
+Ferail presents background work through one process-wide task model. The
 status bar and the task popover both read the same `TaskRegistry`, so the small
 bottom strip and the detailed task list cannot disagree.
 
@@ -10,7 +10,7 @@ Shipped with follow-ups.
 
 Implemented:
 
-- `TaskRegistry` in `crates/feraille-gpui/src/tasks.rs`.
+- `TaskRegistry` in `crates/ferail-gpui/src/tasks.rs`.
 - Process-wide registry ownership in `ProcessState`.
 - Status-bar task text and thin progress strip.
 - Determinate and indeterminate progress states.

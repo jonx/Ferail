@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Generate a folder of sample filenames that exercise Feraille's filename
-hazard detection (see crates/feraille-core/src/name_hazards.rs).
+"""Generate a folder of sample filenames that exercise Ferail's filename
+hazard detection (see crates/ferail-core/src/name_hazards.rs).
 
 Each entry pairs a filename — often containing invisible or deceptive
 characters written here as explicit \\u escapes — with a short note on the
 trick it demonstrates. Run it to (re)create the `samples/` folder, then open
-that folder in Feraille and select each file to see what Get Info flags.
+that folder in Ferail and select each file to see what Get Info flags.
 
     python3 test-data/filename-hazards/generate.py
 """

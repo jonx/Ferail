@@ -1,17 +1,17 @@
 # Streaming Directory Enumeration
 
 Directory loading must be notification-driven, cancellable, and safe to
-apply incrementally. Feraille should never synchronously read a whole
+apply incrementally. Ferail should never synchronously read a whole
 directory on the GPUI render/update path.
 
 ## Status
 
 Implemented for the active GPUI file list.
 
-- `feraille-fs-native::NativeFs::enumerate_streaming` reads on a worker
+- `ferail-fs-native::NativeFs::enumerate_streaming` reads on a worker
   thread, emits bounded batches, and checks an `AtomicBool` cancellation
   flag between entries.
-- `feraille-gpui::Shell::load_path` starts one worker per navigation,
+- `ferail-gpui::Shell::load_path` starts one worker per navigation,
   cancels the previous worker, and receives batches through
   `async-channel`.
 - The GPUI task awaits the channel directly. There is no timer polling:
@@ -77,7 +77,7 @@ push or callback shape.
 
 - [docs/ARCHITECTURE.md](../ARCHITECTURE.md) — nonblocking rules.
 - [LAZY_METADATA.md](LAZY_METADATA.md) — NodeStore and identity model.
-- [crates/feraille-fs-native/src/lib.rs](../../crates/feraille-fs-native/src/lib.rs)
+- [crates/ferail-fs-native/src/lib.rs](../../crates/ferail-fs-native/src/lib.rs)
   — streaming native enumerator.
-- [crates/feraille-gpui/src/shell.rs](../../crates/feraille-gpui/src/shell.rs)
+- [crates/ferail-gpui/src/shell.rs](../../crates/ferail-gpui/src/shell.rs)
   — GPUI channel bridge and stale-result gate.

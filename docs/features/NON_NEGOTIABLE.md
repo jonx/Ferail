@@ -4,7 +4,7 @@
 
 A method for turning a project principle into something an AI coding agent
 (or a tired human) cannot accidentally violate. Written after hardening
-Feraille's Prime Directive ("the UI must never stop"); the layers below are
+Ferail's Prime Directive ("the UI must never stop"); the layers below are
 generic — swap in your own rule.
 
 ## The core idea
@@ -100,14 +100,14 @@ doctrine, and the doctrine names every tripwire.
   first-read file, and every enforcement message must carry enough context
   to act on without further reading.
 
-## The Feraille instantiation (worked example)
+## The Ferail instantiation (worked example)
 
 | Layer | Artifact |
 | --- | --- |
 | Canonical statement | `CLAUDE.md` § Prime Directive → `docs/ARCHITECTURE.md#prime-directive` |
 | Failure modes named | Slow-media list in both docs (exists/metadata/canonicalize/watch) |
 | Sanctioned path | `Shell::load_path_for_tab` pattern; `canonicalize_for_identity`; `FsWatcher` worker |
-| Static wall | `crates/feraille-gpui/clippy.toml` + `disallowed_methods = "deny"` |
-| Runtime tripwire | `feraille_core::path_guard` — render guard + `assert_off_ui_thread` |
+| Static wall | `crates/ferail-gpui/clippy.toml` + `disallowed_methods = "deny"` |
+| Runtime tripwire | `ferail_core::path_guard` — render guard + `assert_off_ui_thread` |
 | Finishing ritual | `CLAUDE.md` § Verification (clippy line) |
 | Ledger | `TODO.md` § Responsiveness — "known remaining UI-thread I/O" |

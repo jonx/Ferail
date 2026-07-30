@@ -1,4 +1,4 @@
-# Feraille — Favorites Feature Specification
+# Ferail — Favorites Feature Specification
 
 A complete behavioral spec for the Favorites section of the sidebar. Written to be implemented against directly.
 
@@ -11,7 +11,7 @@ A complete behavioral spec for the Favorites section of the sidebar. Written to 
 Favorites are distinct from:
 - **Locations** (Home, Desktop, Documents, etc.) — the OS-standard folders. These are *not* favorites; they're a separate, fixed section. (Note: this also resolves the duplicate-Downloads bug — Locations is the standard set, Favorites is the user's set, and they're visually separated.)
 - **The file tree** — the expandable hierarchy. The tree shows structure; Favorites shows shortcuts.
-- **Tags** — if Feraille supports colored tags, they may appear in their own section or be favoritable; see §9.
+- **Tags** — if Ferail supports colored tags, they may appear in their own section or be favoritable; see §9.
 
 A favorite has these intrinsic properties:
 
@@ -33,7 +33,7 @@ A favorite can be created from many entry points. All of them funnel into one in
 
 ### 2.1 Entry points
 
-**Drag and drop into the sidebar.** The primary gesture. User drags a folder — from the file list, from the tree, from the breadcrumb, from another Feraille window, or from Finder/desktop — and drops it onto the Favorites section. Drop is accepted anywhere in the section; the insertion point follows the cursor (§4.3). On drop outside a valid insertion zone but still over the section, append to the end.
+**Drag and drop into the sidebar.** The primary gesture. User drags a folder — from the file list, from the tree, from the breadcrumb, from another Ferail window, or from Finder/desktop — and drops it onto the Favorites section. Drop is accepted anywhere in the section; the insertion point follows the cursor (§4.3). On drop outside a valid insertion zone but still over the section, append to the end.
 
 **Right-click context menu — "Add to Favorites."** Available on any folder row in the file list, any node in the tree, any breadcrumb segment, and on the current-folder header. If the target is *already* a favorite, the menu item reads "Remove from Favorites" instead (it's a toggle). See §5.
 
@@ -41,7 +41,7 @@ A favorite can be created from many entry points. All of them funnel into one in
 
 **Menu bar.** `File → Add to Favorites`, bound to the same `ToggleFavoriteForTarget` (Cmd+D) command, operating on the current selection or current folder. This is the discoverable entry point for users who don't know the shortcut. Static wording "Add to Favorites"; on an already-favorited target it removes (toggle).
 
-**Drag onto the Feraille dock icon** — optional, later. Dropping a folder on the dock icon could open it; holding a modifier could favorite it. Low priority.
+**Drag onto the Ferail dock icon** — optional, later. Dropping a folder on the dock icon could open it; holding a modifier could favorite it. Low priority.
 
 **"Add current folder" affordance in the section header.** A small `+` button that appears on hover of the Favorites section header, adds the currently-viewed folder. Mirrors the settings-panel pattern.
 
@@ -134,7 +134,7 @@ After a one-shot sort, the list is still manually reorderable — the sort doesn
 
 This is the bidirectional-awareness requirement and it deserves its own section because it touches multiple views.
 
-**Rule:** anywhere a folder is displayed in Feraille, if that folder's `target` matches an existing favorite, the folder is rendered with a **favorited indicator**.
+**Rule:** anywhere a folder is displayed in Ferail, if that folder's `target` matches an existing favorite, the folder is rendered with a **favorited indicator**.
 
 ### 5.1 Where the indicator appears
 
@@ -178,7 +178,7 @@ A favorite's `display_name` is independent of the underlying folder's name. Rena
 
 - **Trigger:** context menu → "Rename…", or `Enter` with the favorite selected.
 - **Behavior:** a small modal text-prompt opens pre-filled with the current name, selected for overtype. `Enter` commits, `Esc` cancels.
-  - *Implementation note:* Feraille renames through the **shared gpui text-prompt modal** — the one surface every naming flow (file/folder rename, new folder) uses — rather than an in-row editable label. This is deliberate: it keeps one consistent, accessible naming surface and is cross-platform (Windows has no native text prompt), and it sidesteps per-view inline-edit plumbing in the non-virtualized sidebar. The spec's original "inline text field" wording predates that decision; the modal is the supported path.
+  - *Implementation note:* Ferail renames through the **shared gpui text-prompt modal** — the one surface every naming flow (file/folder rename, new folder) uses — rather than an in-row editable label. This is deliberate: it keeps one consistent, accessible naming surface and is cross-platform (Windows has no native text prompt), and it sidesteps per-view inline-edit plumbing in the non-virtualized sidebar. The spec's original "inline text field" wording predates that decision; the modal is the supported path.
 - **Empty name:** rejected — the commit is a no-op, leaving the previous name (or the folder basename if there was no custom name).
 - **"Reset name":** context menu offers "Reset to Original Name," which clears `display_name` back to tracking the folder basename.
 - Renaming the favorite does **not** rename the folder on disk. Make this unambiguous — if there's any doubt in testing, add a tooltip or a one-time hint.
@@ -191,7 +191,7 @@ A favorite's `display_name` is independent of the underlying folder's name. Rena
 - **Default:** the favorite's icon is auto-resolved from its kind and target — a folder icon, a volume icon, the special icons for Home/Downloads/etc. if the target is a known location, a saved-search icon, a tag swatch for tags.
 - **Custom icon:** context menu → "Change Icon" lets the user pick from a curated set (Lucide/Isocons, since gpui-component ships them) or assign a color tint. Stored as `custom_icon`.
 - **Reset:** "Reset Icon" clears `custom_icon`.
-- **Folder-color inheritance:** if Feraille supports colored folders/tags, a favorite may optionally inherit the folder's color. Decide and be consistent.
+- **Folder-color inheritance:** if Ferail supports colored folders/tags, a favorite may optionally inherit the folder's color. Decide and be consistent.
 - Icon size matches the sidebar's other sections — 16×16 at standard density, scaling with the sidebar density setting.
 
 ---
@@ -224,7 +224,7 @@ Favorites can point at things that aren't always there: unmounted volumes, eject
 
 ## 9. Saved searches and tags as favorites (if applicable)
 
-If Feraille supports saved searches and/or tags, they're favoritable, with these differences:
+If Ferail supports saved searches and/or tags, they're favoritable, with these differences:
 
 - **Saved search favorite:** `target` is a stored query, not a path. Clicking runs the search and shows results. It is never `Missing` (a query is always valid) but may return zero results. Icon is a search/magnifier glyph.
 - **Tag favorite:** `target` is a tag id. Clicking shows all files with that tag. Icon is the tag's color swatch. If the tag is deleted, the favorite becomes `Missing` and follows §8.
@@ -235,12 +235,12 @@ If Feraille supports saved searches and/or tags, they're favoritable, with these
 
 ## 10. Persistence
 
-- Favorites persist across launches. Store them in Feraille's settings/state store (the same domain crate that owns other persisted state — keep this out of the UI layer).
+- Favorites persist across launches. Store them in Ferail's settings/state store (the same domain crate that owns other persisted state — keep this out of the UI layer).
 - **Every mutation persists immediately** — add, remove, reorder, rename, icon change, repoint. No "save favorites" action exists. If the app is force-quit one second after a reorder, the reorder survived.
 - Serialized form per favorite: `id`, `kind`, `target` (path or query or tag-id), `display_name` (nullable — null means "track basename"), `custom_icon` (nullable), `sort_index`, `date_added`.
 - **Schema versioning:** include a version field on the favorites collection so the format can evolve. On load, migrate older versions forward.
 - **Corruption safety:** if the favorites store fails to parse, do not crash and do not wipe it. Load an empty list, log the error, keep the corrupt file aside (`.bak`) so it can be recovered. A user losing their favorites silently is a serious trust failure.
-- **Sync (future):** if Feraille ever syncs settings across machines, favorites are a candidate — but path-based favorites don't transfer meaningfully across machines (different home dirs, different volumes). If/when sync happens, treat machine-local path favorites and portable favorites (tags, saved searches) differently. Out of scope for v1; just don't design the storage in a way that blocks it.
+- **Sync (future):** if Ferail ever syncs settings across machines, favorites are a candidate — but path-based favorites don't transfer meaningfully across machines (different home dirs, different volumes). If/when sync happens, treat machine-local path favorites and portable favorites (tags, saved searches) differently. Out of scope for v1; just don't design the storage in a way that blocks it.
 
 ---
 
@@ -254,12 +254,12 @@ A single click on a favorite navigates the active pane/tab to that location. Not
 
 ### 11.3 Modifier-clicks
 - `Cmd+click` — open the favorite in a **new tab**.
-- `Cmd+Option+click` or middle-click — open in a **new window**. (Pick one; be consistent with how the rest of Feraille opens new windows.)
+- `Cmd+Option+click` or middle-click — open in a **new window**. (Pick one; be consistent with how the rest of Ferail opens new windows.)
 - These mirror whatever the file list does for open-in-new-tab/window, so the modifier vocabulary is consistent app-wide.
 
 ### 11.4 Selection and keyboard nav
 - The Favorites section participates in sidebar keyboard navigation — arrow keys move focus through Locations, Favorites, and the tree as one navigable list.
-- `Enter` on a focused favorite navigates to it. `Space` could trigger Quick Look of the folder, if that's a thing Feraille does.
+- `Enter` on a focused favorite navigates to it. `Space` could trigger Quick Look of the folder, if that's a thing Ferail does.
 - The currently-viewed location, if it matches a favorite, shows that favorite in a **selected/active** state (distinct from the §5 favorited indicator and from keyboard focus).
 
 ### 11.5 Drag a file *onto* a favorite
@@ -283,7 +283,7 @@ If a user has 50 favorites, the section scrolls within the sidebar. Consider a s
 The file watcher already feeds the tree and list. It also feeds favorites:
 - Folder renamed on disk → favorites with no custom name update their displayed name (§6).
 - Folder deleted → matching favorite goes `Missing` (§8).
-- Folder moved → matching favorite goes `Missing` (it can't know where it went); user can "Locate…" it. (If Feraille can track moves via inode/file-id on the same volume, follow the move automatically and update `target`. Nice-to-have, not required.)
+- Folder moved → matching favorite goes `Missing` (it can't know where it went); user can "Locate…" it. (If Ferail can track moves via inode/file-id on the same volume, follow the move automatically and update `target`. Nice-to-have, not required.)
 - Volume mounted/unmounted → matching favorites flip availability state.
 
 ---
@@ -296,7 +296,7 @@ For implementation against the library you're already using:
 - **Icon** — favorite icons, state glyphs, the favorited indicator.
 - **Menu** — the right-click context menus on favorites, on source folders, on the section header.
 - **Tooltip** — hover hints (full path on truncated names, "this renames the shortcut, not the folder" if needed).
-- **Input** — the rename text-prompt modal (Feraille renames via the shared modal, not an in-row field; see §6).
+- **Input** — the rename text-prompt modal (Ferail renames via the shared modal, not an in-row field; see §6).
 - **Notification** — the remove/undo toast, the mount-failure toast, the "only folders" rejection toast.
 - **Dialog** / **Popover** — the missing-target "can't be found" prompt.
 - **Kbd** — showing shortcuts in menus and tooltips.

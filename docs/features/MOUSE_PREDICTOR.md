@@ -1,6 +1,6 @@
 # Mouse Predictor
 
-Mouse prediction is a future prewarm feature from Ferail: use recent pointer
+Mouse prediction is a future prewarm feature from Ferail-Win32: use recent pointer
 motion to guess the next likely row or folder and prepare cheap state ahead of
 the click.
 

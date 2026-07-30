@@ -24,7 +24,7 @@ path already visible in the shell breadcrumb; when windowed, include enough
 context in the tool header for the window to stand alone.
 
 Host placement is expressed through `ToolHostContext` and `ToolHostEvent`
-(`crates/feraille-gpui/src/tool_results.rs`). A host move is dispatched through
+(`crates/ferail-gpui/src/tool_results.rs`). A host move is dispatched through
 `ToolResultSurface::handle_host_event`, which forwards
 `ToolHostEvent::HostChanged(Docked | Windowed)` to the active tool body. The
 tool then decides which chrome, labels, controls, or shortcuts make sense in
@@ -51,7 +51,7 @@ constructing a fresh scan; the moved view receives a host-context change event.
   Open in Window and Dock in Tab host moves.
 
 All three are represented by `Tab::tool_result`, whose variants live in
-`crates/feraille-gpui/src/shell/tab.rs`.
+`crates/ferail-gpui/src/shell/tab.rs`.
 
 ## Architecture
 

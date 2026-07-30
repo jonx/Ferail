@@ -1,0 +1,9 @@
+[package]
+name = "ferail-video-mpv"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "mpv (libmpv) video provider for Ferail's viewer — any format, live filters, alpha keying."
+
+[dependencies]
+ferail-core = { workspace = true }

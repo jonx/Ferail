@@ -1,6 +1,6 @@
 # Lazy Metadata And Node Identity
 
-Feraille keeps expensive metadata and filesystem identity below the render
+Ferail keeps expensive metadata and filesystem identity below the render
 path. Paint reads cached display data; actions and workers resolve paths at
 explicit boundaries.
 
@@ -31,7 +31,7 @@ around every worker.
 
 ## Data Model
 
-`NodeStore` is platform-neutral and lives in `feraille-core`.
+`NodeStore` is platform-neutral and lives in `ferail-core`.
 
 - `NodeId` is the UI-facing identity token.
 - `NodeKind::Path(PathBuf)` represents real filesystem nodes.

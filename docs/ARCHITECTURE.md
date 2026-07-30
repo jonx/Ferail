@@ -1,16 +1,18 @@
-# Feraille Architecture
+# Ferail Architecture
 
 ← [Project README](../README.md) · [Feature notes](features/README.md) ·
 [Open work (TODO)](../TODO.md)
 
-Feraille is a macOS-first file manager written in Rust. It began as a
-port and UI rewrite of the Windows project Ferail,
+Ferail is a macOS-first file manager written in Rust. It began as a
+port and UI rewrite of the Windows project Ferail-Win32 (which held the
+Ferail name until this app took it over on 2026-07-30 — history before
+that commit says *Feraille* and means this app),
 but the active application is now the GPUI shell:
 
-- `feraille-gpui` opens the desktop app.
-- `feraille` is the command-line entry point for non-GUI utilities.
+- `ferail-gpui` opens the desktop app.
+- `ferail` is the command-line entry point for non-GUI utilities.
 
-All new product work belongs in `crates/feraille-gpui`.
+All new product work belongs in `crates/ferail-gpui`.
 
 ## Prime Directive
 
@@ -63,16 +65,16 @@ Every feature that touches the filesystem follows the same shape (see
 ### Enforcement
 
 The directive is enforced by the program, not just this document —
-`feraille_core::path_guard` holds two debug-build tripwires:
+`ferail_core::path_guard` holds two debug-build tripwires:
 
 - **Render guard**: render implementations hold a `RenderPathGuard`;
   resolving a NodeId to a path while one is alive panics
   (`assert_path_resolution_allowed`).
 - **UI-thread guard**: `boot::run_gui` marks the UI thread at startup
   (`mark_ui_thread`), and known-blocking entry points in
-  `feraille-fs-native` call `assert_off_ui_thread` — running one on the
+  `ferail-fs-native` call `assert_off_ui_thread` — running one on the
   UI thread panics in debug builds with a pointer back to this section.
-- **Lint wall**: `crates/feraille-gpui/clippy.toml` disallows the
+- **Lint wall**: `crates/ferail-gpui/clippy.toml` disallows the
   syscalls most likely to freeze the UI (`canonicalize`, blocking
   `Command::output`/`status`, raw `notify` watch registration) and the
   crate denies `clippy::disallowed_methods`. A legitimate off-thread
@@ -86,30 +88,30 @@ update. When you add a new blocking entry point, add the assert to it.
 ## Crate Boundaries
 
 ```text
-feraille-gpui        active GPUI app and CLI entry points
-  |-- feraille-core          domain types, command catalogue, NodeId, FileEntry
-  |-- feraille-fs-native     native filesystem, metadata, magic, volumes, trash
-  |-- feraille-shell-mac     AppKit/Cocoa integrations
-  |-- feraille-meta          SQLite-backed metadata and layout persistence
-  |-- feraille-disk-usage    pure disk-usage model, facts, aggregation, treemap
-  |-- feraille-design        shared visual constants (color, spacing, typography)
+ferail-gpui        active GPUI app and CLI entry points
+  |-- ferail-core          domain types, command catalogue, NodeId, FileEntry
+  |-- ferail-fs-native     native filesystem, metadata, magic, volumes, trash
+  |-- ferail-shell-mac     AppKit/Cocoa integrations
+  |-- ferail-meta          SQLite-backed metadata and layout persistence
+  |-- ferail-disk-usage    pure disk-usage model, facts, aggregation, treemap
+  |-- ferail-design        shared visual constants (color, spacing, typography)
   `-- gpui-component         UI primitives for shell, settings, tables, menus
 
-feraille-shell-win32 Windows reference/platform shell crate, not macOS v1 UI
+ferail-shell-win32 Windows reference/platform shell crate, not macOS v1 UI
 ```
 
 Rules:
 
-- `feraille-core` has no UI or platform dependencies.
+- `ferail-core` has no UI or platform dependencies.
 - Domain crates do not import GPUI, renderers, or app shell state.
 - UI code uses `NodeId`, `FsBackend`, cached display strings, and explicit
   node/path handoff points.
 - Raw `PathBuf` use is allowed at controlled boundaries: filesystem
   backends, worker setup, native shell calls, CLI commands, and persisted
   user state. Rendering code must not resolve paths or query the filesystem.
-- `feraille-shell-mac` owns AppKit/Cocoa details and does not paint UI.
-- `feraille-disk-usage` is pure logic; scanning lives in
-  `feraille-fs-native`, and rendering lives in `feraille-gpui`.
+- `ferail-shell-mac` owns AppKit/Cocoa details and does not paint UI.
+- `ferail-disk-usage` is pure logic; scanning lives in
+  `ferail-fs-native`, and rendering lives in `ferail-gpui`.
 
 ## Data Model
 
@@ -119,7 +121,7 @@ keeps a `NodeStore` so tabs, sidebar rows, table rows, context menus, and
 worker results can speak in stable ids where possible.
 
 Path-identity contract: both maps key on
-`feraille_core::node_store::normalize_path_key`, a lexical-only
+`ferail_core::node_store::normalize_path_key`, a lexical-only
 normalization (trailing slashes, `.` segments, doubled separators fold
 together; no filesystem access). Case, symlinks, and `..` are
 deliberately NOT folded by the key — case-insensitivity is a per-volume
@@ -155,7 +157,7 @@ renames, opens. `display_name` is what the user reads. They differ on macOS
 because of its two inherited path separators: HFS/classic Mac OS used the
 colon, Unix/NeXTSTEP the slash, so the POSIX layer stores a `:` *inside* a
 name component where Finder shows a `/` (a file `ls` reports as `a:b` is
-`a/b` in Finder). `feraille_fs_native::paths::display_leaf` performs the
+`a/b` in Finder). `ferail_fs_native::paths::display_leaf` performs the
 Finder-parity swap (`:` → `/`, macOS only; identity elsewhere) when the
 backend builds each `FileEntry`, and its inverse `on_disk_leaf` (`/` → `:`)
 runs on names typed into the rename / New-Folder fields. Every user-facing
@@ -231,9 +233,9 @@ several can be open at once for different files. The same `EntryInfoView`
 also renders inline in the preview pane (an `embedded` mode that drops the
 window chrome and defers scrolling/notifications to the shell window). A
 background `gather()` composes a platform-neutral
-`feraille_core::entry_info::EntryInfo` from POSIX stat
-(`feraille-fs-native::stat_info`), batched NSURL resource values
-(`feraille-shell-mac::resource_values`), volume info, magic, and tags — never
+`ferail_core::entry_info::EntryInfo` from POSIX stat
+(`ferail-fs-native::stat_info`), batched NSURL resource values
+(`ferail-shell-mac::resource_values`), volume info, magic, and tags — never
 on the paint path. The record drives a dense, editable form: Locked /
 Invisible / Hide-extension toggles, color labels, a POSIX permission grid,
 and an on-demand "Calculate" recursive size. Edits write through the native
@@ -247,7 +249,7 @@ write directly to app state.
 
 Disk Usage opens as a separate GPUI window. Scanning is performed by
 `NativeFs::scan_disk_usage`; aggregation and layout live in
-`feraille-disk-usage`.
+`ferail-disk-usage`.
 
 ## Typography And UI Scale
 
@@ -255,7 +257,7 @@ Division of labour: the **gpui-component theme** (`cx.theme()`) owns colors
 and the **base font size** (`theme.font_size`, default 16px — the rem base
 that `Root::render` pumps into the window `rem_size` every frame). It does
 *not* provide a named multi-tier type scale for chrome — only that one base
-plus per-widget `Sizable` tiers. `feraille-design` fills that gap: a named
+plus per-widget `Sizable` tiers. `ferail-design` fills that gap: a named
 scale layered on top of the theme's rem base.
 
 All chrome text is sized through that one design-token scale — never gpui's
@@ -264,7 +266,7 @@ scale that can't be retuned in one place and silently drift whenever a
 component defaults to a different tier (that is how the Get Info permission
 grid ended up rendering its `r`/`w`/`x` labels oversized).
 
-- **Source of truth:** `feraille_design::TextTokens::BASE` — six tiers
+- **Source of truth:** `ferail_design::TextTokens::BASE` — six tiers
   (`xxs` 10, `xs` 11, `sm` 12, `md` 13, `lg` 15, `xl` 18 logical px; a dense
   Zed-aligned scale). Retune the whole app by editing those six numbers.
 - **Applied via:** the `crate::text::TextScale` extension trait. Use
@@ -324,33 +326,33 @@ mutating rendered rows in place.
 
 ## Persistence
 
-`feraille-meta` is the persistent store for app metadata and layout state.
+`ferail-meta` is the persistent store for app metadata and layout state.
 It stores derived file metadata, Ant Trail data, window/layout state, and
 other app-owned records.
 
-Simple UI preferences also flow through `crates/feraille-gpui/src/app_state.rs`.
+Simple UI preferences also flow through `crates/ferail-gpui/src/app_state.rs`.
 Anything persisted must be treated as a cache or user preference, never as
 the sole source of filesystem truth.
 
 ## Command Surfaces
 
-Feraille has three command surfaces:
+Ferail has three command surfaces:
 
 - GPUI actions and keybindings in the app.
 - macOS menu items generated from the command catalogue.
-- CLI subcommands through the `feraille` binary.
+- CLI subcommands through the `ferail` binary.
 
 Useful CLI commands:
 
 ```sh
-cargo run --bin feraille-gpui
-cargo run --bin feraille -- magic <path>...
-cargo run --bin feraille -- du [--top N] [--packages] <path>
-cargo run --bin feraille-gpui -- --screenshot screenshots/shell.png
-cargo run --bin feraille-gpui -- --reset-db <scope>
+cargo run --bin ferail-gpui
+cargo run --bin ferail -- magic <path>...
+cargo run --bin ferail -- du [--top N] [--packages] <path>
+cargo run --bin ferail-gpui -- --screenshot screenshots/shell.png
+cargo run --bin ferail-gpui -- --reset-db <scope>
 ```
 
-The command catalogue lives in `feraille-core` so menus, shortcuts,
+The command catalogue lives in `ferail-core` so menus, shortcuts,
 settings, and future command-palette work share one identity layer.
 
 Most shortcuts bind under `SHELL_CONTEXT`, so they only fire when a
@@ -371,7 +373,7 @@ required" state that deep-links to Full Disk Access (`shell/loading.rs`,
 `shell/render.rs`).
 
 To get the *automatic* per-folder consent prompt instead (the
-"…would like to access files in your Documents folder" dialog), Feraille
+"…would like to access files in your Documents folder" dialog), Ferail
 must run as a code-signed `.app` bundle whose `Info.plist` declares the
 matching `NS*UsageDescription` strings. The prompt only fires for
 promptable categories (Desktop/Documents/Downloads/removable/network);
@@ -383,7 +385,7 @@ prompt — it has no bundle identity or usage strings.
 ## Observability And Failures
 
 The app installs a panic hook and compact crash report path through
-`crates/feraille-gpui/src/obs.rs`. Worker failures should surface through
+`crates/ferail-gpui/src/obs.rs`. Worker failures should surface through
 logs, status/task state, notifications, or visible error states. They
 must not freeze the interface.
 

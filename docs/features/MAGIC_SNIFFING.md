@@ -9,8 +9,8 @@ Shipped with follow-ups.
 
 Implemented:
 
-- `feraille_fs_native::detect_magic` for legacy label-only callers.
-- `feraille_fs_native::detect_magic_info` for structured facts.
+- `ferail_fs_native::detect_magic` for legacy label-only callers.
+- `ferail_fs_native::detect_magic_info` for structured facts.
 - First-4-KB bounded header reads for the main detector.
 - A ZIP-family tail read, also bounded to 4 KB, for central-directory facts.
 - Structured parsers for executables, ZIP/Office/JAR/APK, images, audio, video,
@@ -68,7 +68,7 @@ content-detected type and grades the relationship. The model is
 **directional risk escalation, not symmetric disagreement** — a file is
 only alarming when its real content is *more dangerous* than its extension
 lets on. `FileEntry::format_label` returns a [`FormatFlag`] with three
-tiers, computed by `classify_format` in `feraille-core`:
+tiers, computed by `classify_format` in `ferail-core`:
 
 - **Alert** (red `triangle-alert`): a genuine disguise. Executable / script
   / shortcut content under a non-code extension (`vacation.png` that is a
@@ -112,7 +112,7 @@ sniffs file content.
 
 ## Prefetch Flow
 
-`crates/feraille-gpui/src/prefetch.rs` starts after directory enumeration. It:
+`crates/ferail-gpui/src/prefetch.rs` starts after directory enumeration. It:
 
 1. Snapshots rows into sendable seeds (`path`, row index, mtime, size, current
    cached flags).

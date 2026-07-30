@@ -1,0 +1,10 @@
+[package]
+name = "ferail-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core domain types for Ferail — filesystem-agnostic, UI-agnostic"
+
+[dependencies]
+uuid = { version = "1", features = ["v4"] }

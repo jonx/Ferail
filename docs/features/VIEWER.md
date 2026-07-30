@@ -1,6 +1,6 @@
 # Viewer & Slideshow
 
-Design and implementation plan for big-image viewing in Feraille: a dedicated
+Design and implementation plan for big-image viewing in Ferail: a dedicated
 viewer window with zoom/pan, slideshow playback, and zoom that sticks while
 flipping through files. Complements [PREVIEW.md](PREVIEW.md) (the info pane);
 this document covers the *large* viewing experience.
@@ -64,18 +64,18 @@ Anything not portable is tagged inline:
 
 | What | Where |
 |---|---|
-| Info-pane thumbnail pipeline (async, 16-entry LRU, Pending/Loaded/Failed) | `crates/feraille-gpui/src/preview.rs` (`request()` at :93, `build_render_image()` at :136) |
-| Quick Look thumbnail fetch, size-parameterized, 8 s timeout | `crates/feraille-shell-mac/src/quick_look.rs:54` (`fetch_thumbnail(path, size_px)`) **[mac]** |
-| Secondary-window pattern (own entity, shared `Arc<NativeFs>` + task registry, weak-handle notify) | `crates/feraille-gpui/src/disk_usage.rs:1185` (`open_window`) |
+| Info-pane thumbnail pipeline (async, 16-entry LRU, Pending/Loaded/Failed) | `crates/ferail-gpui/src/preview.rs` (`request()` at :93, `build_render_image()` at :136) |
+| Quick Look thumbnail fetch, size-parameterized, 8 s timeout | `crates/ferail-shell-mac/src/quick_look.rs:54` (`fetch_thumbnail(path, size_px)`) **[mac]** |
+| Secondary-window pattern (own entity, shared `Arc<NativeFs>` + task registry, weak-handle notify) | `crates/ferail-gpui/src/disk_usage.rs:1185` (`open_window`) |
 | Fullscreen API | gpui `Window::toggle_fullscreen()` / `is_fullscreen()` (zed checkout `crates/gpui/src/window.rs:4892`, `:2136`) |
-| Catalogue-driven keymap (command id → action → binding, context-gated) | `crates/feraille-core/src/commands.rs`, `crates/feraille-gpui/src/keymap.rs` (`install`, `install_extras`) |
-| Task registry for status-bar visibility | `crates/feraille-gpui/src/tasks.rs` (`TaskRegistry::begin/update/end`) |
-| `image` crate already a dep (v0.25, `png` feature only today) | `crates/feraille-gpui/Cargo.toml:42` |
+| Catalogue-driven keymap (command id → action → binding, context-gated) | `crates/ferail-core/src/commands.rs`, `crates/ferail-gpui/src/keymap.rs` (`install`, `install_extras`) |
+| Task registry for status-bar visibility | `crates/ferail-gpui/src/tasks.rs` (`TaskRegistry::begin/update/end`) |
+| `image` crate already a dep (v0.25, `png` feature only today) | `crates/ferail-gpui/Cargo.toml:42` |
 | Theme tokens | `gpui_component::ActiveTheme` — `cx.theme().background/accent/muted_foreground/…` |
 
 ## Architecture
 
-New module: `crates/feraille-gpui/src/viewer/`
+New module: `crates/ferail-gpui/src/viewer/`
 
 ```
 viewer/
@@ -299,7 +299,7 @@ another entry keeps `{mode, center}` verbatim:
     records whether an entry is a preview; the full-size pass runs once on
     drag release (the `processed` entry's `bool`). The Upscale buttons
     themselves aren't a drag, so they go straight to full quality.
-- **Video provider is pluggable** (`feraille_core::video::VideoBackend`,
+- **Video provider is pluggable** (`ferail_core::video::VideoBackend`,
   see NOTES.md 2026-06-19): the built-in AVFoundation player or, in a
   `--features mpv` build with mpv selected in Settings → Plugins, a libmpv
   backend that plays virtually any container (the eligible-extension set is
@@ -330,7 +330,7 @@ another entry keeps `{mode, center}` verbatim:
 
 ### Shell integration
 
-- Command catalogue (`feraille-core/src/commands.rs`): `view.open_viewer`,
+- Command catalogue (`ferail-core/src/commands.rs`): `view.open_viewer`,
   title "Open Viewer", shortcut `Cmd+Y` **[mac; win-parity Ctrl+Y]** —
   Space stays Quick Look **[mac]**.
 - Action `OpenViewer` in `shell/actions.rs`; handler snapshots the active
@@ -355,7 +355,7 @@ another entry keeps `{mode, center}` verbatim:
 
 ## Iterations
 
-Each iteration ends green (`cargo check` + `cargo test -p feraille-gpui`),
+Each iteration ends green (`cargo check` + `cargo test -p ferail-gpui`),
 with a NOTES.md entry; UI iterations add a screenshot under `screenshots/`.
 
 1. **Loader** — `viewer/loader.rs`: ViewerFrame, byte-budget LRU
@@ -385,7 +385,7 @@ video element, but it does have an `img` element backed by `RenderImage`.
 So instead of floating a native `AVPlayerView` NSView over the gpui
 window (the original v1 design), the viewer drives a *windowless*
 `AVPlayer` and pulls decoded frames out of an `AVPlayerItemVideoOutput`
-as 32-BGRA pixel buffers (`feraille-shell-mac/src/video_overlay.rs`).
+as 32-BGRA pixel buffers (`ferail-shell-mac/src/video_overlay.rs`).
 Each frame becomes a `RenderImage` the viewer draws through the **exact
 same `stage::layout` + `img` path as still images** — so the video rect
 is a real gpui element: it composites in-tree, zoom/pan/fit/rotation are

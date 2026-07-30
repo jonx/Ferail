@@ -5,7 +5,7 @@ before→after preview. A self-contained modal: no new subsystem — it rides
 the shared dialog surface, the task registry, and the undo stack.
 
 ← Back to [feature notes](README.md) · Source:
-`crates/feraille-gpui/src/bulk_rename.rs`
+`crates/ferail-gpui/src/bulk_rename.rs`
 
 ## What ships
 
@@ -97,7 +97,7 @@ cached rows — the dialog never touches the filesystem.
 (seeds a 4-row selection when `--select-rows` is absent):
 
 ```sh
-cargo run --bin feraille-gpui -- --screenshot screenshots/bulk-rename.png \
+cargo run --bin ferail-gpui -- --screenshot screenshots/bulk-rename.png \
   --navigate <folder> --bulk-rename
 ```
 

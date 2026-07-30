@@ -8,7 +8,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# CI scope note: the `feraille-gpui` app crate pulls gpui (zed, via git),
+# CI scope note: the `ferail-gpui` app crate pulls gpui (zed, via git),
 # gpui-component, and ~30 tree-sitter grammars. A full
 # `cargo check --all-targets` + `cargo test --workspace` of it produces a
 # multi-tens-of-GB build that overruns a standard GitHub runner's disk,
@@ -17,7 +17,7 @@ env:
 # (domain types + the disk-usage algorithm). The GPUI app is verified
 # locally on macOS (cargo check + screenshots per CLAUDE.md). To cover it
 # in CI later, point a large/self-hosted macOS runner at
-# `cargo check -p feraille-gpui`.
+# `cargo check -p ferail-gpui`.
 jobs:
   logic:
     name: check + test (platform-neutral crates)
@@ -34,7 +34,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: cargo test
-        run: cargo test -p feraille-core -p feraille-disk-usage
+        run: cargo test -p ferail-core -p ferail-disk-usage
 
       - name: clippy
-        run: cargo clippy -p feraille-core -p feraille-disk-usage --all-targets -- -D warnings
+        run: cargo clippy -p ferail-core -p ferail-disk-usage --all-targets -- -D warnings

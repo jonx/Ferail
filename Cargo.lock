@@ -2111,47 +2111,47 @@ dependencies = [
 ]
 
 [[package]]
-name = "feraille-archive"
+name = "ferail-archive"
 version = "0.1.0"
 dependencies = [
- "feraille-core",
+ "ferail-core",
 ]
 
 [[package]]
-name = "feraille-aros-app"
+name = "ferail-aros-app"
 version = "0.1.0"
 dependencies = [
- "feraille-gpui",
+ "ferail-gpui",
  "getrandom 0.3.4",
 ]
 
 [[package]]
-name = "feraille-core"
+name = "ferail-core"
 version = "0.1.0"
 dependencies = [
  "uuid",
 ]
 
 [[package]]
-name = "feraille-design"
+name = "ferail-design"
 version = "0.1.0"
 
 [[package]]
-name = "feraille-disk-usage"
+name = "ferail-disk-usage"
 version = "0.1.0"
 dependencies = [
- "feraille-core",
+ "ferail-core",
 ]
 
 [[package]]
-name = "feraille-fs-native"
+name = "ferail-fs-native"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "bzip2 0.6.1",
- "feraille-archive",
- "feraille-core",
- "feraille-disk-usage",
+ "ferail-archive",
+ "ferail-core",
+ "ferail-disk-usage",
  "flate2",
  "freedesktop-icons",
  "image",
@@ -2174,23 +2174,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "feraille-gpui"
+name = "ferail-gpui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
  "fast_image_resize",
- "feraille-archive",
- "feraille-core",
- "feraille-design",
- "feraille-disk-usage",
- "feraille-fs-native",
- "feraille-meta",
- "feraille-shell-aros",
- "feraille-shell-linux",
- "feraille-shell-mac",
- "feraille-shell-win32",
- "feraille-video-mpv",
+ "ferail-archive",
+ "ferail-core",
+ "ferail-design",
+ "ferail-disk-usage",
+ "ferail-fs-native",
+ "ferail-meta",
+ "ferail-shell-aros",
+ "ferail-shell-linux",
+ "ferail-shell-mac",
+ "ferail-shell-win32",
+ "ferail-video-mpv",
  "gpui",
  "gpui-component",
  "gpui-component-assets",
@@ -2209,38 +2209,38 @@ dependencies = [
 ]
 
 [[package]]
-name = "feraille-meta"
+name = "ferail-meta"
 version = "0.1.0"
 dependencies = [
- "feraille-core",
+ "ferail-core",
  "rusqlite",
  "uuid",
 ]
 
 [[package]]
-name = "feraille-shell-aros"
+name = "ferail-shell-aros"
 version = "0.1.0"
 dependencies = [
- "feraille-shell-linux",
+ "ferail-shell-linux",
 ]
 
 [[package]]
-name = "feraille-shell-linux"
+name = "ferail-shell-linux"
 version = "0.1.0"
 dependencies = [
  "arboard",
- "feraille-core",
+ "ferail-core",
  "image",
  "md-5 0.11.0",
  "zip",
 ]
 
 [[package]]
-name = "feraille-shell-mac"
+name = "ferail-shell-mac"
 version = "0.1.0"
 dependencies = [
  "block2 0.5.1",
- "feraille-core",
+ "ferail-core",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
@@ -2250,10 +2250,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "feraille-shell-win32"
+name = "ferail-shell-win32"
 version = "0.1.0"
 dependencies = [
- "feraille-core",
+ "ferail-core",
  "image",
  "windows 0.58.0",
  "windows-core 0.58.0",
@@ -2261,10 +2261,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "feraille-video-mpv"
+name = "ferail-video-mpv"
 version = "0.1.0"
 dependencies = [
- "feraille-core",
+ "ferail-core",
 ]
 
 [[package]]

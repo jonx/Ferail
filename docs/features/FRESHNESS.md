@@ -3,7 +3,7 @@
 ← [Feature index](README.md) · [Architecture](../ARCHITECTURE.md) ·
 [TODO](../../TODO.md)
 
-How Feraille keeps **derived values that summarize a whole subtree** — today
+How Ferail keeps **derived values that summarize a whole subtree** — today
 the file list's folder sizes and Get Info's "Calculate" — honest when the
 underlying tree changes, whether the change came from inside the app or from a
 3rd-party tool.
@@ -16,7 +16,7 @@ such cache.
 ## The problem
 
 A recursive folder size is cached in the `folder_sizes` table
-([feraille-meta/src/db.rs](../../crates/feraille-meta/src/db.rs)) keyed by path.
+([ferail-meta/src/db.rs](../../crates/ferail-meta/src/db.rs)) keyed by path.
 The obvious validity signal — *has the folder's own `mtime` changed?* — has a
 hard blind spot on POSIX and Windows alike:
 
@@ -30,7 +30,7 @@ things" both leave stale sizes if `mtime` is the only check.
 
 We deliberately do **not** solve this with a recursive FSEvents/`ReadDirectory­
 ChangesW` watch. The existing watcher
-([fs_watcher.rs](../../crates/feraille-gpui/src/fs_watcher.rs)) stays
+([fs_watcher.rs](../../crates/ferail-gpui/src/fs_watcher.rs)) stays
 non-recursive and only drives **listing** reloads (the set of rows in the
 current directory) — that is the cheap, correct signal for direct-child changes.
 Recursive watching of large trees trades a real event-volume / lifecycle cost
@@ -49,11 +49,11 @@ fill every size in a single frame. The two mechanisms below close only the
 
 ### 2. Exact ancestor invalidation for in-app work
 
-When **Feraille itself** mutates the filesystem, it knows precisely what
+When **Ferail itself** mutates the filesystem, it knows precisely what
 changed, so it invalidates precisely. Every mutation already funnels its reload
 through one choke point —
 `Shell::broadcast_reload_for_process`
-([shell.rs](../../crates/feraille-gpui/src/shell.rs)) — and that now also calls
+([shell.rs](../../crates/ferail-gpui/src/shell.rs)) — and that now also calls
 `Shell::invalidate_folder_size_ancestors`, which deletes the cached size for the
 changed path **and every ancestor up to the root** (`delete_folder_size`).
 
@@ -77,7 +77,7 @@ how long that can hide a stale size:
 
 - **TTL.** A cached row counts as a hit only while it is younger than
   `FOLDER_SIZE_TTL_SECS`
-  ([folder_sizes.rs](../../crates/feraille-gpui/src/folder_sizes.rs), 10 min
+  ([folder_sizes.rs](../../crates/ferail-gpui/src/folder_sizes.rs), 10 min
   today — one tunable const). Past that, the next *visit* recomputes. A
   recompute only happens when the folder is actually loaded, off the UI thread,
   so a longer TTL trades a little staleness for fewer re-walks of big trees.
@@ -95,7 +95,7 @@ how long that can hide a stale size:
 
 Get Info's "Calculate" button shares the same cache via
 `folder_sizes::folder_size_cached`
-([folder_sizes.rs](../../crates/feraille-gpui/src/folder_sizes.rs)): a folder
+([folder_sizes.rs](../../crates/ferail-gpui/src/folder_sizes.rs)): a folder
 already sized in the Size column answers instantly, and a value computed in the
 inspector feeds the column. Both honor the identical contract (mtime + TTL) and
 both participate in the same invalidation, so the two surfaces can never
@@ -105,11 +105,11 @@ disagree.
 
 | Concern | Location |
 | --- | --- |
-| Cache table + `delete_folder_size` | [feraille-meta/src/db.rs](../../crates/feraille-meta/src/db.rs) |
-| TTL, `force`, batch worker, single-path helper | [folder_sizes.rs](../../crates/feraille-gpui/src/folder_sizes.rs) |
-| Ancestor invalidation choke point | `Shell::invalidate_folder_size_ancestors` in [shell.rs](../../crates/feraille-gpui/src/shell.rs) |
+| Cache table + `delete_folder_size` | [ferail-meta/src/db.rs](../../crates/ferail-meta/src/db.rs) |
+| TTL, `force`, batch worker, single-path helper | [folder_sizes.rs](../../crates/ferail-gpui/src/folder_sizes.rs) |
+| Ancestor invalidation choke point | `Shell::invalidate_folder_size_ancestors` in [shell.rs](../../crates/ferail-gpui/src/shell.rs) |
 | Forced refresh on return | `observe_window_activation` wiring in `Shell::new`; `restart_folder_size_passes(force)` |
-| Get Info reuse | `calculate_size` in [entry_info.rs](../../crates/feraille-gpui/src/entry_info.rs) |
+| Get Info reuse | `calculate_size` in [entry_info.rs](../../crates/ferail-gpui/src/entry_info.rs) |
 
 ## Known gaps / future work
 

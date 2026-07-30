@@ -1,0 +1,12 @@
+[package]
+name = "ferail-meta"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Persistent metadata store for Ferail — SQLite-backed, schema-versioned, used as the substrate for Ant Trail heat, magic cache, quarantine cache, recent folders, window/layout state, and tabs."
+
+[dependencies]
+ferail-core.workspace = true
+rusqlite = { version = "0.31", features = ["bundled"] }
+uuid.workspace = true

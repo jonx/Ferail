@@ -1,0 +1,159 @@
+[package]
+name = "ferail-gpui"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+# GPUI requires edition 2024 (and Rust >= 1.85). The rest of the
+# workspace is on 2021 / 1.78 — we keep the new crate's edition
+# explicit so the rest of the workspace doesn't have to bump.
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+# "aros" is a custom-JSON target (branch aros-port); register its target_os
+# value so host builds don't warn on the platform_shell alias' cfg arm.
+[lints.rust.unexpected_cfgs]
+level = "warn"
+check-cfg = ['cfg(target_os, values("aros"))']
+
+# Prime Directive enforcement (docs/ARCHITECTURE.md#prime-directive):
+# the workspace-root clippy.toml disallows the syscalls most likely to
+# freeze the UI thread (canonicalize, blocking process waits, raw
+# notify watch registration). Denied here — in the UI crate — so every
+# use must either go through the sanctioned wrapper or carry a visible
+# `#[allow(clippy::disallowed_methods)]` with a why-this-is-off-thread
+# justification. Run `cargo clippy -p ferail-gpui` before finishing.
+[lints.clippy]
+disallowed_methods = "deny"
+
+[features]
+# Compile in the optional mpv video provider (libmpv, loaded at runtime from
+# the path set in Settings). Off by default so a stock build needs nothing.
+mpv = ["dep:ferail-video-mpv"]
+
+[dependencies]
+anyhow.workspace = true
+# Bridge gpui's `.log_err()` (the `log`-crate facade) into the AROS MacRW
+# diagnostic sink — see obs.rs. On booted AROS nothing installs a `log`
+# backend, so those swallowed failures (e.g. `paint_svg`) vanish. Same major
+# as gpui_util's transitive use, so we stay single-copy in the graph.
+log = "0.4"
+gpui.workspace = true
+gpui_platform.workspace = true
+gpui-component.workspace = true
+gpui-component-assets.workspace = true
+# Phase 1 (next-level plan): bundle our own SVG icons alongside
+# the upstream gpui-component icon pack. Same major as the upstream
+# crate uses so we stay single-copy in the graph.
+# `debug-embed`: without it rust-embed reads assets from the host filesystem
+# (CARGO_MANIFEST_DIR) at runtime in debug builds instead of embedding them.
+# That path doesn't exist inside booted AROS, so every icon SVG lookup returned
+# None and no chrome/nav glyph drew. rust-embed is feature-unified across the
+# graph, so this one flag also makes gpui_component_assets embed. The AROS
+# `C:Ferail` is a debug build; this is what puts the SVG bytes in the binary.
+rust-embed = { version = "8.7", features = ["interpolate-folder-path", "include-exclude", "debug-embed"] }
+# Phase 5.b: file-system change events. notify ships its own
+# platform-specific watcher (FSEvents on macOS, inotify on Linux,
+# ReadDirectoryChangesW on Windows). Pinned to the same major as
+# gpui-component's transitive use to keep one copy in the graph.
+notify = "7.0"
+# Streaming directory enumeration sends worker batches to a GPUI task
+# without timer polling.
+async-channel = "2.5"
+# Used to build the smallvec ExternalPaths expects for OS drag-out.
+smallvec = "1"
+# Wraps RGBA byte buffers we pull from NSWorkspace into a Frame the
+# gpui RenderImage type accepts. gpui-component pulls the same major
+# transitively, so this stays single-copy in the graph. The raster
+# decode features beyond `png` feed the viewer window's full-res
+# loader (docs/features/VIEWER.md); non-raster formats fall back to
+# Quick Look thumbnails.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+# SIMD-accelerated resampler for the viewer's still upscale (x2/x4). The
+# `image` crate's `imageops::resize` is single-threaded with no SIMD, so a
+# Lanczos3 enlargement to the 8192 px cap stalled the UI for seconds; this
+# does the same Lanczos3 convolution with SSE4.1/AVX2/NEON. MIT OR Apache-2.0,
+# minimal deps — clean for the dual-licensed release.
+fast_image_resize = "5"
+# The issue reporter bundles the diagnostics report + activity trail + a
+# (redacted) screenshot into a `.zip`. Same major/features as the shell crates'
+# compress_paths so the graph holds a single zip.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# Used by the --screenshot harness on Windows to pull the HWND out of
+# gpui::Window (which implements HasWindowHandle). Same major as
+# gpui's transitive use so we stay single-copy in the graph.
+raw-window-handle = "0.6"
+# Breadcrumb path autocomplete implements gpui-component's
+# LSP-flavoured CompletionProvider, whose item types come from
+# lsp-types. Same version as gpui-component's so the trait's types
+# unify (it only re-exports Position).
+lsp-types = "0.97.0"
+# Bulk-rename find/replace rules (docs/features/BULK_RENAME.md).
+regex.workspace = true
+
+# Domain wiring. ferail-gpui consumes the domain layer through the
+# domain crates' trait surface; they link directly.
+ferail-core.workspace = true
+ferail-fs-native.workspace = true
+# Harvest Stage 0: link the remaining domain crates. Even when
+# their consumers haven't landed yet (e.g. ferail-meta is wired
+# in Stage 1, disk-usage in Stage 7), declaring them here means a
+# single `cargo check` from now on confirms the dep graph remains
+# clean as the harvest proceeds.
+ferail-design.workspace = true
+ferail-meta.workspace = true
+ferail-disk-usage.workspace = true
+ferail-archive.workspace = true
+
+# Platform shell — one impl per target OS. The crate's `pub fn`
+# surface mirrors between the two so `crate::platform_shell` (in
+# `lib.rs`) can alias them with a single `#[cfg]` switch; gpui call
+# sites use `platform_shell::*` and don't care which is active.
+# Optional mpv video provider (enabled by the `mpv` feature). libmpv is
+# loaded at runtime on every desktop OS, so the dep is declared per-target
+# alongside each platform's shell crate.
+[target.'cfg(target_os = "macos")'.dependencies]
+ferail-shell-mac.workspace = true
+ferail-video-mpv = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+ferail-shell-win32.workspace = true
+ferail-video-mpv = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ferail-shell-linux.workspace = true
+ferail-video-mpv = { workspace = true, optional = true }
+
+# AROS (branch aros-port): the shell-linux stub scaffold re-exported under
+# the AROS name. No mpv — libmpv has no AROS build, so the `mpv` feature
+# stays a no-op there.
+[target.'cfg(target_os = "aros")'.dependencies]
+ferail-shell-aros.workspace = true
+
+# Windows-only build script that embeds resources/ferail.ico and a
+# VERSIONINFO block into the .exe. On non-Windows the build script
+# is a no-op and this dep isn't pulled in.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[dev-dependencies]
+# Phase 2 isolation test still lives here. It now ALSO doubles as a
+# guarantee that the domain types stay dyn-safe — Phase 4 relies on
+# `Box<dyn FsBackend>` working.
+ferail-core.workspace = true
+ferail-fs-native.workspace = true
+# assets test: rasterize every bundled chrome SVG through the same usvg/resvg
+# path gpui uses, to catch malformed/empty glyphs that silently don't draw.
+# Already in the compiled graph (via gpui), so this adds no build cost.
+resvg = "0.45"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "ferail-gpui"
+path = "src/main.rs"
+
+[[bin]]
+name = "ferail"
+path = "src/bin/ferail.rs"

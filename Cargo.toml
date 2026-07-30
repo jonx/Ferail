@@ -1,19 +1,19 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/feraille-archive",
-    "crates/feraille-core",
-    "crates/feraille-design",
-    "crates/feraille-disk-usage",
-    "crates/feraille-fs-native",
-    "crates/feraille-meta",
-    "crates/feraille-shell-mac",
-    "crates/feraille-shell-win32",
-    "crates/feraille-shell-linux",
-    "crates/feraille-shell-aros",
-    "crates/feraille-aros-app",
-    "crates/feraille-video-mpv",
-    "crates/feraille-gpui",
+    "crates/ferail-archive",
+    "crates/ferail-core",
+    "crates/ferail-design",
+    "crates/ferail-disk-usage",
+    "crates/ferail-fs-native",
+    "crates/ferail-meta",
+    "crates/ferail-shell-mac",
+    "crates/ferail-shell-win32",
+    "crates/ferail-shell-linux",
+    "crates/ferail-shell-aros",
+    "crates/ferail-aros-app",
+    "crates/ferail-video-mpv",
+    "crates/ferail-gpui",
 ]
 
 [workspace.package]
@@ -21,24 +21,24 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
-repository = "https://github.com/jonx/Feraille"
-homepage = "https://github.com/jonx/Feraille"
+repository = "https://github.com/jonx/Ferail"
+homepage = "https://github.com/jonx/Ferail"
 authors = ["John Knipper <code@jkn.me>"]
 
 [workspace.dependencies]
-feraille-archive      = { path = "crates/feraille-archive" }
-feraille-core         = { path = "crates/feraille-core" }
-feraille-design       = { path = "crates/feraille-design" }
-feraille-disk-usage   = { path = "crates/feraille-disk-usage" }
-feraille-fs-native    = { path = "crates/feraille-fs-native" }
-feraille-meta         = { path = "crates/feraille-meta" }
-feraille-shell-mac    = { path = "crates/feraille-shell-mac" }
-feraille-shell-win32  = { path = "crates/feraille-shell-win32" }
-feraille-shell-linux  = { path = "crates/feraille-shell-linux" }
-feraille-shell-aros   = { path = "crates/feraille-shell-aros" }
-feraille-video-mpv    = { path = "crates/feraille-video-mpv" }
+ferail-archive      = { path = "crates/ferail-archive" }
+ferail-core         = { path = "crates/ferail-core" }
+ferail-design       = { path = "crates/ferail-design" }
+ferail-disk-usage   = { path = "crates/ferail-disk-usage" }
+ferail-fs-native    = { path = "crates/ferail-fs-native" }
+ferail-meta         = { path = "crates/ferail-meta" }
+ferail-shell-mac    = { path = "crates/ferail-shell-mac" }
+ferail-shell-win32  = { path = "crates/ferail-shell-win32" }
+ferail-shell-linux  = { path = "crates/ferail-shell-linux" }
+ferail-shell-aros   = { path = "crates/ferail-shell-aros" }
+ferail-video-mpv    = { path = "crates/ferail-video-mpv" }
 
-# Still needed by feraille-shell-mac for the winit-window-taking subset
+# Still needed by ferail-shell-mac for the winit-window-taking subset
 # (begin_drag, show_context_menu, install_services_anchor, etc.) — those
 # functions are unreachable through the `platform_shell` alias today but
 # kept for parity / a possible re-introduction; revisit when the shell
@@ -66,7 +66,7 @@ regex       = "1"
 # Its MSRV (1.85) is what set this workspace's rust-version.
 lofty       = "0.24"
 
-# External — new stack (feraille-gpui).
+# External — new stack (ferail-gpui).
 #
 # Pinning strategy: `gpui-component` is pinned to a specific rev (it
 # is our higher-level coupling and we want updates to be deliberate).
@@ -79,7 +79,7 @@ lofty       = "0.24"
 # read its Cargo.toml `gpui = { rev = ... }` and copy that rev here.
 # Reproducibility also comes from committing `Cargo.lock`.
 # test-support: enables `Window::render_to_image` + the matching impl
-# in `gpui_macos` so the headless screenshot CLI in feraille-gpui works.
+# in `gpui_macos` so the headless screenshot CLI in ferail-gpui works.
 gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["test-support"] }
 # wayland + x11 enable gpui_linux's compositor backends (gpui_platform's
 # wayland/x11 features pull gpui_linux/wayland|x11). Without them the Linux

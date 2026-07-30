@@ -1,9 +1,9 @@
 # Metadata DB
 
-Persistent SQLite-backed substrate for everything Feraille has been
+Persistent SQLite-backed substrate for everything Ferail has been
 keeping in-memory: Ant Trail heat, magic cache, quarantine cache,
 window/layout/tab geometry, pinned items, file-hash funnel for the
-duplicate finder. Ported from the Ferail predecessor's
+duplicate finder. Ported from the Ferail-Win32 predecessor's
 `crates/ferail-core/src/metadata/{db,cache}.rs`;
 schema reused with macOS-flavored adjustments.
 
@@ -30,16 +30,16 @@ Done (iter-8.0 → 8.5). All five sub-iters shipped:
 
 ## Crate
 
-[`crates/feraille-meta`](../../crates/feraille-meta/) — single
+[`crates/ferail-meta`](../../crates/ferail-meta/) — single
 `MetadataDb` connection, schema-versioned (delete-and-recreate on
-mismatch — Ferail's policy; caches built on top are derived data, so
+mismatch — Ferail-Win32's policy; caches built on top are derived data, so
 a recreate is cheap), plus a thin `MetadataCache` (FIFO-ish bounded
 HashMap) for hot-data read-amplification.
 
 Dependency: `rusqlite = { version = "0.31", features = ["bundled"] }`
 so we don't need the system SQLite to be a particular version.
 
-DB lives at `~/Library/Application Support/Feraille/metadata.db`
+DB lives at `~/Library/Application Support/Ferail/metadata.db`
 (macOS), or in-memory in tests / when `$HOME` is unset (the
 screenshot harness).
 
@@ -112,7 +112,7 @@ queries.
    to `record_folder_visit(path, now)`; every `MagicBatch` arm
    upserts a `FileMetaRecord` for each result.
 4. **Schema bumps** — increment `DB_VERSION` in
-   [`db.rs`](../../crates/feraille-meta/src/db.rs) when changing
+   [`db.rs`](../../crates/ferail-meta/src/db.rs) when changing
    column shape. The on-open version check deletes mismatched files
    and recreates fresh.
 
@@ -124,7 +124,7 @@ in, then walk down the checklist.
 ### A. Pure UI / user setting (window size, splitter, toggle)
 
 1. Add a column to the right table in
-   [`feraille-meta/src/db.rs`](../../crates/feraille-meta/src/db.rs)
+   [`ferail-meta/src/db.rs`](../../crates/ferail-meta/src/db.rs)
    inside `init_schema()` — usually `window_state` or
    `layout_state` for single-row state, or a new dedicated table
    for list-like state.
@@ -133,7 +133,7 @@ in, then walk down the checklist.
    `save_*` / `load_*` SQL.
 3. Bump `DB_VERSION` (top of `db.rs`). On next open the old file
    gets deleted and recreated — fine for derived UI state.
-4. In `feraille-gpui`, extend the persistence site that owns that
+4. In `ferail-gpui`, extend the persistence site that owns that
    state (e.g. the `persist_*` writers in `settings.rs` /
    `favorites.rs`, or the shell's layout persistence) to write the
    new field, and load it back on open.
@@ -208,12 +208,12 @@ the user `rm` the file by hand. Runs the reset, prints a
 one-line confirmation to stderr, and exits 0.
 
 ```sh
-Feraille --reset-db all          # delete the DB file outright
-Feraille --reset-db ui           # window size, splitters, tabs, pinned
-Feraille --reset-db caches       # files table + folder_usage (all derived)
-Feraille --reset-db ant-trail    # just the folder_usage table
-Feraille --reset-db magic        # NULL out files.magic_label
-Feraille --reset-db quarantine   # NULL out files.quarantine_*
+Ferail --reset-db all          # delete the DB file outright
+Ferail --reset-db ui           # window size, splitters, tabs, pinned
+Ferail --reset-db caches       # files table + folder_usage (all derived)
+Ferail --reset-db ant-trail    # just the folder_usage table
+Ferail --reset-db magic        # NULL out files.magic_label
+Ferail --reset-db quarantine   # NULL out files.quarantine_*
 ```
 
 `all` literally deletes the file (cheaper than DELETEing every
@@ -221,14 +221,14 @@ table, and dodges any stale index / FK state). Every other
 scope preserves `preferences.db_version` so the next open
 doesn't trigger the version-mismatch recreate path.
 
-## Differences from Ferail
+## Differences from Ferail-Win32
 
-| Aspect | Ferail | Feraille |
+| Aspect | Ferail-Win32 | Ferail |
 |---|---|---|
 | Path format | Windows drive letters | macOS POSIX |
 | Quarantine | n/a | New columns: `quarantined` flag + agent + iso + where-from |
 | DU window geometry | n/a | New `layout_state` columns: `du_width`/`du_height`/`du_topn_width` |
-| Schema version | 5 | restarted at 1 (we're not migrating Ferail data) |
+| Schema version | 5 | restarted at 1 (we're not migrating Ferail-Win32 data) |
 | `nav_history` | yes (per-tab back/forward) | omitted for now; tabs only carry the active path |
 | `score` column on `folder_usage` | persisted | computed at read time from hits/recency — fewer dimensions to keep in sync |
 

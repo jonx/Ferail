@@ -1,4 +1,4 @@
-# Feraille TODO
+# Ferail TODO
 
 ← [Project README](README.md) · [Architecture](docs/ARCHITECTURE.md) ·
 [Feature notes](docs/features/README.md)
@@ -67,7 +67,7 @@ relative to the daily value. Ordered by bang-for-buck.
 - Finish the hover/focus/selected-state consistency audit. First pass shipped:
   the icon grid gained its missing hover wash (`table_hover`) and an
   out-of-range sort-icon `opacity(7.)` was fixed. Remaining is the larger
-  unification — the app carries a bespoke `feraille_design` token set that is
+  unification — the app carries a bespoke `ferail_design` token set that is
   dead for color while every surface pulls ad-hoc from the gpui-component theme
   plus `selection_colors`, giving five different hover treatments and three
   selection systems. Wire one semantic token layer (or standardize every
@@ -142,8 +142,8 @@ relative to the daily value. Ordered by bang-for-buck.
   directory's mtime bumps only on *direct* child changes, so a delete deep in a
   subtree left a stale size.
   - This must also catch **external changes from third-party apps** — deletes,
-    adds, or edits made outside Feraille (another file manager, a terminal `rm`,
-    an installer). Feraille can't self-report those, so only a live filesystem
+    adds, or edits made outside Ferail (another file manager, a terminal `rm`,
+    an installer). Ferail can't self-report those, so only a live filesystem
     watcher (FSEvents / `ReadDirectoryChangesW` / inotify) closes the gap; it
     should refresh the *listing* (rows appearing/disappearing) and the folder
     *sizes* together, since both go stale the same way. Pairs with the existing
@@ -286,7 +286,7 @@ fallback). Remaining is the UX the system explorers have and we don't:
   generation, large-folder bookkeeping).
 - **Prime Directive — known remaining UI-thread I/O** (from the 2026-07 audit;
   the enforcement layers — `path_guard::assert_off_ui_thread`, the
-  `disallowed-methods` clippy deny in feraille-gpui — are live, these are the
+  `disallowed-methods` clippy deny in ferail-gpui — are live, these are the
   surviving violations):
   - `Shell::new` runs `last_dir.is_dir()` + `canonicalize_for_identity` on the
     UI thread at **every window open** (shell.rs ~1373). A persisted last-dir
@@ -349,9 +349,9 @@ fallback). Remaining is the UX the system explorers have and we don't:
 
 ## CLI & Automation
 
-- Extend `feraille magic` with `--json`, `--csv`, `--recursive`,
+- Extend `ferail magic` with `--json`, `--csv`, `--recursive`,
   `--mismatch-only`, and `--limit` (today: paths in, tab-separated label out).
-- Extend `feraille du` with structured output and filters (today: `--top`,
+- Extend `ferail du` with structured output and filters (today: `--top`,
   `--packages`); reach parity with the Disk Usage window's largest-file model.
 - Add useful non-GUI commands for automation: metadata reset, duplicate
   finding, cache inspection, command-catalogue listing.
@@ -379,7 +379,7 @@ fallback). Remaining is the UX the system explorers have and we don't:
 
 - **Filename display-convention parity.** macOS landed: a name's on-disk `:`
   shows as `/` and a typed `/` stores `:`, matching Finder, via
-  `feraille_fs_native::paths::{display_leaf,on_disk_leaf}` (the seam for
+  `ferail_fs_native::paths::{display_leaf,on_disk_leaf}` (the seam for
   per-platform name presentation; see ARCHITECTURE.md "Raw name vs. display
   name"). Remaining per-platform quirks to consider on the same seam, none
   implemented yet:
@@ -399,7 +399,7 @@ fallback). Remaining is the UX the system explorers have and we don't:
   behavior-breaking stubs (CF_HDROP clipboard, `WM_DEVICECHANGE` volume
   observer, text-naming modal) all shipped.
 - **Resilient file-op coping — Windows-native primitives.** ✅ *Shipped on
-  `windows-parity`* (`feraille-shell-win32/src/elevation.rs`): `run_elevated_self`
+  `windows-parity`* (`ferail-shell-win32/src/elevation.rs`): `run_elevated_self`
   via `ShellExecuteExW` verb `"runas"` (UAC) + wait-for-exit powers **Retry as
   administrator**; `processes_using` via the **Restart Manager**
   (`RmStartSession`/`RmRegisterResources`/`RmGetList`) names the locking process;
@@ -409,7 +409,7 @@ fallback). Remaining is the UX the system explorers have and we don't:
   against a real exclusive lock. **Linux follow-up still open:** `pkexec` re-exec
   for `run_elevated_self` + `/proc/*/fd` scan for `processes_using`.
 - Linux port ([docs/features/linux-port.md](docs/features/linux-port.md)):
-  `feraille-gpui` now **builds and runs** on Linux (verified on WSL2 / Ubuntu
+  `ferail-gpui` now **builds and runs** on Linux (verified on WSL2 / Ubuntu
   24.04 under WSLg + lavapipe — launches a Wayland window, opens its XDG SQLite
   metadata DB, enumerates folders, runs prefetch + folder-sizes). Done and
   tested: volumes (`/proc/self/mountinfo` + `statvfs`), trash (freedesktop

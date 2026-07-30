@@ -14,8 +14,8 @@ Phases 0–4 shipped (2026-06-23), all compile-green; see commits + the
 [NOTES.md](../../NOTES.md) decision log. At a glance:
 
 - **0** spike — SW render emits real alpha ✅
-- **1a** `feraille-video-mpv` crate to parity ✅
-- **1b** optional backend swapped to mpv, `feraille-video-vlc` deleted ✅
+- **1a** `ferail-video-mpv` crate to parity ✅
+- **1b** optional backend swapped to mpv, `ferail-video-vlc` deleted ✅
 - **2** live `set_enhance`, VLC-era reopen apparatus removed ✅
 - **3** single-layer chroma key + eyedropper ✅ (screenshot-verified)
 - **UI** professional popup rework (labeled sections, swatch/hex/Pick) ✅
@@ -51,7 +51,7 @@ colour from the live frame), and **Similarity** (range width) + **Blend**
 (edge feather) sliders. The key is pushed live via `set_chroma_key`, so keyed
 pixels arrive transparent and the stage background shows through. No new icon
 (the swatch is the eyedropper affordance), so `ICONS.md` is untouched. `cargo
-check -p feraille-gpui --features mpv` is green.
+check -p ferail-gpui --features mpv` is green.
 
 > **Verified by screenshot + UI reworked.** The adjustments popup renders
 > correctly with the full mpv-video control set (a new screenshot-only
@@ -135,7 +135,7 @@ next settings save writes `mpv`.
 
 Two scope decisions taken up front (user, 2026-06-23):
 
-- **Replace VLC outright.** `feraille-video-vlc` is removed, not kept as a
+- **Replace VLC outright.** `ferail-video-vlc` is removed, not kept as a
   fallback — sequenced so mpv reaches frame-pull/seek/grade parity and passes
   its integration test *first*, with VLC deleted in the **same phase**. The
   viewer is never left without a working video path between phases.
@@ -154,7 +154,7 @@ render path then computes the crop in rotated space (height 1280) and applies
 it to the un-rotated 1280×720 source, overflowing `img->h`. (It's an upstream
 mpv bug; not patchable here — libmpv is a runtime `dlopen`.)
 
-Fix, entirely in `feraille-video-mpv/src/imp.rs`:
+Fix, entirely in `ferail-video-mpv/src/imp.rs`:
 
 - Set **`video-rotate=no`** so mpv never rotates — it hands us the native frame.
 - Read the intended rotation from **`video-dec-params/rotate`**, *not*
@@ -173,12 +173,12 @@ optimise only if a hot path needs it. Unit-tested for 90/180/270 geometry.
 This class of bug lives in the frame-pull path (`copy_frame`), so it reproduces
 **headlessly** — no clicking required:
 
-- **mpv's own log** → stderr, opt-in: `FERAILLE_MPV_LOG=v` (or `debug`). Off by
+- **mpv's own log** → stderr, opt-in: `FERAIL_MPV_LOG=v` (or `debug`). Off by
   default (`error`). The decoder/VO setup lines name the geometry, hwdec, and
   rotation — this is what revealed the rotation crash. (`mpv_request_log_messages`
   wired in `imp.rs`; a crash deep in libmpv leaves a breadcrumb either way.)
 - **Headless probe** drives the real backend against any file:
-  `cargo run -p feraille-video-mpv --example probe -- <video> [frames]`
+  `cargo run -p ferail-video-mpv --example probe -- <video> [frames]`
   (`--raw out.bgra` dumps the first frame for a visual/diff check).
 - **Capture a crash backtrace non-interactively** under lldb batch mode:
   `lldb --batch -o run -k 'bt' -k 'quit' -- target/debug/examples/probe <video>`
@@ -214,7 +214,7 @@ complexity that libmpv removes:
 3. **Same windowless pull model, near-zero trait churn.** mpv's *software*
    render API (`mpv_render_context_render` into a CPU buffer) maps onto the
    existing `copy_frame → tightly-packed BGRA` seam exactly like libvlc's vmem
-   did. `feraille-video-mpv` is a sibling of `feraille-video-vlc`; the
+   did. `ferail-video-mpv` is a sibling of `ferail-video-vlc`; the
    `VideoBackend`/`VideoStream` trait barely moves.
 
 Other parity: libmpv is mac/Win/Linux with the same runtime-`dlopen` model and
@@ -235,15 +235,15 @@ the same LGPL "dynamic-link only" constraint as libvlc, so the cross-platform
 
 | What | Where |
 |---|---|
-| Video provider seam (`VideoBackend`/`VideoStream`, BGRA pull) | `crates/feraille-core/src/video.rs` |
-| VLC backend (hand-written FFI, runtime dlopen, cross-platform `dynload`) | `crates/feraille-video-vlc/src/imp.rs` |
+| Video provider seam (`VideoBackend`/`VideoStream`, BGRA pull) | `crates/ferail-core/src/video.rs` |
+| VLC backend (hand-written FFI, runtime dlopen, cross-platform `dynload`) | `crates/ferail-video-vlc/src/imp.rs` |
 | Backend selection + path pref | `viewer/window.rs` `resolve_vlc_pref` (:406); `viewer/backend_native.rs` `video_backend()` |
 | Single-video frame pull (~60 Hz) | `viewer/window.rs` `start_video_poll` (:1028), `video_poll_tick` (:1050) |
 | Single-video render (one `img` via `stage::layout`) | `viewer/window.rs` `video_stage` (:1944), `stage_area` (:1991) |
 | Seamless-reopen apparatus (VLC-only; **to delete**) | `viewer/window.rs` `commit_video_enhance` (:912), `video_pending_seek` use (:1063) |
 | Per-frame CPU grade precedent | `viewer/window.rs` `graded_video` (:1716), `apply_color_adjust` |
 | **GPUI already alpha-blends `img` per-pixel transparency** (transparent PNGs over `area.bg`) | `viewer/loader.rs` (RGBA→BGRA) + `stage_area` drawing `img` over `bg` |
-| VLC feature wiring (mirror for `mpv`, then remove `vlc`) | `crates/feraille-gpui/Cargo.toml` `vlc` feature + 3 target blocks |
+| VLC feature wiring (mirror for `mpv`, then remove `vlc`) | `crates/ferail-gpui/Cargo.toml` `vlc` feature + 3 target blocks |
 | Spike precedent | `spikes/vlc-probe/` (standalone crate, dlopen FFI, skip-if-absent) |
 
 The last anchor is decisive for compositing: stacking N keyed videos is the
@@ -252,7 +252,7 @@ PNG over its canvas — not new rendering tech.
 
 ## Trait changes (additive, native keeps defaults)
 
-In `feraille-core/src/video.rs`:
+In `ferail-core/src/video.rs`:
 
 ```rust
 /// A transparent-colour key applied to a layer: pixels within `similarity`
@@ -290,17 +290,17 @@ one live filter chain.
 
 ## Architecture
 
-New crate `crates/feraille-video-mpv/` — same shape as `feraille-video-vlc`:
+New crate `crates/ferail-video-mpv/` — same shape as `ferail-video-vlc`:
 
 ```
-feraille-video-mpv/
-  Cargo.toml          — only feraille-core; libmpv loaded at runtime
+ferail-video-mpv/
+  Cargo.toml          — only ferail-core; libmpv loaded at runtime
   src/lib.rs          — backend(mpv_path) -> Option<Box<dyn VideoBackend>>
   src/imp.rs          — libmpv FFI: create/initialize/render-sw/observe/command;
                         reuses the dynload mac/win/linux pattern from the VLC crate
 ```
 
-Viewer changes in `crates/feraille-gpui/src/viewer/window.rs`:
+Viewer changes in `crates/ferail-gpui/src/viewer/window.rs`:
 
 - The single `video_overlay: Option<(stream, path)>` becomes
   `layers: Vec<VideoLayer>` (bottom→top), each owning its stream, poll epoch,
@@ -379,9 +379,9 @@ UI phases add a screenshot under `screenshots/`.
    property live; change `vf` live; and the gate: **does SW render emit real
    alpha** from a `colorkey` filter? Resolves where keying runs. Delete
    `spikes/` once the binding + alpha decision is recorded in NOTES.md.
-1. **`feraille-video-mpv` to parity, then remove VLC** — open/pull/seek/step/
+1. **`ferail-video-mpv` to parity, then remove VLC** — open/pull/seek/step/
    grade behind the Plugins dropdown; integration test mirroring the VLC one;
-   then delete `feraille-video-vlc`, the `vlc` feature, and the seamless-reopen
+   then delete `ferail-video-vlc`, the `vlc` feature, and the seamless-reopen
    apparatus in the same phase.
 2. **Live enhance** — denoise/sharpen/deband/grain via live `set_enhance`.
 3. **Chroma key, single layer** — `ChromaKey` state + similarity/blend +

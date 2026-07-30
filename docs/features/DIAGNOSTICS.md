@@ -26,7 +26,7 @@ instantly.
 
 ## Phase 1 — Activity trail  ✅ implemented
 
-`crates/feraille-gpui/src/trail.rs` — a typed, timestamped ring buffer
+`crates/ferail-gpui/src/trail.rs` — a typed, timestamped ring buffer
 (`TrailEvent`: `Navigate{kind, path}` / `Command{label}` / `Note`), cap 256,
 in-memory (no I/O, UI-thread-safe). Mirrors the `obs` breadcrumb buffer but
 stores typed events. `obs` stays as the raw stderr log.
@@ -42,7 +42,7 @@ Not yet surfaced in the UI — Phase 2's Diagnostics page renders it.
 
 ## Phase 2 — Diagnostics / health check  (TODO)
 
-`crates/feraille-gpui/src/diagnostics.rs` — `run_checks()` produces a
+`crates/ferail-gpui/src/diagnostics.rs` — `run_checks()` produces a
 `DiagnosticsReport` of `Check { name, status: Ok|Warn|Fail, detail }`, grouped
 App / Storage / Dependencies / Environment. Checks:
 - App: version, debug/release, features (`mpv`), commit.
@@ -58,14 +58,14 @@ Two front-ends over one `run_checks()`:
    a *cached* report entity; opening / "Re-run" schedules the checks on a
    **background task** (prime directive — they touch the FS) → entity update →
    re-render. Buttons: Re-run, Copy report, Save report…, Report a problem…
-2. **`feraille-gpui --doctor`** — same `run_checks()` headless, prints the report
+2. **`ferail-gpui --doctor`** — same `run_checks()` headless, prints the report
    to stdout, exits. Works even when the GUI won't start; no duplicated logic.
 
 Needs `app_state::config_dir()` made `pub` (or a diagnostics accessor).
 
 ## Phase 3 — Issue reporter  (TODO)
 
-`crates/feraille-gpui/src/report.rs` + a redaction modal.
+`crates/ferail-gpui/src/report.rs` + a redaction modal.
 - Capture: `window.render_to_image()` → `image::RgbaImage` (same path as the
   `--screenshot` harness; available at runtime via the `test-support` feature).
 - Redact: a modal where the user drags black rectangles over sensitive areas,
@@ -78,7 +78,7 @@ Needs `app_state::config_dir()` made `pub` (or a diagnostics accessor).
 
 ## Phase 4 — Privacy redaction  ✅ implemented
 
-`crates/feraille-gpui/src/redact.rs` — so a user can share a report and we
+`crates/ferail-gpui/src/redact.rs` — so a user can share a report and we
 **learn nothing about their files**. Two layers compose:
 
 - **Account scrub** ([`report::redact_username`]) is *always* applied: the home

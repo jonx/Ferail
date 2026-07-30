@@ -1,6 +1,6 @@
 # Changelog
 
-Notable changes to Feraille, newest first. This tracks what you'd notice as a
+Notable changes to Ferail, newest first. This tracks what you'd notice as a
 user; the full detail lives in the git history. Dependency-pin bumps are logged
 separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
@@ -37,7 +37,7 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   read-only. The workbench can also be **popped out into its own window** (and
   docked back), like Disk Usage — handy for dragging files into an archive with
   Finder open beside it. You can also **drag entries out of an archive** onto a
-  folder row or another Feraille window to extract them there (dragging to
+  folder row or another Ferail window to extract them there (dragging to
   Finder itself is still to come).
 - **Richer 7-Zip descriptions** — `.7z` files now show their file count, root
   folder, and whether they're encrypted in the Description column, the same way
@@ -64,7 +64,7 @@ First signed & notarized macOS build.
 
 ## 2026-07 — More platforms, steadier on slow drives
 
-- **Runs on AROS** — Feraille now boots on AROS (aarch64) with menus, previews,
+- **Runs on AROS** — Ferail now boots on AROS (aarch64) with menus, previews,
   and disk usage.
 - **Windows & Linux caught up** — resilient file operations with clear errors
   when a file is busy, OneDrive/Trash/Open-With integration, native video, and

@@ -20,4 +20,4 @@ test-data/filename-hazards/samples/
 .cargo/config.toml
 
 # AROS cross-link outputs (link-aros.sh) — regenerable, the ELF is huge
-crates/feraille-aros-app/build/
+crates/ferail-aros-app/build/

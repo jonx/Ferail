@@ -1,6 +1,6 @@
-# Building Feraille for AROS — the complete guide
+# Building Ferail for AROS — the complete guide
 
-How to go from five git checkouts to **Feraille running on AROS**, on an
+How to go from five git checkouts to **Ferail running on AROS**, on an
 Apple Silicon Mac. This documents everything "in between": the AROS OS
 build, the cross-toolchain, the custom Rust std, the patched GPUI stack,
 and the link/deploy/run loop. It is the reproduction recipe for the state
@@ -19,12 +19,12 @@ why).
 ```
 macOS process "Macaros" (AROSBootstrap)
 └── booted AROS (Kickstart 51.51, Intuition, CyberGraphics, posixc)
-    └── C:Feraille  ← a 70 MB ET_REL AROS command containing:
-        Feraille (this repo) → gpui (zed fork) → gpui_aros CPU backend
+    └── C:Ferail  ← a 70 MB ET_REL AROS command containing:
+        Ferail (this repo) → gpui (zed fork) → gpui_aros CPU backend
         → tiny-skia rasterizer → Intuition window → WritePixelArray
 ```
 
-Feraille's full UI — chrome, sidebar, tabs, list/grid, dark theme — browsing
+Ferail's full UI — chrome, sidebar, tabs, list/grid, dark theme — browsing
 `SYS:` with working keyboard (typeahead included), mouse, and icons.
 
 ## 1. Host prerequisites
@@ -44,12 +44,12 @@ Feraille's full UI — chrome, sidebar, tabs, list/grid, dark theme — browsing
 
 ## 2. Checkout layout (sibling paths are load-bearing)
 
-Feraille's `[patch]` entries and `scripts/check-aros.sh` use **relative
+Ferail's `[patch]` entries and `scripts/check-aros.sh` use **relative
 sibling paths**, so all five repos must sit next to each other:
 
 ```
 ~/Source/
-├── Feraille/              branch aros-port      (this repo)
+├── Ferail/              branch aros-port      (this repo)
 ├── zed-aros/              branch aros-platform  (zed fork + gpui_aros backend)
 ├── gpui-component-aros/   branch aros-port      (gpui-component @ pinned rev c112e7b, smol→async-channel)
 ├── rust-aros/                                   (Rust std library fork with the AROS pal)
@@ -78,14 +78,14 @@ The condensed shape:
 
 1. Check out `aros-upstream` on the graft branch (carries the
    `darwin-aarch64` configure case, the AArch64 Darwin signal glue, and
-   the `exec/types.h` storage-class-macro guards Feraille's sqlite build
+   the `exec/types.h` storage-class-macro guards Ferail's sqlite build
    needs — commit `5c1666af`).
 2. Build the AROS-patched crosstools into `~/aros-crosstools` (LLVM 20
    with the 4-line lld patch adding the `aarch64elf_aros` emulation, plus
    `lib/generic/libclang_rt.builtins-aarch64.a`).
 3. Configure + build AROS into `~/aros-build`
    (`configure --target=darwin-aarch64 --with-toolchain=llvm ...`, then
-   the metatargets). What Feraille's build actually consumes:
+   the metatargets). What Ferail's build actually consumes:
    - `bin/darwin-aarch64/gen/include/` — the SDK headers (~1900 files;
      regenerate anytime with `make includes` in a configured tree),
    - `bin/darwin-aarch64/AROS/Developer/lib/` — `startup.o` + the
@@ -122,11 +122,11 @@ The condensed shape:
 ## 5. The GPUI stack
 
 - **`zed-aros`** (branch `aros-platform`): zed pinned at the exact rev
-  Feraille uses (`1d217ee`) plus the port: `crates/gpui_aros` (Intuition
+  Ferail uses (`1d217ee`) plus the port: `crates/gpui_aros` (Intuition
   C glue, tiny-skia CPU renderer, std-thread dispatcher, rawkey keyboard,
   clipboard.device), small cfg-gated core fixes (proptest off-AROS,
   `Background::as_linear_gradient`), and `vendor-aros/` (stacker and
-  filetime with AROS arms). Feraille's root `Cargo.toml` `[patch]`
+  filetime with AROS arms). Ferail's root `Cargo.toml` `[patch]`
   redirects `gpui`/`gpui_platform` here.
 - **`gpui-component-aros`** (branch `aros-port`): the pinned
   gpui-component rev with one delta — `smol::channel` → `async-channel` —
@@ -136,15 +136,15 @@ The condensed shape:
   machine, no AROS needed. `crates/gpui_aros/PORTING.md` keeps the
   bug→test ledger and the on-device checklist.
 
-## 6. Feraille itself (this repo, branch `aros-port`)
+## 6. Ferail itself (this repo, branch `aros-port`)
 
 What the branch adds over `main`:
 
-- `crates/feraille-aros-app/` — staticlib + C harness + `link-aros.sh` +
-  `feraille.startup`. AROS has C own `main()`; the harness feeds
-  argc/argv to the std and calls `feraille_aros_main`, which routes into
-  the same `feraille_gpui::boot::run_gui` the desktop binary uses.
-- `crates/feraille-shell-aros/` — the `platform_shell` arm (v1: the
+- `crates/ferail-aros-app/` — staticlib + C harness + `link-aros.sh` +
+  `ferail.startup`. AROS has C own `main()`; the harness feeds
+  argc/argv to the std and calls `ferail_aros_main`, which routes into
+  the same `ferail_gpui::boot::run_gui` the desktop binary uses.
+- `crates/ferail-shell-aros/` — the `platform_shell` arm (v1: the
   shell-linux stub scaffold re-exported).
 - `.cargo/config.toml` (force-added; machine-specific paths) — the AROS C
   recipe for every `cc`-built dependency: clang ELF triple, large code
@@ -159,21 +159,21 @@ What the branch adds over `main`:
 ## 7. Build → link → deploy → run
 
 ```sh
-cd ~/Source/Feraille          # branch aros-port
+cd ~/Source/Ferail          # branch aros-port
 
 # 1. Type-check gate (fast; catches graph regressions):
 scripts/check-aros.sh
 
 # 2+3. Build + link + deploy in one step (preferred -- it also guards
 #      against cargo's stale-std trap, see below):
-PROFILE=release crates/feraille-aros-app/build-aros.sh
-#    -> ~/aros-build/bin/darwin-aarch64/AROS/C/Feraille  (~70 MB)
+PROFILE=release crates/ferail-aros-app/build-aros.sh
+#    -> ~/aros-build/bin/darwin-aarch64/AROS/C/Ferail  (~70 MB)
 
 # ... or the two raw steps it wraps:
-cargo +nightly-2026-06-27 build --release -p feraille-aros-app \
+cargo +nightly-2026-06-27 build --release -p ferail-aros-app \
   --target ../aros-aarch64/hosted/rust/aarch64-unknown-aros.json \
   -Zjson-target-spec -Zbuild-std=std,panic_abort
-PROFILE=release crates/feraille-aros-app/link-aros.sh
+PROFILE=release crates/ferail-aros-app/link-aros.sh
 
 # STALE-STD TRAP: cargo does NOT fingerprint the rust-src symlink's
 # sources. After editing anything in ~/Source/rust-aros, a raw cargo
@@ -183,19 +183,19 @@ PROFILE=release crates/feraille-aros-app/link-aros.sh
 
 # 4. Strip (mandatory — LoadSeg relocates the whole ET_REL; debug info
 #    turns seconds into minutes):
-llvm-strip --strip-debug crates/feraille-aros-app/build/Feraille
-cp crates/feraille-aros-app/build/Feraille \
-   ~/aros-build/bin/darwin-aarch64/AROS/C/Feraille
+llvm-strip --strip-debug crates/ferail-aros-app/build/Ferail
+cp crates/ferail-aros-app/build/Ferail \
+   ~/aros-build/bin/darwin-aarch64/AROS/C/Ferail
 
-# 5. Boot AROS with the Feraille startup and watch it come up:
+# 5. Boot AROS with the Ferail startup and watch it come up:
 cd ~/Source/aros-aarch64
-AROS_CTL_STARTUP_FILE=~/Source/Feraille/crates/feraille-aros-app/feraille.startup \
+AROS_CTL_STARTUP_FILE=~/Source/Ferail/crates/ferail-aros-app/ferail.startup \
   graft/aros-ctl run
 graft/aros-ctl shot proof.png        # screenshot the framebuffer
 graft/aros-ctl stop
 ```
 
-`feraille.startup` is three lines of load-bearing:
+`ferail.startup` is three lines of load-bearing:
 
 ```
 Stack 16000000                  ← REQUIRED. AROS shells give commands ~40 KB;
@@ -203,18 +203,18 @@ Stack 16000000                  ← REQUIRED. AROS shells give commands ~40 KB;
                                   single-address-space OS the overflow corrupts
                                   *other* tasks (crashes point at emul-handler /
                                   graphics.library, never at the app).
-SetEnv HOME "SYS:"              ← Feraille opens $HOME at boot; unset, it lands
+SetEnv HOME "SYS:"              ← Ferail opens $HOME at boot; unset, it lands
                                   on "/" which AROS can't enumerate.
-C:Feraille --theme dark --width 780 --height 560
+C:Ferail --theme dark --width 780 --height 560
 ```
 
 Driving it under automation: `graft/aros-ctl type/click/key/shot` (input
 travels the same HIDD path as real events). Crash forensics: `obs.rs`'s
 panic hook appends the crash report (message, location, breadcrumbs,
-backtrace) to `MacRW:feraille-panic.txt` (≈ `~/AROS/Shared/` on the host)
+backtrace) to `MacRW:ferail-panic.txt` (≈ `~/AROS/Shared/` on the host)
 — with panic=abort the abort cascades into a deadend + ColdReboot whose
 bootstrap re-exec truncates the host log, so stderr never survives. The
-`log`-crate bridge similarly lands in `MacRW:feraille-log.txt`. When
+`log`-crate bridge similarly lands in `MacRW:ferail-log.txt`. When
 chasing a reboot that leaves neither, capture the host log with a
 truncation-proof reader (`tail -n +1 -F /tmp/aros-window.log > sidecar`) —
 exec's Alert() and ShutdownA() leave breadcrumbs there.
@@ -224,7 +224,7 @@ exec's Alert() and ShutdownA() leave breadcrumbs there.
 | Suite | Where | Command |
 | --- | --- | --- |
 | Porting conformance (renderer/atlas/input) | zed-aros | `cargo test -p gpui_aros` |
-| Feraille host regression | this repo | `cargo test -p feraille-gpui` |
+| Ferail host regression | this repo | `cargo test -p ferail-gpui` |
 | AROS type-check gate | this repo | `scripts/check-aros.sh` |
 | On-device smokes | aros-aarch64 | `graft/rust-smoke`, `graft/bench-run C:RustStd`, `C:GpuiSmoke` |
 
@@ -246,12 +246,12 @@ exec's Alert() and ShutdownA() leave breadcrumbs there.
 | App silently wedges before its first output | A disk library it auto-opens is missing from `AROS/Libs` (e.g. partition.library) — rebuild + copy in. |
 | Random tasks (emul-handler, graphics) crash after input | You launched without `Stack 16000000`. |
 | Every folder empty | The rust-aros path-join fix is missing (std symlink again). |
-| emul-handler `DoExamineNext` requester under browsing | Known OS-side frontier (its handler stack; UPSTREAM-NOTES item 35). Feraille's recursive folder-size walker is gated off on AROS for this reason; crash containment lets you Suspend and keep the session. |
+| emul-handler `DoExamineNext` requester under browsing | Known OS-side frontier (its handler stack; UPSTREAM-NOTES item 35). Ferail's recursive folder-size walker is gated off on AROS for this reason; crash containment lets you Suspend and keep the session. |
 
 ## 10. Known limitations (2026-07-06)
 
 - Folder sizes read `--` on AROS (walker gated; see above).
-- Real platform icons / thumbnails pending (`feraille-shell-aros` is a
+- Real platform icons / thumbnails pending (`ferail-shell-aros` is a
   stub scaffold — Lucide glyph fallbacks render instead; icon.library /
   DefIcons integration is the designed next step).
 - Scroll wheel untested end-to-end (the cocoametal control protocol has

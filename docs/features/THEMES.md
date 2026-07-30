@@ -1,4 +1,4 @@
-# Feraille — Themes & Color Customization
+# Ferail — Themes & Color Customization
 
 Design note for user-facing theming. Written to be implemented against
 directly. Status: **planned** — Phase 0 (the selection-accent override seam)
@@ -11,7 +11,7 @@ has shipped; Phases 1–4 are the work this note scopes.
 
 ## 1. Goal and scope
 
-Let users change how Feraille looks without touching code:
+Let users change how Ferail looks without touching code:
 
 1. **Pick a theme** from a small bundled set (beyond today's single light + dark
    palette).
@@ -136,7 +136,7 @@ override → persist → live-repaint loop. See §2.
 ### Phase 2 — User themes folder (drop-in custom JSON)
 
 - On startup call
-  `ThemeRegistry::watch_dir(<config>/Feraille/themes, cx, on_load)` (the same
+  `ThemeRegistry::watch_dir(<config>/Ferail/themes, cx, on_load)` (the same
   `config_dir()` `app_state` uses). Background-loads every theme file; user JSONs
   appear in the picker; saving a file hot-reloads it.
 - **Affordances** on the Appearance page: "Open themes folder" (reveal in
@@ -178,7 +178,7 @@ override → persist → live-repaint loop. See §2.
 ```
 Theme
   ( ) Light   ( ) Dark   ( ) System         ← mode (exists)
-  Theme:  [ Feraille Default ▾ ]            ← Phase 1 dropdown
+  Theme:  [ Ferail Default ▾ ]            ← Phase 1 dropdown
   Custom themes folder:  [ Open ] [ Reload ] ← Phase 2
 
 Accents
@@ -187,16 +187,16 @@ Accents
 
 ## 8. Integration points (files)
 
-- `crates/feraille-gpui/src/main.rs` (~360–410) — register bundled themes after
+- `crates/ferail-gpui/src/main.rs` (~360–410) — register bundled themes after
   `gpui_component::init`; apply persisted `theme_name`; start `watch_dir`.
-- `crates/feraille-gpui/src/settings.rs` — Theme dropdown + persistence (mirror
+- `crates/ferail-gpui/src/settings.rs` — Theme dropdown + persistence (mirror
   `persist_theme_pref`); the Appearance page already owns the selection picker.
-- `crates/feraille-gpui/src/shell.rs` — extend the `apply_pending_theme` bridge
+- `crates/ferail-gpui/src/shell.rs` — extend the `apply_pending_theme` bridge
   if a non-UI-thread path ever needs to switch themes (likely not for v1).
-- `crates/feraille-gpui/src/app_state.rs` — `theme_name` (+ future override keys)
+- `crates/ferail-gpui/src/app_state.rs` — `theme_name` (+ future override keys)
   field, parse arm, save line.
-- `crates/feraille-gpui/src/assets.rs` — bundle the theme JSON assets.
-- `crates/feraille-gpui/src/selection_colors.rs` — Phase 3 generalization.
+- `crates/ferail-gpui/src/assets.rs` — bundle the theme JSON assets.
+- `crates/ferail-gpui/src/selection_colors.rs` — Phase 3 generalization.
 
 ## 9. Open questions (resolve before Phase 1 build)
 

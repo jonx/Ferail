@@ -1,8 +1,8 @@
 # Third-Party Notices
 
-Feraille's own source is dual-licensed under **MIT OR Apache-2.0**
+Ferail's own source is dual-licensed under **MIT OR Apache-2.0**
 ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)). A built
-Feraille binary also incorporates third-party components whose licenses
+Ferail binary also incorporates third-party components whose licenses
 require their copyright and permission notices to travel with redistributed
 copies. Those notices are collected here.
 
@@ -50,9 +50,9 @@ recorded here for completeness, because GPL-3.0 object code linked into a
 - **ztracing**, **zlog**, **ztracing_macro** — from the Zed editor project.
   <https://github.com/zed-industries/zed> Licensed under GPL-3.0-or-later.
 
-Feraille does **not** currently distribute prebuilt binaries: the published
+Ferail does **not** currently distribute prebuilt binaries: the published
 source references these crates via pinned git dependencies but does not itself
-redistribute their code, so the MIT/Apache-2.0 grant on Feraille's own source is
+redistribute their code, so the MIT/Apache-2.0 grant on Ferail's own source is
 unaffected. The upstream license inconsistency (Apache-2.0 `sum_tree` depending
 on GPL-3.0 `ztracing`) is tracked at
 <https://github.com/zed-industries/zed/issues/55470>. If a redistributable
@@ -63,7 +63,7 @@ is severed by a local patch so the binary remains MIT/Apache.
 
 ## Icon artwork
 
-Feraille embeds ~41 SVG glyphs in `crates/feraille-gpui/resources/icons/` and
+Ferail embeds ~41 SVG glyphs in `crates/ferail-gpui/resources/icons/` and
 references the `gpui-component-assets` icon bundle at runtime. Their provenance
 and per-glyph mapping are catalogued in
 [docs/features/ICONS.md](docs/features/ICONS.md).
@@ -125,7 +125,7 @@ DEALINGS IN THE SOFTWARE.
 
 On macOS, folder and file-type artwork is fetched at runtime from the system
 via `NSWorkspace`/`IconForFile`. This Apple artwork is **never bundled or
-redistributed** with Feraille — it is read from the user's own OS at display
+redistributed** with Ferail — it is read from the user's own OS at display
 time — so no Apple artwork ships in the binary.
 
 ---
@@ -133,10 +133,10 @@ time — so no Apple artwork ships in the binary.
 ## libmpv (optional video player — not bundled)
 
 The optional `mpv` build feature (off by default) plays video through
-**libmpv** (LGPL-2.1-or-later / GPL depending on build). Feraille does **not**
+**libmpv** (LGPL-2.1-or-later / GPL depending on build). Ferail does **not**
 link, bundle, or redistribute libmpv: when the feature is enabled it loads a
 **user-installed** libmpv at runtime via `dlopen`/`LoadLibraryW` from a path the
-user supplies (or a system install such as Homebrew's). A default Feraille build
+user supplies (or a system install such as Homebrew's). A default Ferail build
 contains no mpv code at all. If you distribute a binary built `--features mpv`,
-note that video playback relies on a separately-installed libmpv that Feraille
+note that video playback relies on a separately-installed libmpv that Ferail
 does not ship.

@@ -1,12 +1,12 @@
-# Contributing to Feraille
+# Contributing to Ferail
 
-Thanks for your interest in Feraille. This is a cross-platform native file
+Thanks for your interest in Ferail. This is a cross-platform native file
 manager written in Rust on [GPUI](https://www.gpui.rs/) — macOS and Windows
 today (macOS leads; the Windows port is in progress), with Linux possibly
 later. The bar for changes is correctness, responsiveness, and respect for the
 architecture's one rule.
 
-**AI-generated pull requests are welcome.** Feraille is mostly "vibe-coded" —
+**AI-generated pull requests are welcome.** Ferail is mostly "vibe-coded" —
 written largely through AI pair-programming — and contributions made the same
 way are encouraged. If you're driving an agent, point it at this file,
 [CLAUDE.md](CLAUDE.md), and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before
@@ -23,10 +23,10 @@ A change that blocks the UI thread will not be merged, however small.
 
 ## Where code goes
 
-- New product work belongs in `crates/feraille-gpui`.
-- Domain logic belongs in `feraille-core`, `feraille-fs-native`,
-  `feraille-meta`, or `feraille-disk-usage` whenever it can stay UI-free.
-- `feraille-shell-mac` owns AppKit/Cocoa integration and does not paint UI.
+- New product work belongs in `crates/ferail-gpui`.
+- Domain logic belongs in `ferail-core`, `ferail-fs-native`,
+  `ferail-meta`, or `ferail-disk-usage` whenever it can stay UI-free.
+- `ferail-shell-mac` owns AppKit/Cocoa integration and does not paint UI.
 - The old soft-rendered stack under `crates/_archive/` is reference only.
 
 See the [crate boundary rules](docs/ARCHITECTURE.md#crate-boundaries) before
@@ -39,9 +39,9 @@ adding cross-crate dependencies.
 - For UI changes, attach a screenshot. Generate one headlessly:
 
   ```sh
-  cargo run --bin feraille-gpui -- \
+  cargo run --bin ferail-gpui -- \
     --screenshot screenshots/my-change.png \
-    --navigate ~/Source/Feraille --width 1400 --height 900
+    --navigate ~/Source/Ferail --width 1400 --height 900
   ```
 
 - Keep diffs focused. Do not run broad formatters across the tree — match the
@@ -49,9 +49,9 @@ adding cross-crate dependencies.
 
 ## Building
 
-Feraille depends on `gpui` / `gpui-component` as **git** dependencies (they
+Ferail depends on `gpui` / `gpui-component` as **git** dependencies (they
 are not published to crates.io). Reproducible builds come from the committed
-`Cargo.lock`. A normal `cargo build` / `cargo run --bin feraille-gpui` works
+`Cargo.lock`. A normal `cargo build` / `cargo run --bin ferail-gpui` works
 on a recent stable toolchain (see `rust-toolchain.toml`).
 
 Setting up from a clean machine (prerequisites, per-platform system tools,

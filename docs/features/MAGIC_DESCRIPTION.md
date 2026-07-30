@@ -3,7 +3,7 @@
 Rich content-derived facts about a file, rendered as a single string in a
 new **Description** column to the right of Format. Inspired by the magic
 column in the `bfe-explorer` Windows predecessor (a private prior codebase),
-adapted to feraille's nonblocking contract and current single-`display_magic`
+adapted to ferail's nonblocking contract and current single-`display_magic`
 shape.
 
 ## Status
@@ -16,7 +16,7 @@ facts for *files*; for *folders* it now shows recursive item counts —
 come for free from the background folder-size walk (the same pass that
 sums a directory's recursive bytes now also counts its files and
 sub-folders), cached alongside the size in the `folder_sizes` row and
-formatted by `feraille_fs_native::folder_contents_summary`. The two never
+formatted by `ferail_fs_native::folder_contents_summary`. The two never
 collide: a directory has no magic facts, so the prefetch worker leaves its
 description empty (and its apply only overwrites a *non-empty* value), while
 the folder-size worker owns folder descriptions. See
@@ -47,7 +47,7 @@ the whole cache at once. (Edge case: if a forced re-sniff now yields an
 updates but `upsert_file`'s COALESCE keeps the old DB value — harmless
 for the enrichment case that motivated this.)
 
-- `feraille-fs-native::magic` module ported in full from bfe-explorer
+- `ferail-fs-native::magic` module ported in full from bfe-explorer
   (8 files, ~1500 lines): structured `MagicInfo` / `MagicType` /
   `CpuArch` / `PeSubsystem`, ` · `-joined `description()` formatter,
   per-family parsers (PE / ELF / Mach-O / ZIP / Office / JAR / APK /
@@ -55,15 +55,15 @@ for the enrichment case that motivated this.)
   MP4 / MOV / AVI / MKV / shebang / UTF-16 / INI / .reg / .url / .lnk /
   SQLite / fonts).
 - `HEADER_BYTES`: 512 → 4096.
-- `FileEntry::display_description` (`feraille-core`).
-- `feraille-meta` schema v3: `files.description` column, idempotent
+- `FileEntry::display_description` (`ferail-core`).
+- `ferail-meta` schema v3: `files.description` column, idempotent
   `ALTER TABLE` migration, COALESCE upsert, `ResetScope::Magic` clears
   description alongside `magic_label`.
 - Prefetch worker: one `detect_magic_info` call per file (one 4 KB
   read), derives label + description, write-through to DB.
 - File-list UI: `description` column added at 320px, not sortable.
-- Tests: 80 unit tests across `feraille-core` / `feraille-fs-native` /
-  `feraille-meta` — all pass.
+- Tests: 80 unit tests across `ferail-core` / `ferail-fs-native` /
+  `ferail-meta` — all pass.
 - Live smoke test: GUI navigates `target/debug`, prefetch processes
   28 rows and applies the batch with no panic.
 
@@ -81,11 +81,11 @@ shows real values populated by content sniffing on a folder of mixed files:
   `.txt` extension — magic wins, the ⚠ flags the disagreement).
 
 The headless `--screenshot` path now works on Windows via a
-PrintWindow capture in `feraille-shell-win32` (gpui_windows doesn't
+PrintWindow capture in `ferail-shell-win32` (gpui_windows doesn't
 implement `render_to_image`; see
 [windows-port.md](windows-port.md)).
 
-The unified [Format column](../../crates/feraille-gpui/src/file_list.rs)
+The unified [Format column](../../crates/ferail-gpui/src/file_list.rs)
 (`Kind ⊎ Magic` with the mismatch triangle) stays. Description is **added on
 top** — it never replaces Format and never displaces the mismatch indicator.
 
@@ -186,7 +186,7 @@ script subtypes / Office subtypes (.docx/.xlsm/.pptx + macros) / JAR / APK
 
 ## Data Shape
 
-### `feraille-fs-native::magic`
+### `ferail-fs-native::magic`
 
 Replace the current single `magic.rs` (187 lines, flat byte-pattern table)
 with a `magic/` submodule:
@@ -270,7 +270,7 @@ pub fn sniff_bytes_info(buf: &[u8]) -> MagicInfo;  // unit-testable
 ```
 
 The existing `detect_magic` stays as a thin wrapper so callers that only
-want a label (`feraille-disk-usage::file_category`, `icons::classify_file`)
+want a label (`ferail-disk-usage::file_category`, `icons::classify_file`)
 don't break:
 
 ```rust
@@ -279,14 +279,14 @@ pub fn detect_magic(path: &Path) -> Option<&'static str> {
 }
 ```
 
-`MagicType::display_name()` matches feraille's current label strings where
+`MagicType::display_name()` matches ferail's current label strings where
 possible (`"PNG image"`, `"PE / DOS executable"`, `"ZIP archive"`) so the
 Format column doesn't visibly change. Where bfe-explorer subdivides
-(`ExeWindows` vs `DllWindows`), `display_name()` collapses back to feraille's
+(`ExeWindows` vs `DllWindows`), `display_name()` collapses back to ferail's
 existing label by default; the richer distinction lives in `MagicType` for
 the Description formatter.
 
-### `feraille-core::FileEntry`
+### `ferail-core::FileEntry`
 
 One new field:
 
@@ -296,7 +296,7 @@ pub display_description: String,
 
 Defaults to `""`. Populated by the prefetch worker like `display_magic`.
 
-### `feraille-meta` schema
+### `ferail-meta` schema
 
 Add one column to the `files` table:
 
@@ -319,7 +319,7 @@ the description would leave stale rows).
 
 ## UI
 
-### `feraille-gpui::file_list`
+### `ferail-gpui::file_list`
 
 Add a fourth column, after Modified or before it — defer the order to
 `get_design_feedback` since the user will move it anyway. Default order:
@@ -363,7 +363,7 @@ isn't sortable. If we add sortability later it would be a separate
 
 ## Prefetch Worker Changes
 
-[`prefetch.rs`](../../crates/feraille-gpui/src/prefetch.rs) is the only
+[`prefetch.rs`](../../crates/ferail-gpui/src/prefetch.rs) is the only
 worker we touch:
 
 1. `PrefetchSeed` gains `has_description: bool`.
@@ -410,11 +410,11 @@ has always had.
 
 Unit:
 - `MagicInfo::description()` produces the expected string for every variant
-  combination (snapshots in `feraille-fs-native`).
+  combination (snapshots in `ferail-fs-native`).
 - `detect_magic_info` on fixture binaries (PNG, MP3, .docx, PE, ELF, Mach-O)
   populates the expected fields. Use the same fixture pattern
-  `crates/feraille-fs-native/tests` already has.
-- `formats_compatible` in `feraille-core` is unchanged.
+  `crates/ferail-fs-native/tests` already has.
+- `formats_compatible` in `ferail-core` is unchanged.
 
 Integration:
 - Open the repo's `target/` directory; verify executables show
@@ -446,7 +446,7 @@ UI:
 ## Reference
 
 bfe-explorer's `MagicInfo::description()` is the canonical formatter. Port
-the match arms verbatim where types overlap; deviate only where feraille's
+the match arms verbatim where types overlap; deviate only where ferail's
 type names differ (we have `"ZIP archive"` where bfe has `Zip` /
 `ZipEncrypted` split — the formatter handles both since it reads structured
 fields, not the label string).

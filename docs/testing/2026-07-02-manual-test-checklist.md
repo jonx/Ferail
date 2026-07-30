@@ -6,7 +6,7 @@ you verify them; when the sheet is fully green it can be deleted —
 regressions worth keeping live in each feature's doc under
 [docs/features](../features/README.md).
 
-Build: `cargo run --release --bin feraille-gpui`
+Build: `cargo run --release --bin ferail-gpui`
 
 ## Reported bugs
 

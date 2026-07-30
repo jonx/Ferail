@@ -4,9 +4,9 @@ The duplicate finder is I/O-heavy, so it lives behind the worker/task/progress
 architecture and the [prime directive](../ARCHITECTURE.md#prime-directive): the
 UI never blocks, the app stays navigable, and results stream in incrementally.
 
-This is Feraille's clearest **lead** over the default file managers: Finder,
+This is Ferail's clearest **lead** over the default file managers: Finder,
 File Explorer, and the mainstream Linux managers ship **no** built-in duplicate
-finder — users reach for Gemini, dupeGuru, Czkawka, or rmlint. Feraille builds
+finder — users reach for Gemini, dupeGuru, Czkawka, or rmlint. Ferail builds
 it in.
 
 ## Status
@@ -48,7 +48,7 @@ Every standalone tool worth copying — rmlint, czkawka, jdupes — converges on
 the same progressive funnel, because it minimizes I/O:
 
 1. **Walk + group by size.** Reuse the
-   [`scan_disk_usage`](../../crates/feraille-fs-native/src/disk_usage_scanner.rs)
+   [`scan_disk_usage`](../../crates/ferail-fs-native/src/disk_usage_scanner.rs)
    DFS. Any file with a unique size cannot be a duplicate — drop it with **zero
    hashing**. This eliminates the vast majority of candidates for free.
 2. **Partial hash** (first 64 KB, `xxhash-rust::xxh3`) only on size-collision
@@ -59,7 +59,7 @@ the same progressive funnel, because it minimizes I/O:
    risk entirely).
 4. **Group by full hash** and present.
 
-The `xxh3` + `blake3` pipeline ports by intent from Ferail
+The `xxh3` + `blake3` pipeline ports by intent from Ferail-Win32
 (`crates/ferail-core/src/hash/pipeline.rs`).
 
 ## Not killing the CPU
@@ -71,7 +71,7 @@ BLAKE3/xxh3 run at multi-GB/s; the disk is the bottleneck. So:
   `(path, size, mtime)` against the `files` table and the *second* scan of a
   tree skips hashing entirely — this is czkawka's main speed lever. Mirror the
   read-through / write-through dance the prefetch worker already does
-  ([prefetch.rs](../../crates/feraille-gpui/src/prefetch.rs)): look up before
+  ([prefetch.rs](../../crates/ferail-gpui/src/prefetch.rs)): look up before
   hashing, write back on miss.
 - **Bounded reader concurrency, not greedy parallelism.** Throwing a thread per
   file at one physical disk causes seek thrashing and is *slower*. Cap the
@@ -117,7 +117,7 @@ filesystem's own index directly:
 
 All three keep the funnel identical downstream — they only make the
 candidate-gathering walk cheaper. The same speedup applies verbatim to
-[disk usage](../../crates/feraille-fs-native/src/disk_usage_scanner.rs),
+[disk usage](../../crates/ferail-fs-native/src/disk_usage_scanner.rs),
 which shares the DFS. Sequenced as a deliberate follow-up: correctness
 and the cache come first, raw-index enumeration is a power-user speed
 lever once device/filesystem identity detection exists.
@@ -140,7 +140,7 @@ lever once device/filesystem identity detection exists.
 
 ## Worker shape
 
-A pure-function worker in `feraille-fs-native` (`dupes.rs`), driven exactly
+A pure-function worker in `ferail-fs-native` (`dupes.rs`), driven exactly
 like the disk-usage scanner — batched facts, `AtomicBool` cancel, throttled
 progress, host owns the thread:
 

@@ -4,8 +4,8 @@ Walks a directory tree off the UI thread and shows the result as an
 interactive squarified treemap. It now docks into the active tab as a
 [Tool Result Surface](TOOL_RESULTS.md), while the standalone GPUI window
 renderer remains available for pop-out work. Ported in iter-6.0…6.4 from the
-Ferail predecessor's spec
-(`docs/done/DISK_USAGE.md` in the Ferail repo); the data model
+Ferail-Win32 predecessor's spec
+(`docs/done/DISK_USAGE.md` in the Ferail-Win32 repo); the data model
 and layout algorithm are shared verbatim, the worker and visual
 control are macOS-native rewrites.
 
@@ -62,7 +62,7 @@ open — see "Still open" below.
   it — per-rect ContextMenu layers stacked (their overlay hitboxes
   paint above the rects and don't stop propagation), opening two
   colliding menus and wiping the selection.
-- **HTML export** (shipped): `feraille_disk_usage::treemap_html_*`
+- **HTML export** (shipped): `ferail_disk_usage::treemap_html_*`
   renders the same tree through the same layout pipeline into
   self-contained HTML (inline styles, no JS) — "Copy as HTML" puts a
   paste-anywhere `<figure>` fragment on the clipboard; "Save as
@@ -106,9 +106,9 @@ the `disk_usage.*` ids in keymap.rs are still placeholders.)
 
 | Crate | Responsibility |
 |---|---|
-| `feraille-disk-usage` | Pure data model + squarified treemap. No I/O, no platform deps. Houses `DiskUsageTree`, `DiskUsageNode`, `DiskUsageLayoutNode`, `DiskUsageFact`, `compute_treemap`, `hit_test`, `build_layout_node`, `FileCategory`. |
-| `feraille-fs-native` | `NativeFs::scan_disk_usage` worker — DFS via `read_dir`, `symlink_metadata` (no follow), absorbs per-subdir permission errors, batched fact callback (`DEFAULT_DU_BATCH = 256`), throttled progress (~250 ms). |
-| `feraille-gpui` | `disk_usage.rs` — the Disk Usage view: squarified treemap + top-list views, hover/selection state, and worker orchestration, all as GPUI elements. |
+| `ferail-disk-usage` | Pure data model + squarified treemap. No I/O, no platform deps. Houses `DiskUsageTree`, `DiskUsageNode`, `DiskUsageLayoutNode`, `DiskUsageFact`, `compute_treemap`, `hit_test`, `build_layout_node`, `FileCategory`. |
+| `ferail-fs-native` | `NativeFs::scan_disk_usage` worker — DFS via `read_dir`, `symlink_metadata` (no follow), absorbs per-subdir permission errors, batched fact callback (`DEFAULT_DU_BATCH = 256`), throttled progress (~250 ms). |
+| `ferail-gpui` | `disk_usage.rs` — the Disk Usage view: squarified treemap + top-list views, hover/selection state, and worker orchestration, all as GPUI elements. |
 
 ### Data flow
 
@@ -155,21 +155,21 @@ lockstep by construction.
 
 ```sh
 # Live GUI:
-cargo run --bin Feraille
+cargo run --bin Ferail
 #   then press Cmd+Shift+D
 
 # Headless PNG via main bin:
-cargo run --bin Feraille -- \
+cargo run --bin Ferail -- \
   --screenshot /tmp/du.png \
-  --disk-usage ~/Source/Feraille \
+  --disk-usage ~/Source/Ferail \
   --width 1400 --height 900 --theme dark
 
 # Standalone CLI (also produces PNG via --png):
-cargo run --bin disk_usage_cli -- ~/Source/Feraille --png /tmp/cli.png
+cargo run --bin disk_usage_cli -- ~/Source/Ferail --png /tmp/cli.png
 ```
 
-Tests: `cargo test -p feraille-disk-usage` (model, aggregate, layout,
-hit-test) and `cargo test -p feraille-fs-native` (scanner integration
+Tests: `cargo test -p ferail-disk-usage` (model, aggregate, layout,
+hit-test) and `cargo test -p ferail-fs-native` (scanner integration
 against a temp-dir fixture, with permission and cancellation cases).
 
 ## Iter-7 polish (shipped)

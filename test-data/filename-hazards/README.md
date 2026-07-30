@@ -1,9 +1,9 @@
 # Filename hazard samples
 
-A folder of deliberately deceptive filenames for exercising Feraille's
+A folder of deliberately deceptive filenames for exercising Ferail's
 filename hazard detection — the kind of tricks malware and phishing use to
 make a file's name lie about what it is. The detection lives in
-[`feraille-core/src/name_hazards.rs`](../../crates/feraille-core/src/name_hazards.rs);
+[`ferail-core/src/name_hazards.rs`](../../crates/ferail-core/src/name_hazards.rs);
 Get Info (Cmd+I) and the preview pane highlight each flagged character with a
 tooltip, and show an invisible character via a visible stand-in.
 
@@ -13,7 +13,7 @@ tooltip, and show an invisible character via a visible stand-in.
 python3 test-data/filename-hazards/generate.py
 ```
 
-This writes the files into `samples/`. Open that folder in Feraille and select
+This writes the files into `samples/`. Open that folder in Ferail and select
 each file: clean names render normally, deceptive ones light up
 (amber = whitespace tricks, red = reordering / invisible / look-alike).
 

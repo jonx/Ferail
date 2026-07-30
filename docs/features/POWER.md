@@ -1,6 +1,6 @@
 # Power: sleep / wake handling
 
-Feraille reacts to the machine (and its displays) going to sleep and
+Ferail reacts to the machine (and its displays) going to sleep and
 waking. Two distinct mechanisms, because video and file-ops want
 opposite treatment:
 
@@ -14,7 +14,7 @@ drain, off the notification thread.
 
 ## Vocabulary
 
-`feraille-core::power::PowerEvent` is the platform-neutral enum both
+`ferail-core::power::PowerEvent` is the platform-neutral enum both
 shells speak:
 
 | Variant           | Meaning                                  |
@@ -31,7 +31,7 @@ shells speak:
 
 ### macOS
 
-`feraille-shell-mac::start_power_observer` subscribes an Objective-C
+`ferail-shell-mac::start_power_observer` subscribes an Objective-C
 target to **NSWorkspace's own** notification center (not the default or
 distributed one) for the four `NSWorkspace…Sleep/Wake` notifications.
 Same lifecycle as the theme / volume observers: main-thread-only,
@@ -42,7 +42,7 @@ channel.
 
 ### Windows (planned / scaffolded)
 
-`feraille-shell-win32::start_power_observer` spawns a worker thread
+`ferail-shell-win32::start_power_observer` spawns a worker thread
 owning a **hidden top-level** window (power broadcasts skip
 `HWND_MESSAGE`-only windows, like device-change does) and maps
 `WM_POWERBROADCAST`:
@@ -135,11 +135,11 @@ only a few seconds.
 
 ## Files
 
-- `crates/feraille-core/src/power.rs` — `PowerEvent`.
-- `crates/feraille-shell-mac/src/power_observer.rs` — NSWorkspace hooks.
-- `crates/feraille-shell-mac/src/power_assert.rs` — IOKit assertion.
-- `crates/feraille-shell-win32/src/lib.rs` — `start_power_observer`,
+- `crates/ferail-core/src/power.rs` — `PowerEvent`.
+- `crates/ferail-shell-mac/src/power_observer.rs` — NSWorkspace hooks.
+- `crates/ferail-shell-mac/src/power_assert.rs` — IOKit assertion.
+- `crates/ferail-shell-win32/src/lib.rs` — `start_power_observer`,
   `prevent_idle_sleep`, `SleepBlocker` (cfg(windows) + stubs).
-- `crates/feraille-gpui/src/process_state.rs` — `start_power_watch`.
-- `crates/feraille-gpui/src/viewer/window.rs` — `suspend_for_power`.
-- `crates/feraille-gpui/src/shell/file_ops.rs` — transfer-time guard.
+- `crates/ferail-gpui/src/process_state.rs` — `start_power_watch`.
+- `crates/ferail-gpui/src/viewer/window.rs` — `suspend_for_power`.
+- `crates/ferail-gpui/src/shell/file_ops.rs` — transfer-time guard.

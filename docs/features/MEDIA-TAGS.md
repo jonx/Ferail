@@ -32,12 +32,12 @@ tags. lofty's MSRV (1.85) is what set the workspace `rust-version`.
 The dependency and the parsing live behind the existing crate boundaries; no new
 crate, no new cache, no new worker.
 
-- **`feraille-core::media`** — `MediaTags`, a platform- and UI-free data record
+- **`ferail-core::media`** — `MediaTags`, a platform- and UI-free data record
   (codec, title/artist/album/genre, track/disc, year, comment, duration, bitrate,
   sample rate, channels, bit depth) plus pure formatting helpers
   (`description()`, `duration_label()`, `sample_rate_label()`, …). Zero deps, unit
   tested. Cover-art *bytes* are deliberately **not** a field — see below.
-- **`feraille-fs-native::media`** — the one place `lofty` is used. Two entry
+- **`ferail-fs-native::media`** — the one place `lofty` is used. Two entry
   points split by cost:
   - `read_media_tags(path)` — tags + audio properties, `read_cover_art(false)`
     so it never pulls a multi-megabyte picture into memory. Safe to call per
@@ -169,9 +169,9 @@ Rides the same preview-cache/staleness machinery when it lands. Tracked under
 
 ## Tests
 
-- `feraille-core::media` — duration / kHz / track-of / channel formatting and the
+- `ferail-core::media` — duration / kHz / track-of / channel formatting and the
   `description()` composition (lossy, lossless, empty-segment cases).
-- `feraille-fs-native::media` — real round-trips against a hand-built minimal
+- `ferail-fs-native::media` — real round-trips against a hand-built minimal
   WAV: audio properties, non-audio → `None`, missing file → `None`, and a tagged
   WAV whose two embedded pictures verify front-cover preference in
   `read_cover_art`.

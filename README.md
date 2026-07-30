@@ -1,22 +1,22 @@
-# Feraille
+# Ferail
 
 **A power-user file manager that never freezes.** Native, fast, written in
 Rust — with the tools you normally install separately built in: a duplicate
 finder, a disk-usage treemap you can export as HTML, magic-byte file
 identification, regex bulk rename, a media viewer, and a command palette.
 
-![Feraille main window](docs/images/tour-shell.png)
+![Ferail main window](docs/images/tour-shell.png)
 
-## What is Feraille?
+## What is Ferail?
 
-Feraille is a desktop file manager built around a single conviction: **the UI
+Ferail is a desktop file manager built around a single conviction: **the UI
 must never stop.** Painting, scrolling, hovering, hit-testing, and typing are
 read-only and nonblocking — they never touch the filesystem, network, or
 database. A dead network mount slows a background task, never your pointer.
 Everything expensive happens off the UI thread and reports back when it's
 ready; results that arrive after you've moved on are dropped.
 
-On top of that responsive core, Feraille folds in the utilities power users
+On top of that responsive core, Ferail folds in the utilities power users
 otherwise juggle as separate apps, and adds content intelligence the stock
 managers lack: every file is identified by its **bytes, not its extension**, so
 a `.jpg` that's secretly a `.zip` is flagged in the list, with real facts —
@@ -82,13 +82,13 @@ The prioritized list of open work is in **[TODO.md](TODO.md)**.
 | **macOS** | **Primary, daily-driver.** Feature-complete for everyday use. |
 | **Windows** | **Active port**, broad native parity — clipboard, Recycle Bin, thumbnails, Open With, Media Foundation video. Verified on real hardware; elevation and shell-extension verbs still stubbed. ([details](docs/features/windows-port.md)) |
 | **Linux** | **Early port** — builds and runs; volumes, Trash, and Open With are real; clipboard, thumbnails, and video are still stubbed. ([details](docs/features/linux-port.md)) |
-| **AROS** | **Research port** — Feraille boots and runs as a browsable, themed file manager on [AROS](https://aros.org) (the open-source AmigaOS) via a from-scratch GPUI platform backend. Not at parity: some features are gated pending native shell integration. ([details](docs/features/aros-port.md)) |
+| **AROS** | **Research port** — Ferail boots and runs as a browsable, themed file manager on [AROS](https://aros.org) (the open-source AmigaOS) via a from-scratch GPUI platform backend. Not at parity: some features are gated pending native shell integration. ([details](docs/features/aros-port.md)) |
 
-### How Feraille compares
+### How Ferail compares
 
 The ❌ rows are real gaps, not modesty.
 
-| Capability | Feraille | Finder (macOS) | File Explorer (Windows) | Dolphin / Nautilus (Linux) |
+| Capability | Ferail | Finder (macOS) | File Explorer (Windows) | Dolphin / Nautilus (Linux) |
 |---|---|---|---|---|
 | **Never-block UI on slow / network I/O** | ✅ design invariant | ❌ beachballs | ❌ hangs | ⚠️ varies |
 | **Content / magic detection** (sniff bytes, not extension) | ✅ | ❌ | ❌ | ⚠️ MIME |
@@ -107,8 +107,8 @@ The ❌ rows are real gaps, not modesty.
 ## Getting started
 
 ```sh
-git clone https://github.com/jonx/Feraille && cd Feraille
-cargo run --release --bin feraille-gpui
+git clone https://github.com/jonx/Ferail && cd Ferail
+cargo run --release --bin ferail-gpui
 ```
 
 On macOS, build the signed bundle instead to get the normal folder-access
@@ -118,7 +118,7 @@ bundle** — the loose `cargo run` binary shows an in-app "Access required" scre
 instead):
 
 ```sh
-scripts/bundle-mac.sh && open target/Feraille.app
+scripts/bundle-mac.sh && open target/Ferail.app
 ```
 
 Per-platform prerequisites, permission caveats, and packaging live in
@@ -126,19 +126,19 @@ Per-platform prerequisites, permission caveats, and packaging live in
 
 ## Project layout
 
-The active app is `feraille-gpui`. Domain logic lives in UI-free crates.
+The active app is `ferail-gpui`. Domain logic lives in UI-free crates.
 
 | Crate | Responsibility |
 |---|---|
-| `feraille-gpui` | Active GPUI app + CLI entry points; views, actions, scheduling, shell state |
-| `feraille-core` | Platform-neutral domain types, command catalogue, `NodeId`, `FileEntry` |
-| `feraille-fs-native` | Native filesystem: enumeration, metadata, magic, volumes, trash |
-| `feraille-shell-mac` | AppKit/Cocoa integration — no painting |
-| `feraille-shell-win32` | Windows shell integration |
-| `feraille-shell-linux` | Linux (freedesktop) shell integration |
-| `feraille-meta` | SQLite-backed metadata, layout, and Ant Trail persistence |
-| `feraille-disk-usage` | Pure disk-usage model, aggregation, treemap layout, HTML export |
-| `feraille-design` | Shared design tokens (color, spacing, typography) |
+| `ferail-gpui` | Active GPUI app + CLI entry points; views, actions, scheduling, shell state |
+| `ferail-core` | Platform-neutral domain types, command catalogue, `NodeId`, `FileEntry` |
+| `ferail-fs-native` | Native filesystem: enumeration, metadata, magic, volumes, trash |
+| `ferail-shell-mac` | AppKit/Cocoa integration — no painting |
+| `ferail-shell-win32` | Windows shell integration |
+| `ferail-shell-linux` | Linux (freedesktop) shell integration |
+| `ferail-meta` | SQLite-backed metadata, layout, and Ant Trail persistence |
+| `ferail-disk-usage` | Pure disk-usage model, aggregation, treemap layout, HTML export |
+| `ferail-design` | Shared design tokens (color, spacing, typography) |
 
 Crate-boundary rules:
 [docs/ARCHITECTURE.md → Crate Boundaries](docs/ARCHITECTURE.md#crate-boundaries).
@@ -156,14 +156,14 @@ Crate-boundary rules:
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Feraille is, by design, mostly **AI
+See [CONTRIBUTING.md](CONTRIBUTING.md). Ferail is, by design, mostly **AI
 pair-programmed** — that's the workflow, not a caveat — and **AI-generated pull
 requests are welcome**: point your agent at [CLAUDE.md](CLAUDE.md) and
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), keep the prime directive, and run
 `cargo check` / `cargo test` before opening the PR. Human review gates every
 merge.
 
-- New product work belongs in `crates/feraille-gpui`; keep domain code UI-free
+- New product work belongs in `crates/ferail-gpui`; keep domain code UI-free
   in the core crates.
 - Before finishing: `cargo check`, `cargo test`, and a fresh screenshot for UI
   changes. See [CLAUDE.md](CLAUDE.md#verification).
@@ -181,6 +181,6 @@ Third-party components incorporated into a built binary (GPUI, gpui-component,
 and the bundled Lucide / Bootstrap icon artwork) are credited in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-> **Note:** Feraille depends on `gpui` / `gpui-component` as git dependencies
+> **Note:** Ferail depends on `gpui` / `gpui-component` as git dependencies
 > (not on crates.io), so there is no `cargo install` — build from source;
 > reproducible builds come from the committed `Cargo.lock`.

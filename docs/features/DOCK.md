@@ -2,7 +2,7 @@
 
 ← [Feature index](README.md) · [Architecture](../ARCHITECTURE.md)
 
-Dock the **whole Feraille window** to the **left or right** screen edge as an
+Dock the **whole Ferail window** to the **left or right** screen edge as an
 auto-hiding, always-on-top **drawer** — a Quake/iTerm-hotkey-style panel. When
 docked it floats above every other app and slides off-screen, leaving only a
 thin grab **handle** on that edge. Slamming the cursor into the docked screen
@@ -34,7 +34,7 @@ platforms' shell stubs no-op, so the toolbar menu silently does nothing there.
   the drawer stays open while the pointer is over it and tucks away when the
   pointer leaves both the drawer and the edge (hysteresis).
 - **Floats, doesn't steal focus.** Revealing slides the window in over your
-  current app without activating Feraille (`NSFloatingWindowLevel`); a click
+  current app without activating Ferail (`NSFloatingWindowLevel`); a click
   activates it. It also joins all Spaces and floats over full-screen apps
   (`NSWindowCollectionBehaviorCanJoinAllSpaces | FullScreenAuxiliary`), so it's
   reachable from any Space.
@@ -65,7 +65,7 @@ Three layers, matching the repo's boundaries:
   ~33 ms once settled, and runs **only while docked**. The window's `NSView` is
   captured as a `usize` (raw pointers aren't `Send`) so the async loop can move
   the window without a `Window` handle.
-- **`feraille-shell-mac` — the AppKit primitives.** `current_mouse_location`,
+- **`ferail-shell-mac` — the AppKit primitives.** `current_mouse_location`,
   `screen_visible_frame_for_window`, `window_frame`, `set_window_frame`
   (deliberately *not* animated — the host drives the slide so nothing spins the
   run loop, per the Prime Directive; size stays fixed so gpui never resizes its

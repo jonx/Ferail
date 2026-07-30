@@ -1,4 +1,4 @@
-# Claude Notes for Feraille
+# Claude Notes for Ferail
 
 This is the operating manual for AI or human edits in this repo.
 
@@ -10,16 +10,21 @@ Read first:
 
 ## Active Target
 
-`crates/feraille-gpui` is the active app. Run it with:
+`crates/ferail-gpui` is the active app. Run it with:
 
 ```sh
-cargo run --bin feraille-gpui
+cargo run --bin ferail-gpui
 ```
 
-Feraille has a Windows predecessor, `Ferail` — a separate, older codebase. If
-you have a local checkout of it, inspect that before redesigning a feature the
-user says worked better in the Windows version. Copy intent and lessons, not
-Win32-specific shape.
+Ferail has a Windows predecessor, `Ferail-Win32` — a separate, older codebase
+(local checkout: `../Ferail-win32`; same GitHub repo, `master` branch). If you
+have it, inspect it before redesigning a feature the user says worked better in
+the Windows version. Copy intent and lessons, not Win32-specific shape.
+
+**Name history:** this app was called *Feraille* until 2026-07-30, when it took
+over the predecessor's name and the predecessor became *Ferail-Win32*. Anything
+older than that commit — git history, branch names, external links — says
+Feraille and means this app.
 
 ## Prime Directive
 
@@ -53,22 +58,22 @@ GPUI entity/update boundaries, guarded by a generation counter and a cancel
 flag. If a result arrives after the user moved on, drop it.
 `Shell::load_path_for_tab` is the canonical example — copy its shape.
 
-Debug builds enforce this at runtime (`feraille_core::path_guard`): path
-resolution during render panics, and known-blocking `feraille-fs-native`
+Debug builds enforce this at runtime (`ferail_core::path_guard`): path
+resolution during render panics, and known-blocking `ferail-fs-native`
 entry points panic when called on the UI thread. **Never fix a guard panic
 by removing the guard** — move the work off-thread. When you add a new
 blocking entry point, add `assert_off_ui_thread` to it.
 
 ## Architecture Invariants
 
-- `feraille-core` owns platform-neutral domain types and command identity.
-- `feraille-fs-native` owns native filesystem work.
-- `feraille-shell-mac` owns AppKit/Cocoa integrations and does not paint UI.
-- `feraille-disk-usage` is pure model/layout logic.
-- `feraille-gpui` owns GPUI views, actions, task scheduling, and shell state.
+- `ferail-core` owns platform-neutral domain types and command identity.
+- `ferail-fs-native` owns native filesystem work.
+- `ferail-shell-mac` owns AppKit/Cocoa integrations and does not paint UI.
+- `ferail-disk-usage` is pure model/layout logic.
+- `ferail-gpui` owns GPUI views, actions, task scheduling, and shell state.
 - UI rendering reads cached state; it does not resolve paths or touch I/O.
 
-## Porting Rule From Ferail
+## Porting Rule From Ferail-Win32
 
 Translate by intent:
 
@@ -121,7 +126,7 @@ full picture. The rules:
   `N` is the size at `ui_scale == 1`), so they zoom with the text. A
   gpui-component `Icon` with no `with_size` already scales; if it needs an
   explicit `px` size, multiply by `ui_scale`.
-- The scales live in `feraille_design` (`TextTokens::BASE`, `IconTokens`).
+- The scales live in `ferail_design` (`TextTokens::BASE`, `IconTokens`).
   Change sizes there, in one place — not at call sites.
 - Size gpui-component widgets (Checkbox, Button, Switch, …) with `Sizable`
   (`.xsmall()` inline, `.small()` in dialogs) so their text matches the dense
@@ -145,12 +150,12 @@ in Architecture. If it is not done, put it in TODO.
 Before finishing code changes:
 
 - Run `cargo check` for the touched binary or workspace as appropriate.
-- Run `cargo clippy -p feraille-gpui` when the change touches that crate —
+- Run `cargo clippy -p ferail-gpui` when the change touches that crate —
   the `disallowed_methods` deny is part of Prime Directive enforcement; a
   hit means move the call off-thread, not silence the lint.
 - Run `cargo test` unless the change is docs-only.
 - For UI changes, render at least one screenshot with
-  `cargo run --bin feraille-gpui -- --screenshot ...` and inspect it.
+  `cargo run --bin ferail-gpui -- --screenshot ...` and inspect it.
 - Write screenshots to `screenshots/<feature>.png`, not `/tmp`.
   `screenshots/` is gitignored scratch — any image a committed document
   references (README, docs/) must live in `docs/images/` instead, or it

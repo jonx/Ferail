@@ -102,7 +102,7 @@ verify interactively.
 
 ## Feedback UX Policy
 
-Feraille's mutation feedback should stay calm. The UI itself is the confirmation
+Ferail's mutation feedback should stay calm. The UI itself is the confirmation
 for direct, visible actions; notifications are for attention, ambiguity, or
 failure.
 
@@ -136,11 +136,11 @@ Failures always surface. The notification should include:
 
 Examples:
 
-- `Rename failed: Permission denied (os error 13). Check permissions for the item or grant Feraille access in System Settings.`
+- `Rename failed: Permission denied (os error 13). Check permissions for the item or grant Ferail access in System Settings.`
 - `Search failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again.`
 - `Compress failed: ditto exited with 1: ... Free space on the destination volume or choose another destination.`
 
-Do not hide technical details. Feraille users are expected to be comfortable
+Do not hide technical details. Ferail users are expected to be comfortable
 with OS/tool errors; the app adds context and advice instead of replacing the
 real cause with vague friendly copy.
 
@@ -148,7 +148,7 @@ real cause with vague friendly copy.
 
 A copy/move no longer aborts the whole batch on the first item's failure, and
 no longer flattens the cause into a bare string. The engine
-(`feraille-fs-native/src/file_ops.rs`) classifies each per-item `io::Error`
+(`ferail-fs-native/src/file_ops.rs`) classifies each per-item `io::Error`
 into a **`FileOpError { kind, path, raw, os_code }`** (`FileOpErrorKind` =
 `PermissionDenied | Locked | NotFound | NoSpace | ReadOnly | NameTooLong |
 AlreadyExists | Other`), records it in **`OpOutcome.failed`**, and **keeps
@@ -202,7 +202,7 @@ The destructive ops now use the same elevate-on-permission-denial pattern as
 copy/move, so a root-owned app (e.g. `/Applications/iMovie.app`) is no longer a
 dead end — it pops an OS auth prompt instead, like Finder.
 
-- **`move_to_trash`** (`feraille-fs-native`) now types its failure: it keys off
+- **`move_to_trash`** (`ferail-fs-native`) now types its failure: it keys off
   the Cocoa error **code** `NSFileWriteNoPermissionError` (513), not the
   localized text, and returns `io::ErrorKind::PermissionDenied`. `on_move_to_trash`
   no longer bails on the first item — it trashes what it can and collects the
@@ -212,7 +212,7 @@ dead end — it pops an OS auth prompt instead, like Finder.
   detail). It re-runs *just the permission-denied items* via a new
   `ElevatedTrashOp` (`--elevated-trash` worker). Because the worker runs as
   **root**, whose own `trashItemAtURL` would target *root's* Trash, it instead
-  **moves each item into the user's `~/.Trash`** (`feraille_fs_native::home_trash_dir`)
+  **moves each item into the user's `~/.Trash`** (`ferail_fs_native::home_trash_dir`)
   under a collision-free name. The landed item is root-owned, so **Undo is not
   registered** for elevated trashes (restoring a root-owned item to a
   root-owned location would itself need elevation).
@@ -237,19 +237,19 @@ equivalent for later. Untagged = platform-neutral.
 
 | What | Where |
 |---|---|
-| `spawn_file_op(reload_path, op, label, cx)` — background op + reload broadcast, no progress/cancel/notify | `crates/feraille-gpui/src/shell.rs:1733` |
-| `TaskRegistry::begin_with_cancel(kind, label, flag)` / `update_transfer` / `end` / `end_failed`; foreground tasks keep status-bar priority | `crates/feraille-gpui/src/tasks.rs` |
-| Task panel renders active + recent tasks, transfer details, and cancel buttons backed by cooperative flags | `crates/feraille-gpui/src/task_panel.rs` |
-| gpui modal dialogs (`window.open_dialog` + Input) used by Rename / NewFolder | `crates/feraille-gpui/src/shell/file_ops.rs:446-559` |
-| Finder-style collision naming `pick_suffixed_name(parent, stem, ext, "copy")` | `crates/feraille-shell-mac/src/file_ops.rs:38` **[mac]** |
-| NSPasteboard URL read/write helpers for file copy, cut, and paste | `crates/feraille-shell-mac/src/lib.rs` **[mac]** |
-| Undo stack `UndoOp::{Rename, DeleteFolder, …}` + `apply_fs()` | `crates/feraille-gpui/src/shell.rs:72` |
-| Reload fan-out `broadcast_reload_for_process(process, paths, cx)` | `crates/feraille-gpui/src/shell.rs:1715` |
-| Cancel-aware walker precedent `recursive_size(root, cancel)` | `crates/feraille-fs-native/src/disk_usage_scanner.rs:246` |
+| `spawn_file_op(reload_path, op, label, cx)` — background op + reload broadcast, no progress/cancel/notify | `crates/ferail-gpui/src/shell.rs:1733` |
+| `TaskRegistry::begin_with_cancel(kind, label, flag)` / `update_transfer` / `end` / `end_failed`; foreground tasks keep status-bar priority | `crates/ferail-gpui/src/tasks.rs` |
+| Task panel renders active + recent tasks, transfer details, and cancel buttons backed by cooperative flags | `crates/ferail-gpui/src/task_panel.rs` |
+| gpui modal dialogs (`window.open_dialog` + Input) used by Rename / NewFolder | `crates/ferail-gpui/src/shell/file_ops.rs:446-559` |
+| Finder-style collision naming `pick_suffixed_name(parent, stem, ext, "copy")` | `crates/ferail-shell-mac/src/file_ops.rs:38` **[mac]** |
+| NSPasteboard URL read/write helpers for file copy, cut, and paste | `crates/ferail-shell-mac/src/lib.rs` **[mac]** |
+| Undo stack `UndoOp::{Rename, DeleteFolder, …}` + `apply_fs()` | `crates/ferail-gpui/src/shell.rs:72` |
+| Reload fan-out `broadcast_reload_for_process(process, paths, cx)` | `crates/ferail-gpui/src/shell.rs:1715` |
+| Cancel-aware walker precedent `recursive_size(root, cancel)` | `crates/ferail-fs-native/src/disk_usage_scanner.rs:246` |
 
 ## Architecture
 
-### The engine — `feraille-fs-native/src/file_ops.rs` (platform-neutral)
+### The engine — `ferail-fs-native/src/file_ops.rs` (platform-neutral)
 
 Pure, synchronous, worker-thread functions; the GPUI side owns
 scheduling. Mirrors the `recursive_size` contract: cooperative
@@ -327,7 +327,7 @@ Rules:
   must leave it untouched.
 - The engine never touches the UI, the pasteboard, SQLite, or AppKit.
 
-### GPUI worker — `spawn_transfer_op` (feraille-gpui)
+### GPUI worker — `spawn_transfer_op` (ferail-gpui)
 
 `spawn_file_op`'s grown-up sibling, living next to it in `shell.rs`:
 
@@ -405,7 +405,7 @@ render — same boundary as Quick Look.
 
 ## Iterations
 
-1. **Engine** — `feraille-fs-native/src/file_ops.rs`: plan/copy/move,
+1. **Engine** — `ferail-fs-native/src/file_ops.rs`: plan/copy/move,
    `same_volume`, `pick_available_name`, chunked progress, cancel;
    tempdir unit tests (copy tree, keep-both, replace, skip, cancel
    mid-batch leaves completed items, same-volume rename move,
@@ -424,7 +424,7 @@ render — same boundary as Quick Look.
 
 ## Verification
 
-Per iteration: `cargo test -p feraille-fs-native -p feraille-gpui`,
+Per iteration: `cargo test -p ferail-fs-native -p ferail-gpui`,
 clippy zero, workspace check. End-to-end manual script: copy a folder
 tree onto itself (keep-both names), paste 1 GB into another volume
 (progress strip + cancel mid-way), Cmd+Option+V across volumes,

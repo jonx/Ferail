@@ -1,6 +1,0 @@
-Version
-FailAt 21
-Stack 16000000
-SetEnv HOME "SYS:"
-C:Feraille --theme dark --width 780 --height 560
-Wait 999999

@@ -13,12 +13,12 @@ Audited against the Rust sources on 2026-06-20.
 ## Sources at a glance
 
 The app pulls icons from three places, resolved through one composite
-`AssetSource` ([assets.rs](../../crates/feraille-gpui/src/assets.rs)):
+`AssetSource` ([assets.rs](../../crates/ferail-gpui/src/assets.rs)):
 
 | Source | What it covers | Format | Resolves via |
 | --- | --- | --- | --- |
-| **macOS NSWorkspace** | Folder + volume artwork, custom Finder folder icons | Raster (RGBA→BGRA) | [`IconCache`](../../crates/feraille-gpui/src/icons.rs) → [`fetch_icon_rgba`](../../crates/feraille-fs-native/src/icons.rs) |
-| **Local SVG bundle** | File-type glyphs, sidebar Locations, most toolbar chrome | SVG (Lucide-derived, stroke 1.75) | [`LocalAssets`](../../crates/feraille-gpui/src/assets.rs) — `resources/icons/**` |
+| **macOS NSWorkspace** | Folder + volume artwork, custom Finder folder icons | Raster (RGBA→BGRA) | [`IconCache`](../../crates/ferail-gpui/src/icons.rs) → [`fetch_icon_rgba`](../../crates/ferail-fs-native/src/icons.rs) |
+| **Local SVG bundle** | File-type glyphs, sidebar Locations, most toolbar chrome | SVG (Lucide-derived, stroke 1.75) | [`LocalAssets`](../../crates/ferail-gpui/src/assets.rs) — `resources/icons/**` |
 | **Upstream `gpui-component-assets`** | Generic UI chrome (close, search, chevrons, etc.) | SVG (Lucide, stroke 2) | `gpui_component_assets::Assets` fallback |
 
 `FeraAssets::load` tries the local bundle first, then falls back to upstream, so
@@ -101,7 +101,7 @@ Match this exactly for any new local glyph:
 
 ## Platform neutrality
 
-Feraille ships on **macOS, Windows, and Linux from one icon set**. A glyph should
+Ferail ships on **macOS, Windows, and Linux from one icon set**. A glyph should
 read the same on all three — **avoid OS-specific metaphors** for generic
 commands:
 
@@ -116,7 +116,7 @@ commands:
 
 ## File-type row icons (file list + grid)
 
-Classified by [`file_type_icon`](../../crates/feraille-gpui/src/icons.rs) — pure,
+Classified by [`file_type_icon`](../../crates/ferail-gpui/src/icons.rs) — pure,
 no I/O. Extension and magic string pick a `FileTypeTint`; the tint picks a
 default glyph (some extensions override the glyph but keep the tint). Color comes
 from `tint_color` against the theme's chart palette.
@@ -145,7 +145,7 @@ from `tint_color` against the theme's chart palette.
 
 ## Sidebar Locations (well-known folders)
 
-Mapped in [`well_known_locations`](../../crates/feraille-fs-native/src/paths.rs).
+Mapped in [`well_known_locations`](../../crates/ferail-fs-native/src/paths.rs).
 All local, all Lucide-derived.
 
 | Location | Asset | Lucide origin |
@@ -167,7 +167,7 @@ All local, all Lucide-derived.
 > ~1:1 command→icon rule doesn't apply.
 
 Mounted **volumes** in the tree use `nav/drive.svg` (Lucide `hard-drive`) —
-[tree.rs](../../crates/feraille-gpui/src/tree.rs). **Network mounts**
+[tree.rs](../../crates/ferail-gpui/src/tree.rs). **Network mounts**
 (`is_local == false`) instead draw `network.svg` (Lucide `network`, from the
 spare upstream pool) so a remote share reads differently from a local disk
 (`TreeRowIcon::Network`). Removable/external volume rows (`is_removable`, i.e.
@@ -187,7 +187,7 @@ grey) — e.g. Desktop / Documents under "Desktop & Documents Folders"
 downloaded-vs-evicted distinction: **solid `nav/cloud-fill.svg`** = downloaded
 locally, **outline `nav/cloud.svg`** = a not-downloaded placeholder ("set up for
 cloud but not enabled"). State is computed off-thread by
-`feraille_fs_native::cloud_state` — `path_is_cloud_synced`
+`ferail_fs_native::cloud_state` — `path_is_cloud_synced`
 (`~/Library/Mobile Documents/` prefix **or** `NSURLIsUbiquitousItemKey`) gates
 membership, then the `SF_DATALESS` stat flag picks downloaded vs. placeholder
 (both read via `lstat`, never materializing the file) — and cached in
@@ -228,7 +228,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Task-panel dismiss | `icons/close.svg` ↑ | Lucide | task_panel.rs:101 |
 | Tab close | `icons/close.svg` ↑ | Lucide — shared "close" chrome glyph (replaced a literal `"x"` text char) | render.rs `tabstrip` |
 
-### Preview-pane actions ([render.rs](../../crates/feraille-gpui/src/shell/render.rs))
+### Preview-pane actions ([render.rs](../../crates/ferail-gpui/src/shell/render.rs))
 
 | Command | Icon path | Origin |
 | --- | --- | --- |
@@ -239,7 +239,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 The preview pane also draws a plain-div **resize grip** (rounded pill) under
 the thumbnail — pure chrome, not an icon asset.
 
-### Archive workbench ([archive.rs](../../crates/feraille-gpui/src/archive.rs) + the Name cell in [file_list.rs](../../crates/feraille-gpui/src/file_list.rs))
+### Archive workbench ([archive.rs](../../crates/ferail-gpui/src/archive.rs) + the Name cell in [file_list.rs](../../crates/ferail-gpui/src/file_list.rs))
 
 The workbench renders through the normal file table, so it inherits that
 table's icon set. The one addition is the tree disclosure caret on folder rows.
@@ -254,7 +254,7 @@ table's icon set. The one addition is the tree disclosure caret on folder rows.
 > the command→icon mapping stays ~1:1. A disclosure caret is a state
 > affordance, not a command.
 
-### Viewer window ([viewer/window.rs](../../crates/feraille-gpui/src/viewer/window.rs))
+### Viewer window ([viewer/window.rs](../../crates/ferail-gpui/src/viewer/window.rs))
 
 | Command | Icon path | Origin |
 | --- | --- | --- |
@@ -269,7 +269,7 @@ table's icon set. The one addition is the tree disclosure caret on folder rows.
 | Overflow menu (narrow window) | `icons/ellipsis.svg` ↑ | Lucide — same "More" affordance as the shell toolbar's overflow menu (render.rs:1668), deliberately shared: one glyph for the one concept. Appears only when the width-tiered toolbar has folded clusters away. |
 | Fullscreen | `icons/maximize.svg` ↑ | Lucide |
 
-### Disk Usage window ([disk_usage.rs](../../crates/feraille-gpui/src/disk_usage.rs))
+### Disk Usage window ([disk_usage.rs](../../crates/ferail-gpui/src/disk_usage.rs))
 
 | Command | Icon path | Origin |
 | --- | --- | --- |
@@ -280,7 +280,7 @@ table's icon set. The one addition is the tree disclosure caret on folder rows.
 | Show/hide largest-files panel | `icons/panel-right-open.svg` / `panel-right-close.svg` ↑ | Lucide |
 | Scan packages toggle | `icons/nav/package.svg` | Lucide `package` |
 
-### Settings pages ([settings.rs](../../crates/feraille-gpui/src/settings.rs))
+### Settings pages ([settings.rs](../../crates/ferail-gpui/src/settings.rs))
 
 | Page | Icon path | Origin |
 | --- | --- | --- |
@@ -315,7 +315,7 @@ the catch-all leading glyph.
 ## Favorite icon picker
 
 Right-click a Favorites row → **Change Icon…** opens the icon-picker window
-([favorite_icon_picker.rs](../../crates/feraille-gpui/src/favorite_icon_picker.rs)):
+([favorite_icon_picker.rs](../../crates/ferail-gpui/src/favorite_icon_picker.rs)):
 a scrollable grid of the **flat `icons/<name>.svg` library** (the upstream Lucide
 set plus our top-level adds — ~102 glyphs), enumerated live from the asset
 bundle. Picking one stores `FavoriteIcon::Lucide(name)` on the favorite (resolved

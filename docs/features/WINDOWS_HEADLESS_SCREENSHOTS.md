@@ -1,8 +1,8 @@
 # Windows Headless Screenshots - No-Flash Plan
 
-Feraille's screenshot CLI should be able to render Windows UI states to PNGs
+Ferail's screenshot CLI should be able to render Windows UI states to PNGs
 without ever showing a real window. The desired behavior is the same as macOS:
-`feraille-gpui --screenshot ...` opens a GPUI window with `show: false` and
+`ferail-gpui --screenshot ...` opens a GPUI window with `show: false` and
 `focus: false`, waits for the requested state to settle, captures the rendered
 framebuffer, writes the PNG, and exits. There should be no taskbar button, no
 Alt-Tab entry, and no visible window flash.
@@ -10,7 +10,7 @@ Alt-Tab entry, and no visible window flash.
 ## Current shape
 
 The screenshot harness is in
-[`screenshot.rs`](../../crates/feraille-gpui/src/screenshot.rs). Its primary
+[`screenshot.rs`](../../crates/ferail-gpui/src/screenshot.rs). Its primary
 capture path calls `Window::render_to_image()` on an invisible GPUI window.
 That is the right architecture for no-flash screenshots because it samples the
 renderer output instead of asking Windows to capture an onscreen HWND.
@@ -21,7 +21,7 @@ Windows support depends on a GPUI backend patch:
   adds `gpui_windows` D3D11 staging-texture readback.
 - Root [`Cargo.toml`](../../Cargo.toml) currently wires this through a local
   `[patch."https://github.com/zed-industries/zed"]` path to
-  `../zed-feraille-patch`.
+  `../zed-ferail-patch`.
 - [`docs/GPUI-UPSTREAM.md`](../GPUI-UPSTREAM.md) tracks the upstream issue and
   patch details.
 
@@ -31,7 +31,7 @@ not a portable final state for the branch.
 ## Work to finish
 
 1. Move the GPUI Windows `render_to_image` patch out of a local sibling path.
-   Prefer an upstream Zed PR. If that is not ready, use a Feraille-owned fork
+   Prefer an upstream Zed PR. If that is not ready, use a Ferail-owned fork
    pinned by `git` + `rev` so a fresh checkout resolves without local files.
 
 2. Keep `gpui_platform`'s `test-support` feature connected to
@@ -39,7 +39,7 @@ not a portable final state for the branch.
    same support feature used by the macOS path.
 
 3. Keep the screenshot window hidden in
-   [`screenshot.rs`](../../crates/feraille-gpui/src/screenshot.rs):
+   [`screenshot.rs`](../../crates/ferail-gpui/src/screenshot.rs):
    `WindowOptions { show: false, focus: false, ... }`. Do not show, move, or
    minimize the window in the primary capture path.
 
@@ -48,21 +48,21 @@ not a portable final state for the branch.
    texture, map CPU-readable pixels, convert BGRA to RGBA, and return an
    `image::RgbaImage`.
 
-5. Treat [`capture_window_rgba`](../../crates/feraille-shell-win32/src/capture.rs)
+5. Treat [`capture_window_rgba`](../../crates/ferail-shell-win32/src/capture.rs)
    and `PrintWindow` as emergency fallback/debugging code only. `PrintWindow`
    captures HWND contents and is tied to compositor/window visibility behavior;
    it can require showing or moving a window and is exactly the path that risks
    the visible flash.
 
 6. Once the upstream/fork dependency is in place, remove or update comments that
-   describe the local `../zed-feraille-patch` setup as required. The branch
+   describe the local `../zed-ferail-patch` setup as required. The branch
    should document one reproducible dependency path.
 
 ## Acceptance checks
 
 Run these on a real Windows machine after the dependency wiring is portable:
 
-- Start `feraille-gpui --screenshot screenshots\win-baseline.png` from a clean
+- Start `ferail-gpui --screenshot screenshots\win-baseline.png` from a clean
   checkout with no local sibling GPUI clone.
 - Confirm no window appears, no taskbar button is created, and focus stays with
   the launching terminal/editor.
