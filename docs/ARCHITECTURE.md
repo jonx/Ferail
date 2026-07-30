@@ -207,7 +207,10 @@ The main shell is split into resizable panels:
 The sidebar has three concepts:
 
 - **Favorites:** flat shortcuts such as Home, Applications, Desktop,
-  Documents, Downloads, Trash, Movies, Music, and Pictures.
+  Documents, Downloads, Trash, Movies, Music, and Pictures. Applications is
+  the system-wide `/Applications`, matching Finder's sidebar; the per-user
+  `~/Applications` (PWA shims, per-user installs) gets its own "User
+  Applications" row directly below, and only when it is non-empty.
 - **Browse:** a single expandable Home tree.
 - **Volumes:** mounted volumes with capacity bars and drive icons.
 

@@ -152,6 +152,7 @@ All local, all Lucide-derived.
 | --- | --- | --- |
 | Home | `nav/home.svg` | `house` |
 | Applications | `nav/apps.svg` | Lucide `layout-dashboard` |
+| User Applications | `nav/apps.svg` | Lucide `layout-dashboard` |
 | Desktop | `nav/desktop.svg` | `monitor` |
 | Documents | `nav/documents.svg` | `file-text` |
 | Downloads | `nav/downloads.svg` | `download` |
@@ -159,6 +160,11 @@ All local, all Lucide-derived.
 | Movies / Videos | `nav/movies.svg` | `film` |
 | Music | `nav/music.svg` | `music` |
 | Pictures | `nav/pictures.svg` | `image` |
+
+> The two Applications rows (`/Applications` and, when it holds anything,
+> `~/Applications`) share `nav/apps.svg` on purpose: same *kind* of folder, told
+> apart by the label. This is a location glyph, not a command glyph, so the
+> ~1:1 command→icon rule doesn't apply.
 
 Mounted **volumes** in the tree use `nav/drive.svg` (Lucide `hard-drive`) —
 [tree.rs](../../crates/feraille-gpui/src/tree.rs). **Network mounts**

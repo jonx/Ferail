@@ -257,6 +257,20 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         .collect()
 }
 
+/// `true` when `dir` exists and holds at least one non-dotfile entry.
+///
+/// Used to decide whether an optional sidebar row is worth drawing at all, so
+/// a location that resolves to an empty-looking folder can be dropped instead
+/// of misleading the user. Reads one directory and short-circuits on the first
+/// hit, and is only ever reached from [`well_known_locations_for`] — i.e. the
+/// startup / settings-change resolve, never render.
+#[cfg(target_os = "macos")]
+fn dir_has_visible_entry(dir: &std::path::Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|mut entries| {
+        entries.any(|e| e.is_ok_and(|e| !e.file_name().as_encoded_bytes().starts_with(b".")))
+    })
+}
+
 #[cfg(all(not(windows), not(target_os = "aros")))]
 pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocation> {
     let home = home_dir();
@@ -265,7 +279,11 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         {
             &[
                 ("Home", None, "icons/nav/home.svg"),
-                ("Applications", Some("Applications"), "icons/nav/apps.svg"),
+                // Absolute on purpose: Finder's sidebar "Applications" is the
+                // system-wide `/Applications`, not `~/Applications`. The
+                // per-user folder is surfaced separately below when it holds
+                // anything.
+                ("Applications", Some("/Applications"), "icons/nav/apps.svg"),
                 ("Desktop", Some("Desktop"), "icons/nav/desktop.svg"),
                 ("Documents", Some("Documents"), "icons/nav/documents.svg"),
                 ("Downloads", Some("Downloads"), "icons/nav/downloads.svg"),
@@ -292,10 +310,38 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         .iter()
         .map(|&(label, sub, icon)| WellKnownLocation {
             label,
+            // An *absolute* `sub` (macOS `/Applications`) deliberately escapes
+            // the home base — `Path::join` discards the base when the joined
+            // component is absolute. Do not "fix" it to a relative name.
             path: sub.map_or_else(|| home.clone(), |s| home.join(s)),
             icon,
         })
         .collect();
+
+    // `~/Applications` (macOS): a genuinely separate app folder that Finder's
+    // sidebar hides — per-user installs plus the Chrome/Edge PWA shims. Shown
+    // right under the system row, but only when it holds something the user
+    // would recognise: on many Macs it is absent, or contains nothing but
+    // `.localized` and would be a junk row. Reads one directory, on the same
+    // startup / settings-change path as the iCloud probe below — never render.
+    #[cfg(target_os = "macos")]
+    {
+        let user_apps = home.join("Applications");
+        if dir_has_visible_entry(&user_apps) {
+            let at = locations
+                .iter()
+                .position(|l| l.label == "Applications")
+                .map_or(locations.len(), |i| i + 1);
+            locations.insert(
+                at,
+                WellKnownLocation {
+                    label: "User Applications",
+                    path: user_apps,
+                    icon: "icons/nav/apps.svg",
+                },
+            );
+        }
+    }
 
     // iCloud Drive (macOS): the ubiquity container root. Only surfaced
     // when it actually exists — a user with iCloud Drive disabled has no
@@ -550,6 +596,42 @@ mod leaf_tests {
         assert!(validate_leaf("data ").is_err());
         assert!(validate_leaf(".").is_err());
         assert!(validate_leaf("..").is_err());
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod mac_tests {
+    use super::*;
+
+    /// The sidebar's "Applications" must be the system-wide `/Applications`,
+    /// like Finder's — not `~/Applications`, which on most Macs holds only PWA
+    /// shims and would make the row look near-empty. Regression guard: the row
+    /// is spelled as an absolute join, which reads like a typo.
+    #[test]
+    fn applications_is_the_system_folder() {
+        let locs = well_known_locations();
+        let apps = locs
+            .iter()
+            .find(|l| l.label == "Applications")
+            .expect("Applications location present");
+        assert_eq!(apps.path, PathBuf::from("/Applications"));
+    }
+
+    /// `~/Applications` gets its own row, directly after the system one, and
+    /// only when it holds a visible entry. Skipped on a machine that has no
+    /// such folder (or an empty one) — there the absence *is* the contract.
+    #[test]
+    fn user_applications_row_is_optional_and_adjacent() {
+        let locs = well_known_locations();
+        let Some(at) = locs.iter().position(|l| l.label == "User Applications") else {
+            assert!(
+                !dir_has_visible_entry(&home_dir().join("Applications")),
+                "a non-empty ~/Applications must produce a row"
+            );
+            return;
+        };
+        assert_eq!(locs[at].path, home_dir().join("Applications"));
+        assert_eq!(locs[at - 1].label, "Applications");
     }
 }
 
