@@ -77,7 +77,7 @@ brew install mpv
 ```
 
 Then build with `--features mpv` and select mpv under **Settings → Plugins** (see
-[step 6](#6-optional-enable-the-mpv-video-backend)).
+[step 7](#7-optional-enable-the-mpv-video-backend)).
 
 ---
 
@@ -175,7 +175,57 @@ Caveats:
 
 ---
 
-## 6. Optional: enable the mpv video backend
+## 6. Windows: a distributable build
+
+`cargo run` is all you need for development — unlike macOS, Windows gates no
+folders behind a signed-bundle identity, so there is no permissions reason to
+package. Packaging is purely for handing the app to someone else:
+
+```pwsh
+./scripts/package-win.ps1
+```
+
+That builds release binaries, stages them with the licence files, and writes
+`target/package/Ferail-<version>-win-x64.zip`:
+
+```text
+Ferail/
+├── Ferail.exe          the app
+├── cli/ferail.exe      the `ferail magic` / `ferail du` CLI
+└── licenses/           MIT, Apache-2.0, third-party notices
+```
+
+The CLI sits in `cli/` rather than beside the app on purpose: Windows paths are
+**case-insensitive**, so `ferail.exe` next to `Ferail.exe` is one file and the
+second one written silently wins. The script asserts the two staged binaries
+are distinct so that cannot regress.
+
+Install [Inno Setup](https://jrsoftware.org/isinfo.php)
+(`winget install JRSoftware.InnoSetup`) and it also emits a `…-setup.exe`
+installer with a Start Menu entry and an uninstaller.
+
+### Signing
+
+macOS has notarization; Windows has **Authenticode + SmartScreen reputation**.
+An unsigned build works perfectly, but anyone who *downloads* one meets a
+"Windows protected your PC" interstitial, and reputation accrues to the
+certificate over time — so a public release wants signing from the first
+release, not the third:
+
+```pwsh
+./scripts/package-win.ps1 -SignCert C:\certs\ferail.pfx -SignPassword ...
+# or, for a cert already in the user's store, pass its SHA1 thumbprint:
+./scripts/package-win.ps1 -SignCert 9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B
+```
+
+`$env:FERAIL_SIGN_CERT` / `$env:FERAIL_SIGN_PASSWORD` work too, which is the
+shape CI wants. Both the payload and the installer get signed, and the script
+prints a `Get-AuthenticodeSignature` summary at the end. `signtool.exe` comes
+from the Windows SDK; the script finds it without a Developer Prompt.
+
+---
+
+## 7. Optional: enable the mpv video backend
 
 With libmpv installed ([step 1](#optional-libmpv-for-the-any-format-video-player)):
 
@@ -189,7 +239,7 @@ container and unlocks live grading + the chroma-keyed transparent video windows.
 
 ---
 
-## 7. Command-line tools
+## 8. Command-line tools
 
 Ferail ships a few non-GUI utilities:
 
