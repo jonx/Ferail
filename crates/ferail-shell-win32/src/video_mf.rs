@@ -44,7 +44,7 @@ use windows::Win32::Media::MediaFoundation::{
     MF_MEDIA_ENGINE_DXGI_MANAGER, MF_MEDIA_ENGINE_EVENT_CANPLAY, MF_MEDIA_ENGINE_EVENT_ENDED,
     MF_MEDIA_ENGINE_EVENT_ERROR, MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT,
 };
-use windows::Win32::Foundation::{RECT, RPC_E_CHANGED_MODE};
+use windows::Win32::Foundation::{BOOL, RECT, RPC_E_CHANGED_MODE};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED,
@@ -199,10 +199,7 @@ pub fn video_overlay_show(path: &Path, on_ended: Box<dyn Fn() + 'static + Send>)
     if !ensure_mf_started() {
         return 0;
     }
-    match try_show(path, on_ended) {
-        Some(id) => id,
-        None => 0,
-    }
+    try_show(path, on_ended).unwrap_or_default()
 }
 
 /// Log a `windows::core::Result` failure and convert to `None` for the `?`
@@ -478,7 +475,7 @@ pub fn video_overlay_set_muted(id: u64, muted: bool) {
     PLAYERS.with(|p| {
         if let Some(player) = p.borrow().get(&id) {
             unsafe {
-                let _ = player.engine.SetMuted(muted.into());
+                let _ = player.engine.SetMuted(BOOL::from(muted));
             }
         }
     });

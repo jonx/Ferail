@@ -50,8 +50,8 @@ pub fn capture_window_rgba(hwnd_raw: isize) -> Result<(u32, u32, Vec<u8>), Strin
     unsafe {
         GetClientRect(hwnd, &mut rect).map_err(|e| format!("GetClientRect failed: {e}"))?;
     }
-    let width = (rect.right - rect.left).max(1) as i32;
-    let height = (rect.bottom - rect.top).max(1) as i32;
+    let width = (rect.right - rect.left).max(1);
+    let height = (rect.bottom - rect.top).max(1);
     if width <= 0 || height <= 0 {
         return Err(format!("zero-sized client rect: {width}x{height}"));
     }
@@ -144,14 +144,56 @@ pub fn capture_window_rgba(hwnd_raw: isize) -> Result<(u32, u32, Vec<u8>), Strin
     Ok((width as u32, height as u32, rgba))
 }
 
+/// Move a window far off-screen, strip it from the taskbar / Alt-Tab, and show
+/// it **without activating**, so its DirectComposition swap chain presents at
+/// least one frame for [`capture_window_rgba`] to read back.
+///
+/// This is the fallback the headless `--screenshot` harness needs on a stock
+/// `gpui_windows`, which has no `render_to_image` (docs/GPUI-UPSTREAM.md item
+/// 7): the harness creates the window with `show: false`, and a never-shown
+/// window's swap chain never presents, so PrintWindow would capture nothing.
+/// The window IS technically shown here — but at (-32000, -32000), with no
+/// taskbar button and no focus steal, so nothing is visible to the user.
+///
+/// Best-effort — failures are silent, and the caller reports the eventual
+/// capture error instead.
+pub fn present_offscreen_for_capture(hwnd_raw: isize) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, ShowWindow, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    };
+    if hwnd_raw == 0 {
+        return;
+    }
+    let hwnd = HWND(hwnd_raw as *mut _);
+    // Order matters: ex-style first (so the taskbar never sees it), then the
+    // off-screen move, then the show.
+    hide_window_for_capture(hwnd_raw);
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            OFFSCREEN_ORIGIN,
+            OFFSCREEN_ORIGIN,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    }
+}
+
+/// Far enough off every plausible virtual-desktop arrangement that the window
+/// cannot appear on any monitor, while staying inside the 16-bit coordinate
+/// range legacy `SetWindowPos` paths still assume.
+const OFFSCREEN_ORIGIN: i32 = -32000;
+
 /// Make a window invisible to the user while keeping it *shown* (so its
 /// DirectComposition swap chain still presents a frame for
-/// [`capture_window_rgba`]). Used by the headless `--screenshot` harness: the
-/// window is already positioned far off-screen, and this additionally removes
-/// its taskbar / Alt-Tab button (`WS_EX_TOOLWINDOW`, clearing
-/// `WS_EX_APPWINDOW`) and marks it no-activate so it can't steal focus. This
-/// is the closest we get to macOS's hidden offscreen render until
-/// `gpui_windows` grows a `render_to_image` (docs/GPUI-UPSTREAM.md item 7).
+/// [`capture_window_rgba`]). Removes its taskbar / Alt-Tab button
+/// (`WS_EX_TOOLWINDOW`, clearing `WS_EX_APPWINDOW`) and marks it no-activate so
+/// it can't steal focus. Positioning is the caller's job — see
+/// [`present_offscreen_for_capture`] for the full sequence.
 /// Best-effort — failures are silent.
 pub fn hide_window_for_capture(hwnd_raw: isize) {
     use windows::Win32::Foundation::HWND;

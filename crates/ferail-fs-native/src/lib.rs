@@ -514,7 +514,7 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
     }
 
     fn io_other(msg: impl Into<String>) -> std::io::Error {
-        std::io::Error::new(std::io::ErrorKind::Other, msg.into())
+        std::io::Error::other(msg.into())
     }
 
     fn io_from_windows(context: &str, err: windows::core::Error) -> std::io::Error {

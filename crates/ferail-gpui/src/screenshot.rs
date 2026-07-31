@@ -625,7 +625,9 @@ pub fn run(args: Args) -> Result<()> {
                 });
             }
 
-            let img = capture_window(&handle, cx).expect("screenshot capture failed");
+            let img = capture_window(&handle, cx)
+                .await
+                .expect("screenshot capture failed");
 
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -644,16 +646,74 @@ pub fn run(args: Args) -> Result<()> {
 // Headless capture — unified across platforms.
 // ---------------------------------------------------------------------------
 //
-// Both platforms go through gpui's `Window::render_to_image`, which samples an
-// offscreen render target with the window hidden: macOS via gpui_macos's
-// MetalRenderer, Windows via gpui_windows's D3D11 staging-texture readback (our
-// render_to_image patch — docs/GPUI-UPSTREAM.md item 7). No window is ever
-// shown, so there is no flash and nothing to capture off-screen.
+// The preferred path on every platform is gpui's `Window::render_to_image`,
+// which samples an offscreen render target with the window hidden: macOS via
+// gpui_macos's MetalRenderer, Windows via gpui_windows's D3D11 staging-texture
+// readback. Nothing is ever shown, so there is no flash.
+//
+// But `render_to_image` on Windows only exists with our local patch applied
+// (docs/GPUI-UPSTREAM.md item 7); a stock `gpui_windows` returns
+// `Err("render_to_image not implemented for this platform")` at runtime, which
+// used to abort `--screenshot` outright. Since CLAUDE.md requires a rendered
+// screenshot for UI changes, that made UI work unverifiable on Windows.
+//
+// So Windows falls back to `PrintWindow` (ferail_shell_win32::capture.rs). That
+// path needs the window genuinely shown — a never-shown DirectComposition swap
+// chain presents no frame — so the fallback parks it at (-32000, -32000) with
+// no taskbar button and no focus steal before reading it back.
 
-fn capture_window(handle: &AnyWindowHandle, cx: &mut AsyncApp) -> Result<image::RgbaImage> {
-    cx.update_window(*handle, |_, window, _| window.render_to_image())
+async fn capture_window(handle: &AnyWindowHandle, cx: &mut AsyncApp) -> Result<image::RgbaImage> {
+    let rendered = cx
+        .update_window(*handle, |_, window, _| window.render_to_image())
+        .map_err(|e| anyhow::anyhow!("update_window failed: {e}"))?;
+
+    match rendered {
+        Ok(img) => Ok(img),
+        #[cfg(windows)]
+        Err(primary) => capture_window_printwindow(handle, cx).await.map_err(|fallback| {
+            anyhow::anyhow!(
+                "render_to_image failed: {primary}; PrintWindow fallback also failed: {fallback}"
+            )
+        }),
+        #[cfg(not(windows))]
+        Err(e) => Err(anyhow::anyhow!("render_to_image failed: {e}")),
+    }
+}
+
+/// Windows fallback for [`capture_window`] — see the comment above.
+#[cfg(windows)]
+async fn capture_window_printwindow(
+    handle: &AnyWindowHandle,
+    cx: &mut AsyncApp,
+) -> Result<image::RgbaImage> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let hwnd = cx
+        .update_window(*handle, |_, window, _| {
+            // UFCS: gpui::Window has an inherent `window_handle()` (the gpui
+            // entity handle) that shadows the raw-window-handle trait method.
+            match HasWindowHandle::window_handle(window).ok()?.as_raw() {
+                RawWindowHandle::Win32(h) => Some(isize::from(h.hwnd)),
+                _ => None,
+            }
+        })
         .map_err(|e| anyhow::anyhow!("update_window failed: {e}"))?
-        .map_err(|e| anyhow::anyhow!("render_to_image failed: {e}"))
+        .ok_or_else(|| anyhow::anyhow!("no Win32 window handle"))?;
+
+    crate::platform_shell::present_offscreen_for_capture(hwnd);
+
+    // Let the compositor present at least one frame at the new position before
+    // reading the front buffer back. This has to yield rather than block: the
+    // window was only just shown, and a `thread::sleep` here would stall the
+    // very message pump that has to service the paint we are waiting for.
+    cx.background_executor()
+        .timer(std::time::Duration::from_millis(400))
+        .await;
+
+    let (w, h, rgba) = crate::platform_shell::capture_window_rgba(hwnd)
+        .map_err(|e| anyhow::anyhow!("capture_window_rgba: {e}"))?;
+    image::RgbaImage::from_raw(w, h, rgba)
+        .ok_or_else(|| anyhow::anyhow!("capture buffer {w}x{h} does not match its length"))
 }
 
 // ---------------------------------------------------------------------------

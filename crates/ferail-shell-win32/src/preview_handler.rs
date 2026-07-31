@@ -292,12 +292,12 @@ fn lookup_handler_clsid(ext_lower: &str) -> Option<GUID> {
     if debug() {
         eprintln!("preview_handler: clsid = {} (raw={:?})", cleaned, raw);
     }
-    // GUID::try_from panics on bad input rather than returning Err in
-    // windows-0.58. Catch the panic so a malformed registry value
-    // doesn't kill the worker thread.
-    std::panic::catch_unwind(|| GUID::try_from(cleaned).ok())
-        .ok()
-        .flatten()
+    // windows-0.58 only offers the *infallible* `GUID: From<&str>`, which
+    // panics on a malformed string (the `TryFrom` that used to be called here
+    // was just the blanket impl over it, with `Error = Infallible`, so it could
+    // never actually report the failure it appeared to). Catching the panic is
+    // therefore the only way a bad registry value doesn't kill the worker.
+    std::panic::catch_unwind(|| GUID::from(cleaned)).ok()
 }
 
 unsafe fn init_with_file(handler: &IPreviewHandler, path: &Path) -> windows::core::Result<()> {
@@ -502,15 +502,16 @@ unsafe fn capture_window(hwnd: HWND, w: u32, h: u32) -> Option<(Vec<u8>, u32, u3
 
 fn make_top_down_dib(w: u32, h: u32) -> windows::Win32::Graphics::Gdi::BITMAPINFO {
     use windows::Win32::Graphics::Gdi::{BITMAPINFO, BITMAPINFOHEADER, BI_RGB};
-    let mut bi = BITMAPINFO::default();
-    bi.bmiHeader = BITMAPINFOHEADER {
-        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-        biWidth: w as i32,
-        biHeight: -(h as i32), // top-down
-        biPlanes: 1,
-        biBitCount: 32,
-        biCompression: BI_RGB.0 as u32,
+    BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w as i32,
+            biHeight: -(h as i32), // top-down
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
         ..Default::default()
-    };
-    bi
+    }
 }

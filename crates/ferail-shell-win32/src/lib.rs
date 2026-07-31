@@ -29,7 +29,7 @@ mod preview_handler;
 #[cfg(windows)]
 mod capture;
 #[cfg(windows)]
-pub use capture::{capture_window_rgba, hide_window_for_capture};
+pub use capture::{capture_window_rgba, hide_window_for_capture, present_offscreen_for_capture};
 
 // Native video provider (Media Foundation IMFMediaEngine) behind the
 // windowless frame-pull contract. macOS uses AVFoundation; this is its
@@ -1619,7 +1619,7 @@ pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static + Send>)
         .name("ferail-theme-observer".into())
         .spawn(move || unsafe {
             let class_name: Vec<u16> = "FerailThemeObserver\0".encode_utf16().collect();
-            let mut wc = WNDCLASSEXW {
+            let wc = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
                 lpfnWndProc: Some(wnd_proc),
                 hInstance: HINSTANCE::default(),
@@ -1627,7 +1627,7 @@ pub fn start_system_theme_observer(callback: Box<dyn Fn(bool) + 'static + Send>)
                 ..Default::default()
             };
             // Idempotent register — ignore "class already exists".
-            let _ = RegisterClassExW(&mut wc);
+            let _ = RegisterClassExW(&wc);
 
             let hwnd = match CreateWindowExW(
                 WINDOW_EX_STYLE(0),
@@ -2218,10 +2218,53 @@ pub fn video_overlay_step(id: u64, frames: i64) {
 #[cfg(not(windows))]
 pub fn video_overlay_step(_id: u64, _frames: i64) {}
 
+/// Keep a window above every other app's, or stop doing so — the twin of
+/// macOS's `NSWindow.level = .floating`. Powers the viewer's **Stay on Top**.
+///
+/// The pointer is whatever the platform's raw window handle carries: an
+/// `NSView*` on macOS, an `HWND` here (both are pointers, so the shared
+/// `platform_shell` signature holds).
+///
+/// `HWND_TOPMOST` / `HWND_NOTOPMOST` set and clear `WS_EX_TOPMOST` for us;
+/// `SWP_NOMOVE | SWP_NOSIZE` means only the z-band changes, and
+/// `SWP_NOACTIVATE` keeps a background viewer from stealing focus just because
+/// the user ticked a checkbox.
+#[cfg(windows)]
+pub fn set_window_floating(hwnd_raw: *mut std::ffi::c_void, floating: bool) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+    if hwnd_raw.is_null() {
+        return;
+    }
+    let hwnd = HWND(hwnd_raw);
+    let band = if floating { HWND_TOPMOST } else { HWND_NOTOPMOST };
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            band,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+#[cfg(not(windows))]
 pub fn set_window_floating(_ns_view: *mut std::ffi::c_void, _floating: bool) {}
 
-// Window docking primitives (macOS-only feature; no-op stubs here so the
-// shared `platform_shell::*` surface compiles. See docs/features/DOCK.md).
+// Window docking primitives — still macOS-only (docs/features/DOCK.md). These
+// stay no-op stubs deliberately: `dock.rs` computes frames in macOS *global
+// screen space* (origin bottom-left, y-up), so a Windows port is not "fill in
+// SetWindowPos" — it needs that coordinate space mapped onto Win32's top-left,
+// y-down monitor rects, and a docked drawer cannot be verified headlessly.
+// Implementing them blind is exactly how the `SetMuted` breakage happened
+// (windows-port.md §2.2). `Shell::set_dock` early-returns on Windows because
+// `window_ns_view` yields `None` there, so nothing half-works in the meantime;
+// the plan is recorded in TODO.md § Cross-Platform.
 pub fn current_mouse_location() -> (f64, f64) {
     (0.0, 0.0)
 }

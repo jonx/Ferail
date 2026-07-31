@@ -3541,15 +3541,18 @@ impl ViewerWindow {
     }
 }
 
-/// gpui's window content NSView, for mounting the native video
-/// overlay. `None` on non-AppKit platforms (the win32 overlay stub
-/// ignores it anyway).
+/// The window's native handle, as `platform_shell` window calls (today:
+/// **Stay on Top**) expect it — an `NSView*` on macOS, an `HWND` on Windows.
+/// Both are pointers, so one signature serves both.
+///
+/// `None` on any other backend, where the shell stubs no-op anyway.
 fn content_ns_view(window: &Window) -> Option<*mut std::ffi::c_void> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     // UFCS: gpui::Window has an inherent `window_handle()` (the gpui
     // entity handle) that shadows the raw-window-handle trait method.
     match HasWindowHandle::window_handle(window).ok()?.as_raw() {
         RawWindowHandle::AppKit(h) => Some(h.ns_view.as_ptr()),
+        RawWindowHandle::Win32(h) => Some(isize::from(h.hwnd) as *mut std::ffi::c_void),
         _ => None,
     }
 }

@@ -809,6 +809,10 @@ fn zip_entries_carry_real_modification_times() {
     );
     // Pin the arithmetic itself against a known value: the DOS epoch
     // (1980-01-01T00:00:00Z) is 315_532_800 in unix seconds.
+    // Grouped by the MS-DOS date field layout (7-bit year-since-1980, 4-bit
+    // month, 5-bit day), not in even nibbles — the field boundaries are the
+    // point of the literal, so the "unusual grouping" here is deliberate.
+    #[allow(clippy::unusual_byte_groupings)]
     let dos_epoch = zip::DateTime::try_from_msdos(0b0000000_0001_00001, 0).unwrap();
     assert_eq!(super::zip_codec::dos_datetime_to_unix(dos_epoch), Some(315_532_800));
 }
