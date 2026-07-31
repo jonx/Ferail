@@ -410,8 +410,17 @@ fallback). Remaining is the UX the system explorers have and we don't:
   behavior-breaking stubs (CF_HDROP clipboard, `WM_DEVICECHANGE` volume
   observer, text-naming modal) all shipped.
 - **Windows release-readiness follow-ups** (from the 2026-07-31 pass —
-  windows-port.md §2.2; the build fix, per-OS CI, screenshot fallback, clippy
-  and packaging all shipped there):
+  windows-port.md §2.2; the build fix, screenshot fallback, clippy and
+  packaging all shipped there):
+  - **Restore a build gate for Windows.** Per-OS CI jobs were written in that
+    pass and then removed by request; `.github/workflows` no longer exists.
+    Nothing now compiles Windows (or macOS) automatically, so the exact failure
+    that pass existed to fix — a Mac-authored `cfg(windows)` arm sitting broken
+    on `main` for two weeks — can recur silently. The cheap half is the one
+    worth having: the platform shell crates pull no gpui (ferail-core + windows
+    + zip), so a per-OS `cargo check`/`test` over them runs in minutes and
+    covers exactly that class of bug. The removed workflow is at commit
+    `6d85def` if it's wanted back.
   - **Port window docking to Windows** (docs/features/DOCK.md). ✅ The sibling
     half of this shipped: the viewer's **Stay on Top** was dead on Windows
     because `content_ns_view` only matched `RawWindowHandle::AppKit`; it now

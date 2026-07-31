@@ -42,12 +42,19 @@ nobody could have known.
   `BOOL::from(muted)`. It was the *only* thing broken: with that one line
   changed, `cargo check -p ferail-gpui --all-targets` is clean and 228 tests
   pass.
-- **CI now covers Windows** (`.github/workflows/ci.yml`). Previously CI was
-  ubuntu-only over two logic crates, so nothing in the project ever compiled
-  Windows. There are now `platform` (per-OS shell crates + fs-native) and `app`
-  (ferail-gpui) jobs. The platform job is deliberately cheap — the shell crates
-  have no gpui in their graph, and the `SetMuted` class of breakage lives
-  exactly there.
+- ⚠️ **Nothing builds Windows automatically — this WILL recur.** Per-OS CI jobs
+  were added in this pass and then removed by request (`.github/workflows` is
+  gone entirely; recover with `git revert` of the removal commit, or read the
+  workflow at commit `6d85def`). Until something builds Windows on every push,
+  the only thing standing between `main` and another two-week silent breakage is
+  someone happening to build here. The cheap half is worth restoring first: the
+  platform shell crates carry no gpui in their graph (ferail-core + windows +
+  zip), so compiling them per-OS costs minutes, and the `SetMuted` class of
+  breakage lives exactly there.
+  - Prior CI was ubuntu-only over two logic crates — and had been **failing** on
+    every push for at least a day before this pass (the clippy gate died in ~15 s
+    on the MSRV issue below), which is its own argument for keeping a signal
+    someone actually watches.
 - **`--screenshot` works again.** It had regressed to calling
   `Window::render_to_image` unconditionally, which a stock `gpui_windows` does
   not implement — so it aborted at runtime, and the documented PrintWindow
