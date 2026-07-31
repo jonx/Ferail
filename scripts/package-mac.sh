@@ -39,6 +39,7 @@ cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
 
 APP_NAME="Ferail"
+BIN_NAME="ferail-gpui"   # must match bundle-mac.sh
 APPLE_DEV_ID="${APPLE_DEV_ID:-Developer ID Application: John Knipper (C43N3NG7Z5)}"
 APPLE_TEAM_ID="${APPLE_TEAM_ID:-C43N3NG7Z5}"
 APPLE_NOTARY_PROFILE="${APPLE_NOTARY_PROFILE:-D4Mac}"
@@ -70,6 +71,24 @@ fi
 
 mkdir -p "${DIST_DIR}"
 xattr -cr "${APP_DIR}"   # strip stray xattrs that would fail codesign/notarize
+
+# --- 1b. Refuse to ship a binary that links a build-machine dylib --------
+# A dependency that probes pkg-config (lzma-sys was the first) happily links
+# /opt/homebrew/... on a dev Mac. Notarization does NOT catch this: the app
+# is perfectly signed and simply dies at launch on a clean machine with
+# "Library not loaded". Anything outside /usr/lib and /System is a hard fail.
+echo "==> Checking for non-system dylib references"
+FOREIGN="$(otool -L "${APP_DIR}/Contents/MacOS/${BIN_NAME}" \
+	| tail -n +2 | awk '{print $1}' \
+	| grep -vE '^/usr/lib/|^/System/|^@(executable_path|loader_path|rpath)/' || true)"
+if [[ -n "${FOREIGN}" ]]; then
+	echo "error: the binary links dylibs that will be missing on a clean Mac:" >&2
+	echo "${FOREIGN}" | sed 's/^/  /' >&2
+	echo "Fix the offending crate (e.g. enable its \"static\"/vendored feature)" >&2
+	echo "or bundle + relocate the dylib into Contents/Frameworks." >&2
+	exit 1
+fi
+echo "    ok — only /usr/lib and /System references"
 
 # --- 2. Notarize + staple the .app itself ---------------------------------
 # Staple the ticket onto the .app BEFORE packing it, so a user who drags it

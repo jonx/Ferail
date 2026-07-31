@@ -8,6 +8,19 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.2.1 — 2026-07-31
+
+- **Fixed: the 0.2.0 app would not launch on a Mac without Homebrew.** It quit
+  immediately with a dyld *"Library not loaded:
+  /opt/homebrew/opt/xz/lib/liblzma.5.dylib"* error. The xz/LZMA support added
+  in 0.2.0 linked against whatever liblzma the build machine happened to have
+  instead of bundling its own, so the app only ran on machines that already had
+  Homebrew's `xz` installed. liblzma is now compiled into the binary, and the
+  macOS packaging script refuses to build a release that references any library
+  outside `/usr/lib` and `/System`.
+- The macOS app bundle now carries `LICENSE-MIT`, `LICENSE-APACHE` and
+  `THIRD-PARTY-NOTICES.md` in `Contents/Resources/licenses`.
+
 ## 0.2.0 — 2026-07-30
 
 - **Archive support (compress & extract)** — right-click **Extract** on any
