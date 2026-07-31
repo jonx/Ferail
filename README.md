@@ -90,7 +90,7 @@ The prioritized list of open work is in **[TODO.md](TODO.md)**.
 | Platform | Status |
 |---|---|
 | **macOS** | **Primary, daily-driver.** Feature-complete for everyday use. |
-| **Windows** | **Active port**, broad native parity — clipboard, Recycle Bin, thumbnails, Open With, Media Foundation video. Verified on real hardware; elevation and shell-extension verbs still stubbed. ([details](docs/features/windows-port.md)) |
+| **Windows** | **Active port**, broad native parity — clipboard, Recycle Bin, thumbnails, Open With, Media Foundation video, UAC elevation + Restart Manager lock diagnostics. Builds, runs, and screenshots on real hardware. Still missing: third-party shell-extension verbs, WSL, an indexed search engine, and the window-docking feature. ([details](docs/features/windows-port.md)) |
 | **Linux** | **Early port** — builds and runs; volumes, Trash, and Open With are real; clipboard, thumbnails, and video are still stubbed. ([details](docs/features/linux-port.md)) |
 | **AROS** | **Research port** — Ferail boots and runs as a browsable, themed file manager on [AROS](https://aros.org) (the open-source AmigaOS) via a from-scratch GPUI platform backend. Not at parity: some features are gated pending native shell integration. ([details](docs/features/aros-port.md)) |
 
@@ -115,6 +115,37 @@ The ❌ rows are real gaps, not modesty.
 
 ✅ first-class · ⚠️ partial / varies · ❌ absent
 
+## Download (Windows)
+
+A prebuilt Windows x64 build ships with each release — grab
+`Ferail-<version>-win-x64.zip` from
+[Releases](https://github.com/jonx/Ferail/releases), unzip anywhere, run
+`Ferail.exe`. No installation, no admin rights.
+
+> ### ⚠️ The download is not code-signed yet
+>
+> Windows will show **"Windows protected your PC"** when you run it. That is
+> SmartScreen reporting that the file carries no Authenticode signature — it is
+> not a malware detection. Click **More info → Run anyway** to proceed.
+>
+> Code-signing certificates cost a few hundred euros a year and, since 2023,
+> require a hardware token, so this project ships unsigned for now. **Verify the
+> download with its SHA-256 instead** — that catches a corrupted or tampered
+> download, though, unlike a signature, it cannot prove *who* built the file:
+>
+> ```pwsh
+> Get-FileHash .\Ferail-0.2.2-win-x64.zip -Algorithm SHA256
+> ```
+>
+> ```
+> 9993AF0EF53DE617C255BF9EBBA7FF53DFB3EDDC80866FF5D969715A78F30E6B
+> ```
+>
+> Each release publishes its own checksum in its notes. If it matches, the file
+> is exactly what was built here. If it doesn't, delete it.
+
+macOS and Linux builds are source-only for now — see below.
+
 ## Getting started
 
 ```sh
@@ -130,6 +161,17 @@ instead):
 
 ```sh
 scripts/bundle-mac.sh && open target/Ferail.app
+```
+
+On Windows, build a distributable (portable ZIP, plus an installer when
+[Inno Setup](https://jrsoftware.org/isinfo.php) is present). Licence notices are
+staged next to the binaries, and Authenticode signing is wired but optional —
+an unsigned build runs fine locally, but every downloader of one gets a
+SmartScreen warning, so a public release wants a certificate:
+
+```pwsh
+./scripts/package-win.ps1                              # unsigned, local testing
+./scripts/package-win.ps1 -SignCert C:\certs\ferail.pfx  # release
 ```
 
 Per-platform prerequisites, permission caveats, and packaging live in

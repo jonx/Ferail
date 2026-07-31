@@ -8,6 +8,41 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.2.2 — 2026-07-31
+
+First release with a **Windows download**. Also the release that unbroke the
+Windows build — which had been failing to compile on `main` for two weeks
+without anyone noticing, because nothing in CI ever built it.
+
+- **Windows builds are back, and now ship.** A single `IMFMediaEngine::SetMuted`
+  call written from a Mac on 2026-07-14 could not compile under the `windows`
+  crate's type inference, and took the whole Windows app down with it. Fixed —
+  and with it the app builds, runs, passes its tests, and screenshots on
+  Windows again.
+- **Windows packaging** — `scripts/package-win.ps1` produces a portable ZIP
+  (`Ferail.exe`, the `ferail` CLI, and the licence notices), plus an installer
+  with a Start Menu entry and an uninstaller when Inno Setup is present.
+  Authenticode signing is wired but this release is **unsigned**, so Windows
+  shows a SmartScreen warning — verify the download instead:
+  `Ferail-0.2.2-win-x64.zip` is SHA-256
+  `9993AF0EF53DE617C255BF9EBBA7FF53DFB3EDDC80866FF5D969715A78F30E6B`.
+- **Fixed: the viewer's "Stay on Top" did nothing on Windows.** The toggle never
+  reached the OS. It now really does keep the window above other apps.
+- Note that nothing automatically builds Windows yet, so the class of breakage
+  above can still recur — it is caught only by someone building on a Windows
+  machine.
+- **Fixed: a fresh `git clone` could not build on any platform.** The workspace
+  manifest referenced checkouts that only exist on one developer's machine, so
+  `cargo` failed before it compiled anything.
+- **The shipped binary carries no GPL-3.0 code.** A single non-optional
+  dependency edge (`gpui → sum_tree → ztracing`) pulled GPL-3.0-or-later crates
+  into every build, which is incompatible with distributing a binary under
+  MIT/Apache-2.0. Ferail now vendors that one Apache-2.0 crate with the edge
+  removed. Related correction: THIRD-PARTY-NOTICES.md previously said the edge
+  was already gone upstream — it was not; the lockfile that suggested so had
+  been generated with an unrelated local override active.
+- No user-visible macOS changes.
+
 ## 0.2.1 — 2026-07-31
 
 - **Fixed: the 0.2.0 app would not launch on a Mac without Homebrew.** It quit
