@@ -61,6 +61,21 @@ mkdir -p "${MACOS_DIR}" "${RES_DIR}"
 cp "${BIN_PATH}" "${MACOS_DIR}/${BIN_NAME}"
 cp "${REPO_ROOT}/packaging/macos/Info.plist" "${CONTENTS}/Info.plist"
 
+# Licenses travel with the binary. MIT/Apache-2.0 (and the MIT tree-sitter
+# grammars, the ISC/MIT icon artwork) require their notices to accompany a
+# redistributed copy — a DMG containing only the executable does not
+# satisfy that. Ship them inside the bundle so every copy carries them.
+LIC_DIR="${RES_DIR}/licenses"
+mkdir -p "${LIC_DIR}"
+for f in LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.md; do
+	if [[ -f "${REPO_ROOT}/${f}" ]]; then
+		cp "${REPO_ROOT}/${f}" "${LIC_DIR}/${f}"
+	else
+		echo "warning: ${f} missing — bundle will under-attribute" >&2
+	fi
+done
+echo "==> Copied Resources/licenses ($(ls -1 "${LIC_DIR}" | wc -l | tr -d ' ') files)"
+
 # Icon: prefer the checked-in macOS .icns so bundle output stays stable.
 # If it is missing, regenerate from the macOS PNG source as a best-effort
 # fallback. Windows keeps using resources/ferail.ico via build.rs.
