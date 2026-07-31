@@ -25,6 +25,95 @@ The **prime directive** from [ARCHITECTURE.md](../ARCHITECTURE.md): the UI must 
 
 ---
 
+## 2.2 Status update — release readiness (2026-07-31)
+
+Read this section first; §2.1 and §2.0 below are the earlier passes.
+
+A release-readiness pass run **on a Windows box** after the macOS 0.2.x work.
+The headline: the Windows build had been **broken on `main` for two weeks** and
+nobody could have known.
+
+- **The build was broken.** `ferail-shell-win32/src/video_mf.rs` called
+  `IMFMediaEngine::SetMuted(muted.into())`; `windows` 0.58 declares
+  `SetMuted<P0: Param<BOOL>>`, so `.into()` had no inferable target type
+  (`error[E0283]`). Introduced by `6c12fe8` (2026-07-14, *"media tags + Prime
+  Directive hardening"*) — a **Mac-authored commit writing a `cfg(windows)`-only
+  arm blind**, which is exactly the hazard § 8 warns about. Fixed with
+  `BOOL::from(muted)`. It was the *only* thing broken: with that one line
+  changed, `cargo check -p ferail-gpui --all-targets` is clean and 228 tests
+  pass.
+- **CI now covers Windows** (`.github/workflows/ci.yml`). Previously CI was
+  ubuntu-only over two logic crates, so nothing in the project ever compiled
+  Windows. There are now `platform` (per-OS shell crates + fs-native) and `app`
+  (ferail-gpui) jobs. The platform job is deliberately cheap — the shell crates
+  have no gpui in their graph, and the `SetMuted` class of breakage lives
+  exactly there.
+- **`--screenshot` works again.** It had regressed to calling
+  `Window::render_to_image` unconditionally, which a stock `gpui_windows` does
+  not implement — so it aborted at runtime, and the documented PrintWindow
+  fallback had lost all its callers during the macOS refactors. `capture_window`
+  now falls back to `capture::present_offscreen_for_capture` + `PrintWindow`.
+  Verified: a correct full-window PNG. This matters beyond convenience —
+  CLAUDE.md requires a rendered screenshot for UI changes, so Windows UI work
+  was unverifiable without it.
+- **Clippy is clean on Windows**, and the root cause of two warnings was an
+  **MSRV declaration gap**: only `ferail-gpui` declared `rust-version`, so
+  clippy assumed no MSRV and suggested `is_multiple_of` — a Rust 1.87 API that
+  would have *broken* the workspace's declared 1.85 floor. Every crate now
+  carries `rust-version.workspace = true`. This had also turned the existing
+  ubuntu clippy gate red on current stable.
+- **A clean clone builds again, on every platform.** The workspace `Cargo.toml`
+  carried AROS `[patch]` entries pointing at sibling checkouts
+  (`../zed-aros`, `../gpui-component-aros`). Cargo resolves `[patch]` before
+  anything else, so a machine without those siblings got an instant *manifest*
+  error — not a degraded build — on macOS, Windows, Linux and CI alike. They now
+  live in `packaging/aros/cargo-config-aros.toml`, copied to the gitignored
+  `.cargo/config.toml`. **See the GPL note in TODO.md**: the committed lockfile
+  was generated *with* those patches, and the zed fork they point at happens to
+  sever the GPL-3.0 `ztracing`/`zlog` edge — so removing them re-introduces it.
+- **Packaging exists** — `scripts/package-win.ps1` + `packaging/windows/ferail.iss`,
+  the twin of `bundle-mac.sh`/`package-mac.sh`: release build → stage
+  `Ferail.exe` + `cli\ferail.exe` + licence notices → optional Authenticode
+  signing → portable ZIP, plus an Inno Setup installer when `iscc` is present.
+  Verified end to end (both staged binaries run from the package).
+  - **The CLI lives in `cli\` because Windows paths are case-insensitive.**
+    Staging `ferail.exe` beside `Ferail.exe` resolves to *one* path, and the
+    first cut of this script shipped a package whose `Ferail.exe` was silently
+    the CLI. The script now hash-asserts that the two staged binaries differ,
+    and that the staged GUI matches `target\release\ferail-gpui.exe`.
+  - Signing is wired but a stock run is **unsigned**. Windows has no
+    notarization; the trust signal is Authenticode + SmartScreen reputation,
+    which accrues *to the certificate* over downloads — so signing matters from
+    the first public release, not the third.
+
+**Newly identified gaps (not regressions — never built):**
+
+- **Window docking is absent on Windows** — cleanly, not brokenly: the toolbar
+  control is `cfg!(target_os = "macos")`-gated in `shell/render.rs` ("hidden
+  elsewhere so the menu isn't three silent no-ops"), and the actions are bound
+  to no key and absent from the command catalogue, so there is no dead UI.
+  (DOCK.md's line about the menu doing nothing off macOS predates that gating
+  and is stale.) Making it real is a genuine port, not stub-filling: `dock.rs`
+  computes frames in macOS **global screen space** (origin bottom-left, y-up),
+  which has to be mapped onto Win32's top-left, y-down monitor rects.
+- **The viewer's Stay on Top *was* dead and is now fixed.** It shares the same
+  seam — `content_ns_view` only matched `RawWindowHandle::AppKit`, so on Windows
+  it returned `None` and the call never reached the shell. It now also matches
+  `RawWindowHandle::Win32`, and `set_window_floating` is a real
+  `SetWindowPos(HWND_TOPMOST/HWND_NOTOPMOST)`. `Shell::window_ns_view` (the dock
+  seam) deliberately stays AppKit-only until the coordinate mapping above exists
+  — returning `Some(hwnd)` there would let `set_dock` run against no-op
+  primitives and leave the UI showing a docked state for a window that never
+  moved.
+- **No Recycle Bin row in the sidebar** (macOS has Trash). It is a shell virtual
+  folder, not a filesystem path, so it needs namespace browsing rather than a
+  new `well_known_locations` entry — a real feature, not a one-liner.
+- **~50 px empty band under the title bar** that macOS does not have. Suspect
+  the `TitleBar::title_bar_options()` traffic-light reservation double-counting
+  against the Windows caption area (§ 5 predicted this).
+- **Settings still offers a "Spotlight" search engine** on Windows, where it can
+  never engage — search is walker-only, with no indexed backend.
+
 ## 2.1 Status update — parity pass (2026-07-14)
 
 After absorbing the Mac progress (the July merges + `origin/aros-port`), a

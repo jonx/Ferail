@@ -409,6 +409,48 @@ fallback). Remaining is the UX the system explorers have and we don't:
   context-menu verbs (`IContextMenu`) and WSL integration. The near-term
   behavior-breaking stubs (CF_HDROP clipboard, `WM_DEVICECHANGE` volume
   observer, text-naming modal) all shipped.
+- **Windows release-readiness follow-ups** (from the 2026-07-31 pass —
+  windows-port.md §2.2; the build fix, per-OS CI, screenshot fallback, clippy
+  and packaging all shipped there):
+  - **Port window docking to Windows** (docs/features/DOCK.md). ✅ The sibling
+    half of this shipped: the viewer's **Stay on Top** was dead on Windows
+    because `content_ns_view` only matched `RawWindowHandle::AppKit`; it now
+    also matches `RawWindowHandle::Win32` and `set_window_floating` is a real
+    `SetWindowPos(HWND_TOPMOST/HWND_NOTOPMOST)`. The dock itself is **not**
+    stub-filling: `dock.rs` computes frames in macOS **global screen space**
+    (origin bottom-left, y-up), so a Windows arm has to map that onto Win32's
+    top-left, y-down monitor rects — `MonitorFromWindow`/`GetMonitorInfoW` for
+    `screen_visible_frame_for_window`, `GetCursorPos` for
+    `current_mouse_location`, `SetWindowPos` for the frame — and a docked
+    drawer (edge-slam reveal, auto-hide) cannot be verified headlessly, so it
+    needs interactive testing on a real desktop. `Shell::window_ns_view` must
+    stay AppKit-only until then: returning `Some(hwnd)` would let `set_dock`
+    run against no-op primitives and show a docked state for a window that
+    never moved. No dead UI in the meantime — the toolbar control is already
+    `cfg!(target_os = "macos")`-gated and the actions are unbound elsewhere.
+  - **Recycle Bin sidebar row.** macOS has a Trash location; Windows has none.
+    It is a shell *virtual* folder (`FOLDERID_RecycleBinFolder`, CLSID
+    `{645FF040-…}`), not a filesystem path, so it needs shell-namespace browsing
+    rather than a `well_known_locations_for` entry — navigating to the raw
+    `C:\$Recycle.Bin\<SID>` would show the `$R*`/`$I*` internals, which is worse
+    than nothing. Pairs with the existing Trash-browsing-view item under File
+    Ops.
+  - **~50 px empty band under the title bar** that macOS does not have (compare
+    `screenshots/win-baseline.png` against `docs/images/tour-shell.png`).
+    Probably `TitleBar::title_bar_options()` reserving the macOS traffic-light
+    strip on top of the Windows caption area — windows-port.md §5 predicted
+    exactly this. Cosmetic, but it is the first thing a Windows user sees.
+  - **Settings offers a "Spotlight" search engine on Windows**, where
+    `resolve_spotlight` is macOS-only so it can never engage. Either hide the
+    option off macOS or implement a real indexed backend (Windows Search
+    `ISearchQueryHelper`, or the NTFS MFT+USN engine already listed under
+    Search).
+  - **Obtain an Authenticode certificate.** `scripts/package-win.ps1` wires
+    signing end to end but a stock run is unsigned, and SmartScreen warns on
+    every download of an unsigned binary. Reputation accrues *to the
+    certificate*, so signing from the first public release matters more than
+    signing later. This is the Windows analogue of the Developer ID +
+    notarization line under Packaging & Polish.
 - **Resilient file-op coping — Windows-native primitives.** ✅ *Shipped on
   `windows-parity`* (`ferail-shell-win32/src/elevation.rs`): `run_elevated_self`
   via `ShellExecuteExW` verb `"runas"` (UAC) + wait-for-exit powers **Retry as
@@ -469,14 +511,28 @@ paths scrubbed). Source-first is unblocked. Remaining:
 Publishing *source* is unaffected by the transitive GPL chain; a redistributable
 *binary* is not. Do these only when building a download:
 
-- **Sever the GPL-3.0 dependency edge.** A default build links GPL-3.0
-  `ztracing` / `zlog` / `ztracing_macro` through a single non-optional path
-  `gpui → sum_tree → ztracing` (they supply `#[instrument]` macros that no-op at
-  runtime in non-Zed builds). To keep a shipped binary MIT/Apache, patch
-  `sum_tree` to drop the `ztracing` dep plus its two `use ztracing::instrument;`
-  sites — verified trivial and fully severable (`sum_tree` is the sole consumer).
-  Upstream fix tracked at <https://github.com/zed-industries/zed/issues/55470>
-  (acknowledged but stuck in legal — do **not** assume it lands on a timeline).
+- ✅ **Sever the GPL-3.0 dependency edge** — shipped in 0.2.2 via
+  [`vendor/sum-tree`](vendor/sum-tree/README.md): upstream's Apache-2.0
+  `sum_tree` minus the `ztracing` dep and its nine use-sites, wired in with an
+  **in-repo** `[patch]` (committed, so present in every clone and on CI — unlike
+  a sibling path). `cargo tree -p ferail-gpui -i ztracing` now prints nothing,
+  and the only GPL strings left in the graph are dual-licensed crates offering a
+  permissive alternative. Re-sync procedure on a `gpui` bump is in that README.
+  - ⚠️ **Lesson worth keeping: the lockfile lied.** Before this, `Cargo.lock`
+    had been generated on a machine with the AROS `[patch]` active, and the
+    `../zed-aros` fork it pointed at happens to drop `ztracing` — so the
+    committed lock contained no `ztracing`, and THIRD-PARTY-NOTICES.md
+    confidently (and wrongly) recorded the edge as already fixed upstream. It
+    never was: upstream `sum_tree` at the pinned rev still carries
+    `ztracing.workspace = true`. **Do not audit the licence surface from the
+    lockfile alone** — resolve the graph.
+  - Still worth doing eventually: one **published** zed fork referenced by
+    `git =` URL, carrying both this severance and the
+    `gpui_windows::render_to_image` patch (see the item at the end of
+    Cross-Platform), which would retire both `vendor/sum-tree` and the local
+    screenshot patch. Upstream fix tracked at
+    <https://github.com/zed-industries/zed/issues/55470> (acknowledged but stuck
+    in legal — do **not** assume it lands on a timeline).
   Context in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 - Code signing / notarization / `.dmg` / release CI: tracked under
   **Packaging & Polish** (Developer ID, hardened-runtime-without-sandbox

@@ -13,16 +13,23 @@ the desktop.
 Left/right only by design — the top edge fights the menu bar and the horizontal
 drawer is the useful shape.
 
-macOS-only in practice: it bottoms out in AppKit `NSWindow` calls. The other
-platforms' shell stubs no-op, so the toolbar menu silently does nothing there.
+macOS-only in practice: it bottoms out in AppKit `NSWindow` calls, and
+`Shell::window_ns_view` yields `None` off AppKit so `set_dock` early-returns.
+The toolbar control is `cfg!(target_os = "macos")`-gated and the actions are
+bound to no key and absent from the command catalogue, so the feature is simply
+*absent* elsewhere rather than a menu that does nothing. Porting it is not
+stub-filling — the frame math below is in macOS global screen space (origin
+bottom-left, y-up) and has to be mapped onto the target's coordinate system;
+see TODO.md § Cross-Platform.
 
 ## Using it
 
 - Toolbar → the **dock** glyph (top-right cluster, after Refresh). Its dropdown
   offers **Dock Left**, **Dock Right**, and **Undock**, each with an icon. The
   button shows a pressed state while docked.
-- Actions: `DockLeft`, `DockRight`, `Undock` (`shell/actions.rs`) — also
-  reachable from the command surfaces.
+- Actions: `DockLeft`, `DockRight`, `Undock` (`shell/actions.rs`). The toolbar
+  dropdown is their only surface today — they carry no key binding and no
+  command-catalogue entry, so they do not appear in the Cmd+K palette.
 
 ## Behaviour
 
