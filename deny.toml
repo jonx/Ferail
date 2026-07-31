@@ -6,12 +6,14 @@
 #
 #   cargo deny check licenses advisories
 #
-# The one known copyleft edge is documented in THIRD-PARTY-NOTICES.md:
-# `gpui → sum_tree → ztracing/zlog` are GPL-3.0 zed crates. Publishing
-# SOURCE is unaffected; a redistributable BINARY must first sever that
-# edge (patch sum_tree; upstream zed#55470). The exceptions below pin
-# the allowance to exactly those crates so anything NEW that is GPL
-# fails the check instead of sliding in silently.
+# There is currently NO copyleft in the graph. The former
+# `gpui → sum_tree → ztracing/zlog` GPL-3.0 edge is gone from the pinned
+# rev: sum_tree now depends on the ordinary `tracing` crate, and none of
+# ztracing / ztracing_macro / zlog appear in Cargo.lock. The exception
+# list below is therefore EMPTY on purpose — any GPL crate that appears
+# after a gpui/gpui-component rev bump must fail this check rather than
+# inherit a stale allowance. See THIRD-PARTY-NOTICES.md (and upstream
+# zed#55470, still open) before re-adding anything here.
 
 [graph]
 all-features = false
@@ -34,13 +36,9 @@ allow = [
     "MPL-2.0",
     "OFL-1.1",
 ]
-# The documented zed GPL edge — see the header. Keep this list EXACT:
-# a new GPL dependency must fail the check, not inherit the exception.
-exceptions = [
-    { allow = ["GPL-3.0-or-later"], crate = "ztracing" },
-    { allow = ["GPL-3.0-or-later"], crate = "ztracing_macro" },
-    { allow = ["GPL-3.0-or-later"], crate = "zlog" },
-]
+# Intentionally empty — see the header. Do not add a copyleft exception
+# without also updating THIRD-PARTY-NOTICES.md.
+exceptions = []
 
 [advisories]
 yanked = "warn"

@@ -63,6 +63,26 @@ MIT/Apache-2.0 grant on Ferail's own source is unaffected either way.
 
 ---
 
+## Tree-sitter and its grammars (MIT / Apache-2.0)
+
+The inline syntax-highlighted code preview embeds **tree-sitter** and 35
+grammar crates, all compiled into the shipped binary. Their licenses require
+the copyright and permission notices to travel with redistributed copies.
+
+- **tree-sitter** — <https://github.com/tree-sitter/tree-sitter>
+  Copyright © 2018–2025 Max Brunsfeld and contributors. Licensed under MIT.
+- **Grammar crates** — 32 are MIT, 2 are `MIT OR Apache-2.0`, and 1 is
+  Apache-2.0; `tree-sitter-graphql` (Copyright © 2025 Joohwan Oh) ships a
+  `LICENSE` file rather than a manifest `license` field, and is MIT. Each
+  grammar carries its own copyright holder — the authoritative per-crate
+  list is pinned in [`Cargo.lock`](Cargo.lock) and can be regenerated with
+  `cargo about` or `cargo bundle-licenses`.
+
+The grammars reach the build transitively through `gpui-component`; the set
+changes when that pin moves, so re-check this section on a rev bump.
+
+---
+
 ## Icon artwork
 
 Ferail embeds 53 SVG glyphs in `crates/ferail-gpui/resources/icons/` and
