@@ -115,14 +115,23 @@ The ❌ rows are real gaps, not modesty.
 
 ✅ first-class · ⚠️ partial / varies · ❌ absent
 
-## Download (Windows)
+## Download
 
-A prebuilt Windows x64 build ships with each release — grab
-`Ferail-<version>-win-x64.zip` from
-[Releases](https://github.com/jonx/Ferail/releases), unzip anywhere, run
-`Ferail.exe`. No installation, no admin rights.
+Prebuilt builds are published on the
+[Releases](https://github.com/jonx/Ferail/releases) page.
 
-> ### ⚠️ The download is not code-signed yet
+| Platform | Download | Signed |
+|---|---|---|
+| **macOS** (Apple silicon) | `Ferail-<version>.dmg` — open it and drag Ferail to Applications | ✅ Developer ID signed **and notarized**, so it opens without warnings |
+| **Windows** (x64) | `Ferail-<version>-win-x64.zip` — unzip anywhere and run `Ferail.exe`. No installation, no admin rights. An Inno Setup installer ships alongside it when built. | ❌ unsigned — see below |
+| **Linux** | build from source ([Getting started](#getting-started)) | — |
+
+The two platforms are not always released in lockstep: the newest macOS and
+Windows downloads may sit on different release tags. Check the
+[Releases](https://github.com/jonx/Ferail/releases) list for the latest of
+each.
+
+> ### ⚠️ The Windows download is not code-signed yet
 >
 > Windows will show **"Windows protected your PC"** when you run it. That is
 > SmartScreen reporting that the file carries no Authenticode signature — it is
@@ -144,7 +153,8 @@ A prebuilt Windows x64 build ships with each release — grab
 > Each release publishes its own checksum in its notes. If it matches, the file
 > is exactly what was built here. If it doesn't, delete it.
 
-macOS and Linux builds are source-only for now — see below.
+The macOS download carries no such warning — it is signed with a Developer ID
+and notarized by Apple. Linux is source-only for now.
 
 ## Getting started
 
@@ -240,5 +250,6 @@ and the bundled Lucide / Bootstrap icon artwork) are credited in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 > **Note:** Ferail depends on `gpui` / `gpui-component` as git dependencies
-> (not on crates.io), so there is no `cargo install` — build from source;
-> reproducible builds come from the committed `Cargo.lock`.
+> (not on crates.io), so there is no `cargo install`. Use a
+> [prebuilt download](#download) or build from source; reproducible builds come
+> from the committed `Cargo.lock`.

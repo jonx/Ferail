@@ -9,10 +9,15 @@ already build Rust projects, skip to [Build & run](#3-build--run).
 > [Current status](README.md#current-status) table for the honest breakdown —
 > this guide flags the per-platform steps as you go.
 
-There is no `cargo install` and no prebuilt download: `gpui` / `gpui-component`
-are **git** dependencies (not on crates.io), so Ferail is built from source.
-The committed `Cargo.lock` pins every dependency, so your build matches the
-maintainer's.
+> **Just want to run it?** macOS and Windows have prebuilt downloads on the
+> [Releases](https://github.com/jonx/Ferail/releases) page — see
+> [Download](README.md#download). This guide is for building from source, which
+> is currently the only route on Linux.
+
+There is no `cargo install`: `gpui` / `gpui-component` are **git** dependencies
+(not on crates.io), so Ferail is built from source rather than installed from a
+registry. The committed `Cargo.lock` pins every dependency, so your build
+matches the maintainer's.
 
 ---
 
