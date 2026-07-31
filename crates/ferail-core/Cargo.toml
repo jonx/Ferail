@@ -2,6 +2,7 @@
 name = "ferail-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Core domain types for Ferail — filesystem-agnostic, UI-agnostic"
