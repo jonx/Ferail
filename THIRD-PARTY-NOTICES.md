@@ -32,34 +32,53 @@ Per Apache-2.0 §4(d), the upstream attribution notices are preserved below.
   bundled icon assets. <https://github.com/longbridge/gpui-component>
   Copyright © 2024–2025 Longbridge. Licensed under Apache-2.0.
 
-### GPL-3.0 watch item (gpui → sum_tree)
+### GPL-3.0 severance (gpui → sum_tree → ztracing)
 
-**The current build contains no GPL-licensed code.** This section records a
-resolved upstream issue that is worth re-checking whenever the `gpui` pin moves.
+**The current build contains no GPL-licensed code — because this repository
+severs the edge itself.** That is an active measure, not an upstream fix.
 
-Earlier `gpui` revisions reached three small **GPL-3.0-or-later** crates from
-the Zed repository through a single non-optional dependency edge —
-`gpui → sum_tree → ztracing → { zlog, ztracing_macro }` — which would have
-placed copyleft obligations on any redistributed binary, despite `gpui` itself
-being Apache-2.0.
+`gpui` reaches three small **GPL-3.0-or-later** crates from the Zed repository
+through a single non-optional dependency edge —
+`gpui → sum_tree → ztracing → { zlog, ztracing_macro }` — which would place
+copyleft obligations on any redistributed binary, despite `gpui` itself being
+Apache-2.0. The `#[instrument]` macros they supply no-op at runtime outside
+Zed's own builds, so nothing is lost by removing them.
 
-That edge is gone from the revision pinned here: `sum_tree` now depends on the
-ordinary MIT/Apache-2.0 `tracing` crate, and `ztracing`, `zlog`, and
-`ztracing_macro` appear nowhere in [`Cargo.lock`](Cargo.lock). A binary built
-from this tree links no GPL-3.0 object code.
+The edge **is still present in the `gpui` revision pinned here**: upstream
+`crates/sum_tree/Cargo.toml` at that rev carries `ztracing.workspace = true`.
+It is severed by [`vendor/sum-tree`](vendor/sum-tree/README.md) — upstream's
+Apache-2.0 `sum_tree` minus nine mechanical lines — wired in through a
+`[patch]` in the workspace `Cargo.toml`. `sum_tree` is the only consumer of
+`ztracing` in the graph, which is what makes this severable.
 
-It stays recorded rather than deleted because the upstream inconsistency is
-still tracked as open at <https://github.com/zed-industries/zed/issues/55470>.
-Two consequences worth knowing:
+> **Correction (0.2.2).** An earlier revision of this section stated the edge
+> was already gone upstream, on the evidence that `ztracing` appeared nowhere in
+> `Cargo.lock`. That evidence was misleading: the committed lockfile had been
+> generated on a machine whose `[patch]` entries redirected `gpui` to an AROS
+> fork that happened to drop `ztracing`. A normal clone re-resolved against
+> upstream and pulled the GPL crates straight back in. **Do not treat the
+> lockfile alone as proof of the licence surface** — verify against the
+> resolved graph.
 
-- When bumping the `gpui` pin, re-check `Cargo.lock` for `ztracing`, `zlog`,
-  and `ztracing_macro`. Their absence is what keeps a redistributable binary
-  MIT/Apache.
-- If the edge ever returns before upstream settles, it can be severed by a
-  local patch of that one dependency.
+Verification, which should print nothing:
 
-Ferail publishes source rather than prebuilt binaries today, so the
-MIT/Apache-2.0 grant on Ferail's own source is unaffected either way.
+```sh
+cargo tree -p ferail-gpui -i ztracing
+cargo tree -p ferail-gpui -i zlog
+```
+
+Consequences worth knowing:
+
+- When bumping the `gpui` pin, re-sync `vendor/sum-tree` against the new
+  upstream sources (procedure in its README) and re-run the commands above.
+  Their empty output is what keeps a redistributable binary MIT/Apache.
+- Upstream tracks the same inconsistency at
+  <https://github.com/zed-industries/zed/issues/55470>. It is acknowledged but
+  stuck in legal — do not assume it lands on a timeline. If it does, delete
+  `vendor/sum-tree` and the `[patch]` block.
+
+Ferail's own source is MIT/Apache-2.0 regardless; this matters for the
+**prebuilt binaries** published from 0.2.2 onward.
 
 ---
 

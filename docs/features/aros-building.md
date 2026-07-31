@@ -45,7 +45,20 @@ Ferail's full UI — chrome, sidebar, tabs, list/grid, dark theme — browsing
 ## 2. Checkout layout (sibling paths are load-bearing)
 
 Ferail's `[patch]` entries and `scripts/check-aros.sh` use **relative
-sibling paths**, so all five repos must sit next to each other:
+sibling paths**, so all five repos must sit next to each other.
+
+> **First, install the patch config.** The `[patch]` entries do *not* live in
+> the workspace `Cargo.toml` — a relative sibling path there is load-bearing for
+> every platform's build, so a machine without these checkouts cannot even parse
+> the manifest. Copy the template into the gitignored per-machine config
+> instead, once per checkout:
+>
+> ```sh
+> cp packaging/aros/cargo-config-aros.toml .cargo/config.toml
+> ```
+>
+> Without this the AROS build resolves gpui/gpui-component from upstream git and
+> fails as described in [§ Troubleshooting](#troubleshooting).
 
 ```
 ~/Source/
@@ -238,7 +251,7 @@ exec's Alert() and ShutdownA() leave breadcrumbs there.
 | tree-sitter: `platform not supported` (endian.h) | Compat include dir + `-DHAVE_ENDIAN_H` missing. |
 | sqlite: `expected expression` at `GLOBAL(...)` | aros-upstream too old — needs the `exec/types.h` macro guards (`5c1666af`). |
 | sqlite: `sys/ioctl.h not found` | Compat include dir missing. |
-| `errno`/`rustix`/`wait-timeout` fail to build | The `[patch]` graph isn't applied (gpui-component-aros / zed-aros checkouts missing or on wrong branches). |
+| `errno`/`rustix`/`wait-timeout` fail to build | The `[patch]` graph isn't applied — `.cargo/config.toml` missing (copy `packaging/aros/cargo-config-aros.toml`), or the gpui-component-aros / zed-aros checkouts are missing or on wrong branches. |
 | stacker `libc::mmap` errors | Lock resolved 0.1.24 from crates.io — `cargo update -p stacker --precise 0.1.23`. |
 | Boot: `Failed to open file FileSystem.resource` | Boot image lost a kickstart module — rebuild just it (`make kernel-filesystem` in a configured tree) and copy in. |
 | Boot: `Could not open version 36 ... dos.library` | Wildly misleading. Real cause: the `AROS.boot` signature file is missing from the boot volume root — `echo aarch64 > <bootdir>/AROS.boot`. |

@@ -94,33 +94,40 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee3
 gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "c112e7b482b6b9c53a8c43deaf5847b94a29ad82", features = ["tree-sitter-languages"] }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "c112e7b482b6b9c53a8c43deaf5847b94a29ad82" }
 
-# AROS port (branch aros-port): gpui + gpui_platform come from the sibling
-# zed fork checkout (see docs/features/aros-building.md for the layout) (same pinned rev 1d217ee + the new gpui_aros backend crate).
-# On macOS/Windows/Linux the fork's code is byte-identical to the pinned rev,
-# so this patch changes nothing off-AROS; gpui's intra-repo path deps (and
-# gpui-component's gpui dep) all resolve into the fork automatically.
+# The ONLY `[patch]` allowed here: an **in-repo** path, committed and therefore
+# present in every clone and on CI.
+#
+# `sum_tree` is the sole consumer of GPL-3.0 `ztracing` in the entire graph
+# (`ferail-gpui → gpui → sum_tree → ztracing`), and those `#[instrument]` macros
+# no-op at runtime outside Zed's own builds. Linking them into a binary shipped
+# under MIT/Apache-2.0 is a licence conflict, so a redistributable build has to
+# sever the edge. `vendor/sum-tree` is upstream's Apache-2.0 crate minus nine
+# mechanical lines — see vendor/sum-tree/README.md for the full delta and the
+# re-sync procedure on a gpui bump. Verify with:
+#
+#     cargo tree -p ferail-gpui -i ztracing     # must print nothing
 [patch."https://github.com/zed-industries/zed"]
-gpui = { path = "../zed-aros/crates/gpui" }
-gpui_platform = { path = "../zed-aros/crates/gpui_platform" }
+sum_tree = { path = "vendor/sum-tree" }
 
-# gpui-component at the same pinned rev (a worktree of the local checkout at
-# c112e7b, branch aros-port) with one delta: `smol` → `async-channel` at its
-# two channel-only call sites, keeping smol's async-io/rustix reactor (no
-# AROS arm) out of the graph. Identical behavior on every target.
-[patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { path = "../gpui-component-aros/crates/ui" }
-gpui-component-assets = { path = "../gpui-component-aros/crates/assets" }
-
-# stacker has no AROS arm upstream (its C stack-growth probe assumes
-# unix/windows); the zed fork vendors 0.1.23 with a no-op AROS fallback.
-# Byte-identical behavior on every other target (same upstream source +
-# an added cfg arm), so this patch is inert off-AROS.
-[patch.crates-io]
-stacker = { path = "../zed-aros/vendor-aros/stacker" }
-# filetime (via notify) has unix/windows/wasm arms only; the vendored copy
-# adds an AROS arm (std-Metadata reads, set-times unsupported). Same source
-# otherwise — inert off-AROS.
-filetime = { path = "../zed-aros/vendor-aros/filetime" }
+# NOTE — the AROS `[patch]` entries deliberately do NOT live here.
+#
+# The AROS port needs four source overrides (gpui, gpui_platform,
+# gpui-component[-assets], and vendored stacker/filetime) that resolve to
+# **sibling checkouts** — `../zed-aros`, `../gpui-component-aros`. Unlike the
+# in-repo path above, a *sibling* path in this shared manifest is a hard
+# requirement on every machine that builds the repo: cargo resolves `[patch]`
+# before it does anything else, so a missing sibling is not a degraded build, it
+# is an instant manifest error ("failed to read
+# ../zed-aros/vendor-aros/filetime/Cargo.toml") on macOS, Windows, Linux, and CI
+# alike. That broke every clean clone of `main`.
+#
+# Cargo honours `[patch]` in `.cargo/config.toml` identically, and that path is
+# already gitignored as per-machine config. AROS builders copy the template:
+#
+#     cp packaging/aros/cargo-config-aros.toml .cargo/config.toml
+#
+# See docs/features/aros-building.md § "Checkout layout". Keep this manifest free
+# of paths that are not committed inside the repo.
 
 [profile.dev]
 # Text rasterization is sluggish at -Copt-level=0 — keep some optimization in dev.
