@@ -181,7 +181,21 @@ fn sniff_iff(buf: &[u8]) -> Option<MagicInfo> {
 fn sniff_tracker(buf: &[u8]) -> Option<MagicInfo> {
     let mut info = MagicInfo::new(MagicType::TrackerModule);
 
-    if let Some(tag) = buf.get(1080..1084) {
+    // The ProTracker check reads a tag deep inside the file rather than at
+    // offset 0, and this sniffer runs before the image/audio/video parsers —
+    // so on its own it could claim any file that happens to hold one of these
+    // four bytes at 1080. Require the 20-byte title field to look like a
+    // title (printable ASCII or NUL padding) as corroboration; that is true
+    // of real modules and false of essentially any binary that reaches here.
+    let title_plausible = buf
+        .get(0..20)
+        .map(|t| {
+            t.iter()
+                .all(|&b| b == 0 || (0x20..=0x7e).contains(&b) || b == b'\t')
+        })
+        .unwrap_or(false);
+
+    if let Some(tag) = buf.get(1080..1084).filter(|_| title_plausible) {
         let channels: Option<u8> = match tag {
             b"M.K." | b"M!K!" | b"FLT4" | b"4CHN" | b"M&K!" | b"N.T." => Some(4),
             b"6CHN" => Some(6),
