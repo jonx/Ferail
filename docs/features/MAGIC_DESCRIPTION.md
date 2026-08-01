@@ -151,19 +151,50 @@ the read is one disk block either way on most filesystems.
 Per bfe-explorer's `sniff_bytes_info`:
 
 1. **Executables**: PE / ELF / Mach-O — full structured parse.
-2. **ZIP-based**: Office (.docx/.xlsm/.pptx + macro variants), JAR, APK,
+2. **AmigaOS family** (`magic/amiga.rs`): hunk binaries, Workbench icons,
+   IFF containers, tracker modules, disk images. See below.
+3. **ZIP-based**: Office (.docx/.xlsm/.pptx + macro variants), JAR, APK,
    generic / encrypted ZIP.
-3. **Images**: PNG / JPEG / GIF / BMP / WebP / ICO / TIFF — width × height +
+4. **Images**: PNG / JPEG / GIF / BMP / WebP / ICO / TIFF — width × height +
    alpha where extractable.
-4. **Audio**: MP3 (ID3 or raw frame) / FLAC / WAV / Ogg — channels, sample
+5. **Audio**: MP3 (ID3 or raw frame) / FLAC / WAV / Ogg — channels, sample
    rate, bitrate, duration.
-5. **Video**: MP4 / MOV / AVI / MKV / WebM — `has_video` / `has_audio` via
+6. **Video**: MP4 / MOV / AVI / MKV / WebM — `has_video` / `has_audio` via
    box / chunk scan.
-6. **Signature table fast path**: PDF, RAR, 7z, Gzip, SQLite, Lnk, etc. —
-   no metadata beyond the type.
-7. **Text heuristic**: shebang → script subtype, UTF-16 BOM, XML / HTML /
+7. **Signature table fast path**: PDF, RAR, 7z, Gzip, LHA, SQLite, Lnk, etc.
+   — no metadata beyond the type.
+8. **Text heuristic**: shebang → script subtype, UTF-16 BOM, XML / HTML /
    .reg / INI / .url / JSON detection via prefix sniffing on `text.trim_start()`.
-8. **Binary fallback**: < 85% printable → `Binary`; else `Unknown`.
+9. **Binary fallback**: < 85% printable → `Binary`; else `Unknown`.
+
+### AmigaOS formats
+
+Cross-platform, not an AROS feature: an Aminet download sitting on a Mac is
+still a hunk binary full of `.info` icons and ProTracker modules, and all of
+these are pure header reads. Everything is big-endian — the formats were
+designed on a 68000.
+
+| Format | Detection | Facts reported |
+|---|---|---|
+| Hunk binary | `0x03F3` header / `0x03E7` unit / `0x03FA` library | `68k`, hunk count |
+| Workbench icon | `0xE310` (`DiskObject`) | kind (tool/drawer/project/disk/…), pixel size |
+| IFF ILBM / PBM / ACBM | `FORM` + form type, `BMHD` chunk | width × height, planar depth |
+| IFF 8SVX / 16SV | `FORM` + form type, `VHDR` chunk | mono, sample rate |
+| IFF ANIM / SMUS | `FORM` + form type | type only |
+| Tracker module | tag at offset **1080** (ProTracker), or `MMD0`–`MMD3` / `Extended Module:` / `IMPM` / `SCRM` | family name, channel count |
+| ADF / DMS | `DOS` + filesystem flag ≤ 7 / `DMS!` | type only |
+| LZX, AmigaGuide | `LZX` / `@database` | type only |
+
+Two ordering constraints, both covered by tests:
+
+- The sniffer runs **before** the generic signature table so `FORM`
+  containers and the `DOS` bootblock are classified precisely.
+- It deliberately **declines** `FORM….AIFF`/`AIFC`. Those are IFF too, but
+  the audio parser reports channels and duration for them, which is strictly
+  better than a bare type label.
+
+`EM_68K` (4) also joins the ELF architecture table, so a 68k ELF — as opposed
+to a hunk binary — no longer drops its architecture from the description.
 
 ### What v1 ports
 

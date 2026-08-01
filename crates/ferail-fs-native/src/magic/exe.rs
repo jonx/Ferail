@@ -97,6 +97,7 @@ fn sniff_elf(buf: &[u8]) -> MagicInfo {
         0xb7 => CpuArch::Arm64,
         0xf3 => CpuArch::Riscv,
         0x14 | 0x15 => CpuArch::PowerPc,
+        0x04 => CpuArch::M68k,
         0x08 => CpuArch::Mips,
         _ => CpuArch::Unknown,
     };

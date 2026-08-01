@@ -22,6 +22,7 @@
 
 use std::path::Path;
 
+mod amiga;
 mod audio;
 mod exe;
 mod image;
@@ -147,38 +148,46 @@ pub fn sniff_bytes_info(buf: &[u8]) -> MagicInfo {
         return info;
     }
 
-    // 2. ZIP-based (Office / JAR / APK / generic).
+    // 2. AmigaOS-family: hunk binaries, .info icons, IFF, tracker modules,
+    //    disk images. Before the generic table so `FORM` containers and the
+    //    `DOS` bootblock are classified precisely; it declines AIFF/AIFC so
+    //    the audio parser still gets those.
+    if let Some(info) = amiga::sniff(buf) {
+        return info;
+    }
+
+    // 3. ZIP-based (Office / JAR / APK / generic).
     if let Some(info) = zip::sniff(buf) {
         return info;
     }
 
-    // 3. Images — extract dimensions + alpha.
+    // 4. Images — extract dimensions + alpha.
     if let Some(info) = image::sniff(buf) {
         return info;
     }
 
-    // 4. Audio — channels / sample rate / duration where cheap.
+    // 5. Audio — channels / sample rate / duration where cheap.
     if let Some(info) = audio::sniff(buf) {
         return info;
     }
 
-    // 5. Video containers — has_video / has_audio.
+    // 6. Video containers — has_video / has_audio.
     if let Some(info) = video::sniff(buf) {
         return info;
     }
 
-    // 6. Signature-table fast path for remaining binary formats that
+    // 7. Signature-table fast path for remaining binary formats that
     //    don't need structured parsing.
     if let Some(mt) = sniff_signature_table(buf) {
         return MagicInfo::new(mt);
     }
 
-    // 7. Text / script heuristic (shebang, UTF-16, XML/HTML/JSON/INI/...)
+    // 8. Text / script heuristic (shebang, UTF-16, XML/HTML/JSON/INI/...)
     if let Some(info) = text::sniff(buf) {
         return info;
     }
 
-    // 8. Binary fallback.
+    // 9. Binary fallback.
     let sample = &buf[..buf.len().min(512)];
     let printable = sample
         .iter()
@@ -534,5 +543,147 @@ mod tests {
 
     fn detect_magic_info_label(info: &MagicInfo) -> &'static str {
         info.magic_type.display_name()
+    }
+}
+
+#[cfg(test)]
+mod amiga_tests {
+    use super::types::{CpuArch, MagicType};
+    use super::sniff_bytes_info;
+
+    /// A `HUNK_HEADER` program: magic, empty resident-library list, then a
+    /// 3-entry hunk table.
+    #[test]
+    fn hunk_executable_reports_68k_and_hunk_count() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&0x0000_03F3u32.to_be_bytes()); // HUNK_HEADER
+        buf.extend_from_slice(&0u32.to_be_bytes()); // end of name list
+        buf.extend_from_slice(&3u32.to_be_bytes()); // table size == hunk count
+        buf.extend_from_slice(&0u32.to_be_bytes()); // first hunk
+        buf.extend_from_slice(&2u32.to_be_bytes()); // last hunk
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::ExeAmiga);
+        assert_eq!(info.arch, CpuArch::M68k);
+        assert_eq!(info.description(), "Amiga executable \u{b7} 68k \u{b7} 3 hunks");
+    }
+
+    #[test]
+    fn hunk_unit_and_library_are_distinguished() {
+        let unit = sniff_bytes_info(&0x0000_03E7u32.to_be_bytes());
+        assert_eq!(unit.magic_type, MagicType::ObjAmiga);
+        let lib = sniff_bytes_info(&0x0000_03FAu32.to_be_bytes());
+        assert_eq!(lib.magic_type, MagicType::LibAmiga);
+    }
+
+    /// A 68k ELF (rather than a hunk binary) must report the architecture
+    /// rather than dropping it — `EM_68K` was missing from the table.
+    #[test]
+    fn elf_m68k_reports_its_architecture() {
+        let mut buf = vec![0u8; 32];
+        buf[..4].copy_from_slice(b"\x7fELF");
+        buf[4] = 1; // 32-bit
+        buf[5] = 2; // big-endian
+        buf[16..18].copy_from_slice(&2u16.to_be_bytes()); // ET_EXEC
+        buf[18..20].copy_from_slice(&4u16.to_be_bytes()); // EM_68K
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.arch, CpuArch::M68k);
+        assert!(info.description().contains("68k"), "{}", info.description());
+    }
+
+    /// Workbench icon: magic, then Gadget width/height at 12/14, do_Type at 48.
+    #[test]
+    fn workbench_icon_reports_kind_and_size() {
+        let mut buf = vec![0u8; 78];
+        buf[0..2].copy_from_slice(&0xE310u16.to_be_bytes());
+        buf[12..14].copy_from_slice(&48u16.to_be_bytes()); // Width
+        buf[14..16].copy_from_slice(&24u16.to_be_bytes()); // Height
+        buf[48] = 3; // WBTOOL
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::AmigaIcon);
+        assert_eq!(info.description(), "Amiga icon \u{b7} tool \u{b7} 48\u{d7}24");
+    }
+
+    /// ILBM with a BMHD chunk — the classic 320x256, 5 planes (32 colours).
+    #[test]
+    fn ilbm_reports_dimensions_and_planar_depth() {
+        let mut buf = vec![0u8; 40];
+        buf[0..4].copy_from_slice(b"FORM");
+        buf[8..12].copy_from_slice(b"ILBM");
+        buf[12..16].copy_from_slice(b"BMHD");
+        buf[16..20].copy_from_slice(&20u32.to_be_bytes()); // chunk size
+        buf[20..22].copy_from_slice(&320u16.to_be_bytes());
+        buf[22..24].copy_from_slice(&256u16.to_be_bytes());
+        buf[28] = 5; // nPlanes
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::Ilbm);
+        assert_eq!(info.description(), "IFF ILBM image \u{b7} 320\u{d7}256 \u{b7} 5-bit");
+    }
+
+    /// 8SVX with a VHDR: samplesPerSec sits after three u32 counts.
+    #[test]
+    fn svx8_reports_sample_rate() {
+        let mut buf = vec![0u8; 48];
+        buf[0..4].copy_from_slice(b"FORM");
+        buf[8..12].copy_from_slice(b"8SVX");
+        buf[12..16].copy_from_slice(b"VHDR");
+        buf[16..20].copy_from_slice(&20u32.to_be_bytes());
+        buf[32..34].copy_from_slice(&8363u16.to_be_bytes()); // samplesPerSec
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::Svx8);
+        assert_eq!(info.description(), "IFF 8SVX audio \u{b7} mono \u{b7} 8.4 kHz");
+    }
+
+    /// AIFF is IFF too, but the audio parser handles it properly — the Amiga
+    /// sniffer must decline it rather than shadowing channels and duration.
+    #[test]
+    fn aiff_still_goes_to_the_audio_parser() {
+        let mut buf = vec![0u8; 64];
+        buf[0..4].copy_from_slice(b"FORM");
+        buf[8..12].copy_from_slice(b"AIFF");
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::Aiff);
+    }
+
+    /// ProTracker: the tag at offset 1080 encodes the channel count.
+    #[test]
+    fn protracker_module_reports_channels() {
+        let mut buf = vec![0u8; 1084];
+        buf[1080..1084].copy_from_slice(b"M.K.");
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::TrackerModule);
+        assert_eq!(info.description(), "ProTracker module \u{b7} 4 channels");
+    }
+
+    #[test]
+    fn octamed_and_xm_modules_are_named() {
+        let mut med = vec![0u8; 64];
+        med[0..4].copy_from_slice(b"MMD1");
+        assert_eq!(sniff_bytes_info(&med).description(), "OctaMED module");
+
+        let mut xm = vec![0u8; 64];
+        xm[..17].copy_from_slice(b"Extended Module: ");
+        assert_eq!(sniff_bytes_info(&xm).description(), "FastTracker XM module");
+    }
+
+    #[test]
+    fn adf_bootblock_and_amigaguide_are_recognised() {
+        let mut adf = vec![0u8; 64];
+        adf[0..4].copy_from_slice(b"DOS\x01"); // FFS
+        assert_eq!(sniff_bytes_info(&adf).magic_type, MagicType::AdfDisk);
+
+        let guide = b"@database \"Foo.guide\"\n";
+        assert_eq!(sniff_bytes_info(guide).magic_type, MagicType::AmigaGuide);
+    }
+
+    /// A hostile resident-library length must not walk us off the buffer.
+    #[test]
+    fn corrupt_hunk_name_list_does_not_panic() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&0x0000_03F3u32.to_be_bytes());
+        buf.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes()); // absurd length
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        let info = sniff_bytes_info(&buf);
+        assert_eq!(info.magic_type, MagicType::ExeAmiga);
+        assert_eq!(info.hunk_count, None);
     }
 }

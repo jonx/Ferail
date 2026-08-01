@@ -34,6 +34,36 @@ pub enum MagicType {
     Tar,
     /// LHarc / LZH — the Amiga (and retro DOS) archive format.
     Lha,
+    /// LZX — LHA's Amiga successor. Recognised for the Description column;
+    /// Ferail has no LZX codec, so it is not browsable.
+    Lzx,
+
+    // AmigaOS-family formats (see `magic::amiga`). These are cross-platform
+    // sniffers: an Aminet download on a Mac is still a hunk binary.
+    /// AmigaOS `HUNK_HEADER` binary — a loadable 68k program.
+    ExeAmiga,
+    /// AmigaOS `HUNK_UNIT` — a linker object file.
+    ObjAmiga,
+    /// AmigaOS `HUNK_LIB` — a link library.
+    LibAmiga,
+    /// Workbench `.info` icon (`DiskObject`, magic `0xE310`).
+    AmigaIcon,
+    /// IFF `ILBM` / `PBM ` / `ACBM` bitmap.
+    Ilbm,
+    /// IFF `8SVX` / `16SV` sampled sound.
+    Svx8,
+    /// IFF `ANIM` animation.
+    IffAnim,
+    /// IFF `SMUS` musical score.
+    IffSmus,
+    /// A tracker module (ProTracker, OctaMED, XM, S3M, IT).
+    TrackerModule,
+    /// ADF floppy disk image (an OFS/FFS bootblock).
+    AdfDisk,
+    /// DMS compressed disk image.
+    DmsDisk,
+    /// AmigaGuide hypertext document.
+    AmigaGuide,
     Gzip,
     Xz,
     Bzip2,
@@ -134,6 +164,19 @@ impl MagicType {
             MagicType::Rar => "RAR archive",
             MagicType::SevenZip => "7z archive",
             MagicType::Lha => "LHA archive",
+            MagicType::Lzx => "LZX archive",
+            MagicType::ExeAmiga => "Amiga executable",
+            MagicType::ObjAmiga => "Amiga object file",
+            MagicType::LibAmiga => "Amiga link library",
+            MagicType::AmigaIcon => "Amiga icon",
+            MagicType::Ilbm => "IFF ILBM image",
+            MagicType::Svx8 => "IFF 8SVX audio",
+            MagicType::IffAnim => "IFF ANIM animation",
+            MagicType::IffSmus => "IFF SMUS score",
+            MagicType::TrackerModule => "Tracker module",
+            MagicType::AdfDisk => "Amiga disk image",
+            MagicType::DmsDisk => "DMS disk image",
+            MagicType::AmigaGuide => "AmigaGuide document",
             MagicType::Tar => "TAR archive",
             MagicType::Gzip => "Gzip archive",
             MagicType::Xz => "XZ archive",
@@ -232,6 +275,9 @@ pub enum CpuArch {
     Riscv,
     PowerPc,
     Mips,
+    /// Motorola 68000 family — `EM_68K` in ELF, and the implied architecture
+    /// of every AmigaOS hunk binary.
+    M68k,
 }
 
 impl CpuArch {
@@ -245,6 +291,7 @@ impl CpuArch {
             CpuArch::Riscv => "RISC-V",
             CpuArch::PowerPc => "PowerPC",
             CpuArch::Mips => "MIPS",
+            CpuArch::M68k => "68k",
         }
     }
 }
@@ -356,6 +403,19 @@ pub struct MagicInfo {
 
     // Script
     pub interpreter: Option<&'static str>,
+
+    // AmigaOS-family facts (see `magic::amiga`)
+    /// Number of hunks in an AmigaOS `HUNK_HEADER` binary — the one cheap
+    /// structural fact the format offers.
+    pub hunk_count: Option<u32>,
+    /// `do_Type` of a Workbench `.info` icon: 1 disk, 2 drawer, 3 tool,
+    /// 4 project, 5 trashcan, 6 device, 7 kickstart, 8 appicon.
+    pub icon_kind: Option<u8>,
+    /// Bits per pixel, for formats that report planes rather than a pixel
+    /// format (IFF ILBM).
+    pub bit_depth: Option<u8>,
+    /// Which tracker family a module belongs to ("ProTracker", "OctaMED", …).
+    pub tracker_kind: Option<&'static str>,
 }
 
 impl MagicInfo {
@@ -481,6 +541,99 @@ impl MagicInfo {
             }
             MagicType::Tar => parts.push("TAR archive".into()),
             MagicType::Lha => parts.push("LHA archive".into()),
+            MagicType::Lzx => parts.push("LZX archive".into()),
+
+            // AmigaOS hunk binaries. `arch` is always 68k here (the format
+            // predates every other Amiga CPU), and the hunk count is the one
+            // cheap structural fact the container offers.
+            MagicType::ExeAmiga | MagicType::ObjAmiga | MagicType::LibAmiga => {
+                parts.push(
+                    match self.magic_type {
+                        MagicType::ObjAmiga => "Amiga object file",
+                        MagicType::LibAmiga => "Amiga link library",
+                        _ => "Amiga executable",
+                    }
+                    .into(),
+                );
+                let arch = self.arch.as_str();
+                if !arch.is_empty() {
+                    parts.push(arch.into());
+                }
+                if let Some(n) = self.hunk_count {
+                    parts.push(if n == 1 {
+                        "1 hunk".into()
+                    } else {
+                        format!("{n} hunks")
+                    });
+                }
+            }
+
+            MagicType::AmigaIcon => {
+                parts.push("Amiga icon".into());
+                if let Some(kind) = self.icon_kind {
+                    // do_Type from the DiskObject header.
+                    let label = match kind {
+                        1 => "disk",
+                        2 => "drawer",
+                        3 => "tool",
+                        4 => "project",
+                        5 => "trashcan",
+                        6 => "device",
+                        7 => "Kickstart",
+                        8 => "app icon",
+                        _ => "",
+                    };
+                    if !label.is_empty() {
+                        parts.push(label.into());
+                    }
+                }
+                if let (Some(w), Some(h)) = (self.width, self.height) {
+                    parts.push(format!("{w}\u{00d7}{h}"));
+                }
+            }
+
+            MagicType::Ilbm => {
+                parts.push("IFF ILBM image".into());
+                if let (Some(w), Some(h)) = (self.width, self.height) {
+                    parts.push(format!("{w}\u{00d7}{h}"));
+                }
+                if let Some(d) = self.bit_depth {
+                    // Planar depth: 5 planes is a 32-colour Amiga screen.
+                    parts.push(format!("{d}-bit"));
+                }
+            }
+
+            MagicType::Svx8 => {
+                parts.push("IFF 8SVX audio".into());
+                if let Some(ch) = self.channels {
+                    parts.push(if ch == 1 { "mono".into() } else { "stereo".into() });
+                }
+                if let Some(sr) = self.sample_rate {
+                    let khz = sr as f32 / 1000.0;
+                    if (khz - khz.floor()).abs() < f32::EPSILON {
+                        parts.push(format!("{} kHz", khz as u32));
+                    } else {
+                        parts.push(format!("{khz:.1} kHz"));
+                    }
+                }
+            }
+
+            MagicType::IffAnim => parts.push("IFF ANIM animation".into()),
+            MagicType::IffSmus => parts.push("IFF SMUS score".into()),
+
+            MagicType::TrackerModule => {
+                parts.push(match self.tracker_kind {
+                    Some(k) => format!("{k} module"),
+                    None => "Tracker module".into(),
+                });
+                if let Some(ch) = self.channels {
+                    parts.push(format!("{ch} channels"));
+                }
+            }
+
+            MagicType::AdfDisk => parts.push("Amiga disk image".into()),
+            MagicType::DmsDisk => parts.push("DMS disk image".into()),
+            MagicType::AmigaGuide => parts.push("AmigaGuide document".into()),
             MagicType::Gzip => parts.push("GZIP archive".into()),
             MagicType::Xz => parts.push("XZ archive".into()),
             MagicType::Bzip2 => parts.push("Bzip2 archive".into()),

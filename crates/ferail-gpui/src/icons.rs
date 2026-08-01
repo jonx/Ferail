@@ -303,6 +303,14 @@ fn classify_file(name: &str, magic: &str) -> FileTypeTint {
         // magic sniff.
         "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "zst" | "lz" | "lzma"
         | "lha" | "lzh" | "lzx" => Some(FileTypeTint::Archive),
+        // Amiga-era media: IFF bitmaps, tracker modules, floppy images.
+        "iff" | "ilbm" | "lbm" => Some(FileTypeTint::Image),
+        // `mod` and `it` are deliberately absent: `go.mod` is not a
+        // ProTracker module and `.it` is ambiguous. The magic sniffer
+        // identifies real modules by content (the tag at offset 1080), which
+        // is the right way round for these.
+        "med" | "xm" | "s3m" | "8svx" => Some(FileTypeTint::Audio),
+        "adf" | "adz" | "dms" | "hdf" => Some(FileTypeTint::Disk),
         "dmg" | "iso" | "img" | "vmdk" | "qcow2" | "vhd" | "vdi" | "sparseimage" => {
             Some(FileTypeTint::Disk)
         }
@@ -315,13 +323,20 @@ fn classify_file(name: &str, magic: &str) -> FileTypeTint {
     }
     // Fallback: magic-derived description.
     let m = magic.to_ascii_lowercase();
-    if m.contains("image") {
+    // "disk image" must be tested before the bare "image" check below, or an
+    // ADF/DMS floppy image would tint as a picture.
+    if m.contains("disk image") {
+        return FileTypeTint::Disk;
+    }
+    // Workbench `.info` files are pictures (the icon bitmap), and a tracker
+    // module is audio — neither says so in its own label.
+    if m.contains("image") || m.contains("icon") {
         return FileTypeTint::Image;
     }
-    if m.contains("video") {
+    if m.contains("video") || m.contains("animation") {
         return FileTypeTint::Video;
     }
-    if m.contains("audio") {
+    if m.contains("audio") || m.contains("module") {
         return FileTypeTint::Audio;
     }
     if m.contains("zip")
