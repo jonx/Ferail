@@ -1,0 +1,48 @@
+# Source overrides for the AROS cross-build. NOT a `.cargo/config.toml`.
+#
+# Passed explicitly by the AROS scripts and nothing else:
+#
+#     cargo --config packaging/aros/aros-patches.toml build --target ...aros.json
+#
+# That scoping is the point. `[patch]` is global to a build, so putting these
+# in `.cargo/config.toml` would feed the sibling forks to the macOS and Windows
+# builds on the same machine — including release packaging, where it would also
+# shadow the `vendor/sum-tree` patch that severs the GPL-3.0 ztracing edge
+# (gpui-from-zed-aros brings its own sum_tree). Here they only reach AROS.
+#
+# **Paths below are relative to the PARENT of this file's directory** — i.e.
+# to `packaging/`, not to `packaging/aros/` and not to the repo root. That is
+# cargo's rule for config files (it assumes the usual `<root>/.cargo/` layout
+# and resolves relative to `<root>`), and getting it wrong fails with a path
+# one level off. So `../../zed-aros` is `~/Source/zed-aros` for a checkout at
+# `~/Source/Ferail`. Sibling layout: docs/features/aros-building.md
+# § "Checkout layout".
+#
+# This list is deliberately short. Ferail's AROS graph needs no vendored
+# crates: gpui takes `http_client` with `default-features = false`, which drops
+# `github_download` and util's smol half, and with them the whole async-io
+# reactor (errno / rustix / polling / async-std) that has no AROS arm. If a
+# future gpui bump drags that stack back in, the fix is to keep the graph
+# reactor-free — not to mirror zed-aros/vendor-aros here.
+
+# gpui + gpui_platform from the zed fork (pinned rev 1d217ee plus the gpui_aros
+# backend crate). Off-AROS the fork is byte-identical to the pinned rev.
+[patch."https://github.com/zed-industries/zed"]
+gpui = { path = "../../zed-aros/crates/gpui" }
+gpui_platform = { path = "../../zed-aros/crates/gpui_platform" }
+
+# gpui-component at the same pinned rev (c112e7b, branch aros-port) with one
+# delta: `smol::channel` -> `async-channel` at its two channel-only call sites.
+[patch."https://github.com/longbridge/gpui-component"]
+gpui-component = { path = "../../gpui-component-aros/crates/ui" }
+gpui-component-assets = { path = "../../gpui-component-aros/crates/assets" }
+
+# NOTE — `stacker` and `filetime` are deliberately NOT here.
+#
+# They live in the workspace manifest as `vendor/stacker` and `vendor/filetime`
+# instead. A patch whose version differs from the registry's goes silently
+# inert the moment a host `cargo` command re-resolves the lock to a newer
+# version (cargo will not downgrade to a patch — it drops it), and the next
+# AROS build fails with the original "no libc for this target" errors. Only
+# *source* replacements like the gpui ones above are safe to scope this way,
+# because the version is unchanged and the patch always applies.

@@ -38,6 +38,7 @@ use ferail_archive::{safe_relative_path, CompressionLevel, Format, Toc};
 
 use crate::file_ops::TransferProgress;
 
+mod lha;
 mod sevenz;
 mod single;
 mod tarball;
@@ -45,6 +46,11 @@ mod zip_codec;
 
 #[cfg(test)]
 mod tests;
+
+/// What the xz codec arms report on AROS, where liblzma cannot be built
+/// (`pthread_sigmask` is absent — see the target block in Cargo.toml).
+#[cfg(target_os = "aros")]
+pub(super) const XZ_UNAVAILABLE: &str = "xz compression is not available on AROS";
 
 /// A bounded, cheap-to-read summary of an archive, for the Description column.
 ///
@@ -150,6 +156,7 @@ pub fn probe_format(path: &Path) -> Option<Format> {
         | MagicType::AppApk => Some(Format::Zip),
         MagicType::SevenZip => Some(Format::SevenZ),
         MagicType::Tar => Some(Format::Tar),
+        MagicType::Lha => Some(Format::Lha),
         MagicType::Gzip => Some(Format::Gzip),
         MagicType::Xz => Some(Format::Xz),
         MagicType::Bzip2 => Some(Format::Bzip2),
@@ -171,6 +178,7 @@ pub fn read_toc(archive: &Path, password: Option<&str>) -> Result<Toc, ArchiveEr
     match format {
         Format::Zip => zip_codec::read_toc(archive, password),
         Format::SevenZ => sevenz::read_toc(archive, password),
+        Format::Lha => lha::read_toc(archive),
         f if f.is_tar_family() => tarball::read_toc(archive, f),
         f => single::read_toc(archive, f),
     }
@@ -221,6 +229,10 @@ pub enum SkipReason {
     SpecialFile,
     /// The target already existed and `overwrite` was false.
     ExistingNotOverwritten,
+    /// The entry uses a compression method this build cannot decode (LHA has
+    /// a long tail of historical methods). Skipped rather than written
+    /// truncated, so a partial file is never mistaken for a good one.
+    UnsupportedMethod,
 }
 
 /// One entry that extraction chose not to write, with the reason.
@@ -311,6 +323,7 @@ fn dispatch_extract(
     match format {
         Format::Zip => zip_codec::extract(archive, dest, sel, opts, progress, cancel),
         Format::SevenZ => sevenz::extract(archive, dest, sel, opts, progress, cancel),
+        Format::Lha => lha::extract(archive, dest, sel, opts, progress, cancel),
         f if f.is_tar_family() => tarball::extract(archive, f, dest, sel, opts, progress, cancel),
         f => single::extract(archive, f, dest, sel, opts, progress, cancel),
     }

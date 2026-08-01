@@ -87,7 +87,10 @@ pub(super) fn extract(
     let reader: Box<dyn Read> = match format {
         Format::Gzip => Box::new(flate2::read::GzDecoder::new(file)),
         Format::Bzip2 => Box::new(bzip2::read::BzDecoder::new(file)),
+        #[cfg(not(target_os = "aros"))]
         Format::Xz => Box::new(xz2::read::XzDecoder::new(file)),
+        #[cfg(target_os = "aros")]
+        Format::Xz => return Err(ArchiveError::Codec(super::XZ_UNAVAILABLE.into())),
         other => {
             return Err(ArchiveError::Codec(format!(
                 "not a single-member format: {}",
@@ -132,11 +135,14 @@ pub(super) fn create(
             super::copy_stream(src, &mut enc, progress, cancel)?;
             enc.finish()?;
         }
+        #[cfg(not(target_os = "aros"))]
         Format::Xz => {
             let mut enc = xz2::write::XzEncoder::new(out, level);
             super::copy_stream(src, &mut enc, progress, cancel)?;
             enc.finish()?;
         }
+        #[cfg(target_os = "aros")]
+        Format::Xz => return Err(ArchiveError::Codec(super::XZ_UNAVAILABLE.into())),
         other => {
             return Err(ArchiveError::Codec(format!(
                 "not a single-member format: {}",

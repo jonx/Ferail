@@ -35,7 +35,10 @@ fi
 CARGO_PROFILE_FLAG=""
 [ "$PROFILE" = "release" ] && CARGO_PROFILE_FLAG="--release"
 
-cargo "+$TOOLCHAIN" build $CARGO_PROFILE_FLAG -p ferail-aros-app \
+# The AROS source overrides ride on --config so they stay off host builds
+# ([patch] is global; see the file's header).
+cargo "+$TOOLCHAIN" --config "$REPO/packaging/aros/aros-patches.toml" \
+    build $CARGO_PROFILE_FLAG -p ferail-aros-app \
     --target "$TARGET_JSON" \
     -Zjson-target-spec -Zbuild-std=std,panic_abort
 

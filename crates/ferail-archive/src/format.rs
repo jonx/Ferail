@@ -36,6 +36,12 @@ pub enum Format {
     /// `.7z` — 7-Zip container. Read + extract only in v1 (`sevenz-rust`
     /// has no stable write path we expose yet).
     SevenZ,
+    /// `.lha` / `.lzh` — the Amiga/MS-DOS era LHarc container, still the
+    /// dominant archive format on Aminet and AmigaOS-family systems. Read +
+    /// extract only: `delharc` decodes every method we care about (`-lh0-`
+    /// stored through `-lh7-`, plus `-lz*-` and `-lhd-` directories) but does
+    /// not compress.
+    Lha,
 }
 
 impl Format {
@@ -74,6 +80,8 @@ impl Format {
             (".bz2", Format::Bzip2),
             (".xz", Format::Xz),
             (".7z", Format::SevenZ),
+            (".lha", Format::Lha),
+            (".lzh", Format::Lha),
         ];
         for (suffix, fmt) in SINGLE {
             if lower.ends_with(suffix) {
@@ -101,6 +109,7 @@ impl Format {
             Format::Bzip2 => "bz2",
             Format::Xz => "xz",
             Format::SevenZ => "7z",
+            Format::Lha => "lha",
         }
     }
 
@@ -116,6 +125,7 @@ impl Format {
             Format::Bzip2 => "BZIP2",
             Format::Xz => "XZ",
             Format::SevenZ => "7-Zip",
+            Format::Lha => "LHA",
         }
     }
 

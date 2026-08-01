@@ -32,6 +32,8 @@ pub enum MagicType {
     Rar,
     SevenZip,
     Tar,
+    /// LHarc / LZH — the Amiga (and retro DOS) archive format.
+    Lha,
     Gzip,
     Xz,
     Bzip2,
@@ -131,6 +133,7 @@ impl MagicType {
             MagicType::ZipEncrypted => "ZIP archive",
             MagicType::Rar => "RAR archive",
             MagicType::SevenZip => "7z archive",
+            MagicType::Lha => "LHA archive",
             MagicType::Tar => "TAR archive",
             MagicType::Gzip => "Gzip archive",
             MagicType::Xz => "XZ archive",
@@ -477,6 +480,7 @@ impl MagicInfo {
                 }
             }
             MagicType::Tar => parts.push("TAR archive".into()),
+            MagicType::Lha => parts.push("LHA archive".into()),
             MagicType::Gzip => parts.push("GZIP archive".into()),
             MagicType::Xz => parts.push("XZ archive".into()),
             MagicType::Bzip2 => parts.push("Bzip2 archive".into()),

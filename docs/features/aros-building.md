@@ -47,22 +47,29 @@ Ferail's full UI — chrome, sidebar, tabs, list/grid, dark theme — browsing
 Ferail's `[patch]` entries and `scripts/check-aros.sh` use **relative
 sibling paths**, so all five repos must sit next to each other.
 
-> **First, install the patch config.** The `[patch]` entries do *not* live in
-> the workspace `Cargo.toml` — a relative sibling path there is load-bearing for
-> every platform's build, so a machine without these checkouts cannot even parse
-> the manifest. Copy the template into the gitignored per-machine config
-> instead, once per checkout:
+> **Nothing to copy.** The sibling-checkout `[patch]` entries live in
+> `packaging/aros/aros-patches.toml` (tracked), which `build-aros.sh` and
+> `check-aros.sh` pass to cargo via `--config`. They are deliberately *not* in
+> the workspace `Cargo.toml` — a relative sibling path there is load-bearing
+> for every platform's build, so a machine without these checkouts could not
+> even parse the manifest — and deliberately not in `.cargo/config.toml`
+> either, because `[patch]` is global to a build: entries there would feed the
+> sibling forks to the macOS and Windows builds on the same machine, release
+> packaging included, and would shadow the `vendor/sum-tree` patch that severs
+> the GPL-3.0 ztracing edge.
 >
-> ```sh
-> cp packaging/aros/cargo-config-aros.toml .cargo/config.toml
-> ```
+> The per-machine `.cargo/config.toml` still carries the AROS `[target]` /
+> `[env]` C recipe (see § 6). That half *is* machine-specific.
 >
-> Without this the AROS build resolves gpui/gpui-component from upstream git and
-> fails as described in [§ Troubleshooting](#troubleshooting).
+> **2026-08-01:** the hand-copy step this section used to describe is what
+> broke the AROS build for a day — the patches were moved out of the manifest
+> and the local config never received them, so cargo resolved gpui from
+> upstream git and the build died on `errno`. Hence: no copying.
 
 ```
 ~/Source/
-├── Ferail/              branch aros-port      (this repo)
+├── Ferail/                branch main           (this repo — the AROS work
+│                                                 merged; `aros-port` is dead)
 ├── zed-aros/              branch aros-platform  (zed fork + gpui_aros backend)
 ├── gpui-component-aros/   branch aros-port      (gpui-component @ pinned rev c112e7b, smol→async-channel)
 ├── rust-aros/                                   (Rust std library fork with the AROS pal)
@@ -149,9 +156,9 @@ The condensed shape:
   machine, no AROS needed. `crates/gpui_aros/PORTING.md` keeps the
   bug→test ledger and the on-device checklist.
 
-## 6. Ferail itself (this repo, branch `aros-port`)
+## 6. Ferail itself (this repo, branch `main`)
 
-What the branch adds over `main`:
+What the AROS port consists of:
 
 - `crates/ferail-aros-app/` — staticlib + C harness + `link-aros.sh` +
   `ferail.startup`. AROS has C own `main()`; the harness feeds
@@ -165,9 +172,18 @@ What the branch adds over `main`:
   `-DHAVE_ENDIAN_H` + the compat shims dir (AROS lacks `<endian.h>` /
   `<sys/ioctl.h>`), and the sqlite no-mmap/no-WAL/no-dlopen flags. Adjust
   the `~/aros-build` paths here if your trees live elsewhere.
-- `[patch]` entries for the sibling checkouts + vendored crates. One lock
-  quirk: the vendored stacker is 0.1.23 — if the lockfile ever drifts to
-  0.1.24, re-pin with `cargo update -p stacker --precise 0.1.23`.
+- `packaging/aros/aros-patches.toml` — the sibling-checkout `[patch]` entries
+  (gpui, gpui_platform, gpui-component[-assets]), passed via `--config` so they
+  never touch a host build. **Paths in it resolve relative to `packaging/`, not
+  to the file's own directory** — cargo's rule for config files.
+- `vendor/tar`, `vendor/stacker`, `vendor/filetime` — crates with no upstream
+  AROS arm, patched from the **workspace manifest** so every target sees the
+  same copy. That placement is load-bearing: a version-differing patch that is
+  only visible to AROS invocations goes silently inert as soon as a host
+  `cargo` command re-resolves the lock to a newer registry version (cargo does
+  not downgrade to a patch, it drops it), and the next AROS build fails with
+  the original "no libc for this target" errors. This bit twice on 2026-08-01
+  before the crates moved in-repo.
 
 ## 7. Build → link → deploy → run
 
@@ -251,8 +267,12 @@ exec's Alert() and ShutdownA() leave breadcrumbs there.
 | tree-sitter: `platform not supported` (endian.h) | Compat include dir + `-DHAVE_ENDIAN_H` missing. |
 | sqlite: `expected expression` at `GLOBAL(...)` | aros-upstream too old — needs the `exec/types.h` macro guards (`5c1666af`). |
 | sqlite: `sys/ioctl.h not found` | Compat include dir missing. |
-| `errno`/`rustix`/`wait-timeout` fail to build | The `[patch]` graph isn't applied — `.cargo/config.toml` missing (copy `packaging/aros/cargo-config-aros.toml`), or the gpui-component-aros / zed-aros checkouts are missing or on wrong branches. |
-| stacker `libc::mmap` errors | Lock resolved 0.1.24 from crates.io — `cargo update -p stacker --precise 0.1.23`. |
+| `errno`/`rustix`/`polling` fail to build ("target OS is not yet supported") | The async-io reactor is back in the graph. Ferail never calls it — gpui takes `http_client` with `default-features = false`, which drops `github_download` and util's smol half. Check that zed-aros still has that (root manifest note on `http_client`) and that no new crate pulls `smol`/`async-std` directly. Do **not** fix this by mirroring zed's ~35 vendored reactor crates. |
+| `[patch]` not applied — gpui resolves from github | `--config packaging/aros/aros-patches.toml` missing from the cargo invocation, or a sibling checkout is missing / on the wrong branch. Verify with `cargo tree -i gpui`: it must print a path, not a git URL. |
+| stacker `libc::mmap` / filetime `os::unix` errors | The vendored copy is not being used. `cargo tree -i stacker` must print `vendor/stacker`; if it prints a registry version, the lock drifted past the vendored one — `cargo update -p stacker --precise 0.1.23` (or `filetime` / `0.2.26`). Cargo silently ignores a patch it would have to downgrade to. |
+| `tar` fails with 15 errors in `header.rs` | Same thing for `vendor/tar` — `cargo tree -i tar` must print the vendor path. See `vendor/tar/README.md`. |
+| lzma-sys: `pthread_sigmask` undeclared | `xz2` reached the AROS graph. It is target-gated off in `ferail-fs-native/Cargo.toml`; AROS has no `pthread_sigmask` (posixc stops at `sigprocmask`). |
+| Link fails with undefined `aros_pipe_*` / `aros_proc_*` / `aros_sig_*` | `link-aros.sh` is missing a glue file from `aros-aarch64/hosted/rust`. That set grows as the std pal does — `aros_proc_glue.c` was added on 2026-08-01. Compare against the `.c` files in that directory. |
 | Boot: `Failed to open file FileSystem.resource` | Boot image lost a kickstart module — rebuild just it (`make kernel-filesystem` in a configured tree) and copy in. |
 | Boot: `Could not open version 36 ... dos.library` | Wildly misleading. Real cause: the `AROS.boot` signature file is missing from the boot volume root — `echo aarch64 > <bootdir>/AROS.boot`. |
 | App loads forever, ~0 CPU | Debug binary (strip it) or a `-DDEBUG` dos.library in the image (logs every packet). |
@@ -261,15 +281,33 @@ exec's Alert() and ShutdownA() leave breadcrumbs there.
 | Every folder empty | The rust-aros path-join fix is missing (std symlink again). |
 | emul-handler `DoExamineNext` requester under browsing | Known OS-side frontier (its handler stack; UPSTREAM-NOTES item 35). Ferail's recursive folder-size walker is gated off on AROS for this reason; crash containment lets you Suspend and keep the session. |
 
-## 10. Known limitations (2026-07-06)
+## 10. Known limitations (2026-08-01)
 
 - Folder sizes read `--` on AROS (walker gated; see above).
 - Real platform icons / thumbnails pending (`ferail-shell-aros` is a
   stub scaffold — Lucide glyph fallbacks render instead; icon.library /
   DefIcons integration is the designed next step).
-- Scroll wheel untested end-to-end (the cocoametal control protocol has
-  no wheel injection event yet); dead-key composition disabled.
-- Window resize via the size gadget unverified for app windows under
-  automation.
+- Dead-key composition disabled.
+- **No `.tar.xz` on AROS.** `xz2`/liblzma cannot build for the target
+  (`pthread_sigmask`), so that one format is dropped from the create picker
+  and refused on open with a plain message. Every other archive format —
+  zip, 7z, tar, tar.gz, tar.bz2, gz, bz2, and LHA — works.
 - The metadata DB (sqlite) compiles and links; its runtime behavior on
   AROS paths has not been audited.
+- `parking_lot_core` is in the graph unpatched. Zed vendors an AROS thread
+  parker for it because the upstream generic parker spins in `park()`, and
+  AROS round-robins equal-priority tasks — so a parked thread can starve the
+  UI. Ferail has not needed it, but it is the first place to look if the UI
+  stutters while background work runs.
+
+### Fixed since the 2026-07-06 list
+
+- **Window resize works.** The size gadget drag-resizes and the layout
+  reflows; verified on device 2026-08-01 (`screenshots/aros-resize-*.png`).
+  The earlier "unverified" note predated zed-aros `85b08a3446`, which added
+  the `WA_MinWidth`/`MaxWidth` tags Intuition needs before the gadget can
+  move at all.
+- **No duplicate window controls.** gpui-component's client-side
+  minimise/maximise/close are suppressed on AROS (they were inert there
+  anyway) so only Intuition's own gadgets show.
+- Scroll wheel works end-to-end (the kickstart carries the hidd).

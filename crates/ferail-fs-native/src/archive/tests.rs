@@ -816,3 +816,125 @@ fn zip_entries_carry_real_modification_times() {
     let dos_epoch = zip::DateTime::try_from_msdos(0b0000000_0001_00001, 0).unwrap();
     assert_eq!(super::zip_codec::dos_datetime_to_unix(dos_epoch), Some(315_532_800));
 }
+
+/// Build a level-0 LHA archive containing `-lh0-` (stored) members.
+///
+/// Written by hand rather than shipped as a binary fixture: `delharc` decodes
+/// but cannot compress, so there is no way to generate one in-tree, and a
+/// checked-in blob would be unreviewable. Stored members keep the encoder
+/// trivial — the payload is the file's own bytes — while still exercising the
+/// real header parser, CRC check and streaming walk.
+///
+/// Level-0 header layout (LHA spec):
+///   0   u8    header size (bytes 2..=header_end)
+///   1   u8    header checksum (sum of bytes 2..=header_end, mod 256)
+///   2   [5]   method id, e.g. `-lh0-`
+///   7   u32le compressed size
+///   11  u32le original size
+///   15  u32le MS-DOS timestamp
+///   19  u8    file attribute (0x20 = archived)
+///   20  u8    header level (0)
+///   21  u8    filename length
+///   22  [n]   filename
+///   22+n u16le CRC-16 of the *uncompressed* data
+fn build_lha(path: &Path, entries: &[(&str, &[u8])]) {
+    fn crc16(data: &[u8]) -> u16 {
+        // CRC-16/ARC, the variant LHA uses: reflected, poly 0xA001, init 0.
+        let mut crc: u16 = 0;
+        for &b in data {
+            crc ^= b as u16;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 { (crc >> 1) ^ 0xA001 } else { crc >> 1 };
+            }
+        }
+        crc
+    }
+
+    let mut out: Vec<u8> = Vec::new();
+    for (name, data) in entries {
+        let name_bytes = name.as_bytes();
+        // Everything from the method id to the CRC, i.e. the bytes the size
+        // and checksum fields describe.
+        let mut body: Vec<u8> = Vec::new();
+        body.extend_from_slice(b"-lh0-");
+        body.extend_from_slice(&(data.len() as u32).to_le_bytes()); // compressed
+        body.extend_from_slice(&(data.len() as u32).to_le_bytes()); // original
+        // 1980-01-01 00:00:00 in MS-DOS packed form (date << 16 | time).
+        body.extend_from_slice(&0x0021_0000u32.to_le_bytes());
+        body.push(0x20); // attribute: archived
+        body.push(0x00); // header level 0
+        body.push(name_bytes.len() as u8);
+        body.extend_from_slice(name_bytes);
+        body.extend_from_slice(&crc16(data).to_le_bytes());
+
+        out.push(body.len() as u8);
+        out.push(body.iter().fold(0u8, |acc, b| acc.wrapping_add(*b)));
+        out.extend_from_slice(&body);
+        out.extend_from_slice(data);
+    }
+    // A zero header-size byte terminates the archive.
+    out.push(0);
+    fs::write(path, out).unwrap();
+}
+
+#[test]
+fn lha_round_trips_toc_and_extract() {
+    let tf = TempFile::new("amiga.lha");
+    build_lha(
+        tf.path(),
+        &[("readme.txt", b"hello aminet"), ("data/notes.txt", b"second entry")],
+    );
+
+    let toc = read_toc(tf.path(), None).unwrap();
+    assert_eq!(toc.entries.len(), 2);
+    assert!(!toc.needs_password);
+    assert_eq!(toc.entries[0].path, "readme.txt");
+    assert_eq!(toc.entries[0].uncompressed_size, Some(12));
+    assert!(!toc.entries[0].is_dir);
+    assert_eq!(toc.entries[1].path, "data/notes.txt");
+
+    let out = TempDir::new("lha-extract");
+    let (progress, cancel) = rig();
+    let outcome = extract_all(
+        tf.path(),
+        out.path(),
+        ExtractOptions {
+            overwrite: true,
+            ..Default::default()
+        },
+        &progress,
+        &cancel,
+    )
+    .unwrap();
+
+    assert_eq!(outcome.files_written, 2);
+    assert!(outcome.skipped.is_empty(), "unexpected skips: {:?}", outcome.skipped);
+    assert_eq!(
+        fs::read_to_string(out.path().join("readme.txt")).unwrap(),
+        "hello aminet"
+    );
+    assert_eq!(
+        fs::read_to_string(out.path().join("data/notes.txt")).unwrap(),
+        "second entry"
+    );
+}
+
+#[test]
+fn lha_is_detected_by_content_without_an_extension() {
+    // Aminet downloads routinely arrive with the extension stripped or
+    // renamed, so the magic table has to carry the format on its own.
+    let tf = TempFile::new("no-extension-here");
+    build_lha(tf.path(), &[("a.txt", b"x")]);
+    assert_eq!(super::probe_format(tf.path()), Some(Format::Lha));
+}
+
+#[test]
+fn lha_is_read_only_and_absent_from_the_create_picker() {
+    // delharc decodes but does not compress; the capability matrix is what
+    // keeps Create Archive from offering a format we cannot write.
+    let caps = Format::Lha.capabilities();
+    assert!(caps.can_browse && caps.can_extract);
+    assert!(!caps.can_create, "LHA has no writer");
+    assert!(caps.is_read_only());
+    assert!(!Format::creatable_multi_file().contains(&Format::Lha));
+}

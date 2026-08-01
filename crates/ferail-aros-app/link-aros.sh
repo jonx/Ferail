@@ -52,6 +52,12 @@ echo "[link] compile rust-aros std glues"
 "$CC" "${CFLAGS[@]}" -c "$RS/aros_net_glue.c" -o "$OUT/aros_net_glue.o"
 "$CC" "${CFLAGS[@]}" -I"$GEN/include/aros/posixc" -c "$RS/aros_fs_glue.c" -o "$OUT/aros_fs_glue.o"
 "$CC" "${CFLAGS[@]}" -c "$RS/aros_process_glue.c" -o "$OUT/aros_process_glue.o"
+# aros_proc_glue.c is the newer pipe/spawn/signal layer (aros_pipe_*,
+# aros_proc_*, aros_sig_*, aros_task_self) the std's process pal grew for the
+# over-pipes shell. Distinct file from aros_process_glue.c above, and not in
+# hosted/rust/std-build.sh's list — without it the final link fails with 13
+# undefined symbols.
+"$CC" "${CFLAGS[@]}" -c "$RS/aros_proc_glue.c" -o "$OUT/aros_proc_glue.o"
 "$CC" "${CFLAGS[@]}" -c "$RS/aros_thread_glue.c" -o "$OUT/aros_thread_glue.o"
 "$CC" "${CFLAGS[@]}" -I"$GEN/include/aros/posixc" -c "$RS/aros_sync_glue.c" -o "$OUT/aros_sync_glue.o"
 "$CC" "${CFLAGS[@]}" -c "$RS/aros_env_glue.c" -o "$OUT/aros_env_glue.o"
@@ -62,6 +68,7 @@ COMPILER_PATH="$XTBIN" "$COLLECT" \
     -L"$LIBDIR" -o "$OUT/Ferail" \
     "$LIBDIR/startup.o" "$OUT/ferail_main.o" \
     "$OUT/aros_net_glue.o" "$OUT/aros_fs_glue.o" "$OUT/aros_process_glue.o" \
+    "$OUT/aros_proc_glue.o" \
     "$OUT/aros_thread_glue.o" "$OUT/aros_sync_glue.o" "$OUT/aros_env_glue.o" "$RSLIB" \
     -\( "${AUTOLIB[@]}" "${STDLIBS[@]}" -\)
 echo "[link] built: $OUT/Ferail ($(stat -f%z "$OUT/Ferail") bytes)"

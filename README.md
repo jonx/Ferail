@@ -3,7 +3,7 @@
 **A power-user file manager that never freezes.** Native, fast, written in
 Rust — with the tools you normally install separately built in: a duplicate
 finder, a disk-usage treemap you can export as HTML, an archive browser that
-opens `.zip` / `.7z` / `.tar.*` in place, magic-byte file identification,
+opens `.zip` / `.7z` / `.tar.*` / `.lha` in place, magic-byte file identification,
 regex bulk rename, a media viewer, and a command palette.
 
 ![Ferail main window](docs/images/tour-shell.png)
@@ -37,7 +37,8 @@ It targets the gap the default managers leave: **responsiveness under load** and
   **export the picture as embeddable HTML**), regex bulk rename with live
   preview, sticky-zoom media viewer, Cmd+K command palette — zero extra
   downloads.
-- **Archives open like folders.** Browse inside a `.zip`, `.7z` or `.tar.*`
+- **Archives open like folders.** Browse inside a `.zip`, `.7z`, `.tar.*` or
+  `.lha`/`.lzh` (the Amiga/Aminet format, read-only)
   without extracting first — a real sortable list with expandable folders and a
   filter box, so a 5000-file archive opens as one folder to drill into. Extract
   just what you selected, drag files in to add them, drag entries out to extract
@@ -104,7 +105,7 @@ The ❌ rows are real gaps, not modesty.
 | **Content / magic detection** (sniff bytes, not extension) | ✅ | ❌ | ❌ | ⚠️ MIME |
 | **Built-in disk usage** (treemap, HTML export) | ✅ | ❌ (3rd-party) | ❌ (3rd-party) | ⚠️ separate app |
 | **Built-in duplicate finder** | ✅ hash funnel, clone/hard-link aware | ❌ (3rd-party) | ❌ (3rd-party) | ❌ (3rd-party) |
-| **Browse inside archives** (no extract-first) | ✅ zip, 7z, tar.* — browse, add, extract selected | ❌ extract only | ⚠️ zip only | ✅ Ark / File Roller |
+| **Browse inside archives** (no extract-first) | ✅ zip, 7z, tar.*, lha — browse, add, extract selected | ❌ extract only | ⚠️ zip only | ✅ Ark / File Roller |
 | **Bulk rename** (regex + live preview) | ✅ | ❌ | ⚠️ PowerRename (PowerToys) | ✅ KRename etc. |
 | **Predictive navigation** (visit heat) | ✅ Ant Trail | ❌ | ❌ | ❌ |
 | **Previews** | ✅ Quick Look + inline highlighted code | ✅ Quick Look | ⚠️ preview pane | ✅ Dolphin strong |

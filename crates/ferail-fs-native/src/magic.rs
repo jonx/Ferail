@@ -259,6 +259,60 @@ fn sniff_signature_table(buf: &[u8]) -> Option<MagicType> {
             offset: 257,
             bytes: b"ustar",
         },
+        // LHA/LZH: the method id sits at offset 2 as `-xxN-`, so there is one
+        // signature per method rather than a single pattern. Covers the
+        // methods delharc decodes: `-lh0-` (stored) through `-lh7-`, the
+        // directory marker `-lhd-`, and the older `-lz*-` family.
+        Sig {
+            magic: MagicType::Lha,
+            offset: 2,
+            bytes: b"-lh0-",
+        },
+        Sig {
+            magic: MagicType::Lha,
+            offset: 2,
+            bytes: b"-lh1-",
+        },
+        Sig {
+            magic: MagicType::Lha,
+            offset: 2,
+            bytes: b"-lh4-",
+        },
+        Sig {
+            magic: MagicType::Lha,
+            offset: 2,
+            bytes: b"-lh5-",
+        },
+        Sig {
+            magic: MagicType::Lha,
+            offset: 2,
+            bytes: b"-lh6-",
+        },
+        Sig {
+            magic: MagicType::Lha,
+            offset: 2,
+            bytes: b"-lh7-",
+        },
+        Sig {
+            magic: MagicType::Lha,
+            offset: 2,
+            bytes: b"-lhd-",
+        },
+        Sig {
+            magic: MagicType::Lha,
+            offset: 2,
+            bytes: b"-lzs-",
+        },
+        Sig {
+            magic: MagicType::Lha,
+            offset: 2,
+            bytes: b"-lz4-",
+        },
+        Sig {
+            magic: MagicType::Lha,
+            offset: 2,
+            bytes: b"-lz5-",
+        },
         // Fonts
         Sig {
             magic: MagicType::OpenType,

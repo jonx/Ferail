@@ -109,6 +109,34 @@ gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", 
 [patch."https://github.com/zed-industries/zed"]
 sum_tree = { path = "vendor/sum-tree" }
 
+# `tar` gates its path<->bytes conversion, symlink, permission and xattr
+# helpers on cfg(unix)/cfg(windows)/wasm32, and AROS is none of those — the
+# crate simply does not compile for the target. `vendor/tar` is upstream
+# 0.4.46 plus AROS arms; byte-identical behaviour everywhere else, so unlike
+# the sibling-checkout patches this one is safe (and required) on every
+# platform and stays in the shared manifest. See vendor/tar/README.md.
+[patch.crates-io]
+tar = { path = "vendor/tar" }
+
+# Same story, same reason — upstream has no AROS arm and the crate does not
+# compile for the target. Both are copies of zed-aros/vendor-aros (whose AROS
+# work these are), kept here so Ferail's build does not depend on a sibling
+# checkout for something every platform links.
+#
+# These are patched **globally** rather than from packaging/aros/aros-patches.toml
+# on purpose. A version-differing patch that is only present for AROS
+# invocations goes silently inert the moment any host `cargo` command
+# re-resolves the lock to a newer registry version — cargo will not downgrade
+# to a patch, it just drops it — and the AROS build then fails with the
+# original "no libc for this target" errors. Patching here means the vendored
+# copy is the only stacker/filetime any build can see, on any target.
+#
+# stacker: stack-growth probe is libc mmap/mprotect/sysconf; the AROS arm makes
+# growth a no-op. filetime (via notify): unix/windows/wasm arms only; the AROS
+# arm reads times from std Metadata and reports set-times unsupported.
+stacker = { path = "vendor/stacker" }
+filetime = { path = "vendor/filetime" }
+
 # NOTE — the AROS `[patch]` entries deliberately do NOT live here.
 #
 # The AROS port needs four source overrides (gpui, gpui_platform,

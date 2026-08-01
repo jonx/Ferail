@@ -297,9 +297,12 @@ fn classify_file(name: &str, magic: &str) -> FileTypeTint {
         | "xml" | "html" | "htm" | "css" | "scss" | "sass" | "less" | "sh" | "bash" | "zsh"
         | "fish" | "vim" | "lua" | "sql" | "graphql" | "proto" | "ml" | "hs" | "ex" | "exs"
         | "erl" | "scala" | "clj" | "el" | "asm" | "dart" => Some(FileTypeTint::Code),
-        "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "zst" | "lz" | "lzma" => {
-            Some(FileTypeTint::Archive)
-        }
+        // `lha`/`lzh` are the Amiga/Aminet archive format (and `lzx` its
+        // successor, which we recognise but do not decode) — worth listing
+        // here so the icon is right from the name alone, without waiting on a
+        // magic sniff.
+        "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "zst" | "lz" | "lzma"
+        | "lha" | "lzh" | "lzx" => Some(FileTypeTint::Archive),
         "dmg" | "iso" | "img" | "vmdk" | "qcow2" | "vhd" | "vdi" | "sparseimage" => {
             Some(FileTypeTint::Disk)
         }

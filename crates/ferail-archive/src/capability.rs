@@ -106,6 +106,20 @@ impl Format {
                 supports_password: false,
                 supports_levels: true,
             },
+
+            // LHA: browse and extract only. `delharc` is a decoder — it has
+            // no compressor — so this is the first format in the matrix that
+            // cannot be created at all. It is therefore absent from
+            // `creatable_multi_file` below, which is what keeps it out of the
+            // Create Archive picker.
+            Format::Lha => Capabilities {
+                can_browse: true,
+                can_extract: true,
+                can_create: false,
+                can_edit_in_place: false,
+                supports_password: false,
+                supports_levels: false,
+            },
         }
     }
 

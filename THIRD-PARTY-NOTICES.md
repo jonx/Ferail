@@ -82,6 +82,42 @@ Ferail's own source is MIT/Apache-2.0 regardless; this matters for the
 
 ---
 
+## Vendored crates carrying AROS support (MIT / Apache-2.0)
+
+Three crates are vendored under `vendor/` unmodified except for additive
+`target_os = "aros"` arms, and patched in from the workspace `Cargo.toml`.
+AROS is not `unix`, `windows` or `wasm32`, and each of these matches
+exhaustively over exactly those, so upstream does not merely lose a feature on
+AROS — it fails to compile.
+
+| Crate | Upstream version | Licence | Delta |
+|---|---|---|---|
+| [`vendor/tar`](vendor/tar/README.md) | 0.4.46 | MIT OR Apache-2.0 | AROS arms for `path2bytes`/`bytes2path`/`ends_with_slash`/`fill_platform_from`; AROS added to the existing symlink/permission/xattr fallbacks |
+| `vendor/stacker` | 0.1.23 | MIT OR Apache-2.0 | AROS arm making stack growth a no-op (its probe is libc `mmap`/`mprotect`) |
+| `vendor/filetime` | 0.2.26 | MIT OR Apache-2.0 | AROS arm reading times from std `Metadata`; set-times reported unsupported |
+
+Each keeps its upstream `LICENSE-MIT` and `LICENSE-APACHE` as shipped, and each
+behaves byte-identically to upstream off AROS — the arms are additive, no
+existing arm is modified. `vendor/stacker` and `vendor/filetime` originate in
+`zed-aros/vendor-aros`, where the AROS work was done; they are copied here so
+Ferail's build does not depend on a sibling checkout for crates every platform
+links.
+
+> **Do not move these into the AROS-only patch file.** They differ in version
+> from the registry, and cargo drops rather than downgrades to such a patch the
+> moment a host command re-resolves the lock — leaving the AROS build broken in
+> a way that looks like a missing toolchain.
+
+## LHA / LZH decoding — `delharc` (MIT / Apache-2.0)
+
+`.lha` / `.lzh` support links [`delharc`](https://github.com/royaltm/rust-delharc)
+unmodified from crates.io. Pure Rust, no C, and taken with
+`default-features = false` so its `std` feature (which enables `chrono/clock`)
+stays off. Decoder only — Ferail cannot create LHA archives, which the
+capability matrix reflects.
+
+---
+
 ## Tree-sitter and its grammars (MIT / Apache-2.0)
 
 The inline syntax-highlighted code preview embeds **tree-sitter** and 35
