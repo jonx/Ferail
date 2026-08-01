@@ -1729,7 +1729,7 @@ impl Shell {
         // parallel vec, which `load_path` recomputes from the same
         // entity, so it picks up the change on the next load — for
         // truly synchronous list updates we also push a refresh here.
-        let fav_subscription = cx.observe(&shell.process.favorites, |this, _favs, cx| {
+        let fav_subscription = cx.observe(&shell.process.favorites(), |this, _favs, cx| {
             this.refresh_file_list_favorited(cx);
             // Keep the watcher registered on each favorite's parent dir so
             // a delete/move of a favorited path flips it to Missing live
@@ -1743,7 +1743,7 @@ impl Shell {
         // the fade-in (Added) or the dedup pulse (DedupPulse). Hydrate
         // emits `Reordered`, not `Added`, so launch never animates.
         let fav_anim_subscription = cx.subscribe(
-            &shell.process.favorites,
+            &shell.process.favorites(),
             |this, _favs, event: &crate::favorites::FavoritesEvent, cx| {
                 use crate::favorites::FavoritesEvent;
                 // Each one-shot signal is cleared after its animation
@@ -3843,7 +3843,7 @@ impl Shell {
     /// Recompute the file list's per-row `is_favorited` parallel vec
     /// from the current Favorites entity index. Called from:
     /// - `apply_directory_batch` (after rows arrive)
-    /// - The `cx.observe(&self.process.favorites, …)` subscription registered
+    /// - The `cx.observe(&self.process.favorites(), …)` subscription registered
     ///   in `Shell::new` (so add / remove / repoint repaints star
     ///   badges in the same frame, §5.3).
     pub fn refresh_file_list_favorited(&mut self, cx: &mut Context<Self>) {
@@ -3856,7 +3856,7 @@ impl Shell {
         let Some(tab) = self.tabs.get(idx) else {
             return;
         };
-        let favs = self.process.favorites.clone();
+        let favs = self.process.favorites().clone();
         let table = tab.table.clone();
         let favs_ref = favs.read(cx);
         // Pre-collect each row's path so the table-update closure
@@ -4561,7 +4561,7 @@ impl Shell {
                 // hydrate. The dev seed runs only when the entry list
                 // is empty AND `FERAIL_DEV_SEED_FAVORITES=1` — see
                 // `crate::favorites::maybe_seed_dev_favorites`.
-                let fav_entity = this.process.favorites.clone();
+                let fav_entity = this.process.favorites().clone();
                 fav_entity.update(cx, |f, cx| match favorites {
                     Some(favorites) => {
                         if let Some(d) = db.clone() {
@@ -4691,7 +4691,7 @@ impl Shell {
         // live Missing-transition hook (§8): favorite parents are watched
         // independently of the visible tabs (`watch_favorite_dirs`).
         let _ = process
-            .favorites
+            .favorites()
             .update(cx, |f, cx| f.refresh_availability(cx));
     }
 
@@ -4825,13 +4825,13 @@ impl Shell {
         let label = op.label();
         match op {
             UndoOp::AddFavorite(id) => {
-                self.process.favorites.update(cx, |f, cx| {
+                self.process.favorites().update(cx, |f, cx| {
                     f.remove(id, cx);
                 });
                 window.push_notification(Notification::success(label.to_string()), cx);
             }
             UndoOp::RemoveFavorite(fav) => {
-                self.process.favorites.update(cx, |f, cx| {
+                self.process.favorites().update(cx, |f, cx| {
                     f.restore(fav, cx);
                 });
                 window.push_notification(Notification::success(label.to_string()), cx);
@@ -4955,25 +4955,25 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
-        let already = self.process.favorites.read(cx).contains_path(&canonical);
-        let favs = self.process.favorites.clone();
+        let already = self.process.favorites().read(cx).contains_path(&canonical);
+        let favs = self.process.favorites().clone();
         if already {
             let id = self
                 .process
-                .favorites
+                .favorites()
                 .read(cx)
                 .id_for_path(&canonical)
                 .expect("contains_path returned true");
             let label = self
                 .process
-                .favorites
+                .favorites()
                 .read(cx)
                 .entry_by_id(id)
                 .map(|f| f.effective_label())
                 .unwrap_or_else(|| "favorite".to_string());
             // Capture the full entry before removal so the undo
             // restores name + icon + sort_index + date_added.
-            let removed_for_undo = self.process.favorites.read(cx).entry_by_id(id).cloned();
+            let removed_for_undo = self.process.favorites().read(cx).entry_by_id(id).cloned();
             self.remove_favorite_collapsing(id, cx);
             if let Some(fav) = removed_for_undo {
                 self.push_undo(UndoOp::RemoveFavorite(fav));
@@ -5035,7 +5035,7 @@ impl Shell {
                 // it now. If it was already cleared (undo, re-add), the
                 // entity remove would be redundant, so skip it.
                 if this.fav_removing.remove(&id) {
-                    this.process.favorites.update(cx, |f, cx| {
+                    this.process.favorites().update(cx, |f, cx| {
                         f.remove(id, cx);
                     });
                     cx.notify();
@@ -5076,7 +5076,7 @@ impl Shell {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.process.favorites.update(cx, |f, cx| {
+        self.process.favorites().update(cx, |f, cx| {
             f.one_shot_sort(ferail_core::favorites::FavoriteSort::NameAsc, cx);
         });
     }
@@ -5087,7 +5087,7 @@ impl Shell {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.process.favorites.update(cx, |f, cx| {
+        self.process.favorites().update(cx, |f, cx| {
             f.one_shot_sort(ferail_core::favorites::FavoriteSort::DateAddedNewest, cx);
         });
     }
@@ -5098,7 +5098,7 @@ impl Shell {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.process.favorites.update(cx, |f, cx| {
+        self.process.favorites().update(cx, |f, cx| {
             f.one_shot_sort(ferail_core::favorites::FavoriteSort::DateAddedOldest, cx);
         });
     }
@@ -5109,7 +5109,7 @@ impl Shell {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.process.favorites.update(cx, |f, cx| {
+        self.process.favorites().update(cx, |f, cx| {
             f.one_shot_sort(ferail_core::favorites::FavoriteSort::Kind, cx);
         });
     }
@@ -5124,7 +5124,7 @@ impl Shell {
     ) {
         if let Some(id) = self.focused_favorite {
             self.process
-                .favorites
+                .favorites()
                 .update(cx, |f, cx| f.shift(id, -1, cx));
         }
     }
@@ -5137,7 +5137,7 @@ impl Shell {
     ) {
         if let Some(id) = self.focused_favorite {
             self.process
-                .favorites
+                .favorites()
                 .update(cx, |f, cx| f.shift(id, 1, cx));
         }
     }
@@ -5156,7 +5156,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Option<ferail_core::favorites::FavoriteId> {
         let path = self.favorites_context_path.take()?;
-        self.process.favorites.read(cx).id_for_path(&path)
+        self.process.favorites().read(cx).id_for_path(&path)
     }
 
     pub fn on_rename_favorite(
@@ -5170,7 +5170,7 @@ impl Shell {
         };
         let current = self
             .process
-            .favorites
+            .favorites()
             .read(cx)
             .entry_by_id(id)
             .map(|f| f.effective_label())
@@ -5187,7 +5187,7 @@ impl Shell {
             false,
             move |this, new_name, _window, cx| {
                 this.process
-                    .favorites
+                    .favorites()
                     .update(cx, |f, cx| f.rename(id, Some(new_name), cx));
             },
             window,
@@ -5205,7 +5205,7 @@ impl Shell {
             return;
         };
         self.process
-            .favorites
+            .favorites()
             .update(cx, |f, cx| f.rename(id, None, cx));
     }
 
@@ -5219,7 +5219,7 @@ impl Shell {
             return;
         };
         self.process
-            .favorites
+            .favorites()
             .update(cx, |f, cx| f.set_icon(id, None, cx));
     }
 
@@ -5269,7 +5269,7 @@ impl Shell {
                 .spawn(async move { path::canonicalize_for_identity(chosen) })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.process.favorites.update(cx, |f, cx| {
+                this.process.favorites().update(cx, |f, cx| {
                     f.repoint(
                         id,
                         ferail_core::favorites::FavoriteTarget::Path(canonical),
@@ -5338,7 +5338,7 @@ impl Shell {
                                     let removed = shell_remove
                                         .read(cx)
                                         .process
-                                        .favorites
+                                        .favorites()
                                         .read(cx)
                                         .entry_by_id(id)
                                         .cloned();
@@ -5383,7 +5383,7 @@ impl Shell {
     /// first (next) or last (previous) entry so a single arrow press
     /// from the section header enters the list.
     fn move_favorite_focus(&mut self, by: isize, cx: &mut Context<Self>) {
-        let entries = self.process.favorites.read(cx).entries().to_vec();
+        let entries = self.process.favorites().read(cx).entries().to_vec();
         if entries.is_empty() {
             return;
         }
@@ -5431,13 +5431,13 @@ impl Shell {
         let Some(id) = self.focused_favorite else {
             return;
         };
-        let Some(fav) = self.process.favorites.read(cx).entry_by_id(id).cloned() else {
+        let Some(fav) = self.process.favorites().read(cx).entry_by_id(id).cloned() else {
             return;
         };
         let ferail_core::favorites::FavoriteTarget::Path(path) = fav.target else {
             return;
         };
-        match self.process.favorites.read(cx).state_for(id) {
+        match self.process.favorites().read(cx).state_for(id) {
             FavoriteState::Available => self.navigate_from_favorite(path, cx),
             other => self.show_missing_favorite_dialog(id, path, other, window, cx),
         }
@@ -5455,7 +5455,7 @@ impl Shell {
         let Some(id) = self.focused_favorite else {
             return;
         };
-        let removed = self.process.favorites.read(cx).entry_by_id(id).cloned();
+        let removed = self.process.favorites().read(cx).entry_by_id(id).cloned();
         let Some(fav) = removed else {
             // Stale focus (entry already gone) — clear it.
             self.focused_favorite = None;
@@ -5487,7 +5487,7 @@ impl Shell {
         let Some(id) = self.pop_favorite_id_for_action(cx) else {
             return;
         };
-        let favorites = self.process.favorites.clone();
+        let favorites = self.process.favorites().clone();
         crate::favorite_icon_picker::open_window(cx, favorites, id);
     }
 
@@ -5509,7 +5509,7 @@ impl Shell {
         // Favorites" on a broken row routes to the NotAFolder rejection
         // toast and the user can never remove the stale shortcut.
         let already_favorite =
-            |path: &Path, this: &Self| this.process.favorites.read(cx).contains_path(path);
+            |path: &Path, this: &Self| this.process.favorites().read(cx).contains_path(path);
         if let Some(p) = self.favorites_context_path.take() {
             // Every surface that sets `favorites_context_path` is
             // folder-only by construction (favorites rows, sidebar

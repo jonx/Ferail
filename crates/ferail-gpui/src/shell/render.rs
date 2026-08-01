@@ -190,7 +190,7 @@ impl Shell {
             .borrow_mut()
             .get_or_create_path_with_id(home.clone(), node_id);
         let is_expanded = self.expanded.contains(&home);
-        let favorited = self.process.favorites.read(cx).contains_path(&home);
+        let favorited = self.process.favorites().read(cx).contains_path(&home);
         let mut rows: Vec<TreeRowSpec> = vec![TreeRowSpec {
             node_id,
             path: home.clone(),
@@ -234,7 +234,7 @@ impl Shell {
         // construction time below so any mutation (add / remove /
         // reorder / rename) drives a Shell repaint, which re-runs
         // `build_user_favorites_section` with the fresh list.
-        let entries = self.process.favorites.read(cx).entries().to_vec();
+        let entries = self.process.favorites().read(cx).entries().to_vec();
         ShellSidebarItem::favorites(crate::favorites_section::FavoritesSection::new(
             entries,
             self.favorites_section_collapsed,
@@ -417,7 +417,7 @@ impl Shell {
         use gpui_component::Icon;
         let current = self.active_tab().current_dir.clone();
         let mut menu = SidebarMenu::new();
-        let favs = self.process.favorites.read(cx);
+        let favs = self.process.favorites().read(cx);
         for loc in crate::special_folders::locations(cx).iter() {
             let path = loc.path.clone();
             let node_id = self.process.fs.id_for_path(&path);
@@ -535,7 +535,7 @@ impl Shell {
         let mut rows: Vec<TreeRowSpec> = Vec::new();
         // Snapshot the favorites paths once so the inner loop doesn't
         // re-read the entity per row.
-        let favs = self.process.favorites.read(cx);
+        let favs = self.process.favorites().read(cx);
         let volume_paths: Vec<VolumeRow> = self
             .process
             .volumes
@@ -658,7 +658,7 @@ impl Shell {
             })
             .collect();
         let last_ix = visible.len().saturating_sub(1);
-        let favs = self.process.favorites.read(cx);
+        let favs = self.process.favorites().read(cx);
         for (ix, child) in visible.into_iter().enumerate() {
             let is_last = ix == last_ix;
             let is_expanded = self.expanded.contains(&child.path);
@@ -2941,7 +2941,7 @@ impl Shell {
             // segment whose path is in the Favorites index. The last
             // segment is the current-folder header per §5.1, so the
             // current-folder header is covered by the same render path.
-            let favorited = self.process.favorites.read(cx).contains_path(&path);
+            let favorited = self.process.favorites().read(cx).contains_path(&path);
             let crumb = div()
                 .id(ElementId::Name(format!("crumb-{i}").into()))
                 .px_2()
@@ -3001,7 +3001,7 @@ impl Shell {
                         let already = s
                             .read(cx)
                             .process
-                            .favorites
+                            .favorites()
                             .read(cx)
                             .contains_path(&path_for_menu);
                         s.update(cx, |shell, cx| {
@@ -3204,7 +3204,7 @@ impl Render for Shell {
                     icon_warm.push(row.path.clone());
                 }
             }
-            for fav in self.process.favorites.read(cx).entries() {
+            for fav in self.process.favorites().read(cx).entries() {
                 if let ferail_core::favorites::FavoriteTarget::Path(p) = &fav.target {
                     if fav.custom_icon.is_none() && !icons.has_folder_icon(p) {
                         icon_warm.push(p.clone());
@@ -3562,13 +3562,13 @@ impl Render for Shell {
                     let id = payload.id;
                     let label = this
                         .process
-                        .favorites
+                        .favorites()
                         .read(cx)
                         .entry_by_id(id)
                         .map(|f| f.effective_label())
                         .unwrap_or_else(|| "favorite".to_string());
-                    let removed_for_undo = this.process.favorites.read(cx).entry_by_id(id).cloned();
-                    this.process.favorites.update(cx, |f, cx| {
+                    let removed_for_undo = this.process.favorites().read(cx).entry_by_id(id).cloned();
+                    this.process.favorites().update(cx, |f, cx| {
                         f.remove(id, cx);
                     });
                     if let Some(fav) = removed_for_undo {

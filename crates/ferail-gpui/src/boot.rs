@@ -174,7 +174,7 @@ pub fn run_gui(args: screenshot::Args) {
         // future Cmd+N windows, screenshot path) reads the same Rc
         // through `process_state::process_state(cx)`.
         let process = crate::shell::Shell::build_process_state(cx);
-        cx.set_global(crate::process_state::ProcessStateGlobal(process));
+        crate::process_state::install(cx, process);
 
         // Resolve the sidebar Locations for the persisted special-folder
         // mode (Windows/OneDrive) once, before any window paints. Render

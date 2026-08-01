@@ -200,7 +200,7 @@ impl SidebarItem for FavoritesSection {
                     };
                     if let Some(shell) = shell_weak.upgrade() {
                         shell.update(cx, |s, cx| {
-                            s.process.favorites.update(cx, |f, cx| {
+                            s.process.favorites().update(cx, |f, cx| {
                                 f.add_path(
                                     canonical,
                                     ferail_core::favorites::FavoriteKind::Folder,
@@ -336,7 +336,7 @@ impl SidebarItem for FavoritesSection {
                 .map(|f| {
                     shell
                         .upgrade()
-                        .map(|s| s.read(cx).process.favorites.read(cx).state_for(f.id))
+                        .map(|s| s.read(cx).process.favorites().read(cx).state_for(f.id))
                         .unwrap_or(FavoriteState::Available)
                 })
                 .collect();
@@ -802,7 +802,7 @@ fn render_drop_gap(
                 if let Some(s) = shell.upgrade() {
                     let id = payload.id;
                     s.update(cx, |shell, cx| {
-                        shell.process.favorites.update(cx, |f, cx| {
+                        shell.process.favorites().update(cx, |f, cx| {
                             f.reorder_between(id, before, after, cx);
                         });
                     });
@@ -873,7 +873,7 @@ fn add_dropped_folders(
             let upper = after;
             for canonical in valid {
                 let slot = ferail_core::favorites::fractional_between(cursor, upper);
-                shell.process.favorites.update(cx, |f, cx| {
+                shell.process.favorites().update(cx, |f, cx| {
                     f.add_path_at(canonical.clone(), FavoriteKind::Folder, slot, cx);
                 });
                 cursor = slot;

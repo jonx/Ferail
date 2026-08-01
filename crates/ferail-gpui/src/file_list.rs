@@ -1999,7 +1999,7 @@ impl TableDelegate for FileListDelegate {
                     let name = name.clone();
                     let label = format!("Pin \u{201c}{name}\u{201d} to Sidebar");
                     m = m.item(PopupMenuItem::new(label).on_click(move |_ev, _w, cx| {
-                        let favs = crate::process_state::process_state(cx).favorites.clone();
+                        let favs = crate::process_state::process_state(cx).favorites().clone();
                         let name = name.clone();
                         favs.update(cx, |f, cx| {
                             f.add_tag(name, cx);

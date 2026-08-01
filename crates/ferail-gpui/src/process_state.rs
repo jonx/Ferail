@@ -90,7 +90,15 @@ pub struct ProcessState {
 
     /// User-curated favorites. An Entity so subscriptions / observers
     /// across multiple windows all see the same mutations.
-    pub favorites: Entity<Favorites>,
+    ///
+    /// Read it through [`ProcessState::favorites`]. The `Option` exists so
+    /// [`ProcessState::release_favorites`] can hand the handle back at quit:
+    /// this is the process's only *strong* [`Entity`] outside GPUI's own
+    /// entity map (every other handle here is a [`WeakEntity`]), and GPUI's
+    /// `App` drops `entities` before the fields that hold it — the global
+    /// below, subscriptions, queued tasks. A handle still alive at that point
+    /// is what its leak detector panics on. See [`install`].
+    favorites: RefCell<Option<Entity<Favorites>>>,
 
     /// Process-wide undo stack. A delete/rename in window A is
     /// reachable from a Cmd+Z in window B by design — the operation
@@ -194,6 +202,26 @@ pub struct ProcessState {
 }
 
 impl ProcessState {
+    /// The shared favorites entity.
+    ///
+    /// Cloning an [`Entity`] is a refcount bump, so callers take one freely.
+    /// Panics only after [`Self::release_favorites`] has run, i.e. during
+    /// app teardown — anything reading favorites that late is a bug in the
+    /// shutdown ordering, and a clear panic beats a silent no-op.
+    pub fn favorites(&self) -> Entity<Favorites> {
+        self.favorites
+            .borrow()
+            .clone()
+            .expect("favorites read after release_favorites (app is quitting)")
+    }
+
+    /// Drop the process's strong handle on the favorites entity. Called from
+    /// the quit observer installed by [`install`]; see its note for why this
+    /// exists at all.
+    pub fn release_favorites(&self) {
+        self.favorites.borrow_mut().take();
+    }
+
     /// Build the singleton. Takes the `favorites` entity by value so
     /// the caller can allocate it inside their `Context` (Entity
     /// allocations need a Context; ProcessState isn't a GPUI entity).
@@ -210,7 +238,7 @@ impl ProcessState {
             thumbnails: Rc::new(RefCell::new(crate::thumbnails::ThumbnailCache::new())),
             tasks: Rc::new(RefCell::new(TaskRegistry::new())),
             watcher,
-            favorites,
+            favorites: RefCell::new(Some(favorites)),
             undo_stack: RefCell::new(VecDeque::new()),
             ant_visits: RefCell::new(HashMap::new()),
             ant_max: Cell::new(0),
@@ -329,7 +357,7 @@ impl ProcessState {
         // tab so a favorited path deleted/moved while unseen still flips
         // to Missing (see `Favorites::watch_dirs`). Keep them across the
         // prune, not just the visible tab dirs.
-        keep.extend(self.favorites.read(cx).watch_dirs());
+        keep.extend(self.favorites().read(cx).watch_dirs());
         if let Some(w) = self.watcher.borrow_mut().as_mut() {
             w.retain_watched(&keep);
         }
@@ -342,7 +370,7 @@ impl ProcessState {
     /// that drive `Favorites::refresh_availability`. `prune_watches`
     /// keeps these registered across navigation.
     pub fn watch_favorite_dirs(&self, cx: &gpui::App) {
-        let dirs = self.favorites.read(cx).watch_dirs();
+        let dirs = self.favorites().read(cx).watch_dirs();
         if dirs.is_empty() {
             return;
         }
@@ -425,6 +453,40 @@ pub fn process_state(cx: &App) -> Rc<ProcessState> {
     cx.global::<ProcessStateGlobal>().0.clone()
 }
 
+/// Install the singleton as a GPUI global **and** arrange for its one strong
+/// entity handle to be released at quit.
+///
+/// The release half is what keeps the app from panicking on exit. GPUI's
+/// `App` declares `entities` before `globals_by_type`, `observers` and the
+/// rest, and Rust drops struct fields in declaration order — so the entity
+/// map (which owns the leak detector) is torn down while those later fields
+/// still hold handles. Dropping the *global* is not enough on its own:
+/// `Rc<ProcessState>` clones also live in subscriptions and queued tasks, and
+/// any one of them keeps `favorites` alive. Releasing the handle itself works
+/// regardless of how many `Rc`s are still out there.
+///
+/// Without this, closing the window produces:
+///
+/// ```text
+/// Exited with leaked handles:
+///   Leaked handle for entity ferail_gpui::favorites::Favorites (EntityId(1v1))
+/// ```
+///
+/// Only AROS actually shows it: every other backend's `quit` terminates the
+/// process (macOS hands off to `NSApplication terminate`) and never drops
+/// `App`, so the detector never runs there. The retention was real on all of
+/// them regardless — AROS is simply the one that checks.
+pub fn install(cx: &mut App, process: Rc<ProcessState>) {
+    cx.set_global(ProcessStateGlobal(process));
+    cx.on_app_quit(|cx| {
+        // Quit observers run before teardown, so anything reading favorites
+        // during shutdown must be registered before this one.
+        cx.global::<ProcessStateGlobal>().0.release_favorites();
+        async {}
+    })
+    .detach();
+}
+
 /// Start the live volume watch. Platform mount/unmount/rename
 /// notifications ([mac] NSWorkspace; win-parity stub today) feed a
 /// coalescing channel; the foreground drain task re-lists volumes on
@@ -467,7 +529,7 @@ async fn refresh_volumes(cx: &mut gpui::AsyncApp) {
         *process.volumes.borrow_mut() = vols;
         *process.cloud_locations.borrow_mut() = clouds;
         process
-            .favorites
+            .favorites()
             .update(cx, |favs, cx| favs.refresh_mount_states(cx));
         for weak in process.live_shells() {
             if let Some(shell) = weak.upgrade() {
@@ -539,7 +601,7 @@ pub fn start_power_watch(cx: &mut App) {
                     *process.volumes.borrow_mut() = vols;
                     *process.cloud_locations.borrow_mut() = clouds;
                     process
-                        .favorites
+                        .favorites()
                         .update(cx, |favs, cx| favs.refresh_mount_states(cx));
                     for weak in process.live_shells() {
                         if let Some(shell) = weak.upgrade() {

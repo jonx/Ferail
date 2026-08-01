@@ -424,7 +424,7 @@ pub fn run(args: Args) -> Result<()> {
         // GPUI Global so the open_window factory (and any
         // subsequent Shell::new) can read it back.
         let process = Shell::build_process_state(cx);
-        cx.set_global(crate::process_state::ProcessStateGlobal(process));
+        crate::process_state::install(cx, process);
         // Volumes are seeded empty and filled asynchronously; the fill
         // lands well within the pre-capture settle delay, so the
         // sidebar's Volumes section renders in screenshots.
