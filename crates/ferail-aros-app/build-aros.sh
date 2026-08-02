@@ -35,9 +35,30 @@ fi
 CARGO_PROFILE_FLAG=""
 [ "$PROFILE" = "release" ] && CARGO_PROFILE_FLAG="--release"
 
+PATCHES="$REPO/packaging/aros/aros-patches.toml"
+
+# THE INERT-PATCH GUARD. `aros-patches.toml` overrides libc with the vendored
+# AROS copy, and cargo only honours a `[patch]` whose version the lock can
+# accept -- it will not downgrade to one. Any host `cargo` command that bumps
+# libc past the vendored version therefore *silently disables* the patch, and
+# the next AROS build dies deep in lzma-sys with
+#
+#     error[E0432]: unresolved imports `libc::c_char`, `libc::size_t`
+#
+# which says nothing about the real cause. Re-assert the pin every build rather
+# than relying on whoever last touched the lockfile (this bit twice on
+# 2026-08-01/02). The version is read from the vendored crate so it cannot go
+# stale against it.
+LIBC_VENDOR="${AROS_ZED_SRC:-$REPO/../zed-aros}/vendor-aros/libc/Cargo.toml"
+LIBC_VER="$(awk -F'"' '/^version = /{print $2; exit}' "$LIBC_VENDOR" 2>/dev/null || true)"
+if [ -n "$LIBC_VER" ]; then
+    cargo "+$TOOLCHAIN" --config "$PATCHES" \
+        update -p libc --precise "$LIBC_VER" >/dev/null 2>&1 || true
+fi
+
 # The AROS source overrides ride on --config so they stay off host builds
 # ([patch] is global; see the file's header).
-cargo "+$TOOLCHAIN" --config "$REPO/packaging/aros/aros-patches.toml" \
+cargo "+$TOOLCHAIN" --config "$PATCHES" \
     build $CARGO_PROFILE_FLAG -p ferail-aros-app \
     --target "$TARGET_JSON" \
     -Zjson-target-spec -Zbuild-std=std,panic_abort

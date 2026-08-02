@@ -37,6 +37,21 @@ gpui_platform = { path = "../../zed-aros/crates/gpui_platform" }
 gpui-component = { path = "../../gpui-component-aros/crates/ui" }
 gpui-component-assets = { path = "../../gpui-component-aros/crates/assets" }
 
+# libc, for AROS only. Upstream compiles to an empty module on this target
+# (AROS is not cfg(unix)), which is fine until something actually imports from
+# it — lzma-sys does, for `c_char`/`c_uchar`/`size_t`/`c_uint`, so xz cannot
+# build without this. zed-aros vendors 0.2.186 with an additive AROS module.
+#
+# Scoped here rather than patched globally like the small crates below: libc is
+# large and security-relevant, and pointing macOS/Windows/Linux release builds
+# at a fork is a much bigger blast radius than a stack-probe shim. The cost of
+# that choice is the inertness trap described below — the vendored copy is
+# 0.2.186, so `Cargo.lock` must stay on 0.2.186 or this patch is silently
+# dropped and the AROS build fails with "unresolved imports `libc::c_char`".
+# Re-pin with `cargo update -p libc --precise 0.2.186`.
+[patch.crates-io]
+libc = { path = "../../zed-aros/vendor-aros/libc" }
+
 # NOTE — `stacker` and `filetime` are deliberately NOT here.
 #
 # They live in the workspace manifest as `vendor/stacker` and `vendor/filetime`

@@ -32,25 +32,12 @@ use crate::shell::Shell;
 use crate::text::TextScale as _;
 
 /// Formats offered in the picker, in menu order.
-#[cfg(not(target_os = "aros"))]
 const FORMATS: &[Format] = &[
     Format::Zip,
     Format::SevenZ,
     Format::TarGz,
     Format::TarBz2,
     Format::TarXz,
-    Format::Tar,
-];
-
-/// AROS builds without `xz2` (liblzma needs `pthread_sigmask`, which the OS
-/// does not provide), so `.tar.xz` is not offered there. Every other format is
-/// identical — `tar` itself works via the AROS arms in `vendor/tar`.
-#[cfg(target_os = "aros")]
-const FORMATS: &[Format] = &[
-    Format::Zip,
-    Format::SevenZ,
-    Format::TarGz,
-    Format::TarBz2,
     Format::Tar,
 ];
 

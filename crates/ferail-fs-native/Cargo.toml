@@ -30,8 +30,12 @@ blake3.workspace = true
 # - flate2: gzip stream (already transitive; pinned here explicitly).
 # - bzip2 0.6: bzip2 stream — pure-Rust libbz2-rs-sys backend (no C).
 # - xz2: xz/LZMA stream — the one C edge, accepted like the app's other C
-#   deps (tree-sitter). See the AROS target block below for why it is not
-#   in this table.
+#   deps (tree-sitter). MUST stay on the "static" feature: without it lzma-sys
+#   probes pkg-config and links whatever liblzma the build machine happens to
+#   have — on a dev Mac that is Homebrew's liblzma.5.dylib, which does not
+#   exist on a clean Mac, so the shipped app dies at launch with a dyld
+#   "Library not loaded" abort. "static" vendors and builds liblzma in.
+#   scripts/package-mac.sh re-checks this with otool before packaging.
 # - sevenz-rust: 7z read/extract only (no write path exposed in v1).
 # "time" makes the writer stamp entries with the real current time; without it
 # every archive we create records the 1980 DOS epoch. The `time` crate is
@@ -42,6 +46,10 @@ zip = { version = "2", default-features = false, features = ["deflate", "bzip2",
 tar = "0.4"
 flate2 = "1"
 bzip2 = "0.6"
+# Builds for AROS too since pthread_sigmask landed in the OS's libpthread —
+# it was an unimplemented, undeclared stub, which is what liblzma's
+# mythread.h tripped over.
+xz2 = { version = "0.1", features = ["static"] }
 sevenz-rust = "0.6"
 # LHA/LZH read + extract (Amiga/Aminet's native archive format). Pure Rust and
 # no C, so it builds for every target including AROS — but `default-features`
@@ -53,21 +61,6 @@ delharc = { version = "0.6", default-features = false, features = ["lh1", "lz"] 
 # Embedded-tag / audio-property reader for the media module. Cross-platform
 # pure Rust, so it lives in the shared dependency table, not a target block.
 lofty.workspace = true
-
-# xz/LZMA everywhere but AROS. liblzma's mythread.h calls `pthread_sigmask`,
-# which AROS has no declaration or symbol for (posixc stops at
-# `sigprocmask`), so lzma-sys cannot compile for the target at all. The xz
-# arms in archive/{single,tarball}.rs are cfg'd off to match and the create
-# picker drops .tar.xz there — every other format still works.
-#
-# MUST stay on the "static" feature: without it lzma-sys probes pkg-config
-# and links whatever liblzma the build machine happens to have — on a dev Mac
-# that is Homebrew's /opt/homebrew/opt/xz/lib/liblzma.5.dylib, which does not
-# exist on a clean Mac, so the shipped app dies at launch with a dyld
-# "Library not loaded" abort. "static" vendors and builds liblzma into the
-# binary. scripts/package-mac.sh re-checks this with otool before packaging.
-[target.'cfg(not(target_os = "aros"))'.dependencies]
-xz2 = { version = "0.1", features = ["static"] }
 
 [target.'cfg(windows)'.dependencies]
 # Win32 bindings for drive enumeration + volume info. Same version as

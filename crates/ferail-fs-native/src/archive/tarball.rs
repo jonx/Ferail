@@ -24,10 +24,7 @@ fn decoded_reader(archive: &Path, format: Format) -> Result<Box<dyn Read>, Archi
         Format::Tar => Box::new(file),
         Format::TarGz => Box::new(flate2::read::GzDecoder::new(file)),
         Format::TarBz2 => Box::new(bzip2::read::BzDecoder::new(file)),
-        #[cfg(not(target_os = "aros"))]
         Format::TarXz => Box::new(xz2::read::XzDecoder::new(file)),
-        #[cfg(target_os = "aros")]
-        Format::TarXz => return Err(ArchiveError::Codec(super::XZ_UNAVAILABLE.into())),
         // The dispatcher only routes tar-family formats here.
         other => {
             return Err(ArchiveError::Codec(format!(
@@ -174,14 +171,11 @@ pub(super) fn create(
             let enc = build_tar(tar::Builder::new(enc), items, progress, cancel)?;
             enc.finish()?;
         }
-        #[cfg(not(target_os = "aros"))]
         Format::TarXz => {
             let enc = xz2::write::XzEncoder::new(file, level);
             let enc = build_tar(tar::Builder::new(enc), items, progress, cancel)?;
             enc.finish()?;
         }
-        #[cfg(target_os = "aros")]
-        Format::TarXz => return Err(ArchiveError::Codec(super::XZ_UNAVAILABLE.into())),
         other => {
             return Err(ArchiveError::Codec(format!(
                 "not a tar-family format: {}",

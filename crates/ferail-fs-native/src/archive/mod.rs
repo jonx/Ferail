@@ -47,11 +47,6 @@ mod zip_codec;
 #[cfg(test)]
 mod tests;
 
-/// What the xz codec arms report on AROS, where liblzma cannot be built
-/// (`pthread_sigmask` is absent — see the target block in Cargo.toml).
-#[cfg(target_os = "aros")]
-pub(super) const XZ_UNAVAILABLE: &str = "xz compression is not available on AROS";
-
 /// A bounded, cheap-to-read summary of an archive, for the Description column.
 ///
 /// Fields are `None`/`false` when the fact was not cheaply available — a

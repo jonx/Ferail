@@ -271,7 +271,8 @@ exec's Alert() and ShutdownA() leave breadcrumbs there.
 | `[patch]` not applied — gpui resolves from github | `--config packaging/aros/aros-patches.toml` missing from the cargo invocation, or a sibling checkout is missing / on the wrong branch. Verify with `cargo tree -i gpui`: it must print a path, not a git URL. |
 | stacker `libc::mmap` / filetime `os::unix` errors | The vendored copy is not being used. `cargo tree -i stacker` must print `vendor/stacker`; if it prints a registry version, the lock drifted past the vendored one — `cargo update -p stacker --precise 0.1.23` (or `filetime` / `0.2.26`). Cargo silently ignores a patch it would have to downgrade to. |
 | `tar` fails with 15 errors in `header.rs` | Same thing for `vendor/tar` — `cargo tree -i tar` must print the vendor path. See `vendor/tar/README.md`. |
-| lzma-sys: `pthread_sigmask` undeclared | `xz2` reached the AROS graph. It is target-gated off in `ferail-fs-native/Cargo.toml`; AROS has no `pthread_sigmask` (posixc stops at `sigprocmask`). |
+| lzma-sys: `pthread_sigmask` undeclared | The AROS build tree predates the `pthread_sigmask` implementation. It was a stub — unimplemented, absent from `compiler/pthread/mmakefile.src`, undeclared in `pthread.h` — so liblzma could not compile. Rebuild the OS side: `make linklibs-pthread` in the configured tree. |
+| lzma-sys: `unresolved imports \`libc::c_char\`` | The vendored libc patch is inert. `cargo tree -i libc` (with the AROS `--config`) must print `zed-aros/vendor-aros/libc`; if it prints a registry version, re-pin: `cargo update -p libc --precise 0.2.186`. |
 | Link fails with undefined `aros_pipe_*` / `aros_proc_*` / `aros_sig_*` | `link-aros.sh` is missing a glue file from `aros-aarch64/hosted/rust`. That set grows as the std pal does — `aros_proc_glue.c` was added on 2026-08-01. Compare against the `.c` files in that directory. |
 | Boot: `Failed to open file FileSystem.resource` | Boot image lost a kickstart module — rebuild just it (`make kernel-filesystem` in a configured tree) and copy in. |
 | Boot: `Could not open version 36 ... dos.library` | Wildly misleading. Real cause: the `AROS.boot` signature file is missing from the boot volume root — `echo aarch64 > <bootdir>/AROS.boot`. |
@@ -288,10 +289,14 @@ exec's Alert() and ShutdownA() leave breadcrumbs there.
   stub scaffold — Lucide glyph fallbacks render instead; icon.library /
   DefIcons integration is the designed next step).
 - Dead-key composition disabled.
-- **No `.tar.xz` on AROS.** `xz2`/liblzma cannot build for the target
-  (`pthread_sigmask`), so that one format is dropped from the create picker
-  and refused on open with a plain message. Every other archive format —
-  zip, 7z, tar, tar.gz, tar.bz2, gz, bz2, and LHA — works.
+- **`.tar.xz` decode is unverified on device.** It builds, links and boots
+  since `pthread_sigmask` landed (see below), but the archive workbench could
+  not be driven through injected input to confirm a real decode — double-click
+  does not register even when the four events are written straight to the
+  control FIFO (the guest polls on a 33 ms frame), plain right-click raises no
+  context menu, and the native Intuition menu arms but will not drop under the
+  synthetic hold gesture. Verify by hand, or teach `aros-ctl` a real
+  double-click.
 - The metadata DB (sqlite) compiles and links; its runtime behavior on
   AROS paths has not been audited.
 - `parking_lot_core` is in the graph unpatched. Zed vendors an AROS thread
@@ -301,6 +306,15 @@ exec's Alert() and ShutdownA() leave breadcrumbs there.
   stutters while background work runs.
 
 ### Fixed since the 2026-07-06 list
+
+- **`.tar.xz` works.** It used to be gated off: liblzma's `mythread.h` calls
+  `pthread_sigmask`, which AROS declared nowhere and never built. That has
+  been implemented upstream-side (`compiler/pthread/pthread_sigmask.c`
+  forwards to `sigprocmask`, whose mask is already per-task) and added to the
+  pthread linklib and header. Every archive format Ferail supports now works
+  on AROS. **Runtime decode is not yet confirmed on device** — the build,
+  link and boot are, but driving the archive workbench through injected input
+  did not work (see the note on double-click below).
 
 - **Window resize works.** The size gadget drag-resizes and the layout
   reflows; verified on device 2026-08-01 (`screenshots/aros-resize-*.png`).
