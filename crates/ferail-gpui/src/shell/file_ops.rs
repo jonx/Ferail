@@ -3116,7 +3116,7 @@ impl Shell {
             return;
         }
         cx.spawn_in(window, async move |this, cx| {
-            let Some(dest) = crate::platform_shell::pick_folder() else {
+            let Some(dest) = pick_destination_folder(cx).await else {
                 return;
             };
             let _ = this.update_in(cx, |this, window, cx| {
@@ -3314,11 +3314,46 @@ impl Shell {
             match result {
                 Ok(_) => {
                     Shell::broadcast_reload_for_process(&process, vec![reload_path], cx);
-                    if let FileOpSuccessToast::IfSurfaced(message) = success_toast {
-                        if surfaced && !cancelled {
+                    let confirm = match success_toast {
+                        FileOpSuccessToast::None => None,
+                        FileOpSuccessToast::IfSurfaced(message) => surfaced.then_some(message),
+                        FileOpSuccessToast::Always(message) => Some(message),
+                    };
+                    if let Some(message) = confirm {
+                        if !cancelled {
+                            // Clicking the confirmation lands on the result:
+                            // the op wrote into `created`, which may be a
+                            // folder the user is not looking at. Reveal its
+                            // parent with the new entries selected — the same
+                            // thing "Show in Finder" does for a download.
+                            let reveal = created
+                                .first()
+                                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                                .map(|dir| {
+                                    let names: Vec<String> = created
+                                        .iter()
+                                        .filter_map(|p| p.file_name())
+                                        .map(|n| n.to_string_lossy().into_owned())
+                                        .collect();
+                                    (dir, names)
+                                })
+                                .filter(|(_, names)| !names.is_empty());
+                            let shell_for_click = weak.clone();
                             let _ = win.update(cx, |_, window, cx| {
                                 use gpui_component::notification::Notification;
-                                window.push_notification(Notification::success(message), cx);
+                                let mut note = Notification::success(message);
+                                if let Some((dir, names)) = reveal {
+                                    note = note.on_click(move |_, window, cx| {
+                                        if let Some(shell) = shell_for_click.upgrade() {
+                                            let dir = dir.clone();
+                                            let names = names.clone();
+                                            shell.update(cx, |this, cx| {
+                                                this.reveal_in_new_tab(dir, names, window, cx);
+                                            });
+                                        }
+                                    });
+                                }
+                                window.push_notification(note, cx);
                             });
                         }
                     }
@@ -3360,10 +3395,17 @@ impl Shell {
         } else {
             format!("Extracting {count} archives")
         };
+        // Named after the destination, because that is the question the
+        // confirmation answers: extraction writes into the archive's folder,
+        // which is often not the folder the user is looking at.
+        let dest_name = dest_parent
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| dest_parent.to_string_lossy().into_owned());
         let success = if count == 1 {
-            "Extracted archive".to_string()
+            format!("Extracted to {dest_name} \u{2014} click to show")
         } else {
-            format!("Extracted {count} archives")
+            format!("Extracted {count} archives to {dest_name} \u{2014} click to show")
         };
 
         fn extract_one_archive(
@@ -3441,7 +3483,7 @@ impl Shell {
             },
             "Extract",
             task_label,
-            FileOpSuccessToast::IfSurfaced(success),
+            FileOpSuccessToast::Always(success),
             FileOpUndo::RemoveCreatedResult,
             None,
             window,
@@ -3470,6 +3512,11 @@ impl Shell {
         let plural = if count == 1 { "" } else { "s" };
         let task_label = format!("Extracting {count} item{plural}");
         let success = format!("Extracted {count} item{plural}");
+        let success = match dest_parent.file_name() {
+            Some(name) => format!("{success} to {}", name.to_string_lossy()),
+            None => success,
+        };
+        let success = format!("{success} \u{2014} click to show");
         self.spawn_archive_op(
             dest_parent.clone(),
             move |progress, cancel| {
@@ -3502,7 +3549,7 @@ impl Shell {
             },
             "Extract",
             task_label,
-            FileOpSuccessToast::IfSurfaced(success),
+            FileOpSuccessToast::Always(success),
             FileOpUndo::RemoveCreatedResult,
             None,
             window,
@@ -3736,4 +3783,33 @@ mod transfer_rate_tests {
         assert_eq!(round_eta(3_081), 3_120); // whole minutes
         assert_eq!(round_eta(3_120), 3_120); // already on a step
     }
+}
+
+/// Ask the user for a destination folder, off the UI thread.
+///
+/// Uses **gpui's** path prompt rather than `platform_shell::pick_folder`,
+/// which is a `None` stub outside macOS/Windows — on AROS that made
+/// "Extract To…" silently do nothing, which is precisely the platform where
+/// it matters most: the archive's own folder is frequently on a read-only
+/// volume (`MacRO:`) or a full one, so extracting in place cannot work and
+/// choosing a destination is the only way through.
+///
+/// gpui implements this per backend (NSOpenPanel on macOS, an asl.library
+/// requester on AROS), so one call covers every target.
+pub(crate) async fn pick_destination_folder(
+    cx: &mut gpui::AsyncWindowContext,
+) -> Option<std::path::PathBuf> {
+    let rx = cx
+        .update(|_, cx| {
+            cx.prompt_for_paths(gpui::PathPromptOptions {
+                files: false,
+                directories: true,
+                multiple: false,
+                prompt: Some("Extract to".into()),
+            })
+        })
+        .ok()?;
+    // Outer: the channel (dismissed without answering). Middle: the platform
+    // reporting failure. Inner: the user cancelling.
+    rx.await.ok()?.ok()?.and_then(|paths| paths.into_iter().next())
 }

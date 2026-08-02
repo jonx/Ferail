@@ -477,6 +477,12 @@ pub struct Tab {
     /// Same as `pending_select_row` but for the multi-row
     /// screenshot seed (`--select-rows`).
     pub pending_select_rows: Vec<usize>,
+    /// Leaf names queued for selection once this tab's rows land. Names
+    /// rather than row indices because the queuing happens *before* the
+    /// directory is enumerated — the extract confirmation navigates to the
+    /// destination and then wants to select what it just wrote there, and
+    /// those rows do not exist at click time. Cleared on apply.
+    pub pending_select_names: Vec<String>,
     /// Live filter text for *this* tab. Spec §3.1: each tab owns its
     /// own filter. Switching tabs swaps the visible filter input
     /// to this tab's `filter_input`; typing only re-enumerates
@@ -547,6 +553,7 @@ impl Tab {
             volume_name: None,
             pending_select_row: None,
             pending_select_rows: Vec::new(),
+            pending_select_names: Vec::new(),
             filter_text: String::new(),
             filter_input,
             _table_subscription: table_subscription,

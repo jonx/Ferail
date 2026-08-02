@@ -45,6 +45,7 @@ mod dock;
 mod dupe_panel;
 mod dupes;
 mod file_ops;
+pub(crate) use file_ops::pick_destination_folder;
 pub use file_ops::ArchiveOpDone;
 mod loading;
 mod path;
@@ -81,7 +82,15 @@ enum FavoriteResolved {
 #[derive(Clone, Debug)]
 enum FileOpSuccessToast {
     None,
+    /// Confirm only if the op ran long enough to surface a task row. Keeps
+    /// trivial, obviously-completed actions (New Folder, Duplicate) from
+    /// toasting every time.
     IfSurfaced(String),
+    /// Always confirm, however fast it finished. For operations whose result
+    /// is not visible where the user is looking — extraction writes its output
+    /// into the destination folder, which may not be the folder on screen, so
+    /// "did that work?" has no on-screen answer without this.
+    Always(String),
 }
 
 #[derive(Clone, Debug)]
@@ -5859,6 +5868,37 @@ impl Shell {
     /// restored selection before calling here).
     pub fn navigate(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.navigate_with_tracking(path, true, cx);
+    }
+
+    /// Open `dir` in a **new tab** and select `names` there once the rows
+    /// arrive.
+    ///
+    /// Backs the extract confirmation: extraction writes into the archive's
+    /// folder, which is often not the folder on screen, so the toast is
+    /// clickable and lands the user on the result with it selected.
+    ///
+    /// A new tab rather than navigating in place, for two reasons. It never
+    /// costs the user the folder they were in — extraction is a side errand,
+    /// not a navigation. And it always *visibly* does something: when the
+    /// destination happens to be the folder already on screen, navigating
+    /// would do nothing at all and only select a row, which the first
+    /// version of this did — off-screen in a long listing, that reads as a
+    /// dead link.
+    ///
+    /// The selection is queued by name because the new tab has not
+    /// enumerated yet (see [`Tab::pending_select_names`]).
+    pub fn reveal_in_new_tab(
+        &mut self,
+        dir: PathBuf,
+        names: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_path_in_new_tab(dir, window, cx);
+        if !names.is_empty() {
+            self.active_tab_mut().pending_select_names = names;
+        }
+        cx.notify();
     }
 
     /// Navigate originating from a favorite (sidebar click / Enter). When

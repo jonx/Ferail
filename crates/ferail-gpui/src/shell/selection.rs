@@ -148,6 +148,57 @@ impl Shell {
             let rows = std::mem::take(&mut self.active_tab_mut().pending_select_rows);
             self.select_row_indices(&rows, cx);
         }
+        self.apply_pending_select_names(cx);
+    }
+
+    /// Resolve queued leaf names (see [`Tab::pending_select_names`]) against
+    /// the rows that have now landed and select them.
+    ///
+    /// Streaming loads deliver in batches, so a name may simply not be here
+    /// yet: only the names that resolve are consumed, and the rest stay queued
+    /// for a later batch. Names that never arrive — the file was moved or
+    /// renamed between the operation and the click — fall away when the tab
+    /// navigates.
+    pub(super) fn apply_pending_select_names(&mut self, cx: &mut Context<Self>) {
+        if self.active_tab().pending_select_names.is_empty() {
+            return;
+        }
+        let queued = self.active_tab().pending_select_names.clone();
+        let (found, missing): (Vec<usize>, Vec<String>) = {
+            let table = self.active_tab().table.read(cx);
+            let entries = &table.delegate().entries;
+            let mut found = Vec::new();
+            let mut missing = Vec::new();
+            for name in queued {
+                match entries.iter().position(|e| e.name == name) {
+                    Some(i) => found.push(i),
+                    None => missing.push(name),
+                }
+            }
+            (found, missing)
+        };
+        if found.is_empty() {
+            return;
+        }
+        self.active_tab_mut().pending_select_names = missing;
+        let first = found[0];
+        self.select_row_indices(&found, cx);
+        // Scroll the result into view. Without this the selection can land
+        // off-screen in a long listing and the reveal looks like it did
+        // nothing — which is exactly how the first version of the extract
+        // confirmation failed.
+        let grid = matches!(self.active_tab().view_mode, crate::grid::ViewMode::Grid);
+        if grid {
+            let cols = self.grid_cols(cx).max(1);
+            self.active_tab()
+                .grid_scroll
+                .scroll_to_item(first / cols, gpui::ScrollStrategy::Center);
+        } else {
+            self.active_tab()
+                .table
+                .update(cx, |table, cx| table.scroll_to_row(first, cx));
+        }
+        cx.notify();
     }
 
     /// Programmatic multi-row select used by the screenshot

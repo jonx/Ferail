@@ -443,6 +443,39 @@ impl ArchiveView {
         });
     }
 
+    /// Extract to a folder the user picks, rather than next to the archive.
+    ///
+    /// Extract All / Extract Selected both write into the archive's own
+    /// folder, which fails outright when that volume is read-only or full —
+    /// on AROS the shared host folder is mounted twice, `MacRO:` read-only
+    /// and `MacRW:` writable, so an archive opened through `MacRO:` can never
+    /// extract in place. This is the way out, and it honours the current
+    /// selection: selected rows if there are any, otherwise the whole
+    /// archive, matching what the two buttons beside it would have done.
+    fn extract_to(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(shell) = self.shell.clone() else {
+            return;
+        };
+        let selected = self.selected_archive_paths(cx);
+        let archive = self.archive_path.clone();
+        let password = self.password.clone();
+        cx.spawn_in(window, async move |_this, cx| {
+            let Some(dest) = crate::shell::pick_destination_folder(cx).await else {
+                return;
+            };
+            let _ = shell.update_in(cx, |shell, window, scx| {
+                if selected.is_empty() {
+                    shell.spawn_extract_into(vec![archive], dest, password, window, scx);
+                } else {
+                    shell.extract_archive_entries_into(
+                        archive, selected, dest, password, window, scx,
+                    );
+                }
+            });
+        })
+        .detach();
+    }
+
     /// Archive paths behind the delegate's current selection.
     fn selected_archive_paths(&self, cx: &App) -> Vec<String> {
         let table = self.table.read(cx);
@@ -613,6 +646,14 @@ impl ArchiveView {
                             })),
                     )
                 },
+            )
+            .child(
+                Button::new("archive-extract-to")
+                    .label("Extract To\u{2026}")
+                    .small()
+                    .tooltip("Extract to a folder you choose (selection, or all)")
+                    .disabled(!can_extract)
+                    .on_click(cx.listener(|this, _, window, cx| this.extract_to(window, cx))),
             )
             .child(
                 Button::new("archive-extract-all")
