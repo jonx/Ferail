@@ -817,7 +817,7 @@ pub fn open_existing_window(
             ))),
             ..Default::default()
         }),
-        ..Default::default()
+        ..crate::base_window_options()
     };
     let handle =
         cx.open_window(opts, |window, cx| cx.new(|cx| gpui_component::Root::new(view, window, cx)))?;

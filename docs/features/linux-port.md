@@ -115,6 +115,31 @@ blind from a Mac):
 - **trash, `open_with_candidates`, video** — freedesktop-trash /
   MIME-association parsing / GStreamer respectively.
 
+**Packaging scaffold (2026-08-04) — host-agnostic parts done, .deb untested:**
+
+- **Desktop identity:** `crates/ferail-gpui/resources/linux/ferail.desktop`
+  (freedesktop desktop entry) + every window now sets
+  `WindowOptions::app_id = "ferail"` through
+  `ferail_gpui::base_window_options()` (lib.rs) — the string compositors match
+  against the `.desktop` basename and hicolor icon name. `set_app_id` is a
+  no-op on macOS/Windows, so it's set unconditionally. New windows should
+  close their `WindowOptions` literal with `..crate::base_window_options()`,
+  not `..Default::default()`.
+- **Debian packaging:** `[package.metadata.deb]` in
+  `crates/ferail-gpui/Cargo.toml` (cargo-deb) — ships `usr/bin/ferail`, the
+  desktop entry, and `resources/ferail.png` as the 512×512 hicolor icon;
+  `depends = "$auto"`, with the runtime tools the shell layer execs
+  (xdg-utils, udisks2, gdk-pixbuf-thumbnailer, gio, shared-mime-info) as
+  Recommends. **Needs a Debian-family host** to actually run
+  `cargo deb -p ferail-gpui` (dpkg-shlibdeps resolves `$auto` there) and to
+  validate install/launch; build on the oldest Ubuntu LTS you want to support
+  — the .deb inherits the build host's glibc floor.
+- **Known gap:** `Exec=ferail` has no `%F`/`%U` field code — the binary
+  treats a bare positional argument as an unknown subcommand
+  (`main.rs::handle_cli_subcommand`), so "Open folder with Ferail" /
+  `MimeType=inode/directory;` must wait until a directory argument is
+  accepted.
+
 > **Verify Linux code from any host.** `cargo check` doesn't link, so the real
 > arms type-check (and the Linux-gated unit tests compile) on a Mac/Windows box:
 > `cargo check --target x86_64-unknown-linux-gnu -p ferail-shell-linux --tests`
@@ -315,7 +340,7 @@ thread** (prime directive).
 | `read_canonical_tags` / `toggle_tag` / `clear_tags` | No portable native tags. Back via `ferail-meta` SQLite (private), or drop for v1. |
 | `system_is_dark()` | Portal `org.freedesktop.portal.Settings.ReadOne("org.freedesktop.appearance", "color-scheme")` (1 = prefer-dark) via `ashpd::desktop::settings`. Fallback: `gsettings get org.gnome.desktop.interface color-scheme`. |
 | `start_system_theme_observer(cb)` | Subscribe to the portal `SettingChanged` signal for `org.freedesktop.appearance` / `color-scheme` (`ashpd` exposes a stream); fire the callback off-thread. |
-| `set_app_icon_from_png_bytes` | **No-op.** On Linux app identity/icon comes from a `.desktop` file + the Wayland `app_id` / X11 `WM_CLASS`, not a runtime swap. Ship a `ferail.desktop` and an icon in the hicolor theme instead. |
+| `set_app_icon_from_png_bytes` | **No-op.** On Linux app identity/icon comes from a `.desktop` file + the Wayland `app_id` / X11 `WM_CLASS`, not a runtime swap. **Shipped:** `resources/linux/ferail.desktop` + the hicolor icon are installed by the cargo-deb assets, and every window sets `app_id = "ferail"` via `ferail_gpui::base_window_options()` (see §2). |
 | `set_app_user_model_id(id)` | **No-op** (Windows taskbar concept). The Wayland `app_id` plays the grouping role; ensure gpui sets it to match the `.desktop` file's basename. |
 | `app_bundle_path()` | `None` (no bundle concept), or the install prefix if ever useful. |
 | `video_overlay_show` / `set_frame` / `remove` | GStreamer (`gstreamer` crate) or libmpv child surface floated over the viewer stage rect. Viewer-feature-sized; defer. See VIEWER.md. |

@@ -491,7 +491,7 @@ pub fn open_settings_window(cx: &mut App) {
             title: Some(SharedString::from("Settings")),
             ..Default::default()
         }),
-        ..Default::default()
+        ..crate::base_window_options()
     };
     cx.spawn(async move |cx| {
         // A failed `open_window` (display reconfiguration, resource pressure)

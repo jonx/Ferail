@@ -98,7 +98,7 @@ fn open_viewer_inner(
         // by default keeps the fullscreen transition clean; the toggle grants
         // see-through only when the user asks for it.
         window_background: WindowBackgroundAppearance::Opaque,
-        ..Default::default()
+        ..crate::base_window_options()
     };
     let mut weak_view = None;
     let handle = cx.open_window(opts, |window, cx| {

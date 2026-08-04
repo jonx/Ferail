@@ -184,7 +184,7 @@ pub fn open_window(cx: &mut App, favorites: Entity<Favorites>, target: FavoriteI
             title: Some(SharedString::from("Choose Favorite Icon")),
             ..Default::default()
         }),
-        ..Default::default()
+        ..crate::base_window_options()
     };
     let _ = cx.open_window(opts, |window, cx| {
         let view = cx.new(|cx| IconPickerView::new(favorites, target, window, cx));

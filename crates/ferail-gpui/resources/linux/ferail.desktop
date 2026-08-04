@@ -1,0 +1,25 @@
+# Ferail desktop entry (freedesktop desktop-entry spec).
+#
+# The basename ("ferail") is load-bearing: Wayland compositors and X11
+# window managers associate running windows with this file by matching it
+# against the window's app_id / WM_CLASS, which every Ferail window sets
+# to "ferail" (see ferail-gpui/src/lib.rs base_window_options). Rename
+# this file and the taskbar icon/grouping silently breaks.
+#
+# No %F/%U field code on Exec yet: the binary treats a bare positional
+# argument as an unknown subcommand (src/main.rs handle_cli_subcommand),
+# so it cannot open a directory passed by the desktop shell. Add
+# MimeType=inode/directory; and Exec=ferail %U once a path argument is
+# supported.
+[Desktop Entry]
+Type=Application
+Name=Ferail
+GenericName=File Manager
+Comment=Fast file manager with disk usage, previews, and dual-pane browsing
+Exec=ferail
+Icon=ferail
+Terminal=false
+Categories=System;FileTools;FileManager;
+Keywords=files;folders;browser;explorer;disk;usage;archive;preview;
+StartupNotify=true
+StartupWMClass=ferail

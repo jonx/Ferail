@@ -1303,7 +1303,7 @@ pub fn open_window_at(cx: &mut App, path: PathBuf) {
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(1180.0), px(760.0)), cx)),
         titlebar: Some(gpui_component::TitleBar::title_bar_options()),
-        ..Default::default()
+        ..crate::base_window_options()
     };
     let _ = cx.open_window(opts, |window, cx| {
         let process = crate::process_state::process_state(cx);

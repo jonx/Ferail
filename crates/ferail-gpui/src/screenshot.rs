@@ -454,7 +454,7 @@ pub fn run(args: Args) -> Result<()> {
                 titlebar: Some(gpui_component::TitleBar::title_bar_options()),
                 show: false,
                 focus: false,
-                ..Default::default()
+                ..crate::base_window_options()
             };
             // Open the window. Whether we hand back an
             // `Option<Entity<Shell>>` so the CLI flags can drive it

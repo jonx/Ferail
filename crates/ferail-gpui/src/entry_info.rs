@@ -107,7 +107,7 @@ pub fn open(
             title: Some(title),
             ..Default::default()
         }),
-        ..Default::default()
+        ..crate::base_window_options()
     };
     let _ = cx.open_window(opts, move |window, cx| {
         let view = cx.new(|cx| {

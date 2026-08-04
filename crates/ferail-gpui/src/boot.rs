@@ -290,7 +290,7 @@ fn settings_window_opts(width: f32, height: f32) -> WindowOptions {
             size: size(px(width), px(height)),
         })),
         titlebar: Some(gpui_component::TitleBar::title_bar_options()),
-        ..Default::default()
+        ..crate::base_window_options()
     }
 }
 
@@ -310,7 +310,7 @@ fn open_shell_window_sized(cx: &mut App, size_hint: Option<(f32, f32)>) {
         // text + adopts the traffic-light area so our custom title-
         // bar content (brand + filter + nav) sits flush across the top.
         titlebar: Some(gpui_component::TitleBar::title_bar_options()),
-        ..Default::default()
+        ..crate::base_window_options()
     };
     cx.spawn(async move |cx| {
         // The main window failing to open is fatal to a useful session, but a
@@ -338,7 +338,7 @@ fn open_shell_window_then(
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(1180.0), px(760.0)), cx)),
         titlebar: Some(gpui_component::TitleBar::title_bar_options()),
-        ..Default::default()
+        ..crate::base_window_options()
     };
     cx.spawn(async move |cx| {
         match cx.open_window(opts, |window, cx| {

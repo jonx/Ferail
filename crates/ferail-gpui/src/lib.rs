@@ -69,6 +69,27 @@ pub mod video_poster;
 pub mod viewer;
 pub mod window_cascade;
 
+/// Application identity every Ferail window advertises to the desktop
+/// environment (`WindowOptions::app_id` → Wayland `app_id` / X11
+/// `WM_CLASS`; a no-op on macOS/Windows). Must equal the basename of
+/// the installed `ferail.desktop` and the hicolor icon name (see
+/// `resources/linux/ferail.desktop` and the cargo-deb assets) —
+/// compositors match these by string, and a mismatch means a generic
+/// taskbar icon and mis-grouped windows.
+pub const APP_ID: &str = "ferail";
+
+/// Base [`gpui::WindowOptions`] every window starts from: all fields
+/// default except the desktop-environment identity above. Use
+/// `..base_window_options()` where `..Default::default()` would
+/// otherwise close a `WindowOptions` literal, so a new window can't
+/// silently drop the app_id.
+pub fn base_window_options() -> gpui::WindowOptions {
+    gpui::WindowOptions {
+        app_id: Some(APP_ID.to_owned()),
+        ..Default::default()
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub use ferail_shell_linux as platform_shell;
 /// Platform shell abstraction. Resolves to `ferail_shell_mac` on
