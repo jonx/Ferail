@@ -26,6 +26,16 @@ pub enum MagicType {
     DocExcelMacro,
     DocPowerPoint,
     DocPowerPointMacro,
+    // Office — legacy OLE2/CFBF binary formats (.doc / .xls / .ppt).
+    // Distinct from the ZIP-based types above so the archive engine
+    // never offers them for ZIP browsing.
+    DocWordOle,
+    DocExcelOle,
+    DocPowerPointOle,
+    /// An OLE2/CFBF compound file whose application couldn't be named
+    /// from the directory (or a non-Office one, e.g. MSI). With
+    /// `is_encrypted` set it is a password-protected OOXML document.
+    OleCompound,
     // Archives
     Zip,
     ZipEncrypted,
@@ -153,9 +163,16 @@ impl MagicType {
 
             // Office — extension is more familiar to users than
             // "Document (Word)" style. Keep concise.
-            MagicType::DocWord | MagicType::DocWordMacro => "Word document",
-            MagicType::DocExcel | MagicType::DocExcelMacro => "Excel spreadsheet",
-            MagicType::DocPowerPoint | MagicType::DocPowerPointMacro => "PowerPoint presentation",
+            MagicType::DocWord | MagicType::DocWordMacro | MagicType::DocWordOle => {
+                "Word document"
+            }
+            MagicType::DocExcel | MagicType::DocExcelMacro | MagicType::DocExcelOle => {
+                "Excel spreadsheet"
+            }
+            MagicType::DocPowerPoint
+            | MagicType::DocPowerPointMacro
+            | MagicType::DocPowerPointOle => "PowerPoint presentation",
+            MagicType::OleCompound => "Compound document",
 
             // Archives — match the historical flat-table labels exactly
             // so existing format_label tests keep passing.
@@ -494,22 +511,44 @@ impl MagicInfo {
             }
 
             // Office documents
-            MagicType::DocWord | MagicType::DocWordMacro => {
+            MagicType::DocWord | MagicType::DocWordMacro | MagicType::DocWordOle => {
                 parts.push("Word document".into());
+                if matches!(self.magic_type, MagicType::DocWordOle) {
+                    parts.push("legacy format".into());
+                }
                 if self.has_macros {
                     parts.push("macro-enabled".into());
                 }
             }
-            MagicType::DocExcel | MagicType::DocExcelMacro => {
+            MagicType::DocExcel | MagicType::DocExcelMacro | MagicType::DocExcelOle => {
                 parts.push("Excel spreadsheet".into());
+                if matches!(self.magic_type, MagicType::DocExcelOle) {
+                    parts.push("legacy format".into());
+                }
                 if self.has_macros {
                     parts.push("macro-enabled".into());
                 }
             }
-            MagicType::DocPowerPoint | MagicType::DocPowerPointMacro => {
+            MagicType::DocPowerPoint
+            | MagicType::DocPowerPointMacro
+            | MagicType::DocPowerPointOle => {
                 parts.push("PowerPoint presentation".into());
+                if matches!(self.magic_type, MagicType::DocPowerPointOle) {
+                    parts.push("legacy format".into());
+                }
                 if self.has_macros {
                     parts.push("macro-enabled".into());
+                }
+            }
+            MagicType::OleCompound => {
+                if self.is_encrypted {
+                    // An `EncryptedPackage` stream: a password-protected
+                    // OOXML document. Which app made it is unknowable
+                    // without decrypting.
+                    parts.push("Office document".into());
+                    parts.push("encrypted".into());
+                } else {
+                    parts.push("OLE2 compound document".into());
                 }
             }
 

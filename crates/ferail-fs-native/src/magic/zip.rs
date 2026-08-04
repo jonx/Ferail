@@ -87,14 +87,17 @@ fn zip_info(is_encrypted: bool) -> MagicInfo {
 /// `header_buf` is the first 4 KB of the file; `tail_buf` is the last
 /// 4 KB (or the whole file if smaller). Either may be empty — the
 /// function is best-effort; the caller's `info` is left unchanged if
-/// the CD can't be parsed.
+/// the CD can't be parsed. `read_at` performs one bounded read at an
+/// absolute offset when the CD sits outside both windows (see
+/// [`parse_central_directory`]).
 pub(super) fn refine_with_central_directory(
     info: &mut MagicInfo,
     header_buf: &[u8],
     tail_buf: &[u8],
     file_size: u64,
+    read_at: &mut dyn FnMut(u64, usize) -> Option<Vec<u8>>,
 ) {
-    let Some(cd) = parse_central_directory(header_buf, tail_buf, file_size) else {
+    let Some(cd) = parse_central_directory(header_buf, tail_buf, file_size, read_at) else {
         return;
     };
     info.file_count = Some(cd.file_count);
@@ -180,6 +183,10 @@ pub(super) struct CentralDirInfo {
 
 const MAX_CD_ENTRIES_TO_SCAN: usize = 200;
 
+/// Upper bound for the targeted central-directory read. Generous for
+/// [`MAX_CD_ENTRIES_TO_SCAN`] entries even with long member names.
+const MAX_CD_READ_BYTES: u64 = 128 * 1024;
+
 /// Parse the End-of-Central-Directory record and the central directory
 /// entries it points at. Returns `None` when the EOCD can't be found
 /// in `tail_buf`.
@@ -193,12 +200,21 @@ const MAX_CD_ENTRIES_TO_SCAN: usize = 200;
 /// the outer ZIP's compressed-data region and shares the same
 /// `PK\x01\x02` signature). That was the original bfe-explorer bug.
 ///
+/// When the CD lies outside both windows — the common case for real
+/// OOXML files, whose CDs run well past 4 KB (a routine `.pptx` has a
+/// 10–25 KB CD, so it starts *before* the tail window and every entry
+/// name was invisible, leaving the file classified as a plain ZIP) —
+/// `read_at(absolute_offset, len)` performs one bounded targeted read
+/// of the CD itself. It may return `None` (e.g. in tests), in which
+/// case classification degrades to the EOCD count alone.
+///
 /// Ported from bfe-explorer's `parse_zip_central_dir` + `analyze_zip_layout`
 /// with the `cd_offset` guard added.
 pub(super) fn parse_central_directory(
     header_buf: &[u8],
     tail_buf: &[u8],
     file_size: u64,
+    read_at: &mut dyn FnMut(u64, usize) -> Option<Vec<u8>>,
 ) -> Option<CentralDirInfo> {
     const EOCD_SIG: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
     let eocd_pos = find_last_subsequence(tail_buf, &EOCD_SIG)?;
@@ -206,35 +222,55 @@ pub(super) fn parse_central_directory(
         return None;
     }
     let eocd = &tail_buf[eocd_pos..];
-    let total_entries = u16::from_le_bytes([eocd[10], eocd[11]]) as u32;
-    let cd_offset = u32::from_le_bytes([eocd[16], eocd[17], eocd[18], eocd[19]]) as u64;
+    let mut total_entries = u16::from_le_bytes([eocd[10], eocd[11]]) as u64;
+    let mut cd_size = u32::from_le_bytes([eocd[12], eocd[13], eocd[14], eocd[15]]) as u64;
+    let mut cd_offset = u32::from_le_bytes([eocd[16], eocd[17], eocd[18], eocd[19]]) as u64;
 
-    // Map the absolute `cd_offset` into one of our buffers and walk
-    // ONLY from there to the EOCD. Anything earlier in the tail
-    // buffer is compressed payload (which may itself look like CD
-    // records when the payload happens to be another ZIP).
-    let tail_start = file_size.saturating_sub(tail_buf.len() as u64);
-    let entry_names = if cd_offset >= tail_start {
-        let start_in_tail = (cd_offset - tail_start) as usize;
-        if start_in_tail < eocd_pos {
-            walk_central_directory(&tail_buf[start_in_tail..eocd_pos])
-        } else {
-            Vec::new()
+    // ZIP64: the classic EOCD saturates these fields at their max
+    // markers and the real values live in the ZIP64 EOCD record
+    // (`PK\x06\x06`), which sits just before the locator + EOCD at the
+    // file tail.
+    if total_entries == 0xFFFF || cd_size == 0xFFFF_FFFF || cd_offset == 0xFFFF_FFFF {
+        const EOCD64_SIG: [u8; 4] = [0x50, 0x4b, 0x06, 0x06];
+        if let Some(p64) = find_last_subsequence(&tail_buf[..eocd_pos], &EOCD64_SIG) {
+            if tail_buf.len() >= p64 + 56 {
+                let z = &tail_buf[p64..p64 + 56];
+                total_entries = u64::from_le_bytes(z[32..40].try_into().unwrap());
+                cd_size = u64::from_le_bytes(z[40..48].try_into().unwrap());
+                cd_offset = u64::from_le_bytes(z[48..56].try_into().unwrap());
+            }
         }
-    } else if (cd_offset as usize) < header_buf.len() {
-        // Tiny archive: CD lives in the header buffer.
-        walk_central_directory(&header_buf[cd_offset as usize..])
-    } else {
-        // CD lies between the header buffer and the tail buffer —
-        // can't read it without a third I/O. Trust only the EOCD
-        // count; layout / classification stay best-effort defaults.
+    }
+
+    // Locate the CD as an absolute range and walk ONLY that range.
+    // Anything earlier in the tail buffer is compressed payload (which
+    // may itself look like CD records when the payload happens to be
+    // another ZIP).
+    let tail_start = file_size.saturating_sub(tail_buf.len() as u64);
+    let eocd_abs = tail_start + eocd_pos as u64;
+    let cd_end = cd_offset.saturating_add(cd_size).min(eocd_abs);
+    let entry_names = if cd_offset >= cd_end {
         Vec::new()
+    } else if cd_offset >= tail_start {
+        let start = (cd_offset - tail_start) as usize;
+        let end = ((cd_end - tail_start) as usize).min(tail_buf.len());
+        walk_central_directory(&tail_buf[start..end])
+    } else if cd_end <= header_buf.len() as u64 {
+        // Tiny archive: CD lives in the header buffer.
+        walk_central_directory(&header_buf[cd_offset as usize..cd_end as usize])
+    } else {
+        // CD lies outside both windows — one bounded targeted read.
+        let want = (cd_end - cd_offset).min(MAX_CD_READ_BYTES) as usize;
+        match read_at(cd_offset, want) {
+            Some(cd_buf) => walk_central_directory(&cd_buf),
+            None => Vec::new(),
+        }
     };
 
     let root = single_root(&entry_names);
 
     Some(CentralDirInfo {
-        file_count: total_entries,
+        file_count: total_entries.min(u32::MAX as u64) as u32,
         root,
         entry_names,
     })
@@ -366,7 +402,21 @@ mod tests {
         let mut info = sniff(buf).expect("zip detected");
         // Synthetic archives in these tests are small enough that the
         // whole file is both "header" and "tail"; file_size == buf.len().
-        refine_with_central_directory(&mut info, buf, buf, buf.len() as u64);
+        refine_with_central_directory(&mut info, buf, buf, buf.len() as u64, &mut |_, _| None);
+        info
+    }
+
+    /// Like the real `detect_magic_info` flow: 4 KB header window,
+    /// 4 KB tail window, targeted reads served from the full buffer.
+    fn classify_windowed(buf: &[u8]) -> MagicInfo {
+        let header = &buf[..buf.len().min(4096)];
+        let tail = &buf[buf.len().saturating_sub(4096)..];
+        let mut info = sniff(header).expect("zip detected");
+        refine_with_central_directory(&mut info, header, tail, buf.len() as u64, &mut |off, len| {
+            let start = off as usize;
+            let end = (start + len).min(buf.len());
+            (start < end).then(|| buf[start..end].to_vec())
+        });
         info
     }
 
@@ -446,6 +496,46 @@ mod tests {
         // (the strong first-entry signal isn't there).
         let info = sniff(&zip).expect("zip detected");
         assert_eq!(info.magic_type, MagicType::Zip);
+    }
+
+    #[test]
+    fn large_pptx_cd_outside_windows_detected_via_targeted_read() {
+        // A realistic .pptx: enough entries that both the local-header
+        // region and the central directory overflow the 4 KB windows,
+        // so the CD is reachable only through the targeted read. This
+        // was the regression where every non-trivial OOXML file showed
+        // as a plain "ZIP archive".
+        let mut names: Vec<String> = vec![
+            "[Content_Types].xml".into(),
+            "_rels/.rels".into(),
+            "ppt/presentation.xml".into(),
+        ];
+        for i in 0..120 {
+            names.push(format!(
+                "ppt/slides/slide{i}_with_a_reasonably_long_member_name.xml"
+            ));
+        }
+        let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        let zip = build_zip(&name_refs);
+        assert!(zip.len() > 2 * 4096, "test premise: file larger than both windows");
+
+        let info = classify_windowed(&zip);
+        assert_eq!(info.magic_type, MagicType::DocPowerPoint);
+        assert_eq!(info.file_count, Some(123));
+
+        // Without the targeted read the same file degrades to a plain
+        // ZIP with only the EOCD count — the pre-fix behaviour.
+        let header = &zip[..4096];
+        let tail = &zip[zip.len() - 4096..];
+        let mut degraded = sniff(header).expect("zip detected");
+        refine_with_central_directory(
+            &mut degraded,
+            header,
+            tail,
+            zip.len() as u64,
+            &mut |_, _| None,
+        );
+        assert_eq!(degraded.magic_type, MagicType::Zip);
     }
 
     #[test]

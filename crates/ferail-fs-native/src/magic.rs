@@ -26,6 +26,7 @@ mod amiga;
 mod audio;
 mod exe;
 mod image;
+mod ole;
 mod text;
 pub mod types;
 mod video;
@@ -71,8 +72,16 @@ pub fn detect_magic_info(path: &Path) -> Option<MagicInfo> {
                 &header[..n_header],
                 &tail[..n_tail],
                 file_size,
+                &mut |offset, len| read_at(path, offset, len),
             );
         }
+    } else if info.magic_type == MagicType::OleCompound {
+        // CFBF containers (legacy .doc/.xls/.ppt, password-protected
+        // OOXML) name their app in the directory sector, which usually
+        // sits outside the first 4 KB — one more targeted read.
+        ole::refine_with_directory(&mut info, &header[..n_header], &mut |offset, len| {
+            read_at(path, offset, len)
+        });
     } else if info.magic_type == MagicType::SevenZip {
         // 7z keeps its file list in a footer we can read without inflating
         // payloads, so the Description gains a count / root / encrypted flag
@@ -106,6 +115,31 @@ fn is_zip_family(mt: MagicType) -> bool {
             | MagicType::AppJar
             | MagicType::AppApk
     )
+}
+
+/// One bounded read at an absolute offset — used for a ZIP central
+/// directory or a CFBF directory sector that sits outside the
+/// header/tail windows. Returns however many bytes were available
+/// (possibly fewer than `len`), or `None` on error / empty.
+fn read_at(path: &Path, offset: u64, len: usize) -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    f.seek(SeekFrom::Start(offset)).ok()?;
+    let mut buf = vec![0u8; len];
+    let mut total = 0usize;
+    while total < len {
+        match f.read(&mut buf[total..]) {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(_) => return None,
+        }
+    }
+    buf.truncate(total);
+    if buf.is_empty() {
+        None
+    } else {
+        Some(buf)
+    }
 }
 
 /// Read the last [`HEADER_BYTES`] of `path` into `buf`. Returns
@@ -158,6 +192,13 @@ pub fn sniff_bytes_info(buf: &[u8]) -> MagicInfo {
 
     // 3. ZIP-based (Office / JAR / APK / generic).
     if let Some(info) = zip::sniff(buf) {
+        return info;
+    }
+
+    // 4. OLE2 / CFBF compound documents (legacy Office, password-
+    //    protected OOXML, MSI). `detect_magic_info` refines the app
+    //    from the directory sector.
+    if let Some(info) = ole::sniff(buf) {
         return info;
     }
 

@@ -10,6 +10,39 @@ shape.
 
 **Shipped (2026-05-15).**
 
+**OOXML central directory read + OLE2/CFBF family (2026-08-04).** Two
+fixes for Office files misdescribed as "ZIP archive" / "Binary data":
+
+- *Targeted CD read.* The ZIP refine pass could only see central-directory
+  entries inside the first/last 4 KB windows. A routine `.pptx` has a
+  10–25 KB CD that starts *before* the tail window, so its entry names
+  were invisible and the file stayed a plain ZIP (small decks happened to
+  fit and did refine — hence the inconsistency). `parse_central_directory`
+  now takes a `read_at` closure and performs **one bounded targeted read**
+  of the CD itself (capped at 128 KB) when it lies outside both windows.
+  ZIP64 marker values (`0xFFFF` / `0xFFFFFFFF`) are resolved through the
+  ZIP64 EOCD record while we're there.
+- *OLE2/CFBF detection.* The `D0 CF 11 E0` compound-file container —
+  legacy `.doc`/`.xls`/`.ppt`, MSI, and **password-protected OOXML**
+  (an encrypted `.pptx` is a CFBF wrapping an `EncryptedPackage` stream,
+  not a ZIP) — previously fell through to "Binary data". New
+  `magic::ole` sniffs the container and refines the app from the first
+  directory sector (one more targeted read): `WordDocument` /
+  `Workbook` / `PowerPoint Document` → `DocWordOle` / `DocExcelOle` /
+  `DocPowerPointOle` ("… · legacy format"), `EncryptedPackage` →
+  `OleCompound` + encrypted ("Office document · encrypted"), VBA
+  storages → macro flag. The `*Ole` types are deliberately distinct
+  from the ZIP-based `Doc*` types so `archive::probe_format` never
+  offers them for ZIP browsing.
+
+The read budget for ZIP/CFBF is now up to three bounded reads: 4 KB
+header, 4 KB tail, and one targeted CD / directory-sector read. Because
+descriptions are cached by `(path, mtime, size)`, rows sniffed before
+this fix keep their stale "ZIP archive" text until Refresh (F5) forces a
+re-sniff or `--reset-db magic` clears the cache. A dev probe exists for
+checking a file by hand:
+`cargo run -p ferail-fs-native --example magic_probe -- <files…>`.
+
 **Folder counts share the column (2026-07-22).** The column is content
 facts for *files*; for *folders* it now shows recursive item counts —
 "N files · M folders" (singular-aware; "Empty" for an empty tree). These
