@@ -114,6 +114,11 @@ pub struct ArchiveView {
     /// Archive path of the entry currently staged for preview, so re-selecting
     /// the same row doesn't extract it twice.
     previewed: Option<String>,
+    /// The scratch file backing the current preview. At most one exists at a
+    /// time: staging a new entry, closing the preview, or dropping the view
+    /// removes it, so archive contents are never in the clear for longer than
+    /// they are on screen.
+    staged_file: Option<PathBuf>,
     focus_handle: FocusHandle,
 }
 
@@ -222,6 +227,7 @@ impl ArchiveView {
             preview_enabled: false,
             scratch: None,
             previewed: None,
+            staged_file: None,
             focus_handle: cx.focus_handle(),
         };
         view.start_load(None, cx);
@@ -262,6 +268,7 @@ impl ArchiveView {
         self.preview_enabled = !self.preview_enabled;
         if !self.preview_enabled {
             self.previewed = None;
+            self.discard_staged();
             if let Some(shell) = self.shell.clone() {
                 let _ = shell.update(cx, |s, cx| {
                     s.archive_preview = None;
@@ -283,6 +290,13 @@ impl ArchiveView {
         cx.notify();
     }
 
+    /// Remove the currently staged scratch file, if any.
+    fn discard_staged(&mut self) {
+        if let Some(path) = self.staged_file.take() {
+            ferail_fs_native::scratch::remove_staged(&path);
+        }
+    }
+
     /// Force the preview toggle off — used when the preview pane is closed
     /// from its own header, so the two controls can't disagree.
     pub fn set_preview_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -292,6 +306,7 @@ impl ArchiveView {
         self.preview_enabled = enabled;
         if !enabled {
             self.previewed = None;
+            self.discard_staged();
         }
         cx.notify();
     }
@@ -375,6 +390,8 @@ impl ArchiveView {
             Some(dir) => dir,
             None => return,
         };
+        // Supersede the previous one immediately — never two at once.
+        self.discard_staged();
         self.previewed = Some(entry.clone());
         let display_name = entry
             .rsplit('/')
@@ -383,10 +400,14 @@ impl ArchiveView {
             .to_string();
         let archive = self.archive_path.clone();
         let password = self.password.clone();
-        cx.spawn(async move |_this, cx| {
+        cx.spawn(async move |this, cx| {
             let staged = cx
                 .background_executor()
                 .spawn(async move {
+                    // Wipe first: one staged file exists at a time, and the
+                    // wipe must not run after extraction or it would delete
+                    // the entry we just wrote.
+                    ferail_fs_native::scratch::clear_staged_dir(&scratch);
                     let progress = ferail_fs_native::file_ops::TransferProgress::new();
                     let cancel = std::sync::atomic::AtomicBool::new(false);
                     let opts = ferail_fs_native::ExtractOptions {
@@ -409,7 +430,7 @@ impl ArchiveView {
                     // Rename to an opaque, extension-preserving name: the
                     // extension is what lets Quick Look pick a renderer, but
                     // the original name would otherwise sit in plain sight.
-                    let staged = scratch.join(ferail_fs_native::scratch::opaque_name(&entry));
+                    let staged = ferail_fs_native::scratch::staged_path(&scratch, &entry);
                     if std::fs::rename(&extracted, &staged).is_err() {
                         return None;
                     }
@@ -425,6 +446,10 @@ impl ArchiveView {
                 })
                 .await;
             if let Some(staged) = staged {
+                let _ = this.update(cx, |this: &mut ArchiveView, cx| {
+                    this.staged_file = Some(staged.clone());
+                    cx.notify();
+                });
                 let _ = shell.update(cx, |s, cx| {
                     s.archive_preview = Some((staged.clone(), display_name.clone()));
                     crate::preview::request(s, staged, cx);

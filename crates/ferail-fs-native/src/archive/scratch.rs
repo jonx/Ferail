@@ -32,16 +32,38 @@ pub fn scratch_dir() -> Option<PathBuf> {
     Some(dir)
 }
 
-/// A name that reveals nothing but still lets Quick Look pick a renderer: a
-/// hash of the entry path plus its original extension.
-pub fn opaque_name(entry: &str) -> String {
-    let digest = blake3::hash(entry.as_bytes()).to_hex();
-    let stem = &digest.as_str()[..24];
+/// The one path an entry is ever staged to, inside `dir`.
+///
+/// Always `preview.<ext>` — the extension is kept because Quick Look
+/// dispatches on it, and the stem is constant so the filename says nothing
+/// about the entry.
+///
+/// Pure: call [`clear_staged_dir`] before extracting to guarantee only one
+/// staged file exists. (Wiping from *here* would delete the freshly extracted
+/// entry this path is meant to receive.)
+pub fn staged_path(dir: &Path, entry: &str) -> PathBuf {
     let leaf = entry.rsplit('/').next().unwrap_or(entry);
     match leaf.rsplit_once('.') {
         // A leading dot is a hidden file, not an extension.
-        Some((base, ext)) if !ext.is_empty() && !base.is_empty() => format!("{stem}.{ext}"),
-        _ => stem.to_string(),
+        Some((base, ext)) if !ext.is_empty() && !base.is_empty() => {
+            dir.join(format!("preview.{ext}"))
+        }
+        _ => dir.join("preview"),
+    }
+}
+
+/// Remove everything previously staged in `dir`, best-effort.
+pub fn clear_staged_dir(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let _ = std::fs::remove_dir_all(&path);
+        } else {
+            let _ = std::fs::remove_file(&path);
+        }
     }
 }
 
@@ -55,6 +77,16 @@ pub fn set_private_permissions(path: &Path, mode: u32) {
     }
     #[cfg(not(unix))]
     let _ = (path, mode);
+}
+
+/// Remove a single staged file, best-effort.
+///
+/// Callers stage at most one entry at a time and drop the previous one as soon
+/// as it is superseded, so the window in which any archive content exists in
+/// the clear is bounded to "while you are looking at it" rather than "until
+/// the app exits".
+pub fn remove_staged(path: &Path) {
+    let _ = std::fs::remove_file(path);
 }
 
 /// Delete scratch directories left behind by processes that are no longer
@@ -98,28 +130,77 @@ fn process_is_alive(pid: u32) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn opaque_name_hides_the_entry_but_keeps_its_extension() {
-        let staged = opaque_name("hr/salary-review-2026.pdf");
-        // The extension survives — Quick Look dispatches on it.
-        assert!(staged.ends_with(".pdf"), "got {staged}");
-        // Nothing of the original path does.
-        assert!(!staged.contains("salary"), "got {staged}");
-        assert!(!staged.contains("hr"), "got {staged}");
-        // Stable for the same entry, distinct for different ones.
-        assert_eq!(staged, opaque_name("hr/salary-review-2026.pdf"));
-        assert_ne!(staged, opaque_name("hr/salary-review-2027.pdf"));
+    /// A private directory per test. `scratch_dir()` is keyed by PID, so every
+    /// test in this process would otherwise share — and delete — the same one.
+    fn test_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ferail-scratch-test-{}-{tag}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[test]
-    fn opaque_name_handles_entries_without_a_usable_extension() {
-        assert!(!opaque_name("README").contains("README"));
+    fn staged_path_keeps_the_extension_but_never_the_name() {
+        let dir = test_dir("ext");
+        let p = staged_path(&dir, "hr/salary-review-2026.pdf");
+        // The extension survives — Quick Look dispatches on it.
+        assert_eq!(p.extension().unwrap(), "pdf");
+        // Nothing of the original path does.
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(name, "preview.pdf", "the stem must be constant");
+        // Two different entries of the same type share the one path, so they
+        // cannot accumulate.
+        assert_eq!(p, staged_path(&dir, "finance/board-minutes.pdf"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn staged_path_handles_entries_without_a_usable_extension() {
+        let dir = test_dir("noext");
+        assert_eq!(staged_path(&dir, "README").file_name().unwrap(), "preview");
         // A dot in a *directory* must not be read as the leaf's extension.
-        let staged = opaque_name("v1.2/CHANGELOG");
-        assert!(!staged.contains('.'), "got {staged}");
+        assert_eq!(
+            staged_path(&dir, "v1.2/CHANGELOG").file_name().unwrap(),
+            "preview"
+        );
         // A dotfile is hidden, not an extension.
-        let staged = opaque_name("cfg/.gitignore");
-        assert!(!staged.contains(".gitignore"), "got {staged}");
+        assert_eq!(
+            staged_path(&dir, "cfg/.gitignore").file_name().unwrap(),
+            "preview"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clearing_removes_previous_files_and_extracted_subdirs() {
+        let dir = test_dir("clear");
+        let first = staged_path(&dir, "secret/notes.txt");
+        std::fs::write(&first, b"private").unwrap();
+        // Extraction of a nested entry leaves a directory behind too.
+        std::fs::create_dir_all(dir.join("nested/deep")).unwrap();
+        std::fs::write(dir.join("nested/deep/x.bin"), b"x").unwrap();
+
+        clear_staged_dir(&dir);
+
+        assert!(!first.exists(), "previous staged file must be gone");
+        assert!(!dir.join("nested").exists(), "extracted dirs must go too");
+        assert!(dir.exists(), "the scratch dir itself stays");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_staged_deletes_the_file_and_tolerates_a_missing_one() {
+        let dir = test_dir("remove");
+        let f = dir.join("preview.txt");
+        std::fs::write(&f, b"private").unwrap();
+        remove_staged(&f);
+        assert!(!f.exists(), "staged file should be gone");
+        // Superseding an already-removed file must not panic.
+        remove_staged(&f);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
