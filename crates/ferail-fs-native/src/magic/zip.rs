@@ -314,10 +314,8 @@ fn single_root(entry_names: &[String]) -> Option<String> {
         if trimmed.is_empty() {
             continue;
         }
-        let head = match trimmed.find('/') {
-            Some(slash) => &trimmed[..slash],
-            None => return None, // a file at root → not single-rooted
-        };
+        // No slash at all is a file at root → not single-rooted.
+        let head = &trimmed[..trimmed.find('/')?];
         roots.insert(head);
         if roots.len() > 1 {
             return None;
