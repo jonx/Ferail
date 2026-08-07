@@ -110,8 +110,11 @@ pub fn sweep_stale_scratch() {
     }
 }
 
-/// Whether `pid` is still running. `kill(pid, 0)` reports liveness without
-/// signalling; off unix we keep the directory rather than risk deleting a live
+/// Whether `pid` is still running. On unix, `kill(pid, 0)` reports liveness
+/// without signalling. On Windows, a PID that cannot even be opened does not
+/// exist, and one that opens but no longer reports STILL_ACTIVE has exited
+/// (the process object outlives the process while anyone holds a handle).
+/// Anywhere else we keep the directory rather than risk deleting a live
 /// process's scratch.
 fn process_is_alive(pid: u32) -> bool {
     #[cfg(unix)]
@@ -119,7 +122,28 @@ fn process_is_alive(pid: u32) -> bool {
         // SAFETY: signal 0 performs error checking only — it never delivers.
         unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, STILL_ACTIVE};
+        use windows::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        // SAFETY: every path that obtains the handle closes it.
+        match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+            Ok(h) => {
+                let mut code = 0u32;
+                let got = unsafe { GetExitCodeProcess(h, &mut code) };
+                unsafe {
+                    let _ = CloseHandle(h);
+                }
+                got.is_ok() && code == STILL_ACTIVE.0 as u32
+            }
+            // Access-denied proves a process exists; only an open failure
+            // like ERROR_INVALID_PARAMETER means the PID is gone.
+            Err(e) => e.code() == E_ACCESSDENIED,
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
         true

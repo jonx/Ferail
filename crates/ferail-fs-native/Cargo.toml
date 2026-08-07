@@ -83,6 +83,9 @@ windows = { version = "0.58", features = [
     "Win32_Security",
     "Win32_System_IO",
     "Win32_System_Ioctl",
+    # sweep_stale_scratch (archive/scratch.rs) → OpenProcess +
+    # GetExitCodeProcess, to tell a dead scratch owner from a live one
+    "Win32_System_Threading",
 ] }
 
 # stat_info.rs reads ownership / mode / timestamps via libc on ALL unix
