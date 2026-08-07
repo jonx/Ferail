@@ -6,14 +6,10 @@ on:
     paths-ignore: ["docs/**", "**.md", "screenshots/**"]
   pull_request:
     paths-ignore: ["docs/**", "**.md", "screenshots/**"]
-  # Weekly tick for the expensive `app` job only (see its note); the cheap
-  # jobs skip scheduled runs.
-  schedule:
-    - cron: "0 6 * * 1"
-  # Manual "run everything now", including `app`.
+  # Manual "run everything now".
   workflow_dispatch:
 
-# A newer push supersedes an in-flight run of the same kind: fewer billed
+# A newer push supersedes an in-flight run of the same kind: fewer runner
 # minutes, and a burst of pushes on a broken tree produces at most one
 # failure notification instead of one per push.
 concurrency:
@@ -24,18 +20,9 @@ env:
   CARGO_TERM_COLOR: always
 
 # Restored 2026-08-07 from commit 6d85def (removed in a2fbb44 during release
-# prep). Three deliberate changes from that version, all driven by the repo
-# being PRIVATE right now (macOS runner minutes bill 10x, Windows 2x; public
-# repos run free):
-#
-#   - The platform matrix has no macos leg. It would cost ~10x the other two
-#     legs combined and guards the one platform that gets built locally every
-#     day. When the repo goes public, add
-#     `{ os: macos-latest, shell_crate: ferail-shell-mac }` to the matrix.
-#   - `app` (the ~7 GB windows ferail-gpui build) runs weekly + on manual
-#     dispatch instead of on every push. When the repo goes public, drop its
-#     `if:` to move it back to push.
-#   - Docs-only pushes skip CI entirely (paths-ignore above).
+# prep), initially trimmed for private-repo runner billing; the repo went
+# public the same day, so the full shape is back: all three platform legs and
+# `app` on every push. Docs-only pushes still skip CI (paths-ignore above).
 #
 # CI scope note: the `ferail-gpui` app crate pulls gpui (zed, via git),
 # gpui-component, and ~30 tree-sitter grammars — a `cargo check --all-targets`
@@ -53,7 +40,6 @@ env:
 jobs:
   logic:
     name: check + test (platform-neutral crates)
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +60,6 @@ jobs:
 
   platform:
     name: platform crates (${{ matrix.os }})
-    if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
@@ -83,10 +68,8 @@ jobs:
             shell_crate: ferail-shell-win32
           - os: ubuntu-latest
             shell_crate: ferail-shell-linux
-          # macos-latest is deliberately absent while the repo is private:
-          # 10x billed minutes, and macOS is the daily driver so breakage
-          # there is noticed locally in minutes. When the repo goes public,
-          # add { os: macos-latest, shell_crate: ferail-shell-mac }.
+          - os: macos-latest
+            shell_crate: ferail-shell-mac
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -123,12 +106,10 @@ jobs:
   # and the risk it covers is asymmetric: macOS is the daily driver, so a break
   # there is noticed within minutes, whereas the `SetMuted` breakage this job
   # exists to prevent sat on main for two weeks precisely because nobody runs
-  # Windows day to day. Weekly + manual while the repo is private (2x billed
-  # minutes would dominate the budget on every push); drop the `if:` to run it
-  # on push once the repo is public.
+  # Windows day to day. Add macos-latest here too if the daily driver ever
+  # changes.
   app:
     name: app crate (windows)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
