@@ -15,9 +15,30 @@ pub(crate) struct LoadBatch {
     pub paths: HashMap<NodeId, PathBuf>,
 }
 
+/// Aggregate of the entries the hidden filter dropped from a load —
+/// what the status bar shows ("N hidden · X B") when *show hidden* is
+/// off, so hidden content is discoverable without unhiding it. Zero
+/// when the toggle is on (nothing is skipped). `bytes` sums
+/// `FileEntry::size`, so hidden *folders* count at their dirent size,
+/// not their subtree total — same property as the status bar's item
+/// total.
+// `pub` (not `pub(crate)`) only to satisfy private-interfaces on the
+// `Tab::hidden_summary` field; the private `loading` module bounds the
+// real reach to the shell tree.
+#[derive(Clone, Copy, Default)]
+pub struct HiddenSummary {
+    pub count: usize,
+    pub bytes: u64,
+}
+
 pub(super) enum LoadMsg {
     Batch(LoadBatch),
-    Done(Option<EnumerationError>),
+    /// End of stream: the enumeration error (if any) and the totals of
+    /// hidden entries skipped across the whole load. Carried on `Done`
+    /// rather than per-batch because `Done` is sent exactly once and
+    /// never dropped (empty batches are), and the status bar only needs
+    /// the final figure.
+    Done(Option<EnumerationError>, HiddenSummary),
 }
 
 pub(super) fn run_directory_load_streaming(
@@ -29,13 +50,16 @@ pub(super) fn run_directory_load_streaming(
     tx: async_channel::Sender<LoadMsg>,
 ) {
     let needle = filter_text.trim().to_lowercase();
+    let mut hidden = HiddenSummary::default();
     let error = fs.enumerate_streaming(&path, DEFAULT_ENUMERATION_BATCH, &cancel, |entries| {
-        let batch = filter_directory_batch(&fs, entries, show_hidden, &needle);
+        let (batch, skipped) = filter_directory_batch(&fs, entries, show_hidden, &needle);
+        hidden.count += skipped.count;
+        hidden.bytes += skipped.bytes;
         if !batch.entries.is_empty() && tx.send_blocking(LoadMsg::Batch(batch)).is_err() {
             cancel.store(true, Ordering::Relaxed);
         }
     });
-    let _ = tx.send_blocking(LoadMsg::Done(error));
+    let _ = tx.send_blocking(LoadMsg::Done(error, hidden));
 }
 
 fn filter_directory_batch(
@@ -43,13 +67,22 @@ fn filter_directory_batch(
     entries: Vec<FileEntry>,
     show_hidden: bool,
     needle: &str,
-) -> LoadBatch {
-    let entries: Vec<FileEntry> = entries
+) -> (LoadBatch, HiddenSummary) {
+    // Hidden partition FIRST, text filter second: the hidden summary
+    // must not change while the user types a filter, so it counts every
+    // hidden entry the listing dropped, needle or no needle.
+    // `hidden` carries platform semantics (BSD UF_HIDDEN on macOS,
+    // FILE_ATTRIBUTE_HIDDEN on Windows) resolved at enumerate time —
+    // never re-derive from the name here.
+    let (visible, skipped): (Vec<FileEntry>, Vec<FileEntry>) = entries
         .into_iter()
-        // `hidden` carries platform semantics (BSD UF_HIDDEN on macOS,
-        // FILE_ATTRIBUTE_HIDDEN on Windows) resolved at enumerate time —
-        // never re-derive from the name here.
-        .filter(|e| show_hidden || !e.hidden)
+        .partition(|e| show_hidden || !e.hidden);
+    let hidden = HiddenSummary {
+        count: skipped.len(),
+        bytes: skipped.iter().map(|e| e.size).sum(),
+    };
+    let entries: Vec<FileEntry> = visible
+        .into_iter()
         .filter(|e| {
             if needle.is_empty() {
                 true
@@ -69,7 +102,94 @@ fn filter_directory_batch(
             paths.insert(entry.id, path);
         }
     }
-    LoadBatch { entries, paths }
+    (LoadBatch { entries, paths }, hidden)
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+    use ferail_core::EntryKind;
+
+    fn entry(name: &str, size: u64, hidden: bool) -> FileEntry {
+        FileEntry {
+            id: NodeId::from(size + u64::from(hidden)),
+            name: name.to_string(),
+            display_name: name.to_string(),
+            name_has_hazards: false,
+            kind: EntryKind::File,
+            size,
+            mtime_unix: 0,
+            display_size: String::new(),
+            display_kind: "Document".into(),
+            display_magic: String::new(),
+            display_description: String::new(),
+            is_quarantined: false,
+            quarantine: None,
+            hidden,
+        }
+    }
+
+    fn batch(
+        entries: Vec<FileEntry>,
+        show_hidden: bool,
+        needle: &str,
+    ) -> (Vec<String>, HiddenSummary) {
+        let fs = NativeFs::new();
+        let (batch, hidden) = filter_directory_batch(&fs, entries, show_hidden, needle);
+        (batch.entries.into_iter().map(|e| e.name).collect(), hidden)
+    }
+
+    #[test]
+    fn hidden_off_counts_and_sums_skipped() {
+        let (names, hidden) = batch(
+            vec![
+                entry("a.txt", 10, false),
+                entry(".env", 5, true),
+                entry(".git", 300, true),
+            ],
+            false,
+            "",
+        );
+        assert_eq!(names, vec!["a.txt"]);
+        assert_eq!(hidden.count, 2);
+        assert_eq!(hidden.bytes, 305);
+    }
+
+    #[test]
+    fn hidden_on_reports_zero() {
+        let (names, hidden) = batch(
+            vec![entry("a.txt", 10, false), entry(".env", 5, true)],
+            true,
+            "",
+        );
+        assert_eq!(names, vec!["a.txt", ".env"]);
+        assert_eq!(hidden.count, 0);
+        assert_eq!(hidden.bytes, 0);
+    }
+
+    #[test]
+    fn text_filter_does_not_perturb_hidden_summary() {
+        // The needle drops every visible row; the hidden aggregate must
+        // still report the full skipped set, not shrink with the filter.
+        let (names, hidden) = batch(
+            vec![entry("a.txt", 10, false), entry(".env", 5, true)],
+            false,
+            "no-match-zzz",
+        );
+        assert!(names.is_empty());
+        assert_eq!(hidden.count, 1);
+        assert_eq!(hidden.bytes, 5);
+    }
+
+    #[test]
+    fn all_hidden_batch_still_reports() {
+        // The worker drops empty batches on the channel; the summary
+        // must survive independently (it rides `Done`, not `Batch`).
+        let (names, hidden) = batch(vec![entry(".a", 1, true), entry(".b", 2, true)], false, "");
+        assert!(names.is_empty());
+        assert_eq!(hidden.count, 2);
+        assert_eq!(hidden.bytes, 3);
+    }
 }
 
 pub(super) fn run_tree_children_load(fs: Arc<NativeFs>, path: PathBuf) -> Vec<TreeChild> {

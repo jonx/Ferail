@@ -1,8 +1,9 @@
-//! Typed accessors for the search + duplicate-finder preferences stored
-//! in [`crate::app_state`]. One place resolves the persisted string/bool
-//! fields into the concrete config the workers want, so the settings UI
-//! and the shell never disagree about a default.
+//! Typed accessors for the search, duplicate-finder, and terminal
+//! preferences stored in [`crate::app_state`]. One place resolves the
+//! persisted string/bool fields into the concrete config the workers
+//! want, so the settings UI and the shell never disagree about a default.
 
+use ferail_core::terminal::{split_args, TerminalMode, TerminalSpec};
 use ferail_fs_native::{DupeOpts, SearchQuery};
 
 use crate::app_state::{self, AppState};
@@ -140,6 +141,51 @@ impl DupeConfig {
     }
 }
 
+/// Resolved terminal-launch preferences ("Open Terminal Here").
+#[derive(Clone, Debug)]
+pub struct TerminalConfig {
+    pub path: Option<String>,
+    pub args: Option<String>,
+    pub mode: TerminalMode,
+}
+
+impl TerminalConfig {
+    pub fn from_state(s: &AppState) -> Self {
+        Self {
+            path: s
+                .terminal_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(str::to_string),
+            args: s
+                .terminal_args
+                .as_deref()
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .map(str::to_string),
+            mode: s
+                .terminal_mode
+                .as_deref()
+                .map(TerminalMode::from_str)
+                .unwrap_or_default(),
+        }
+    }
+
+    pub fn load() -> Self {
+        Self::from_state(&app_state::load())
+    }
+
+    /// The launch request `platform_shell::open_terminal_with` consumes.
+    pub fn spec(&self) -> TerminalSpec {
+        TerminalSpec {
+            program: self.path.clone(),
+            args: self.args.as_deref().map(split_args).unwrap_or_default(),
+            mode: self.mode,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,6 +217,25 @@ mod tests {
             !SearchConfig::from_state(&s).include_hidden,
             "explicit search pref overrides the global fallback"
         );
+    }
+
+    #[test]
+    fn terminal_defaults_and_custom() {
+        let cfg = TerminalConfig::from_state(&AppState::default());
+        assert_eq!(cfg.path, None);
+        assert_eq!(cfg.mode, TerminalMode::Standard);
+        assert_eq!(cfg.spec(), TerminalSpec::default());
+
+        let s = AppState {
+            terminal_path: Some("  /usr/bin/kitty ".into()),
+            terminal_args: Some("-d \"{dir}\"".into()),
+            terminal_mode: Some("admin".into()),
+            ..AppState::default()
+        };
+        let spec = TerminalConfig::from_state(&s).spec();
+        assert_eq!(spec.program(), Some("/usr/bin/kitty"));
+        assert_eq!(spec.args, vec!["-d", "{dir}"]);
+        assert!(spec.admin());
     }
 
     #[test]

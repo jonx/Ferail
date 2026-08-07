@@ -3,9 +3,10 @@
 //! A Quick Look thumbnail of a source file is a tiny unreadable
 //! image, so text files get their actual content rendered monospaced
 //! instead (docs/features/PREVIEW.md). Detection happens in the
-//! worker — read a bounded prefix, reject on NUL bytes or invalid
-//! UTF-8 — so there's no dependency on magic having been sniffed yet,
-//! and the UI thread never reads the file.
+//! worker — read a bounded prefix, reject on NUL bytes, then decode
+//! as UTF-8 with a Latin-1 fallback for legacy single-byte text — so
+//! there's no dependency on magic having been sniffed yet, and the UI
+//! thread never reads the file.
 //!
 //! Parallel in shape to [`crate::preview`] (the thumbnail provider):
 //! per-path LRU cache, `Pending` markers dedup in-flight reads,
@@ -130,18 +131,48 @@ fn read_text_preview(path: &Path) -> Result<Option<String>, ()> {
     }
     // Decode as UTF-8, tolerating only a multibyte char split at the
     // read boundary (error_len == None). A real invalid sequence
-    // mid-buffer means binary.
-    let valid_end = match std::str::from_utf8(&buf) {
-        Ok(_) => buf.len(),
-        Err(e) if e.error_len().is_none() => e.valid_up_to(),
+    // mid-buffer means the file isn't UTF-8 — but it may still be
+    // single-byte text (ISO-8859-1: Amiga/DOS-era readmes, scene
+    // .nfo files, old exports), which deserves a preview just as much
+    // as UTF-8 does. Fall back to a Latin-1 decode when the bytes
+    // look overwhelmingly printable; the NUL check above has already
+    // rejected the classic binary shape.
+    let text: std::borrow::Cow<'_, str> = match std::str::from_utf8(&buf) {
+        Ok(t) => std::borrow::Cow::Borrowed(t),
+        Err(e) if e.error_len().is_none() => std::borrow::Cow::Borrowed(
+            std::str::from_utf8(&buf[..e.valid_up_to()]).map_err(|_| ())?,
+        ),
+        Err(_) if looks_like_single_byte_text(&buf) => {
+            // In Latin-1 every byte IS its code point, so this cast
+            // is the whole decode.
+            std::borrow::Cow::Owned(buf.iter().map(|&b| b as char).collect())
+        }
         Err(_) => return Ok(None),
     };
-    let text = std::str::from_utf8(&buf[..valid_end]).map_err(|_| ())?;
+    let text = text.as_ref();
     let mut out: String = text.lines().take(MAX_LINES).collect::<Vec<_>>().join("\n");
     if text.lines().count() > MAX_LINES {
         out.push_str("\n\u{2026}");
     }
     Ok(Some(out))
+}
+
+/// Gate for the Latin-1 fallback: ≥ 85% of the first 512 bytes must be
+/// printable — ASCII graphic/whitespace or Latin-1 high bytes (0xA0+,
+/// accents, ©, box-drawing in legacy pages). Mirrors the magic
+/// sniffer's plain-text ratio (`ferail-fs-native/src/magic/text.rs`)
+/// widened for the single-byte range; the 15% budget absorbs the odd
+/// escape code in ANSI-art .nfo files without letting real binaries
+/// through (their headers are control-byte-dense).
+fn looks_like_single_byte_text(buf: &[u8]) -> bool {
+    let sample = &buf[..buf.len().min(512)];
+    let printable = sample
+        .iter()
+        .filter(|&&b| {
+            b.is_ascii_graphic() || matches!(b, b' ' | b'\n' | b'\r' | b'\t') || b >= 0xA0
+        })
+        .count();
+    printable * 100 / sample.len().max(1) >= 85
 }
 
 async fn apply_result(
@@ -256,11 +287,26 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_utf8() {
+    fn rejects_control_dense_binary() {
         let p = scratch("c.bin");
-        // 0xFF 0xFE mid-buffer is not a valid UTF-8 lead.
-        std::fs::write(&p, [b'h', b'i', 0xFF, 0xFE, b'y', b'o']).unwrap();
+        // Invalid UTF-8 AND control-byte-dense (no NULs): a typical
+        // binary header shape. The Latin-1 fallback must not claim it.
+        let mut bytes = vec![b'M', b'Z'];
+        bytes.extend((1u8..=120).flat_map(|b| [b % 0x1F + 1, 0x90]));
+        std::fs::write(&p, &bytes).unwrap();
         assert!(read_text_preview(&p).unwrap().is_none());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn reads_latin1_text() {
+        let p = scratch("readme-latin1.txt");
+        // ISO-8859-1 "Café © Digita" — 0xE9 (é) and 0xA9 (©) are
+        // invalid UTF-8 lead bytes, but this is text and previews as
+        // such via the Latin-1 fallback (Amiga/DOS-era readmes).
+        std::fs::write(&p, [b'C', b'a', b'f', 0xE9, b' ', 0xA9, b' ', b'D', b'i', b'g', b'i', b't', b'a']).unwrap();
+        let out = read_text_preview(&p).unwrap().unwrap();
+        assert_eq!(out, "Café © Digita");
         let _ = std::fs::remove_file(&p);
     }
 

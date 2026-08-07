@@ -1183,8 +1183,20 @@ impl TableDelegate for FileListDelegate {
             .and_then(|id| self.paths.get(&id))
             .map(|p| self.cut_marker.borrow().iter().any(|c| c == p))
             .unwrap_or(false);
+        // Hidden entries (visible because show-hidden is on) dim more
+        // gently — text and icon in one stroke — so they read as
+        // distinct from normal files, Finder-style. `else if`: a cut
+        // hidden row keeps the stronger cut treatment (opacity doesn't
+        // compound; the last call would win).
+        let is_hidden = self
+            .entries
+            .get(row_ix)
+            .map(|e| e.hidden)
+            .unwrap_or(false);
         if is_cut {
             row = row.opacity(0.45);
+        } else if is_hidden {
+            row = row.opacity(0.6);
         }
         // Folder rows are drop targets for OS file drags (dnd-spec
         // §3.5): accent ring on hover, drop surfaces as a TableEvent

@@ -729,6 +729,18 @@ impl Shell {
                                 }
                                 _ => {}
                             }
+                            // If the user is still looking at the destination
+                            // folder, select what landed and bring the first
+                            // item into view once the reload below delivers
+                            // the fresh rows. `created` carries the final
+                            // (post collision-rename) destinations.
+                            let names = outcome
+                                .created
+                                .iter()
+                                .filter_map(|(_, d)| d.file_name())
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .collect();
+                            this.queue_select_names_if_current(&dest, names);
                         }
                     }
                     cx.notify();
@@ -1219,7 +1231,8 @@ impl Shell {
 
     /// File-list "Open Terminal Here". Folder-only menu item; resolves
     /// the right-clicked (or selected) directory via the same path as
-    /// `CopyPath`, then hands it to the platform shell.
+    /// `CopyPath`, then hands it to the platform shell along with the
+    /// user's terminal preferences (Settings → Files → Terminal).
     pub(super) fn on_open_terminal_here(
         &mut self,
         _: &OpenTerminalHere,
@@ -1229,9 +1242,11 @@ impl Shell {
         let Some((_, _, path)) = self.action_entries_visible_order(cx).into_iter().next() else {
             return;
         };
-        // Process spawn — worker, not UI thread (Prime Directive).
+        // Settings read + process spawn — worker, not UI thread
+        // (Prime Directive).
         cx.background_spawn(async move {
-            crate::platform_shell::open_terminal(&path);
+            let spec = crate::feature_settings::TerminalConfig::load().spec();
+            crate::platform_shell::open_terminal_with(&path, &spec);
         })
         .detach();
     }
@@ -1248,9 +1263,11 @@ impl Shell {
         let Some(path) = self.context_target.take() else {
             return;
         };
-        // Process spawn — worker, not UI thread (Prime Directive).
+        // Settings read + process spawn — worker, not UI thread
+        // (Prime Directive).
         cx.background_spawn(async move {
-            crate::platform_shell::open_terminal(&path);
+            let spec = crate::feature_settings::TerminalConfig::load().spec();
+            crate::platform_shell::open_terminal_with(&path, &spec);
         })
         .detach();
     }
@@ -1270,6 +1287,36 @@ impl Shell {
             return;
         };
         self.eject_path(path, window, cx);
+    }
+
+    /// Sidebar/tree "Get Info". Opens the Get Info window for the
+    /// right-clicked row (`context_target`). Volume rows are recognised
+    /// against the cached volume list so the loading header shows the
+    /// volume's display name and `InfoTarget::Volume` immediately; the
+    /// background gather then fills in capacity, format, and device.
+    pub(super) fn on_get_info_at_context(
+        &mut self,
+        _: &GetInfoAtContext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use ferail_core::entry_info::InfoTarget;
+        let Some(path) = self.context_target.take() else {
+            return;
+        };
+        let (name, target) = match self.mounted_volume_name(&path) {
+            Some(name) => (name, InfoTarget::Volume),
+            None => {
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| path.display().to_string());
+                (name, InfoTarget::Folder)
+            }
+        };
+        let weak = cx.weak_entity();
+        crate::entry_info::open(path, name, target, None, weak, cx);
     }
 
     /// Eject the volume mounted at `path`. Shared by the context-menu
@@ -1373,21 +1420,28 @@ impl Shell {
         .detach();
     }
 
-    /// Display name for the volume mounted at `path`, from the cached
-    /// sidebar volume list (fallback: the path's leaf).
-    fn volume_display_name(&self, path: &Path) -> String {
+    /// Display name of the volume mounted exactly at `path`, from the
+    /// cached sidebar volume list — pure in-memory lookup, no I/O, so
+    /// it's safe on the render path. `None` when `path` isn't a mount
+    /// root.
+    pub(super) fn mounted_volume_name(&self, path: &Path) -> Option<String> {
         self.process
             .volumes
             .borrow()
             .iter()
             .find(|v| v.path == path)
             .map(|v| v.name.clone())
-            .unwrap_or_else(|| {
-                path.file_name()
-                    .and_then(|s| s.to_str())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| path.display().to_string())
-            })
+    }
+
+    /// Display name for the volume mounted at `path`, from the cached
+    /// sidebar volume list (fallback: the path's leaf).
+    fn volume_display_name(&self, path: &Path) -> String {
+        self.mounted_volume_name(path).unwrap_or_else(|| {
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| path.display().to_string())
+        })
     }
 
     /// Other mounted volumes sharing `path`'s physical device, as
@@ -2651,7 +2705,10 @@ impl Shell {
                     parent.clone(),
                     move || {
                         std::fs::rename(&op_old_path, &op_new_path).map_err(|e| e.to_string())?;
-                        Ok(Vec::new())
+                        // Report the result so the renamed entry is re-
+                        // selected in place (its NodeId changes with the
+                        // path, so plain selection preservation loses it).
+                        Ok(vec![op_new_path])
                     },
                     "Rename",
                     None,

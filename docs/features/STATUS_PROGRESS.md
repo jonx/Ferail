@@ -73,9 +73,21 @@ The status bar shows:
 - active folder item count,
 - selected count/size when a selection exists,
 - total visible size,
-- free space when available,
+- free space when available — swapped for "{volume} is read-only" when the
+  tab's volume is mounted read-only (CD/DVD, locked card, `ro` mount):
+  "0 B free" on a CD is true but buries the actual story. The macOS boot
+  volume is exempt — its sealed snapshot statfs's read-only, but the
+  Macintosh HD the user sees is writable via the firmlinked Data volume,
 - task label or "N tasks running",
 - progress strip,
+- a passive "N hidden · X B" chip when *show hidden* is off and the folder
+  has hidden entries — count + summed sizes of what the listing skipped, so
+  hidden content is discoverable without unhiding it. Fed per-tab by the
+  enumeration's `Done` message (`loading::HiddenSummary`; counted before the
+  text filter, zeroed at load start; hidden *folders* count at their dirent
+  size, like the item total). Suppressed in archive mode. Its sibling
+  affordance: with *show hidden* on, hidden rows render dimmed
+  (`opacity(0.6)`, list + grid; a cut row's `0.45` wins),
 - Show Hidden toggle.
 
 Clicking the task label or progress strip toggles the task popover.

@@ -161,6 +161,9 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "file.new_folder" => cx.bind_keys([KeyBinding::new(kb_str, NewFolder, ctx)]),
         "file.move_to_trash" => cx.bind_keys([KeyBinding::new(kb_str, MoveToTrash, ctx)]),
         // No catalogue shortcut (the Shortcut DSL lacks Delete);
+        // install_extras binds shift-delete / secondary-alt-backspace.
+        "file.delete_immediately" => {}
+        // No catalogue shortcut (the Shortcut DSL lacks Delete);
         // install_extras binds Finder's cmd-shift-backspace chord.
         "file.empty_trash" => {}
         "file.copy_path" => cx.bind_keys([KeyBinding::new(kb_str, CopyPath, ctx)]),

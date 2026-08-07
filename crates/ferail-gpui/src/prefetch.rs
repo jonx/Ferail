@@ -74,11 +74,19 @@ struct PrefetchRow {
 
 /// Snapshot used to seed the worker. We can't capture `&FileEntry`
 /// (not Send + lifetime); copy the bits the worker needs.
+#[derive(Clone)]
 struct PrefetchSeed {
     node: NodeId,
     path: PathBuf,
     mtime_unix: i64,
     size: u64,
+    /// Directories skip the magic/description derive entirely. Not
+    /// just an optimisation: on cd9660 (and other legacy filesystems)
+    /// `open()`+`read()` on a directory *succeeds* and returns raw
+    /// directory records, so the sniffer would confidently label every
+    /// folder "Binary". The folder-size worker owns folder
+    /// descriptions; the Format column falls back to the kind label.
+    is_dir: bool,
     has_magic: bool,
     has_description: bool,
     has_quarantine: bool,
@@ -125,6 +133,7 @@ pub fn start(
                 path,
                 mtime_unix: e.mtime_unix,
                 size: e.size,
+                is_dir: matches!(e.kind, ferail_core::EntryKind::Directory),
                 has_magic: !e.display_magic.is_empty(),
                 has_description: !e.display_description.is_empty(),
                 has_quarantine: e.is_quarantined,
@@ -226,11 +235,19 @@ fn run_worker(
         }
         let path_str = seed.path.to_string_lossy().into_owned();
 
-        // Try DB cache.
-        let cached = db.as_ref().and_then(|db| {
-            let guard = db.lock().ok()?;
-            guard.get_file(&path_str).ok().flatten()
-        });
+        // Try DB cache. A row whose stored mtime doesn't match the
+        // live file describes different bytes — serving it would keep
+        // a stale label/description (and quarantine state) forever
+        // after an in-place edit, since nothing else re-validates.
+        // Drop it and let the fresh derive write through (caches buy
+        // latency, never correctness).
+        let cached = db
+            .as_ref()
+            .and_then(|db| {
+                let guard = db.lock().ok()?;
+                guard.get_file(&path_str).ok().flatten()
+            })
+            .filter(|r| r.mtime_unix == seed.mtime_unix);
 
         // Determine magic label + description in one shot. The new
         // detector reads 4 KB once and returns a structured info
@@ -247,18 +264,27 @@ fn run_worker(
         // served from the DB cache) — only a fresh derive does the extra
         // audio-tag read, since the cache already holds the media line.
         let desc_was_cached = cached_desc.is_some();
-        let (magic_label, mut description) = match (cached_label, cached_desc) {
-            (Some(l), Some(d)) => (l, d),
-            (cached_l, cached_d) => {
-                let info = detect_magic_info(&seed.path);
-                let label = cached_l.unwrap_or_else(|| {
-                    info.as_ref()
-                        .map(|i| i.magic_type.display_name().to_string())
-                        .unwrap_or_default()
-                });
-                let desc = cached_d
-                    .unwrap_or_else(|| info.as_ref().map(|i| i.description()).unwrap_or_default());
-                (label, desc)
+        let (magic_label, mut description) = if seed.is_dir {
+            // See `PrefetchSeed::is_dir` — never sniff a directory,
+            // and don't resurrect a label an older build sniffed for
+            // one. Empty values mean the Format column shows the kind
+            // ("Folder") and the folder-size worker owns Description.
+            (String::new(), String::new())
+        } else {
+            match (cached_label, cached_desc) {
+                (Some(l), Some(d)) => (l, d),
+                (cached_l, cached_d) => {
+                    let info = detect_magic_info(&seed.path);
+                    let label = cached_l.unwrap_or_else(|| {
+                        info.as_ref()
+                            .map(|i| i.magic_type.display_name().to_string())
+                            .unwrap_or_default()
+                    });
+                    let desc = cached_d.unwrap_or_else(|| {
+                        info.as_ref().map(|i| i.description()).unwrap_or_default()
+                    });
+                    (label, desc)
+                }
             }
         };
 
@@ -361,10 +387,16 @@ fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<PrefetchRow>) {
         let Some(row) = by_node.remove(&e.id) else {
             continue;
         };
-        if !row.magic_label.is_empty() {
+        // Belt-and-suspenders (mirrors `format_label`'s folder guard):
+        // a directory row never takes a magic label or description, even
+        // if a stale path-keyed cache row arrives carrying one — the
+        // Format column shows the kind ("Folder") and the folder-size
+        // worker owns Description for directories.
+        let is_dir = matches!(e.kind, ferail_core::EntryKind::Directory);
+        if !is_dir && !row.magic_label.is_empty() {
             e.display_magic = row.magic_label;
         }
-        if !row.description.is_empty() {
+        if !is_dir && !row.description.is_empty() {
             e.display_description = row.description;
         }
         e.is_quarantined = row.is_quarantined;
@@ -478,6 +510,7 @@ mod tests {
             path: path.to_path_buf(),
             mtime_unix: 100,
             size: AROS_ELF.len() as u64,
+            is_dir: false,
             // Fresh enumeration: no derived data carried on the entry,
             // so the worker always reaches the cache/sniff decision.
             has_magic: false,
@@ -551,5 +584,43 @@ mod tests {
         assert!(healed[0].description.ends_with("AROS"));
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// The directory magic-label bug (TODO.md): a path-keyed cache row
+    /// written while the path was a *file* must never resurface on a
+    /// *directory* at that path. The worker's `is_dir` arm returns empty
+    /// values regardless of what the poisoned row carries, cache-first
+    /// or forced.
+    #[test]
+    fn directory_never_takes_a_cached_magic_label() {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("ferail-prefetch-dir-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir_str = dir.to_string_lossy().into_owned();
+
+        let db = Arc::new(Mutex::new(MetadataDb::in_memory().unwrap()));
+        // Poisoned row: the path used to be a ZIP file, same mtime.
+        let mut poisoned = stale_record(&dir_str);
+        poisoned.magic_label = Some("ZIP archive".into());
+        poisoned.description = Some("ZIP archive \u{b7} 3 files".into());
+        db.lock().unwrap().upsert_file(&poisoned).unwrap();
+
+        let seed = PrefetchSeed {
+            is_dir: true,
+            ..seed_for(&dir)
+        };
+        for force in [false, true] {
+            let rows = run_worker(
+                vec![seed.clone()],
+                Some(db.clone()),
+                force,
+                Arc::new(AtomicBool::new(false)),
+            );
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].magic_label, "", "force={force}");
+            assert_eq!(rows[0].description, "", "force={force}");
+        }
+
+        let _ = std::fs::remove_dir(&dir);
     }
 }

@@ -431,6 +431,17 @@ pub struct Tab {
     /// changed). Reset to `false` at the start of every load and
     /// consumed by `finish_directory_load_in_tab`.
     pub force_resniff: bool,
+    /// When set, the folder-size pass that follows this load ignores the
+    /// `folder_sizes` cache and re-walks every directory row. Armed only
+    /// by the Refresh command — it is the user's explicit "measure this
+    /// again", and the one gesture that should pay for a full re-walk.
+    /// Everything else (navigation, returning to a folder, the window
+    /// coming forward) rides the cache; deep external changes are caught
+    /// by the TTL and by watcher-driven ancestor invalidation instead.
+    /// Reset to `false` at the start of every load and consumed by
+    /// `finish_directory_load_in_tab`, so a superseded Refresh doesn't
+    /// leak a forced walk into the load that replaced it.
+    pub force_folder_sizes: bool,
     /// Off-screen accumulator for an *in-place reload* (Refresh, Esc
     /// clear-filter, show-hidden toggle, watcher reload — any load
     /// that re-reads the directory already on screen). `Some` for the
@@ -470,6 +481,17 @@ pub struct Tab {
     /// Cached display name of this tab's volume; same lifecycle as
     /// `volume_free_bytes`.
     pub volume_name: Option<SharedString>,
+    /// Cached read-only mount state of this tab's volume; same
+    /// lifecycle as `volume_free_bytes`. The status bar swaps its
+    /// free-space label for "is read-only" when set — "0 B free" on
+    /// a CD is true but the wrong message.
+    pub volume_read_only: bool,
+    /// Count + bytes of the hidden entries the last completed load
+    /// skipped (show-hidden off). Written by
+    /// `finish_directory_load_in_tab`, zeroed when a load starts;
+    /// render reads this cache only. Drives the status bar's passive
+    /// "N hidden · X" chip.
+    pub hidden_summary: super::loading::HiddenSummary,
     /// Screenshot-driver row index queued for selection once a
     /// streaming batch lands for this tab. Cleared on apply or on
     /// navigation. Internal/CLI use only.
@@ -544,6 +566,7 @@ impl Tab {
             load_task: None,
             load_pending_first_batch: false,
             force_resniff: false,
+            force_folder_sizes: false,
             load_staging: None,
             tool_result: None,
             dupe_groups: Vec::new(),
@@ -551,6 +574,8 @@ impl Tab {
             last_error: None,
             volume_free_bytes: None,
             volume_name: None,
+            volume_read_only: false,
+            hidden_summary: Default::default(),
             pending_select_row: None,
             pending_select_rows: Vec::new(),
             pending_select_names: Vec::new(),

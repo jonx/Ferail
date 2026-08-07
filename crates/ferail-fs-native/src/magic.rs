@@ -34,6 +34,16 @@ mod zip;
 
 pub use types::{CpuArch, ElfOs, MagicInfo, MagicType, PeSubsystem};
 
+/// Revision of the sniffer's knowledge. **Bump this whenever detection
+/// improves** — new signatures, refined labels, richer descriptions —
+/// so the metadata DB's magic cache heals: at startup the app compares
+/// the revision stored in the DB against this one and, on mismatch,
+/// drops every cached label/description so rows re-sniff lazily with
+/// the current detector. Without the stamp, a label cached by an older
+/// build shadows the better answer forever — cache rows only invalidate
+/// on file mtime, and files don't change when Ferail does.
+pub const MAGIC_REVISION: u32 = 2;
+
 const HEADER_BYTES: usize = 4096;
 
 /// Return a friendly label for the file's content, or `None` if no
@@ -60,6 +70,16 @@ pub fn detect_magic(path: &Path) -> Option<&'static str> {
 /// remains).
 pub fn detect_magic_info(path: &Path) -> Option<MagicInfo> {
     ferail_core::path_guard::assert_off_ui_thread("detect_magic_info");
+    // Never sniff a directory (this also catches symlinks resolving to
+    // one — `is_dir` follows links). `read()` on a directory fails with
+    // EISDIR on APFS/ext4, but *succeeds* on cd9660 and some legacy
+    // filesystems, handing raw dirent bytes to the classifier — which
+    // then confidently labels a folder as an archive. Callers pass
+    // directories on purpose (the prefetch worker sends every row for
+    // its quarantine read), so the guard belongs here at the entry.
+    if path.is_dir() {
+        return None;
+    }
     let mut header = [0u8; HEADER_BYTES];
     let n_header = read_header(path, &mut header)?;
     let mut info = sniff_bytes_info(&header[..n_header]);
@@ -417,6 +437,14 @@ mod tests {
     fn empty_buf_is_unknown() {
         let info = sniff_bytes_info(&[]);
         assert_eq!(info.magic_type, MagicType::Unknown);
+    }
+
+    /// Directories never sniff (the entry guard): on some filesystems
+    /// `read()` on a directory returns raw dirent bytes, which the
+    /// classifier would happily label. `temp_dir` always exists.
+    #[test]
+    fn detect_magic_info_refuses_directories() {
+        assert!(detect_magic_info(&std::env::temp_dir()).is_none());
     }
 
     #[test]

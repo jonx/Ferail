@@ -69,6 +69,17 @@ pub struct StatusMetrics {
     pub total_size: u64,
     pub free_bytes: Option<u64>,
     pub volume_name: Option<SharedString>,
+    /// The tab's volume is mounted read-only (CD/DVD, locked card,
+    /// read-only image, `ro` mount). Replaces the free-space label —
+    /// "0 B free" on a CD is true but buries the actual story.
+    pub volume_read_only: bool,
+    /// Hidden entries the current listing skipped (show-hidden off) —
+    /// count and summed sizes. Zero when the toggle is on or the folder
+    /// has none, which also hides the chip. Passive discoverability:
+    /// the user learns hidden content exists (and how much) without
+    /// unhiding it.
+    pub hidden_count: usize,
+    pub hidden_bytes: u64,
 }
 
 pub fn render(
@@ -111,10 +122,27 @@ pub fn render(
         )
     };
 
-    let free_label = match (metrics.free_bytes, metrics.volume_name) {
-        (Some(b), Some(name)) => Some(format!("{} free on {}", humanize_bytes(b), name)),
-        (Some(b), None) => Some(format!("{} free", humanize_bytes(b))),
-        _ => None,
+    // Passive hidden-content summary, sitting right before the toggle
+    // it explains. Only when something is actually hidden from view.
+    let hidden_label = (metrics.hidden_count > 0).then(|| {
+        format!(
+            "{} hidden \u{00B7} {}",
+            metrics.hidden_count,
+            humanize_bytes(metrics.hidden_bytes)
+        )
+    });
+
+    let free_label = if metrics.volume_read_only {
+        Some(match metrics.volume_name {
+            Some(name) => format!("{name} is read-only"),
+            None => "Read-only volume".to_string(),
+        })
+    } else {
+        match (metrics.free_bytes, metrics.volume_name) {
+            (Some(b), Some(name)) => Some(format!("{} free on {}", humanize_bytes(b), name)),
+            (Some(b), None) => Some(format!("{} free", humanize_bytes(b))),
+            _ => None,
+        }
     };
 
     // Middle: task summary. Only surfaced tasks count — sub-perceptual
@@ -191,6 +219,16 @@ pub fn render(
         // could query the volume info — non-macOS / sandboxed
         // builds skip it gracefully.
         .when_some(free_label, |this, label| {
+            this.child(
+                div()
+                    .flex_shrink_0()
+                    .text_color(theme_muted_fg.opacity(0.85))
+                    .child(SharedString::from(label)),
+            )
+        })
+        // Hidden-content summary: what the Show-Hidden toggle beside it
+        // would reveal. Same muted treatment as the free-space label.
+        .when_some(hidden_label, |this, label| {
             this.child(
                 div()
                     .flex_shrink_0()

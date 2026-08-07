@@ -70,20 +70,28 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
         // timeout (tens of seconds) — the bare letter is an honest
         // label, and the sidebar refresh picks up a nicer one when the
         // share is actually reachable via the capacity-free path.
+        // Read-only detection rides along for free: 0x00080000 is
+        // FILE_READ_ONLY_VOLUME (stable since XP; the `windows` crate
+        // 0.58 doesn't re-export it). Set for CD/DVD media, locked SD
+        // cards, and NTFS/ReFS volumes mounted read-only.
+        const FILE_READ_ONLY_VOLUME: u32 = 0x0008_0000;
+        let mut read_only = false;
         let name = if kind == DRIVE_REMOTE {
             format!("{letter}:")
         } else {
             let mut name_buf = [0u16; 261];
+            let mut fs_flags: u32 = 0;
             unsafe {
                 match GetVolumeInformationW(
                     root_pcwstr,
                     Some(&mut name_buf),
                     None,
                     None,
-                    None,
+                    Some(&mut fs_flags),
                     None,
                 ) {
                     Ok(()) => {
+                        read_only = fs_flags & FILE_READ_ONLY_VOLUME != 0;
                         let len =
                             name_buf.iter().position(|&c| c == 0).unwrap_or(name_buf.len());
                         let label = String::from_utf16_lossy(&name_buf[..len]);
@@ -139,6 +147,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             is_local,
             is_removable,
             format: None,
+            read_only,
             bsd_device: None,
             device_id,
         });
@@ -270,6 +279,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             is_local: true,
             is_removable: false,
             format: None,
+            read_only: false,
             bsd_device: None,
             device_id: None,
         });
@@ -331,7 +341,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
         }
         seen.insert(mount_point.clone());
 
-        let (total, available) = statvfs_bytes(&mount_point);
+        let (total, available, read_only) = statvfs_bytes(&mount_point);
         let name = if mount_point == "/" {
             "Root".to_string()
         } else {
@@ -349,6 +359,7 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             is_local: true,
             is_removable: is_user_mount,
             format: Some(fs_type.to_string()),
+            read_only,
             bsd_device: Some(source.to_string()),
             device_id: linux_device_group(source),
         });
@@ -388,23 +399,24 @@ fn unescape_mountinfo(s: &str) -> String {
     out
 }
 
-/// Total + available bytes for the filesystem at `path` via `statvfs`.
+/// Total + available bytes and the read-only mount flag (`ST_RDONLY`)
+/// for the filesystem at `path` via `statvfs`.
 #[cfg(target_os = "linux")]
-fn statvfs_bytes(path: &str) -> (Option<u64>, Option<u64>) {
+fn statvfs_bytes(path: &str) -> (Option<u64>, Option<u64>, bool) {
     use std::os::unix::ffi::OsStrExt;
     let Ok(c_path) = std::ffi::CString::new(std::ffi::OsStr::new(path).as_bytes()) else {
-        return (None, None);
+        return (None, None, false);
     };
     // SAFETY: zeroed statvfs is a valid initial state; on non-zero return we
     // read nothing from it.
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
     if unsafe { libc::statvfs(c_path.as_ptr(), &mut st) } != 0 {
-        return (None, None);
+        return (None, None, false);
     }
     let frsize = st.f_frsize as u64;
     let total = (st.f_blocks as u64).checked_mul(frsize);
     let avail = (st.f_bavail as u64).checked_mul(frsize);
-    (total, avail)
+    (total, avail, st.f_flag & libc::ST_RDONLY != 0)
 }
 
 /// AROS volumes for the sidebar's Volumes section. AROS has no `/proc/mounts`
@@ -436,6 +448,10 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
             is_local: true,
             is_removable: false,
             format: None,
+            // MacRO: is the host-folder assign mounted without write
+            // access — the name already says so; the flag makes the
+            // status bar say it too.
+            read_only: path == "MacRO:",
             bsd_device: None,
             device_id: None,
         })

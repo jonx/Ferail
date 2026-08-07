@@ -10,6 +10,20 @@ shape.
 
 **Shipped (2026-05-15).**
 
+**Cache correctness (2026-08-07).** Two fixes for stale labels shadowing
+better answers:
+
+- *Sniffer-revision healing.* Cached rows only invalidate on file mtime,
+  so labels written by an older build (e.g. "Binary" for an Amiga hunk
+  executable, before `magic/amiga.rs` existed) survived detector upgrades
+  forever. `ferail_fs_native::MAGIC_REVISION` now stamps the DB; a bump
+  wipes cached labels/descriptions at startup so rows re-sniff lazily.
+  Bump it with every detection improvement (see MAGIC_SNIFFING.md).
+- *mtime validation on read.* The prefetch cache read served a row
+  without comparing its stored mtime to the live file's, so an in-place
+  edit kept the old label/description/quarantine state until a manual
+  Refresh. Mismatched rows are now treated as misses.
+
 **OOXML central directory read + OLE2/CFBF family (2026-08-04).** Two
 fixes for Office files misdescribed as "ZIP archive" / "Binary data":
 

@@ -151,14 +151,34 @@ impl Shell {
         self.apply_pending_select_names(cx);
     }
 
+    /// Queue leaf `names` for selection in the active tab, but only when it
+    /// is still a plain directory view of `dir` — the "select what I just
+    /// pasted/renamed/created" affordance. If the user moved away (navigated
+    /// elsewhere, or the tab shows search/dupe results) the operation's
+    /// results are not where they're looking, and selecting would be a
+    /// surprise: do nothing. The names apply when the post-op reload's rows
+    /// land (`apply_pending_select_names`), which also scrolls the first one
+    /// into view.
+    pub(super) fn queue_select_names_if_current(&mut self, dir: &std::path::Path, names: Vec<String>) {
+        if names.is_empty() {
+            return;
+        }
+        let tab = self.active_tab();
+        if tab.tool_result.is_some() || tab.current_dir != dir {
+            return;
+        }
+        self.active_tab_mut().pending_select_names = names;
+    }
+
     /// Resolve queued leaf names (see [`Tab::pending_select_names`]) against
     /// the rows that have now landed and select them.
     ///
     /// Streaming loads deliver in batches, so a name may simply not be here
     /// yet: only the names that resolve are consumed, and the rest stay queued
     /// for a later batch. Names that never arrive — the file was moved or
-    /// renamed between the operation and the click — fall away when the tab
-    /// navigates.
+    /// renamed between the operation and the click, or it's hidden/filtered
+    /// in this view — are dropped when the load completes
+    /// (`finish_directory_load_in_tab`) or the tab navigates.
     pub(super) fn apply_pending_select_names(&mut self, cx: &mut Context<Self>) {
         if self.active_tab().pending_select_names.is_empty() {
             return;

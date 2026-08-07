@@ -1228,9 +1228,11 @@ impl Shell {
                         .p(px(gap))
                         .flex()
                         .cursor_pointer()
-                        // Cut cells dim until the move pastes (mirrors the
-                        // dimmed list row).
+                        // Cut cells dim until the move pastes; hidden
+                        // entries dim more gently (mirrors the list
+                        // rows — cut wins over hidden).
                         .when(is_cut, |d| d.opacity(0.45))
+                        .when(!is_cut && entry.hidden, |d| d.opacity(0.6))
                         .child(inner)
                         // The label is `.truncate()`d, so surface the full
                         // name on hover (mirrors the list row's tooltip).
@@ -2803,10 +2805,20 @@ impl Render for Shell {
         let free_bytes = self.active_tab().volume_free_bytes;
         let volume_name = self.active_tab().volume_name.clone();
         let volume_read_only = self.active_tab().volume_read_only;
+        // Hidden aggregate cached by the last completed load. An archive
+        // listing has no hidden-file concept, so archive mode zeroes it
+        // below along with the other overrides.
+        let hidden_summary = self.active_tab().hidden_summary;
         // A docked archive workbench owns its own table, so the tab's delegate
         // is (correctly) empty — read the counts from the archive's table
         // instead, or the status bar would report "Empty folder" while the
         // pane is showing an archive's contents.
+        let archive_mode = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .and_then(|s| s.archive_mode())
+            .is_some();
         let (entry_count, total_size, selected_count, selected_size) = self
             .active_tab()
             .tool_result
@@ -2836,6 +2848,8 @@ impl Render for Shell {
             free_bytes,
             volume_name,
             volume_read_only,
+            hidden_count: if archive_mode { 0 } else { hidden_summary.count },
+            hidden_bytes: if archive_mode { 0 } else { hidden_summary.bytes },
         };
         let _ = delegate;
         // Clicking the task region of the status bar toggles the

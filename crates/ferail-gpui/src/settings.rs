@@ -830,6 +830,7 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
         for ci in 0..group.checks.len() {
             let report = report.clone();
             sg = sg.item(SettingItem::render(move |_o, _w, cx| {
+                use gpui_component::{Sizable as _, button::Button};
                 let check = &report.groups[gi].checks[ci];
                 let (tag_color, tag) = match check.status {
                     Status::Ok => (gpui::rgb(0x16a34a), "OK"),
@@ -860,7 +861,23 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                                     .text_scale_sm()
                                     .text_color(fg)
                                     .child(SharedString::from(check.name.clone())),
-                            ),
+                            )
+                            // Jump to the location this check is about:
+                            // reveal it (selected in its parent) in a
+                            // Ferail file window. Local UI action — the
+                            // target never enters a shared report, so it
+                            // coexists with the redaction toggle.
+                            .children(check.path.clone().map(|path| {
+                                Button::new(SharedString::from(format!(
+                                    "diag-reveal-{gi}-{ci}"
+                                )))
+                                .label("Reveal")
+                                .outline()
+                                .xsmall()
+                                .on_click(move |_, _w, cx| {
+                                    crate::shell::reveal_path_in_app(cx, path.clone());
+                                })
+                            })),
                     )
                     .child(
                         div()
@@ -1277,7 +1294,92 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
             .title("Locations")
             .item(locations_mode_setting()),
     );
-    page
+    page.group(terminal_group())
+}
+
+/// The Files-page Terminal group: which terminal the "Open Terminal Here"
+/// context command launches, its launch arguments, and standard vs.
+/// administrator mode. Resolved at use by
+/// [`crate::feature_settings::TerminalConfig`].
+fn terminal_group() -> SettingGroup {
+    SettingGroup::new()
+        .title("Terminal")
+        .item(
+            SettingItem::new(
+                "Terminal application",
+                SettingField::input(
+                    |_cx: &App| {
+                        SharedString::from(app_state::load().terminal_path.unwrap_or_default())
+                    },
+                    |val: SharedString, _cx: &mut App| persist_terminal_path(val.as_ref()),
+                ),
+            )
+            .layout(Axis::Vertical)
+            .description(
+                "Which terminal \u{201C}Open Terminal Here\u{201D} launches \u{2014} an app name \
+                 or .app bundle on macOS, a program path, or a command on PATH. Blank uses the \
+                 platform default: Terminal.app on macOS, Windows Terminal on Windows, and \
+                 auto-detection ($TERMINAL, then common emulators) on Linux.",
+            ),
+        )
+        .item(
+            SettingItem::new(
+                "Arguments",
+                SettingField::input(
+                    |_cx: &App| {
+                        SharedString::from(app_state::load().terminal_args.unwrap_or_default())
+                    },
+                    |val: SharedString, _cx: &mut App| persist_terminal_args(val.as_ref()),
+                ),
+            )
+            .layout(Axis::Vertical)
+            .description(
+                "Extra launch arguments. {dir} expands to the folder; double quotes group a \
+                 value with spaces (e.g. --working-directory \"{dir}\"). Without {dir} the \
+                 terminal starts in the folder via its working directory. Blank uses the \
+                 terminal's defaults.",
+            ),
+        )
+        .item(dropdown_setting(
+            "Launch mode",
+            "Standard opens the terminal normally. Administrator opens it with elevated \
+             rights \u{2014} a UAC prompt on Windows; on macOS and Linux the window opens \
+             into a root shell, with sudo asking for your password inside the terminal.",
+            &[("standard", "Standard"), ("admin", "Administrator")],
+            &[],
+            || {
+                app_state::load()
+                    .terminal_mode
+                    .unwrap_or_else(|| "standard".into())
+            },
+            persist_terminal_mode,
+        ))
+}
+
+fn persist_terminal_path(value: &str) {
+    let existing = app_state::load();
+    let v = value.trim();
+    app_state::save(&AppState {
+        terminal_path: (!v.is_empty()).then(|| v.to_string()),
+        ..existing
+    });
+}
+
+fn persist_terminal_args(value: &str) {
+    let existing = app_state::load();
+    let v = value.trim();
+    app_state::save(&AppState {
+        terminal_args: (!v.is_empty()).then(|| v.to_string()),
+        ..existing
+    });
+}
+
+fn persist_terminal_mode(value: &str) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        terminal_mode: Some(value.to_string()),
+        ..existing
+    });
 }
 
 /// The sidebar Locations root dropdown (Windows / OneDrive). Picks which copy

@@ -217,6 +217,11 @@ actions!(
         /// volume (`context_target`). Only attached to removable/
         /// ejectable volume rows.
         EjectVolume,
+        /// Sidebar/tree "Get Info" — open the Get Info window for the
+        /// right-clicked row (`context_target`). Split from the
+        /// file-list `GetInfo` because that one resolves through the
+        /// row selection, not the right-clicked sidebar path.
+        GetInfoAtContext,
         // Phase 6 follow-on: Tags + Open-With submenus. Seven tag
         // colours match Finder's canonical Red/Orange/Yellow/Green/
         // Blue/Purple/Gray set; toggle behaviour mirrors

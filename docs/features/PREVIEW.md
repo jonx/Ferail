@@ -30,7 +30,14 @@ per-provider cancellation tokens.
   the height persists across restarts (`app_state::preview_thumb_height`, on
   the same debounced save as the splitter widths).
 - Inline text/code preview appears before the detailed metadata for text-like
-  files.
+  files. Text is detected by content, not extension: bounded read, NUL-byte
+  reject, UTF-8 decode with a Latin-1 fallback for legacy single-byte text
+  (Amiga/DOS-era readmes, scene .nfo files) gated on a printable-ratio check.
+- With nothing selected and the tab parked at a volume's mount root — where a
+  sidebar volume click lands — the pane previews the volume itself: name plus
+  the Get Info volume section (capacity, available, used, format, a read-only
+  Access row when the mount is, mount point, device). The mount-root check reads the cached volume list only; the record
+  gathers on the background executor like every other selection.
 - The preview pane has its own scroll state and can be resized without stealing
   width from the sidebar.
 

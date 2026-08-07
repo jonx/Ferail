@@ -81,15 +81,34 @@ how long that can hide a stale size:
   today — one tunable const). Past that, the next *visit* recomputes. A
   recompute only happens when the folder is actually loaded, off the UI thread,
   so a longer TTL trades a little staleness for fewer re-walks of big trees.
-- **Activation refresh.** When the window returns from the background — the
-  natural moment a user comes back after working elsewhere — we force a
-  cache-bypassing re-walk of visible folder sizes. This reuses GPUI's
-  framework-level `observe_window_activation` (no new platform-shell surface)
-  and only fires on a genuine background→foreground transition: the
-  `Shell::was_window_active` guard skips the initial launch activation and any
-  same-state re-fire, so app-switch thrash is bounded. The forced pass routes
-  through `restart_folder_size_passes(force = true)`, cancelling any in-flight
-  pass first.
+- **Explicit Refresh.** The one gesture that means "measure this again" is the
+  Refresh command, and it is the only thing that bypasses the cache. It arms
+  `Tab::force_folder_sizes` (alongside the existing `force_resniff`) for exactly
+  its own load; `finish_directory_load_in_tab` consumes the flag and passes it
+  to `folder_sizes::start(.., force)`. A Refresh superseded before it finishes
+  is dropped by the generation guard, and the superseding load resets the flag.
+
+- **Activation re-seed.** When the window returns from the background we re-run
+  the pass, but **cache-first** (`restart_folder_size_passes(force = false)`),
+  so rows whose TTL lapsed while we were away get recomputed and everything else
+  answers instantly. It reuses GPUI's framework-level
+  `observe_window_activation` (no new platform-shell surface) and only fires on
+  a genuine background→foreground transition: the `Shell::was_window_active`
+  guard skips the initial launch activation and any same-state re-fire.
+
+> **This used to force.** Until 2026-08-04 the activation path passed
+> `force = true`, re-walking every visible tree on every return to the app.
+> Switching apps is something a user does dozens of times an hour, so in
+> practice the Size column could never settle — a folder measured a moment ago
+> was measured again the next time the window came forward, and a big tree that
+> lost the race to the next navigation was never cached at all. The liveness it
+> bought is already covered from both sides: watcher-driven ancestor
+> invalidation catches what the app and 3rd-party tools do to a *watched*
+> directory, and the TTL bounds how long a *deep* external change can hide.
+> What was left was cost without a matching guarantee. Don't reintroduce it —
+> if deep external liveness ever needs to be better than the TTL, the seam is a
+> recursive watcher feeding `invalidate_folder_size_ancestors`, not a periodic
+> re-walk.
 
 ## One source of truth
 
@@ -108,7 +127,9 @@ disagree.
 | Cache table + `delete_folder_size` | [ferail-meta/src/db.rs](../../crates/ferail-meta/src/db.rs) |
 | TTL, `force`, batch worker, single-path helper | [folder_sizes.rs](../../crates/ferail-gpui/src/folder_sizes.rs) |
 | Ancestor invalidation choke point | `Shell::invalidate_folder_size_ancestors` in [shell.rs](../../crates/ferail-gpui/src/shell.rs) |
-| Forced refresh on return | `observe_window_activation` wiring in `Shell::new`; `restart_folder_size_passes(force)` |
+| Forced re-walk on Refresh | `Tab::force_folder_sizes` ([tab.rs](../../crates/ferail-gpui/src/shell/tab.rs)), armed in `Shell::on_refresh`, consumed in `finish_directory_load_in_tab` |
+| Cache-first re-seed on return | `observe_window_activation` wiring in `Shell::new`; `restart_folder_size_passes(force = false)` |
+| Hit/miss visibility | `folder-sizes: N cache hit(s), M to walk` at log level 90 |
 | Get Info reuse | `calculate_size` in [entry_info.rs](../../crates/ferail-gpui/src/entry_info.rs) |
 
 ## Known gaps / future work

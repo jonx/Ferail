@@ -324,8 +324,18 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
         if let Some(a) = v.available_bytes {
             volume = volume.text_if("Available", fsn::humanize_bytes(a));
         }
+        // Finder parity: Capacity / Available / Used. Used is derived —
+        // statfs reports total and free, not a used counter.
+        if let (Some(t), Some(a)) = (v.total_bytes, v.available_bytes) {
+            volume = volume.text_if("Used", fsn::humanize_bytes(t.saturating_sub(a)));
+        }
         if let Some(f) = v.format.clone() {
             volume = volume.text_if("Format", f);
+        }
+        // Only worth a row when it constrains the user; a writable
+        // volume is the unremarkable default.
+        if v.read_only {
+            volume = volume.text_if("Access", "Read-only");
         }
         volume = volume.text_if("Mount point", v.path.display().to_string());
         if let Some(d) = v.bsd_device.clone() {

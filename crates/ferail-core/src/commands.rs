@@ -264,6 +264,15 @@ const CATALOGUE: &[CommandSpec] = &[
         shortcuts: &[],
     },
     CommandSpec {
+        id: CommandId("file.delete_immediately"),
+        title: "Delete Immediately",
+        category: Category::File,
+        // Shift+Delete [win/linux] / Option+Cmd+Delete [mac]; the keymap
+        // installs the chords directly (the Shortcut DSL has no Delete
+        // key yet), same as Empty Trash below.
+        shortcuts: &[],
+    },
+    CommandSpec {
         id: CommandId("file.empty_trash"),
         title: "Empty Trash",
         category: Category::File,

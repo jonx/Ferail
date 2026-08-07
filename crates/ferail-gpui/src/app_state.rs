@@ -204,6 +204,20 @@ pub struct AppState {
     /// `mpv.app`). `None` == the platform default (Homebrew on macOS).
     pub mpv_path: Option<String>,
 
+    // ---- Terminal (docs/features/CONTEXT_MENU.md, "Open Terminal Here") ----
+    /// Terminal program the "Open Terminal Here" command launches: an
+    /// absolute path, a `.app` bundle (macOS), or a bare `PATH` command.
+    /// `None` == the platform default (Terminal.app / `wt.exe` / the
+    /// Linux detection chain).
+    pub terminal_path: Option<String>,
+    /// Extra launch arguments, one params string (split shell-style at
+    /// use; `{dir}` expands to the target folder). `None` == the default
+    /// arguments for the chosen terminal.
+    pub terminal_args: Option<String>,
+    /// "standard" or "admin" (elevated: UAC on Windows, a sudo root
+    /// shell on macOS/Linux). `None` == standard.
+    pub terminal_mode: Option<String>,
+
     // ---- Diagnostics privacy (docs/features/DIAGNOSTICS.md) ----
     /// When `true` (the default), the diagnostics bundle, "Copy report", and the
     /// in-app activity trail replace every file/folder name with `…` so a shared
@@ -426,6 +440,18 @@ fn load_from_disk() -> AppState {
             "mpv_path" if !val.trim().is_empty() => {
                 out.mpv_path = Some(val.trim().to_string());
             }
+            "terminal_path" if !val.trim().is_empty() => {
+                out.terminal_path = Some(val.trim().to_string());
+            }
+            "terminal_args" if !val.trim().is_empty() => {
+                out.terminal_args = Some(val.trim().to_string());
+            }
+            "terminal_mode" => {
+                let v = val.trim().to_lowercase();
+                if matches!(v.as_str(), "standard" | "admin") {
+                    out.terminal_mode = Some(v);
+                }
+            }
             "redact_diagnostics" => {
                 out.redact_diagnostics = parse_bool(val);
             }
@@ -552,6 +578,15 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(p) = &state.mpv_path {
         s.push_str(&format!("mpv_path={p}\n"));
+    }
+    if let Some(p) = &state.terminal_path {
+        s.push_str(&format!("terminal_path={p}\n"));
+    }
+    if let Some(a) = &state.terminal_args {
+        s.push_str(&format!("terminal_args={a}\n"));
+    }
+    if let Some(m) = &state.terminal_mode {
+        s.push_str(&format!("terminal_mode={m}\n"));
     }
     if let Some(b) = state.redact_diagnostics {
         s.push_str(&format!("redact_diagnostics={b}\n"));

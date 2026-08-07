@@ -42,19 +42,18 @@ nobody could have known.
   `BOOL::from(muted)`. It was the *only* thing broken: with that one line
   changed, `cargo check -p ferail-gpui --all-targets` is clean and 228 tests
   pass.
-- ⚠️ **Nothing builds Windows automatically — this WILL recur.** Per-OS CI jobs
-  were added in this pass and then removed by request (`.github/workflows` is
-  gone entirely; recover with `git revert` of the removal commit, or read the
-  workflow at commit `6d85def`). Until something builds Windows on every push,
-  the only thing standing between `main` and another two-week silent breakage is
-  someone happening to build here. The cheap half is worth restoring first: the
-  platform shell crates carry no gpui in their graph (ferail-core + windows +
-  zip), so compiling them per-OS costs minutes, and the `SetMuted` class of
-  breakage lives exactly there.
-  - Prior CI was ubuntu-only over two logic crates — and had been **failing** on
-    every push for at least a day before this pass (the clippy gate died in ~15 s
-    on the MSRV issue below), which is its own argument for keeping a signal
-    someone actually watches.
+- ✅ **Per-OS CI restored (2026-08-07)** — `.github/workflows/ci.yml`, the
+  `6d85def` workflow with private-repo adjustments. Every push now compiles
+  and tests the platform shell crates + ferail-fs-native on windows and ubuntu
+  hosts, which covers the `SetMuted` class of breakage (a Mac-authored
+  `cfg(windows)` arm that cannot compile, sitting invisible on `main`). The
+  repo went public the same day, so the initially-trimmed private-repo shape
+  (no macos leg, weekly-only app job) lasted hours: the full matrix
+  (windows/ubuntu/macos) and the windows ferail-gpui clippy job now all run
+  on every push. First run immediately caught real breakage: `main` had not
+  compiled ferail-fs-native on *any* platform since `6039e25` (partial
+  commits left `MAGIC_REVISION` and the `VolumeInfo.read_only` arms only in
+  the working tree).
 - **`--screenshot` works again.** It had regressed to calling
   `Window::render_to_image` unconditionally, which a stock `gpui_windows` does
   not implement — so it aborted at runtime, and the documented PrintWindow
@@ -378,7 +377,7 @@ The `ferail-shell-win32` public surface mirrors shell-mac. What's already real v
 | `system_is_dark()` | `RegGetValueW(HKCU, "…\\Themes\\Personalize", "AppsUseLightTheme")`. `0` = dark, `1` = light. Missing key → light. |
 | `start_system_theme_observer(cb)` | Message-only window via `CreateWindowExW(HWND_MESSAGE)`; WndProc filters `WM_SETTINGCHANGE` lParam `"ImmersiveColorSet"`; re-reads `system_is_dark()` and fires the callback on a worker thread. (Box still leaks — future work keeps a handle.) |
 | `reveal_in_finder(path)` | `explorer.exe /select,<path>` shellout. |
-| `open_terminal(dir)` | `wt.exe -d <dir>` shellout. |
+| `open_terminal(dir)` / `open_terminal_with(dir, spec)` | Default: `wt.exe -d <dir>` shellout, `cmd.exe` fallback. The `_with` form honours the Settings → Files → Terminal prefs (custom program/params, `{dir}` expansion); admin mode elevates via `ShellExecuteExW` verb `runas`. |
 | `open_url(url)` | `cmd /C start "" <url>` shellout. (Future: `ShellExecuteW` so we don't spawn cmd.) |
 | `duplicate_path(src)` | `std::fs::copy` for files; recursive walk for dirs. Naming: `<stem> - Copy.<ext>`, then `<stem> - Copy (2).<ext>`…, capped at 99. |
 | `make_alias(target)` | `CoCreateInstance(ShellLink)` → `IShellLinkW::SetPath` → `IPersistFile::Save(<target>.lnk)`. |

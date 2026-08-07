@@ -13,7 +13,7 @@
 //! never persisted because the config directory resolved to `None`. The
 //! "Config directory" check below reports exactly that as a hard `Fail`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::app_state;
 
@@ -40,6 +40,13 @@ pub struct Check {
     pub name: String,
     pub status: Status,
     pub detail: String,
+    /// The filesystem location this check is about, when it has one —
+    /// drives the Diagnostics page's "Reveal" jump button. Structured
+    /// here (never re-parsed out of the prose `detail`, whose shape
+    /// varies per status and gets username-scrubbed in reports).
+    /// [`render_text`] ignores it, so text output is unchanged. May
+    /// point at a not-yet-created file — reveal then shows the parent.
+    pub path: Option<PathBuf>,
 }
 
 impl Check {
@@ -48,7 +55,13 @@ impl Check {
             name: name.to_string(),
             status,
             detail: detail.into(),
+            path: None,
         }
+    }
+
+    fn with_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.path = Some(path.into());
+        self
     }
 }
 
@@ -126,11 +139,23 @@ fn app_group() -> Group {
             "not compiled in — rebuild with --features mpv to use the mpv player",
         )
     };
+    // The running artifact itself — the `.app` bundle on macOS, the
+    // executable elsewhere. Answers "which build am I actually running?"
+    // (a stale copy in ~/Downloads vs the one in /Applications).
+    let exe = match crate::platform_shell::app_bundle_path() {
+        Some(p) => Check::new("Executable", Status::Ok, p.clone()).with_path(p),
+        None => Check::new(
+            "Executable",
+            Status::Warn,
+            "could not determine the running executable's path",
+        ),
+    };
     Group {
         title: "App",
         checks: vec![
             Check::new("Version", Status::Ok, env!("CARGO_PKG_VERSION")),
             Check::new("Build", Status::Ok, build),
+            exe,
             mpv,
         ],
     }
@@ -152,7 +177,7 @@ fn dependencies_group() -> Group {
             .clone()
             .unwrap_or_else(|| crate::viewer::backend_native::default_mpv_path().to_string());
         if Path::new(&path).exists() {
-            Check::new("mpv install", Status::Ok, format!("{path} (found)"))
+            Check::new("mpv install", Status::Ok, format!("{path} (found)")).with_path(&path)
         } else {
             Check::new(
                 "mpv install",
@@ -219,12 +244,14 @@ fn check_config_dir() -> Check {
                 "Config directory",
                 Status::Ok,
                 format!("{} (writable)", dir.display()),
-            ),
+            )
+            .with_path(dir),
             Err(e) => Check::new(
                 "Config directory",
                 Status::Fail,
                 format!("{} — NOT writable: {e}; settings will not persist", dir.display()),
-            ),
+            )
+            .with_path(dir),
         },
     }
 }
@@ -245,12 +272,14 @@ fn check_settings_file() -> Check {
                 Status::Ok,
                 format!("{} ({keys} settings stored)", path.display()),
             )
+            .with_path(path)
         }
         Err(_) => Check::new(
             "Settings file",
             Status::Warn,
             format!("{} (not created yet — written on first change)", path.display()),
-        ),
+        )
+        .with_path(path),
     }
 }
 
@@ -268,17 +297,20 @@ fn check_metadata_db() -> Check {
             "Metadata database",
             Status::Ok,
             format!("{} (present)", path.display()),
-        ),
+        )
+        .with_path(path),
         (false, Ok(_)) => Check::new(
             "Metadata database",
             Status::Warn,
             format!("{} (not created yet — written on first use)", path.display()),
-        ),
+        )
+        .with_path(path),
         (false, Err(e)) => Check::new(
             "Metadata database",
             Status::Fail,
             format!("{} — directory not writable: {e}", path.display()),
-        ),
+        )
+        .with_path(path),
     }
 }
 
@@ -336,6 +368,14 @@ mod tests {
         assert!(text.contains("Ferail diagnostics"));
         assert!(text.contains("[Storage]"));
         assert!(text.contains("Config directory"));
+        assert!(text.contains("Executable"));
+        // The jump targets: the running-executable row and the storage
+        // rows carry a structured path for the Reveal button.
+        let app = report.groups.iter().find(|g| g.title == "App").unwrap();
+        let exe = app.checks.iter().find(|c| c.name == "Executable").unwrap();
+        assert!(exe.path.is_some(), "executable path resolves in tests");
+        let storage = report.groups.iter().find(|g| g.title == "Storage").unwrap();
+        assert!(storage.checks.iter().all(|c| c.path.is_some()));
         // tally + worst are internally consistent.
         let (ok, warn, fail) = report.tally();
         assert!(ok + warn + fail >= 7);

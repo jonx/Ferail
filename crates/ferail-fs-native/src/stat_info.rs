@@ -328,22 +328,24 @@ fn io_err(op: &str) -> String {
     format!("{op}: {}", std::io::Error::last_os_error())
 }
 
-/// Filesystem type name (e.g. "apfs", "hfs", "exfat") and BSD device node
-/// (e.g. "/dev/disk3s1s1") for the volume containing `path`. Both `None` off
-/// macOS or on `statfs` failure.
+/// Filesystem type name (e.g. "apfs", "hfs", "exfat"), BSD device node
+/// (e.g. "/dev/disk3s1s1"), and whether the volume is mounted read-only
+/// (`MNT_RDONLY`, except the root mount — see below) for the volume
+/// containing `path`. Strings `None` and read-only `false` off macOS or
+/// on `statfs` failure.
 #[cfg(target_os = "macos")]
-pub fn volume_fs_info(path: &Path) -> (Option<String>, Option<String>) {
+pub fn volume_fs_info(path: &Path) -> (Option<String>, Option<String>, bool) {
     use std::os::unix::ffi::OsStrExt;
 
     let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
-        return (None, None);
+        return (None, None, false);
     };
     // SAFETY: zeroed `statfs` is valid input; on non-zero return we read
     // nothing from it.
     let mut sfs: libc::statfs = unsafe { std::mem::zeroed() };
     let rc = unsafe { libc::statfs(c_path.as_ptr(), &mut sfs) };
     if rc != 0 {
-        return (None, None);
+        return (None, None, false);
     }
     let read_cstr = |arr: &[libc::c_char]| -> Option<String> {
         // SAFETY: the array is a NUL-terminated C string from the kernel.
@@ -355,12 +357,25 @@ pub fn volume_fs_info(path: &Path) -> (Option<String>, Option<String>) {
             Some(s)
         }
     };
-    (read_cstr(&sfs.f_fstypename), read_cstr(&sfs.f_mntfromname))
+    // Boot-volume special case: the sealed system snapshot statfs's as
+    // MNT_RDONLY on every modern macOS, but the "Macintosh HD" the user
+    // sees is writable — their files live on the firmlinked Data
+    // volume. A "read-only" badge on the boot volume is technically
+    // true of the snapshot and nonsense as a user message, so the root
+    // mount never reports it. Real read-only media (CDs, locked cards,
+    // ro images) mount elsewhere and keep the flag.
+    let read_only = sfs.f_flags & libc::MNT_RDONLY as u32 != 0
+        && read_cstr(&sfs.f_mntonname).as_deref() != Some("/");
+    (
+        read_cstr(&sfs.f_fstypename),
+        read_cstr(&sfs.f_mntfromname),
+        read_only,
+    )
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn volume_fs_info(_path: &Path) -> (Option<String>, Option<String>) {
-    (None, None)
+pub fn volume_fs_info(_path: &Path) -> (Option<String>, Option<String>, bool) {
+    (None, None, false)
 }
 
 /// Format a unix timestamp as a Finder-style local date-time,
@@ -465,11 +480,16 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn boot_volume_is_apfs() {
-        let (fmt, dev) = volume_fs_info(Path::new("/"));
+        let (fmt, dev, read_only) = volume_fs_info(Path::new("/"));
         assert!(fmt.is_some(), "boot volume has a format");
         assert!(
             dev.as_deref().unwrap_or("").starts_with("/dev/"),
             "device node looks like /dev/...: {dev:?}"
         );
+        // The sealed snapshot statfs's as MNT_RDONLY, but the boot
+        // volume is deliberately exempt — the user-visible Macintosh HD
+        // is writable via the firmlinked Data volume, so a read-only
+        // badge there would be nonsense.
+        assert!(!read_only, "the boot volume never reports read-only");
     }
 }

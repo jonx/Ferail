@@ -63,6 +63,22 @@ Two front-ends over one `run_checks()`:
 
 Needs `app_state::config_dir()` made `pub` (or a diagnostics accessor).
 
+**Reveal buttons (implemented).** A `Check` additionally carries
+`path: Option<PathBuf>` — structured, never re-parsed from the prose
+`detail` (whose shape varies per status and gets username-scrubbed in
+shared output). Rows with a path — the App group's **Executable** row
+(`platform_shell::app_bundle_path()`, i.e. the running `.app` bundle or
+binary), config dir, settings file, metadata DB, mpv install — render a
+"Reveal" button that jumps to the location *in Ferail*:
+`shell::reveal_path_in_app` opens a new tab in the first live Shell
+window (or a fresh window if none) at the parent folder with the entry
+queued for selection via `pending_select_names`, then raises the window.
+`render_text` ignores the field, so `--doctor` / Copy report / bundle
+output are unchanged, and the jump is a local UI action — it coexists
+with the redaction toggle. A not-yet-created target ("written on first
+change" rows) still reveals the parent; the unresolved name is dropped
+when the load completes.
+
 ## Phase 3 — Issue reporter  (TODO)
 
 `crates/ferail-gpui/src/report.rs` + a redaction modal.

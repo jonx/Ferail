@@ -115,13 +115,29 @@ sniffs file content.
 `crates/ferail-gpui/src/prefetch.rs` starts after directory enumeration. It:
 
 1. Snapshots rows into sendable seeds (`path`, row index, mtime, size, current
-   cached flags).
+   cached flags). Directories are seeded for quarantine only — never sniffed:
+   on cd9660 `open()`+`read()` on a directory *succeeds* and returns raw
+   directory records, which the sniffer would confidently call "Binary".
 2. Registers a `TaskKind::MagicPrefetch` task.
 3. Runs on the background executor.
-4. Reads `MetadataDb` first.
+4. Reads `MetadataDb` first. A cached row is honoured only when its stored
+   mtime matches the live file's — a mismatched row describes different
+   bytes and is dropped so the fresh derive heals it.
 5. Falls back to `detect_magic_info` and quarantine xattr lookup.
 6. Writes fresh data back to SQLite.
 7. Applies one foreground batch to the live `FileEntry` slice.
+
+### Cache Healing Across Sniffer Upgrades
+
+Cache rows only invalidate on file mtime — and files don't change when
+Ferail does. So a label cached by an older build ("Binary") would shadow
+a detector improvement ("Amiga executable") forever. To prevent that,
+`ferail_fs_native::MAGIC_REVISION` stamps the sniffer's knowledge level:
+**bump it whenever detection improves** (new signatures, refined labels,
+richer descriptions). At startup, `Shell::start_metadata_load` compares
+the DB's stored `magic_revision` preference against the constant and, on
+mismatch, runs `ResetScope::Magic` (one UPDATE nulling every cached
+label/description) so rows re-sniff lazily as folders are browsed.
 
 Row application is bounds-checked so a re-enumerated directory does not panic on
 stale row indexes.

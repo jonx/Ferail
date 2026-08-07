@@ -8,6 +8,47 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Choose your terminal.** Settings → Files → Terminal picks which terminal
+  "Open Terminal Here" launches — an app name or `.app` bundle on macOS, a
+  program path, or a command on `PATH` — with your own launch arguments
+  (`{dir}` expands to the folder) and a Standard/Administrator mode. Blank
+  keeps the platform default: Terminal.app, Windows Terminal, or the usual
+  Linux emulator hunt. Administrator means a UAC prompt on Windows and a root
+  shell in the terminal on macOS and Linux.
+- **Paste, move, rename, and the result is selected for you.** When an
+  operation finishes in the folder you're still looking at, what it produced is
+  selected and scrolled into view — pasted and moved files, a renamed item, a
+  new folder, a duplicate, an alias. Previously a paste into a long listing
+  gave no sign of where the file landed.
+- **Hidden files are easier to reason about.** With *Show hidden* on, hidden
+  entries render dimmed so they read as distinct from your real files. With it
+  off, the status bar quietly reports what's out of sight — "3 hidden ·
+  12.1 KB" — so you know hidden content exists, and how much space it takes,
+  without unhiding it.
+- **Diagnostics can take you to the files it talks about.** Settings →
+  Diagnostics now shows the full path of the running app, and every row about a
+  location on disk — the app itself, the config folder, the settings file, the
+  metadata database, mpv — has a Reveal button that opens that spot in Ferail
+  with the item selected.
+- **Read-only volumes are detected on Windows and Linux.** The status bar says
+  "{volume} is read-only" instead of reporting "0 B free", which is true on a
+  CD but buries the actual story.
+- **Text previews handle legacy single-byte files.** Old README and `.nfo`
+  files written in ISO-8859-1 (Amiga/DOS-era exports) now preview as text
+  instead of being rejected as binary.
+- **Folder sizes stop re-measuring themselves.** Returning to the app used to
+  re-walk every visible folder tree from scratch, so on a big folder the Size
+  column could never settle. It now answers from cache and only recomputes what
+  actually went stale; Refresh is still the gesture that forces a fresh measure.
+- **Fixed: folders labelled as archives.** Some folders showed a file format
+  such as "ZIP archive · 3 files" in the Format and Description columns,
+  inherited from a stale cache entry for a path that used to be a file. Folders
+  are now guarded from format detection at every layer, and existing bad
+  entries clear themselves on next launch.
+- **Delete Immediately is findable.** The permanent-delete command (Shift+Delete,
+  or Option+Cmd+Delete on macOS) was missing from the Cmd+K command palette and
+  the keyboard-shortcut sheet, so it could only be reached from a menu.
+
 ## 0.2.2 — 2026-07-31
 
 First release with a **Windows download**. Also the release that unbroke the

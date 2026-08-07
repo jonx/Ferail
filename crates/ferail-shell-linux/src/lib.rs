@@ -181,46 +181,73 @@ pub fn reveal_in_finder(path: &Path) {
 #[cfg(not(target_os = "linux"))]
 pub fn reveal_in_finder(_path: &Path) {}
 
-/// Open a terminal emulator with its working directory set to `path`.
-/// Detection chain: `$TERMINAL`, then the Debian `x-terminal-emulator`
-/// alternative, then a probe list of common emulators. The child inherits
-/// `current_dir(path)`, which is how virtually every emulator picks its
-/// initial shell directory.
-#[cfg(target_os = "linux")]
+/// Open a terminal emulator at `path` with the default spec (auto-detect,
+/// no extra args, standard mode). See [`open_terminal_with`].
 pub fn open_terminal(path: &Path) {
+    open_terminal_with(path, &ferail_core::terminal::TerminalSpec::default());
+}
+
+/// Open a terminal emulator at `path` (a directory) per the user's
+/// terminal preferences (docs/features/CONTEXT_MENU.md).
+///
+/// A custom program is spawned as-is; otherwise the detection chain runs:
+/// `$TERMINAL`, then the Debian `x-terminal-emulator` alternative, then a
+/// probe list of common emulators. Either way the child inherits
+/// `current_dir(path)` — how virtually every emulator picks its initial
+/// shell directory — and any custom params (with `{dir}` expanded) are
+/// passed along. Admin mode appends the emulator's exec tokens plus
+/// `sudo -s`, so the terminal opens straight into a root shell with the
+/// password prompt inside it (there is no portable "launch this GUI app
+/// as root" on Linux; `pkexec` strips the display environment).
+#[cfg(target_os = "linux")]
+pub fn open_terminal_with(path: &Path, spec: &ferail_core::terminal::TerminalSpec) {
+    use ferail_core::terminal::{exec_prefix_for, POSIX_ADMIN_SHELL};
+
+    let dir = path.to_string_lossy();
+    let (args, _had_dir) = spec.resolved_args(&dir);
+
     let mut candidates: Vec<String> = Vec::new();
-    if let Ok(t) = std::env::var("TERMINAL") {
-        if !t.is_empty() {
-            candidates.push(t);
+    if let Some(p) = spec.program() {
+        candidates.push(p.to_string());
+    } else {
+        if let Ok(t) = std::env::var("TERMINAL") {
+            if !t.is_empty() {
+                candidates.push(t);
+            }
         }
+        candidates.extend(
+            [
+                "x-terminal-emulator",
+                "gnome-terminal",
+                "kgx", // GNOME Console
+                "konsole",
+                "kitty",
+                "alacritty",
+                "wezterm",
+                "xfce4-terminal",
+                "tilix",
+                "foot",
+                "xterm",
+            ]
+            .iter()
+            .map(|s| s.to_string()),
+        );
     }
-    candidates.extend(
-        [
-            "x-terminal-emulator",
-            "gnome-terminal",
-            "kgx", // GNOME Console
-            "konsole",
-            "kitty",
-            "alacritty",
-            "wezterm",
-            "xfce4-terminal",
-            "tilix",
-            "foot",
-            "xterm",
-        ]
-        .iter()
-        .map(|s| s.to_string()),
-    );
     for term in candidates {
         let mut cmd = std::process::Command::new(&term);
+        cmd.args(&args);
         cmd.current_dir(path);
+        if spec.admin() {
+            cmd.args(exec_prefix_for(&term));
+            cmd.args(POSIX_ADMIN_SHELL);
+        }
         if spawn_detached(&mut cmd).is_ok() {
             return;
         }
     }
 }
 #[cfg(not(target_os = "linux"))]
-pub fn open_terminal(_path: &Path) {}
+pub fn open_terminal_with(_path: &Path, _spec: &ferail_core::terminal::TerminalSpec) {}
 
 /// Enumerate the applications that can open `path`, freedesktop-style: resolve
 /// the file's MIME type, find the registered default, then scan the XDG

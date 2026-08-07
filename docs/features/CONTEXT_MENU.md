@@ -14,8 +14,10 @@ into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](..
 
 ## Surfaces Covered
 
-- File tree (sidebar): Open, Reveal in Finder, Quick Look, Copy Path,
-  Open Terminal Here (folders), Pin / Remove from Favorites.
+- File tree (sidebar): Open in New Tab, Get Info (volume rows open with
+  `InfoTarget::Volume` so the header names the volume), Reveal in Finder,
+  Copy Path, Open Terminal Here, Add / Remove from Favorites, New Folder
+  Here, Eject (removable volume rows only).
 - List pane (per-row): full Finder-equivalent — Open, Open in New Tab
   (folders), Open With submenu,
   Reveal in Finder, Get Info, Quick Look, Rename, Duplicate, Make Alias,
@@ -197,6 +199,29 @@ emoji (🔴 🟠 🟡 🟢 🔵 🟣 ⚪) so AppKit picks up native colour rende
 without us painting attributed strings. Currently-set tags get a
 checkmark. Toggling applies to the whole resolved selection. Round-trips
 with Finder via Launch Services.
+
+## Open Terminal Here
+
+Folder-anchor command on both surfaces, configurable in **Settings →
+Files → Terminal** and resolved at click time by
+`feature_settings::TerminalConfig` → `ferail_core::terminal::TerminalSpec`
+→ `platform_shell::open_terminal_with` (settings read + process spawn on
+a worker):
+
+- **Terminal application** — blank uses the platform default
+  (Terminal.app / `wt.exe`, falling back to `cmd.exe` / the Linux
+  `$TERMINAL`-then-probe chain). Accepts an app name or `.app` bundle
+  (macOS, launched via `open -a`), a program path, or a `PATH` command.
+- **Arguments** — one params string, split shell-style (double quotes
+  group); `{dir}` expands per-token to the target folder. Without
+  `{dir}` the child instead inherits the folder as its working
+  directory.
+- **Launch mode** — Standard, or Administrator: `ShellExecuteExW`
+  verb `runas` (UAC) on Windows; on macOS and Linux the terminal opens
+  into a `sudo -s` root shell (macOS routes app bundles through
+  Terminal.app AppleScript `do script`, which needs the one-time
+  Automation consent; CLI terminals get their exec flag — `-e`, `--`,
+  `wezterm start --`, `-x` — from `ferail_core::terminal::exec_prefix_for`).
 
 ## Prewarm Rule
 

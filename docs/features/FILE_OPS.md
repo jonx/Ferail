@@ -126,6 +126,27 @@ Show success only when at least one of these is true:
 Implementation rule: task-backed actions use `TaskRegistry::end_and_was_surfaced`
 to decide whether a success toast is warranted. Sub-150 ms work stays silent.
 
+### Post-op selection (select what just landed)
+
+When an operation produces results **in the folder the user is still
+looking at**, the results are selected and the first one is scrolled into
+view once the post-op reload delivers the fresh rows — the quiet
+counterpart to a success toast. Covered: paste / cut-paste / drag-move
+(`spawn_transfer_op`'s completion queues `OpOutcome::created`'s final,
+post-collision-rename names), and every `spawn_file_op` action whose
+`created` paths land in the current dir — rename (re-selects the entry,
+whose NodeId changes with its path), New Folder, Duplicate, Make Alias.
+
+Mechanism: `Shell::queue_select_names_if_current` (shell/selection.rs)
+stores leaf names on the active tab's `pending_select_names` only when the
+tab is a plain directory view of the op's destination; the existing
+`apply_pending_select_names` drain (built for archive-extract reveal)
+selects + scrolls in both list and grid when rows arrive. Names are
+scoped: navigation clears the queue, and unresolved leftovers (hidden
+files with Show Hidden off, filtered-out names) are dropped when the load
+completes. Results elsewhere (drop into a subfolder, background tabs,
+other windows) select nothing — the user isn't looking there.
+
 ### Failure
 
 Failures always surface. The notification should include:

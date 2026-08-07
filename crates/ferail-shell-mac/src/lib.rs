@@ -286,18 +286,102 @@ pub fn reveal_in_finder(path: &std::path::Path) {
 #[cfg(not(target_os = "macos"))]
 pub fn reveal_in_finder(_path: &std::path::Path) {}
 
-/// Open a terminal at `path` (a directory). macOS: `open -a Terminal
-/// <dir>`, which launches Terminal.app with `path` as the working
-/// directory. Non-macOS: no-op.
-#[cfg(target_os = "macos")]
+/// Open a terminal at `path` (a directory) with the default spec:
+/// `open -a Terminal <dir>`. See [`open_terminal_with`].
 pub fn open_terminal(path: &std::path::Path) {
-    let mut cmd = std::process::Command::new("open");
-    cmd.arg("-a").arg("Terminal").arg(path);
-    let _ = spawn_and_reap(&mut cmd);
+    open_terminal_with(path, &ferail_core::terminal::TerminalSpec::default());
+}
+
+/// Open a terminal at `path` (a directory) per the user's terminal
+/// preferences (docs/features/CONTEXT_MENU.md).
+///
+/// Standard mode:
+/// - no custom program — `open -a Terminal <dir>` (today's behavior);
+/// - a `.app` bundle — `open -a <app> [<dir>] [--args <params>]`, the
+///   `<dir>` document passed only when the params never mention `{dir}`;
+/// - a plain binary — spawned directly with the resolved params, working
+///   directory set to `path` when `{dir}` isn't in the params.
+///
+/// Admin mode opens a **root shell** (there is no "launch a GUI app
+/// elevated" on macOS): a CLI-binary terminal gets its exec flag +
+/// `sudo -s`; anything else routes through Terminal.app via AppleScript
+/// `do script "cd <dir> && sudo -s"` — the sudo password prompt appears
+/// inside the terminal. The AppleScript path needs the one-time
+/// Automation (TCC) consent to control Terminal. Callers run this on a
+/// worker (Prime Directive) — `osascript` can block on that consent.
+#[cfg(target_os = "macos")]
+pub fn open_terminal_with(path: &std::path::Path, spec: &ferail_core::terminal::TerminalSpec) {
+    use ferail_core::terminal::{exec_prefix_for, POSIX_ADMIN_SHELL};
+
+    let dir = path.to_string_lossy();
+    let (args, had_dir) = spec.resolved_args(&dir);
+    let program = spec.program();
+    // `.app` paths and bare names ("iTerm") go through LaunchServices;
+    // only a slash-path that isn't a bundle is treated as a CLI binary.
+    let is_app_bundle = |p: &str| p.to_ascii_lowercase().ends_with(".app") || !p.contains('/');
+
+    if spec.admin() {
+        // A bare command name ("kitty") or path to a CLI binary can carry
+        // the root shell itself; app bundles (and the Terminal.app
+        // default) go through AppleScript.
+        if let Some(p) = program.filter(|p| p.contains('/') && !p.to_ascii_lowercase().ends_with(".app"))
+        {
+            let mut cmd = std::process::Command::new(p);
+            cmd.args(&args);
+            cmd.current_dir(path);
+            cmd.args(exec_prefix_for(p));
+            cmd.args(POSIX_ADMIN_SHELL);
+            let _ = spawn_and_reap(&mut cmd);
+            return;
+        }
+        let shell_cmd = format!(
+            "cd {} && sudo -s",
+            elevation::shell_quote(&dir)
+        );
+        let script = format!(
+            "tell application \"Terminal\"\nactivate\ndo script {}\nend tell",
+            elevation::applescript_quote(&shell_cmd)
+        );
+        let mut cmd = std::process::Command::new("/usr/bin/osascript");
+        cmd.arg("-e").arg(&script);
+        let _ = spawn_and_reap(&mut cmd);
+        return;
+    }
+
+    match program {
+        None => {
+            let mut cmd = std::process::Command::new("open");
+            cmd.arg("-a").arg("Terminal").arg(path);
+            let _ = spawn_and_reap(&mut cmd);
+        }
+        // `.app` bundles (or bare app names like "iTerm") launch through
+        // LaunchServices so the running instance gets the open, not a
+        // second copy.
+        Some(p) if is_app_bundle(p) => {
+            let mut cmd = std::process::Command::new("open");
+            cmd.arg("-a").arg(p);
+            if !had_dir {
+                cmd.arg(path);
+            }
+            if !args.is_empty() {
+                cmd.arg("--args");
+                cmd.args(&args);
+            }
+            let _ = spawn_and_reap(&mut cmd);
+        }
+        Some(p) => {
+            let mut cmd = std::process::Command::new(p);
+            cmd.args(&args);
+            if !had_dir {
+                cmd.current_dir(path);
+            }
+            let _ = spawn_and_reap(&mut cmd);
+        }
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn open_terminal(_path: &std::path::Path) {}
+pub fn open_terminal_with(_path: &std::path::Path, _spec: &ferail_core::terminal::TerminalSpec) {}
 
 /// Duplicate `src` next to itself with Finder's " copy" / " copy 2"
 /// naming. Returns the destination path on success, or an error
@@ -1450,7 +1534,7 @@ mod elevation {
     }
 
     /// Wrap in single quotes, turning each interior `'` into `'\''`.
-    fn shell_quote(s: &str) -> String {
+    pub(crate) fn shell_quote(s: &str) -> String {
         let mut out = String::with_capacity(s.len() + 2);
         out.push('\'');
         for ch in s.chars() {
@@ -1465,7 +1549,7 @@ mod elevation {
     }
 
     /// AppleScript string literal: wrap in `"…"`, escaping `\` and `"`.
-    fn applescript_quote(s: &str) -> String {
+    pub(crate) fn applescript_quote(s: &str) -> String {
         let mut out = String::with_capacity(s.len() + 2);
         out.push('"');
         for ch in s.chars() {
@@ -1477,5 +1561,83 @@ mod elevation {
         }
         out.push('"');
         out
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod terminal_tests {
+    use ferail_core::terminal::{TerminalMode, TerminalSpec};
+
+    /// A fake CLI "terminal": a script that records its argv and cwd,
+    /// so the custom-program launch path (arg resolution, `{dir}`
+    /// expansion, working-directory fallback) is verified end-to-end
+    /// without opening a window.
+    fn recorder_script(dir: &std::path::Path, out: &std::path::Path) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("fake-term.sh");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\n{{ pwd; printf '%s\\n' \"$@\"; }} > '{}'\n", out.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+
+    fn wait_for(out: &std::path::Path) -> String {
+        for _ in 0..100 {
+            if let Ok(s) = std::fs::read_to_string(out) {
+                if !s.is_empty() {
+                    return s;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("recorder output never appeared at {}", out.display());
+    }
+
+    #[test]
+    fn custom_binary_gets_resolved_args() {
+        let tmp = std::env::temp_dir().join(format!("ferail-term-test-{}", std::process::id()));
+        let target = tmp.join("target dir");
+        std::fs::create_dir_all(&target).unwrap();
+        let out = tmp.join("argv.txt");
+        let script = recorder_script(&tmp, &out);
+
+        let spec = TerminalSpec {
+            program: Some(script.to_string_lossy().into_owned()),
+            args: vec!["--cwd".into(), "{dir}".into()],
+            mode: TerminalMode::Standard,
+        };
+        super::open_terminal_with(&target, &spec);
+
+        let recorded = wait_for(&out);
+        let lines: Vec<&str> = recorded.lines().collect();
+        // `{dir}` appeared in the args, so cwd stays wherever the app was.
+        assert_eq!(lines[1..], ["--cwd", &*target.to_string_lossy()]);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn custom_binary_without_dir_placeholder_inherits_cwd() {
+        let tmp = std::env::temp_dir().join(format!("ferail-term-cwd-{}", std::process::id()));
+        let target = tmp.join("workdir");
+        std::fs::create_dir_all(&target).unwrap();
+        let out = tmp.join("argv.txt");
+        let script = recorder_script(&tmp, &out);
+
+        let spec = TerminalSpec {
+            program: Some(script.to_string_lossy().into_owned()),
+            args: vec![],
+            mode: TerminalMode::Standard,
+        };
+        super::open_terminal_with(&target, &spec);
+
+        let recorded = wait_for(&out);
+        // No `{dir}` in the args → the child runs *in* the folder.
+        // `pwd` may come back through /private on macOS; canonicalize both.
+        let reported = std::fs::canonicalize(recorded.lines().next().unwrap()).unwrap();
+        assert_eq!(reported, std::fs::canonicalize(&target).unwrap());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

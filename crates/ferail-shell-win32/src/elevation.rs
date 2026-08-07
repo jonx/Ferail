@@ -35,6 +35,10 @@ pub fn lock_diagnostics_available() -> bool {
 
 #[cfg(windows)]
 pub use imp::{force_close_processes, processes_using, run_elevated_self};
+// The CommandLineToArgvW-safe quoting is also what a non-elevating
+// ShellExecute parameter string needs (open_terminal_with's runas mode).
+#[cfg(windows)]
+pub(crate) use imp::append_quoted;
 
 #[cfg(not(windows))]
 pub fn run_elevated_self(_args: &[String]) -> Result<i32, String> {
@@ -83,7 +87,7 @@ mod imp {
     /// Append one argument to a command line under `CommandLineToArgvW`
     /// quoting rules, so the elevated child's `std::env::args` round-trips
     /// exactly (descriptor paths can contain spaces).
-    fn append_quoted(arg: &str, cmdline: &mut String) {
+    pub(crate) fn append_quoted(arg: &str, cmdline: &mut String) {
         let needs_quotes =
             arg.is_empty() || arg.chars().any(|c| matches!(c, ' ' | '\t' | '\n' | '"'));
         if !needs_quotes {

@@ -25,8 +25,12 @@
 //!     recomputes.
 //!   - **External (3rd-party) work** is caught lazily — the TTL
 //!     bounds how long a deep external change can hide, and an
-//!     activation/forced pass (`start(.., force = true)`) recomputes
-//!     visible rows when the user returns to the app.
+//!     explicit Refresh (`start(.., force = true)`) recomputes visible
+//!     rows on demand.
+//!
+//! Nothing else bypasses the cache. Navigation, revisiting a folder you
+//! just left, and the window coming forward all answer from it — the
+//! Size column is meant to settle, not to re-measure under the user.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -115,9 +119,9 @@ struct SizeRow {
 /// in-flight `recursive_size` walk at its next dirent and marks
 /// any partial sum as not-cacheable.
 /// `force` bypasses the cache fast-path entirely — every folder is
-/// re-walked and written through. Used by the activation refresh to
-/// pick up deep external changes the cache still considers valid; the
-/// normal directory-load path passes `false`.
+/// re-walked and written through. Armed only by Refresh
+/// (`Tab::force_folder_sizes`), which is the user asking for exactly
+/// that; every other load path passes `false`.
 #[allow(clippy::too_many_arguments)]
 pub fn start(
     table: Entity<TableState<FileListDelegate>>,
@@ -272,6 +276,18 @@ fn run_worker(
             _ => misses.push(seed),
         }
     }
+    // The one line that tells you whether the cache is doing its job:
+    // a revisit to an unchanged folder should report all hits and walk
+    // nothing. Persistent misses on a folder you keep returning to mean
+    // either its mtime is moving under you or the pass never survives
+    // long enough to write its rows.
+    crate::log_info!(
+        90,
+        "folder-sizes: {} cache hit(s), {} to walk{}",
+        hits.len(),
+        misses.len(),
+        if force { " (forced)" } else { "" }
+    );
     if !hits.is_empty() && tx.send_blocking(hits).is_err() {
         return;
     }

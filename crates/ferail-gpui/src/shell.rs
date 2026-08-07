@@ -3735,6 +3735,9 @@ impl Shell {
         // delegating here.
         tab.force_resniff = false;
         tab.force_folder_sizes = false;
+        // Zero the hidden aggregate so a cancelled/failed load can't
+        // leave a stale chip on screen; the new load's Done rewrites it.
+        tab.hidden_summary = Default::default();
         tab.load_generation = tab.load_generation.wrapping_add(1);
         let generation = tab.load_generation;
         let filter = tab.filter_text.clone();
@@ -3797,7 +3800,7 @@ impl Shell {
 
         cx.spawn(async move |this, cx| {
             while let Ok(msg) = rx.recv().await {
-                let done = matches!(msg, LoadMsg::Done(_));
+                let done = matches!(msg, LoadMsg::Done(..));
                 let stale = this
                     .update(cx, |this, cx| {
                         // Find the loading tab by id — its index may
@@ -3881,7 +3884,9 @@ impl Shell {
     ) {
         match msg {
             LoadMsg::Batch(batch) => self.apply_directory_batch_in_tab(idx, batch, cx),
-            LoadMsg::Done(error) => self.finish_directory_load_in_tab(idx, error, cx),
+            LoadMsg::Done(error, hidden) => {
+                self.finish_directory_load_in_tab(idx, error, hidden, cx)
+            }
         }
     }
 
@@ -4088,11 +4093,16 @@ impl Shell {
         &mut self,
         idx: usize,
         error: Option<EnumerationError>,
+        hidden: crate::shell::loading::HiddenSummary,
         cx: &mut Context<Self>,
     ) {
         let Some(tab) = self.tabs.get_mut(idx) else {
             return;
         };
+        // The load is complete, so the skipped-hidden totals are final.
+        // (Zeroed at load start, so a mid-stream cancel never shows a
+        // half count.)
+        tab.hidden_summary = hidden;
         if let Some(id) = tab.load_task.take() {
             self.process.tasks.borrow_mut().end(id);
         }

@@ -462,20 +462,102 @@ pub fn reveal_in_finder(path: &std::path::Path) {
 #[cfg(not(windows))]
 pub fn reveal_in_finder(_path: &std::path::Path) {}
 
-/// Open a terminal at `path` (a directory). Windows: Windows Terminal
-/// (`wt.exe -d <dir>`) opens a new tab whose working directory is
-/// `path`. Non-Windows: no-op.
-#[cfg(windows)]
+/// Open a terminal at `path` (a directory) with the default spec:
+/// Windows Terminal, `wt.exe -d <dir>`. See [`open_terminal_with`].
 pub fn open_terminal(path: &std::path::Path) {
-    // `wt.exe -d` mis-parses the `\\?\` verbatim form; hand it the plain path.
-    let _ = std::process::Command::new("wt.exe")
-        .arg("-d")
-        .arg(strip_verbatim(path))
-        .spawn();
+    open_terminal_with(path, &ferail_core::terminal::TerminalSpec::default());
+}
+
+/// Open a terminal at `path` (a directory) per the user's terminal
+/// preferences (docs/features/CONTEXT_MENU.md).
+///
+/// Standard mode spawns the configured program (default: Windows
+/// Terminal, `wt.exe -d <dir>`) with the resolved params; when the
+/// params never mention `{dir}` the child inherits `current_dir(path)`
+/// instead. With no custom terminal and no `wt.exe` on the machine, a
+/// classic `cmd.exe` console at `path` is the fallback.
+///
+/// Admin mode launches the same program + params elevated via
+/// `ShellExecuteExW` verb `"runas"` — the UAC prompt. Blocks until UAC
+/// resolves (`SEE_MASK_NOASYNC`); callers run this on a worker (Prime
+/// Directive). A dismissed prompt is treated like any failed launcher:
+/// fire-and-forget.
+#[cfg(windows)]
+pub fn open_terminal_with(path: &std::path::Path, spec: &ferail_core::terminal::TerminalSpec) {
+    // `wt.exe -d` (and cmd) mis-parse the `\\?\` verbatim form; hand
+    // every child the plain path.
+    let cleaned = strip_verbatim(path);
+    let dir = cleaned.display().to_string();
+    let (mut args, had_dir) = spec.resolved_args(&dir);
+    let custom = spec.program();
+    let program = custom.unwrap_or("wt.exe").to_string();
+    // Default args for the default terminal: a new tab whose working
+    // directory is `path` (wt ignores its own cwd by default).
+    if custom.is_none() && args.is_empty() {
+        args = vec!["-d".into(), dir.clone()];
+    }
+
+    if spec.admin() {
+        shell_execute_runas(&program, &args, &cleaned);
+        return;
+    }
+
+    let mut cmd = std::process::Command::new(&program);
+    cmd.args(&args);
+    if !had_dir {
+        cmd.current_dir(&cleaned);
+    }
+    if cmd.spawn().is_ok() {
+        return;
+    }
+    if custom.is_none() {
+        let _ = std::process::Command::new("cmd.exe")
+            .current_dir(&cleaned)
+            .spawn();
+    }
 }
 
 #[cfg(not(windows))]
-pub fn open_terminal(_path: &std::path::Path) {}
+pub fn open_terminal_with(_path: &std::path::Path, _spec: &ferail_core::terminal::TerminalSpec) {}
+
+/// Launch `program` elevated (UAC) with `args`, working directory `dir`.
+/// Best-effort: any failure — including the user dismissing the prompt —
+/// is swallowed, matching the other launchers here.
+#[cfg(windows)]
+fn shell_execute_runas(program: &str, args: &[String], dir: &std::path::Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW};
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    fn wide(s: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(s).encode_wide().chain(Some(0)).collect()
+    }
+    let mut params = String::new();
+    for (i, a) in args.iter().enumerate() {
+        if i > 0 {
+            params.push(' ');
+        }
+        elevation::append_quoted(a, &mut params);
+    }
+    // These buffers must outlive the ShellExecuteExW call.
+    let file_w = wide(program);
+    let params_w = wide(&params);
+    let verb_w = wide("runas");
+    let dir_w = wide(&dir.display().to_string());
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        // NOASYNC: fully resolve before returning (we're on a worker).
+        fMask: SEE_MASK_NOASYNC,
+        lpVerb: PCWSTR::from_raw(verb_w.as_ptr()),
+        lpFile: PCWSTR::from_raw(file_w.as_ptr()),
+        lpParameters: PCWSTR::from_raw(params_w.as_ptr()),
+        lpDirectory: PCWSTR::from_raw(dir_w.as_ptr()),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    let _ = unsafe { ShellExecuteExW(&mut info) };
+}
 
 // =============================================================
 // File operations

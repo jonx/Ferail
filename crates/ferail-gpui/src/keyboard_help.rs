@@ -62,6 +62,7 @@ fn action_for_command(id: ferail_core::commands::CommandId) -> Option<Box<dyn gp
         "file.copy" => Box::new(CopyFiles),
         "file.paste" => Box::new(PasteFiles),
         "file.move_paste" => Box::new(MovePasteFiles),
+        "file.delete_immediately" => Box::new(DeleteImmediately),
         "file.empty_trash" => Box::new(EmptyTrash),
         "file.reopen_closed_tab" => Box::new(ReopenClosedTab),
         "window.close_window" => Box::new(CloseWindow),

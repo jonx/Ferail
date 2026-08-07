@@ -12,6 +12,7 @@ pub mod navigation;
 pub mod node_store;
 pub mod path_guard;
 pub mod power;
+pub mod terminal;
 pub mod video;
 
 use std::num::NonZeroU64;

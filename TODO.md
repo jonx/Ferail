@@ -89,12 +89,13 @@ relative to the daily value. Ordered by bang-for-buck.
 - Toolbar **grouping by kind / date** — a shared list+grid sort/render model
   (group headers with members beneath). Deferred from the density pass.
 - Persist per-tab sort/filter/scroll state where it is not already stable.
-- **Hidden-file affordances.** When *show hidden* is on, render hidden entries
-  dimmed/greyed (row text + icon) so they read as distinct from normal files.
-  When hidden files are *off*, surface their presence passively — aggregate
-  count and total size of the hidden entries in the current folder — somewhere
-  unobtrusive (status bar / folder footer / Get Info) so the user knows hidden
-  content exists and how much space it occupies.
+- ✅ **Hidden-file affordances** — shipped: with *show hidden* on, hidden rows
+  (list + grid) render dimmed via the cut-row opacity treatment (cut wins over
+  hidden); with it off, the status bar shows a passive "N hidden · X B" chip
+  next to the Show-hidden toggle, fed by a `HiddenSummary` the enumeration's
+  `Done` message carries (counted before the text filter, so typing a filter
+  doesn't perturb it). Optional follow-up: mirror the summary into folder Get
+  Info via the Calculate walk.
 - Context-menu follow-ups: compact Finder-style tag swatch row, async Open With
   prewarm if cold-cache stutter appears, and per-target enable/disable rules for
   read-only volumes, missing files, and permission-denied targets.
@@ -116,15 +117,13 @@ relative to the daily value. Ordered by bang-for-buck.
   session-scoped); a richer **Trash browsing view** (original-location column).
   Windows Recycle Bin restore is blocked (`SHFileOperationW` doesn't report the
   recycled location).
-- **Permanent delete (Shift+Delete).** Add a `DeletePermanently` action that
-  deletes the selection outright, bypassing Trash/Recycle Bin, **behind a
-  mandatory confirmation modal** ("Permanently delete N items? This can't be
-  undone."). Bind it to `shift-delete` in `keymap.rs` (Windows convention; pair
-  with the platform-appropriate chord on macOS, e.g. `cmd-shift-delete`). Reuse
-  the empty-trash confirmation pattern in `on_empty_trash` (`file_ops.rs`) and
-  add a permanent-delete fs call alongside `move_to_trash` / `MoveToTrash`.
-  There is no undo — it skips the `(original, trashed)` pairs Cmd+Z relies on —
-  so the confirmation cannot be optional.
+- Permanent-delete follow-up: `on_delete_immediately` reports failures as raw
+  `format!("{}: {e}")` strings instead of the structured
+  `FileOpError`/`file_op_failure_report` path that `on_move_to_trash` and
+  `on_empty_trash` use — align it so permanent-delete failures get the same
+  per-item classified report + coping actions. (The feature itself shipped as
+  `DeleteImmediately` — mandatory confirmation, Shift+Delete /
+  Option+Cmd+Delete, elevated retry — docs/features/FILE_OPS.md.)
 - File-ops: Windows pasteboard **volume-identity parity** (CF_HDROP copy/paste
   itself shipped — docs/features/FILE_OPS.md).
 - Recents follow-ups: recently-opened **files** (needs a file-open signal — we
@@ -230,17 +229,12 @@ fallback). Remaining is the UX the system explorers have and we don't:
 - **Magic detection**: the table (~67 signatures + structured parsers for
   exe/zip/image/audio/video) is solid; expand the long tail and add the CLI
   modes (see CLI section).
-- **Directories get a file-format label (bug).** Folders are showing a magic
-  *format* in the Format/Description columns — observed as two folders rendered
-  `ZIP archive · N files` under `dev-angular/Archive`. One of them
-  (`sba-latest-test`) has no extension, so the label is not an extension-derived
-  `display_kind`; it is a `display_magic` value applied to a directory row by the
-  magic prefetch / SQLite cache (`prefetch.rs`, `e.display_magic =
-  row.magic_label`) — likely a stale path-keyed cache entry or the worker
-  sniffing a dir. Guard so directory rows never receive a magic label at the
-  worker entry *and* at the prefetch apply; `format_label` already
-  belt-and-suspenders folders in the *mismatch* check, but the label itself
-  still leaks the archive kind into the column.
+- ✅ **Directories get a file-format label (bug)** — fixed: directory rows are
+  guarded at all three layers (the worker derive skips `is_dir` seeds, magic
+  sniffing refuses directories at `detect_magic_info`'s entry, and the prefetch
+  apply never writes a magic label/description onto a `Directory` row), and the
+  `MAGIC_REVISION` bump nulls already-poisoned path-keyed cache rows at next
+  launch.
 - **Quarantine / provenance UI**: badge halo + clear-quarantine action ship.
   Add Gatekeeper assessment, code-signature identity, and in-list provenance
   display (where-from is cached but only shown in the preview pane).
@@ -412,15 +406,12 @@ fallback). Remaining is the UX the system explorers have and we don't:
 - **Windows release-readiness follow-ups** (from the 2026-07-31 pass —
   windows-port.md §2.2; the build fix, screenshot fallback, clippy and
   packaging all shipped there):
-  - **Restore a build gate for Windows.** Per-OS CI jobs were written in that
-    pass and then removed by request; `.github/workflows` no longer exists.
-    Nothing now compiles Windows (or macOS) automatically, so the exact failure
-    that pass existed to fix — a Mac-authored `cfg(windows)` arm sitting broken
-    on `main` for two weeks — can recur silently. The cheap half is the one
-    worth having: the platform shell crates pull no gpui (ferail-core + windows
-    + zip), so a per-OS `cargo check`/`test` over them runs in minutes and
-    covers exactly that class of bug. The removed workflow is at commit
-    `6d85def` if it's wanted back.
+  - **Restore a build gate for Windows.** ✅ Done 2026-08-07:
+    `.github/workflows/ci.yml` restores the `6d85def` workflow in full — the
+    repo went public the same day, so all three platform legs
+    (windows/ubuntu/macos over the shell crates + ferail-fs-native + meta +
+    archive) and the windows ferail-gpui clippy job run on every push.
+    Docs-only pushes skip CI; superseded runs are cancelled.
   - **Port window docking to Windows** (docs/features/DOCK.md). ✅ The sibling
     half of this shipped: the viewer's **Stay on Top** was dead on Windows
     because `content_ns_view` only matched `RawWindowHandle::AppKit`; it now

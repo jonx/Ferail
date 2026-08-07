@@ -330,7 +330,7 @@ thread** (prime directive).
 | `copy_to_clipboard(text)` | `arboard` (handles Wayland + X11). |
 | `open_url(url)` | `xdg-open <url>`, or portal `org.freedesktop.portal.OpenURI` via `ashpd`. |
 | `reveal_in_finder(path)` | D-Bus `org.freedesktop.FileManager1.ShowItems` (works with Nautilus/Dolphin/Nemo/Files), fallback `xdg-open <parent dir>`. |
-| `open_terminal(dir)` | No standard. Detection chain: `$TERMINAL`, then `x-terminal-emulator` (Debian alternatives), then probe known emulators (gnome-terminal, konsole, kgx, alacritty, xterm). Document the order. |
+| `open_terminal(dir)` / `open_terminal_with(dir, spec)` | No standard. Detection chain: `$TERMINAL`, then `x-terminal-emulator` (Debian alternatives), then probe known emulators (gnome-terminal, konsole, kgx, alacritty, xterm). The `_with` form honours the Settings → Files → Terminal prefs (custom program/params, `{dir}` expansion); admin mode appends the emulator's exec tokens (`ferail_core::terminal::exec_prefix_for`) + `sudo -s` for a root shell in the window. |
 | `duplicate_path(src)` | Pure `std::fs` (lift the Windows impl almost verbatim; just use a Linux-ish copy-name convention, e.g. `<stem> (copy).<ext>`). |
 | `make_alias(target)` | `std::os::unix::fs::symlink` — trivial. (A `.desktop` launcher is the heavier alternative; a symlink is the right default.) |
 | `compress_paths(targets)` | The `zip` crate — already cross-platform; reuse the shared logic. |

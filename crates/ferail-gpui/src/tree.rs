@@ -701,8 +701,9 @@ fn render_tree_row(
     let attach_menu = move |el: gpui::Stateful<gpui::Div>| {
         el.context_menu(move |menu, _window, cx| {
             use crate::shell::{
-                CopyContextPath, EjectVolume, NewFolderHere, OpenContextInNewTab,
-                OpenTerminalAtContext, RevealContextPath, ToggleFavoriteForTarget,
+                CopyContextPath, EjectVolume, GetInfoAtContext, NewFolderHere,
+                OpenContextInNewTab, OpenTerminalAtContext, RevealContextPath,
+                ToggleFavoriteForTarget,
             };
             if let Some(shell) = shell_for_menu.upgrade() {
                 shell.update(cx, |s, _| {
@@ -715,6 +716,8 @@ fn render_tree_row(
             }
             let menu = menu
                 .menu("Open in New Tab", Box::new(OpenContextInNewTab))
+                .separator()
+                .menu("Get Info", Box::new(GetInfoAtContext))
                 .separator()
                 .menu(
                     ferail_core::commands::REVEAL_LABEL,

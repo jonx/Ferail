@@ -151,9 +151,44 @@ full picture. The rules:
 - Current architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Open work: [TODO.md](TODO.md)
 - Feature design notes: [docs/features](docs/features)
+- What changed, for users: [CHANGELOG.md](CHANGELOG.md) (see below)
 
 Do not add new root ledgers under `docs/`. If it is current structure, put it
 in Architecture. If it is not done, put it in TODO.
+
+## Changelog
+
+[CHANGELOG.md](CHANGELOG.md) answers "what would I notice as a user?" — git
+history carries the full detail, so the changelog is not a commit log.
+
+**When to add an entry.** Any change a user could notice: a new or changed
+feature, a new setting or command, a fixed bug they could have hit, a
+behavioural change, a performance change big enough to feel, a packaging or
+platform-support change. Add it **in the same change that ships the code**, not
+at release time — a reconstructed changelog is always thinner and less honest
+than one written while the work is fresh.
+
+**When to skip it.** Refactors, internal architecture, test-only or docs-only
+changes, and anything invisible from outside the app. Dependency-pin bumps go
+in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md) instead. If nothing user-visible
+changed, say so in the release section rather than inventing filler ("No
+user-visible macOS changes." is a real 0.2.2 line).
+
+**How to write it.**
+
+- Add to the `## Unreleased` section at the top; a release moves that block
+  under a new `## <version> — <date>` heading. Newest first, always.
+- One bullet per change, leading with a **bold sentence in plain language**
+  that names the user-facing outcome — not the module, function, or type you
+  touched.
+- Write for someone who does not know the codebase: "folders showed a file
+  format such as *ZIP archive*", not "`display_magic` leaked onto `Directory`
+  rows". Internal names belong in the code and in `docs/features/`.
+- For a fix, say what went wrong from the user's side, and when it is worth
+  knowing, why — the existing entries explain the *cause* in one clause because
+  that is what makes a fix trustworthy.
+- Be honest about what is still broken or unsigned; 0.2.2's SmartScreen and
+  "nothing builds Windows yet" notes are the standard to match.
 
 ## Verification
 
@@ -174,3 +209,5 @@ Before finishing code changes:
   work.
 - If the change touches icons, update
   [docs/features/ICONS.md](docs/features/ICONS.md) (see [Icons](#icons)).
+- If a user could notice the change, add a [CHANGELOG.md](CHANGELOG.md) entry
+  under `## Unreleased` in the same commit (see [Changelog](#changelog)).
