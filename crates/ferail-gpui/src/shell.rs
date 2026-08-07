@@ -50,7 +50,7 @@ pub(crate) use file_ops::TransferMode;
 pub use file_ops::ArchiveOpDone;
 mod loading;
 mod path;
-mod render;
+pub(crate) mod render;
 mod search;
 mod selection;
 mod tab;
@@ -955,7 +955,15 @@ pub struct Shell {
     /// file to render and the entry's real name to label it with. The pane
     /// reads the *tab's* delegate, which is empty in archive mode (the
     /// workbench owns its own table), so without this it shows "No selection".
-    pub archive_preview: Option<(PathBuf, String)>,
+    /// Set by a docked archive workbench: what it wants previewed, in place of
+    /// this tab's own selection (its rows live in the workbench's table, not
+    /// the tab's). A workbench in its *own window* will host a panel directly
+    /// instead, which is what the component split makes possible.
+    pub preview_override: Option<crate::preview_panel::PreviewTarget>,
+    /// The preview pane, as a component this Shell hosts. The archive
+    /// workbench hosts its own, which is what lets a popped-out window preview
+    /// its entries.
+    pub preview_panel: Option<Entity<crate::preview_panel::PreviewPanel>>,
     /// Scroll position of the preview pane's body, so the content
     /// stays reachable (with a scrollbar) when the window is shorter
     /// than the metadata + actions stack. Persistent across renders;
@@ -1316,6 +1324,66 @@ pub fn open_window_at(cx: &mut App, path: PathBuf) {
         let view = cx.new(|cx| Shell::new(process, window, cx));
         view.update(cx, |shell, cx| {
             shell.load_path(path.clone(), cx);
+        });
+        cx.new(|cx| gpui_component::Root::new(view, window, cx))
+    });
+}
+
+/// Reveal `path` in a Ferail file window from a non-Shell context — the
+/// Settings window's Diagnostics "Reveal" buttons. Finder-style reveal:
+/// navigate to the parent folder with the entry queued for selection
+/// (scrolled into view once rows land). The first live Shell window gets
+/// a new tab and is raised; with none open, a fresh window opens at the
+/// parent. A target that doesn't exist yet ("not created yet" rows)
+/// still opens the parent — the unresolved name is dropped when the
+/// load completes.
+pub fn reveal_path_in_app(cx: &mut App, path: PathBuf) {
+    let (dir, names) = match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => (
+            parent.to_path_buf(),
+            vec![name.to_string_lossy().into_owned()],
+        ),
+        // A filesystem root (or a bare relative leaf): open it directly.
+        _ => (path.clone(), Vec::new()),
+    };
+    // Prefer an existing Shell window: new tab there, then raise it. The
+    // windows list also holds Settings/viewer Roots — the downcast skips
+    // them.
+    for handle in cx.windows() {
+        let Some(root) = handle.downcast::<gpui_component::Root>() else {
+            continue;
+        };
+        let revealed = root
+            .update(cx, |root, window, cx| {
+                let Ok(shell) = root.view().clone().downcast::<Shell>() else {
+                    return false;
+                };
+                shell.update(cx, |s, cx| {
+                    s.reveal_in_new_tab(dir.clone(), names.clone(), window, cx);
+                });
+                window.activate_window();
+                true
+            })
+            .unwrap_or(false);
+        if revealed {
+            return;
+        }
+    }
+    // No Shell window open (Settings can outlive the last one): open a
+    // fresh window at the parent with the selection queued.
+    let opts = WindowOptions {
+        window_bounds: Some(WindowBounds::centered(size(px(1180.0), px(760.0)), cx)),
+        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
+        ..crate::base_window_options()
+    };
+    let _ = cx.open_window(opts, |window, cx| {
+        let process = crate::process_state::process_state(cx);
+        let view = cx.new(|cx| Shell::new(process, window, cx));
+        view.update(cx, |shell, cx| {
+            shell.load_path(dir.clone(), cx);
+            if !names.is_empty() {
+                shell.active_tab_mut().pending_select_names = names.clone();
+            }
         });
         cx.new(|cx| gpui_component::Root::new(view, window, cx))
     });
@@ -1693,7 +1761,8 @@ impl Shell {
             // override this default — until then this is the boot
             // state on every launch.
             preview_visible: false,
-            archive_preview: None,
+            preview_override: None,
+            preview_panel: None,
             preview_info: None,
             preview_scroll: ScrollHandle::new(),
             preview_text_scroll: ScrollHandle::new(),
@@ -2873,7 +2942,7 @@ impl Shell {
     /// are no-ops (a write is already queued). When the timer fires it
     /// reads the *latest* widths off `self`, so the value at drag-end always
     /// persists — and a single drag costs at most a couple of file writes.
-    fn schedule_splitter_save(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn schedule_splitter_save(&mut self, cx: &mut Context<Self>) {
         if self.splitter_save_scheduled {
             return;
         }

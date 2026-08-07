@@ -5,7 +5,7 @@ use crate::text::IconScale as _;
 /// reads as a column instead of folding to slivers in the narrow preview
 /// pane. The box scrolls horizontally to reach overflow when the pane is
 /// narrower than this; a wider pane lets the content grow past it.
-const PREVIEW_MD_MIN_W: f32 = 520.0;
+pub(crate) const PREVIEW_MD_MIN_W: f32 = 520.0;
 
 /// Code/source preview: a `whitespace_nowrap` code block clips long lines
 /// but won't grow its container past the pane on its own, so the box has
@@ -14,15 +14,15 @@ const PREVIEW_MD_MIN_W: f32 = 520.0;
 /// mono used in the code block; slightly over the real ~5.4px advance so
 /// the last glyphs aren't clipped (a little slop on the right is fine,
 /// lost characters are not).
-const PREVIEW_CODE_CHAR_W: f32 = 5.8;
+pub(crate) const PREVIEW_CODE_CHAR_W: f32 = 5.8;
 /// A horizontal tab counts as this many columns when measuring the widest
 /// line (source is commonly tab-indented; 1 char would under-size it).
-const PREVIEW_CODE_TAB_COLS: usize = 4;
+pub(crate) const PREVIEW_CODE_TAB_COLS: usize = 4;
 /// Box + code-block horizontal padding added to the measured line width.
-const PREVIEW_CODE_PAD: f32 = 48.0;
+pub(crate) const PREVIEW_CODE_PAD: f32 = 48.0;
 /// Upper bound on the sized width so a minified single-line file doesn't
 /// build a multi-thousand-pixel element (it clips past this — rare).
-const PREVIEW_CODE_MAX_W: f32 = 4000.0;
+pub(crate) const PREVIEW_CODE_MAX_W: f32 = 4000.0;
 
 /// Payload carried by a tab-strip drag (Phase D, spec §3.3
 /// "Reorder tab"). The same Render-as-its-own-preview shape
@@ -85,7 +85,7 @@ impl Render for ResizePreviewThumb {
 /// Truncated single-line URL for the preview pane's provenance rows,
 /// with the full URL in a hover tooltip — same treatment as the
 /// "Where" path row. Pure display; no parsing.
-fn truncated_url_value(key: &'static str, url: &str, id: ferail_core::NodeId) -> AnyElement {
+pub(crate) fn truncated_url_value(key: &'static str, url: &str, id: ferail_core::NodeId) -> AnyElement {
     let full = SharedString::from(url.to_string());
     let tip = full.clone();
     div()
@@ -2204,723 +2204,93 @@ impl Shell {
     /// `current_dir` — without touching the guarded node store, which
     /// would panic on the paint path. Falls back to `current_dir + name`
     /// only when the map has no entry.
-    fn resolve_preview_path(&self, entry: &FileEntry, cx: &App) -> PathBuf {
-        self.active_tab()
-            .table
-            .read(cx)
-            .delegate()
-            .path_for_entry(entry.id)
-            .unwrap_or_else(|| {
-                let mut p = self.active_tab().current_dir.clone();
-                p.push(&entry.name);
-                p
-            })
-    }
-
-    /// Wheel scroll-chaining for the inline text/code box in the preview
-    /// pane. The box is a nested scroll inside `preview_scroll`, bounded to
-    /// `max_h(280)` on purpose so a long file doesn't bury the Get Info
-    /// details below it. Without chaining the wheel drives both scrolls at
-    /// once; we want the box to consume the delta and only spill the
-    /// remainder into the outer pane.
-    ///
-    /// `overflow_scroll`'s built-in handler runs just before this one (in the
-    /// same bubble pass) and has already added the full wheel delta to
-    /// `preview_text_scroll`, unclamped — so `offset()` now sits *past* the
-    /// top (positive) or bottom (below `-max_offset`) by exactly the part the
-    /// box couldn't use. We forward that residual to `preview_scroll` and
-    /// `stop_propagation` so the outer pane's own handler — which would
-    /// otherwise apply the *whole* delta and double-scroll — never fires.
-    ///
-    /// A short file (box not scrollable, `max_offset == 0`) spills the entire
-    /// delta straight through, so its box never traps the wheel.
-    fn on_preview_text_scroll(
-        &mut self,
-        _: &ScrollWheelEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let off = self.preview_text_scroll.offset().y;
-        let max = self.preview_text_scroll.max_offset().y;
-        let residual = if off > px(0.0) {
-            off // overshot the top
-        } else if off < -max {
-            off + max // overshot the bottom
-        } else {
-            px(0.0) // the box absorbed the whole delta
-        };
-        if residual != px(0.0) {
-            let cur = self.preview_scroll.offset();
-            let max_out = self.preview_scroll.max_offset().y;
-            let y = (cur.y + residual).clamp(-max_out, px(0.0));
-            self.preview_scroll.set_offset(point(cur.x, y));
-            cx.notify();
-        }
-        cx.stop_propagation();
-    }
-
-    /// The drag grip under the preview thumbnail box. Dragging it
-    /// down/up grows/shrinks the box between `PREVIEW_THUMB_MIN_H`
-    /// and `PREVIEW_THUMB_MAX_H`; the height persists via the same
-    /// debounced save as the splitter widths. The drag anchor (mouse
-    /// y + height at drag start) is snapped in the `on_drag`
-    /// constructor; `on_drag_move` then applies the absolute delta,
-    /// so the box edge tracks the cursor 1:1 — no per-tick
-    /// accumulation drift, no dependence on the pane's scroll offset.
-    fn preview_thumb_resize_grip(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let weak = cx.weak_entity();
-        div()
-            .id("preview-thumb-resize")
-            .group("preview-thumb-grip")
-            .w_full()
-            .h(px(9.0))
-            .flex()
-            .items_center()
-            .justify_center()
-            .cursor_row_resize()
-            .child(
-                div()
-                    .w(px(48.0))
-                    .h(px(3.0))
-                    .rounded_full()
-                    .bg(cx.theme().border)
-                    .group_hover("preview-thumb-grip", |this| this.bg(cx.theme().drag_border)),
-            )
-            .on_drag(ResizePreviewThumb, move |drag, _offset, window, cx| {
-                cx.stop_propagation();
-                let y = window.mouse_position().y;
-                if let Some(shell) = weak.upgrade() {
-                    shell.update(cx, |this, _| {
-                        this.preview_thumb_drag = Some((y, this.preview_thumb_h));
-                    });
-                }
-                cx.new(|_| drag.clone())
-            })
-            .on_drag_move(cx.listener(
-                |this, e: &DragMoveEvent<ResizePreviewThumb>, _window, cx| {
-                    let Some((y0, h0)) = this.preview_thumb_drag else {
-                        return;
-                    };
-                    let h = (h0 + f32::from(e.event.position.y - y0))
-                        .clamp(PREVIEW_THUMB_MIN_H, PREVIEW_THUMB_MAX_H);
-                    if h != this.preview_thumb_h {
-                        this.preview_thumb_h = h;
-                        this.schedule_splitter_save(cx);
-                        cx.notify();
-                    }
-                },
-            ))
-    }
-
-    /// Build the preview pane on the right of the file list. Shows
-    /// title / kind / size / modified / full path of the selected
-    /// row. Falls back to a neutral empty state when nothing is
-    /// selected. Format-specific previews (image, text, PDF) arrive
-    /// in a follow-up polish iter.
-    fn preview(&mut self, cx: &mut Context<Self>) -> Div {
-        use gpui_component::{
-            Sizable as _,
-            button::{Button, ButtonVariants as _},
-            scroll::Scrollbar,
-            tooltip::Tooltip,
-        };
-
-        // Preview always reflects the **lead** row, even with a
-        // multi-selection. Matches Finder's "the focused one of
-        // many" semantics.
-        let selected = {
-            let entries = &self.active_tab().table.read(cx).delegate().entries;
-            self.active_tab()
-                .lead_row(entries)
-                .and_then(|i| entries.get(i).cloned())
-        };
-        // An archive entry staged for preview stands in for the selection: it
-        // lives in the workbench's table, not the tab's, so the lookup above
-        // finds nothing. The row is synthesized with the entry's real name —
-        // the scratch file's name is a hash, which would be useless to show.
-        let archive_staged = self
-            .active_tab()
-            .tool_result
-            .as_ref()
-            .and_then(|s| s.archive_mode())
-            .and(self.archive_preview.clone());
-        let selected = match &archive_staged {
-            Some((staged, name)) => Some(archive_preview_entry(staged, name)),
-            None => selected,
-        };
-
-        // Resolve the row's real path from the delegate's per-entry
-        // `paths` map — populated at load for directory listings AND for
-        // search / duplicate results. It's a pure in-memory lookup, so
-        // it's safe on the render path (unlike `path_for_row`, which
-        // resolves through the guarded node store). For results views
-        // the file lives outside `current_dir`, so the old
-        // `current_dir + name` reconstruction keyed the preview cache
-        // wrong and the thumbnail / text never appeared; the map has the
-        // true path. Fall back to `current_dir + name` only if absent.
-        //
-        // Scroll position carries across renders (the body scrolls
-        // when the window is shorter than the metadata stack), but a
-        // different file starts back at the top.
-        // With nothing selected, a tab parked at a volume's mount root
-        // previews the volume itself — which is exactly where a sidebar
-        // volume click lands (navigation clears the selection, so the
-        // pane would otherwise just read "No selection"). The mount-root
-        // check is a lookup in the cached volume list — no I/O on the
-        // render path.
-        let volume_target = if selected.is_none() {
-            let dir = &self.active_tab().current_dir;
-            self.mounted_volume_name(dir).map(|name| (dir.clone(), name))
-        } else {
-            None
-        };
-
-        let selected_path = match &archive_staged {
-            // Bypass the delegate path map — the scratch file is the content.
-            Some((staged, _)) => Some(staged.clone()),
-            None => selected
-                .as_ref()
-                .map(|entry| self.resolve_preview_path(entry, cx)),
-        };
-        let scroll_key = selected_path
-            .clone()
-            .or_else(|| volume_target.as_ref().map(|(path, _)| path.clone()));
-        if self.preview_scroll_path != scroll_key {
-            self.preview_scroll_path = scroll_key;
-            self.preview_scroll.set_offset(gpui::Point::default());
-            self.preview_text_scroll.set_offset(gpui::Point::default());
-        }
-
-        let header = h_flex()
-            .w_full()
-            .items_center()
-            .justify_between()
-            .child(
-                div()
-                    .text_scale_xs()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().muted_foreground)
-                    .child("Preview"),
-            )
-            .child(
-                Button::new("preview-close")
-                    .small()
-                    .ghost()
-                    .icon(gpui_component::Icon::empty().path("icons/close.svg"))
-                    .tooltip("Hide preview")
-                    .on_click(cx.listener(|this, _, _window, cx| {
-                        this.preview_visible = false;
-                        // An archive workbench driving this pane keeps its own
-                        // toggle state — clear it too, so its eye button
-                        // doesn't read "on" over a hidden pane.
-                        this.archive_preview = None;
-                        if let Some(view) = this.active_archive_view() {
-                            view.update(cx, |v, cx| v.set_preview_enabled(false, cx));
-                        }
-                        cx.notify();
-                    })),
-            );
-
-        let body: AnyElement = match (selected, volume_target) {
-            // Sidebar volume click: preview the volume itself. The
-            // embedded Get Info panel renders the Volume section
-            // (capacity, used, format, device) once the background
-            // gather lands.
-            (None, Some((vol_path, vol_name))) => self.preview_volume_body(vol_path, vol_name, cx),
-            (None, None) => div()
-                .flex()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .text_scale_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("No selection")
-                .into_any_element(),
-            (Some(entry), _) => {
-                // Same render-safe resolution as `selected_path` above.
-                let full_path = selected_path
-                    .clone()
-                    .unwrap_or_else(|| self.resolve_preview_path(&entry, cx));
-
-                // Keep the embedded Get Info panel pointed at the lead
-                // selection (reuses the popup's view in `embedded` mode).
-                let info_target = match entry.kind {
-                    EntryKind::Directory => ferail_core::entry_info::InfoTarget::Folder,
-                    _ => ferail_core::entry_info::InfoTarget::File,
-                };
-                // Hand the folder's already-computed recursive size (from the
-                // Size column) to Get Info so it reuses it, not rescans.
-                let known_size = if matches!(entry.kind, EntryKind::Directory) && entry.size > 0 {
-                    Some(entry.size)
-                } else {
-                    None
-                };
-                let info_view = self.sync_preview_info(
-                    full_path.clone(),
-                    entry.name.clone(),
-                    info_target,
-                    known_size,
-                    cx,
-                );
-
-                // Quick Look thumbnail (Stage 8 native preview).
-                // `preview::request` was kicked off when the row
-                // was selected; this just reads whatever the cache
-                // has — Loaded shows the bitmap, Pending shows a
-                // muted placeholder, Failed shows nothing.
-                // Folders have no file preview — show metadata only
-                // (no thumbnail/text box). Files get the media block.
-                let is_dir = matches!(entry.kind, EntryKind::Directory);
-                let thumb_state = if is_dir {
-                    None
-                } else {
-                    self.process.preview_cache.borrow().get(&full_path)
-                };
-                let thumb_img = crate::preview::loaded_image(thumb_state.clone());
-                // Text/code files render their content inline instead
-                // of a thumbnail (docs/features/PREVIEW.md).
-                let text_body = if is_dir {
-                    None
-                } else {
-                    let text_state = self.process.text_preview_cache.borrow().get(&full_path);
-                    crate::text_preview::loaded_text(text_state)
-                };
-
-                let mut col = v_flex().gap_3();
-                if let Some(text) = text_body {
-                    // Render through gpui-component's TextView:
-                    // markdown files format, source files highlight
-                    // (the worker already capped this to 500 lines, and
-                    // TextView parses off the UI thread). The id is keyed
-                    // per file (see below) so selection state can't bleed
-                    // across previews.
-                    //
-                    // A bounded box with its own scroll on BOTH axes:
-                    // vertical so a long file doesn't push the Get Info
-                    // details far down the pane, horizontal so no-wrap code
-                    // lines stay readable.
-                    //
-                    // Wheel scroll-chaining: `overflow_scroll`'s own handler
-                    // applies the delta to `preview_text_scroll` first; the
-                    // `on_scroll_wheel` below then forwards only what spilled
-                    // past the box's top/bottom to the outer `preview_scroll`,
-                    // so a long file scrolls the box, then reveals Get Info —
-                    // not both at once. `track_scroll` is what makes the box's
-                    // offset readable for that math.
-                    let block = div()
-                        .id(("preview-text", entry.id.as_raw() as usize))
-                        .w_full()
-                        .max_h(px(280.0))
-                        .overflow_scroll()
-                        .track_scroll(&self.preview_text_scroll)
-                        .on_scroll_wheel(cx.listener(Self::on_preview_text_scroll))
-                        .p_2()
-                        .rounded(cx.theme().radius)
-                        .bg(cx.theme().secondary.opacity(0.5))
-                        .text_scale_xs();
-                    let block = if text.is_empty() {
-                        block
-                            .font_family("monospace")
-                            .text_color(cx.theme().muted_foreground)
-                            .child(SharedString::from("(empty file)"))
-                    } else {
-                        let md = crate::text_preview::to_markdown_source(&entry.name, &text);
-                        // Compact mono in code blocks, and don't wrap —
-                        // long lines scroll horizontally in the block
-                        // above instead of folding.
-                        let style = gpui_component::text::TextViewStyle::default().code_block(
-                            gpui::StyleRefinement::default()
-                                .text_size(px(9.0))
-                                .whitespace_nowrap(),
-                        );
-                        // Per-file element id (keyed on the entry id), not
-                        // a constant: a TextView keeps internal selection /
-                        // scroll state under its id, so a shared id let a
-                        // stale text selection bleed onto the next file you
-                        // previewed (it looked "already selected" on hover).
-                        // A distinct id per file gives each a clean TextView
-                        // at the cost of re-parsing on file switch (cheap —
-                        // the worker caps content to 500 lines, off-thread).
-                        let view = gpui_component::text::TextView::markdown(
-                            ("preview-textview", entry.id.as_raw() as usize),
-                            SharedString::from(md),
-                        )
-                        .style(style)
-                        .selectable(true);
-                        // Neither preview kind scrolls horizontally on its own
-                        // in the narrow pane, so we give the content a definite
-                        // width wider than the box and let the box's
-                        // `overflow_scroll` reach the rest. `w_full` keeps a
-                        // short file filling the pane rather than sitting in an
-                        // over-wide box.
-                        //
-                        //  - Rendered markdown (`.md`) wraps its prose to the
-                        //    container width (gpui-component forces
-                        //    `whitespace_normal` on paragraphs), folding every
-                        //    sentence into a sliver. A fixed reading column
-                        //    (PREVIEW_MD_MIN_W) reads well and scrolls when the
-                        //    pane is narrower.
-                        //  - Code blocks are `whitespace_nowrap`; they clip
-                        //    long lines but don't grow their container, so the
-                        //    box has nothing to scroll toward. Size to the
-                        //    widest line (estimated from its column count) so
-                        //    the box can scroll the full line into view.
-                        let is_markdown = matches!(
-                            std::path::Path::new(&entry.name)
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .map(|e| e.to_ascii_lowercase())
-                                .as_deref(),
-                            Some("md" | "markdown" | "mdx")
-                        );
-                        let min_w = if is_markdown {
-                            PREVIEW_MD_MIN_W
-                        } else {
-                            let cols = text
-                                .lines()
-                                .map(|line| {
-                                    line.chars()
-                                        .map(|c| if c == '\t' { PREVIEW_CODE_TAB_COLS } else { 1 })
-                                        .sum::<usize>()
-                                })
-                                .max()
-                                .unwrap_or(0);
-                            (cols as f32 * PREVIEW_CODE_CHAR_W + PREVIEW_CODE_PAD)
-                                .min(PREVIEW_CODE_MAX_W)
-                        };
-                        block.child(div().w_full().min_w(px(min_w)).child(view))
-                    };
-                    col = col.child(block);
-                } else if let Some(img) = thumb_img {
-                    // Clicking the thumbnail opens the big viewer
-                    // window (docs/features/VIEWER.md) on the current
-                    // folder, same as Cmd+Y. A maximize glyph in the
-                    // top-right corner is the discoverability affordance
-                    // (only shown here, where a viewer-capable preview
-                    // exists) instead of a text caption.
-                    //
-                    // Box height is user-adjustable via the resize grip
-                    // below; the image fills whatever the box allows
-                    // (aspect preserved — gpui's img derives its
-                    // aspect_ratio from the bitmap's intrinsic size).
-                    col = col.child(
-                        div()
-                            .id("preview-thumb-open")
-                            .relative()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w_full()
-                            .h(px(self.preview_thumb_h))
-                            .p_2()
-                            .rounded(cx.theme().radius)
-                            .bg(cx.theme().secondary.opacity(0.5))
-                            .cursor_pointer()
-                            .hover(|this| this.bg(cx.theme().secondary.opacity(0.8)))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.on_open_viewer(&OpenViewer, window, cx)
-                            }))
-                            .child(gpui::img(img).max_w_full().max_h_full())
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top_2()
-                                    .right_2()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .size(px(22.0))
-                                    .rounded(cx.theme().radius)
-                                    .bg(cx.theme().background.opacity(0.75))
-                                    .child(
-                                        svg()
-                                            .path("icons/maximize.svg")
-                                            .w(px(13.0))
-                                            .h(px(13.0))
-                                            .text_color(cx.theme().foreground),
-                                    ),
-                            ),
-                    );
-                    col = col.child(self.preview_thumb_resize_grip(cx));
-                } else if matches!(thumb_state, Some(crate::preview::PreviewState::Pending)) {
-                    col = col.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w_full()
-                            .h(px(self.preview_thumb_h))
-                            .rounded(cx.theme().radius)
-                            .bg(cx.theme().secondary.opacity(0.5))
-                            .text_scale_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Loading preview\u{2026}"),
-                    );
-                    col = col.child(self.preview_thumb_resize_grip(cx));
-                }
-
-                // Filename header. A clean name truncates with a full-name
-                // tooltip; a name with deceptive characters (homoglyphs,
-                // bidi overrides, hidden whitespace) renders each hazard
-                // highlighted with its own explanatory tooltip instead.
-                let name_header = div()
-                    .id(("preview-name", entry.id.as_raw() as usize))
-                    .text_scale_lg()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().foreground);
-                let name_header = if entry.name_has_hazards {
-                    name_header.child(crate::entry_info::name_hazard_element(
-                        &entry.display_name,
-                        "preview-name",
-                    ))
-                } else {
-                    let name_for_tooltip = entry.display_name.clone();
-                    name_header
-                        .truncate()
-                        .child(SharedString::from(entry.display_name.clone()))
-                        .tooltip(move |window, cx| {
-                            Tooltip::new(SharedString::from(name_for_tooltip.clone()))
-                                .build(window, cx)
-                        })
-                };
-                col = col.child(name_header);
-
-                // The Get Info panel, embedded — the detail rows the
-                // preview used to show, now editable and complete. Cmd+I
-                // opens the same content as a standalone popup.
-                col = col.child(info_view);
-
-                // Quarantine surface — the red mark line, the
-                // provenance the prefetch worker read off the xattr /
-                // Zone.Identifier record (source URL, referrer, agent
-                // + download time), and the clear action. All cached
-                // on the entry; zero I/O at render time.
-                if entry.is_quarantined {
-                    col = col.child(
-                        h_flex()
-                            .mt_1()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_scale_xs()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(gpui::rgb(0xFF3B30))
-                                    .child("Quarantined \u{00B7} Mark of the Web"),
-                            )
-                            .child(
-                                Button::new("preview-clear-quarantine")
-                                    .label(ferail_core::commands::CLEAR_QUARANTINE_LABEL)
-                                    .xsmall()
-                                    .outline()
-                                    .flex_shrink_0()
-                                    .tooltip(
-                                        "Remove the mark and its \
-                                         downloaded-from record",
-                                    )
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.on_clear_quarantine(&ClearQuarantine, window, cx);
-                                    })),
-                            ),
-                    );
-                    if let Some(q) = &entry.quarantine {
-                        // where_from convention (both platforms): the
-                        // first URL is the download source, the second
-                        // the referring page. Rendered as plain
-                        // `text_xs` label/value rows so the provenance
-                        // matches the Get Info rows directly above it.
-                        // (The gpui-component `DescriptionList` this
-                        // used before hardcodes its label at `text_sm`
-                        // and lets the value inherit the ambient size;
-                        // its `.small()`/`.xsmall()` knob only changes
-                        // gap + padding, not font size — so it always
-                        // rendered a notch larger than the rest of the
-                        // pane.)
-                        let muted = cx.theme().muted_foreground;
-                        let prov_row = |label: &str, value: AnyElement| {
-                            v_flex()
-                                .gap_0p5()
-                                .min_w_0()
-                                .child(
-                                    div()
-                                        .text_scale_xs()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(muted)
-                                        .child(label.to_string()),
-                                )
-                                .child(div().min_w_0().text_scale_xs().child(value))
-                        };
-                        let mut prov = v_flex().mt_1p5().gap_2();
-                        let mut has_rows = false;
-                        if let Some(src) = q.where_from.first() {
-                            prov = prov.child(prov_row(
-                                "Source",
-                                truncated_url_value("prov-source", src, entry.id),
-                            ));
-                            has_rows = true;
-                        }
-                        if let Some(referrer) = q.where_from.get(1) {
-                            prov = prov.child(prov_row(
-                                "Referrer",
-                                truncated_url_value("prov-referrer", referrer, entry.id),
-                            ));
-                            has_rows = true;
-                        }
-                        if q.agent.is_some() || q.downloaded_iso.is_some() {
-                            let via = match (&q.agent, &q.downloaded_iso) {
-                                (Some(a), Some(t)) => format!("{a} \u{00B7} {t}"),
-                                (Some(a), None) => a.clone(),
-                                (None, Some(t)) => t.clone(),
-                                (None, None) => unreachable!(),
-                            };
-                            prov = prov.child(prov_row(
-                                "Downloaded via",
-                                div().child(SharedString::from(via)).into_any_element(),
-                            ));
-                            has_rows = true;
-                        }
-                        if has_rows {
-                            col = col.child(prov);
-                        }
-                    }
-                }
-
-                // Action row — icon-only buttons with tooltips that
-                // include the keyboard shortcut. No Get Info button here:
-                // the preview pane already shows the full Get Info panel,
-                // so the icon would just duplicate what's on screen (Cmd+I
-                // still opens the detached Get Info window).
-                // `tooltip_with_action` pulls the chord from the
-                // keymap automatically so each hover reads "Open ⌘O".
-                let actions = h_flex()
-                    .mt_2()
-                    .gap_1()
-                    .child(
-                        Button::new("preview-open")
-                            .icon(gpui_component::Icon::empty().path("icons/external-link.svg"))
-                            .xsmall()
-                            .ghost()
-                            .tooltip_with_action("Open", &OpenSelected, Some(SHELL_CONTEXT))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.on_open_selected(&OpenSelected, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("preview-reveal")
-                            .icon(gpui_component::Icon::empty().path("icons/folder-open.svg"))
-                            .xsmall()
-                            .ghost()
-                            .tooltip_with_action(
-                                ferail_core::commands::REVEAL_LABEL,
-                                &RevealInFinder,
-                                Some(SHELL_CONTEXT),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.on_reveal_in_finder(&RevealInFinder, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("preview-copy-path")
-                            .icon(gpui_component::Icon::empty().path("icons/copy.svg"))
-                            .xsmall()
-                            .ghost()
-                            .tooltip_with_action("Copy Path", &CopyPath, Some(SHELL_CONTEXT))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.on_copy_path(&CopyPath, window, cx);
-                            })),
-                    );
-                col = col.child(actions);
-
-                col.into_any_element()
-            }
-        };
-
-        // Pinned header; the body scrolls when the window is shorter
-        // than the thumbnail + metadata + actions stack, with a
-        // gpui-component scrollbar overlaid on the pane's right edge
-        // (it only shows while the content actually overflows).
-        v_flex()
-            .size_full()
-            .min_h_0()
-            .border_l_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().background)
-            .child(div().px_4().pt_4().pb_3().child(header))
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
-                        div()
-                            .id("preview-scroll")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.preview_scroll)
-                            .flex()
-                            .flex_col()
-                            .px_4()
-                            .pb_4()
-                            .child(body),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .right_0()
-                            .bottom_0()
-                            .w(px(16.0))
-                            .child(Scrollbar::vertical(&self.preview_scroll)),
-                    ),
-            )
-    }
-
-    /// Preview-pane body for a volume mount root: the volume's display
-    /// name over the embedded Get Info panel (same entity the file
-    /// preview reuses, retargeted at the mount root). The gather runs on
-    /// the background executor; this only points the view at the path.
-    fn preview_volume_body(
-        &mut self,
-        path: PathBuf,
-        name: String,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        use gpui_component::tooltip::Tooltip;
-
-        let info_view = self.sync_preview_info(
-            path,
-            name.clone(),
-            ferail_core::entry_info::InfoTarget::Volume,
-            None,
-            cx,
-        );
-        let name_for_tooltip = name.clone();
-        v_flex()
-            .gap_3()
-            .child(
-                div()
-                    .id("preview-volume-name")
-                    .text_scale_lg()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().foreground)
-                    .truncate()
-                    .child(SharedString::from(name))
-                    .tooltip(move |window, cx| {
-                        Tooltip::new(SharedString::from(name_for_tooltip.clone())).build(window, cx)
-                    }),
-            )
-            .child(info_view)
-            .into_any_element()
-    }
 
     /// Build the breadcrumb row from `current_dir`. Each ancestor is
     /// clickable and navigates the pane to that level. The root `/`
     /// gets its own leading segment. When `breadcrumb_editing` is
     /// set (Cmd+L) the row swaps in an Input field instead — Enter
     /// commits the path, Blur cancels.
+    /// Host the preview panel, pointing it at whatever this tab has selected.
+    fn preview_pane(&mut self, cx: &mut Context<Self>) -> Div {
+        use crate::preview_panel::PreviewTarget;
+
+        // Preview always reflects the **lead** row, even with a
+        // multi-selection — Finder's "the focused one of many" semantics.
+        let selected = {
+            let entries = &self.active_tab().table.read(cx).delegate().entries;
+            self.active_tab()
+                .lead_row(entries)
+                .and_then(|i| entries.get(i).cloned())
+        };
+        // A docked archive workbench overrides the tab's selection.
+        if let Some(target) = self.preview_override.clone() {
+            let panel = self.ensure_preview_panel(cx);
+            panel.update(cx, |panel, cx| panel.set_target(target, cx));
+            return div().size_full().child(panel);
+        }
+        let target = match selected {
+            Some(entry) => {
+                // The delegate's per-entry map has the true path — search and
+                // duplicate results live outside `current_dir`, so rebuilding
+                // it from the name would key the preview cache wrong.
+                let path = self
+                    .active_tab()
+                    .table
+                    .read(cx)
+                    .delegate()
+                    .path_for_entry(entry.id)
+                    .unwrap_or_else(|| {
+                        let mut p = self.active_tab().current_dir.clone();
+                        p.push(&entry.name);
+                        p
+                    });
+                PreviewTarget::File {
+                    path,
+                    entry: Box::new(entry),
+                }
+            }
+            // Nothing selected but parked at a volume's mount root: preview the
+            // volume, which is where a sidebar volume click lands.
+            None => {
+                let dir = self.active_tab().current_dir.clone();
+                match self.mounted_volume_name(&dir) {
+                    Some(name) => PreviewTarget::Volume { path: dir, name },
+                    None => PreviewTarget::None,
+                }
+            }
+        };
+
+        let panel = self.ensure_preview_panel(cx);
+        panel.update(cx, |panel, cx| panel.set_target(target, cx));
+        div().size_full().child(panel)
+    }
+
+    /// The Shell's preview panel, created on first use.
+    fn ensure_preview_panel(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Entity<crate::preview_panel::PreviewPanel> {
+        use crate::preview_panel::{PreviewCloseRequested, PreviewPanel};
+        if let Some(panel) = &self.preview_panel {
+            return panel.clone();
+        }
+        let process = self.process.clone();
+        let weak = cx.weak_entity();
+        let thumb_h = self.preview_thumb_h;
+        let panel = cx.new(|_| PreviewPanel::new(process, weak, thumb_h));
+        cx.subscribe(&panel, |this, _panel, _: &PreviewCloseRequested, cx| {
+            this.preview_visible = false;
+            this.preview_override = None;
+            if let Some(view) = this.active_archive_view() {
+                view.update(cx, |v, cx| v.set_preview_enabled(false, cx));
+            }
+            cx.notify();
+        })
+        .detach();
+        self.preview_panel = Some(panel.clone());
+        panel
+    }
+
     fn breadcrumb(&self, cx: &mut Context<Self>) -> Div {
         if self.breadcrumb_editing {
             // Key routing for the autocomplete menu. Two upstream
@@ -3772,7 +3142,7 @@ impl Render for Shell {
                 // toggle, so Cmd+P appeared to do nothing on smaller windows.)
                 let preview_visible = self.preview_visible;
                 let preview_pane = if preview_visible {
-                    Some(self.preview(cx))
+                    Some(self.preview_pane(cx))
                 } else {
                     None
                 };

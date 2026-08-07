@@ -271,7 +271,7 @@ impl ArchiveView {
             self.discard_staged();
             if let Some(shell) = self.shell.clone() {
                 let _ = shell.update(cx, |s, cx| {
-                    s.archive_preview = None;
+                    s.preview_override = None;
                     cx.notify();
                 });
             }
@@ -451,7 +451,13 @@ impl ArchiveView {
                     cx.notify();
                 });
                 let _ = shell.update(cx, |s, cx| {
-                    s.archive_preview = Some((staged.clone(), display_name.clone()));
+                    s.preview_override = Some(crate::preview_panel::PreviewTarget::File {
+                        path: staged.clone(),
+                        entry: Box::new(crate::preview_panel::synthetic_entry(
+                            &staged,
+                            &display_name,
+                        )),
+                    });
                     crate::preview::request(s, staged, cx);
                     cx.notify();
                 });

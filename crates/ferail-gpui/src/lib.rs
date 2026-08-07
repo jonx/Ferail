@@ -40,6 +40,7 @@ pub mod obs;
 pub mod path_complete;
 pub mod prefetch;
 pub mod preview;
+pub mod preview_panel;
 pub mod process_state;
 pub mod recents_section;
 pub mod redact;
