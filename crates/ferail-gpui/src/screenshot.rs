@@ -59,6 +59,11 @@ pub struct Args {
     /// enter") dispatched through the real window key path after the
     /// other flags apply. Verifies focus/keybinding routing headlessly.
     pub keys: Option<String>,
+    /// Paths copied into the current dir via the real transfer worker
+    /// (`spawn_transfer_op`, `TransferMode::Copy`) after navigation —
+    /// exercises the post-paste reload + select-what-landed path
+    /// headlessly, since the harness can't seed the OS pasteboard.
+    pub paste_sources: Vec<PathBuf>,
     /// Seed a multi-row selection by row index (comma-separated on
     /// the CLI: `--select-rows 0,2,5`). The first index becomes
     /// the anchor; the last becomes the lead. Drives screenshot
@@ -146,6 +151,8 @@ pub struct Args {
     /// Open the archive workbench on this archive file and render its
     /// contents view headless.
     pub archive: Option<PathBuf>,
+    /// With `--archive`, select this row and turn the entry preview on.
+    pub archive_preview_row: Option<usize>,
     /// Treemap recursion depth for `--disk-usage`. Default 4.
     pub disk_usage_depth: u32,
     /// Coloring mode for `--disk-usage`. `category` (default) or
@@ -234,6 +241,11 @@ pub fn parse_args() -> Args {
             }
             "--breadcrumb" => args.breadcrumb = iter.next(),
             "--keys" => args.keys = iter.next(),
+            "--paste-source" => {
+                if let Some(p) = iter.next() {
+                    args.paste_sources.push(PathBuf::from(p));
+                }
+            }
             "--select-rows" => {
                 if let Some(raw) = iter.next() {
                     args.select_rows = raw
@@ -287,6 +299,9 @@ pub fn parse_args() -> Args {
             "--ui-scale" => args.ui_scale = iter.next().and_then(|s| s.parse().ok()),
             "--disk-usage" => args.disk_usage = iter.next().map(PathBuf::from),
             "--archive" => args.archive = iter.next().map(PathBuf::from),
+            "--archive-preview-row" => {
+                args.archive_preview_row = iter.next().and_then(|s| s.parse().ok())
+            }
             "--du-depth" => {
                 if let Some(n) = iter.next().and_then(|s| s.parse().ok()) {
                     args.disk_usage_depth = n;
@@ -366,10 +381,14 @@ OPTIONS
   --ui-scale <factor>      Apply UI zoom. Lands in Stage 9.
   --disk-usage <path>      Render disk-usage treemap. Lands in Stage 7.
   --archive <path>         Render the archive workbench for <path>.
+  --archive-preview-row N  With --archive: select row N and show its preview.
   --du-depth <N>           Treemap recursion depth (default 4).
   --du-coloring <mode>     'category' (default) or 'depth'.
   --settings <page>        Open Settings instead of Shell.
                            appearance / files / layout / about.
+  --paste-source <path>    Copy <path> into the current dir via the real
+                           transfer worker (repeatable) — captures the
+                           post-paste select-what-landed behavior.
   --viewer <path>          Render the viewer window for <path> (file or
                            folder) instead of the shell.
   --viewer-adjust          Open the viewer's colour/enhance panel for capture.
@@ -741,6 +760,7 @@ struct ShellArgs {
     view: Option<crate::grid::ViewMode>,
     breadcrumb: Option<String>,
     keys: Option<String>,
+    paste_sources: Vec<PathBuf>,
     preview: bool,
     sort: Option<(String, bool)>,
     rename: bool,
@@ -749,6 +769,7 @@ struct ShellArgs {
     new_archive: bool,
     go_to_folder: bool,
     archive: Option<PathBuf>,
+    archive_preview_row: Option<usize>,
     expand: Vec<PathBuf>,
     // Stage-deferred flags. Recorded so the apply step can emit a
     // single "stage X not yet wired" log warning per use, rather
@@ -785,6 +806,7 @@ impl From<&Args> for ShellArgs {
             view: a.view,
             breadcrumb: a.breadcrumb.clone(),
             keys: a.keys.clone(),
+            paste_sources: a.paste_sources.clone(),
             preview: a.preview,
             sort: a.sort.clone(),
             rename: a.rename || a.inline_rename,
@@ -793,6 +815,7 @@ impl From<&Args> for ShellArgs {
             new_archive: a.new_archive,
             go_to_folder: a.go_to_folder,
             archive: a.archive.clone(),
+            archive_preview_row: a.archive_preview_row,
             expand: a.expand.clone(),
             properties: a.properties,
             edit_mode: a.edit_mode,
@@ -1019,6 +1042,33 @@ impl ShellArgs {
                     );
             }
         }
+        if !self.paste_sources.is_empty() {
+            // Let the initial enumeration land so the paste's in-place
+            // reload has live rows to swap over, then run the REAL
+            // transfer worker — completion queues the pasted names for
+            // selection and the reload applies them (FILE_OPS.md
+            // "Post-op selection"). The wait after gives plan → engine →
+            // completion → reload time to finish before capture.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(700))
+                .await;
+            let sources = self.paste_sources.clone();
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                shell.update(cx, |s, cx| {
+                    let dest = s.active_tab().current_dir.clone();
+                    s.spawn_transfer_op(
+                        sources,
+                        dest,
+                        crate::shell::TransferMode::Copy,
+                        window,
+                        cx,
+                    );
+                });
+            });
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(800))
+                .await;
+        }
         if self.select_row.is_some()
             || self.select_name.is_some()
             || !self.select_rows.is_empty()
@@ -1161,11 +1211,32 @@ impl ShellArgs {
             // dispatch the same action the context menu does, so the capture
             // exercises the shipping code rather than a bespoke harness view.
             let canonical = std::fs::canonicalize(&arc).unwrap_or(arc.clone());
-            let _ = cx.update_window((*handle).into(), |_, window, cx| {
-                shell.update(cx, |s, cx| {
-                    s.open_archive_path(canonical, window, cx);
+            let view = cx
+                .update_window((*handle).into(), |_, window, cx| {
+                    shell.update(cx, |s, cx| {
+                        s.open_archive_path(canonical, window, cx);
+                        s.active_archive_view()
+                    })
+                })
+                .ok()
+                .flatten();
+            if let (Some(view), Some(row)) = (view, self.archive_preview_row) {
+                // The table of contents is read off-thread, so the rows don't
+                // exist yet — selecting now would find nothing. Let the read
+                // land, then drive the selection and preview.
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(700))
+                    .await;
+                let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                    // Outside the Shell update: enabling preview reveals the
+                    // shell's pane, and gpui forbids a reentrant update.
+                    view.update(cx, |v, cx| v.preview_row_for_capture(row, window, cx));
                 });
-            });
+                // And let the staged extraction + preview decode land.
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(900))
+                    .await;
+            }
         }
         if self.new_archive {
             let _ = cx.update_window((*handle).into(), |_, window, cx| {

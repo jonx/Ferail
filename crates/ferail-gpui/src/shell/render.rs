@@ -123,6 +123,28 @@ fn tab_drop_gap(pos: usize, cx: &mut Context<Shell>) -> impl IntoElement {
         )
 }
 
+/// A stand-in row for an archive entry staged into the scratch dir, labelled
+/// with the entry's real name rather than its hashed scratch filename.
+fn archive_preview_entry(staged: &std::path::Path, name: &str) -> ferail_core::FileEntry {
+    let size = std::fs::metadata(staged).map(|m| m.len()).unwrap_or(0);
+    ferail_core::FileEntry {
+        id: ferail_core::NodeId::from_raw(1).expect("nonzero"),
+        name: name.to_string(),
+        display_name: name.to_string(),
+        name_has_hazards: false,
+        kind: ferail_core::EntryKind::File,
+        size,
+        mtime_unix: 0,
+        display_size: ferail_fs_native::humanize_bytes(size),
+        display_kind: String::new(),
+        display_magic: String::new(),
+        display_description: String::new(),
+        is_quarantined: false,
+        quarantine: None,
+        hidden: false,
+    }
+}
+
 impl Shell {
     fn tool_result_breadcrumb_summary(&self) -> Option<String> {
         let surface = self.active_tab().tool_result.as_ref()?;
@@ -2312,6 +2334,20 @@ impl Shell {
                 .lead_row(entries)
                 .and_then(|i| entries.get(i).cloned())
         };
+        // An archive entry staged for preview stands in for the selection: it
+        // lives in the workbench's table, not the tab's, so the lookup above
+        // finds nothing. The row is synthesized with the entry's real name —
+        // the scratch file's name is a hash, which would be useless to show.
+        let archive_staged = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .and_then(|s| s.archive_mode())
+            .and(self.archive_preview.clone());
+        let selected = match &archive_staged {
+            Some((staged, name)) => Some(archive_preview_entry(staged, name)),
+            None => selected,
+        };
 
         // Resolve the row's real path from the delegate's per-entry
         // `paths` map — populated at load for directory listings AND for
@@ -2326,23 +2362,72 @@ impl Shell {
         // Scroll position carries across renders (the body scrolls
         // when the window is shorter than the metadata stack), but a
         // different file starts back at the top.
-        let selected_path = selected
-            .as_ref()
-            .map(|entry| self.resolve_preview_path(entry, cx));
-        if self.preview_scroll_path != selected_path {
-            self.preview_scroll_path = selected_path.clone();
+        // With nothing selected, a tab parked at a volume's mount root
+        // previews the volume itself — which is exactly where a sidebar
+        // volume click lands (navigation clears the selection, so the
+        // pane would otherwise just read "No selection"). The mount-root
+        // check is a lookup in the cached volume list — no I/O on the
+        // render path.
+        let volume_target = if selected.is_none() {
+            let dir = &self.active_tab().current_dir;
+            self.mounted_volume_name(dir).map(|name| (dir.clone(), name))
+        } else {
+            None
+        };
+
+        let selected_path = match &archive_staged {
+            // Bypass the delegate path map — the scratch file is the content.
+            Some((staged, _)) => Some(staged.clone()),
+            None => selected
+                .as_ref()
+                .map(|entry| self.resolve_preview_path(entry, cx)),
+        };
+        let scroll_key = selected_path
+            .clone()
+            .or_else(|| volume_target.as_ref().map(|(path, _)| path.clone()));
+        if self.preview_scroll_path != scroll_key {
+            self.preview_scroll_path = scroll_key;
             self.preview_scroll.set_offset(gpui::Point::default());
             self.preview_text_scroll.set_offset(gpui::Point::default());
         }
 
-        let header = div()
-            .text_scale_xs()
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(cx.theme().muted_foreground)
-            .child("Preview");
+        let header = h_flex()
+            .w_full()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .text_scale_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Preview"),
+            )
+            .child(
+                Button::new("preview-close")
+                    .small()
+                    .ghost()
+                    .icon(gpui_component::Icon::empty().path("icons/close.svg"))
+                    .tooltip("Hide preview")
+                    .on_click(cx.listener(|this, _, _window, cx| {
+                        this.preview_visible = false;
+                        // An archive workbench driving this pane keeps its own
+                        // toggle state — clear it too, so its eye button
+                        // doesn't read "on" over a hidden pane.
+                        this.archive_preview = None;
+                        if let Some(view) = this.active_archive_view() {
+                            view.update(cx, |v, cx| v.set_preview_enabled(false, cx));
+                        }
+                        cx.notify();
+                    })),
+            );
 
-        let body: AnyElement = match selected {
-            None => div()
+        let body: AnyElement = match (selected, volume_target) {
+            // Sidebar volume click: preview the volume itself. The
+            // embedded Get Info panel renders the Volume section
+            // (capacity, used, format, device) once the background
+            // gather lands.
+            (None, Some((vol_path, vol_name))) => self.preview_volume_body(vol_path, vol_name, cx),
+            (None, None) => div()
                 .flex()
                 .flex_1()
                 .items_center()
@@ -2351,7 +2436,7 @@ impl Shell {
                 .text_color(cx.theme().muted_foreground)
                 .child("No selection")
                 .into_any_element(),
-            Some(entry) => {
+            (Some(entry), _) => {
                 // Same render-safe resolution as `selected_path` above.
                 let full_path = selected_path
                     .clone()
@@ -2791,6 +2876,44 @@ impl Shell {
                             .child(Scrollbar::vertical(&self.preview_scroll)),
                     ),
             )
+    }
+
+    /// Preview-pane body for a volume mount root: the volume's display
+    /// name over the embedded Get Info panel (same entity the file
+    /// preview reuses, retargeted at the mount root). The gather runs on
+    /// the background executor; this only points the view at the path.
+    fn preview_volume_body(
+        &mut self,
+        path: PathBuf,
+        name: String,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        use gpui_component::tooltip::Tooltip;
+
+        let info_view = self.sync_preview_info(
+            path,
+            name.clone(),
+            ferail_core::entry_info::InfoTarget::Volume,
+            None,
+            cx,
+        );
+        let name_for_tooltip = name.clone();
+        v_flex()
+            .gap_3()
+            .child(
+                div()
+                    .id("preview-volume-name")
+                    .text_scale_lg()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(cx.theme().foreground)
+                    .truncate()
+                    .child(SharedString::from(name))
+                    .tooltip(move |window, cx| {
+                        Tooltip::new(SharedString::from(name_for_tooltip.clone())).build(window, cx)
+                    }),
+            )
+            .child(info_view)
+            .into_any_element()
     }
 
     /// Build the breadcrumb row from `current_dir`. Each ancestor is
@@ -3309,6 +3432,7 @@ impl Render for Shell {
         // a network mount, so it never runs on the paint path.
         let free_bytes = self.active_tab().volume_free_bytes;
         let volume_name = self.active_tab().volume_name.clone();
+        let volume_read_only = self.active_tab().volume_read_only;
         // A docked archive workbench owns its own table, so the tab's delegate
         // is (correctly) empty — read the counts from the archive's table
         // instead, or the status bar would report "Empty folder" while the
@@ -3341,6 +3465,7 @@ impl Render for Shell {
             total_size,
             free_bytes,
             volume_name,
+            volume_read_only,
         };
         let _ = delegate;
         // Clicking the task region of the status bar toggles the
@@ -3512,6 +3637,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_open_context_in_new_tab))
             .on_action(cx.listener(Self::on_new_folder_here))
             .on_action(cx.listener(Self::on_eject_volume))
+            .on_action(cx.listener(Self::on_get_info_at_context))
             .on_action(cx.listener(Self::on_toggle_tag_red))
             .on_action(cx.listener(Self::on_toggle_tag_orange))
             .on_action(cx.listener(Self::on_toggle_tag_yellow))

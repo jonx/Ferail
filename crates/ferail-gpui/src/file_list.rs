@@ -952,6 +952,11 @@ impl FileListDelegate {
         self.lead = Some(id);
     }
 
+    /// The full tree row behind a row index, when in archive mode.
+    pub fn archive_row(&self, row_ix: usize) -> Option<&ferail_archive::TreeRow> {
+        self.archive_rows.get(row_ix)
+    }
+
     /// The archive path behind a row, when in archive mode.
     pub fn archive_path_for_row(&self, row_ix: usize) -> Option<&str> {
         self.archive_rows.get(row_ix).map(|r| r.path.as_str())

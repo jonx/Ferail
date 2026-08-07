@@ -46,6 +46,7 @@ mod dupe_panel;
 mod dupes;
 mod file_ops;
 pub(crate) use file_ops::pick_destination_folder;
+pub(crate) use file_ops::TransferMode;
 pub use file_ops::ArchiveOpDone;
 mod loading;
 mod path;
@@ -950,6 +951,11 @@ pub struct Shell {
     /// it; Cmd+I focuses the preview's Get Info section (today it's
     /// the only thing in the pane).
     pub preview_visible: bool,
+    /// Entry staged out of a docked archive for the preview pane: the scratch
+    /// file to render and the entry's real name to label it with. The pane
+    /// reads the *tab's* delegate, which is empty in archive mode (the
+    /// workbench owns its own table), so without this it shows "No selection".
+    pub archive_preview: Option<(PathBuf, String)>,
     /// Scroll position of the preview pane's body, so the content
     /// stays reachable (with a scrollbar) when the window is shorter
     /// than the metadata + actions stack. Persistent across renders;
@@ -1687,6 +1693,7 @@ impl Shell {
             // override this default — until then this is the boot
             // state on every launch.
             preview_visible: false,
+            archive_preview: None,
             preview_info: None,
             preview_scroll: ScrollHandle::new(),
             preview_text_scroll: ScrollHandle::new(),
@@ -1877,13 +1884,18 @@ impl Shell {
         });
         shell._subscriptions.push(drag_esc_subscription);
 
-        // Activation refresh (docs/features/FRESHNESS.md): when the
-        // window returns from the background, a 3rd-party tool may have
-        // changed content the non-recursive watcher never saw — and a
-        // deep change leaves folder mtimes untouched, so the size cache
-        // still reads valid. On a genuine inactive→active transition,
-        // re-walk visible folder sizes with the cache bypassed. The
-        // initial launch activation is skipped (`was_window_active`
+        // Activation re-seed (docs/features/FRESHNESS.md): when the
+        // window returns from the background, re-run the folder-size
+        // pass so rows whose TTL lapsed while we were away get picked
+        // up. This runs **cache-first** (`force = false`) on purpose:
+        // switching apps is something a user does constantly, and a
+        // cache-bypassing re-walk here meant every single return
+        // re-measured every visible tree from scratch — the size column
+        // could never settle. Deep external changes are bounded by the
+        // TTL and caught exactly by watcher-driven ancestor
+        // invalidation; a user who wants them *now* hits Refresh.
+        //
+        // The initial launch activation is skipped (`was_window_active`
         // starts `true`), and a same-state re-fire can't pass the
         // transition guard, so app-switch thrash is bounded.
         let activation_subscription = cx.observe_window_activation(window, |this, window, cx| {
@@ -1891,7 +1903,7 @@ impl Shell {
             let returned = active && !this.was_window_active;
             this.was_window_active = active;
             if returned {
-                this.restart_folder_size_passes(true, cx);
+                this.restart_folder_size_passes(false, cx);
             }
         });
         shell._subscriptions.push(activation_subscription);
@@ -2345,15 +2357,22 @@ impl Shell {
     fn on_refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
         let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
-        // Re-read the directory *and* re-sniff magic/description from
-        // disk, bypassing the metadata-DB cache. `load_path_for_tab`
-        // just reset this to `false` and bumped the load generation, so
-        // arming it here scopes the forced re-sniff to exactly this
-        // load: a load superseded before it finishes is dropped by the
-        // generation guard, and the superseding load reset the flag.
+        // Re-read the directory *and* re-derive everything cached about
+        // it from disk: magic/description (bypassing the metadata-DB
+        // cache) and the recursive folder sizes (bypassing the
+        // `folder_sizes` cache). Refresh is the user's explicit "measure
+        // this again", and the only gesture that pays for a full
+        // re-walk — see docs/features/FRESHNESS.md.
+        //
+        // `load_path_for_tab` just reset both flags to `false` and
+        // bumped the load generation, so arming them here scopes the
+        // forced work to exactly this load: a load superseded before it
+        // finishes is dropped by the generation guard, and the
+        // superseding load reset the flags.
         let tab_id = self.active_tab().id;
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
             tab.force_resniff = true;
+            tab.force_folder_sizes = true;
         }
     }
 
@@ -2898,6 +2917,15 @@ impl Shell {
     /// Build the archive view for `archive` and dock it as the active tab's
     /// tool-result surface, cancelling the tab's directory-load work (mirrors
     /// `dock_disk_usage_view`). The tab stays rooted at `current_dir`.
+    /// The docked archive workbench, when one is open.
+    pub fn active_archive_view(&self) -> Option<Entity<crate::archive::ArchiveView>> {
+        self.active_tab()
+            .tool_result
+            .as_ref()
+            .and_then(|s| s.archive_mode())
+            .map(|a| a.view.clone())
+    }
+
     /// Open a specific archive in the workbench, bypassing the selection.
     /// Used by the screenshot harness; the context action goes through
     /// `on_open_archive`.
@@ -3633,9 +3661,11 @@ impl Shell {
         // commits a new path, clears selection itself BEFORE
         // delegating here.
         tab.last_error = None;
-        // Default every load to cache-first prefetch. `on_refresh`
-        // re-arms this for its own load after delegating here.
+        // Default every load to cache-first prefetch and cache-first
+        // folder sizes. `on_refresh` re-arms both for its own load after
+        // delegating here.
         tab.force_resniff = false;
+        tab.force_folder_sizes = false;
         tab.load_generation = tab.load_generation.wrapping_add(1);
         let generation = tab.load_generation;
         let filter = tab.filter_text.clone();
@@ -4033,6 +4063,15 @@ impl Shell {
                 state.refresh(cx);
             });
         }
+        // The listing is final: queued post-op names that didn't resolve
+        // never will (hidden file with Show Hidden off, filtered out, or
+        // gone again) — drop them so they can't select a same-named entry
+        // after a later reload or navigation. Active tab only: a
+        // background tab's queue hasn't had its apply chance yet (the
+        // apply passes are active-tab-scoped).
+        if idx == self.active {
+            self.tabs[idx].pending_select_names.clear();
+        }
         let row_count = self.tabs[idx].table.read(cx).delegate().entries.len();
         if row_count == 0 {
             self.tabs[idx].last_error = error;
@@ -4096,6 +4135,10 @@ impl Shell {
             let size_cancel = Arc::new(AtomicBool::new(false));
             let size_tab_id = self.tabs[idx].id;
             let size_generation = self.tabs[idx].load_generation;
+            // Only an explicit Refresh bypasses the cache (`Tab::force_folder_sizes`).
+            // Plain navigation — including coming back to a folder you just
+            // left — answers from the `folder_sizes` rows the last pass wrote.
+            let force_sizes = self.tabs[idx].force_folder_sizes;
             self.tabs[idx].folder_size_cancel = Some(size_cancel.clone());
             crate::folder_sizes::start(
                 table,
@@ -4105,7 +4148,7 @@ impl Shell {
                 size_tab_id,
                 size_generation,
                 size_cancel,
-                false,
+                force_sizes,
                 cx,
             );
         }
@@ -4145,13 +4188,21 @@ impl Shell {
                 if this.tabs[idx].load_generation != generation {
                     return;
                 }
-                let (free, name) = match info {
-                    Some(v) => (v.available_bytes, Some(SharedString::from(v.name))),
-                    None => (None, None),
+                let (free, name, read_only) = match info {
+                    Some(v) => (
+                        v.available_bytes,
+                        Some(SharedString::from(v.name)),
+                        v.read_only,
+                    ),
+                    None => (None, None, false),
                 };
-                if this.tabs[idx].volume_free_bytes != free || this.tabs[idx].volume_name != name {
+                if this.tabs[idx].volume_free_bytes != free
+                    || this.tabs[idx].volume_name != name
+                    || this.tabs[idx].volume_read_only != read_only
+                {
                     this.tabs[idx].volume_free_bytes = free;
                     this.tabs[idx].volume_name = name;
+                    this.tabs[idx].volume_read_only = read_only;
                     cx.notify();
                 }
             })
@@ -4502,6 +4553,31 @@ impl Shell {
                             if let Err(e) = g.prune_stale(now) {
                                 crate::log_warn!(90, "metadata prune failed: {e}");
                             }
+                            // Heal the magic cache across sniffer
+                            // upgrades: labels cached by an older
+                            // detector otherwise shadow the improved
+                            // answer forever (rows only invalidate on
+                            // file mtime, and files don't change when
+                            // Ferail does). One UPDATE, once per
+                            // `MAGIC_REVISION` bump; rows re-sniff
+                            // lazily as folders are browsed.
+                            let rev = ferail_fs_native::MAGIC_REVISION.to_string();
+                            let stored = g.get_preference("magic_revision").ok().flatten();
+                            if stored.as_deref() != Some(rev.as_str()) {
+                                match g.reset(ferail_meta::ResetScope::Magic) {
+                                    Ok(()) => {
+                                        if let Err(e) = g.set_preference("magic_revision", &rev) {
+                                            crate::log_warn!(
+                                                90,
+                                                "magic revision stamp failed: {e}"
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        crate::log_warn!(90, "magic cache heal failed: {e}")
+                                    }
+                                }
+                            }
                         }
                     }
                     let (ant_visits, ant_max, recents) = hydrate_ant_trail(db.as_ref());
@@ -4605,15 +4681,17 @@ impl Shell {
     }
 
     /// Re-run the folder-size pass for every tab. Cancels any pass
-    /// still in flight first. Called when the metadata DB attaches
-    /// (`force = false`: the cache is authoritative, just re-seed it)
-    /// and on app activation (`force = true`: bypass the cache so a
-    /// deep external change made while we were away is re-walked).
+    /// still in flight first. Both callers pass `force = false` — the
+    /// metadata DB attaching and the window returning from the
+    /// background are both "re-seed from the cache" moments, not
+    /// "re-measure everything" ones. The parameter stays because the
+    /// pass itself supports forcing; only Refresh arms it today, per-tab
+    /// through `Tab::force_folder_sizes`.
     fn restart_folder_size_passes(&mut self, force: bool, cx: &mut Context<Self>) {
         // Respect the Performance toggle — this is also the activation
-        // re-walk path (`observe_window_activation`), so disabling folder
-        // sizing stops the cache-bypassed re-scan that would otherwise
-        // fire every time the window comes forward.
+        // re-seed path (`observe_window_activation`), so disabling folder
+        // sizing stops the re-scan that would otherwise fire every time
+        // the window comes forward.
         if !crate::folder_sizes::folder_sizing_enabled(cx) {
             return;
         }
@@ -4782,6 +4860,20 @@ impl Shell {
                         })
                         .unwrap_or(false);
                     if error.is_none() {
+                        // If the user is still looking at the folder the op
+                        // produced its results in, select them (renamed /
+                        // new / duplicated / aliased entries) and bring the
+                        // first into view once the reload lands. Results in
+                        // other folders (e.g. an alias dropped into a
+                        // subfolder) are filtered out by the parent check.
+                        let dir = this.active_tab().current_dir.clone();
+                        let names = created_for_undo
+                            .iter()
+                            .filter(|p| p.parent() == Some(dir.as_path()))
+                            .filter_map(|p| p.file_name())
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .collect();
+                        this.queue_select_names_if_current(&dir, names);
                         undo.push(this, created_for_undo);
                     }
                     cx.notify();
@@ -6017,9 +6109,12 @@ impl Shell {
         tab.tool_result = None;
         tab.nav.navigate_to(node_id);
         // Any pending screenshot select belongs to the previous
-        // path; drop it so a stale row index doesn't apply.
+        // path; drop it so a stale row index doesn't apply. Same for
+        // queued post-op names — a leftover name must not select a
+        // same-named entry in an unrelated folder.
         self.active_tab_mut().pending_select_row = None;
         self.active_tab_mut().pending_select_rows.clear();
+        self.active_tab_mut().pending_select_names.clear();
         if record_visit {
             self.record_ant_visit(node_id, cx);
         }

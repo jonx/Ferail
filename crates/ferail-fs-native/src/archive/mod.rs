@@ -39,6 +39,7 @@ use ferail_archive::{safe_relative_path, CompressionLevel, Format, Toc};
 use crate::file_ops::TransferProgress;
 
 mod lha;
+pub mod scratch;
 mod sevenz;
 mod single;
 mod tarball;

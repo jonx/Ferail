@@ -29,6 +29,7 @@ mod search;
 pub mod stat_info;
 mod volumes;
 pub mod xattr_info;
+pub use archive::scratch;
 pub use archive::{
     add_to_archive, create_archive, extract_all as extract_archive, probe_format as probe_archive_format,
     extract_entries as extract_archive_entries, read_summary as read_archive_summary,
@@ -43,7 +44,7 @@ pub use dupes::{
 pub use icons::fetch_icon_rgba;
 pub use magic::{
     detect_magic, detect_magic_info, sniff_bytes_info, CpuArch, ElfOs, MagicInfo, MagicType,
-    PeSubsystem,
+    PeSubsystem, MAGIC_REVISION,
 };
 pub use paths::home_dir;
 pub use search::{SearchHit, SearchQuery, SearchStats, DEFAULT_SEARCH_BATCH};
@@ -708,6 +709,14 @@ pub struct VolumeInfo {
     /// Filesystem format (e.g. "apfs", "exfat"). `None` off macOS or when
     /// `statfs` failed. Populated for the Get Info panel's volume rows.
     pub format: Option<String>,
+    /// Mounted read-only (a CD/DVD, a locked SD card, a read-only disk
+    /// image, an `ro` mount). Drives the status bar's "is read-only"
+    /// label — "0 B free" on a CD is technically true but the wrong
+    /// message — and the Get Info / preview Access row. The macOS boot
+    /// volume is deliberately exempt: the sealed system snapshot
+    /// statfs's as read-only, but the Macintosh HD the user sees is
+    /// writable via the firmlinked Data volume.
+    pub read_only: bool,
     /// BSD device node (e.g. "/dev/disk3s1s1"). Same availability as `format`.
     pub bsd_device: Option<String>,
     /// Opaque whole-device grouping key: volumes with the same `device_id`
@@ -827,7 +836,7 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
             (None, None)
         };
 
-        let (format, bsd_device) = crate::stat_info::volume_fs_info(path);
+        let (format, bsd_device, read_only) = crate::stat_info::volume_fs_info(path);
         // Group by the whole-disk BSD name so the eject flow can find the
         // other volumes of a multi-partition external device. Local disks
         // only — an SMB `f_mntfromname` is a URL, not a disk node.
@@ -844,6 +853,7 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
             is_local,
             is_removable,
             format,
+            read_only,
             bsd_device,
             device_id,
         })

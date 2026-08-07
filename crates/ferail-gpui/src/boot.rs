@@ -43,6 +43,13 @@ pub fn run_gui(args: screenshot::Args) {
     // shell caches the ID on first-window-show.
     crate::platform_shell::set_app_user_model_id("Knipper.Ferail");
 
+    // Archive previews stage entries into a per-process scratch directory.
+    // A clean exit removes it, but a crash or a kill runs no destructor, and
+    // archive contents are not something to leave lying around — so sweep any
+    // scratch directory whose owning process is gone. Cheap: one temp-dir
+    // listing, and it runs before any window exists.
+    ferail_fs_native::scratch::sweep_stale_scratch();
+
     // FeraAssets stacks our local SVG bundle (file-type icons, etc.)
     // in front of the upstream gpui-component icon pack. Both surface
     // through one `icons/X.svg` namespace.

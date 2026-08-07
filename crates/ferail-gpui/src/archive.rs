@@ -32,7 +32,7 @@ use gpui_component::{
     button::Button,
     h_flex,
     input::{Input, InputState},
-    v_flex, ActiveTheme, Disableable, ElementExt as _, Sizable,
+    v_flex, ActiveTheme, Disableable, ElementExt as _, Selectable as _, Sizable, WindowExt as _,
 };
 
 use ferail_archive::{ArchiveTree, Capabilities, Format, Toc, TreeRow};
@@ -51,7 +51,13 @@ pub type ArchiveDockOwner = std::rc::Rc<dyn Fn(PathBuf, Entity<ArchiveView>, &mu
 
 /// Narrower than this and the header hides its filter box so the archive's
 /// name keeps a usable share of the row.
-const FILTER_MIN_WIDTH: f32 = 620.0;
+const FILTER_MIN_WIDTH: f32 = 820.0;
+
+/// Above this, previewing asks first. An archive entry has to be written out
+/// before Quick Look can read it (it is an OS service that takes a file URL),
+/// and the table of contents gives us the uncompressed size *before* we spend
+/// anything — so the check is free and also caps decompression bombs.
+const PREVIEW_CONFIRM_BYTES: u64 = 100 * 1024 * 1024;
 
 /// Key context for the archive pane (keymap bindings hang off this).
 pub const ARCHIVE_CONTEXT: &str = "Archive";
@@ -98,6 +104,16 @@ pub struct ArchiveView {
     /// Rounded pane width, captured at prepaint. Lets the header drop its
     /// lower-priority controls before they crush the archive's name.
     host_width: Option<f32>,
+    /// Preview is opt-in: entries must be written to a scratch file before the
+    /// preview providers (Quick Look) can read them, so nothing is extracted
+    /// until the user asks for it.
+    preview_enabled: bool,
+    /// Scratch directory holding entries written out for preview, removed when
+    /// this view is dropped. Created lazily on the first preview.
+    scratch: Option<PathBuf>,
+    /// Archive path of the entry currently staged for preview, so re-selecting
+    /// the same row doesn't extract it twice.
+    previewed: Option<String>,
     focus_handle: FocusHandle,
 }
 
@@ -130,7 +146,7 @@ impl ArchiveView {
         let table_sub = cx.subscribe_in(
             &table,
             window,
-            |this: &mut Self, table, event: &TableEvent, _window, cx| match event {
+            |this: &mut Self, table, event: &TableEvent, _window: &mut Window, cx| match event {
                 TableEvent::RowClicked {
                     row_ix,
                     modifiers,
@@ -155,6 +171,7 @@ impl ArchiveView {
                         t.delegate_mut().apply_click_gesture(row_ix, modifiers);
                         cx.notify();
                     });
+                    this.preview_selection(_window, cx);
                     cx.notify();
                 }
                 TableEvent::LeadMoved { row_ix, modifiers } => {
@@ -164,6 +181,7 @@ impl ArchiveView {
                         t.delegate_mut().apply_click_gesture(row_ix, modifiers);
                         cx.notify();
                     });
+                    this.preview_selection(_window, cx);
                     cx.notify();
                 }
                 _ => {}
@@ -201,6 +219,9 @@ impl ArchiveView {
             password_input,
             password: None,
             host_width: None,
+            preview_enabled: false,
+            scratch: None,
+            previewed: None,
             focus_handle: cx.focus_handle(),
         };
         view.start_load(None, cx);
@@ -232,6 +253,239 @@ impl ArchiveView {
         }
         self.host_width = Some(next);
         cx.notify();
+    }
+
+    /// Toggle the preview pane for archive entries. Turning it on previews the
+    /// current selection immediately; turning it off leaves the staged file
+    /// alone (the scratch dir is cleaned when the view closes).
+    fn toggle_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.preview_enabled = !self.preview_enabled;
+        if !self.preview_enabled {
+            self.previewed = None;
+            if let Some(shell) = self.shell.clone() {
+                let _ = shell.update(cx, |s, cx| {
+                    s.archive_preview = None;
+                    cx.notify();
+                });
+            }
+        }
+        if self.preview_enabled {
+            // Reveal the shell's pane too, so the button never appears to do
+            // nothing when the pane happens to be hidden.
+            if let Some(shell) = self.shell.clone() {
+                let _ = shell.update(cx, |s, cx| {
+                    s.preview_visible = true;
+                    cx.notify();
+                });
+            }
+            self.preview_selection(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Force the preview toggle off — used when the preview pane is closed
+    /// from its own header, so the two controls can't disagree.
+    pub fn set_preview_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.preview_enabled == enabled {
+            return;
+        }
+        self.preview_enabled = enabled;
+        if !enabled {
+            self.previewed = None;
+        }
+        cx.notify();
+    }
+
+    /// Stage the selected entry for preview, if it is a single file and preview
+    /// is enabled. Big entries ask first.
+    fn preview_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.preview_enabled {
+            return;
+        }
+        let Some(row) = self.single_selected_file(cx) else {
+            return;
+        };
+        if self.previewed.as_deref() == Some(row.path.as_str()) {
+            return; // already staged
+        }
+        let size = row.size.unwrap_or(0);
+        if size > PREVIEW_CONFIRM_BYTES {
+            self.confirm_large_preview(row, size, window, cx);
+        } else {
+            self.stage_preview(row.path, cx);
+        }
+    }
+
+    /// The selected row when it is exactly one non-directory entry — preview is
+    /// meaningless for a folder or a multi-selection.
+    fn single_selected_file(&self, cx: &App) -> Option<TreeRow> {
+        let table = self.table.read(cx);
+        let del = table.delegate();
+        let mut hits = del
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| del.selected_set.contains(&e.id));
+        let (row_ix, _) = hits.next()?;
+        if hits.next().is_some() {
+            return None; // multi-selection
+        }
+        let row = del.archive_row(row_ix)?.clone();
+        (!row.is_dir).then_some(row)
+    }
+
+    fn confirm_large_preview(
+        &mut self,
+        row: TreeRow,
+        size: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let human = ferail_fs_native::humanize_bytes(size);
+        let name = row.name.clone();
+        let path = row.path.clone();
+        let this = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let (path, this) = (path.clone(), this.clone());
+            dialog
+                .title(SharedString::from("Preview this file?"))
+                .child(
+                    div()
+                        .text_scale_sm()
+                        .child(format!(
+                            "\u{201c}{name}\u{201d} is {human}. Previewing it writes a temporary copy out of the archive first."
+                        )),
+                )
+                .on_ok(move |_, _window, cx: &mut App| {
+                    let _ = this.update(cx, |this: &mut ArchiveView, cx| {
+                        this.stage_preview(path.clone(), cx);
+                    });
+                    true
+                })
+        });
+    }
+
+    /// Extract one entry into the scratch dir off-thread, then hand the real
+    /// path to the shell's existing preview pipeline.
+    fn stage_preview(&mut self, entry: String, cx: &mut Context<Self>) {
+        let Some(shell) = self.shell.clone() else {
+            return;
+        };
+        let scratch = match self.scratch_dir() {
+            Some(dir) => dir,
+            None => return,
+        };
+        self.previewed = Some(entry.clone());
+        let display_name = entry
+            .rsplit('/')
+            .next()
+            .unwrap_or(entry.as_str())
+            .to_string();
+        let archive = self.archive_path.clone();
+        let password = self.password.clone();
+        cx.spawn(async move |_this, cx| {
+            let staged = cx
+                .background_executor()
+                .spawn(async move {
+                    let progress = ferail_fs_native::file_ops::TransferProgress::new();
+                    let cancel = std::sync::atomic::AtomicBool::new(false);
+                    let opts = ferail_fs_native::ExtractOptions {
+                        password: password.as_deref(),
+                        overwrite: true,
+                    };
+                    ferail_fs_native::extract_archive_entries(
+                        &archive,
+                        &scratch,
+                        &[entry.as_str()],
+                        opts,
+                        &progress,
+                        &cancel,
+                    )
+                    .ok()?;
+                    let extracted = scratch.join(&entry);
+                    if !extracted.is_file() {
+                        return None;
+                    }
+                    // Rename to an opaque, extension-preserving name: the
+                    // extension is what lets Quick Look pick a renderer, but
+                    // the original name would otherwise sit in plain sight.
+                    let staged = scratch.join(ferail_fs_native::scratch::opaque_name(&entry));
+                    if std::fs::rename(&extracted, &staged).is_err() {
+                        return None;
+                    }
+                    ferail_fs_native::scratch::set_private_permissions(&staged, 0o600);
+                    // The entry's own directory chain is now empty — drop it so
+                    // the folder names don't linger either.
+                    if let Some(top) = entry.split('/').next() {
+                        if top != entry {
+                            let _ = std::fs::remove_dir_all(scratch.join(top));
+                        }
+                    }
+                    Some(staged)
+                })
+                .await;
+            if let Some(staged) = staged {
+                let _ = shell.update(cx, |s, cx| {
+                    s.archive_preview = Some((staged.clone(), display_name.clone()));
+                    crate::preview::request(s, staged, cx);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Per-view scratch directory, created on first use.
+    ///
+    /// # Privacy
+    ///
+    /// Previewing an archive entry means writing it out in the clear: Quick
+    /// Look is a separate OS process that reads a file URL, so an encrypted or
+    /// hashed *payload* could not be rendered at all. What we can control is
+    /// everything around it:
+    ///
+    /// - It lives under `std::env::temp_dir()`, which on macOS is the
+    ///   per-user `$TMPDIR` (`/var/folders/…/T`, mode 0700) rather than the
+    ///   world-readable `/tmp`.
+    /// - The directory is created 0700 and each staged file 0600, so on a
+    ///   shared machine no other user can read them.
+    /// - Staged files are named by a hash of the entry path, so a leftover
+    ///   file leaks nothing through its *name* — "salary-review.pdf" is
+    ///   metadata even when the bytes are unreadable.
+    /// - The directory carries our PID, and
+    ///   `ferail_fs_native::scratch::sweep_stale_scratch` deletes the dirs of
+    ///   dead processes at startup. `Drop` covers a clean exit; the sweep
+    ///   covers crashes and kills, which no in-process cleanup can.
+    ///
+    /// The mechanics live in `ferail_fs_native::scratch` — filesystem work
+    /// belongs behind that boundary, and it is where they can be tested.
+    fn scratch_dir(&mut self) -> Option<PathBuf> {
+        if let Some(dir) = &self.scratch {
+            return Some(dir.clone());
+        }
+        let dir = ferail_fs_native::scratch::scratch_dir()?;
+        self.scratch = Some(dir.clone());
+        Some(dir)
+    }
+
+    /// Screenshot harness: select `row_ix` and turn the preview on, so the
+    /// staged-preview state can be captured headlessly.
+    pub fn preview_row_for_capture(
+        &mut self,
+        row_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.table.update(cx, |t, cx| {
+            t.delegate_mut()
+                .apply_click_gesture(row_ix, gpui::Modifiers::default());
+            cx.notify();
+        });
+        if !self.preview_enabled {
+            self.toggle_preview(window, cx);
+        } else {
+            self.preview_selection(window, cx);
+        }
     }
 
     /// Password to carry in a drag payload, so a drop can extract encrypted
@@ -570,7 +824,9 @@ impl ArchiveView {
             .child(
                 v_flex()
                     .flex_1()
-                    .min_w_0()
+                    // Floor the name's share: with four controls to its right
+                    // an unbounded flex child collapses to a couple of glyphs.
+                    .min_w(px(140.0))
                     // Filenames truncate in the middle (house style — keeps the
                     // start and the extension); the subtitle is free-form, so
                     // its tail is expendable. Without these the text wrapped a
@@ -614,6 +870,18 @@ impl ArchiveView {
                         .child(Input::new(&self.filter_input).small()),
                 )
             })
+            .child(
+                Button::new("archive-preview")
+                    .small()
+                    .icon(gpui_component::Icon::empty().path("icons/eye.svg"))
+                    .tooltip(if self.preview_enabled {
+                        "Hide preview"
+                    } else {
+                        "Preview selected file"
+                    })
+                    .selected(self.preview_enabled)
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_preview(window, cx))),
+            )
             .child(
                 Button::new("archive-extract-selected")
                     .label(if selected > 0 {
@@ -712,6 +980,15 @@ impl ArchiveView {
                     .child(message.into()),
             )
             .into_any_element()
+    }
+}
+
+impl Drop for ArchiveView {
+    fn drop(&mut self) {
+        // Entries written out for preview are ours alone — take them with us.
+        if let Some(dir) = &self.scratch {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 }
 
@@ -823,3 +1100,4 @@ pub fn open_existing_window(
         cx.open_window(opts, |window, cx| cx.new(|cx| gpui_component::Root::new(view, window, cx)))?;
     Ok(handle)
 }
+
