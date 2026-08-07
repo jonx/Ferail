@@ -45,6 +45,19 @@ flagged — above, `Holiday Photo.jpg` is really a ZIP, and says so.
 ([magic description](features/MAGIC_DESCRIPTION.md) ·
 [magic sniffing](features/MAGIC_SNIFFING.md))
 
+## Filename hazards — names that can't lie
+
+![Filename hazards](images/tour-filename-hazards.png)
+
+A filename can pretend to be something it isn't: a zero-width space
+buried in `invoice_…_final.exe`, a bidi override that reverses the
+visible extension, a Cyrillic `а` standing in for a Latin one in
+`pаypal-login`, a run of padding that pushes `.exe` out of sight. Every
+display name is pre-scanned off-thread, and what's actually there is
+what gets drawn — invisible characters become explicit `⟨U+200B⟩`-style
+chips, homoglyphs and disguised whitespace are highlighted in place.
+The name you read is the name you have.
+
 ## Archives — open them like folders
 
 ![Archive workbench](images/tour-archive.png)

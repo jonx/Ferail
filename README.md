@@ -63,11 +63,16 @@ The full tour with a picture per feature lives in
 | **Archives, browsed in place** | **Ant Trail visit heat** | **Content-derived descriptions** |
 | ![Archive workbench](docs/images/tour-archive.png) | ![Ant Trail](docs/images/tour-ant-trail.png) | ![Magic descriptions](docs/images/tour-magic.png) |
 
+**Deceptive filenames, exposed** — zero-widths, bidi overrides, homoglyphs and
+disguised whitespace are rendered as visible chips instead of letting a name lie:
+
+![Filename hazards](docs/images/tour-filename-hazards.png)
+
 And the ones a screenshot can't show: sticky zoom that carries your zoom and pan
 to the next file; chroma-keyed transparent video windows you can stack over your
 desktop (optional mpv backend); a dock drawer that parks against a screen edge
 and slides in on an edge-slam; streaming search; quarantine "where from"
-provenance; a homoglyph-aware deceptive-filename detector.
+provenance.
 **[Read the tour →](docs/FEATURES.md)**
 
 ## Vision & roadmap
