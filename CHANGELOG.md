@@ -14,9 +14,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   desktop environment as `ferail`, so docks and taskbars show the right icon
   and group Ferail windows together. Verified end to end on Ubuntu 24.04
   (arm64): the package builds, installs, and the installed app launches and
-  browses folders. No prebuilt `.deb` is distributed yet, and opening a
-  *specific folder* from the desktop ("Open with Ferail") isn't wired — the
-  binary doesn't take a directory argument yet.
+  browses folders. CI can now produce the Intel (amd64) package on demand,
+  built against Ubuntu 22.04 so it runs on 22.04 and later. No prebuilt
+  `.deb` is *distributed* yet, and opening a *specific folder* from the
+  desktop ("Open with Ferail") isn't wired — the binary doesn't take a
+  directory argument yet.
 - **Fixed a crash-on-build for ARM Linux.** Owner/group name lookup used a
   buffer type that only compiles where C's `char` is signed — fine on
   Intel/macOS, a build failure on ARM Linux (Raspberry Pi class machines,

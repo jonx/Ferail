@@ -489,11 +489,13 @@ fallback). Remaining is the UX the system explorers have and we don't:
   builds, installs, `ferail doctor` clean, GUI launches under Xvfb with
   `WM_CLASS = ferail` (details + build-host gotchas in
   [docs/features/linux-port.md](docs/features/linux-port.md) § packaging).
-  Remaining: an **amd64** build (CI `ubuntu` runner on the oldest supported
-  LTS — the .deb inherits the build host's glibc floor), taskbar-identity
-  check on a real desktop session, and later `Exec=ferail %U` +
-  `MimeType=inode/directory;` once the binary accepts a directory argument
-  (today a bare path exits as an unknown subcommand).
+  The **amd64** build is CI's job: `.github/workflows/deb.yml` builds in an
+  ubuntu:22.04 container (pins the glibc floor), installs the result, and
+  smoke-tests `ferail doctor` — on `v*` tags and manual dispatch. Remaining:
+  taskbar-identity check on a real desktop session, publishing the artifact
+  somewhere users find it (today it's a run artifact), and later
+  `Exec=ferail %U` + `MimeType=inode/directory;` once the binary accepts a
+  directory argument (today a bare path exits as an unknown subcommand).
 - Linux headless screenshots: implement `render_to_image` in `gpui_wgpu`
   (offscreen render target + `copy_texture_to_buffer` readback, BGRA/RGBA) and
   wire it through both `gpui_linux` window backends (Wayland + X11), mirroring

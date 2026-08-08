@@ -1,0 +1,77 @@
+# Build the distributable amd64 .deb (docs/features/linux-port.md § packaging).
+#
+# Runs in an ubuntu:22.04 container, NOT on the runner's own OS: the binary
+# inherits the glibc of whatever builds it, so the container pins the floor at
+# 22.04 (glibc 2.35 → the package runs on 22.04 LTS and later) and keeps it
+# pinned when GitHub retires runner images. Bump the container tag — never the
+# runner label — to raise the floor deliberately.
+#
+# Tag- and manually-triggered only. A release build of ferail-gpui is the
+# expensive shape of this repo's build (gpui + ~30 tree-sitter grammars, fat
+# LTO), so it doesn't ride on every push the way ci.yml's check jobs do.
+#
+# `-j2` on the build is load-bearing, not a tuning nicety: the workspace
+# release profile is lto = true + codegen-units = 1, and the two binaries
+# (ferail, ferail-gpui) linking their fat-LTO images in parallel OOM-killed a
+# 8 GB VM during the first arm64 build. Runners have ~16 GB; don't tempt it.
+name: Linux .deb
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: deb-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deb:
+    name: amd64 .deb (glibc floor 22.04)
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    steps:
+      # The container starts bare — no git, no curl, no compiler. This list is
+      # linux-port.md § 8 minus the Vulkan pieces (gpui dlopens Vulkan at
+      # runtime; nothing links it at build time) plus dpkg-dev, which provides
+      # the dpkg-shlibdeps that resolves cargo-deb's `$auto` Depends.
+      - name: Install system build deps
+        run: |
+          apt-get update -q
+          DEBIAN_FRONTEND=noninteractive apt-get install -yq \
+            build-essential pkg-config cmake git curl ca-certificates dpkg-dev \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            xorg-dev libxcb1-dev libssl-dev libzstd-dev libdbus-1-dev
+
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Build .deb
+        run: cargo deb -p ferail-gpui -- -j2
+
+      # Install into this same 22.04 container and exercise the CLI surface.
+      # `apt-get install ./x.deb` also proves the Depends line is satisfiable
+      # from stock repos — a hand-maintained dep (the dlopen'd Vulkan/Wayland
+      # libs) with a typo'd package name would fail right here.
+      - name: Install and smoke-test
+        run: |
+          apt-get install -yq ./target/debian/ferail_*_amd64.deb
+          ferail doctor
+          ferail magic /etc/hostname
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ferail-deb-amd64
+          path: target/debian/ferail_*_amd64.deb
+          if-no-files-found: error
