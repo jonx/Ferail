@@ -489,13 +489,14 @@ fallback). Remaining is the UX the system explorers have and we don't:
   builds, installs, `ferail doctor` clean, GUI launches under Xvfb with
   `WM_CLASS = ferail` (details + build-host gotchas in
   [docs/features/linux-port.md](docs/features/linux-port.md) § packaging).
-  The **amd64** build is CI's job: `.github/workflows/deb.yml` builds in an
-  ubuntu:22.04 container (pins the glibc floor), installs the result, and
-  smoke-tests `ferail doctor` — on `v*` tags and manual dispatch. Remaining:
-  taskbar-identity check on a real desktop session, publishing the artifact
-  somewhere users find it (today it's a run artifact), and later
-  `Exec=ferail %U` + `MimeType=inode/directory;` once the binary accepts a
-  directory argument (today a bare path exits as an unknown subcommand).
+  The **amd64 + arm64** builds are CI's job: `.github/workflows/deb.yml`
+  builds each in an ubuntu:22.04 container (pins the glibc floor), installs
+  the result, smoke-tests `ferail doctor`, and on `v*` tags attaches both
+  packages to the tag's GitHub release (manual dispatch leaves them as run
+  artifacts). Remaining: taskbar-identity check on a real desktop session,
+  and later `Exec=ferail %U` + `MimeType=inode/directory;` once the binary
+  accepts a directory argument (today a bare path exits as an unknown
+  subcommand).
 - Linux headless screenshots: implement `render_to_image` in `gpui_wgpu`
   (offscreen render target + `copy_texture_to_buffer` readback, BGRA/RGBA) and
   wire it through both `gpui_linux` window backends (Wayland + X11), mirroring
@@ -526,13 +527,14 @@ paths scrubbed). Source-first is unblocked. Remaining:
 Publishing *source* is unaffected by the transitive GPL chain; a redistributable
 *binary* is not. Do these only when building a download:
 
-- ✅ **Sever the GPL-3.0 dependency edge** — shipped in 0.2.2 via
-  [`vendor/sum-tree`](vendor/sum-tree/README.md): upstream's Apache-2.0
-  `sum_tree` minus the `ztracing` dep and its nine use-sites, wired in with an
-  **in-repo** `[patch]` (committed, so present in every clone and on CI — unlike
-  a sibling path). `cargo tree -p ferail-gpui -i ztracing` now prints nothing,
-  and the only GPL strings left in the graph are dual-licensed crates offering a
-  permissive alternative. Re-sync procedure on a `gpui` bump is in that README.
+- ✅ **Sever the GPL-3.0 dependency edge** — shipped in 0.2.2 via a vendored
+  `sum_tree` fork; **superseded 2026-08-08** by
+  [`vendor/ztracing`](vendor/ztracing/README.md), a clean-room MIT/Apache
+  no-op stub patched over the zed source, after gpui gained a *direct*
+  `ztracing` dependency (zed 00cba838a) that the sum_tree fork could no longer
+  sever. The stub also keeps GPL `zlog`/`ztracing_macro` out and needs no
+  re-sync on gpui bumps. `cargo tree -p ferail-gpui -i ztracing` must print
+  only the vendor path crate; `-i zlog` must print nothing.
   - ⚠️ **Lesson worth keeping: the lockfile lied.** Before this, `Cargo.lock`
     had been generated on a machine with the AROS `[patch]` active, and the
     `../zed-aros` fork it pointed at happens to drop `ztracing` — so the

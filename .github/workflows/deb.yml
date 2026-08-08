@@ -1,14 +1,20 @@
-# Build the distributable amd64 .deb (docs/features/linux-port.md § packaging).
+# Build the distributable .debs (docs/features/linux-port.md § packaging).
 #
-# Runs in an ubuntu:22.04 container, NOT on the runner's own OS: the binary
-# inherits the glibc of whatever builds it, so the container pins the floor at
-# 22.04 (glibc 2.35 → the package runs on 22.04 LTS and later) and keeps it
-# pinned when GitHub retires runner images. Bump the container tag — never the
-# runner label — to raise the floor deliberately.
+# Two legs — amd64 (Intel/AMD) and arm64 (Pi-class boxes, ARM servers, VMs on
+# Apple Silicon) — each running in an ubuntu:22.04 container, NOT on the
+# runner's own OS: the binary inherits the glibc of whatever builds it, so the
+# container pins the floor at 22.04 (glibc 2.35 → the package runs on 22.04
+# LTS and later) and keeps it pinned when GitHub retires runner images. Bump
+# the container tag — never the runner label — to raise the floor deliberately.
 #
-# Tag- and manually-triggered only. A release build of ferail-gpui is the
-# expensive shape of this repo's build (gpui + ~30 tree-sitter grammars, fat
-# LTO), so it doesn't ride on every push the way ci.yml's check jobs do.
+# On a `v*` tag the packages are also attached to that tag's GitHub release
+# (created if the tag has none yet — publishing the release from the GitHub UI
+# first also works; the upload then just adds assets). Manual dispatch builds
+# and smoke-tests only, leaving the artifacts on the run page.
+#
+# A release build of ferail-gpui is the expensive shape of this repo's build
+# (gpui + ~30 tree-sitter grammars, fat LTO), so it doesn't ride on every push
+# the way ci.yml's check jobs do.
 #
 # `-j2` on the build is load-bearing, not a tuning nicety: the workspace
 # release profile is lto = true + codegen-units = 1, and the two binaries
@@ -30,9 +36,20 @@ env:
 
 jobs:
   deb:
-    name: amd64 .deb (glibc floor 22.04)
-    runs-on: ubuntu-latest
+    name: ${{ matrix.arch }} .deb (glibc floor 22.04)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     container: ubuntu:22.04
+    permissions:
+      # Needed only by the tag-triggered release upload; harmless otherwise.
+      contents: write
     steps:
       # The container starts bare — no git, no curl, no compiler. This list is
       # linux-port.md § 8 minus the Vulkan pieces (gpui dlopens Vulkan at
@@ -53,6 +70,8 @@ jobs:
 
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
 
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked
@@ -66,12 +85,22 @@ jobs:
       # libs) with a typo'd package name would fail right here.
       - name: Install and smoke-test
         run: |
-          apt-get install -yq ./target/debian/ferail_*_amd64.deb
+          apt-get install -yq ./target/debian/ferail_*_${{ matrix.arch }}.deb
           ferail doctor
           ferail magic /etc/hostname
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ferail-deb-amd64
-          path: target/debian/ferail_*_amd64.deb
+          name: ferail-deb-${{ matrix.arch }}
+          path: target/debian/ferail_*_${{ matrix.arch }}.deb
           if-no-files-found: error
+
+      # Tag builds become public downloads: attach the package to the tag's
+      # release. `softprops/action-gh-release` appends assets to an existing
+      # release without touching its title/notes, and creates the release if
+      # the tag doesn't have one yet.
+      - name: Attach to GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/debian/ferail_*_${{ matrix.arch }}.deb

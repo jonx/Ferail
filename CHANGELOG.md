@@ -8,17 +8,37 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Dragging files out of Ferail into other apps now works.** Dragging rows,
+  grid cells, or sidebar folders to Finder, the Desktop, an editor, or any
+  other app never actually worked — the drag ghost just stopped at the edge
+  of the window and nothing was handed to the system, because the UI
+  framework's drag was in-window only and the code wrongly believed
+  otherwise. The framework has since gained real drag-out support; Ferail now
+  promotes a drag to a native macOS drag session the moment the pointer
+  leaves the window, so dropping files elsewhere copies them like a Finder
+  drag would. Entries inside an archive are the one exception — they have no
+  on-disk files until extracted, so they still only drag within the window.
+- **The status bar shows what Ferail itself costs.** A quiet readout on the
+  right — "up 3d 4h · CPU 0.2% · MEM 184.0 MB · 0 fps" — reports how long the
+  app has been running, its CPU share, its memory footprint, and how many
+  frames the window actually drew in the last couple of seconds. All figures
+  are about Ferail, not the machine: an idle window honestly reads 0 fps
+  (numbers only move when something is really repainting), and CPU is counted
+  the way Activity Monitor does, so it can exceed 100% on multi-core work.
+  The readout appears a few seconds after launch, once the first reliable
+  sample exists.
 - **Ferail can be packaged as an Ubuntu/Debian `.deb`.** The repo now carries
   a freedesktop desktop entry, the app icon in the standard hicolor location,
   and `cargo deb` packaging metadata; every window identifies itself to the
   desktop environment as `ferail`, so docks and taskbars show the right icon
   and group Ferail windows together. Verified end to end on Ubuntu 24.04
   (arm64): the package builds, installs, and the installed app launches and
-  browses folders. CI can now produce the Intel (amd64) package on demand,
-  built against Ubuntu 22.04 so it runs on 22.04 and later. No prebuilt
-  `.deb` is *distributed* yet, and opening a *specific folder* from the
-  desktop ("Open with Ferail") isn't wired — the binary doesn't take a
-  directory argument yet.
+  browses folders. CI builds both the Intel (amd64) and ARM (arm64)
+  packages against Ubuntu 22.04, so they run on 22.04 and later — and on
+  release tags they are attached to the GitHub release as public downloads,
+  starting with the next release. Opening a *specific folder* from the
+  desktop ("Open with Ferail") isn't wired yet — the binary doesn't take a
+  directory argument.
 - **Fixed a crash-on-build for ARM Linux.** Owner/group name lookup used a
   buffer type that only compiles where C's `char` is signed — fine on
   Intel/macOS, a build failure on ARM Linux (Raspberry Pi class machines,
