@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::*;
-use gpui_component::{ActiveTheme, h_flex, v_flex};
+use gpui_component::{ActiveTheme, Sizable as _, button::ButtonVariants as _, h_flex, v_flex};
 
 use ferail_core::{EntryKind, FileEntry};
 
@@ -41,6 +41,31 @@ pub enum PreviewTarget {
     /// A mounted volume, previewed as itself (a sidebar volume click lands
     /// here, since navigating clears the selection).
     Volume { path: PathBuf, name: String },
+    /// Content we already hold, with no file behind it — an archive entry we
+    /// decoded in memory rather than writing out. Renderers we own (text,
+    /// images) take this path, so previewing an archive entry usually touches
+    /// no disk at all.
+    InMemory {
+        name: String,
+        size: u64,
+        content: PreviewContent,
+    },
+}
+
+/// Decoded content for [`PreviewTarget::InMemory`].
+#[derive(Clone)]
+pub enum PreviewContent {
+    Text(SharedString),
+    Image(std::sync::Arc<RenderImage>),
+}
+
+impl std::fmt::Debug for PreviewContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PreviewContent::Text(_) => f.write_str("Text(..)"),
+            PreviewContent::Image(_) => f.write_str("Image(..)"),
+        }
+    }
 }
 
 /// A stand-in row for content that has no listing entry of its own — an
@@ -113,6 +138,74 @@ impl PreviewPanel {
 
     pub fn thumb_h(&self) -> f32 {
         self.thumb_h
+    }
+
+    /// Body for content we hold in memory.
+    fn in_memory_body(
+        &mut self,
+        name: String,
+        size: u64,
+        content: PreviewContent,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let theme = cx.theme();
+        let header = h_flex()
+            .w_full()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .text_scale_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.muted_foreground)
+                    .child("Preview"),
+            )
+            .child(
+                gpui_component::button::Button::new("preview-close")
+                    .small()
+                    .ghost()
+                    .icon(gpui_component::Icon::empty().path("icons/close.svg"))
+                    .tooltip("Hide preview")
+                    .on_click(cx.listener(|_, _, _window, cx| {
+                        cx.emit(PreviewCloseRequested);
+                    })),
+            );
+        let body = match content {
+            PreviewContent::Image(image) => div()
+                .w_full()
+                .child(img(image).max_w_full().object_fit(ObjectFit::Contain))
+                .into_any_element(),
+            PreviewContent::Text(text) => div()
+                .w_full()
+                .p_2()
+                .rounded_md()
+                .bg(theme.muted.opacity(0.4))
+                .font_family("monospace")
+                .text_scale_xs()
+                .child(text)
+                .into_any_element(),
+        };
+        v_flex()
+            .size_full()
+            .p_3()
+            .gap_2()
+            .child(header)
+            .child(div().text_scale_md().truncate().child(name))
+            .child(
+                div()
+                    .text_scale_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(ferail_fs_native::humanize_bytes(size)),
+            )
+            .child(
+                div()
+                    .id("preview-inmem-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .child(body),
+            )
     }
 
     /// Create-or-retarget the embedded Get Info view. Mirrors the Shell method
@@ -269,6 +362,12 @@ impl PreviewPanel {
         // The host decided what to show; the pane just renders it. This
         // used to reach into the active tab's selection, which is exactly what
         // made the pane unusable from any other window.
+        // Content held in memory renders directly: no cache lookup (the caches
+        // are path-keyed) and no Get Info block (there is no file to stat).
+        if let PreviewTarget::InMemory { name, size, content } = &self.target {
+            let (name, size, content) = (name.clone(), *size, content.clone());
+            return self.in_memory_body(name, size, content, cx);
+        }
         let (selected, selected_path, volume_target) = match &self.target {
             PreviewTarget::None => (None, None, None),
             PreviewTarget::File { path, entry } => {
@@ -277,6 +376,8 @@ impl PreviewPanel {
             PreviewTarget::Volume { path, name } => {
                 (None, None, Some((path.clone(), name.clone())))
             }
+            // Handled above; unreachable here.
+            PreviewTarget::InMemory { .. } => (None, None, None),
         };
         let scroll_key = selected_path
             .clone()

@@ -85,6 +85,43 @@ pub(super) fn dos_datetime_to_unix(dt: zip::DateTime) -> Option<i64> {
     Some(days * 86_400 + dt.hour() as i64 * 3_600 + dt.minute() as i64 * 60 + dt.second() as i64)
 }
 
+/// Read one entry into memory, or `Ok(None)` when it exceeds `cap`.
+pub(super) fn read_entry_bytes(
+    archive: &Path,
+    entry: &str,
+    password: Option<&str>,
+    cap: u64,
+) -> Result<Option<Vec<u8>>, ArchiveError> {
+    use std::io::Read as _;
+    let mut zipf = open(archive)?;
+    let count = zipf.len();
+    for i in 0..count {
+        let (name, is_dir, encrypted, size) = {
+            let e = zipf.by_index_raw(i).map_err(map_zip_err)?;
+            (e.name().to_string(), e.is_dir(), e.encrypted(), e.size())
+        };
+        if name != entry || is_dir {
+            continue;
+        }
+        if size > cap {
+            return Ok(None);
+        }
+        if encrypted && password.is_none() {
+            return Err(ArchiveError::PasswordRequired);
+        }
+        let mut f = if encrypted {
+            zipf.by_index_decrypt(i, password.unwrap_or_default().as_bytes())
+                .map_err(map_zip_err)?
+        } else {
+            zipf.by_index(i).map_err(map_zip_err)?
+        };
+        let mut buf = Vec::with_capacity(size as usize);
+        f.read_to_end(&mut buf)?;
+        return Ok(Some(buf));
+    }
+    Ok(None)
+}
+
 /// Whether a unix mode marks a symlink (`S_IFLNK`).
 fn is_symlink_mode(mode: Option<u32>) -> bool {
     mode.is_some_and(|m| m & 0o170000 == 0o120000)

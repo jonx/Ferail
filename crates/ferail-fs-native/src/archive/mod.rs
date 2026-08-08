@@ -180,6 +180,35 @@ pub fn read_toc(archive: &Path, password: Option<&str>) -> Result<Toc, ArchiveEr
     }
 }
 
+/// Read one entry's bytes into memory, up to `cap` bytes.
+///
+/// This is the no-disk path: text and images are decoded and drawn by our own
+/// renderers, so their contents never need to be written out. Formats whose
+/// preview only Quick Look can produce (PDF, Office, video) still have to be
+/// staged to a file — see `ferail_fs_native::scratch`.
+///
+/// `Ok(None)` means the entry is larger than `cap`; the caller decides whether
+/// to stage it instead. Blocking, so off the UI thread like the rest.
+pub fn read_entry_bytes(
+    archive: &Path,
+    entry: &str,
+    password: Option<&str>,
+    cap: u64,
+) -> Result<Option<Vec<u8>>, ArchiveError> {
+    feraille_off_ui("archive::read_entry_bytes");
+    let format = probe_format(archive).ok_or(ArchiveError::UnsupportedFormat)?;
+    match format {
+        Format::Zip => zip_codec::read_entry_bytes(archive, entry, password, cap),
+        f if f.is_tar_family() => tarball::read_entry_bytes(archive, f, entry, cap),
+        // 7z and the single-member compressors go through the staging path.
+        _ => Ok(None),
+    }
+}
+
+fn feraille_off_ui(what: &str) {
+    ferail_core::path_guard::assert_off_ui_thread(what);
+}
+
 /// Read a bounded summary of `archive` for the Description column.
 ///
 /// Cheap by contract: never decompresses payloads. Tar-family archives return

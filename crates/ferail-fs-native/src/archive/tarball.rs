@@ -66,6 +66,35 @@ pub(super) fn read_toc(archive: &Path, format: Format) -> Result<Toc, ArchiveErr
     })
 }
 
+/// Read one entry into memory, or `Ok(None)` when it exceeds `cap` or is
+/// absent. Tar has no index, so this streams until it finds the entry.
+pub(super) fn read_entry_bytes(
+    archive: &Path,
+    format: Format,
+    entry: &str,
+    cap: u64,
+) -> Result<Option<Vec<u8>>, ArchiveError> {
+    let reader = decoded_reader(archive, format)?;
+    let mut ar = tar::Archive::new(reader);
+    for e in ar.entries()? {
+        let mut e = e?;
+        let path = e
+            .path()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        if path != entry || !e.header().entry_type().is_file() {
+            continue;
+        }
+        if e.header().size().unwrap_or(u64::MAX) > cap {
+            return Ok(None);
+        }
+        let mut buf = Vec::new();
+        e.read_to_end(&mut buf)?;
+        return Ok(Some(buf));
+    }
+    Ok(None)
+}
+
 pub(super) fn extract(
     archive: &Path,
     format: Format,

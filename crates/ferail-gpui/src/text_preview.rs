@@ -120,6 +120,15 @@ fn read_text_preview(path: &Path) -> Result<Option<String>, ()> {
     let mut buf = vec![0u8; MAX_BYTES];
     let n = f.read(&mut buf).map_err(|_| ())?;
     buf.truncate(n);
+    Ok(decode_text_preview(buf))
+}
+
+/// The decode half of [`read_text_preview`], over bytes we already hold —
+/// archive entries are read into memory rather than written out, so they need
+/// the same text-vs-binary decision without a file to point at.
+pub(crate) fn decode_text_preview(mut buf: Vec<u8>) -> Option<String> {
+    buf.truncate(MAX_BYTES);
+    let r: Result<Option<String>, ()> = (|| {
     if buf.is_empty() {
         // An empty file is "text" (empty) — nicer than a blank
         // thumbnail box.
@@ -155,6 +164,8 @@ fn read_text_preview(path: &Path) -> Result<Option<String>, ()> {
         out.push_str("\n\u{2026}");
     }
     Ok(Some(out))
+    })();
+    r.ok().flatten()
 }
 
 /// Gate for the Latin-1 fallback: ≥ 85% of the first 512 bytes must be

@@ -59,6 +59,11 @@ const FILTER_MIN_WIDTH: f32 = 820.0;
 /// anything — so the check is free and also caps decompression bombs.
 const PREVIEW_CONFIRM_BYTES: u64 = 100 * 1024 * 1024;
 
+/// Ceiling for decoding an entry in memory. Above this we stage to disk
+/// instead of holding the whole thing — text and images worth previewing are
+/// far below it.
+const PREVIEW_INMEMORY_CAP: u64 = 16 * 1024 * 1024;
+
 /// Key context for the archive pane (keymap bindings hang off this).
 pub const ARCHIVE_CONTEXT: &str = "Archive";
 
@@ -101,6 +106,10 @@ pub struct ArchiveView {
     shell: Option<WeakEntity<Shell>>,
     password_input: Entity<InputState>,
     password: Option<String>,
+    /// Own preview panel, used when this workbench lives in its own window —
+    /// there is no Shell pane there to borrow. `None` while docked, where the
+    /// Shell's pane shows the entry instead.
+    preview_panel: Option<Entity<crate::preview_panel::PreviewPanel>>,
     /// Rounded pane width, captured at prepaint. Lets the header drop its
     /// lower-priority controls before they crush the archive's name.
     host_width: Option<f32>,
@@ -224,6 +233,7 @@ impl ArchiveView {
             password_input,
             password: None,
             host_width: None,
+            preview_panel: None,
             preview_enabled: false,
             scratch: None,
             previewed: None,
@@ -246,6 +256,34 @@ impl ArchiveView {
     pub fn handle_host_event(&mut self, event: ToolHostEvent, cx: &mut Context<Self>) {
         match event {
             ToolHostEvent::HostChanged(context) => self.host = context,
+        }
+        // Windowed: nothing else is drawing a preview pane, so host one.
+        // Docked: hand the job back to the Shell's pane.
+        match self.host {
+            ToolHostContext::Windowed => {
+                if self.preview_panel.is_none() {
+                    if let Some(shell) = self.shell.clone() {
+                        let process = crate::process_state::process_state(cx).clone();
+                        let panel = cx.new(|_| {
+                            crate::preview_panel::PreviewPanel::new(process, shell, 200.0)
+                        });
+                        cx.subscribe(
+                            &panel,
+                            |this: &mut Self,
+                             _p,
+                             _: &crate::preview_panel::PreviewCloseRequested,
+                             cx| {
+                                this.set_preview_enabled(false, cx);
+                            },
+                        )
+                        .detach();
+                        self.preview_panel = Some(panel);
+                    }
+                }
+            }
+            ToolHostContext::Docked => {
+                self.preview_panel = None;
+            }
         }
         cx.notify();
     }
@@ -326,7 +364,7 @@ impl ArchiveView {
         let size = row.size.unwrap_or(0);
         if size > PREVIEW_CONFIRM_BYTES {
             self.confirm_large_preview(row, size, window, cx);
-        } else {
+        } else if !self.preview_in_memory(&row.path.clone(), cx) {
             self.stage_preview(row.path, cx);
         }
     }
@@ -378,6 +416,98 @@ impl ArchiveView {
                     true
                 })
         });
+    }
+
+    /// Decode an entry in memory when one of our own renderers can draw it —
+    /// text and images, which is most of what anyone peeks at. Nothing touches
+    /// disk on this path. Returns false when the entry needs Quick Look, which
+    /// only reads files.
+    fn preview_in_memory(&mut self, entry: &str, cx: &mut Context<Self>) -> bool {
+        let leaf = entry.rsplit('/').next().unwrap_or(entry).to_string();
+        let ext = leaf
+            .rsplit_once('.')
+            .map(|(_, e)| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        // Only claim what we can actually draw; everything else falls through
+        // to staging so the preview stays as rich as it was.
+        const IMAGE_EXT: &[&str] = &[
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "tif",
+        ];
+        let is_image = IMAGE_EXT.contains(&ext.as_str());
+        let archive = self.archive_path.clone();
+        let password = self.password.clone();
+        let entry_owned = entry.to_string();
+        let entry_for_fallback = entry_owned.clone();
+        let this = cx.entity().downgrade();
+        cx.spawn(async move |_this, cx| {
+            let decoded = cx
+                .background_executor()
+                .spawn(async move {
+                    let bytes = ferail_fs_native::read_archive_entry_bytes(
+                        &archive,
+                        &entry_owned,
+                        password.as_deref(),
+                        PREVIEW_INMEMORY_CAP,
+                    )
+                    .ok()
+                    .flatten()?;
+                    let size = bytes.len() as u64;
+                    if is_image {
+                        let decoded = image::load_from_memory(&bytes).ok()?;
+                        let rgba = decoded.to_rgba8();
+                        let (w, h) = (rgba.width(), rgba.height());
+                        let img = crate::icons::build_render_image(rgba.into_raw(), w, h);
+                        return Some((
+                            size,
+                            crate::preview_panel::PreviewContent::Image(std::sync::Arc::new(img)),
+                        ));
+                    }
+                    let text = crate::text_preview::decode_text_preview(bytes)?;
+                    Some((
+                        size,
+                        crate::preview_panel::PreviewContent::Text(text.into()),
+                    ))
+                })
+                .await;
+            let Some((size, content)) = decoded else {
+                // Not something we can draw — stage it for Quick Look.
+                let _ = this.update(cx, |this: &mut ArchiveView, cx| {
+                    this.stage_preview(entry_for_fallback.clone(), cx);
+                });
+                return;
+            };
+            let _ = this.update(cx, |this: &mut ArchiveView, cx| {
+                this.set_preview_target(
+                    crate::preview_panel::PreviewTarget::InMemory {
+                        name: leaf.clone(),
+                        size,
+                        content,
+                    },
+                    cx,
+                );
+            });
+        })
+        .detach();
+        true
+    }
+
+    /// Point whichever panel is hosting us at `target`.
+    fn set_preview_target(
+        &mut self,
+        target: crate::preview_panel::PreviewTarget,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(panel) = &self.preview_panel {
+            panel.update(cx, |p, cx| p.set_target(target, cx));
+            cx.notify();
+            return;
+        }
+        if let Some(shell) = self.shell.clone() {
+            let _ = shell.update(cx, |s, cx| {
+                s.preview_override = Some(target);
+                cx.notify();
+            });
+        }
     }
 
     /// Extract one entry into the scratch dir off-thread, then hand the real
@@ -451,15 +581,18 @@ impl ArchiveView {
                     cx.notify();
                 });
                 let _ = shell.update(cx, |s, cx| {
-                    s.preview_override = Some(crate::preview_panel::PreviewTarget::File {
+                    crate::preview::request(s, staged.clone(), cx);
+                    cx.notify();
+                });
+                let _ = this.update(cx, |this: &mut ArchiveView, cx| {
+                    let target = crate::preview_panel::PreviewTarget::File {
                         path: staged.clone(),
                         entry: Box::new(crate::preview_panel::synthetic_entry(
                             &staged,
                             &display_name,
                         )),
-                    });
-                    crate::preview::request(s, staged, cx);
-                    cx.notify();
+                    };
+                    this.set_preview_target(target, cx);
                 });
             }
         })
@@ -1097,7 +1230,29 @@ impl Render for ArchiveView {
             })
             .child(header)
             .children(locked_strip)
-            .child(body)
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .items_stretch()
+                    .child(div().flex_1().min_w_0().child(body))
+                    // Windowed only: docked, the Shell's pane shows it.
+                    .when_some(
+                        self.preview_enabled
+                            .then(|| self.preview_panel.clone())
+                            .flatten(),
+                        |this, panel| {
+                            this.child(
+                                div()
+                                    .w(px(360.0))
+                                    .flex_none()
+                                    .border_l_1()
+                                    .border_color(border)
+                                    .child(panel),
+                            )
+                        },
+                    ),
+            )
     }
 }
 

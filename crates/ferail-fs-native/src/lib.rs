@@ -31,7 +31,7 @@ mod volumes;
 pub mod xattr_info;
 pub use archive::scratch;
 pub use archive::{
-    add_to_archive, create_archive, extract_all as extract_archive, probe_format as probe_archive_format,
+    add_to_archive, create_archive, read_entry_bytes as read_archive_entry_bytes, extract_all as extract_archive, probe_format as probe_archive_format,
     extract_entries as extract_archive_entries, read_summary as read_archive_summary,
     read_toc as read_archive_toc, AddOutcome, ArchiveError, ArchiveSummary, CreateOptions,
     ExtractOptions, ExtractOutcome, SkipReason, SkippedEntry,
