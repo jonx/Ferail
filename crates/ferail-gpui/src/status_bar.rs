@@ -81,7 +81,7 @@ pub struct StatusMetrics {
     /// unhiding it.
     pub hidden_count: usize,
     pub hidden_bytes: u64,
-    /// App-footprint figures (up · CPU · MEM · fps), pre-formatted by
+    /// App-footprint figures (up · CPU · MEM · rps), pre-formatted by
     /// the off-thread sampler's snapshot (or `--simulate-stats`).
     /// `None` until the sampler's first real reading.
     pub stats: Option<crate::system_stats::SegmentParts>,
@@ -231,19 +231,19 @@ pub fn render(
                     .child(SharedString::from(label)),
             )
         })
-        // App-footprint stats (up · CPU · MEM · fps), precomputed by
+        // App-footprint stats (up · CPU · MEM · rps), precomputed by
         // the off-thread sampler (system_stats.rs) — render only
         // formats a cached snapshot. Absent until the sampler's first
         // real reading, and always absent in screenshot mode unless
         // `--simulate-stats` pins deterministic values.
         //
         // Each figure sits in its own fixed-min-width, right-aligned
-        // box so a live value changing width ("9.8%" → "10%", "0 fps"
-        // → "58 fps") never shifts its neighbours — the separators
+        // box so a live value changing width ("9.8%" → "10%", "0 rps"
+        // → "58 rps") never shifts its neighbours — the separators
         // stay put and the bar doesn't jitter on every 2 s tick. The
         // widths are rem-based so `ui_scale` scales them with the
         // text; each fits its realistic worst case ("up 99d 23h",
-        // "CPU 999%", "MEM 1023.9 MB", "120 fps") and, being min_w,
+        // "CPU 999%", "MEM 1023.9 MB", "120 rps") and, being min_w,
         // degrades to growing rather than overlapping beyond that.
         .when_some(metrics.stats, |this, parts| {
             let cell = |text: SharedString, min_w_rems: f32| {
@@ -264,7 +264,7 @@ pub fn render(
                     .child("\u{00B7}")
                     .child(cell(parts.mem, 5.0))
                     .child("\u{00B7}")
-                    .child(cell(parts.fps, 2.6)),
+                    .child(cell(parts.rps, 2.6)),
             )
         })
         // Hidden-content summary: what the Show-Hidden toggle beside it

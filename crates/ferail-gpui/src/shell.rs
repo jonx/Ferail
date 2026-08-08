@@ -932,7 +932,7 @@ pub struct Shell {
     /// `tasks` state — useful for screenshots.
     pub simulated_progress: Option<f32>,
     /// CLI-injected status-bar stats segment (`--simulate-stats`):
-    /// renders a fixed "up · CPU · MEM · fps" label so screenshots
+    /// renders a fixed "up · CPU · MEM · rps" label so screenshots
     /// are deterministic (the real sampler never runs on the
     /// screenshot path).
     pub simulated_stats: bool,

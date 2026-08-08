@@ -135,7 +135,7 @@ pub struct Args {
     /// tasks. Lands in Stage 5.
     pub simulate_task_panel: bool,
     /// Render the status-bar stats segment with fixed reference
-    /// values ("up 3d 4h · CPU 6.8% · MEM 184.0 MB · 58 fps") — the
+    /// values ("up 3d 4h · CPU 6.8% · MEM 184.0 MB · 58 rps") — the
     /// real sampler never runs on the screenshot path, so captures
     /// stay deterministic.
     pub simulate_stats: bool,

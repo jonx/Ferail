@@ -19,17 +19,18 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   drag would. Entries inside an archive are the one exception — they have no
   on-disk files until extracted, so they still only drag within the window.
 - **The status bar shows what Ferail itself costs.** A quiet readout on the
-  right — "up 3d 4h · CPU 0.2% · MEM 184.0 MB · 0 fps" — reports how long the
-  app has been running, its CPU share, its memory footprint, and how fast it
-  draws while something is actually moving. All figures are about Ferail, not
-  the machine: an idle window honestly reads 0 fps (numbers only move when
-  something is really repainting), fps is measured only across the moments
-  the window was drawing — so a brief scroll reports its true smoothness
-  instead of an average watered down by idle time — and CPU is counted the
-  way Activity Monitor does, so it can exceed 100% on multi-core work. Each
-  number sits in a fixed-width slot, so the bar doesn't shift around as
-  values update. The readout appears a few seconds after launch, once the
-  first reliable sample exists.
+  right — "up 3d 4h · CPU 0.2% · MEM 184.0 MB · 0 rps" — reports how long the
+  app has been running, its CPU share, its memory footprint, and how many
+  times per second the window redrew. All figures are about Ferail, not the
+  machine: the last figure is deliberately labelled *rps* (redraws per
+  second), not "fps" — the app only draws when something changes, so an idle
+  window honestly reads 0, and any number it shows is a plain count of real
+  redraws rather than a claim about animation smoothness. A nonzero value
+  while you aren't doing anything means something is wastefully repainting.
+  CPU is counted the way Activity Monitor does, so it can exceed 100% on
+  multi-core work. Each number sits in a fixed-width slot, so the bar
+  doesn't shift around as values update. The readout appears a few seconds
+  after launch, once the first reliable sample exists.
 - **Ferail can be packaged as an Ubuntu/Debian `.deb`.** The repo now carries
   a freedesktop desktop entry, the app icon in the standard hicolor location,
   and `cargo deb` packaging metadata; every window identifies itself to the

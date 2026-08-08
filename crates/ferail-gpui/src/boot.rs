@@ -200,7 +200,7 @@ pub fn run_gui(args: screenshot::Args) {
         crate::process_state::start_power_watch(cx);
 
         // App-footprint sampler behind the status bar's
-        // "up · CPU · MEM · fps" segment. Not started on the
+        // "up · CPU · MEM · rps" segment. Not started on the
         // screenshot path (screenshot::run) — captures use the
         // deterministic `--simulate-stats` label instead
         // (docs/features/SYSTEM_STATS.md).
@@ -336,9 +336,28 @@ fn open_shell_window_sized(cx: &mut App, size_hint: Option<(f32, f32)>) {
             cx.new(|cx| gpui_component::Root::new(view, window, cx))
         }) {
             crate::log_error!(90, "could not open main window: {e}");
+        } else {
+            install_native_drag_operations();
         }
     })
     .detach();
+}
+
+/// Widen gpui's outbound drag mask to Finder parity (move/copy/alias by
+/// destination + modifier keys, with the system's “+” copy badge). Must
+/// run after a gpui window exists — the window classes it patches are
+/// registered lazily on first window construction. Idempotent, so every
+/// shell-window open calls it. No-op off macOS: drag-out on other
+/// platforms uses upstream's masks as-is.
+fn install_native_drag_operations() {
+    #[cfg(target_os = "macos")]
+    if !crate::platform_shell::install_native_drag_operations() {
+        crate::log_warn!(
+            60,
+            "native drag-operations override not installed (gpui window classes not found); \
+             external drags fall back to copy-only"
+        );
+    }
 }
 
 /// Open a new Shell window and run `after` against its Shell once the
@@ -361,6 +380,7 @@ fn open_shell_window_then(
             cx.new(|cx| gpui_component::Root::new(view, window, cx))
         }) {
             Ok(handle) => {
+                install_native_drag_operations();
                 let _ = handle.update(cx, |root, window, cx| {
                     let Ok(shell) = root.view().clone().downcast::<Shell>() else {
                         return;
@@ -557,4 +577,18 @@ fn title(id: &'static str, fallback: &'static str) -> SharedString {
     find(CommandId(id))
         .map(|spec| SharedString::from(spec.title))
         .unwrap_or_else(|| SharedString::from(fallback))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    /// The drag-operations override patches gpui's `GPUIWindow` /
+    /// `GPUIPanel` classes by name (registered in a `#[ctor]` at load, so
+    /// they exist here too). If upstream renames them this fails — the
+    /// override would otherwise silently degrade to copy-only external
+    /// drags. Second call checks idempotence.
+    #[test]
+    fn native_drag_operations_override_installs() {
+        assert!(crate::platform_shell::install_native_drag_operations());
+        assert!(crate::platform_shell::install_native_drag_operations());
+    }
 }
