@@ -551,9 +551,16 @@ Publishing *source* is unaffected by the transitive GPL chain; a redistributable
     <https://github.com/zed-industries/zed/issues/55470> (acknowledged but stuck
     in legal — do **not** assume it lands on a timeline).
   Context in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
-- Code signing / notarization / `.dmg` / release CI: tracked under
-  **Packaging & Polish** (Developer ID, hardened-runtime-without-sandbox
-  entitlements, notarization + stapling, versioning/tags, macOS release job).
+- ✅ macOS code signing / notarization / `.dmg` — **shipped in 0.2.2** via
+  `scripts/package-mac.sh` (Developer ID + hardened runtime, notarytool
+  profile `D4Mac`, stapled; the released dmg passes
+  `spctl --assess` as "Notarized Developer ID"). Still open: a **macOS
+  release job in CI** — needs the signing cert (.p12) and a notary API key
+  as encrypted repo secrets; until then a mac release is one local
+  `scripts/package-mac.sh` run + `gh release upload`. Linux .debs already
+  release from CI on `v*` tags (`.github/workflows/deb.yml`); Windows zip
+  remains a local `scripts/package-win.ps1` run (and unsigned — see the
+  Authenticode item under Cross-Platform).
 
 ## Cleanup
 
