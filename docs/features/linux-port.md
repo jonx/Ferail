@@ -115,7 +115,31 @@ blind from a Mac):
 - **trash, `open_with_candidates`, video** — freedesktop-trash /
   MIME-association parsing / GStreamer respectively.
 
-**Packaging scaffold (2026-08-04) — host-agnostic parts done, .deb untested:**
+**Packaging (2026-08-08) — .deb builds, installs, and runs on Ubuntu 24.04:**
+
+Validated end to end in an arm64 QEMU VM (Ubuntu 24.04 server): `cargo deb
+-p ferail-gpui` produces `ferail_<ver>_arm64.deb`; it installs via apt;
+`ferail doctor` and the `magic` CLI work; the GUI launches under Xvfb with a
+1180×760 window whose `WM_CLASS` is `("ferail", "ferail")` — the desktop-file
+association string. Findings worth keeping:
+
+- **`c_char` portability:** the first arm64 build failed because
+  `stat_info.rs` spelled `getpwuid_r`/`getgrgid_r` buffers as `[i8; …]`;
+  `c_char` is `u8` on aarch64 Linux. Never write `i8` for a C string buffer.
+- **Fat-LTO links are memory-hungry:** the two `lto = true,
+  codegen-units = 1` binaries linking in parallel OOM-killed an 8 GB VM.
+  16 GB + `-j2` (or just more RAM) builds fine.
+- **dlopen'd deps are invisible to `$auto`:** dpkg-shlibdeps only lists
+  *linked* libs, so `libvulkan1` / `libwayland-client0` / `libwayland-cursor0`
+  are spelled out in `depends` by hand (gpui dlopens them), with
+  `mesa-vulkan-drivers` as Recommends.
+- **Weston's headless backend crashes gpui** (no `wl_seat`; gpui unwraps it
+  in `wayland/client.rs`). Use Xvfb + the X11 backend for headless smoke
+  tests — but window *captures* under Xvfb come back black (no DRI3, Vulkan
+  presents outside X's readable surface), so pixel-level verification still
+  waits on the `render_to_image` TODO or a real desktop session.
+
+**Original scaffold notes (2026-08-04):**
 
 - **Desktop identity:** `crates/ferail-gpui/resources/linux/ferail.desktop`
   (freedesktop desktop entry) + every window now sets

@@ -8,6 +8,19 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Ferail can be packaged as an Ubuntu/Debian `.deb`.** The repo now carries
+  a freedesktop desktop entry, the app icon in the standard hicolor location,
+  and `cargo deb` packaging metadata; every window identifies itself to the
+  desktop environment as `ferail`, so docks and taskbars show the right icon
+  and group Ferail windows together. Verified end to end on Ubuntu 24.04
+  (arm64): the package builds, installs, and the installed app launches and
+  browses folders. No prebuilt `.deb` is distributed yet, and opening a
+  *specific folder* from the desktop ("Open with Ferail") isn't wired — the
+  binary doesn't take a directory argument yet.
+- **Fixed a crash-on-build for ARM Linux.** Owner/group name lookup used a
+  buffer type that only compiles where C's `char` is signed — fine on
+  Intel/macOS, a build failure on ARM Linux (Raspberry Pi class machines,
+  ARM servers, Apple-Silicon VMs).
 - **Choose your terminal.** Settings → Files → Terminal picks which terminal
   "Open Terminal Here" launches — an app name or `.app` bundle on macOS, a
   program path, or a command on `PATH` — with your own launch arguments

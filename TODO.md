@@ -481,15 +481,19 @@ fallback). Remaining is the UX the system explorers have and we don't:
   work: the file-URL clipboard (`text/uri-list`), and the dark/volume/power
   observers (D-Bus / udisks2 / logind). These need a real desktop (mounts,
   session events) to verify meaningfully — best paired with the next item.
-  **Ubuntu/Debian packaging scaffold landed (2026-08-04):**
+  **Ubuntu/Debian packaging works (2026-08-08):**
   `resources/linux/ferail.desktop`, cargo-deb metadata
   (`[package.metadata.deb]` in ferail-gpui's Cargo.toml), and
   `WindowOptions::app_id = "ferail"` on every window
-  (`base_window_options()`). Remaining: run `cargo deb -p ferail-gpui` on a
-  Debian-family host (oldest supported Ubuntu LTS — the .deb inherits its
-  glibc floor), validate install/launch/taskbar identity, and later add
-  `Exec=ferail %U` + `MimeType=inode/directory;` once the binary accepts a
-  directory argument (today a bare path exits as an unknown subcommand).
+  (`base_window_options()`). Validated in an arm64 Ubuntu 24.04 QEMU VM:
+  builds, installs, `ferail doctor` clean, GUI launches under Xvfb with
+  `WM_CLASS = ferail` (details + build-host gotchas in
+  [docs/features/linux-port.md](docs/features/linux-port.md) § packaging).
+  Remaining: an **amd64** build (CI `ubuntu` runner on the oldest supported
+  LTS — the .deb inherits the build host's glibc floor), taskbar-identity
+  check on a real desktop session, and later `Exec=ferail %U` +
+  `MimeType=inode/directory;` once the binary accepts a directory argument
+  (today a bare path exits as an unknown subcommand).
 - Linux headless screenshots: implement `render_to_image` in `gpui_wgpu`
   (offscreen render target + `copy_texture_to_buffer` readback, BGRA/RGBA) and
   wire it through both `gpui_linux` window backends (Wayland + X11), mirroring
