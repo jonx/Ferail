@@ -992,10 +992,6 @@ pub struct Shell {
     /// Path the preview pane showed last frame — the selection-change
     /// edge detector for the scroll reset above.
     pub preview_scroll_path: Option<PathBuf>,
-    /// The embedded Get Info panel shown in the preview pane. A single
-    /// reused entity, retargeted as the selection changes (the same view
-    /// the Cmd+I popup uses, in `embedded` mode). `None` until first shown.
-    pub preview_info: Option<gpui::Entity<crate::entry_info::EntryInfoView>>,
     /// UI zoom factor (Stage 9.b.5). 1.0 = default; bumped by Cmd+=
     /// and Cmd+-. Applied via `apply_ui_zoom`, which writes the
     /// gpui-component theme base font size (`theme.font_size`); `Root`
@@ -1769,7 +1765,6 @@ impl Shell {
             preview_visible: false,
             preview_override: None,
             preview_panel: None,
-            preview_info: None,
             preview_scroll: ScrollHandle::new(),
             preview_text_scroll: ScrollHandle::new(),
             tab_scroll: ScrollHandle::new(),
@@ -2252,36 +2247,6 @@ impl Shell {
         if let Some(p) = self.path_for_row(row_ix, cx) {
             crate::preview::request(self, p, cx);
         }
-    }
-
-    /// Create or retarget the embedded preview Get Info panel for `path`.
-    /// Reuses one entity across selections so we don't churn views; returns
-    /// a clone to drop into the preview render.
-    pub(crate) fn sync_preview_info(
-        &mut self,
-        path: PathBuf,
-        name: String,
-        target: ferail_core::entry_info::InfoTarget,
-        known_size: Option<u64>,
-        cx: &mut Context<Self>,
-    ) -> gpui::Entity<crate::entry_info::EntryInfoView> {
-        match &self.preview_info {
-            Some(view) => {
-                let p = path.clone();
-                let n = name.clone();
-                view.update(cx, |view, cx| view.retarget(p, n, known_size, cx));
-            }
-            None => {
-                let weak = cx.weak_entity();
-                let view = cx.new(|cx| {
-                    crate::entry_info::EntryInfoView::new_embedded(
-                        path, name, target, known_size, weak, cx,
-                    )
-                });
-                self.preview_info = Some(view);
-            }
-        }
-        self.preview_info.clone().expect("preview_info set above")
     }
 
     pub fn path_for_row(&self, row_ix: usize, cx: &App) -> Option<PathBuf> {

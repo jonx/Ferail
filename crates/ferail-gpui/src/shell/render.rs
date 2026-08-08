@@ -142,28 +142,6 @@ fn tab_drop_gap(pos: usize, cx: &mut Context<Shell>) -> impl IntoElement {
         )
 }
 
-/// A stand-in row for an archive entry staged into the scratch dir, labelled
-/// with the entry's real name rather than its hashed scratch filename.
-fn archive_preview_entry(staged: &std::path::Path, name: &str) -> ferail_core::FileEntry {
-    let size = std::fs::metadata(staged).map(|m| m.len()).unwrap_or(0);
-    ferail_core::FileEntry {
-        id: ferail_core::NodeId::from_raw(1).expect("nonzero"),
-        name: name.to_string(),
-        display_name: name.to_string(),
-        name_has_hazards: false,
-        kind: ferail_core::EntryKind::File,
-        size,
-        mtime_unix: 0,
-        display_size: ferail_fs_native::humanize_bytes(size),
-        display_kind: String::new(),
-        display_magic: String::new(),
-        display_description: String::new(),
-        is_quarantined: false,
-        quarantine: None,
-        hidden: false,
-    }
-}
-
 impl Shell {
     fn tool_result_breadcrumb_summary(&self) -> Option<String> {
         let surface = self.active_tab().tool_result.as_ref()?;
