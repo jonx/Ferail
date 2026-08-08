@@ -68,6 +68,13 @@ disguised whitespace are rendered as visible chips instead of letting a name lie
 
 ![Filename hazards](docs/images/tour-filename-hazards.png)
 
+**The same binary is a command-line toolbox** — `ferail magic` prints what
+files really are (bytes, not extensions), `ferail du` a disk-usage summary,
+`ferail thumb` extracts any file's thumbnail to a PNG, and `ferail doctor`
+runs a config/storage/dependency health check:
+
+![Ferail CLI](docs/images/tour-cli.png)
+
 And the ones a screenshot can't show: sticky zoom that carries your zoom and pan
 to the next file; chroma-keyed transparent video windows you can stack over your
 desktop (optional mpv backend); a dock drawer that parks against a screen edge
