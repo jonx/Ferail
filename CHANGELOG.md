@@ -6,7 +6,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 **Unreleased** collects work not yet in a tagged build.
 
-## Unreleased
+## 0.3.0 — 2026-08-08
+
+First release with **Linux downloads** (Ubuntu/Debian `.deb`, Intel and ARM),
+and the first where dragging files out of Ferail to other apps works on macOS.
+macOS remains signed + notarized; Windows remains unsigned (SHA-256 on the
+release page).
 
 - **Dragging files out of Ferail into other apps now works — with full
   Finder semantics.** Dragging rows, grid cells, or sidebar folders to
@@ -43,9 +48,9 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   and group Ferail windows together. Verified end to end on Ubuntu 24.04
   (arm64): the package builds, installs, and the installed app launches and
   browses folders. CI builds both the Intel (amd64) and ARM (arm64)
-  packages against Ubuntu 22.04, so they run on 22.04 and later — and on
-  release tags they are attached to the GitHub release as public downloads,
-  starting with the next release. Opening a *specific folder* from the
+  packages against Ubuntu 22.04, so they run on 22.04 and later — and they
+  are attached to the GitHub release as public downloads, starting with this
+  release. Opening a *specific folder* from the
   desktop ("Open with Ferail") isn't wired yet — the binary doesn't take a
   directory argument.
 - **Fixed a crash-on-build for ARM Linux.** Owner/group name lookup used a

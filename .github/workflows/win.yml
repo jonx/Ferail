@@ -1,0 +1,60 @@
+# Build the Windows portable ZIP via scripts/package-win.ps1 — the same script
+# a local Windows box would run, so CI and hand-built artifacts stay identical.
+# The build is UNSIGNED (no Authenticode cert in CI; see the SmartScreen note
+# in README.md § Windows) — publish the ZIP's SHA-256 with the release so
+# downloads are at least verifiable.
+#
+# On a `v*` tag the ZIP is attached to that tag's GitHub release, same
+# contract as deb.yml. Manual dispatch leaves it as a run artifact.
+name: Windows zip
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: win-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  zip:
+    name: win-x64 portable zip
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      # -NoInstaller: the runner image ships Inno Setup, but the installer
+      # path hasn't been exercised from CI — ship the portable ZIP that
+      # matches what 0.2.2 distributed. Drop the flag once the installer is
+      # validated end to end.
+      - name: Build portable ZIP
+        shell: pwsh
+        run: ./scripts/package-win.ps1 -NoInstaller
+
+      - name: SHA-256
+        shell: pwsh
+        run: Get-FileHash target/package/Ferail-*-win-x64.zip -Algorithm SHA256 | Format-List
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ferail-win-x64
+          path: target/package/Ferail-*-win-x64.zip
+          if-no-files-found: error
+
+      - name: Attach to GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/package/Ferail-*-win-x64.zip
