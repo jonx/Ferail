@@ -529,6 +529,10 @@ struct DragSnapshot {
     /// value (gpui's mac backend needs it by value), but the walk,
     /// membership probes, and ghost assembly happen once.
     paths: Vec<PathBuf>,
+    /// Parallel to `paths`: whether each entry is a directory, from the
+    /// already-listed `EntryKind` — so promoting the drag to a native
+    /// session (`external_drag_payload`) never stats anything.
+    dirs: Vec<bool>,
     names: SmallVec<[SharedString; GHOST_STACK_CAP]>,
     icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>,
 }
@@ -650,6 +654,7 @@ impl FileListDelegate {
         }
         let want_thumb = show_thumbnails(cx);
         let mut paths: Vec<PathBuf> = Vec::with_capacity(self.selected_set.len());
+        let mut dirs: Vec<bool> = Vec::with_capacity(self.selected_set.len());
         let mut icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]> = smallvec![];
         for entry in &self.entries {
             if !self.selected_set.contains(&entry.id) {
@@ -660,6 +665,7 @@ impl FileListDelegate {
             };
             self.push_ghost_icon(entry, &path, want_thumb, &mut icons);
             paths.push(path);
+            dirs.push(matches!(entry.kind, EntryKind::Directory));
         }
         // Names shown on the ghost, lead-first and capped — the
         // single chip uses the first; the multi list shows up to
@@ -671,6 +677,7 @@ impl FileListDelegate {
             .collect();
         DragSnapshot {
             paths,
+            dirs,
             names,
             icons,
         }
@@ -1268,9 +1275,13 @@ impl TableDelegate for FileListDelegate {
         if in_set && !is_lead {
             row = row.bg(crate::selection_colors::fill(cx));
         }
-        // OS drag-out: GPUI's macOS backend recognises ExternalPaths
-        // and uses NSFilePromise / NSPasteboard, so dragging rows to
-        // Finder / other apps drops the actual files. Spec §3.1:
+        // OS drag-out: `on_drag` alone is a purely in-window gpui drag —
+        // the `external_drag_payload` chained below is what promotes it
+        // to a native `NSDraggingSession` (file URLs on the pasteboard)
+        // the moment the pointer leaves the viewport, so dragging rows
+        // to Finder / other apps drops the actual files. The resolver
+        // runs on the UI thread at promotion time: directory-ness comes
+        // from the cached `EntryKind`, never from a stat. Spec §3.1:
         // pressing a selected row drags the full visible-order
         // selection; pressing an unselected row drags just that row.
         if let Some(entry) = self.entries.get(row_ix) {
@@ -1313,17 +1324,28 @@ impl TableDelegate for FileListDelegate {
                         let count = snapshot.paths.len();
                         let names = snapshot.names.clone();
                         let ghost_icons = snapshot.icons.clone();
-                        return row.on_drag(
-                            ExternalPaths(snapshot.paths.clone().into()),
-                            move |_paths, offset, _window, cx| {
-                                cx.new(|_| DragBadge {
-                                    names: names.clone(),
-                                    icons: ghost_icons.clone(),
-                                    count,
-                                    offset,
-                                })
-                            },
-                        );
+                        let dirs = snapshot.dirs.clone();
+                        return row
+                            .on_drag(
+                                ExternalPaths(snapshot.paths.clone().into()),
+                                move |_paths, offset, _window, cx| {
+                                    cx.new(|_| DragBadge {
+                                        names: names.clone(),
+                                        icons: ghost_icons.clone(),
+                                        count,
+                                        offset,
+                                    })
+                                },
+                            )
+                            .external_drag_payload::<ExternalPaths>(move |paths, _window, _cx| {
+                                Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new(
+                                    paths
+                                        .paths()
+                                        .iter()
+                                        .cloned()
+                                        .zip(dirs.iter().copied()),
+                                )))
+                            });
                     }
                 }
             } else if let Some(path) = self.path_for_entry(entry.id) {
@@ -1332,17 +1354,24 @@ impl TableDelegate for FileListDelegate {
                 self.push_ghost_icon(entry, &path, show_thumbnails(cx), &mut ghost_icons);
                 let names: SmallVec<[SharedString; GHOST_STACK_CAP]> =
                     smallvec![ghost_name(&path)];
-                return row.on_drag(
-                    ExternalPaths(vec![path].into()),
-                    move |_paths, offset, _window, cx| {
-                        cx.new(|_| DragBadge {
-                            names: names.clone(),
-                            icons: ghost_icons.clone(),
-                            count: 1,
-                            offset,
-                        })
-                    },
-                );
+                let is_dir = matches!(entry.kind, EntryKind::Directory);
+                return row
+                    .on_drag(
+                        ExternalPaths(vec![path].into()),
+                        move |_paths, offset, _window, cx| {
+                            cx.new(|_| DragBadge {
+                                names: names.clone(),
+                                icons: ghost_icons.clone(),
+                                count: 1,
+                                offset,
+                            })
+                        },
+                    )
+                    .external_drag_payload::<ExternalPaths>(move |paths, _window, _cx| {
+                        Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new(
+                            paths.paths().iter().cloned().map(|p| (p, is_dir)),
+                        )))
+                    });
             }
         }
         row

@@ -105,6 +105,25 @@ type VolumeRow = (PathBuf, String, Option<(u64, u64)>, bool, bool);
 /// `VolumeRow` plus the "is favorited" star flag.
 type VolumeRowFav = (PathBuf, String, Option<(u64, u64)>, bool, bool, bool);
 
+/// Grid drag payload shared by every selected cell in a render pass:
+/// (paths, parallel is-dir flags, ghost icons, ghost names). `Rc` so the
+/// per-cell clones share one allocation.
+type GridSelDrag = (
+    Rc<Vec<PathBuf>>,
+    Rc<Vec<bool>>,
+    smallvec::SmallVec<[Arc<gpui::RenderImage>; crate::file_list::GHOST_STACK_CAP]>,
+    smallvec::SmallVec<[SharedString; crate::file_list::GHOST_STACK_CAP]>,
+);
+
+/// Per-cell drag payload: same shape as [`GridSelDrag`] but owned, since
+/// an unselected cell drags only itself.
+type GridCellDrag = (
+    smallvec::SmallVec<[PathBuf; 2]>,
+    smallvec::SmallVec<[bool; 2]>,
+    smallvec::SmallVec<[Arc<gpui::RenderImage>; crate::file_list::GHOST_STACK_CAP]>,
+    smallvec::SmallVec<[SharedString; crate::file_list::GHOST_STACK_CAP]>,
+);
+
 fn tab_drop_gap(pos: usize, cx: &mut Context<Shell>) -> impl IntoElement {
     let theme = cx.theme();
     let accent = theme.primary;
@@ -910,14 +929,11 @@ impl Shell {
             // DragSnapshot; this closure only holds a read borrow, so
             // it hoists instead.)
             let show_thumbs_for_drag = show_thumbs;
-            let sel_drag: Option<(
-                Rc<Vec<PathBuf>>,
-                SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]>,
-                SmallVec<[SharedString; GHOST_STACK_CAP]>,
-            )> = if del.selected_set.is_empty() {
+            let sel_drag: Option<GridSelDrag> = if del.selected_set.is_empty() {
                 None
             } else {
                 let mut paths: Vec<PathBuf> = Vec::with_capacity(del.selected_set.len());
+                let mut dirs: Vec<bool> = Vec::with_capacity(del.selected_set.len());
                 let mut gicons: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
                     SmallVec::new();
                 for e in entries.iter() {
@@ -938,6 +954,7 @@ impl Shell {
                             None => gicons.push(icons.borrow_mut().icon_for(e, &p)),
                         }
                     }
+                    dirs.push(matches!(e.kind, EntryKind::Directory));
                     paths.push(p);
                 }
                 let names: SmallVec<[SharedString; GHOST_STACK_CAP]> = paths
@@ -955,7 +972,7 @@ impl Shell {
                             .into()
                     })
                     .collect();
-                Some((Rc::new(paths), gicons, names))
+                Some((Rc::new(paths), Rc::new(dirs), gicons, names))
             };
 
             let (row_lo, row_hi) = (row_range.start, row_range.end);
@@ -1076,16 +1093,20 @@ impl Shell {
                     // come only from already-warm caches, so building
                     // them never touches the filesystem.
                     let is_dir = matches!(entry.kind, EntryKind::Directory);
-                    let (drag_paths, ghost_icons, ghost_names): (
-                        SmallVec<[PathBuf; 2]>,
-                        SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]>,
-                        SmallVec<[SharedString; GHOST_STACK_CAP]>,
-                    ) = if selected {
+                    let (drag_paths, drag_dirs, ghost_icons, ghost_names): GridCellDrag = if selected {
                         match &sel_drag {
-                            Some((paths, gi, gn)) => {
-                                (SmallVec::from_vec((**paths).clone()), gi.clone(), gn.clone())
-                            }
-                            None => (SmallVec::new(), SmallVec::new(), SmallVec::new()),
+                            Some((paths, dirs, gi, gn)) => (
+                                SmallVec::from_vec((**paths).clone()),
+                                SmallVec::from_vec((**dirs).clone()),
+                                gi.clone(),
+                                gn.clone(),
+                            ),
+                            None => (
+                                SmallVec::new(),
+                                SmallVec::new(),
+                                SmallVec::new(),
+                                SmallVec::new(),
+                            ),
                         }
                     } else {
                         let mut gi: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
@@ -1112,6 +1133,7 @@ impl Shell {
                             .into();
                         (
                             SmallVec::from_vec(vec![path.clone()]),
+                            SmallVec::from_vec(vec![is_dir]),
                             gi,
                             SmallVec::from_vec(vec![name]),
                         )
@@ -1262,6 +1284,22 @@ impl Shell {
                                         count: drag_count,
                                         offset,
                                     })
+                                },
+                            )
+                            // Promote to a native drag session when the
+                            // pointer leaves the window; dir-ness comes
+                            // from the cached EntryKind, never a stat.
+                            .external_drag_payload::<ExternalPaths>(
+                                move |paths, _window, _cx| {
+                                    Some(gpui::ExternalDragPayload::Files(
+                                        gpui::FileDragPaths::new(
+                                            paths
+                                                .paths()
+                                                .iter()
+                                                .cloned()
+                                                .zip(drag_dirs.iter().copied()),
+                                        ),
+                                    ))
                                 },
                             )
                         })

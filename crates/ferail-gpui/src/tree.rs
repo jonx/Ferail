@@ -426,7 +426,14 @@ fn render_tree_row(
                     offset,
                 })
             },
-        );
+        )
+        // Tree rows are always directories; promote the drag to a
+        // native session when the pointer leaves the window.
+        .external_drag_payload::<gpui::ExternalPaths>(move |paths, _window, _cx| {
+            Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new(
+                paths.paths().iter().cloned().map(|p| (p, true)),
+            )))
+        });
     if is_active {
         row = row.bg(theme.sidebar_accent);
     } else {

@@ -78,10 +78,23 @@ driven headlessly — interactive verification pending.
   each file-list delegate); the next plain Paste of exactly that set is a
   Move (then clears the mark), and marked rows render dimmed (0.45).
 
-**Dragging *from* the list (2026-06-18):** rows already drag out to
-Finder via `ExternalPaths` (NSFilePromise); added a Finder-like cursor
-ghost (`DragBadge`: the item's icon or warmed Quick Look thumbnail +
-name, or "N items" with a stacked-card hint) that tracks the pointer.
+**Dragging *from* the list (2026-06-18; native drag-out fixed
+2026-08-08):** the 2026-06-18 work believed `ExternalPaths` made gpui's
+mac backend start a native drag — it never did; gpui's `on_drag` is
+purely in-window, so drags to Finder/other apps silently went nowhere
+(the ghost just clipped at the window edge). Real drag-out arrived with
+gpui's `external_drag_payload` API (zed #58161): each drag source
+(file-list rows, grid cells, sidebar tree rows) now registers a resolver
+that, the moment the pointer leaves the viewport, hands the platform a
+`FileDragPaths` payload — paths paired with cached-`EntryKind`
+directory-ness, so promotion never stats — and gpui begins a real
+`NSDraggingSession`; from there the OS draws file icons and our
+in-window ghost hands off. Inside the window the ghost is the
+Finder-like `DragBadge` (the item's icon or warmed Quick Look thumbnail
++ name, or "N items" with a stacked-card hint) that tracks the pointer.
+Archive-mode rows still drag in-window only — their entries have no
+on-disk path until extracted (native promotion for those needs
+file-promise materialization, deliberately deferred).
 gpui paints the drag view at `mouse − cursor_offset` and `cursor_offset`
 is the grab point within the *dragged element* — for a full-width row
 that pins the ghost to the row's left edge, so the badge re-anchors
