@@ -931,6 +931,11 @@ pub struct Shell {
     /// at that fraction (negative = indeterminate) regardless of
     /// `tasks` state — useful for screenshots.
     pub simulated_progress: Option<f32>,
+    /// CLI-injected status-bar stats segment (`--simulate-stats`):
+    /// renders a fixed "up · CPU · MEM · fps" label so screenshots
+    /// are deterministic (the real sampler never runs on the
+    /// screenshot path).
+    pub simulated_stats: bool,
     /// Cmd+L breadcrumb edit (Stage 9.b): when true the breadcrumb
     /// renders an Input field pre-filled with the active tab's
     /// current_dir instead of the clickable segments. Enter commits
@@ -1748,6 +1753,7 @@ impl Shell {
             breadcrumb_children: HashMap::new(),
             task_panel_open: false,
             simulated_progress: None,
+            simulated_stats: false,
             breadcrumb_editing: false,
             breadcrumb_input,
             shortcuts_help_filter: None,

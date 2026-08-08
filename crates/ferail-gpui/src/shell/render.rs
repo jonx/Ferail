@@ -2915,6 +2915,24 @@ impl Render for Shell {
                 }
             })
         };
+        // App-footprint stats segment. The real path reads the cached
+        // snapshot the off-thread sampler last published (never
+        // samples here — Prime Directive); `--simulate-stats` pins the
+        // fixed reference values from the module docs instead.
+        let stats_label: Option<gpui::SharedString> = if self.simulated_stats {
+            Some(crate::system_stats::format_segment(
+                3 * 86_400 + 4 * 3_600, // "up 3d 4h"
+                6.8,
+                184 * 1024 * 1024,
+                58.0,
+            ))
+        } else {
+            self.process
+                .system_stats
+                .borrow()
+                .as_ref()
+                .map(|s| s.segment_label(window.window_handle().window_id()))
+        };
         let status_bar = crate::status_bar::render(
             metrics,
             &self.process.tasks,
@@ -2922,6 +2940,7 @@ impl Render for Shell {
             Some(toggle_task_panel),
             self.show_hidden,
             Some(toggle_hidden_cb),
+            stats_label,
             cx,
         );
         // Auto-dismiss the background-task popover when the pointer

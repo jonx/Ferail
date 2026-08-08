@@ -134,6 +134,11 @@ pub struct Args {
     /// Open the task panel pre-populated with two representative
     /// tasks. Lands in Stage 5.
     pub simulate_task_panel: bool,
+    /// Render the status-bar stats segment with fixed reference
+    /// values ("up 3d 4h · CPU 6.8% · MEM 184.0 MB · 58 fps") — the
+    /// real sampler never runs on the screenshot path, so captures
+    /// stay deterministic.
+    pub simulate_stats: bool,
     /// Force the file pane into the slow-load skeleton state (the view
     /// a spun-down external drive shows after
     /// `SLOW_LOAD_INDICATOR_DELAY`), labeled with the given name.
@@ -293,6 +298,7 @@ pub fn parse_args() -> Args {
                 );
             }
             "--simulate-task-panel" => args.simulate_task_panel = true,
+            "--simulate-stats" => args.simulate_stats = true,
             "--simulate-slow-load" => args.simulate_slow_load = iter.next(),
             "--shortcuts-help" => args.shortcuts_help = Some(String::new()),
             "--shortcuts-help-filter" => args.shortcuts_help = iter.next(),
@@ -376,6 +382,7 @@ OPTIONS
   --simulate-toast <text>  Push an error toast. Lands in Stage 5.
   --simulate-progress <p>  Force-show the progress strip. Lands in Stage 5.
   --simulate-task-panel    Open task panel with fixtures. Lands in Stage 5.
+  --simulate-stats         Show the status-bar stats segment with fixed values.
   --simulate-slow-load <name>  Force the slow-device skeleton loading view.
   --shortcuts-help[-filter] Open keyboard help overlay. Lands in Stage 9.
   --ui-scale <factor>      Apply UI zoom. Lands in Stage 9.
@@ -780,6 +787,7 @@ struct ShellArgs {
     simulate_toast: Option<String>,
     simulate_progress: Option<f32>,
     simulate_task_panel: bool,
+    simulate_stats: bool,
     simulate_slow_load: Option<String>,
     shortcuts_help: Option<String>,
     splitter: Option<f32>,
@@ -823,6 +831,7 @@ impl From<&Args> for ShellArgs {
             simulate_toast: a.simulate_toast.clone(),
             simulate_progress: a.simulate_progress,
             simulate_task_panel: a.simulate_task_panel,
+            simulate_stats: a.simulate_stats,
             simulate_slow_load: a.simulate_slow_load.clone(),
             shortcuts_help: a.shortcuts_help.clone(),
             splitter: a.splitter,
@@ -1254,6 +1263,12 @@ impl ShellArgs {
         if let Some(p) = self.simulate_progress {
             shell.update(cx, |s, cx| {
                 s.simulated_progress = Some(p);
+                cx.notify();
+            });
+        }
+        if self.simulate_stats {
+            shell.update(cx, |s, cx| {
+                s.simulated_stats = true;
                 cx.notify();
             });
         }

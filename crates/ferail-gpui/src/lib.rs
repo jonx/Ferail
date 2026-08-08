@@ -58,6 +58,7 @@ pub mod special_folders;
 pub mod splitter;
 pub mod status_bar;
 pub mod syntax_extra;
+pub mod system_stats;
 pub mod task_panel;
 pub mod tasks;
 pub mod text;

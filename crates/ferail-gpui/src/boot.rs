@@ -199,6 +199,13 @@ pub fn run_gui(args: screenshot::Args) {
         // directory tabs on wake (docs/features/POWER.md).
         crate::process_state::start_power_watch(cx);
 
+        // App-footprint sampler behind the status bar's
+        // "up · CPU · MEM · fps" segment. Not started on the
+        // screenshot path (screenshot::run) — captures use the
+        // deterministic `--simulate-stats` label instead
+        // (docs/features/SYSTEM_STATS.md).
+        crate::system_stats::start_sampler(cx);
+
         // Cmd+N → new window. The handler runs at App level so the
         // binding works regardless of which window holds focus, and
         // works with zero windows (after the last window closes the

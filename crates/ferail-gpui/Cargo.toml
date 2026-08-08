@@ -60,6 +60,9 @@ notify = "7.0"
 # Streaming directory enumeration sends worker batches to a GPUI task
 # without timer polling.
 async-channel = "2.5"
+# Status-bar app-footprint segment: samples this process's CPU / RSS on the
+# background executor (docs/features/SYSTEM_STATS.md).
+sysinfo.workspace = true
 # Used to build the smallvec ExternalPaths expects for OS drag-out.
 smallvec = "1"
 # Wraps RGBA byte buffers we pull from NSWorkspace into a Frame the

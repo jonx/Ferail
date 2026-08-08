@@ -199,6 +199,14 @@ pub struct ProcessState {
     /// `Rc`) with each file-list delegate so cut rows render dimmed.
     /// (docs/features/FILE_OPS.md)
     pub cut_marker: Rc<RefCell<Vec<std::path::PathBuf>>>,
+
+    /// Latest app-footprint sample (uptime / CPU / RSS / fps) for the
+    /// status bar's stats segment. `None` until the sampler publishes
+    /// its first real reading (~2 ticks after boot — the first refresh
+    /// only primes the CPU-delta baseline). Written by
+    /// `system_stats::start_sampler`'s drain, read by render
+    /// (docs/features/SYSTEM_STATS.md).
+    pub system_stats: RefCell<Option<crate::system_stats::StatsSnapshot>>,
 }
 
 impl ProcessState {
@@ -261,6 +269,7 @@ impl ProcessState {
             closed_tabs: RefCell::new(VecDeque::new()),
             viewers: RefCell::new(Vec::new()),
             cut_marker: Rc::new(RefCell::new(Vec::new())),
+            system_stats: RefCell::new(None),
         })
     }
 

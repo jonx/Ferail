@@ -60,6 +60,12 @@ blake3      = "1"
 # for the dual-licensed release.
 regex       = "1"
 
+# Status-bar app-footprint segment (docs/features/SYSTEM_STATS.md): process
+# CPU / RSS / run-time sampling. `system` only — no disk/network/component
+# probes. Same 0.31 line the graph already carries via zed-scap, so this
+# adds no second copy.
+sysinfo     = { version = "0.31", default-features = false, features = ["system"] }
+
 # Media tags (docs/features/MEDIA-TAGS.md): one parser for ID3v1/v2 (mp3 +
 # WAV/AIFF chunks), MP4 atoms, Vorbis comments (flac/ogg/opus), and APE —
 # tags, audio properties, and embedded cover art. Pure Rust, MIT/Apache-2.0.
