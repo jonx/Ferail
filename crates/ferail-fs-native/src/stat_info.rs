@@ -169,7 +169,9 @@ pub fn read_stat_info(_path: &Path) -> Option<StatInfo> {
 fn owner_name(uid: u32) -> String {
     unsafe {
         let mut pwd: libc::passwd = std::mem::zeroed();
-        let mut buf = [0i8; 1024];
+        // `c_char` is i8 on x86/macOS but u8 on aarch64 Linux — never
+        // spell the buffer element type out.
+        let mut buf = [0 as libc::c_char; 1024];
         let mut result: *mut libc::passwd = std::ptr::null_mut();
         let rc = libc::getpwuid_r(
             uid as libc::uid_t,
@@ -191,7 +193,7 @@ fn owner_name(uid: u32) -> String {
 fn group_name(gid: u32) -> String {
     unsafe {
         let mut grp: libc::group = std::mem::zeroed();
-        let mut buf = [0i8; 1024];
+        let mut buf = [0 as libc::c_char; 1024];
         let mut result: *mut libc::group = std::ptr::null_mut();
         let rc = libc::getgrgid_r(
             gid as libc::gid_t,
