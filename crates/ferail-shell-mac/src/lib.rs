@@ -1224,6 +1224,86 @@ pub fn set_window_floating(ns_view: *mut std::ffi::c_void, floating: bool) {
 #[cfg(not(target_os = "macos"))]
 pub fn set_window_floating(_ns_view: *mut std::ffi::c_void, _floating: bool) {}
 
+/// Widen gpui's outbound drag-and-drop operation mask to Finder parity.
+///
+/// gpui's `NSDraggingSource` hardcodes `NSDragOperationCopy` for drag
+/// sessions leaving the app (`gpui_macos/src/window.rs`,
+/// `dragging_session_source_operation_mask`), so an external drop can only
+/// ever copy: same-volume Finder drops don't move, and ⌥ / ⌘ / ⌃ change
+/// nothing. Replacing the method on gpui's window classes with one that
+/// offers Copy | Link | Generic | Move outside the app restores the
+/// standard macOS contract — the destination picks the operation and
+/// AppKit's built-in modifier filtering applies (⌥ forces copy and the
+/// system draws the green “+” badge, ⌘ forces move, ⌃ makes an alias).
+/// The within-application mask is left exactly as upstream had it
+/// (Copy | Move); in-window drops are handled by our own `on_drop` code.
+///
+/// This is a runtime method replacement, not a fork: if upstream renames
+/// `GPUIWindow` / `GPUIPanel` or grows a real API for this
+/// (docs/GPUI-UPSTREAM.md #10 asks for allowed operations on
+/// `ExternalDragPayload`), this quietly degrades to upstream's copy-only
+/// behaviour. Call **after the first gpui window exists** — the classes
+/// are registered lazily on first window construction. Idempotent;
+/// returns whether at least one class was patched.
+#[cfg(target_os = "macos")]
+pub fn install_native_drag_operations() -> bool {
+    use objc2::runtime::AnyClass;
+
+    // NSDragOperation bits (AppKit).
+    const COPY: usize = 1;
+    const LINK: usize = 2;
+    const GENERIC: usize = 4;
+    const MOVE: usize = 16;
+    // NSDraggingContext: 0 = outside the application, 1 = within it.
+    const CONTEXT_WITHIN_APPLICATION: isize = 1;
+
+    extern "C" fn source_operation_mask(
+        _this: *mut objc2::runtime::AnyObject,
+        _sel: objc2::runtime::Sel,
+        _session: *mut objc2::runtime::AnyObject,
+        context: isize,
+    ) -> usize {
+        if context == CONTEXT_WITHIN_APPLICATION {
+            COPY | MOVE
+        } else {
+            COPY | LINK | GENERIC | MOVE
+        }
+    }
+
+    let sel = objc2::sel!(draggingSession:sourceOperationMaskForDraggingContext:);
+    let mut installed = false;
+    for name in ["GPUIWindow", "GPUIPanel"] {
+        let Some(class) = AnyClass::get(name) else {
+            continue;
+        };
+        unsafe {
+            // Signature: NSUInteger (id self, SEL, id session, NSInteger ctx).
+            let imp: objc2::ffi::IMP = std::mem::transmute(
+                source_operation_mask
+                    as extern "C" fn(
+                        *mut objc2::runtime::AnyObject,
+                        objc2::runtime::Sel,
+                        *mut objc2::runtime::AnyObject,
+                        isize,
+                    ) -> usize,
+            );
+            objc2::ffi::class_replaceMethod(
+                class as *const AnyClass as *mut objc2::ffi::objc_class,
+                sel.as_ptr(),
+                imp,
+                c"Q@:@q".as_ptr(),
+            );
+        }
+        installed = true;
+    }
+    installed
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn install_native_drag_operations() -> bool {
+    false
+}
+
 // ---------------------------------------------------------------------------
 // Window docking primitives (docs/features/DOCK.md).
 //

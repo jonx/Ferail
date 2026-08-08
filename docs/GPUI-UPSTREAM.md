@@ -314,4 +314,32 @@ draws per-type file icons and the in-window ghost hands off. Payloads are
 real on-disk paths only (`ExternalDragPayload::Files`) — nothing exists yet
 for promise-based/deferred content (our archive-entry drags stay in-window).
 
+## 10. Drag-out operation mask is hardcoded to Copy — no move, no modifiers
+
+**Hit during:** "drag out only copies; can a modifier make it a move?" —
+follow-up to #9.
+
+`gpui_macos`'s `NSDraggingSource` returns `NSDragOperationCopy` for the
+outside-application dragging context, hardcoded
+(`dragging_session_source_operation_mask`). Consequences: external drops can
+only copy (a same-volume drop in Finder that should default to *move*
+copies instead), ⌥ / ⌘ / ⌃ change nothing (AppKit's modifier filtering ANDs
+against the source mask, and Move/Link aren't in it), and the system badge
+row (green “+” for copy, curved arrow for alias) never varies. There is no
+gpui API to widen the mask.
+
+**Workaround:** `ferail_shell_mac::install_native_drag_operations()` —
+runtime `class_replaceMethod` on `GPUIWindow` / `GPUIPanel` (registered by a
+`#[ctor]` in gpui_macos, so they always exist) swapping in a mask of
+Copy | Link | Generic | Move for the outside context, keeping upstream's
+Copy | Move within the app. Destination + standard modifier semantics then
+just work. Called from `boot.rs` after window open; degrades silently to
+copy-only if upstream renames the classes (a boot log warns, and a
+`boot::tests` unit test fails on rename).
+
+**What upstream could do:** carry allowed operations on
+`ExternalDragPayload` (e.g. `Files { paths, operations }`) and return them
+from the mask callback — the source knows whether its items are movable;
+a file manager's are, a text snippet's usually aren't.
+
 <!-- Add new findings above this line as the bump surfaces them. -->

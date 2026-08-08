@@ -89,7 +89,13 @@ that, the moment the pointer leaves the viewport, hands the platform a
 `FileDragPaths` payload — paths paired with cached-`EntryKind`
 directory-ness, so promotion never stats — and gpui begins a real
 `NSDraggingSession`; from there the OS draws file icons and our
-in-window ghost hands off. Inside the window the ghost is the
+in-window ghost hands off. gpui hardcodes that session's operation
+mask to copy-only, so `install_native_drag_operations()`
+(ferail-shell-mac, called from boot) widens it to
+Copy | Link | Generic | Move for Finder-parity semantics: a
+same-volume Finder drop moves, cross-volume copies with the system's
+green “+” badge, ⌥ forces copy, ⌘ forces move, ⌃ makes an alias
+(GPUI-UPSTREAM.md #10). Inside the window the ghost is the
 Finder-like `DragBadge` (the item's icon or warmed Quick Look thumbnail
 + name, or "N items" with a stacked-card hint) that tracks the pointer.
 Archive-mode rows still drag in-window only — their entries have no

@@ -8,16 +8,19 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
-- **Dragging files out of Ferail into other apps now works.** Dragging rows,
-  grid cells, or sidebar folders to Finder, the Desktop, an editor, or any
-  other app never actually worked — the drag ghost just stopped at the edge
-  of the window and nothing was handed to the system, because the UI
-  framework's drag was in-window only and the code wrongly believed
-  otherwise. The framework has since gained real drag-out support; Ferail now
-  promotes a drag to a native macOS drag session the moment the pointer
-  leaves the window, so dropping files elsewhere copies them like a Finder
-  drag would. Entries inside an archive are the one exception — they have no
-  on-disk files until extracted, so they still only drag within the window.
+- **Dragging files out of Ferail into other apps now works — with full
+  Finder semantics.** Dragging rows, grid cells, or sidebar folders to
+  Finder, the Desktop, an editor, or any other app never actually worked —
+  the drag ghost just stopped at the edge of the window and nothing was
+  handed to the system, because the UI framework's drag was in-window only
+  and the code wrongly believed otherwise. Ferail now promotes a drag to a
+  native macOS drag session the moment the pointer leaves the window, and
+  the drop behaves exactly like a drag started in Finder: a drop on the
+  same volume moves the files, a drop on another volume copies them (with
+  the system's green “+” badge on the cursor), holding ⌥ forces a copy,
+  ⌘ forces a move, and ⌃ drops an alias. Entries inside an archive are the
+  one exception — they have no on-disk files until extracted, so they still
+  only drag within the window.
 - **The status bar shows what Ferail itself costs.** A quiet readout on the
   right — "up 3d 4h · CPU 0.2% · MEM 184.0 MB · 0 rps" — reports how long the
   app has been running, its CPU share, its memory footprint, and how many
