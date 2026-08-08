@@ -1943,13 +1943,27 @@ impl Shell {
         // Esc cancels an in-progress drag. gpui only auto-cancels on
         // mouse-up, and an element `on_key_down` needs the shell focused
         // (which it may not be mid-drag), so observe keystrokes globally
-        // — this fires regardless of focus.
+        // — this fires regardless of focus. Two phases: while the drag is
+        // in-window it is gpui state (`active_drag`); once the pointer
+        // leaves the window gpui hands it to a native NSDraggingSession
+        // (`has_active_drag` goes false) and cancellation goes through
+        // the platform shell instead (docs/GPUI-UPSTREAM.md #10).
         let drag_esc_subscription = cx.observe_keystrokes(move |this, e, window, cx| {
-            if e.keystroke.key == "escape" && cx.has_active_drag() {
+            if e.keystroke.key != "escape" {
+                return;
+            }
+            if cx.has_active_drag() {
                 cx.stop_active_drag(window);
                 this.spring_load = None;
                 this.tree_spring = None;
                 cx.notify();
+                return;
+            }
+            #[cfg(target_os = "macos")]
+            if crate::platform_shell::native_drag_session_active() {
+                crate::platform_shell::cancel_native_drag();
+                this.spring_load = None;
+                this.tree_spring = None;
             }
         });
         shell._subscriptions.push(drag_esc_subscription);

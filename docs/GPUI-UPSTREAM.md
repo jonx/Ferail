@@ -342,4 +342,19 @@ copy-only if upstream renames the classes (a boot log warns, and a
 from the mask callback — the source knows whether its items are movable;
 a file manager's are, a text snippet's usually aren't.
 
+**Esc-cancel (same friction, second symptom):** once promoted, the session
+can't be cancelled either — gpui exposes no hook, and AppKit itself has no
+public "cancel this `NSDraggingSession`" API. The same
+`install_native_drag_operations()` pass therefore also adds
+`draggingSession:willBeginAtPoint:` and wraps
+`…endedAtPoint:operation:` (chaining gpui's original) to track session
+liveness, and `cancel_native_drag()` cancels by the one lever a source
+owns: collapse the mask to `None`, force a destination re-query with a
+synthetic 1-px drag, then end the gesture with a delayed synthetic
+mouse-up — AppKit resolves that as a failed drag and animates the items
+back. The Shell's global Esc keystroke observer routes to it when
+`has_active_drag()` is false but a native session is live. Upstream could
+expose a `Window::cancel_external_drag()` (and gpui could bind Esc itself,
+matching Finder).
+
 <!-- Add new findings above this line as the bump surfaces them. -->

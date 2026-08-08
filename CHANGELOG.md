@@ -18,9 +18,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   the drop behaves exactly like a drag started in Finder: a drop on the
   same volume moves the files, a drop on another volume copies them (with
   the system's green “+” badge on the cursor), holding ⌥ forces a copy,
-  ⌘ forces a move, and ⌃ drops an alias. Entries inside an archive are the
-  one exception — they have no on-disk files until extracted, so they still
-  only drag within the window.
+  ⌘ forces a move, ⌃ drops an alias — and pressing Esc cancels the drag,
+  inside or outside the window, with the items animating back to where
+  they came from. Entries inside an archive are the one exception — they
+  have no on-disk files until extracted, so they still only drag within
+  the window.
 - **The status bar shows what Ferail itself costs.** A quiet readout on the
   right — "up 3d 4h · CPU 0.2% · MEM 184.0 MB · 0 rps" — reports how long the
   app has been running, its CPU share, its memory footprint, and how many

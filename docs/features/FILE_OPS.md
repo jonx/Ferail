@@ -95,7 +95,10 @@ mask to copy-only, so `install_native_drag_operations()`
 Copy | Link | Generic | Move for Finder-parity semantics: a
 same-volume Finder drop moves, cross-volume copies with the system's
 green “+” badge, ⌥ forces copy, ⌘ forces move, ⌃ makes an alias
-(GPUI-UPSTREAM.md #10). Inside the window the ghost is the
+(GPUI-UPSTREAM.md #10). Esc cancels in both phases: in-window it clears
+gpui's `active_drag` (Shell keystroke observer); once native, the same
+observer routes to `cancel_native_drag()` — mask collapsed to None +
+synthetic gesture end, since AppKit has no session-cancel API. Inside the window the ghost is the
 Finder-like `DragBadge` (the item's icon or warmed Quick Look thumbnail
 + name, or "N items" with a stacked-card hint) that tracks the pointer.
 Archive-mode rows still drag in-window only — their entries have no

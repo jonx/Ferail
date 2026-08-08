@@ -1245,54 +1245,138 @@ pub fn set_window_floating(_ns_view: *mut std::ffi::c_void, _floating: bool) {}
 /// behaviour. Call **after the first gpui window exists** — the classes
 /// are registered lazily on first window construction. Idempotent;
 /// returns whether at least one class was patched.
+///
+/// The same patching pass also wires the state
+/// [`cancel_native_drag`] needs: an added
+/// `draggingSession:willBeginAtPoint:` marks a session live, and a
+/// wrapped `draggingSession:endedAtPoint:operation:` (chaining to gpui's
+/// original) marks it over.
 #[cfg(target_os = "macos")]
 pub fn install_native_drag_operations() -> bool {
-    use objc2::runtime::AnyClass;
+    use objc2::runtime::{AnyClass, AnyObject, Sel};
 
-    // NSDragOperation bits (AppKit).
-    const COPY: usize = 1;
-    const LINK: usize = 2;
-    const GENERIC: usize = 4;
-    const MOVE: usize = 16;
-    // NSDraggingContext: 0 = outside the application, 1 = within it.
-    const CONTEXT_WITHIN_APPLICATION: isize = 1;
+    let mask_sel = objc2::sel!(draggingSession:sourceOperationMaskForDraggingContext:);
+    let begin_sel = objc2::sel!(draggingSession:willBeginAtPoint:);
+    let ended_sel = objc2::sel!(draggingSession:endedAtPoint:operation:);
 
     extern "C" fn source_operation_mask(
-        _this: *mut objc2::runtime::AnyObject,
-        _sel: objc2::runtime::Sel,
-        _session: *mut objc2::runtime::AnyObject,
+        _this: *mut AnyObject,
+        _sel: Sel,
+        _session: *mut AnyObject,
         context: isize,
     ) -> usize {
-        if context == CONTEXT_WITHIN_APPLICATION {
-            COPY | MOVE
+        if native_drag::CANCEL_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+            return native_drag::OP_NONE;
+        }
+        if context == native_drag::CONTEXT_WITHIN_APPLICATION {
+            native_drag::OP_COPY | native_drag::OP_MOVE
         } else {
-            COPY | LINK | GENERIC | MOVE
+            native_drag::OP_COPY
+                | native_drag::OP_LINK
+                | native_drag::OP_GENERIC
+                | native_drag::OP_MOVE
         }
     }
 
-    let sel = objc2::sel!(draggingSession:sourceOperationMaskForDraggingContext:);
+    extern "C" fn session_will_begin(
+        _this: *mut AnyObject,
+        _sel: Sel,
+        _session: *mut AnyObject,
+        _point: native_drag::CGPointRaw,
+    ) {
+        use std::sync::atomic::Ordering::SeqCst;
+        native_drag::CANCEL_REQUESTED.store(false, SeqCst);
+        native_drag::SESSION_ACTIVE.store(true, SeqCst);
+    }
+
+    extern "C" fn session_ended(
+        this: *mut AnyObject,
+        sel: Sel,
+        session: *mut AnyObject,
+        point: native_drag::CGPointRaw,
+        operation: usize,
+    ) {
+        use std::sync::atomic::Ordering::SeqCst;
+        native_drag::SESSION_ACTIVE.store(false, SeqCst);
+        native_drag::CANCEL_REQUESTED.store(false, SeqCst);
+        // Chain to gpui's implementation — it resets its own drag state
+        // (synthetic-drag counter, FileDropEvent::Ended). Skipping it
+        // would leave gpui believing a drag is still live.
+        let orig = native_drag::ORIG_ENDED_IMP.load(SeqCst);
+        if !orig.is_null() {
+            let orig: extern "C" fn(
+                *mut AnyObject,
+                Sel,
+                *mut AnyObject,
+                native_drag::CGPointRaw,
+                usize,
+            ) = unsafe { std::mem::transmute(orig) };
+            orig(this, sel, session, point, operation);
+        }
+    }
+
     let mut installed = false;
     for name in ["GPUIWindow", "GPUIPanel"] {
         let Some(class) = AnyClass::get(name) else {
             continue;
         };
+        let class = class as *const AnyClass as *mut objc2::ffi::objc_class;
         unsafe {
-            // Signature: NSUInteger (id self, SEL, id session, NSInteger ctx).
+            // NSUInteger (id self, SEL, id session, NSInteger ctx).
             let imp: objc2::ffi::IMP = std::mem::transmute(
                 source_operation_mask
-                    as extern "C" fn(
-                        *mut objc2::runtime::AnyObject,
-                        objc2::runtime::Sel,
-                        *mut objc2::runtime::AnyObject,
-                        isize,
-                    ) -> usize,
+                    as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, isize) -> usize,
+            );
+            objc2::ffi::class_replaceMethod(class, mask_sel.as_ptr(), imp, c"Q@:@q".as_ptr());
+
+            // void (id self, SEL, id session, NSPoint). gpui doesn't
+            // implement willBegin, so this is an add, not a replace.
+            let imp: objc2::ffi::IMP = std::mem::transmute(
+                session_will_begin
+                    as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, native_drag::CGPointRaw),
             );
             objc2::ffi::class_replaceMethod(
-                class as *const AnyClass as *mut objc2::ffi::objc_class,
-                sel.as_ptr(),
+                class,
+                begin_sel.as_ptr(),
                 imp,
-                c"Q@:@q".as_ptr(),
+                c"v@:@{CGPoint=dd}".as_ptr(),
             );
+
+            // void (id self, SEL, id session, NSPoint, NSDragOperation).
+            // Both classes register the same upstream function, so one
+            // stored original IMP serves both; guard against clobbering
+            // it with our own wrapper on a second (idempotent) install.
+            let imp: objc2::ffi::IMP = std::mem::transmute(
+                session_ended
+                    as extern "C" fn(
+                        *mut AnyObject,
+                        Sel,
+                        *mut AnyObject,
+                        native_drag::CGPointRaw,
+                        usize,
+                    ),
+            );
+            let prev = objc2::ffi::class_replaceMethod(
+                class,
+                ended_sel.as_ptr(),
+                imp,
+                c"v@:@{CGPoint=dd}Q".as_ptr(),
+            );
+            let ours = session_ended
+                as extern "C" fn(
+                    *mut AnyObject,
+                    Sel,
+                    *mut AnyObject,
+                    native_drag::CGPointRaw,
+                    usize,
+                ) as *mut std::ffi::c_void;
+            if let Some(prev) = prev {
+                let prev = prev as *mut std::ffi::c_void;
+                if prev != ours {
+                    native_drag::ORIG_ENDED_IMP
+                        .store(prev, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
         }
         installed = true;
     }
@@ -1303,6 +1387,141 @@ pub fn install_native_drag_operations() -> bool {
 pub fn install_native_drag_operations() -> bool {
     false
 }
+
+/// Shared state + FFI for the native-drag override and its Esc-cancel.
+#[cfg(target_os = "macos")]
+mod native_drag {
+    use std::sync::atomic::{AtomicBool, AtomicPtr};
+
+    // NSDragOperation bits (AppKit).
+    pub const OP_NONE: usize = 0;
+    pub const OP_COPY: usize = 1;
+    pub const OP_LINK: usize = 2;
+    pub const OP_GENERIC: usize = 4;
+    pub const OP_MOVE: usize = 16;
+    // NSDraggingContext: 0 = outside the application, 1 = within it.
+    pub const CONTEXT_WITHIN_APPLICATION: isize = 1;
+
+    /// A native dragging session started from one of our windows is live.
+    pub static SESSION_ACTIVE: AtomicBool = AtomicBool::new(false);
+    /// Esc was pressed mid-session: the mask collapses to None so no
+    /// destination can accept the drop.
+    pub static CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
+    /// gpui's original `draggingSession:endedAtPoint:operation:` IMP,
+    /// chained from our wrapper.
+    pub static ORIG_ENDED_IMP: AtomicPtr<std::ffi::c_void> =
+        AtomicPtr::new(std::ptr::null_mut());
+
+    /// `CGPoint` / `NSPoint` by value across the ObjC boundary.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct CGPointRaw {
+        pub x: f64,
+        pub y: f64,
+    }
+
+    // CGEvent: used to finish the physical gesture synthetically after a
+    // cancel. Declared by hand — three functions don't justify a crate.
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        pub fn CGEventCreate(source: *const std::ffi::c_void) -> *mut std::ffi::c_void;
+        pub fn CGEventCreateMouseEvent(
+            source: *const std::ffi::c_void,
+            mouse_type: u32,
+            position: CGPointRaw,
+            button: u32,
+        ) -> *mut std::ffi::c_void;
+        pub fn CGEventGetLocation(event: *mut std::ffi::c_void) -> CGPointRaw;
+        pub fn CGEventPost(tap: u32, event: *mut std::ffi::c_void);
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        pub fn CFRelease(cf: *const std::ffi::c_void);
+    }
+
+    pub const KCG_HID_EVENT_TAP: u32 = 0;
+    pub const KCG_EVENT_LEFT_MOUSE_DRAGGED: u32 = 6;
+    pub const KCG_EVENT_LEFT_MOUSE_UP: u32 = 2;
+    pub const KCG_MOUSE_BUTTON_LEFT: u32 = 0;
+}
+
+/// Whether a native (outside-the-window) dragging session started from one
+/// of our windows is currently live. gpui hands its in-window drag state to
+/// the platform on promotion, so the host's `has_active_drag()` goes false
+/// exactly when this goes true.
+#[cfg(target_os = "macos")]
+pub fn native_drag_session_active() -> bool {
+    native_drag::SESSION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn native_drag_session_active() -> bool {
+    false
+}
+
+/// Cancel the live native dragging session (Esc during a drag-out).
+///
+/// AppKit has no public "cancel this NSDraggingSession" call, so this uses
+/// the one safe lever the source owns: collapse the source operation mask
+/// to `None` (see `CANCEL_REQUESTED` in the swizzled mask method) so no
+/// destination can accept the items, then finish the gesture synthetically —
+/// a 1-px synthetic drag forces destinations to re-query the now-empty mask,
+/// and a delayed synthetic mouse-up ends the session, which AppKit resolves
+/// as a failed drag: the items animate back to their origin. Ordering
+/// matters: the mouse-up is delayed (~80 ms, off-thread) so the None mask
+/// propagates before the drop resolves; a same-instant up could still
+/// resolve against the stale mask and perform the drop Esc meant to prevent.
+/// The user's eventual physical button release delivers a stray mouse-up
+/// with no drag in flight, which AppKit ignores.
+///
+/// No-op when no session is live.
+#[cfg(target_os = "macos")]
+pub fn cancel_native_drag() {
+    use std::sync::atomic::Ordering::SeqCst;
+    if !native_drag::SESSION_ACTIVE.load(SeqCst) {
+        return;
+    }
+    native_drag::CANCEL_REQUESTED.store(true, SeqCst);
+    // CGEventPost is documented thread-safe; do the delay off the UI thread.
+    std::thread::spawn(|| unsafe {
+        use native_drag::*;
+        let probe = CGEventCreate(std::ptr::null());
+        if probe.is_null() {
+            return;
+        }
+        let at = CGEventGetLocation(probe);
+        CFRelease(probe);
+
+        let jiggle = CGEventCreateMouseEvent(
+            std::ptr::null(),
+            KCG_EVENT_LEFT_MOUSE_DRAGGED,
+            CGPointRaw { x: at.x + 1.0, y: at.y },
+            KCG_MOUSE_BUTTON_LEFT,
+        );
+        if !jiggle.is_null() {
+            CGEventPost(KCG_HID_EVENT_TAP, jiggle);
+            CFRelease(jiggle);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        // The session may have ended meanwhile (user released the button).
+        if !SESSION_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let up = CGEventCreateMouseEvent(
+            std::ptr::null(),
+            KCG_EVENT_LEFT_MOUSE_UP,
+            at,
+            KCG_MOUSE_BUTTON_LEFT,
+        );
+        if !up.is_null() {
+            CGEventPost(KCG_HID_EVENT_TAP, up);
+            CFRelease(up);
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn cancel_native_drag() {}
 
 // ---------------------------------------------------------------------------
 // Window docking primitives (docs/features/DOCK.md).
