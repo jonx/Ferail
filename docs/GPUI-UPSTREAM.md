@@ -33,6 +33,14 @@ now the documented rule in the root `Cargo.toml` pinning comment: when bumping
 gpui-component, open its `Cargo.toml`, read `gpui = { rev = ... }`, and copy
 that rev into ours.
 
+**Update (2026-08-08, bump `c112e7b` → `6d7847e`):** gpui-component *removed*
+its gpui pin again, so the rule is now conditional and both styles are
+documented in the root `Cargo.toml` comment: when gpui-component is unpinned,
+we leave ours unpinned too (both float onto one source; the committed
+`Cargo.lock` is the real pin, moved deliberately with `cargo update -p gpui`);
+when it pins, we mirror the rev. Same invariant either way — one gpui source
+in the graph.
+
 **What upstream could do:**
 - gpui-component could re-export the `gpui` it builds against (e.g.
   `pub use gpui;`) so consumers depend on *its* gpui transitively instead of
@@ -263,5 +271,47 @@ With the patch active, the screenshot harness opens the window with
 `show: false` and captures via `render_to_image` — **truly headless, no flash**.
 The PrintWindow path (`ferail_shell_win32::capture_window_rgba` + off-screen
 move) remains as the fallback for builds without the patch.
+
+## 8. gpui grew a *direct* GPL-3.0 `ztracing` dependency
+
+**Hit during:** the 2026-08-08 bump to zed `38ca9106` (edge added upstream in
+`00cba838a`, 2026-08-05).
+
+Until then the only GPL reach was `gpui → sum_tree → ztracing`, severable by
+forking `sum_tree` (the old `vendor/sum-tree`). With `ztracing` in `gpui`'s
+own `[dependencies]`, that fork stopped being sufficient — and forking gpui
+itself is not a maintainable option.
+
+**Workaround:** patch `ztracing` at the source root with a clean-room
+MIT/Apache no-op stub, [`vendor/ztracing`](../vendor/ztracing/README.md).
+Outside Zed's `--cfg ztracing` profiling builds the real crate is pure no-ops,
+so the stub is behaviourally identical; it also drops GPL `ztracing_macro` and
+`zlog` from the graph and retired the `sum_tree` fork (no more per-bump
+re-sync). Instrumentation edges may keep spreading through zed's crates; the
+stub covers all of them at once, but a bump that fails on an unresolved
+`ztracing::…` item means upstream grew the API — add the missing name to the
+stub as a no-op.
+
+**What upstream could do:** relicense the tracing shim permissively (it is
+~60 lines of no-op glue outside profiling builds), or gate it behind an
+optional feature default-off. Tracked upstream as zed#55470 (acknowledged,
+stuck in legal).
+
+## 9. External file drag-out finally exists — via `external_drag_payload` (zed #58161)
+
+**Hit during:** "drag to Finder does nothing" investigation, fixed with the
+2026-08-08 bump.
+
+Not a complaint — an API note. gpui's `on_drag` is purely in-window (the app
+paints its own ghost; nothing reaches the OS). Dragging `ExternalPaths` as
+the *value* does *not* make it a native drag — a misreading we shipped for
+seven weeks. Real drag-out requires chaining
+`.external_drag_payload::<T>(resolver)` after `.on_drag(...)`: when the
+pointer leaves the viewport, gpui calls the resolver (UI thread — keep it
+allocation-cheap and I/O-free; we feed it cached `EntryKind` dir-ness) and
+promotes to a native `NSDraggingSession` / Wayland drag. The platform then
+draws per-type file icons and the in-window ghost hands off. Payloads are
+real on-disk paths only (`ExternalDragPayload::Files`) — nothing exists yet
+for promise-based/deferred content (our archive-entry drags stay in-window).
 
 <!-- Add new findings above this line as the bump surfaces them. -->

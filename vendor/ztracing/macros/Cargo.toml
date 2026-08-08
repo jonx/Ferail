@@ -1,0 +1,10 @@
+[package]
+name = "ztracing-stub-macros"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "No-op #[instrument] attribute for the ztracing clean-room stub"
+
+[lib]
+proc-macro = true

@@ -7,8 +7,8 @@
 # That scoping is the point. `[patch]` is global to a build, so putting these
 # in `.cargo/config.toml` would feed the sibling forks to the macOS and Windows
 # builds on the same machine — including release packaging, where it would also
-# shadow the `vendor/sum-tree` patch that severs the GPL-3.0 ztracing edge
-# (gpui-from-zed-aros brings its own sum_tree). Here they only reach AROS.
+# shadow the `vendor/ztracing` patch that severs the GPL-3.0 ztracing edge
+# (gpui-from-zed-aros brings its own ztracing). Here they only reach AROS.
 #
 # **Paths below are relative to the PARENT of this file's directory** — i.e.
 # to `packaging/`, not to `packaging/aros/` and not to the repo root. That is

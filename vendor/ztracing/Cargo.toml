@@ -1,0 +1,20 @@
+# Clean-room, no-op stand-in for zed's `ztracing` (which is GPL-3.0-or-later
+# and reaches our MIT/Apache binary via `gpui` and `sum_tree`). Outside Zed's
+# own profiling builds (`--cfg ztracing`, never set here) the upstream crate
+# already compiles to no-ops, so this stub is behaviourally identical — it
+# just isn't GPL-derived object code. Written from the public API surface
+# only; see README.md for the licence rationale and the API contract.
+
+[package]
+name = "ztracing"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "No-op tracing shim API-compatible with zed's ztracing (clean-room stub)"
+
+[dependencies]
+# `ztracing` re-exports `tracing::{Level, field}` (tracing is MIT); mirror
+# that so consumer code referencing those names still compiles.
+tracing = "0.1"
+ztracing-stub-macros = { path = "macros" }

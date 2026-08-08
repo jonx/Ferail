@@ -70,44 +70,50 @@ lofty       = "0.24"
 #
 # Pinning strategy: `gpui-component` is pinned to a specific rev (it
 # is our higher-level coupling and we want updates to be deliberate).
-# `gpui` MUST be pinned to the SAME zed rev that gpui-component pins —
-# they share one source so the graph holds a single gpui. (Earlier,
-# gpui-component left gpui unpinned and we matched by also leaving ours
-# unpinned; as of upstream rev c112e7b gpui-component pins gpui to an
-# explicit rev, so we must mirror that rev or cargo resolves two/three
-# gpui copies. See docs/GPUI-UPSTREAM.md.) When bumping gpui-component,
-# read its Cargo.toml `gpui = { rev = ... }` and copy that rev here.
-# Reproducibility also comes from committing `Cargo.lock`.
+# `gpui` must resolve to ONE source shared with gpui-component's own
+# gpui dependency, or cargo resolves two/three incompatible gpui
+# copies (see docs/GPUI-UPSTREAM.md §1). How to share it depends on
+# how gpui-component declares gpui at the rev we pin:
+#   - unpinned (no rev, like current main): leave ours unpinned too;
+#     both float and unify, and the committed Cargo.lock is the real
+#     pin. Bump with `cargo update -p gpui` (drags the whole zed set).
+#   - pinned to an explicit rev (the c112e7b-era style): mirror that
+#     exact rev here.
+# When bumping gpui-component, read its Cargo.toml `gpui = { ... }`
+# and match its style. Reproducibility comes from committing Cargo.lock.
 # test-support: enables `Window::render_to_image` + the matching impl
 # in `gpui_macos` so the headless screenshot CLI in ferail-gpui works.
-gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["test-support"] }
+gpui = { git = "https://github.com/zed-industries/zed", features = ["test-support"] }
 # wayland + x11 enable gpui_linux's compositor backends (gpui_platform's
 # wayland/x11 features pull gpui_linux/wayland|x11). Without them the Linux
 # build compiles but panics at startup — guess_compositor() returns "Wayland"
 # and hits the unreachable arm. No-op on macOS/Windows (gpui_linux is
 # Linux-only there).
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["font-kit", "test-support", "wayland", "x11"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "test-support", "wayland", "x11"] }
 # `tree-sitter-languages` pulls in the full tree-sitter grammar set so
 # the preview pane's TextView highlights fenced code blocks (and
 # markdown code) for every language (docs/features/PREVIEW.md). Each
 # grammar is a C-compiled crate — a real but one-time build cost.
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "c112e7b482b6b9c53a8c43deaf5847b94a29ad82", features = ["tree-sitter-languages"] }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "c112e7b482b6b9c53a8c43deaf5847b94a29ad82" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "6d7847e33ef3b8e043d1fcea82eb7e1b7f919d8b", features = ["tree-sitter-languages"] }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "6d7847e33ef3b8e043d1fcea82eb7e1b7f919d8b" }
 
-# The ONLY `[patch]` allowed here: an **in-repo** path, committed and therefore
-# present in every clone and on CI.
+# The ONLY zed-source `[patch]` allowed here: an **in-repo** path, committed
+# and therefore present in every clone and on CI.
 #
-# `sum_tree` is the sole consumer of GPL-3.0 `ztracing` in the entire graph
-# (`ferail-gpui → gpui → sum_tree → ztracing`), and those `#[instrument]` macros
-# no-op at runtime outside Zed's own builds. Linking them into a binary shipped
-# under MIT/Apache-2.0 is a licence conflict, so a redistributable build has to
-# sever the edge. `vendor/sum-tree` is upstream's Apache-2.0 crate minus nine
-# mechanical lines — see vendor/sum-tree/README.md for the full delta and the
-# re-sync procedure on a gpui bump. Verify with:
+# `ztracing` (and its satellites `ztracing_macro` and `zlog`) are GPL-3.0,
+# and gpui depends on ztracing directly as of zed 00cba838a — previously the
+# only edge was via `sum_tree`, which we severed with a vendored fork (see
+# git history for vendor/sum-tree). Outside Zed's own `--cfg ztracing`
+# profiling builds the crate is pure no-ops, so `vendor/ztracing` is a
+# clean-room MIT/Apache no-op stub — behaviourally identical, not
+# GPL-derived. Patching it also drops ztracing_macro and zlog from the
+# graph and made the sum_tree fork unnecessary. See vendor/ztracing/README.md.
+# Verify with:
 #
-#     cargo tree -p ferail-gpui -i ztracing     # must print nothing
+#     cargo tree -p ferail-gpui -i ztracing  # must print ONLY vendor/ztracing
+#     cargo tree -p ferail-gpui -i zlog      # must print nothing
 [patch."https://github.com/zed-industries/zed"]
-sum_tree = { path = "vendor/sum-tree" }
+ztracing = { path = "vendor/ztracing" }
 
 # `tar` gates its path<->bytes conversion, symlink, permission and xattr
 # helpers on cfg(unix)/cfg(windows)/wasm32, and AROS is none of those — the

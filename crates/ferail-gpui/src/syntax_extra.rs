@@ -38,9 +38,14 @@ pub fn register_extra_languages() {
         let Some(existing) = registry.language(name) else {
             continue;
         };
+        // `language` is `None` for grammarless (plain-text) registry
+        // entries; our queries are useless without the grammar.
+        let Some(language) = existing.language.clone() else {
+            continue;
+        };
         let config = LanguageConfig::new(
             *name,
-            existing.language.clone(),
+            language,
             existing.injection_languages.clone(),
             query,
             "",

@@ -32,24 +32,28 @@ Per Apache-2.0 §4(d), the upstream attribution notices are preserved below.
   bundled icon assets. <https://github.com/longbridge/gpui-component>
   Copyright © 2024–2025 Longbridge. Licensed under Apache-2.0.
 
-### GPL-3.0 severance (gpui → sum_tree → ztracing)
+### GPL-3.0 severance (gpui → ztracing)
 
 **The current build contains no GPL-licensed code — because this repository
 severs the edge itself.** That is an active measure, not an upstream fix.
 
-`gpui` reaches three small **GPL-3.0-or-later** crates from the Zed repository
-through a single non-optional dependency edge —
-`gpui → sum_tree → ztracing → { zlog, ztracing_macro }` — which would place
-copyleft obligations on any redistributed binary, despite `gpui` itself being
-Apache-2.0. The `#[instrument]` macros they supply no-op at runtime outside
-Zed's own builds, so nothing is lost by removing them.
+`gpui` reaches three small **GPL-3.0-or-later** crates from the Zed
+repository — `ztracing` and, through it, `zlog` and `ztracing_macro` — which
+would place copyleft obligations on any redistributed binary, despite `gpui`
+itself being Apache-2.0. Outside Zed's own `--cfg ztracing` profiling builds
+those crates are pure no-ops, so nothing is lost by removing them.
 
-The edge **is still present in the `gpui` revision pinned here**: upstream
-`crates/sum_tree/Cargo.toml` at that rev carries `ztracing.workspace = true`.
-It is severed by [`vendor/sum-tree`](vendor/sum-tree/README.md) — upstream's
-Apache-2.0 `sum_tree` minus nine mechanical lines — wired in through a
-`[patch]` in the workspace `Cargo.toml`. `sum_tree` is the only consumer of
-`ztracing` in the graph, which is what makes this severable.
+The dependency **is present in the `gpui` revision resolved here**, and since
+zed `00cba838a` (2026-08-05) it is a *direct* `gpui → ztracing` edge, no
+longer just `gpui → sum_tree → ztracing`. It is severed by
+[`vendor/ztracing`](vendor/ztracing/README.md) — a **clean-room MIT/Apache
+no-op stub** with the same public surface, written from the API contract
+rather than derived from the GPL source — wired in through a `[patch]` in the
+workspace `Cargo.toml`. Patching `ztracing` at the root keeps `zlog` and
+`ztracing_macro` out of the graph entirely, and retired the earlier
+`vendor/sum-tree` fork (a copy of Apache-2.0 `sum_tree` minus its ztracing
+use, sufficient only while `sum_tree` was ztracing's sole consumer — see git
+history for that crate).
 
 > **Correction (0.2.2).** An earlier revision of this section stated the edge
 > was already gone upstream, on the evidence that `ztracing` appeared nowhere in

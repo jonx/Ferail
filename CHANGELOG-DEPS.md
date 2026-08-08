@@ -6,10 +6,40 @@ log of the locked revs at each deliberate bump. See the pinning-strategy
 comment in the root `Cargo.toml` and the friction log in
 [docs/GPUI-UPSTREAM.md](docs/GPUI-UPSTREAM.md).
 
-Pinning rule: `gpui-component` pins `gpui` to an explicit zed rev, and our
-`gpui` / `gpui_platform` MUST mirror that exact rev so the graph holds a single
-gpui (see GPUI-UPSTREAM.md #1). When bumping `gpui-component`, read its
-`Cargo.toml` `gpui = { rev = ... }` and copy it here.
+Pinning rule: the graph must hold a single gpui source (see GPUI-UPSTREAM.md
+#1), so our `gpui` / `gpui_platform` declaration mirrors *how* gpui-component
+declares gpui at the pinned rev: when gpui-component pins an explicit zed rev,
+copy that exact rev; when it leaves gpui unpinned (the style since ~2026-07),
+leave ours unpinned too and let the committed `Cargo.lock` carry the actual
+zed rev — bumped deliberately with `cargo update -p gpui`.
+
+## 2026-08-08 — bump gpui-component (~8 weeks), zed to current main
+
+| crate | from | to |
+|---|---|---|
+| `gpui-component` / `-assets` | `c112e7b482b6b9c53a8c43deaf5847b94a29ad82` (2026-06-16) | `6d7847e33ef3b8e043d1fcea82eb7e1b7f919d8b` (2026-08-08) |
+| `gpui` / `gpui_platform` (zed) | `1d217ee39d381ac101b7cf49d3d22451ac1093fe` (2026-06-12, pinned) | `38ca9106c5306ef93e52c35643df015a27f15b72` (2026-08-07, unpinned — locked via Cargo.lock) |
+
+Motive: zed #58161 (2026-07-29) added the `external_drag_payload` API — the
+missing piece that makes dragging files out to Finder/other apps a real
+native drag session (see GPUI-UPSTREAM.md #9). gpui-component `main` dropped
+its gpui rev pin again, so both float and the lockfile is the pin.
+
+Fallout handled in the same change:
+- gpui gained a **direct GPL-3.0 `ztracing` dependency** (zed `00cba838a`);
+  the `vendor/sum-tree` severance was no longer sufficient and was replaced
+  by the clean-room `vendor/ztracing` no-op stub (GPUI-UPSTREAM.md #8), which
+  also keeps `zlog` / `ztracing_macro` out and needs no per-bump re-sync.
+- One source break: gpui-component's `LanguageConfig.language` became
+  `Option<tree_sitter::Language>` (grammarless languages); `syntax_extra.rs`
+  now skips registry entries without a grammar.
+- wgpu moved from zed's git fork (29.0.3) to crates.io 29.0.4; taffy 0.10 →
+  0.12; assorted transitive churn recorded in Cargo.lock.
+
+Verified: `cargo check` / `clippy` (no new warnings from this change) /
+workspace tests green; screenshot harness renders; drag-out to Finder needs
+an interactive session to confirm (OS drag gestures aren't headlessly
+drivable).
 
 ## 2026-06-16 — bump gpui-component (60 commits)
 
