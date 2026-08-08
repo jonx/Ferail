@@ -137,10 +137,10 @@ Prebuilt builds are published on the
 |---|---|---|
 | **macOS** (Apple silicon) | `Ferail-<version>.dmg` — open it and drag Ferail to Applications | ✅ Developer ID signed **and notarized**, so it opens without warnings |
 | **Windows** (x64) | `Ferail-<version>-win-x64.zip` — unzip anywhere and run `Ferail.exe`. No installation, no admin rights. An Inno Setup installer ships alongside it when built. | ❌ unsigned — see below |
-| **Linux** | build from source ([Getting started](#getting-started)) | — |
+| **Linux** (Ubuntu 22.04+ / Debian, Intel & ARM) | `ferail_<version>-1_amd64.deb` or `…_arm64.deb` — install with `sudo apt install ./ferail_*.deb`, run `ferail` | — (unsigned, like most out-of-repo `.deb`s; built and smoke-tested by CI) |
 
-The two platforms are not always released in lockstep: the newest macOS and
-Windows downloads may sit on different release tags. Check the
+The platforms are not always released in lockstep: the newest downloads may
+sit on different release tags. Check the
 [Releases](https://github.com/jonx/Ferail/releases) list for the latest of
 each.
 
@@ -156,18 +156,18 @@ each.
 > download, though, unlike a signature, it cannot prove *who* built the file:
 >
 > ```pwsh
-> Get-FileHash .\Ferail-0.2.2-win-x64.zip -Algorithm SHA256
+> Get-FileHash .\Ferail-0.3.0-win-x64.zip -Algorithm SHA256
 > ```
 >
 > ```
-> 9993AF0EF53DE617C255BF9EBBA7FF53DFB3EDDC80866FF5D969715A78F30E6B
+> 451CEF7F00EF3C92D8A2B961E583AD79231DE6059CF0A7B10FCC285CF8E1F404
 > ```
 >
 > Each release publishes its own checksum in its notes. If it matches, the file
 > is exactly what was built here. If it doesn't, delete it.
 
 The macOS download carries no such warning — it is signed with a Developer ID
-and notarized by Apple. Linux is source-only for now.
+and notarized by Apple.
 
 ## Getting started
 
