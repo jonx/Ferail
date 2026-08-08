@@ -4,11 +4,15 @@
 //! Everything shown is **app-centric** — what Ferail itself costs, not
 //! the machine: time since this process launched, the process's CPU
 //! share (Activity Monitor convention — % of one core, so it can
-//! exceed 100 on multi-core), its resident memory, and the frames the
-//! window actually drew over the last sample window. Fps comes from
-//! gpui's frame-timing profiler, which records every `Window::draw`;
-//! an idle window draws nothing and honestly reads `0 fps`, so the
-//! figure doubles as a repaint-leak tripwire.
+//! exceed 100 on multi-core), its resident memory, and how fast the
+//! window draws **while it is drawing**. Fps comes from gpui's
+//! frame-timing profiler, which records every `Window::draw`, and is
+//! computed over *bursts* — runs of consecutive frames closer than
+//! [`BURST_GAP`] apart. Averaging over the whole sample window would
+//! dilute half a second of buttery scrolling into a meaningless "12
+//! fps"; the burst rate reports the scroll's real ~60. An idle window
+//! has no bursts and honestly reads `0 fps`, so the figure doubles as
+//! a repaint-leak tripwire (a notify-loop shows its true loop rate).
 //!
 //! Prime Directive: the sysinfo refresh is a syscall, so it runs on
 //! the background executor. The UI-thread side only stores the
@@ -26,6 +30,13 @@ use gpui::{App, SharedString, WindowId};
 /// between two refreshes is meaningful.
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
 
+/// Two frames further apart than this belong to different bursts of
+/// drawing. 250 ms (= 4 fps) comfortably separates real animation
+/// (16.7 ms at 60 Hz) and even janky redraws from isolated
+/// one-off paints — including this sampler's own 0.5 Hz status-bar
+/// ticks, which land far outside any burst and thus never register.
+const BURST_GAP: Duration = Duration::from_millis(250);
+
 /// One finished sample. Stored in `ProcessState::system_stats`
 /// (`None` until the sampler has published its first real reading).
 #[derive(Clone, Debug, Default)]
@@ -36,34 +47,53 @@ pub struct StatsSnapshot {
     pub cpu_pct: f32,
     /// Resident set size, bytes.
     pub mem_bytes: u64,
-    /// Frames drawn per second over the last sample window, keyed by
-    /// gpui window. Windows that drew nothing are simply absent.
+    /// Burst draw rate (frames per second while actually drawing)
+    /// over the last sample window, keyed by gpui window. Windows
+    /// that drew no bursts are simply absent.
     pub fps: HashMap<WindowId, f32>,
 }
 
 impl StatsSnapshot {
-    /// The status-bar line for `window_id`.
-    pub fn segment_label(&self, window_id: WindowId) -> SharedString {
+    /// The status-bar segment for `window_id`, one pre-formatted
+    /// string per figure so the bar can give each a fixed-width box.
+    pub fn segment_parts(&self, window_id: WindowId) -> SegmentParts {
         let fps = self.fps.get(&window_id).copied().unwrap_or(0.0);
-        format_segment(self.run_secs, self.cpu_pct, self.mem_bytes, fps)
+        SegmentParts::from_values(self.run_secs, self.cpu_pct, self.mem_bytes, fps)
     }
 }
 
-/// `up 3d 4h · CPU 6.8% · MEM 184.0 MB · 58 fps`. Also used verbatim
-/// by the `--simulate-stats` screenshot flag so captures are
-/// deterministic.
-pub fn format_segment(run_secs: u64, cpu_pct: f32, mem_bytes: u64, fps: f32) -> SharedString {
-    format!(
-        "up {} \u{00B7} CPU {} \u{00B7} MEM {} \u{00B7} {} fps",
-        format_uptime(run_secs),
-        format_cpu(cpu_pct),
-        crate::status_bar::humanize_bytes(mem_bytes),
-        // Floor, don't round: an idle window whose only redraws are
-        // this segment's own 0.5 Hz ticks must read 0 fps, not
-        // flicker between 0 and 1.
-        fps.max(0.0) as u64,
-    )
-    .into()
+/// The four status-bar figures, pre-formatted. Split (rather than one
+/// joined string) so the status bar can sit each in a fixed-min-width
+/// box — a live readout whose width breathes on every tick makes the
+/// whole bar jitter.
+#[derive(Clone, Debug)]
+pub struct SegmentParts {
+    /// `up 3d 4h`
+    pub up: SharedString,
+    /// `CPU 6.8%`
+    pub cpu: SharedString,
+    /// `MEM 184.0 MB`
+    pub mem: SharedString,
+    /// `58 fps`
+    pub fps: SharedString,
+}
+
+impl SegmentParts {
+    pub fn from_values(run_secs: u64, cpu_pct: f32, mem_bytes: u64, fps: f32) -> Self {
+        Self {
+            up: format!("up {}", format_uptime(run_secs)).into(),
+            cpu: format!("CPU {}", format_cpu(cpu_pct)).into(),
+            mem: format!("MEM {}", crate::status_bar::humanize_bytes(mem_bytes)).into(),
+            // Round: burst rate already excludes isolated one-off
+            // paints, so 59.94 from timer jitter should read 60.
+            fps: format!("{} fps", fps.max(0.0).round() as u64).into(),
+        }
+    }
+
+    /// Fixed reference values for `--simulate-stats` screenshots.
+    pub fn simulated() -> Self {
+        Self::from_values(3 * 86_400 + 4 * 3_600, 6.8, 184 * 1024 * 1024, 58.0)
+    }
 }
 
 /// One decimal below 10% (where the decimal carries real signal —
@@ -116,20 +146,15 @@ pub fn start_sampler(cx: &mut App) {
         // must not run on the UI thread).
         let mut sys = sysinfo::System::new();
         let mut collector = gpui::profiler::FrameTimingCollector::new();
-        let mut last_sample = Instant::now();
         let mut primed = false;
         loop {
             cx.background_executor().timer(SAMPLE_INTERVAL).await;
-            // Fps divides by the *actual* elapsed time, not the
-            // nominal interval — timer wakeups drift under load.
-            let elapsed = last_sample.elapsed();
-            last_sample = Instant::now();
             let (returned_sys, returned_collector, snapshot) = cx
                 .background_executor()
                 .spawn(async move {
                     let mut sys = sys;
                     let mut collector = collector;
-                    let snapshot = sample(&mut sys, &mut collector, pid, elapsed);
+                    let snapshot = sample(&mut sys, &mut collector, pid);
                     (sys, collector, snapshot)
                 })
                 .await;
@@ -165,7 +190,6 @@ fn sample(
     sys: &mut sysinfo::System,
     collector: &mut gpui::profiler::FrameTimingCollector,
     pid: sysinfo::Pid,
-    elapsed: Duration,
 ) -> Option<StatsSnapshot> {
     // Drain the frames drawn since the last tick, then flip tracing
     // off/on: disabling clears (and shrinks) gpui's global ring, so
@@ -178,14 +202,17 @@ fn sample(
     gpui::profiler::set_frame_trace_enabled(true);
     *collector = gpui::profiler::FrameTimingCollector::new();
 
-    let secs = elapsed.as_secs_f32().max(0.001);
-    let mut fps: HashMap<WindowId, f32> = HashMap::new();
+    // Group draw timestamps per window (the ring is chronological,
+    // so each per-window list stays sorted), then take the burst
+    // rate of each.
+    let mut draws: HashMap<WindowId, Vec<Instant>> = HashMap::new();
     for timing in &frames {
-        *fps.entry(timing.window_id).or_insert(0.0) += 1.0;
+        draws.entry(timing.window_id).or_default().push(timing.draw_end);
     }
-    for count in fps.values_mut() {
-        *count /= secs;
-    }
+    let fps: HashMap<WindowId, f32> = draws
+        .into_iter()
+        .map(|(id, ends)| (id, burst_fps(&ends)))
+        .collect();
 
     sys.refresh_processes_specifics(
         sysinfo::ProcessesToUpdate::Some(&[pid]),
@@ -198,6 +225,31 @@ fn sample(
         mem_bytes: proc.memory(),
         fps,
     })
+}
+
+/// Frames per second *while drawing*: only gaps between consecutive
+/// frames closer than [`BURST_GAP`] count as drawing time. Averaging
+/// over wall-clock instead would report "12 fps" for half a second of
+/// perfect 60 Hz scrolling inside a 2 s window — a dilution artifact,
+/// not a frame rate. Isolated paints (no neighbour within the gap)
+/// contribute nothing, so an idle window — including one repainted
+/// only by the sampler's own ticks — reads 0.
+///
+/// `draw_ends` must be chronological (the profiler ring is).
+fn burst_fps(draw_ends: &[Instant]) -> f32 {
+    let mut drawing = Duration::ZERO;
+    let mut intervals = 0u32;
+    for pair in draw_ends.windows(2) {
+        let delta = pair[1].duration_since(pair[0]);
+        if delta <= BURST_GAP {
+            drawing += delta;
+            intervals += 1;
+        }
+    }
+    if drawing.is_zero() {
+        return 0.0;
+    }
+    intervals as f32 / drawing.as_secs_f32()
 }
 
 #[cfg(test)]
@@ -223,25 +275,50 @@ mod tests {
     }
 
     #[test]
-    fn segment_floors_fps_and_composes() {
-        let s = format_segment(3 * 86_400 + 4 * 3_600, 6.8, 184 * 1024 * 1024, 58.9);
-        assert_eq!(&*s, "up 3d 4h \u{00B7} CPU 6.8% \u{00B7} MEM 184.0 MB \u{00B7} 58 fps");
-        // Idle: the only redraws are the sampler's own ticks (~0.5/s)
-        // — must floor to an honest 0.
-        let s = format_segment(30, 0.2, 3_774_874, 0.5);
-        assert_eq!(&*s, "up 30s \u{00B7} CPU 0.2% \u{00B7} MEM 3.6 MB \u{00B7} 0 fps");
+    fn segment_parts_compose() {
+        let p = SegmentParts::from_values(3 * 86_400 + 4 * 3_600, 6.8, 184 * 1024 * 1024, 58.9);
+        assert_eq!(&*p.up, "up 3d 4h");
+        assert_eq!(&*p.cpu, "CPU 6.8%");
+        assert_eq!(&*p.mem, "MEM 184.0 MB");
+        // Burst rate rounds (59.94 from timer jitter should read 60;
+        // isolated paints were already excluded upstream).
+        assert_eq!(&*p.fps, "59 fps");
+        let p = SegmentParts::from_values(30, 0.2, 3_774_874, 0.0);
+        assert_eq!(&*p.up, "up 30s");
+        assert_eq!(&*p.mem, "MEM 3.6 MB");
+        assert_eq!(&*p.fps, "0 fps");
     }
 
     #[test]
-    fn snapshot_label_missing_window_reads_zero_fps() {
+    fn snapshot_parts_missing_window_reads_zero_fps() {
         let snap = StatsSnapshot {
             run_secs: 61,
             cpu_pct: 1.0,
             mem_bytes: 1024,
             fps: HashMap::new(),
         };
-        let label = snap.segment_label(WindowId::default());
-        assert!(label.contains("0 fps"), "{label}");
-        assert!(label.starts_with("up 1m"), "{label}");
+        let parts = snap.segment_parts(WindowId::default());
+        assert_eq!(&*parts.fps, "0 fps");
+        assert_eq!(&*parts.up, "up 1m");
+    }
+
+    #[test]
+    fn burst_fps_reports_rate_while_drawing_not_wall_clock() {
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        // Half a second of 60 Hz scrolling inside an otherwise idle
+        // 2 s window: the old wall-clock average said ~15 fps; the
+        // burst rate must say ~60.
+        let mut ends: Vec<Instant> = (0..30).map(|i| ms(1_000 + i * 16)).collect();
+        ends.insert(0, ms(0)); // an isolated paint long before the burst
+        let fps = burst_fps(&ends);
+        assert!((59.0..=64.0).contains(&fps), "{fps}");
+        // Idle: only the sampler's own ~0.5 Hz repaint ticks — no
+        // pair is closer than BURST_GAP, so no drawing time at all.
+        let ends: Vec<Instant> = (0..3).map(|i| ms(i * 2_000)).collect();
+        assert_eq!(burst_fps(&ends), 0.0);
+        // Degenerate inputs.
+        assert_eq!(burst_fps(&[]), 0.0);
+        assert_eq!(burst_fps(&[t0]), 0.0);
     }
 }

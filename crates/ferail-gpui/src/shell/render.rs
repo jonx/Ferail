@@ -2866,6 +2866,9 @@ impl Render for Shell {
             volume_read_only,
             hidden_count: if archive_mode { 0 } else { hidden_summary.count },
             hidden_bytes: if archive_mode { 0 } else { hidden_summary.bytes },
+            // Filled in just before the status_bar::render call, where
+            // the window id is in hand.
+            stats: None,
         };
         let _ = delegate;
         // Clicking the task region of the status bar toggles the
@@ -2896,20 +2899,18 @@ impl Render for Shell {
         // App-footprint stats segment. The real path reads the cached
         // snapshot the off-thread sampler last published (never
         // samples here — Prime Directive); `--simulate-stats` pins the
-        // fixed reference values from the module docs instead.
-        let stats_label: Option<gpui::SharedString> = if self.simulated_stats {
-            Some(crate::system_stats::format_segment(
-                3 * 86_400 + 4 * 3_600, // "up 3d 4h"
-                6.8,
-                184 * 1024 * 1024,
-                58.0,
-            ))
-        } else {
-            self.process
-                .system_stats
-                .borrow()
-                .as_ref()
-                .map(|s| s.segment_label(window.window_handle().window_id()))
+        // fixed reference values instead.
+        let metrics = crate::status_bar::StatusMetrics {
+            stats: if self.simulated_stats {
+                Some(crate::system_stats::SegmentParts::simulated())
+            } else {
+                self.process
+                    .system_stats
+                    .borrow()
+                    .as_ref()
+                    .map(|s| s.segment_parts(window.window_handle().window_id()))
+            },
+            ..metrics
         };
         let status_bar = crate::status_bar::render(
             metrics,
@@ -2918,7 +2919,6 @@ impl Render for Shell {
             Some(toggle_task_panel),
             self.show_hidden,
             Some(toggle_hidden_cb),
-            stats_label,
             cx,
         );
         // Auto-dismiss the background-task popover when the pointer

@@ -20,13 +20,16 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   on-disk files until extracted, so they still only drag within the window.
 - **The status bar shows what Ferail itself costs.** A quiet readout on the
   right — "up 3d 4h · CPU 0.2% · MEM 184.0 MB · 0 fps" — reports how long the
-  app has been running, its CPU share, its memory footprint, and how many
-  frames the window actually drew in the last couple of seconds. All figures
-  are about Ferail, not the machine: an idle window honestly reads 0 fps
-  (numbers only move when something is really repainting), and CPU is counted
-  the way Activity Monitor does, so it can exceed 100% on multi-core work.
-  The readout appears a few seconds after launch, once the first reliable
-  sample exists.
+  app has been running, its CPU share, its memory footprint, and how fast it
+  draws while something is actually moving. All figures are about Ferail, not
+  the machine: an idle window honestly reads 0 fps (numbers only move when
+  something is really repainting), fps is measured only across the moments
+  the window was drawing — so a brief scroll reports its true smoothness
+  instead of an average watered down by idle time — and CPU is counted the
+  way Activity Monitor does, so it can exceed 100% on multi-core work. Each
+  number sits in a fixed-width slot, so the bar doesn't shift around as
+  values update. The readout appears a few seconds after launch, once the
+  first reliable sample exists.
 - **Ferail can be packaged as an Ubuntu/Debian `.deb`.** The repo now carries
   a freedesktop desktop entry, the app icon in the standard hicolor location,
   and `cargo deb` packaging metadata; every window identifies itself to the

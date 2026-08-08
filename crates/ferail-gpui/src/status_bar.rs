@@ -81,6 +81,10 @@ pub struct StatusMetrics {
     /// unhiding it.
     pub hidden_count: usize,
     pub hidden_bytes: u64,
+    /// App-footprint figures (up · CPU · MEM · fps), pre-formatted by
+    /// the off-thread sampler's snapshot (or `--simulate-stats`).
+    /// `None` until the sampler's first real reading.
+    pub stats: Option<crate::system_stats::SegmentParts>,
 }
 
 pub fn render(
@@ -90,7 +94,6 @@ pub fn render(
     on_toggle_task_panel: Option<ClickHandler>,
     show_hidden: bool,
     on_toggle_hidden: Option<ActionHandler>,
-    stats_label: Option<SharedString>,
     cx: &mut App,
 ) -> Div {
     // Snapshot theme colours up-front — the later progress_strip
@@ -232,13 +235,36 @@ pub fn render(
         // the off-thread sampler (system_stats.rs) — render only
         // formats a cached snapshot. Absent until the sampler's first
         // real reading, and always absent in screenshot mode unless
-        // `--simulate-stats` pins a deterministic label.
-        .when_some(stats_label, |this, label| {
-            this.child(
-                div()
+        // `--simulate-stats` pins deterministic values.
+        //
+        // Each figure sits in its own fixed-min-width, right-aligned
+        // box so a live value changing width ("9.8%" → "10%", "0 fps"
+        // → "58 fps") never shifts its neighbours — the separators
+        // stay put and the bar doesn't jitter on every 2 s tick. The
+        // widths are rem-based so `ui_scale` scales them with the
+        // text; each fits its realistic worst case ("up 99d 23h",
+        // "CPU 999%", "MEM 1023.9 MB", "120 fps") and, being min_w,
+        // degrades to growing rather than overlapping beyond that.
+        .when_some(metrics.stats, |this, parts| {
+            let cell = |text: SharedString, min_w_rems: f32| {
+                h_flex()
                     .flex_shrink_0()
+                    .justify_end()
+                    .min_w(rems(min_w_rems))
+                    .child(text)
+            };
+            this.child(
+                h_flex()
+                    .flex_shrink_0()
+                    .gap_1()
                     .text_color(theme_muted_fg.opacity(0.85))
-                    .child(label),
+                    .child(cell(parts.up, 3.9))
+                    .child("\u{00B7}")
+                    .child(cell(parts.cpu, 3.4))
+                    .child("\u{00B7}")
+                    .child(cell(parts.mem, 5.0))
+                    .child("\u{00B7}")
+                    .child(cell(parts.fps, 2.6)),
             )
         })
         // Hidden-content summary: what the Show-Hidden toggle beside it
