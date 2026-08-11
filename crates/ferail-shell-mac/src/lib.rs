@@ -422,16 +422,43 @@ pub fn eject_device(_volume_paths: &[&std::path::Path]) -> Result<(), String> {
     Err("eject is macOS-only in this build".into())
 }
 
-/// Names of processes holding files open on the volume at `path` — the
-/// "why won't it eject" answer for a failed eject. Synchronous —
+/// Processes holding files open on the volume at `path` — the
+/// "why won't it eject" answer for a failed eject, with pids so the UI
+/// can activate the blocking app ([`activate_app`]). Synchronous —
 /// callers run this on a worker. Non-macOS: empty.
 #[cfg(target_os = "macos")]
-pub fn volume_busy_processes(path: &std::path::Path) -> Vec<String> {
+pub fn volume_busy_processes(path: &std::path::Path) -> Vec<ferail_core::BusyApp> {
     file_ops::volume_busy_processes(path)
 }
 
+/// Bring the application owning `pid` to the foreground — the click
+/// action on a failed-eject toast's culprit chips, so the user can go
+/// close the files blocking the eject. `false` when the pid has no GUI
+/// application to activate (a daemon or a shell), which callers treat
+/// as a no-op. Cheap AppKit lookup; call from the UI thread.
+#[cfg(target_os = "macos")]
+pub fn activate_app(pid: i32) -> bool {
+    use objc2::runtime::AnyObject;
+    unsafe {
+        let app: *mut AnyObject = objc2::msg_send![
+            objc2::class!(NSRunningApplication),
+            runningApplicationWithProcessIdentifier: pid
+        ];
+        if app.is_null() {
+            return false;
+        }
+        // NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps.
+        objc2::msg_send![app, activateWithOptions: 3usize]
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
-pub fn volume_busy_processes(_path: &std::path::Path) -> Vec<String> {
+pub fn activate_app(_pid: i32) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn volume_busy_processes(_path: &std::path::Path) -> Vec<ferail_core::BusyApp> {
     Vec::new()
 }
 

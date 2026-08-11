@@ -641,11 +641,11 @@ fn unmount_filesystem(source: &str, mount_point: &Path) -> Result<(), String> {
 /// trips over. Best-effort, sorted, deduped, capped at 5. Callers
 /// dispatch from a worker.
 #[cfg(target_os = "linux")]
-pub fn volume_busy_processes(path: &Path) -> Vec<String> {
+pub fn volume_busy_processes(path: &Path) -> Vec<ferail_core::BusyApp> {
     let Ok(procs) = std::fs::read_dir("/proc") else {
         return Vec::new();
     };
-    let mut names: Vec<String> = Vec::new();
+    let mut apps: Vec<ferail_core::BusyApp> = Vec::new();
     for entry in procs.flatten() {
         let pid_os = entry.file_name();
         let Some(pid) = pid_os
@@ -669,18 +669,29 @@ pub fn volume_busy_processes(path: &Path) -> Vec<String> {
             let name = std::fs::read_to_string(proc_dir.join("comm"))
                 .map(|s| s.trim().to_string())
                 .unwrap_or_default();
-            names.push(if name.is_empty() { format!("pid {pid}") } else { name });
+            apps.push(ferail_core::BusyApp {
+                pid: pid.parse().unwrap_or(0),
+                name: if name.is_empty() { format!("pid {pid}") } else { name },
+            });
         }
     }
-    names.sort();
-    names.dedup();
-    names.truncate(5);
-    names
+    apps.sort_by(|a, b| a.name.cmp(&b.name));
+    apps.dedup_by(|a, b| a.name == b.name);
+    apps.truncate(5);
+    apps
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn volume_busy_processes(_path: &Path) -> Vec<String> {
+pub fn volume_busy_processes(_path: &Path) -> Vec<ferail_core::BusyApp> {
     Vec::new()
+}
+
+/// Bring the app owning `pid` to the foreground. Not implemented on
+/// Linux (needs a Wayland/X11 window-to-pid mapping we don't have);
+/// callers treat `false` as a no-op, so the failed-eject toast's app
+/// chips are inert here.
+pub fn activate_app(_pid: i32) -> bool {
+    false
 }
 
 /// Run a command to completion; `Err` carries trimmed stderr (or the

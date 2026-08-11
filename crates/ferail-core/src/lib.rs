@@ -805,6 +805,17 @@ mod format_label_tests {
     }
 }
 
+/// A process holding files open on a volume — the "why won't it eject"
+/// answer a failed unmount is enriched with. `pid` lets the UI activate
+/// the owning application so the user can close the offending files;
+/// `name` is the process display name shown on the toast. Produced by
+/// each platform shell's `volume_busy_processes`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BusyApp {
+    pub pid: i32,
+    pub name: String,
+}
+
 /// Display-ready provenance fields for a quarantined file. Strings are
 /// pre-formatted in the worker so paint never allocates or parses.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

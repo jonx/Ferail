@@ -135,8 +135,17 @@ selection). The eject worker then waits ~500 ms for the dropped resources to
 close their descriptors and retries once (1 s) before blaming other apps in
 the failure toast. Pure state mutation on the UI side — no I/O on the click
 path. Not covered: in-flight duplicate/metadata scans reading volume files at
-the moment of eject (transient), and other apps' holds — the toast still
-names those processes.
+the moment of eject (transient).
+
+**When another app blocks the eject (2026-08-11)**, the failure toast renders
+the blockers as clickable chips: `volume_busy_processes` now returns
+`ferail_core::BusyApp` (pid + name, via libproc on macOS, `/proc` on Linux),
+and clicking a chip calls `platform_shell::activate_app(pid)` —
+`NSRunningApplication` activation on macOS — bringing that app forward so the
+user can close the offending files and try again. Chips are inert for
+processes with no GUI (daemons, shells) and on Linux/Windows, where
+`activate_app` is unimplemented. The toast is pinned (no autohide) so it
+survives the app switch; the hover ✕ dismisses it.
 
 ## Feedback UX Policy
 

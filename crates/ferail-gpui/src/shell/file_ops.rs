@@ -1591,18 +1591,17 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        use ferail_core::BusyApp;
         use gpui_component::notification::Notification;
 
-        /// Failed-eject toast: name who's blocking when we can (the
-        /// actionable why), else fall back to the platform error.
-        fn failure_message(busy: &[String], what: &str, err: &str) -> String {
-            let apps = match busy {
-                [] => return format!("Couldn’t eject {what}: {err}"),
-                [a] => format!("{a} has"),
-                [a, b] => format!("{a} and {b} have"),
-                [head @ .., last] => format!("{} and {last} have", head.join(", ")),
-            };
-            format!("Couldn’t eject {what} — {apps} files open on it. Close them and try again.")
+        /// One failed eject, carried structured from the worker so the
+        /// UI side can render the blocking apps as clickable chips.
+        struct EjectFailure {
+            /// "“Untitled”" or "the disk".
+            what: String,
+            /// Platform error, shown when we can't name a blocker.
+            err: String,
+            busy: Vec<BusyApp>,
         }
 
         let roots: Vec<PathBuf> = volumes.iter().map(|(p, _)| p.clone()).collect();
@@ -1613,18 +1612,18 @@ impl Shell {
             let (ejected, failures) = cx
                 .background_executor()
                 .spawn(async move {
-                    fn attempt(volumes: &[(PathBuf, String)]) -> (Vec<String>, Vec<String>) {
+                    fn attempt(volumes: &[(PathBuf, String)]) -> (Vec<String>, Vec<EjectFailure>) {
                         let mut ejected: Vec<String> = Vec::new();
-                        let mut failures: Vec<String> = Vec::new();
+                        let mut failures: Vec<EjectFailure> = Vec::new();
                         match volumes {
                             [] => {}
                             [(path, name)] => match crate::platform_shell::eject_volume(path) {
                                 Ok(()) => ejected.push(name.clone()),
-                                Err(e) => {
-                                    let busy = crate::platform_shell::volume_busy_processes(path);
-                                    let what = format!("\u{201C}{name}\u{201D}");
-                                    failures.push(failure_message(&busy, &what, &e));
-                                }
+                                Err(e) => failures.push(EjectFailure {
+                                    what: format!("\u{201C}{name}\u{201D}"),
+                                    err: e,
+                                    busy: crate::platform_shell::volume_busy_processes(path),
+                                }),
                             },
                             many => {
                                 let paths: Vec<&Path> =
@@ -1636,16 +1635,20 @@ impl Shell {
                                     Err(e) => {
                                         // Whoever holds a file open on *any* of the
                                         // device's volumes blocks the whole eject.
-                                        let mut busy: Vec<String> = many
+                                        let mut busy: Vec<BusyApp> = many
                                             .iter()
                                             .flat_map(|(p, _)| {
                                                 crate::platform_shell::volume_busy_processes(p)
                                             })
                                             .collect();
-                                        busy.sort();
-                                        busy.dedup();
+                                        busy.sort_by(|a, b| a.name.cmp(&b.name));
+                                        busy.dedup_by(|a, b| a.name == b.name);
                                         busy.truncate(5);
-                                        failures.push(failure_message(&busy, "the disk", &e));
+                                        failures.push(EjectFailure {
+                                            what: "the disk".into(),
+                                            err: e,
+                                            busy,
+                                        });
                                     }
                                 }
                             }
@@ -1680,8 +1683,47 @@ impl Shell {
                     };
                     window.push_notification(Notification::info(msg), cx);
                 }
-                for msg in failures {
-                    window.push_notification(Notification::error(msg), cx);
+                for failure in failures {
+                    // No blocker we can name → the platform error is all
+                    // we have. Otherwise: the blocking apps as clickable
+                    // chips — clicking one brings that app forward so
+                    // the user can close the offending files (inert for
+                    // daemons/shells with no GUI to activate). Pinned
+                    // open (no autohide) so it survives the app switch;
+                    // the hover ✕ dismisses it.
+                    if failure.busy.is_empty() {
+                        let msg = format!("Couldn’t eject {}: {}", failure.what, failure.err);
+                        window.push_notification(Notification::error(msg), cx);
+                        continue;
+                    }
+                    let msg = format!(
+                        "Couldn’t eject {} — these apps have files open on it. \
+                         Click one to bring it forward, close the files, and try again.",
+                        failure.what
+                    );
+                    let busy = failure.busy;
+                    let note = Notification::error(msg).autohide(false).content(move |_, _, _| {
+                        use crate::text::TextScale as _;
+                        use gpui_component::Sizable as _;
+                        use gpui_component::button::ButtonVariants as _;
+                        h_flex()
+                            .pt_1()
+                            .gap_1()
+                            .flex_wrap()
+                            .children(busy.iter().enumerate().map(|(ix, app)| {
+                                let pid = app.pid;
+                                gpui_component::button::Button::new(("eject-busy-app", ix))
+                                    .label(app.name.clone())
+                                    .text_scale_xs()
+                                    .xsmall()
+                                    .outline()
+                                    .on_click(move |_, _, _| {
+                                        crate::platform_shell::activate_app(pid);
+                                    })
+                            }))
+                            .into_any_element()
+                    });
+                    window.push_notification(note, cx);
                 }
             });
         })

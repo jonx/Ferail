@@ -709,8 +709,16 @@ pub fn eject_volume(_path: &std::path::Path) -> Result<(), String> {
 /// Windows yet (the honest source is the Restart Manager, which wants a
 /// file list, not a volume; NtQuerySystemInformation handle walks need
 /// admin). Callers must treat empty as "unknown", not "nothing".
-pub fn volume_busy_processes(_path: &std::path::Path) -> Vec<String> {
+pub fn volume_busy_processes(_path: &std::path::Path) -> Vec<ferail_core::BusyApp> {
     Vec::new()
+}
+
+/// Bring the app owning `pid` to the foreground. Not implemented on
+/// Windows (would need an EnumWindows pid→HWND walk + SetForegroundWindow,
+/// and there is no busy-process list to click yet — see above); callers
+/// treat `false` as a no-op.
+pub fn activate_app(_pid: i32) -> bool {
+    false
 }
 
 /// Duplicate `src` next to itself with Explorer's " - Copy" /

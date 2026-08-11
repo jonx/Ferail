@@ -285,7 +285,7 @@ pub fn eject_device(volume_paths: &[&Path]) -> Result<(), String> {
 /// innocent daemons. Best-effort: empty on any failure. Sorted, deduped,
 /// capped at 5. Synchronous — callers run this on a worker.
 #[cfg(target_os = "macos")]
-pub fn volume_busy_processes(path: &Path) -> Vec<String> {
+pub fn volume_busy_processes(path: &Path) -> Vec<ferail_core::BusyApp> {
     use std::os::raw::{c_char, c_int, c_void};
     use std::os::unix::ffi::OsStrExt;
 
@@ -337,7 +337,7 @@ pub fn volume_busy_processes(path: &Path) -> Vec<String> {
             return Vec::new();
         }
         let count = (bytes as usize / 4).min(pids.len());
-        let mut names: Vec<String> = Vec::new();
+        let mut apps: Vec<ferail_core::BusyApp> = Vec::new();
         for &pid in &pids[..count] {
             if pid <= 0 {
                 continue;
@@ -347,14 +347,15 @@ pub fn volume_busy_processes(path: &Path) -> Vec<String> {
             if len > 0 {
                 let name = String::from_utf8_lossy(&buf[..len as usize]).into_owned();
                 if !name.is_empty() {
-                    names.push(name);
+                    apps.push(ferail_core::BusyApp { pid, name });
                 }
             }
         }
-        names.sort();
-        names.dedup();
-        names.truncate(5);
-        names
+        // One chip per app name; the kept pid is enough to activate it.
+        apps.sort_by(|a, b| a.name.cmp(&b.name));
+        apps.dedup_by(|a, b| a.name == b.name);
+        apps.truncate(5);
+        apps
     }
 }
 

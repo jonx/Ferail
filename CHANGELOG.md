@@ -15,8 +15,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   holds: tabs on the volume (in every window) go back to your home folder,
   archive and disk-usage views rooted on it close, and viewer windows
   playing from it close; then the eject proceeds, waiting a moment and
-  retrying once so the freed files are really closed. If another app still
-  blocks the eject, the failure message names it, as before.
+  retrying once so the freed files are really closed. And when another app
+  still blocks the eject, the failure message shows each blocking app as a
+  **clickable button** — clicking one brings that app to the front so you
+  can close whatever it has open on the volume and try again. (Buttons for
+  processes without windows, like background daemons, do nothing; on Linux
+  and Windows the names are shown but aren't clickable yet.)
 
 ## 0.3.0 — 2026-08-08
 
