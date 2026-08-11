@@ -884,6 +884,17 @@ impl ViewerWindow {
         self.playlist.get(self.index)
     }
 
+    /// Whether any playlist entry lives under one of `roots`. The eject
+    /// release pass (docs/features/FILE_OPS.md) closes such viewers so
+    /// mpv lets go of the open media file — the whole playlist counts,
+    /// not just the current entry, since Next would land on the gone
+    /// volume anyway.
+    pub fn touches_any(&self, roots: &[std::path::PathBuf]) -> bool {
+        self.playlist
+            .iter()
+            .any(|e| roots.iter().any(|r| e.path.starts_with(r)))
+    }
+
     /// Render-time title sync. The platform call only happens when the
     /// text changed, so per-frame cost is one string compare.
     fn sync_title(&mut self, window: &mut Window) {

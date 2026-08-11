@@ -1466,6 +1466,106 @@ impl Shell {
             .collect()
     }
 
+    /// Let go of everything *we* hold on the given volumes so an eject
+    /// isn't blocked by Ferail itself: tabs browsing the volume (their
+    /// enumeration / folder-size / prefetch walks keep directories
+    /// open) navigate home, tool-result surfaces rooted on it are
+    /// dropped (the archive workbench holds the archive file open;
+    /// disk-usage and duplicate scans walk it), and a pinned preview
+    /// override pointing into it is cleared — the ordinary preview
+    /// follows the (now empty) selection by itself. Pure state
+    /// mutation, no I/O. Returns whether anything was released.
+    fn release_volumes_locally(
+        &mut self,
+        roots: &[PathBuf],
+        cx: &mut Context<Self>,
+    ) -> bool {
+        use super::tab::ToolResultMode;
+        let under = |p: &Path| roots.iter().any(|r| p.starts_with(r));
+
+        let mut released = false;
+        let mut dropped_archive = false;
+        let mut go_home: Vec<super::tab::TabId> = Vec::new();
+        for tab in &mut self.tabs {
+            let surface_hit = tab.tool_result.as_ref().is_some_and(|s| match &s.mode {
+                ToolResultMode::Search(m) => under(&m.root),
+                ToolResultMode::Duplicates(m) => under(&m.root),
+                ToolResultMode::DiskUsage(m) => under(&m.root),
+                ToolResultMode::Archive(m) => under(&m.archive),
+            });
+            if surface_hit {
+                dropped_archive |= tab
+                    .tool_result
+                    .as_ref()
+                    .is_some_and(|s| s.archive_mode().is_some());
+                tab.tool_result = None;
+                released = true;
+            }
+            if under(&tab.current_dir) {
+                tab.selection.clear();
+                tab.anchor = None;
+                tab.lead = None;
+                tab.filtered_out.clear();
+                go_home.push(tab.id);
+                released = true;
+            }
+        }
+        let home = ferail_fs_native::home_dir();
+        for id in go_home {
+            self.load_path_for_tab(id, home.clone(), cx);
+        }
+        if let Some(target) = &self.preview_override {
+            use crate::preview_panel::PreviewTarget;
+            let hit = match target {
+                PreviewTarget::File { path, .. } => under(path),
+                PreviewTarget::Volume { path, .. } => under(path),
+                // No path to test — an in-memory archive-entry preview;
+                // tie it to the archive surface we just dropped.
+                PreviewTarget::InMemory { .. } => dropped_archive,
+                PreviewTarget::None => false,
+            };
+            if hit {
+                self.preview_override = None;
+                released = true;
+            }
+        }
+        if released {
+            cx.notify();
+        }
+        released
+    }
+
+    /// The process-wide half of the release: run
+    /// [`Self::release_volumes_locally`] on every live Shell window
+    /// (a tab in another window holds the volume just as firmly), and
+    /// close any viewer window whose playlist touches the volumes —
+    /// mpv keeps the playing file open, and that alone fails an eject.
+    fn release_volumes_for_eject(&mut self, roots: &[PathBuf], cx: &mut Context<Self>) -> bool {
+        let mut released = self.release_volumes_locally(roots, cx);
+
+        let me = cx.entity_id();
+        let shells: Vec<_> = self.process.shells.borrow().clone();
+        for weak in shells {
+            let Some(shell) = weak.upgrade() else { continue };
+            if shell.entity_id() == me {
+                continue;
+            }
+            shell.update(cx, |shell, cx| {
+                released |= shell.release_volumes_locally(roots, cx);
+            });
+        }
+
+        let viewers: Vec<_> = self.process.viewers.borrow().clone();
+        for (handle, weak) in viewers {
+            let Some(viewer) = weak.upgrade() else { continue };
+            if viewer.read(cx).touches_any(roots) {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+                released = true;
+            }
+        }
+        released
+    }
+
     /// Eject the given `(mount path, display name)` volumes on a
     /// worker (unmount/eject can block while the system flushes and
     /// closes the device). A single volume goes through
@@ -1477,6 +1577,14 @@ impl Shell {
     /// volume — the usual reason an eject fails, and the part Finder's
     /// "disk is in use" alert never tells you. The volume observer
     /// drops ejected rows from the sidebar once the unmounts land.
+    ///
+    /// Before any of that, Ferail releases its own holds
+    /// ([`Self::release_volumes_for_eject`]) — otherwise browsing the
+    /// volume in a tab was enough to make its own eject button report
+    /// "Ferail has files open on it". When something was released, the
+    /// worker waits briefly for the dropped resources (mpv teardown,
+    /// cancelled walks) to actually close their descriptors, and
+    /// retries once on failure before blaming other apps.
     fn eject_volumes(
         &mut self,
         volumes: Vec<(PathBuf, String)>,
@@ -1497,45 +1605,71 @@ impl Shell {
             format!("Couldn’t eject {what} — {apps} files open on it. Close them and try again.")
         }
 
+        let roots: Vec<PathBuf> = volumes.iter().map(|(p, _)| p.clone()).collect();
+        let released = self.release_volumes_for_eject(&roots, cx);
+
         let win = window.window_handle();
         cx.spawn(async move |_this, cx| {
             let (ejected, failures) = cx
                 .background_executor()
                 .spawn(async move {
-                    let mut ejected: Vec<String> = Vec::new();
-                    let mut failures: Vec<String> = Vec::new();
-                    match volumes.as_slice() {
-                        [] => {}
-                        [(path, name)] => match crate::platform_shell::eject_volume(path) {
-                            Ok(()) => ejected.push(name.clone()),
-                            Err(e) => {
-                                let busy = crate::platform_shell::volume_busy_processes(path);
-                                let what = format!("\u{201C}{name}\u{201D}");
-                                failures.push(failure_message(&busy, &what, &e));
-                            }
-                        },
-                        many => {
-                            let paths: Vec<&Path> = many.iter().map(|(p, _)| p.as_path()).collect();
-                            match crate::platform_shell::eject_device(&paths) {
-                                Ok(()) => ejected.extend(many.iter().map(|(_, n)| n.clone())),
+                    fn attempt(volumes: &[(PathBuf, String)]) -> (Vec<String>, Vec<String>) {
+                        let mut ejected: Vec<String> = Vec::new();
+                        let mut failures: Vec<String> = Vec::new();
+                        match volumes {
+                            [] => {}
+                            [(path, name)] => match crate::platform_shell::eject_volume(path) {
+                                Ok(()) => ejected.push(name.clone()),
                                 Err(e) => {
-                                    // Whoever holds a file open on *any* of the
-                                    // device's volumes blocks the whole eject.
-                                    let mut busy: Vec<String> = many
-                                        .iter()
-                                        .flat_map(|(p, _)| {
-                                            crate::platform_shell::volume_busy_processes(p)
-                                        })
-                                        .collect();
-                                    busy.sort();
-                                    busy.dedup();
-                                    busy.truncate(5);
-                                    failures.push(failure_message(&busy, "the disk", &e));
+                                    let busy = crate::platform_shell::volume_busy_processes(path);
+                                    let what = format!("\u{201C}{name}\u{201D}");
+                                    failures.push(failure_message(&busy, &what, &e));
+                                }
+                            },
+                            many => {
+                                let paths: Vec<&Path> =
+                                    many.iter().map(|(p, _)| p.as_path()).collect();
+                                match crate::platform_shell::eject_device(&paths) {
+                                    Ok(()) => {
+                                        ejected.extend(many.iter().map(|(_, n)| n.clone()))
+                                    }
+                                    Err(e) => {
+                                        // Whoever holds a file open on *any* of the
+                                        // device's volumes blocks the whole eject.
+                                        let mut busy: Vec<String> = many
+                                            .iter()
+                                            .flat_map(|(p, _)| {
+                                                crate::platform_shell::volume_busy_processes(p)
+                                            })
+                                            .collect();
+                                        busy.sort();
+                                        busy.dedup();
+                                        busy.truncate(5);
+                                        failures.push(failure_message(&busy, "the disk", &e));
+                                    }
                                 }
                             }
                         }
+                        (ejected, failures)
                     }
-                    (ejected, failures)
+
+                    // We just dropped our own holds on the UI side; give
+                    // the released resources a beat to close their file
+                    // descriptors (mpv teardown, cancelled directory
+                    // walks) before the unmount samples the volume.
+                    // Blocking sleeps are fine here — this whole closure
+                    // is the blocking-eject worker.
+                    if released {
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                    }
+                    let (ejected, failures) = attempt(&volumes);
+                    if failures.is_empty() || !released {
+                        return (ejected, failures);
+                    }
+                    // Descriptors can outlive our 500 ms grace; one
+                    // slower retry before blaming other apps in a toast.
+                    std::thread::sleep(std::time::Duration::from_millis(1000));
+                    attempt(&volumes)
                 })
                 .await;
             let _ = win.update(cx, |_, window, cx| {

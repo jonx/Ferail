@@ -122,6 +122,22 @@ volume-identity parity and the `.lnk` alias-in-dest path. Note: all drag
 gestures are OS-driven, so they can't be exercised by the screenshot harness —
 verify interactively.
 
+**Eject releases Ferail's own holds first (2026-08-11).** Ejecting a volume
+you are still browsing used to fail with "Ferail has files open on it" —
+self-inflicted: tab enumeration/folder-size/prefetch walks keep directories
+open, the archive workbench keeps the archive file open, and a viewer window
+keeps its playing media open through mpv. `eject_volumes` now runs a release
+pass before unmounting (`Shell::release_volumes_for_eject`): every tab on the
+volume — in every window — navigates home with its tool-result surface
+dropped, viewer windows whose playlist touches the volume close, and a pinned
+preview override into it clears (the ordinary preview follows the emptied
+selection). The eject worker then waits ~500 ms for the dropped resources to
+close their descriptors and retries once (1 s) before blaming other apps in
+the failure toast. Pure state mutation on the UI side — no I/O on the click
+path. Not covered: in-flight duplicate/metadata scans reading volume files at
+the moment of eject (transient), and other apps' holds — the toast still
+names those processes.
+
 ## Feedback UX Policy
 
 Ferail's mutation feedback should stay calm. The UI itself is the confirmation

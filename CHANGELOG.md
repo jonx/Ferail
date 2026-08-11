@@ -6,6 +6,18 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 **Unreleased** collects work not yet in a tagged build.
 
+## Unreleased
+
+- **Ejecting a volume you're still browsing now works.** Eject used to fail
+  with "Ferail has files open on it" when the app itself was the culprit —
+  a tab open on the volume, an archive being browsed, or a viewer window
+  playing a file from it was enough. Eject now first releases Ferail's own
+  holds: tabs on the volume (in every window) go back to your home folder,
+  archive and disk-usage views rooted on it close, and viewer windows
+  playing from it close; then the eject proceeds, waiting a moment and
+  retrying once so the freed files are really closed. If another app still
+  blocks the eject, the failure message names it, as before.
+
 ## 0.3.0 — 2026-08-08
 
 First release with **Linux downloads** (Ubuntu/Debian `.deb`, Intel and ARM),
