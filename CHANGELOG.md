@@ -8,6 +8,19 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+No user-visible changes yet.
+
+## 0.4.0 — 2026-08-19
+
+The Linux build becomes actually usable (a font-lookup/backtrace stack-up
+had it at seconds per frame), and a batch of features lands: a filter box
+that understands metadata expressions and suggests its syntax, freeze
+diagnostics (automatic hang reports, `--safe-mode`), a viewer that fits
+media to the window, a folder context menu on empty space, an honest
+status bar under a filter, and eject that first releases Ferail's own
+holds. Linux `.deb`s and the Windows zip are built by CI; Windows remains
+unsigned (SHA-256 on the release page).
+
 - **Linux: the app no longer crawls at seconds per frame.** On a stock
   Linux install the interface was barely usable — every repaint took
   seconds and input lagged far behind. Two causes stacked: the UI font the
