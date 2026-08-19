@@ -156,11 +156,11 @@ each.
 > download, though, unlike a signature, it cannot prove *who* built the file:
 >
 > ```pwsh
-> Get-FileHash .\Ferail-0.3.0-win-x64.zip -Algorithm SHA256
+> Get-FileHash .\Ferail-0.4.0-win-x64.zip -Algorithm SHA256
 > ```
 >
 > ```
-> 451CEF7F00EF3C92D8A2B961E583AD79231DE6059CF0A7B10FCC285CF8E1F404
+> 5C4A87891102C461B54FA53CC615CA0B3BCDB04656BAB5DBA8F6DB29BDD32F50
 > ```
 >
 > Each release publishes its own checksum in its notes. If it matches, the file
