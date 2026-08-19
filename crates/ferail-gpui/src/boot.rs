@@ -83,6 +83,7 @@ pub fn run_gui(args: screenshot::Args) {
         // `ferail_core::path_guard::assert_off_ui_thread`.
         ferail_core::path_guard::mark_ui_thread();
         gpui_component::init(cx);
+        crate::text::install_platform_font_families(cx);
         crate::shell::init(cx);
         // Replace the dock / About icon. Has to happen after gpui
         // has built its NSApplication — calling from `main()` panics

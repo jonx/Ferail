@@ -8,6 +8,21 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Linux: the app no longer crawls at seconds per frame.** On a stock
+  Linux install the interface was barely usable — every repaint took
+  seconds and input lagged far behind. Two causes stacked: the UI font the
+  toolkit asks for by default ("IBM Plex Sans", which Zed bundles and
+  Ferail does not) isn't installed, so every piece of text on screen walked
+  a nine-deep fallback list on every frame; and Ferail's own
+  crash-diagnostics default (`RUST_BACKTRACE=1`) made each of those misses
+  capture a full stack trace. Ferail now picks an installed system font once
+  at startup (Adwaita Sans / Ubuntu / Cantarell / Noto Sans / DejaVu Sans,
+  in that order; Noto Sans first under KDE) and a real monospace face for
+  code previews (which used to fall through to a proportional font), and it
+  no longer lets the crash-diagnostics backtrace setting leak into ordinary
+  error handling on any platform — panics still get full backtraces. Set
+  `RUST_LIB_BACKTRACE=1` yourself if you want library errors to carry one.
+
 - **The viewer now fits media to the window by default — and you can pick a
   different default.** Small images and videos used to open as a tiny
   postage stamp in the middle of the window (the viewer fitted large media

@@ -35,6 +35,22 @@ pub fn init() {
         // SAFETY: single-threaded process startup, before any worker spawn.
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
     }
+    // ...but never let that leak into *library* error construction.
+    // `std::backtrace::Backtrace::capture()` — which `anyhow::Error` calls on
+    // every `anyhow!`/`bail!`/`.context()` — consults RUST_LIB_BACKTRACE
+    // first and falls back to RUST_BACKTRACE, so the default above would
+    // silently make every anyhow error in the process capture a full stack
+    // walk. Hot paths build those errors by the hundreds per frame (gpui's
+    // font lookup re-wraps a cached miss in a fresh `anyhow!` per text run;
+    // on Linux that walk is ~9 misses deep), and on Linux each capture is a
+    // libgcc `_Unwind_Find_FDE` crawl over a 100 MB binary — measured at 78%
+    // of the UI thread's time on the Ubuntu VM, the app crawling at seconds
+    // per frame. Panics are unaffected: std's panic path honours
+    // RUST_BACKTRACE, and our hook uses `Backtrace::force_capture()` anyway.
+    if std::env::var_os("RUST_LIB_BACKTRACE").is_none() {
+        // SAFETY: as above — startup, before any worker spawn.
+        unsafe { std::env::set_var("RUST_LIB_BACKTRACE", "0") };
+    }
 
     install_panic_hook();
     print_startup_banner();

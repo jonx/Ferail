@@ -109,3 +109,104 @@ pub trait TruncateMiddle: Styled + Sized {
 }
 
 impl<T: Styled + Sized> TruncateMiddle for T {}
+
+/// Pin the theme's UI and monospace families to fonts that are actually
+/// installed, where the platform default is only a *virtual* name.
+///
+/// gpui-component's theme defaults to `.SystemUIFont`. macOS and Windows
+/// resolve that natively; gpui's Linux text system maps it to "IBM Plex
+/// Sans" (the family Zed bundles, which Ferail does not), so on a stock
+/// Linux box the lookup misses and gpui walks its fallback stack —
+/// `.ZedMono`, `.ZedSans`, Helvetica, Segoe UI, Ubuntu, Adwaita Sans,
+/// Cantarell, Noto Sans, … — until something like DejaVu Sans answers. gpui
+/// caches the miss but re-derives an `anyhow!` error from it on **every**
+/// `resolve_font`, i.e. per text run per frame: nine failed lookups, nine
+/// error allocations (and, before `obs::init` disabled it, nine backtrace
+/// captures) for every string on screen. Resolving once here, at startup,
+/// gives every later lookup a first-try cache hit.
+///
+/// Same story for `"monospace"`: a CSS generic name that fontconfig
+/// understands but gpui's family matcher does not, so code previews on
+/// Linux silently fell through to a proportional face. Callers should use
+/// `cx.theme().mono_font_family` rather than the generic name.
+///
+/// Call once, right after `gpui_component::init`, before any window opens.
+/// No-op on platforms whose `.SystemUIFont` resolves natively.
+pub fn install_platform_font_families(cx: &mut gpui::App) {
+    #[cfg(target_os = "linux")]
+    {
+        let text_system = cx.text_system().clone();
+        // If the virtual name resolves to a real face (IBM Plex Sans is
+        // installed), leave the platform default alone.
+        if font_family_installed(&text_system, ".SystemUIFont") {
+            return;
+        }
+        // Order: desktop-native families first (GNOME 47+ Adwaita Sans,
+        // Ubuntu, GNOME Cantarell, KDE Noto Sans), then the families every
+        // distro ships as dependencies of something, then the metric
+        // clones. A KDE session prefers Noto Sans over the Ubuntu brand
+        // font even on Kubuntu.
+        let kde = std::env::var("XDG_CURRENT_DESKTOP")
+            .map(|d| d.to_ascii_uppercase().contains("KDE"))
+            .unwrap_or(false);
+        let ui_candidates: &[&str] = if kde {
+            &["Noto Sans", "Adwaita Sans", "Ubuntu", "Cantarell"]
+        } else {
+            &["Adwaita Sans", "Ubuntu", "Cantarell", "Noto Sans"]
+        };
+        let ui_common: &[&str] = &[
+            "DejaVu Sans",
+            "Liberation Sans",
+            "Nimbus Sans",
+            "Arial",
+            "Helvetica",
+        ];
+        let mono_candidates: &[&str] = &[
+            "Ubuntu Mono",
+            "Noto Sans Mono",
+            "DejaVu Sans Mono",
+            "Liberation Mono",
+            "Nimbus Mono PS",
+            "Courier New",
+        ];
+        let ui = ui_candidates
+            .iter()
+            .chain(ui_common)
+            .copied()
+            .find(|f| font_family_installed(&text_system, f));
+        let mono = mono_candidates
+            .iter()
+            .copied()
+            .find(|f| font_family_installed(&text_system, f));
+        let theme = gpui_component::Theme::global_mut(cx);
+        if let Some(ui) = ui {
+            theme.font_family = ui.into();
+        }
+        if let Some(mono) = mono {
+            theme.mono_font_family = mono.into();
+        }
+        crate::log_info!(
+            90,
+            "fonts: .SystemUIFont unresolved on this system; ui={} mono={}",
+            ui.unwrap_or("<gpui fallback>"),
+            mono.unwrap_or("<theme default>")
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = cx;
+    }
+}
+
+/// Is `family` a real, loadable face on this machine? `resolve_font` never
+/// fails (it falls back), so ask which family the resolved id belongs to
+/// and compare. Virtual names (`.SystemUIFont`) count as installed when the
+/// face they map to exists — the cache maps the virtual name itself to the
+/// id, so the round trip returns the virtual name.
+#[cfg(target_os = "linux")]
+fn font_family_installed(text_system: &gpui::TextSystem, family: &str) -> bool {
+    let id = text_system.resolve_font(&gpui::font(family));
+    text_system
+        .get_font_for_id(id)
+        .is_some_and(|f| f.family.as_ref() == family)
+}

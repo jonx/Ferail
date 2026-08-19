@@ -139,6 +139,38 @@ association string. Findings worth keeping:
   presents outside X's readable surface), so pixel-level verification still
   waits on the `render_to_image` TODO or a real desktop session.
 
+**Interactive testing + first performance fix (2026-08-19):**
+
+The same VM now boots with a virtio-gpu into a QEMU Cocoa window
+(`~/VMs/ferail-ubuntu/vm.sh start-gui`), runs weston on it with the DRM
+backend + pixman renderer (`vm.sh desktop`; needs `seatd` and the user in
+`video`/`render`/`input`), and launches the release binary in that session
+(`vm.sh ferail`). Vulkan is llvmpipe — fully software, fine for testing,
+not for judging frame rate. Weston's screenshooter refuses un-authorized
+clients, so grab pictures from the host side or add `--debug` to weston.
+First thing it showed: the app was unusable — seconds per frame, 100% on
+the UI thread while idle. `perf` on the main thread put 78% of the time in
+libgcc `_Unwind_Find_FDE`:
+
+- **`.SystemUIFont` does not resolve on Linux.** gpui's cosmic-text system
+  maps the virtual name to "IBM Plex Sans" (what Zed bundles; Ferail does
+  not). A stock system misses, and `resolve_font` walks the fallback stack
+  (`.ZedMono`, `.ZedSans`, Helvetica, Segoe UI, Ubuntu, Adwaita Sans,
+  Cantarell, Noto Sans, …) until DejaVu Sans answers. gpui caches the miss
+  but re-wraps it in a fresh `anyhow!` on every cache hit — nine error
+  allocations per text run per frame. `text::install_platform_font_families`
+  now resolves a real installed family once at startup (and a real mono
+  family; the generic `"monospace"` name is equally unknown to gpui's
+  matcher, so Linux code previews were proportional).
+- **`RUST_BACKTRACE=1` makes `anyhow` capture backtraces.** `obs::init`
+  defaults it on for panic reports; `Backtrace::capture()` (anyhow's
+  constructor path) honours it unless `RUST_LIB_BACKTRACE` says otherwise.
+  So every one of those per-frame misses walked the stack — and on Linux
+  that walk is a linear FDE search over a ~100 MB binary. `obs::init` now
+  also defaults `RUST_LIB_BACKTRACE=0`; panics are unaffected (the hook uses
+  `force_capture`). This was costing something on macOS too — just cheaply
+  enough to hide.
+
 **Original scaffold notes (2026-08-04):**
 
 - **Desktop identity:** `crates/ferail-gpui/resources/linux/ferail.desktop`

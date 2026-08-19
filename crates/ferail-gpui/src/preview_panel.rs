@@ -182,7 +182,7 @@ impl PreviewPanel {
                 .p_2()
                 .rounded_md()
                 .bg(theme.muted.opacity(0.4))
-                .font_family("monospace")
+                .font_family(theme.mono_font_family.clone())
                 .text_scale_xs()
                 .child(text)
                 .into_any_element(),
@@ -511,7 +511,7 @@ impl PreviewPanel {
                         .text_scale_xs();
                     let block = if text.is_empty() {
                         block
-                            .font_family("monospace")
+                            .font_family(cx.theme().mono_font_family.clone())
                             .text_color(cx.theme().muted_foreground)
                             .child(SharedString::from("(empty file)"))
                     } else {

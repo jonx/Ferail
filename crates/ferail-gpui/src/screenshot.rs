@@ -460,6 +460,7 @@ pub fn run(args: Args) -> Result<()> {
     let app = gpui_platform::application().with_assets(FeraAssets);
     app.run(move |cx| {
         gpui_component::init(cx);
+        crate::text::install_platform_font_families(cx);
         crate::shell::init(cx);
         // Register the dock icon — see comment in main.rs::run_gui;
         // must happen post-NSApplication-init.
