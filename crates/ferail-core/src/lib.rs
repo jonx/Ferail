@@ -6,6 +6,7 @@
 pub mod commands;
 pub mod entry_info;
 pub mod favorites;
+pub mod filter_expr;
 pub mod media;
 pub mod name_hazards;
 pub mod navigation;
@@ -104,6 +105,15 @@ pub struct FileEntry {
     /// name, so the show-hidden toggle behaves like the native file
     /// manager on every platform.
     pub hidden: bool,
+    /// Birth (creation) time, unix seconds, resolved from the same
+    /// stat the enumeration already makes. `None` where the filesystem
+    /// doesn't record one (some network/legacy volumes) — value
+    /// filters treat missing as non-matching, never as zero.
+    pub created_unix: Option<i64>,
+    /// Platform "locked" flag, from the enumerate-time stat: macOS
+    /// `UF_IMMUTABLE`/`SF_IMMUTABLE` (Finder's Locked checkbox),
+    /// Windows `FILE_ATTRIBUTE_READONLY`. Always false elsewhere.
+    pub locked: bool,
 }
 
 /// How strongly the Format column should flag the relationship between a
@@ -633,6 +643,8 @@ mod format_label_tests {
             is_quarantined: false,
             quarantine: None,
             hidden: false,
+            created_unix: None,
+            locked: false,
         }
     }
 

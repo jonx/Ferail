@@ -73,16 +73,19 @@ You also need **git** to clone the repo and to fetch the git dependencies.
 
 The built-in viewer plays `mp4` / `m4v` / `mov` out of the box. The optional
 **mpv** backend (any container, plus live grading and the transparent
-chroma-key windows) is **off by default** and loads a **user-installed** libmpv
-at runtime — Ferail never bundles it. Install it only if you want that path:
+chroma-key windows) loads a **user-installed** libmpv at runtime — Ferail
+never bundles it. Install it only if you want that path:
 
 ```sh
 # macOS
 brew install mpv
 ```
 
-Then build with `--features mpv` and select mpv under **Settings → Plugins** (see
-[step 7](#7-optional-enable-the-mpv-video-backend)).
+**Release downloads** (the DMG, the Windows ZIP, the .deb) already compile the
+mpv provider in — install libmpv and select mpv under **Settings → Plugins**,
+no rebuild needed. The .deb recommends `libmpv2`, so apt normally installs it
+alongside. When you **build from source**, the provider is off by default; add
+`--features mpv` (see [step 7](#7-optional-enable-the-mpv-video-backend)).
 
 ---
 
@@ -238,6 +241,10 @@ With libmpv installed ([step 1](#optional-libmpv-for-the-any-format-video-player
 cargo run --bin ferail-gpui --features mpv
 ```
 
+(Release downloads and the packaging scripts already build with this feature;
+the flag matters for `cargo run`/`cargo build` from source, where it is off by
+default.)
+
 Then open **Settings → Plugins**, set the video player to **mpv**, and (if it
 isn't auto-found) point it at your libmpv. Now the viewer plays virtually any
 container and unlocks live grading + the chroma-keyed transparent video windows.
@@ -269,9 +276,10 @@ cargo run --bin ferail-gpui -- --reset-db <scope>            # reset local metad
   Vulkan. Install `mesa-vulkan-drivers` (or vendor drivers) and confirm with
   `vulkaninfo`; in a VM, enable 3D acceleration or a software Vulkan (lavapipe).
   See [docs/features/linux-port.md → Day-one steps](docs/features/linux-port.md#8-day-one-steps-on-a-linux-machine).
-- **mpv video doesn't play.** Confirm you built `--features mpv`, that libmpv is
-  installed, and that **Settings → Plugins** has mpv selected with a valid
-  library path. `--doctor` reports whether libmpv was found.
+- **mpv video doesn't play.** Confirm libmpv is installed and that
+  **Settings → Plugins** has mpv selected with a valid library path (source
+  builds also need `--features mpv`; release downloads have it). `--doctor`
+  reports whether libmpv was found.
 
 ---
 

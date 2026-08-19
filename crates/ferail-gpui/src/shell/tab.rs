@@ -492,6 +492,12 @@ pub struct Tab {
     /// render reads this cache only. Drives the status bar's passive
     /// "N hidden · X" chip.
     pub hidden_summary: super::loading::HiddenSummary,
+    /// Count + bytes of the entries the *filter field* excluded from
+    /// the last completed load. Same lifecycle as `hidden_summary`, and
+    /// zero whenever the field is empty. Drives the status bar's
+    /// "N filtered out · X" chip, so the item count and size stay
+    /// honest about the whole folder while a filter narrows the view.
+    pub filter_summary: super::loading::FilterSummary,
     /// Screenshot-driver row index queued for selection once a
     /// streaming batch lands for this tab. Cleared on apply or on
     /// navigation. Internal/CLI use only.
@@ -576,6 +582,7 @@ impl Tab {
             volume_name: None,
             volume_read_only: false,
             hidden_summary: Default::default(),
+            filter_summary: Default::default(),
             pending_select_row: None,
             pending_select_rows: Vec::new(),
             pending_select_names: Vec::new(),

@@ -194,10 +194,22 @@ pub struct Args {
     /// Nothing else opens it: the menu lives in a mouse-event listener,
     /// not behind an action.
     pub context_menu_row: Option<usize>,
+    /// Right-click the middle of the file-list body — the background, not
+    /// a row — so the empty-space context menu (New Folder / Paste / …)
+    /// builds and can be captured. Point the harness at an empty folder
+    /// (or one whose rows stop above the midpoint), or the click lands on
+    /// a row and captures the row menu instead.
+    pub context_menu_background: bool,
     /// Render the favorite icon-picker window
     /// ([`crate::favorite_icon_picker`]) instead of the shell, so the
     /// Lucide glyph grid can be captured headlessly.
     pub icon_picker: bool,
+    /// Launch the GUI with every optional background subsystem off —
+    /// no watcher, folder sizes, thumbnails, file-detail scan, metadata
+    /// DB, volume-info refresh, or volume/power/stats watchers. The
+    /// freeze-bisection switch (docs/features/FREEZE_DIAGNOSTICS.md);
+    /// `FERAIL_SAFE_MODE=1` is the flagless spelling.
+    pub safe_mode: bool,
 }
 
 pub fn parse_args() -> Args {
@@ -244,6 +256,7 @@ pub fn parse_args() -> Args {
             "--context-menu-row" => {
                 args.context_menu_row = iter.next().and_then(|s| s.parse().ok())
             }
+            "--context-menu-background" => args.context_menu_background = true,
             "--breadcrumb" => args.breadcrumb = iter.next(),
             "--keys" => args.keys = iter.next(),
             "--paste-source" => {
@@ -331,6 +344,7 @@ pub fn parse_args() -> Args {
                 args.viewer_step = iter.next().and_then(|s| s.parse().ok()).unwrap_or(1);
             }
             "--icon-picker" => args.icon_picker = true,
+            "--safe-mode" => args.safe_mode = true,
             "--drag-ghost" => args.drag_ghost = iter.next().and_then(|s| s.parse().ok()),
             "--help" | "-h" => {
                 print_help();
@@ -403,6 +417,13 @@ OPTIONS
   --viewer-step <n>        Advance n items in the viewer (after --viewer-rotate).
   --drag-ghost <N>         Render the drag cursor ghost for an N-item drag
                            (placeholder tiles) against a neutral backdrop.
+  --safe-mode              Launch the GUI with all optional background work
+                           disabled (fs watcher, folder sizes, thumbnails,
+                           file-detail scan, metadata DB, volume/power/stats
+                           watchers) — for bisecting freezes. Env spelling:
+                           FERAIL_SAFE_MODE=1. If the app still freezes,
+                           press Ctrl+\\ in the launching terminal to write
+                           a hang report and exit.
   -h, --help               Print this help.
 
 EXAMPLES
@@ -764,6 +785,7 @@ struct ShellArgs {
     select_name: Option<String>,
     select_rows: Vec<usize>,
     context_menu_row: Option<usize>,
+    context_menu_background: bool,
     view: Option<crate::grid::ViewMode>,
     breadcrumb: Option<String>,
     keys: Option<String>,
@@ -811,6 +833,7 @@ impl From<&Args> for ShellArgs {
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
             context_menu_row: a.context_menu_row,
+            context_menu_background: a.context_menu_background,
             view: a.view,
             breadcrumb: a.breadcrumb.clone(),
             keys: a.keys.clone(),
@@ -1180,6 +1203,47 @@ impl ShellArgs {
                     90,
                     "--context-menu-row {row}: row not laid out / out of view"
                 ),
+            }
+        }
+        if self.context_menu_background {
+            // Same dance as `--context-menu-row`, aimed at the body's
+            // midpoint instead of a row: move (so the menu's hitbox reads
+            // as hovered), let a frame paint, then a real right-click.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(700))
+                .await;
+            let point = shell.read_with(cx, |s, cx| {
+                s.active_tab().table.read(cx).body_center()
+            });
+            match point {
+                Some(position) => {
+                    let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                        let _ = window.dispatch_event(
+                            gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                                position,
+                                modifiers: gpui::Modifiers::default(),
+                                pressed_button: None,
+                            }),
+                            cx,
+                        );
+                    });
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(200))
+                        .await;
+                    let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                        let _ = window.dispatch_event(
+                            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                                button: gpui::MouseButton::Right,
+                                position,
+                                modifiers: gpui::Modifiers::default(),
+                                click_count: 1,
+                                first_mouse: false,
+                            }),
+                            cx,
+                        );
+                    });
+                }
+                None => crate::log_warn!(90, "--context-menu-background: table not laid out"),
             }
         }
         if self.rename {

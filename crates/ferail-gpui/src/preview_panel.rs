@@ -88,6 +88,8 @@ pub fn synthetic_entry(path: &std::path::Path, name: &str) -> FileEntry {
         is_quarantined: false,
         quarantine: None,
         hidden: false,
+        created_unix: None,
+        locked: false,
     }
 }
 

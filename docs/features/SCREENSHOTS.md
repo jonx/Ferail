@@ -60,7 +60,10 @@ scratch). If a committed doc needs to reference an image, copy it into
   (dispatched through the real window key path; `pause` token waits out async UI
   between keys), `--context-menu-row N` (synthesises a real mouse-move +
   right-click over row N, so the row context menu builds exactly as it does for
-  a user — it lives in a mouse-event listener, so no action can open it).
+  a user — it lives in a mouse-event listener, so no action can open it),
+  `--context-menu-background` (same synthesis aimed at the file-list body's
+  midpoint, capturing the empty-space folder menu; point it at an empty
+  folder, or one whose rows stop above the midpoint).
 - **Panels & overlays** — `--preview`, `--properties` (Get Info),
   `--rename`, `--new-folder`, `--shortcuts-help[-filter]`, `--simulate-toast`,
   `--simulate-progress`, `--simulate-task-panel`.

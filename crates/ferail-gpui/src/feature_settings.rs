@@ -95,6 +95,7 @@ impl SearchConfig {
             needle: needle.into(),
             match_path: self.match_path,
             include_hidden: self.include_hidden,
+            expr: None,
         }
     }
 }

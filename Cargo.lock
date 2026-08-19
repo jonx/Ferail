@@ -2126,6 +2126,7 @@ dependencies = [
  "gpui-component-assets",
  "gpui_platform",
  "image",
+ "libc",
  "log",
  "lsp-types",
  "notify",
@@ -2135,6 +2136,7 @@ dependencies = [
  "rust-embed",
  "smallvec",
  "sysinfo",
+ "windows-sys 0.59.0",
  "winresource",
  "zip",
 ]

@@ -13,6 +13,9 @@
 /// How the image is scaled into the viewport.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ZoomMode {
+    /// Fit the viewport exactly (aspect preserved): large media scales
+    /// down, small media scales *up* to fill the window.
+    Fit,
     /// Fit inside the viewport, but never upscale beyond 100 % —
     /// tiny icons render pixel-true instead of as blurry posters.
     FitDown,
@@ -39,7 +42,17 @@ pub struct StageState {
 impl Default for StageState {
     fn default() -> Self {
         Self {
-            mode: ZoomMode::FitDown,
+            mode: ZoomMode::Fit,
+            center: (0.5, 0.5),
+        }
+    }
+}
+
+impl StageState {
+    /// Centered state in the given mode — what "reset zoom" returns to.
+    pub fn reset(mode: ZoomMode) -> Self {
+        Self {
+            mode,
             center: (0.5, 0.5),
         }
     }
@@ -55,16 +68,24 @@ pub struct StageRect {
     pub h: f32,
 }
 
-/// Scale that fits `img` inside `view` without ever upscaling.
-pub fn fit_down_scale(img: (f32, f32), view: (f32, f32)) -> f32 {
+/// Scale that fits `img` to `view` exactly (up- or downscaling), aspect
+/// preserved. Not clamped to [`MIN_SCALE`]/[`MAX_SCALE`] — those bound
+/// *user* zoom steps; a fit is whatever the window demands.
+pub fn fit_scale(img: (f32, f32), view: (f32, f32)) -> f32 {
     if img.0 <= 0.0 || img.1 <= 0.0 {
         return 1.0;
     }
-    (view.0 / img.0).min(view.1 / img.1).min(1.0)
+    (view.0 / img.0).min(view.1 / img.1)
+}
+
+/// Scale that fits `img` inside `view` without ever upscaling.
+pub fn fit_down_scale(img: (f32, f32), view: (f32, f32)) -> f32 {
+    fit_scale(img, view).min(1.0)
 }
 
 pub fn effective_scale(mode: ZoomMode, img: (f32, f32), view: (f32, f32)) -> f32 {
     match mode {
+        ZoomMode::Fit => fit_scale(img, view),
         ZoomMode::FitDown => fit_down_scale(img, view),
         ZoomMode::Actual => 1.0,
         ZoomMode::Custom(s) => s.clamp(MIN_SCALE, MAX_SCALE),
@@ -160,8 +181,17 @@ mod tests {
     #[test]
     fn fit_down_never_upscales() {
         assert_eq!(fit_down_scale((100.0, 100.0), VIEW), 1.0);
-        let r = layout((100.0, 100.0), VIEW, StageState::default());
+        let r = layout((100.0, 100.0), VIEW, StageState::reset(ZoomMode::FitDown));
         assert_eq!((r.x, r.y, r.w, r.h), (450.0, 325.0, 100.0, 100.0));
+    }
+
+    #[test]
+    fn fit_upscales_small_images_to_the_window() {
+        assert_eq!(fit_scale((100.0, 100.0), VIEW), 7.5);
+        let r = layout((100.0, 100.0), VIEW, StageState::default());
+        assert_eq!((r.x, r.y, r.w, r.h), (125.0, 0.0, 750.0, 750.0));
+        // Large media fits down identically in both fit modes.
+        assert_eq!(fit_scale((4000.0, 3000.0), VIEW), 0.25);
     }
 
     #[test]
@@ -239,7 +269,12 @@ mod tests {
     #[test]
     fn pan_is_inert_when_image_fits() {
         let img = (100.0, 100.0);
-        let st = pan_by(StageState::default(), (300.0, 300.0), img, VIEW);
+        let st = pan_by(
+            StageState::reset(ZoomMode::FitDown),
+            (300.0, 300.0),
+            img,
+            VIEW,
+        );
         assert_eq!(st.center, (0.5, 0.5));
         let r = layout(img, VIEW, st);
         assert_eq!((r.x, r.y), (450.0, 325.0));

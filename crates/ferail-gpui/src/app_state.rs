@@ -196,6 +196,12 @@ pub struct AppState {
     /// hash-collision doubt at the cost of re-reading). Defaults false.
     pub dupe_paranoid: Option<bool>,
 
+    // ---- Viewer (docs/features/VIEWER.md) ----
+    /// Zoom a viewer window opens with (and returns to on zoom reset):
+    /// "fit" (fill the window, upscaling small media), "fit-down" (fit
+    /// without enlarging past 100 %), or "actual" (1:1). `None` == fit.
+    pub viewer_default_zoom: Option<String>,
+
     // ---- Plugins (docs/features/VIEWER.md) ----
     /// Video player provider: "builtin" (AVFoundation) or "mpv". `None` ==
     /// builtin. mpv only takes effect in a build with the `mpv` feature.
@@ -431,6 +437,12 @@ fn load_from_disk() -> AppState {
             "dupe_paranoid" => {
                 out.dupe_paranoid = parse_bool(val);
             }
+            "viewer_default_zoom" => {
+                let v = val.trim().to_lowercase();
+                if matches!(v.as_str(), "fit" | "fit-down" | "actual") {
+                    out.viewer_default_zoom = Some(v);
+                }
+            }
             "video_backend" => {
                 let v = val.trim().to_lowercase();
                 if matches!(v.as_str(), "builtin" | "mpv") {
@@ -572,6 +584,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(b) = state.dupe_paranoid {
         s.push_str(&format!("dupe_paranoid={b}\n"));
+    }
+    if let Some(z) = &state.viewer_default_zoom {
+        s.push_str(&format!("viewer_default_zoom={z}\n"));
     }
     if let Some(v) = &state.video_backend {
         s.push_str(&format!("video_backend={v}\n"));

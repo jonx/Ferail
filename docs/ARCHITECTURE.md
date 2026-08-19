@@ -85,6 +85,15 @@ When one of these fires, the fix is never to remove the guard: move the
 work to the background executor and report back through an entity
 update. When you add a new blocking entry point, add the assert to it.
 
+The field-side counterpart is `ferail-gpui/src/watchdog.rs`: a UI-thread
+heartbeat plus a watchdog thread that, when the directive fails on a
+user's machine anyway, writes an automatic hang report (last background
+tasks, breadcrumbs, activity trail, per-platform thread stacks) and lets
+`Ctrl+\` / kill signals produce the same report on demand. `--safe-mode`
+launches with every optional background subsystem off to bisect such
+freezes. See
+[docs/features/FREEZE_DIAGNOSTICS.md](features/FREEZE_DIAGNOSTICS.md).
+
 ## Crate Boundaries
 
 ```text

@@ -33,13 +33,20 @@ const PROGRESS_THROTTLE_MS: u128 = 250;
 #[derive(Clone, Debug)]
 pub struct SearchQuery {
     /// Case-insensitive needle. Empty matches nothing (callers should
-    /// avoid spawning a walk for an empty query).
+    /// avoid spawning a walk for an empty query). Ignored when `expr`
+    /// is set.
     pub needle: String,
     /// Match against the path relative to the search root instead of
     /// the file name alone.
     pub match_path: bool,
     /// Descend into (and match) dot-files / `UF_HIDDEN` entries.
     pub include_hidden: bool,
+    /// Structured query (`size:>10mb mod:week …`). When set it replaces
+    /// `needle`: its text terms match the name/path haystack, its
+    /// metadata terms test the built row's cached fields. An
+    /// expression with only metadata terms matches every name — the
+    /// walk is then a pure metadata scan.
+    pub expr: Option<ferail_core::filter_expr::FilterExpr>,
 }
 
 /// A single search result: a ready-to-display row plus its absolute
@@ -96,7 +103,12 @@ impl NativeFs {
         }
 
         let needle = query.needle.to_lowercase();
-        if needle.is_empty() {
+        let expr = query.expr.as_ref();
+        let empty_query = match expr {
+            Some(e) => e.is_empty(),
+            None => needle.is_empty(),
+        };
+        if empty_query {
             on_progress(SearchStats::default());
             return None;
         }
@@ -165,15 +177,23 @@ impl NativeFs {
                 } else {
                     name.to_lowercase()
                 };
-                if haystack.contains(&needle) {
+                let text_ok = match expr {
+                    Some(e) => e.text_matches(&haystack),
+                    None => haystack.contains(&needle),
+                };
+                if text_ok {
                     // `dirent.metadata()` (used by the shared builder)
                     // does not follow symlinks, matching enumerate.
+                    // Metadata terms test the built row so they read the
+                    // same cached fields Tier 0 filters on.
                     if let Some(entry) = self.dirent_to_file_entry(&dirent) {
-                        buffer.push(SearchHit { entry, path: child_path.clone() });
-                        stats.matches = stats.matches.saturating_add(1);
-                        if buffer.len() >= batch_size {
-                            on_batch(std::mem::take(&mut buffer));
-                            buffer.reserve(batch_size);
+                        if expr.is_none_or(|e| e.metadata_matches(&entry)) {
+                            buffer.push(SearchHit { entry, path: child_path.clone() });
+                            stats.matches = stats.matches.saturating_add(1);
+                            if buffer.len() >= batch_size {
+                                on_batch(std::mem::take(&mut buffer));
+                                buffer.reserve(batch_size);
+                            }
                         }
                     }
                 }
@@ -276,7 +296,7 @@ mod tests {
         let tmp = fixture();
         let hits = run(
             tmp.path(),
-            SearchQuery { needle: "txt".into(), match_path: false, include_hidden: false },
+            SearchQuery { needle: "txt".into(), match_path: false, include_hidden: false, expr: None },
         );
         // readme.txt + sub/report.txt; .hidden/secret.txt excluded.
         assert_eq!(hits, vec!["readme.txt", "report.txt"]);
@@ -287,7 +307,7 @@ mod tests {
         let tmp = fixture();
         let hits = run(
             tmp.path(),
-            SearchQuery { needle: "REPORT".into(), match_path: false, include_hidden: false },
+            SearchQuery { needle: "REPORT".into(), match_path: false, include_hidden: false, expr: None },
         );
         assert_eq!(hits, vec!["report.txt"]);
     }
@@ -297,7 +317,7 @@ mod tests {
         let tmp = fixture();
         let hits = run(
             tmp.path(),
-            SearchQuery { needle: "secret".into(), match_path: false, include_hidden: true },
+            SearchQuery { needle: "secret".into(), match_path: false, include_hidden: true, expr: None },
         );
         assert_eq!(hits, vec!["secret.txt"]);
     }
@@ -307,7 +327,7 @@ mod tests {
         let tmp = fixture();
         let hits = run(
             tmp.path(),
-            SearchQuery { needle: String::new(), match_path: false, include_hidden: false },
+            SearchQuery { needle: String::new(), match_path: false, include_hidden: false, expr: None },
         );
         assert!(hits.is_empty());
     }
@@ -320,7 +340,7 @@ mod tests {
         let mut count = 0;
         let err = fs.search_subtree(
             tmp.path(),
-            &SearchQuery { needle: "txt".into(), match_path: false, include_hidden: false },
+            &SearchQuery { needle: "txt".into(), match_path: false, include_hidden: false, expr: None },
             8,
             &cancel,
             false,

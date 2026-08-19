@@ -81,10 +81,70 @@ pub struct StatusMetrics {
     /// unhiding it.
     pub hidden_count: usize,
     pub hidden_bytes: u64,
+    /// Entries the filter field excluded from the current listing —
+    /// count and summed sizes. Zero when the field is empty. Keeps the
+    /// count and total honest about the whole folder: without it, "12
+    /// items · 3.2 MB" while a filter is typed reads as the folder's
+    /// full contents.
+    pub filtered_count: usize,
+    pub filtered_bytes: u64,
     /// App-footprint figures (up · CPU · MEM · rps), pre-formatted by
     /// the off-thread sampler's snapshot (or `--simulate-stats`).
     /// `None` until the sampler's first real reading.
     pub stats: Option<crate::system_stats::SegmentParts>,
+}
+
+/// The left-hand count/size text, plus the "N filtered out · X"
+/// companion when the filter field is holding entries back.
+///
+/// The count and total describe *what is on screen*; the companion
+/// carries the rest of the folder, so a filtered view never passes
+/// itself off as the whole thing. When the needle matches nothing, the
+/// count itself becomes the explanation — "Empty folder" would send the
+/// user hunting for files that are merely filtered.
+///
+/// Pure and split out of `render` so the wording is unit-testable.
+pub(crate) fn count_labels(metrics: &StatusMetrics) -> (String, Option<String>) {
+    let entries = metrics.entries;
+    let filtered = metrics.filtered_count;
+    if entries == 0 {
+        let label = match filtered {
+            0 => "Empty folder".to_string(),
+            1 => format!(
+                "1 item filtered out \u{00B7} {}",
+                humanize_bytes(metrics.filtered_bytes)
+            ),
+            n => format!(
+                "All {n} items filtered out \u{00B7} {}",
+                humanize_bytes(metrics.filtered_bytes)
+            ),
+        };
+        return (label, None);
+    }
+    let count_label = if entries == 1 {
+        format!("1 item \u{00B7} {}", humanize_bytes(metrics.total_size))
+    } else if metrics.selected_count > 0 {
+        format!(
+            "{} of {} selected \u{00B7} {}",
+            metrics.selected_count,
+            entries,
+            humanize_bytes(metrics.selected_size),
+        )
+    } else {
+        format!(
+            "{} items \u{00B7} {}",
+            entries,
+            humanize_bytes(metrics.total_size)
+        )
+    };
+    let filtered_label = (filtered > 0).then(|| {
+        format!(
+            "{} filtered out \u{00B7} {}",
+            filtered,
+            humanize_bytes(metrics.filtered_bytes)
+        )
+    });
+    (count_label, filtered_label)
 }
 
 pub fn render(
@@ -105,27 +165,8 @@ pub fn render(
     let registry = tasks.borrow();
 
     // Left side: item count + selected-count / -size when there is
-    // a selection. Total visible size sits after the count so a
-    // glance reveals "how heavy is this folder?" without selecting.
-    let entries = metrics.entries;
-    let count_label = if entries == 1 {
-        format!("1 item \u{00B7} {}", humanize_bytes(metrics.total_size))
-    } else if entries == 0 {
-        "Empty folder".to_string()
-    } else if metrics.selected_count > 0 {
-        format!(
-            "{} of {} selected \u{00B7} {}",
-            metrics.selected_count,
-            entries,
-            humanize_bytes(metrics.selected_size),
-        )
-    } else {
-        format!(
-            "{} items \u{00B7} {}",
-            entries,
-            humanize_bytes(metrics.total_size)
-        )
-    };
+    // a selection, then what the filter field is holding back.
+    let (count_label, filtered_label) = count_labels(&metrics);
 
     // Passive hidden-content summary, sitting right before the toggle
     // it explains. Only when something is actually hidden from view.
@@ -204,6 +245,16 @@ pub fn render(
         .text_scale_xs()
         .text_color(theme_muted_fg)
         .child(div().flex_shrink_0().child(count_label))
+        // What the filter field is holding back, sitting next to the
+        // count it qualifies — same muted treatment as the hidden chip.
+        .when_some(filtered_label, |this, label| {
+            this.child(
+                div()
+                    .flex_shrink_0()
+                    .text_color(theme_muted_fg.opacity(0.85))
+                    .child(SharedString::from(label)),
+            )
+        })
         .when_some(task_label, |this, label| {
             this.child(make_clickable(
                 div().flex_1().min_w_0().truncate().child(label),
@@ -295,6 +346,70 @@ pub fn render(
                     })
                 }),
         )
+}
+
+#[cfg(test)]
+mod count_label_tests {
+    // Deliberately *not* `use super::*`: that re-imports `gpui::*`,
+    // whose glob shadows the built-in `#[test]` with gpui's own test
+    // macro, and expanding that here blows the crate's recursion limit.
+    use super::{StatusMetrics, count_labels};
+
+    fn metrics(entries: usize, total: u64, filtered: usize, filtered_bytes: u64) -> StatusMetrics {
+        StatusMetrics {
+            entries,
+            total_size: total,
+            filtered_count: filtered,
+            filtered_bytes,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn no_filter_keeps_the_plain_count() {
+        let (count, chip) = count_labels(&metrics(12, 3 * 1024 * 1024, 0, 0));
+        assert_eq!(count, "12 items \u{00B7} 3.0 MB");
+        assert!(chip.is_none());
+    }
+
+    #[test]
+    fn filter_adds_what_it_holds_back() {
+        let (count, chip) = count_labels(&metrics(12, 3 * 1024 * 1024, 48, 12 * 1024 * 1024));
+        assert_eq!(count, "12 items \u{00B7} 3.0 MB");
+        assert_eq!(chip.unwrap(), "48 filtered out \u{00B7} 12.0 MB");
+    }
+
+    #[test]
+    fn selection_still_wins_the_count_and_keeps_the_chip() {
+        let m = StatusMetrics {
+            selected_count: 3,
+            selected_size: 1024,
+            ..metrics(12, 3 * 1024 * 1024, 48, 1024)
+        };
+        let (count, chip) = count_labels(&m);
+        assert_eq!(count, "3 of 12 selected \u{00B7} 1.0 KB");
+        assert!(chip.is_some());
+    }
+
+    #[test]
+    fn everything_filtered_out_is_not_an_empty_folder() {
+        let (count, chip) = count_labels(&metrics(0, 0, 60, 15 * 1024 * 1024));
+        assert_eq!(count, "All 60 items filtered out \u{00B7} 15.0 MB");
+        assert!(chip.is_none());
+    }
+
+    #[test]
+    fn one_filtered_out_reads_singular() {
+        let (count, _) = count_labels(&metrics(0, 0, 1, 2048));
+        assert_eq!(count, "1 item filtered out \u{00B7} 2.0 KB");
+    }
+
+    #[test]
+    fn a_genuinely_empty_folder_still_says_so() {
+        let (count, chip) = count_labels(&metrics(0, 0, 0, 0));
+        assert_eq!(count, "Empty folder");
+        assert!(chip.is_none());
+    }
 }
 
 fn task_label_none(registry: &TaskRegistry, simulated_progress: Option<f32>) -> bool {

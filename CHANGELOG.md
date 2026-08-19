@@ -8,6 +8,88 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **The viewer now fits media to the window by default — and you can pick a
+  different default.** Small images and videos used to open as a tiny
+  postage stamp in the middle of the window (the viewer fitted large media
+  down but never enlarged anything); now everything opens filling the
+  window. If you preferred the old pixel-true behaviour, a new **Settings →
+  Layout → Viewer → Default zoom** dropdown offers "Fit, never enlarge" and
+  "Actual size (100%)" alongside the new "Fit to window" default; the
+  choice also sets what zoom reset (⌘0) and the double-click fit toggle
+  return to, and applies from the next viewer window you open.
+
+- **A frozen app now explains itself.** If the interface stops responding
+  for about ten seconds, Ferail automatically writes a hang report — what
+  background work was running, the recent action history (path-redacted,
+  honoring the privacy toggle), and on macOS full stack traces of every
+  thread — to the same `reports/` folder as the issue bundle, and keeps
+  running in case it recovers. Launched from a terminal, pressing
+  `Ctrl+\` (macOS/Linux) or `Ctrl+Break` (Windows) writes the same report
+  on demand and exits; `Ctrl+C` on a frozen app writes one on the way
+  out too. On Linux, stack traces are included when `elfutils` or `gdb`
+  is installed. Attach the report when filing a freeze issue.
+
+- **New `--safe-mode` launch flag (or `FERAIL_SAFE_MODE=1`) for freeze
+  hunting.** It starts the app with every optional background subsystem
+  off — file watching, folder sizes, thumbnails, format detection, the
+  metadata database, free-space lookups, and the volume/power/stats
+  watchers — so one relaunch answers whether a freeze comes from the
+  background work. Settings are untouched; a normal restart brings
+  everything back. Favorites, Recents, and Ant Trail stay empty for the
+  safe-mode session by design.
+
+- **The filter box now filters by metadata values, not just names.** Typing
+  `size:>10mb`, `mod:week`, `created:2026-01-01..2026-06-30`, `kind:folder`,
+  `ext:pdf`, or `locked:yes` narrows the listing by the file's actual size,
+  dates, kind, extension, or locked flag — alone or combined with ordinary
+  text (`report ext:pdf mod:month`). Plain words keep working exactly as
+  before, and anything unrecognized is treated as literal text rather than
+  guessed at. The same tokens work when Enter escalates the filter into a
+  recursive search, whichever engine runs it (Spotlight or the built-in
+  walker). Dates accept `today`, `yesterday`, `week`, `month`, `year`,
+  comparisons (`mod:>2026-01-01`), and ranges; sizes accept the units the
+  Size column shows. Wrap a phrase in quotes to match it with its spaces.
+
+- **The filter box suggests its own syntax as you type.** Start typing a
+  token key and a completion menu offers the supported filters — type `lo`
+  and it offers `locked:` with a one-line description; accept it and the
+  menu chains into the valid values (`yes` / `no`, or ready-made examples
+  like `size:>1mb` and `mod:today`). Clearing the field shows the full
+  token list once, so the syntax is discoverable without reading docs.
+  Arrow keys and Enter pick from the menu while it's open; Esc dismisses
+  it, and plain typing is never interrupted — the menu only appears when
+  what you're typing looks like a token.
+
+- **The mpv video player now works in release downloads — no rebuild needed.**
+  The optional mpv backend (plays virtually any video format, and powers live
+  grading and the transparent chroma-key windows) used to require compiling
+  Ferail from source with a special flag. Release builds now ship with the
+  provider compiled in; it stays dormant until you install mpv's library
+  (macOS: `brew install mpv`; Windows: a libmpv build; Linux: `libmpv2`,
+  which the .deb now pulls in automatically on current distributions) and
+  pick **mpv** under **Settings → Plugins**. Ferail still does not bundle
+  libmpv itself — without it the built-in player works as before.
+
+- **Right-clicking the file list's empty space now opens a folder menu.**
+  Right-clicking below the last row — or anywhere in an empty folder —
+  used to do nothing. It now opens a context menu of commands that act on
+  the folder you're browsing: New Folder, Paste, Select All, Get Info,
+  Reveal in Finder, Copy Path, Open Terminal Here, Add Folder to
+  Favorites, and Refresh. The menu targets the folder itself, never the
+  current selection, matching what Finder does on its window background.
+
+- **The status bar now says how much the filter field is hiding.** Typing in
+  the filter narrowed the listing, but the item count and total size beside
+  it silently narrowed too — "11 items · 214 KB" looked like the whole
+  folder when it was only the matches. The count now carries a companion
+  figure for what the filter is holding back — "11 items · 214.3 KB" now
+  sits beside "16 filtered out · 281.1 KB" — so the rest of the folder,
+  and its size, is never a mystery. When the filter matches nothing at
+  all, the status bar says "All 60 items filtered out · 15.0 MB" and the
+  empty listing says
+  "All 60 items filtered out." instead of claiming the folder is empty —
+  which used to send you looking for files that were only being filtered.
+
 - **Ejecting a volume you're still browsing now works.** Eject used to fail
   with "Ferail has files open on it" when the app itself was the culprit —
   a tab open on the volume, an archive being browsed, or a viewer window

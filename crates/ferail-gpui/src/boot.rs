@@ -43,12 +43,29 @@ pub fn run_gui(args: screenshot::Args) {
     // shell caches the ID on first-window-show.
     crate::platform_shell::set_app_user_model_id("Knipper.Ferail");
 
+    // Safe mode (--safe-mode / FERAIL_SAFE_MODE=1): freeze-bisection
+    // launch with every optional background subsystem off. Resolved
+    // before anything below consults it (docs/features/FREEZE_DIAGNOSTICS.md).
+    crate::safe_mode::set(args.safe_mode || crate::safe_mode::from_env());
+    if crate::safe_mode::enabled() {
+        crate::log_info!(
+            90,
+            "safe mode: background subsystems disabled for this session"
+        );
+    }
+
     // Archive previews stage entries into a per-process scratch directory.
     // A clean exit removes it, but a crash or a kill runs no destructor, and
     // archive contents are not something to leave lying around — so sweep any
-    // scratch directory whose owning process is gone. Cheap: one temp-dir
-    // listing, and it runs before any window exists.
-    ferail_fs_native::scratch::sweep_stale_scratch();
+    // scratch directory whose owning process is gone. One temp-dir listing —
+    // cheap on a local SSD, but a temp dir can live on slow media, so it runs
+    // on its own thread, not the soon-to-be-UI thread (Prime Directive).
+    // Skipped in safe mode like every other optional background task.
+    if !crate::safe_mode::enabled() {
+        crate::obs::spawn_logged("scratch-sweep", || {
+            ferail_fs_native::scratch::sweep_stale_scratch();
+        });
+    }
 
     // FeraAssets stacks our local SVG bundle (file-type icons, etc.)
     // in front of the upstream gpui-component icon pack. Both surface
@@ -183,28 +200,40 @@ pub fn run_gui(args: screenshot::Args) {
         let process = crate::shell::Shell::build_process_state(cx);
         crate::process_state::install(cx, process);
 
+        // Freeze watchdog + hang reports: heartbeat on the UI thread,
+        // watchdog thread, kill-signal interception. After the
+        // ProcessState global (its per-beat snapshot reads the task
+        // registry), before any window can freeze. Stays on in safe
+        // mode — diagnosing freezes is what both exist for.
+        crate::watchdog::start(cx);
+
         // Resolve the sidebar Locations for the persisted special-folder
         // mode (Windows/OneDrive) once, before any window paints. Render
         // reads this cached global — it must never stat (Prime Directive).
         crate::special_folders::seed(cx);
 
-        // Live volume mount/unmount watch: NSWorkspace notifications
-        // [mac] feed a coalescing channel; the drain task re-lists
-        // volumes off-thread and fans the change out to every window's
-        // sidebar + the Favorites mount states.
-        crate::process_state::start_volume_watch(cx);
+        // The three process-wide watchers below are all skipped in safe
+        // mode — each one talks to the OS off-thread, and safe mode's
+        // whole point is a session where no background subsystem runs.
+        if !crate::safe_mode::enabled() {
+            // Live volume mount/unmount watch: NSWorkspace notifications
+            // [mac] feed a coalescing channel; the drain task re-lists
+            // volumes off-thread and fans the change out to every window's
+            // sidebar + the Favorites mount states.
+            crate::process_state::start_volume_watch(cx);
 
-        // Live sleep/wake watch: pause video + slideshow when the
-        // machine or its displays sleep; re-list volumes and reload
-        // directory tabs on wake (docs/features/POWER.md).
-        crate::process_state::start_power_watch(cx);
+            // Live sleep/wake watch: pause video + slideshow when the
+            // machine or its displays sleep; re-list volumes and reload
+            // directory tabs on wake (docs/features/POWER.md).
+            crate::process_state::start_power_watch(cx);
 
-        // App-footprint sampler behind the status bar's
-        // "up · CPU · MEM · rps" segment. Not started on the
-        // screenshot path (screenshot::run) — captures use the
-        // deterministic `--simulate-stats` label instead
-        // (docs/features/SYSTEM_STATS.md).
-        crate::system_stats::start_sampler(cx);
+            // App-footprint sampler behind the status bar's
+            // "up · CPU · MEM · rps" segment. Not started on the
+            // screenshot path (screenshot::run) — captures use the
+            // deterministic `--simulate-stats` label instead
+            // (docs/features/SYSTEM_STATS.md).
+            crate::system_stats::start_sampler(cx);
+        }
 
         // Cmd+N → new window. The handler runs at App level so the
         // binding works regardless of which window holds focus, and

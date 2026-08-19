@@ -26,12 +26,13 @@ current folder and below. Esc clears. The engine is selectable in Settings →
 Search & Duplicates.
 
 **Honest scope — this is the mechanism, not Finder-grade search UX.** What
-ships is a *single query box*: substring/name (walker) or Spotlight's
-natural-language name+content query, streamed into the list with the hit's
+ships is a *single query box*: free text (substring/name via the walker, or
+Spotlight's natural-language name+content query) plus the structured
+[filter tokens](#filter-tokens) below, streamed into the list with the hit's
 location shown. What it deliberately does **not** have yet, and where the
-system explorers are still ahead: filter chips (kind / date / size), query
-operators, **saved smart folders**, and **live-updating** results. Those are
-the real follow-ups.
+system explorers are still ahead: filter chips as first-class UI, **saved
+smart folders**, and **live-updating** results. Those are the real
+follow-ups.
 
 A pinned, live "smart folder" tab is the highest-value next step, and it's
 cheap *if Spotlight-backed*: a live `MDQuery` (or a debounced `mdfind` re-run on
@@ -40,6 +41,52 @@ which is exactly how Finder keeps its smart folders fresh. Walker-backed views
 and duplicate results are expensive to keep live and should stay snapshots
 (re-run on demand). So the model is: ephemeral results tabs by default; opt-in
 pin → a Spotlight-backed live tab.
+
+## Filter tokens
+
+The filter box (and, via Enter, subtree search) understands `key:value`
+tokens alongside free text. The language lives in
+`ferail_core::filter_expr` — one parser, three consumers: the Tier 0
+in-directory filter (`shell/loading.rs`), the Tier 1 walker
+(`SearchQuery::expr`), and the Spotlight path (text terms feed the
+`mdfind` query, metadata terms post-filter the hits) — so every surface
+enforces identical semantics.
+
+| Token | Values | Notes |
+|---|---|---|
+| `kind:` | `folder` `file` `link` | entry kind |
+| `ext:` | `ext:rs`, `ext:pdf` | extension, case-insensitive, no dot |
+| `size:` | `>10mb` `<=1gb` `1mb..100mb` `100` | 1024-based units matching the Size column; bare number = bytes, bare value means ≥ |
+| `mod:` / `created:` | `today` `yesterday` `week` `month` `year` `>2026-01-01` `2026-01-01..2026-06-30` | local-midnight day boundaries; `>` excludes the named day, `>=` includes it; ranges inclusive |
+| `locked:` | `yes` `no` | macOS `UF_IMMUTABLE`/`SF_IMMUTABLE` (Finder's Locked), Windows read-only attribute |
+
+Grammar rules, all deliberate:
+
+- Terms AND together; bare words are substring matches over the name and
+  the Format label (so multi-word text now means "all words", not one
+  space-containing substring). `"quoted phrase"` restores exact-phrase
+  matching.
+- A token that fails to parse (`size:banana`, unknown key) degrades to a
+  literal substring term — typing never silently changes meaning.
+- Metadata predicates read only cached `FileEntry` fields captured at
+  enumerate time (`size`, `mtime_unix`, `created_unix`, `locked`, kind,
+  name) — never fresh I/O, per the prime directive. A value the
+  filesystem didn't provide (`created` on some network volumes) fails the
+  predicate quietly.
+- Dates resolve against a `DateCtx` (now + local zone offset) built per
+  load on the worker, so parsing is pure and testable.
+
+**Autocomplete** (`filter_complete.rs`): the filter input carries a
+`CompletionProvider` over `filter_expr::TOKEN_HELP` — typing a key prefix
+offers the keys with a one-line description, accepting a key chains into
+its example values, and an empty field lists the whole token set as a
+cheat-sheet. Static table lookup only, `Task::ready`, no I/O; parser
+tests round-trip `TOKEN_HELP` so the menu can't advertise syntax the
+parser rejects.
+
+A token-only query (`mod:week` with no text) routes subtree search to the
+walker even when Spotlight is preferred — Spotlight needs a query string;
+the walker runs a pure metadata scan.
 
 ## The three tiers
 

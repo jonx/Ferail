@@ -105,6 +105,25 @@ pub trait TableDelegate: Sized + 'static {
         menu
     }
 
+    /// Build the context menu for a right-click on the table's empty space —
+    /// below the last row, or anywhere in an empty folder's body. The header
+    /// and the rows have their own menus and never reach this. Default
+    /// returns the menu unchanged; an empty menu is suppressed, so a
+    /// delegate that doesn't implement this keeps the empty space inert.
+    ///
+    /// `TableEvent::RightClickedBackground` is emitted just before this
+    /// runs, so a subscriber can stage the menu's target (the file list's
+    /// Shell stages the current directory).
+    fn background_context_menu(
+        &mut self,
+        menu: PopupMenu,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        let _ = (window, cx);
+        menu
+    }
+
     /// Content revision for the row context menu. While a menu is open the
     /// table polls this each frame and rebuilds the menu whenever the value
     /// changes, so data that could only be fetched off-thread (see

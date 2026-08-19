@@ -1431,10 +1431,16 @@ impl Shell {
         let fs = Arc::new(NativeFs::new());
         // Spin up the platform file-system watcher. Errors
         // (sandboxed CI without FSEvents) are non-fatal — the app
-        // still runs, just without live external updates.
-        let watcher_rc: Rc<RefCell<Option<FsWatcher>>> = match FsWatcher::new() {
-            Ok(w) => Rc::new(RefCell::new(Some(w))),
-            Err(_) => Rc::new(RefCell::new(None)),
+        // still runs, just without live external updates. Safe mode
+        // skips it entirely (no notify backend, no fs-watcher thread);
+        // every watcher consumer already tolerates `None`.
+        let watcher_rc: Rc<RefCell<Option<FsWatcher>>> = if crate::safe_mode::enabled() {
+            Rc::new(RefCell::new(None))
+        } else {
+            match FsWatcher::new() {
+                Ok(w) => Rc::new(RefCell::new(Some(w))),
+                Err(_) => Rc::new(RefCell::new(None)),
+            }
         };
         // Favorites is process-scoped: one Entity shared across every
         // window. DB handle attached later by `start_metadata_load`.
@@ -1482,10 +1488,15 @@ impl Shell {
             w.watch(&start);
         }
         let show_hidden = persisted.show_hidden.unwrap_or(false);
+        // Safe mode forces the three background-scan switches off for
+        // this session, whatever was persisted — freeze bisection needs
+        // a launch with no ambient disk work. The persisted values are
+        // untouched; a normal relaunch restores them.
+        let safe_mode = crate::safe_mode::enabled();
         // Seed the live thumbnail toggle from persisted settings so the
         // file list and Settings window agree from the first frame.
         cx.set_global(crate::thumbnails::ShowThumbnails(
-            persisted.show_thumbnails.unwrap_or(true),
+            persisted.show_thumbnails.unwrap_or(true) && !safe_mode,
         ));
         // Seed the live grid icon size from persisted settings.
         cx.set_global(crate::grid::IconSize(crate::grid::clamp_icon_size(
@@ -1499,12 +1510,12 @@ impl Shell {
         )));
         // Seed the folder-size walker master switch. Default true (on).
         cx.set_global(crate::folder_sizes::FolderSizingEnabled(
-            persisted.folder_sizing.unwrap_or(true),
+            persisted.folder_sizing.unwrap_or(true) && !safe_mode,
         ));
         // Seed the per-row file-detail scan switch (magic sniff + Finder
         // tags). Default true (on).
         cx.set_global(crate::prefetch::FileDetailScan(
-            persisted.file_detail_scan.unwrap_or(true),
+            persisted.file_detail_scan.unwrap_or(true) && !safe_mode,
         ));
         // Seed the live selection accent (file list + grid share it).
         // `None` ⇒ the helpers fall back to the theme's blue.
@@ -1992,7 +2003,12 @@ impl Shell {
         });
         shell._subscriptions.push(activation_subscription);
 
-        shell.start_metadata_load(cx);
+        // Safe mode: never open the metadata SQLite DB — a damaged disk
+        // or a DB on slow media is a real hang candidate. Favorites, Ant
+        // Trail and Recents stay cold for the session (expected).
+        if !crate::safe_mode::enabled() {
+            shell.start_metadata_load(cx);
+        }
         shell.load_path(start, cx);
         shell
     }
@@ -2140,6 +2156,16 @@ impl Shell {
                             this.context_row = None;
                         }
                     }
+                    TableEvent::RightClickedBackground => {
+                        // Empty-space right-click: the background menu's
+                        // folder verbs (Get Info / Reveal / Copy Path /
+                        // Open Terminal) act on `context_target`, staged
+                        // here to the folder being browsed — same pattern
+                        // as the breadcrumb menu. Emitted at menu-build
+                        // time, so this lands before any item is clicked.
+                        this.context_row = None;
+                        this.context_target = Some(this.active_tab().current_dir.clone());
+                    }
                     _ => {}
                 }
             },
@@ -2154,7 +2180,13 @@ impl Shell {
             let placeholder = "Filter \u{2026}  Enter to search subfolders";
             #[cfg(not(target_os = "aros"))]
             let placeholder = "Filter \u{2026}  \u{23CE} to search subfolders";
-            InputState::new(window, cx).placeholder(placeholder)
+            let mut state = InputState::new(window, cx).placeholder(placeholder);
+            // Token autocomplete (`size:`, `mod:`, `locked:`, …) — a
+            // static-table lookup, no I/O (filter_complete.rs).
+            state.lsp.completion_provider = Some(std::rc::Rc::new(
+                crate::filter_complete::FilterCompletionProvider,
+            ));
+            state
         });
         let filter_subscription = cx.subscribe_in(&filter_input, window, {
             let filter_input = filter_input.clone();
@@ -3720,9 +3752,11 @@ impl Shell {
         // delegating here.
         tab.force_resniff = false;
         tab.force_folder_sizes = false;
-        // Zero the hidden aggregate so a cancelled/failed load can't
-        // leave a stale chip on screen; the new load's Done rewrites it.
+        // Zero the skipped-entry aggregates so a cancelled/failed load
+        // can't leave a stale chip on screen; the new load's Done
+        // rewrites both.
         tab.hidden_summary = Default::default();
+        tab.filter_summary = Default::default();
         tab.load_generation = tab.load_generation.wrapping_add(1);
         let generation = tab.load_generation;
         let filter = tab.filter_text.clone();
@@ -3869,8 +3903,8 @@ impl Shell {
     ) {
         match msg {
             LoadMsg::Batch(batch) => self.apply_directory_batch_in_tab(idx, batch, cx),
-            LoadMsg::Done(error, hidden) => {
-                self.finish_directory_load_in_tab(idx, error, hidden, cx)
+            LoadMsg::Done(error, hidden, filtered) => {
+                self.finish_directory_load_in_tab(idx, error, hidden, filtered, cx)
             }
         }
     }
@@ -4079,15 +4113,17 @@ impl Shell {
         idx: usize,
         error: Option<EnumerationError>,
         hidden: crate::shell::loading::HiddenSummary,
+        filtered: crate::shell::loading::FilterSummary,
         cx: &mut Context<Self>,
     ) {
         let Some(tab) = self.tabs.get_mut(idx) else {
             return;
         };
-        // The load is complete, so the skipped-hidden totals are final.
-        // (Zeroed at load start, so a mid-stream cancel never shows a
-        // half count.)
+        // The load is complete, so the skipped-hidden and filtered-out
+        // totals are final. (Zeroed at load start, so a mid-stream
+        // cancel never shows a half count.)
         tab.hidden_summary = hidden;
+        tab.filter_summary = filtered;
         if let Some(id) = tab.load_task.take() {
             self.process.tasks.borrow_mut().end(id);
         }
@@ -4136,6 +4172,14 @@ impl Shell {
         if idx == self.active {
             self.tabs[idx].pending_select_names.clear();
         }
+        // Tell the table how many rows the filter took away, so its
+        // empty state says "filtered out" instead of "this folder is
+        // empty" when the needle matched nothing. Written after the
+        // replace/clear above, which reset it.
+        let filtered_out = filtered.count;
+        self.tabs[idx].table.update(cx, |state, _cx| {
+            state.delegate_mut().filtered_out = filtered_out;
+        });
         let row_count = self.tabs[idx].table.read(cx).delegate().entries.len();
         if row_count == 0 {
             self.tabs[idx].last_error = error;
@@ -4234,6 +4278,12 @@ impl Shell {
     /// this method maintains. Guarded by tab id + load generation so
     /// a slow result for a departed directory is dropped.
     fn refresh_volume_info_in_tab(&mut self, idx: usize, cx: &mut Context<Self>) {
+        // Safe mode: the statfs / NSURL round-trip is exactly the
+        // network-mount hazard the mode exists to rule out. The status
+        // bar's free-space segment simply stays empty.
+        if crate::safe_mode::enabled() {
+            return;
+        }
         let Some(tab) = self.tabs.get(idx) else {
             return;
         };

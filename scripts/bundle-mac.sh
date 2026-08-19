@@ -32,8 +32,11 @@ BIN_NAME="ferail-gpui"
 APP_NAME="Ferail"
 IDENTITY="${CODESIGN_IDENTITY:--}" # "-" == ad-hoc
 
-# Pass extra cargo flags through, e.g. FEATURES="--features mpv".
-FEATURES="${FEATURES:-}"
+# Extra cargo flags. Defaults to compiling the mpv video provider in: it is
+# a runtime dlopen (no build-time link, no bundled library), so a build that
+# carries it still runs on a machine with no libmpv — the viewer just falls
+# back to the native player. FEATURES="" builds without it.
+FEATURES="${FEATURES---features mpv}"
 
 echo "==> Building ${BIN_NAME} (${PROFILE})"
 if [[ "${PROFILE}" == "release" ]]; then

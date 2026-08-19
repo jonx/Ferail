@@ -1431,6 +1431,34 @@ fn layout_page() -> SettingPage {
             || format!("{:.2}", app_state::load().ui_scale.unwrap_or(1.0)),
             |v| persist_ui_scale(v.parse().unwrap_or(1.0)),
         )))
+        .group(SettingGroup::new().title("Viewer").item(dropdown_setting(
+            "Default zoom",
+            "How media is sized when the viewer opens, and what zoom reset returns to. \
+             \u{201C}Fit to window\u{201D} scales large media down and small media up to fill \
+             the window; \u{201C}Fit, never enlarge\u{201D} stops at the media's real size, so \
+             small images stay pixel-true; \u{201C}Actual size\u{201D} always shows 1:1. \
+             Takes effect on the next viewer window.",
+            &[
+                ("fit", "Fit to window"),
+                ("fit-down", "Fit, never enlarge"),
+                ("actual", "Actual size (100%)"),
+            ],
+            &[],
+            || {
+                app_state::load()
+                    .viewer_default_zoom
+                    .unwrap_or_else(|| "fit".into())
+            },
+            persist_viewer_default_zoom,
+        )))
+}
+
+fn persist_viewer_default_zoom(value: &str) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        viewer_default_zoom: Some(value.to_string()),
+        ..existing
+    });
 }
 
 fn persist_video_backend(value: &str) {

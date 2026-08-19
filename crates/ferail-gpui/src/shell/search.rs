@@ -15,6 +15,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+use ferail_core::filter_expr::FilterExpr;
 use ferail_core::{EnumerationError, FileEntry};
 use ferail_fs_native::{DEFAULT_SEARCH_BATCH, NativeFs};
 use gpui::{AnyWindowHandle, Context};
@@ -88,18 +89,24 @@ pub(super) fn run_search_load(
     cancel: Arc<AtomicBool>,
     tx: async_channel::Sender<SearchMsg>,
 ) {
+    // Structured filter tokens (size:, mod:, locked:, …) work in
+    // subtree search too: text terms drive the engine's name/content
+    // match, metadata terms test each hit's built row.
+    let expr = FilterExpr::parse(needle.trim(), super::loading::filter_date_ctx());
     let error = if let Some(tag) = tag {
         // Tag favorites (§9): a Spotlight `kMDItemUserTags` query. Finder
         // tags are a macOS concept, so there is no walker fallback — a
         // system without Spotlight simply returns no results.
         let _ = tx.send_blocking(SearchMsg::Engine("Tag"));
         run_tag_search(&fs, &config, &root, &tag, &cancel, &tx)
-    } else if resolve_spotlight(config.engine) {
+    } else if resolve_spotlight(config.engine) && !expr.text_needle().is_empty() {
+        // Spotlight needs a query string; a token-only filter
+        // (`mod:week` alone) has none, so it walks instead.
         let _ = tx.send_blocking(SearchMsg::Engine("Spotlight"));
-        run_spotlight(&fs, &config, &root, &needle, &cancel, &tx)
+        run_spotlight(&fs, &config, &root, &expr, &cancel, &tx)
     } else {
         let _ = tx.send_blocking(SearchMsg::Engine("Subtree"));
-        run_walker(&fs, &config, &root, &needle, &cancel, &tx)
+        run_walker(&fs, &config, &root, expr.clone(), &cancel, &tx)
     };
     let _ = tx.send_blocking(SearchMsg::Done(error));
 }
@@ -171,11 +178,12 @@ fn run_walker(
     fs: &NativeFs,
     config: &SearchConfig,
     root: &Path,
-    needle: &str,
+    expr: FilterExpr,
     cancel: &AtomicBool,
     tx: &async_channel::Sender<SearchMsg>,
 ) -> Option<EnumerationError> {
-    let query = config.query(needle);
+    let mut query = config.query(String::new());
+    query.expr = Some(expr);
     fs.search_subtree(
         root,
         &query,
@@ -206,14 +214,18 @@ fn run_spotlight(
     fs: &NativeFs,
     config: &SearchConfig,
     root: &Path,
-    needle: &str,
+    expr: &FilterExpr,
     cancel: &AtomicBool,
     tx: &async_channel::Sender<SearchMsg>,
 ) -> Option<EnumerationError> {
     use ferail_shell_mac::{SpotlightScope, spotlight_search};
+    // Spotlight gets the free-text part of the query; structured
+    // tokens (size:, mod:, locked:, …) are applied here to each hit's
+    // built row, so both engines enforce identical value semantics.
+    let needle = expr.text_needle();
     let res = spotlight_search(
         SpotlightScope::Subtree(root.to_path_buf()),
-        needle,
+        &needle,
         // name-only when the user isn't matching paths; otherwise let
         // Spotlight's natural-language query reach content + metadata.
         !config.match_path,
@@ -228,6 +240,9 @@ fn run_spotlight(
                 };
                 // Spotlight may surface hidden items; honor the toggle.
                 if !config.include_hidden && entry.hidden {
+                    continue;
+                }
+                if !expr.metadata_matches(&entry) {
                     continue;
                 }
                 let entry = with_location(entry, &path, root);
@@ -246,7 +261,7 @@ fn run_spotlight(
     // A spawn failure (Spotlight disabled) falls back to the walker so the
     // user still gets results.
     if res.is_err() {
-        return run_walker(fs, config, root, needle, cancel, tx);
+        return run_walker(fs, config, root, expr.clone(), cancel, tx);
     }
     None
 }
@@ -256,11 +271,11 @@ fn run_spotlight(
     fs: &NativeFs,
     config: &SearchConfig,
     root: &Path,
-    needle: &str,
+    expr: &FilterExpr,
     cancel: &AtomicBool,
     tx: &async_channel::Sender<SearchMsg>,
 ) -> Option<EnumerationError> {
-    run_walker(fs, config, root, needle, cancel, tx)
+    run_walker(fs, config, root, expr.clone(), cancel, tx)
 }
 
 impl Shell {
@@ -346,6 +361,11 @@ impl Shell {
             cancel.store(true, Ordering::Relaxed);
         }
         self.tabs[idx].load_staging = None;
+        // A results listing is not the directory the last load counted:
+        // drop that load's skipped/filtered aggregates so their chips
+        // don't describe a folder the user has navigated past.
+        self.tabs[idx].hidden_summary = Default::default();
+        self.tabs[idx].filter_summary = Default::default();
         self.tabs[idx].tool_result = Some(ToolResultSurface::search(
             needle.clone(),
             root.clone(),

@@ -29,6 +29,7 @@ pub mod favorites;
 pub mod favorites_section;
 pub mod feature_settings;
 pub mod file_list;
+pub mod filter_complete;
 pub mod folder_sizes;
 pub mod fs_watcher;
 pub mod grid;
@@ -46,6 +47,7 @@ pub mod recents_section;
 pub mod redact;
 pub mod report;
 pub mod reset_db;
+pub mod safe_mode;
 // The headless screenshot driver is a CLI path with no live UI to
 // freeze — the Prime Directive syscall lint doesn't apply to it.
 #[allow(clippy::disallowed_methods)]
@@ -69,6 +71,7 @@ pub mod trail;
 pub mod tree;
 pub mod video_poster;
 pub mod viewer;
+pub mod watchdog;
 pub mod window_cascade;
 
 /// Application identity every Ferail window advertises to the desktop

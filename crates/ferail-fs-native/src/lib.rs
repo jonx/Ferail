@@ -233,6 +233,12 @@ impl NativeFs {
         };
         let display_kind = describe_kind(kind, &name);
         let hidden = entry_is_hidden(&name, metadata);
+        let created_unix = metadata
+            .created()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64);
+        let locked = entry_is_locked(metadata);
         let id = self.id_for_path(path);
         // User-facing leaf (macOS shows an on-disk `:` as `/`, Finder-style),
         // and a precomputed hazard flag so the dense row paint never runs the
@@ -254,8 +260,34 @@ impl NativeFs {
             is_quarantined: false,
             quarantine: None,
             hidden,
+            created_unix,
+            locked,
         }
     }
+}
+
+/// Platform "locked" semantics for `FileEntry::locked`, evaluated once
+/// at enumerate time from the stat already in hand. macOS: the
+/// user/system immutable flags — what Finder's "Locked" checkbox sets.
+/// Windows: the read-only attribute, its closest native analogue.
+#[cfg(target_os = "macos")]
+pub fn entry_is_locked(metadata: &std::fs::Metadata) -> bool {
+    use std::os::macos::fs::MetadataExt;
+    // From <sys/stat.h>: UF_IMMUTABLE | SF_IMMUTABLE.
+    const IMMUTABLE: u32 = 0x2 | 0x2_0000;
+    (metadata.st_flags() & IMMUTABLE) != 0
+}
+
+#[cfg(windows)]
+pub fn entry_is_locked(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
+    (metadata.file_attributes() & FILE_ATTRIBUTE_READONLY) != 0
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+pub fn entry_is_locked(_metadata: &std::fs::Metadata) -> bool {
+    false
 }
 
 /// Platform "hidden file" semantics for `FileEntry::hidden`, evaluated

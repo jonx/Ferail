@@ -544,12 +544,27 @@ fn resolve_mpv_pref() -> Option<PathBuf> {
     crate::video_poster::resolve_mpv_pref()
 }
 
+/// The zoom mode a viewer window opens with (and returns to on zoom
+/// reset), from Settings → Layout → Viewer. Resolved once per window —
+/// `app_state::load` is cache-backed, and a change takes effect on the
+/// next viewer window like the video-backend pref.
+fn resolve_default_zoom() -> ZoomMode {
+    match crate::app_state::load().viewer_default_zoom.as_deref() {
+        Some("fit-down") => ZoomMode::FitDown,
+        Some("actual") => ZoomMode::Actual,
+        _ => ZoomMode::Fit,
+    }
+}
+
 pub struct ViewerWindow {
     playlist: Vec<PlaylistEntry>,
     index: usize,
     cache: loader::ViewerCache,
     /// Sticky zoom/pan — survives navigation by design.
     stage: StageState,
+    /// The mode `stage` opens with and resets to, per the
+    /// `viewer_default_zoom` setting (resolved once at window open).
+    default_zoom: ZoomMode,
     focus_handle: FocusHandle,
     /// Stage-area size captured at render time so keyboard zoom (which
     /// has no cursor position) can anchor at the viewport center.
@@ -762,9 +777,9 @@ impl ViewerWindow {
     ) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
-        // Re-render on window resize so the image/video refit (FitDown
-        // recomputes from the live viewport) and the native video overlay
-        // repositions to the new stage.
+        // Re-render on window resize so the image/video refit (the fit
+        // modes recompute from the live viewport) and the native video
+        // overlay repositions to the new stage.
         cx.observe_window_bounds(window, |_, _, cx| cx.notify())
             .detach();
         let interval = crate::app_state::load()
@@ -780,11 +795,13 @@ impl ViewerWindow {
             }
         })
         .detach();
+        let default_zoom = resolve_default_zoom();
         let mut this = Self {
             index: start.min(playlist.len().saturating_sub(1)),
             playlist,
             cache: loader::ViewerCache::default(),
-            stage: StageState::default(),
+            stage: StageState::reset(default_zoom),
+            default_zoom,
             focus_handle,
             last_stage_size: (1100.0, 760.0 - TOOLBAR_H - STATUS_H),
             scale_factor: 1.0,
@@ -862,7 +879,10 @@ impl ViewerWindow {
     ) {
         self.index = start.min(playlist.len().saturating_sub(1));
         self.playlist = playlist;
-        self.stage = StageState::default();
+        // Fresh session → re-resolve the default-zoom pref too, so a
+        // Settings change reaches a reused window on its next open.
+        self.default_zoom = resolve_default_zoom();
+        self.stage = StageState::reset(self.default_zoom);
         // New playlist → a fresh viewing session; drop the sticky
         // rotation (it doesn't outlive a retarget either).
         self.rotation = 0;
@@ -1728,7 +1748,7 @@ impl ViewerWindow {
             return;
         };
         if self.stage.mode == ZoomMode::Actual {
-            self.stage = StageState::default();
+            self.stage = StageState::reset(self.fit_fallback());
         } else {
             let img = self.to_logical((f.w as f32, f.h as f32));
             let r = stage::layout(img, self.last_stage_size, self.stage);
@@ -1802,8 +1822,18 @@ impl ViewerWindow {
     }
 
     fn on_zoom_reset(&mut self, _: &ViewerZoomReset, _window: &mut Window, cx: &mut Context<Self>) {
-        self.stage = StageState::default();
+        self.stage = StageState::reset(self.default_zoom);
         cx.notify();
+    }
+
+    /// The fit mode the 1:1 toggles fall back to: the user's default
+    /// zoom, unless that default *is* 1:1 — then plain fit, so the
+    /// toggle still has two distinct states.
+    fn fit_fallback(&self) -> ZoomMode {
+        match self.default_zoom {
+            ZoomMode::Actual => ZoomMode::Fit,
+            mode => mode,
+        }
     }
 
     fn on_actual_size(
@@ -1815,7 +1845,7 @@ impl ViewerWindow {
         // Toggle: 1:1 ↔ fit, keeping the pan center so the user stays
         // on the region they were inspecting.
         self.stage.mode = match self.stage.mode {
-            ZoomMode::Actual => ZoomMode::FitDown,
+            ZoomMode::Actual => self.fit_fallback(),
             _ => ZoomMode::Actual,
         };
         cx.notify();

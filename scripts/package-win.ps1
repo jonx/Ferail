@@ -43,12 +43,15 @@
     Package whatever is already in target/release (for iterating on packaging).
 
 .PARAMETER Features
-    Extra cargo features, e.g. -Features "mpv".
+    Cargo features for the build. Defaults to "mpv": the mpv video provider
+    is a runtime dlopen (no build-time link, no bundled DLL), so the package
+    still runs on a machine with no libmpv — the viewer just falls back to
+    the native player. -Features '' builds without it.
 
 .EXAMPLE
     ./scripts/package-win.ps1
     ./scripts/package-win.ps1 -SignCert C:\certs\ferail.pfx -SignPassword hunter2
-    ./scripts/package-win.ps1 -Features mpv -NoInstaller
+    ./scripts/package-win.ps1 -Features '' -NoInstaller
 #>
 [CmdletBinding()]
 param(
@@ -57,7 +60,7 @@ param(
     [string]$TimestampUrl = 'http://timestamp.digicert.com',
     [switch]$NoInstaller,
     [switch]$SkipBuild,
-    [string]$Features = ''
+    [string]$Features = 'mpv'
 )
 
 $ErrorActionPreference = 'Stop'

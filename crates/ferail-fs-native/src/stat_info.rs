@@ -380,6 +380,25 @@ pub fn volume_fs_info(_path: &Path) -> (Option<String>, Option<String>, bool) {
     (None, None, false)
 }
 
+/// The local timezone's current offset from UTC in seconds (positive
+/// east), for local-midnight math in filter date predicates
+/// (`ferail_core::filter_expr::DateCtx`). DST-aware via `localtime_r`;
+/// 0 (UTC) where unavailable.
+pub fn local_tz_offset_secs() -> i64 {
+    #[cfg(unix)]
+    {
+        let t = ferail_core::now_unix() as libc::time_t;
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        // SAFETY: `localtime_r` fills the caller-provided `tm`; the
+        // time_t is passed by pointer and not retained.
+        let res = unsafe { libc::localtime_r(&t, &mut tm) };
+        if !res.is_null() {
+            return tm.tm_gmtoff as i64;
+        }
+    }
+    0
+}
+
 /// Format a unix timestamp as a Finder-style local date-time,
 /// e.g. "9 Mar 2024 at 12:11". Uses `localtime_r` for an accurate local
 /// wall-clock (DST-aware); falls back to a UTC render off unix.

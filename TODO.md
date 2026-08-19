@@ -357,18 +357,31 @@ fallback). Remaining is the UX the system explorers have and we don't:
 - Rework the app icon to macOS conventions and generate the iconset (the bundle
   script already builds `.icns` from a PNG source; the icon *art* is the gap).
 - Bundle an **LGPL** libmpv inside the `.app` so mpv playback works out of the
-  box (deferred from 0.2.0, which ships with mpv off and loaded from a user's
-  own install). Homebrew's libmpv chain is **GPL-3.0** — its ffmpeg is built
-  with x264/x265 — so it cannot ship inside an MIT/Apache DMG without making
-  the whole binary GPL. The viable path: build ffmpeg
-  `--disable-gpl --disable-nonfree` plus mpv's LGPL option (only the *encoders*
-  are GPL; the H.264/HEVC/AV1/VP9 **decoders** are LGPL, and decoding is all the
-  viewer needs), relocate the ~47-dylib / 60 MB closure into
-  `Contents/Frameworks/` with `install_name_tool`, sign the nested dylibs
-  inside-out *before* the outer bundle (`bundle-mac.sh` signs only the app
-  today, so notarization would fail), probe the bundle ahead of Homebrew in
-  `default_mpv_path()`, and add the LGPL notices plus a corresponding-source
-  offer (an ongoing obligation on every rebuild).
+  box. ✅ *Step 1 shipped:* every release build (DMG, Windows ZIP, .deb) now
+  compiles `--features mpv` in — the provider dlopens a user-installed libmpv
+  and falls back to the native player without one, and the .deb `Recommends:
+  libmpv2` (Debian 12+ / Ubuntu 23.04+; jammy only has libmpv1, whose
+  soname the loader doesn't probe). *Remaining — ship the library itself.*
+  Homebrew's libmpv chain is **GPL-3.0** — its ffmpeg is built with x264/x265
+  — so it cannot ship inside an MIT/Apache DMG without making the whole binary
+  GPL. The viable path: build ffmpeg `--disable-gpl --disable-nonfree`
+  (decoders/demuxers only — the *encoders* are GPL; the H.264/HEVC/AV1/VP9
+  **decoders** are LGPL, and decoding is all the viewer needs) as **static
+  libs linked into libmpv** built with its LGPL option, yielding a single
+  self-contained `libmpv.dylib` — one file to place in `Contents/Frameworks/`
+  and sign, instead of relocating Homebrew's ~47-dylib closure with
+  `install_name_tool`. Sign it *before* the outer bundle (`bundle-mac.sh`
+  signs only the app today, so notarization would fail), probe the bundle
+  ahead of Homebrew in `default_mpv_path()` (the resolver already probes
+  `Contents/Frameworks/libmpv.2.dylib` under a hint dir), and add the LGPL
+  notices plus a corresponding-source offer — pin the ffmpeg/mpv sources +
+  build script in-repo, an ongoing obligation on every rebuild. **Verify
+  early:** the viewer's live vf chain must survive an LGPL ffmpeg — ffmpeg's
+  `eq` filter is GPL-gated, so the grade path may need `colorlevels`/`hue`
+  there; test the exact chain with the headless probe
+  (`cargo run -p ferail-video-mpv --example probe`). Windows: same recipe →
+  `libmpv-2.dll` beside the exe in the ZIP. Linux: nothing to bundle
+  (distro libmpv via Recommends).
 - Visual polish still missing from the GPUI shell: vibrancy/materials, titlebar
   hit testing, sharper row density, empty/error illustrations, animation-budget
   review.

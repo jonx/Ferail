@@ -25,8 +25,18 @@ into the window's chain at startup ([crates/ferail-shell-mac/src/services.rs](..
   Extract (archive rows only; submenu: Extract Here / Extract To…),
   Copy Path, Open Terminal Here (folders), Share…, Tags row
   (7 colours), Move to Trash.
-- List pane (background): right-click empty area shows New Folder, Reveal
-  in Finder, Refresh, Show Hidden Files toggle.
+- List pane (background): right-click on empty space — below the last row,
+  or anywhere in an empty folder — targets the *folder being browsed*,
+  never the selection: New Folder, Paste, Select All, Get Info, Reveal in
+  Finder, Copy Path, Open Terminal Here, Add Folder to Favorites, Refresh.
+  Region is decided in the mouse capture phase (`TableState`'s
+  `right_clicked_background`): every right-click starts as background, a
+  row's bubble handler claims it, the header un-flags it. The folder verbs
+  ride the `context_target` actions; `TableEvent::RightClickedBackground`
+  (emitted at menu-build time) is what stages the current directory there.
+  An earlier attempt hung a `.context_menu` on the file-pane wrapper and
+  ate the row menus' clicks — this one lives inside the same
+  `LiveContextMenu` the rows use, so the two can't fight.
 - Disk-usage treemap: Open, Reveal, Copy Path, Quick Look, Zoom into,
   Move to Trash. Multi-selection-aware.
 

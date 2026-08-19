@@ -5,6 +5,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+use ferail_core::filter_expr::{DateCtx, FilterExpr};
 use ferail_core::{EnumerationError, FileEntry, NodeId};
 use ferail_fs_native::{DEFAULT_ENUMERATION_BATCH, NativeFs};
 
@@ -31,14 +32,40 @@ pub struct HiddenSummary {
     pub bytes: u64,
 }
 
+/// Aggregate of the entries the *filter field* dropped from a load —
+/// what the status bar shows ("N filtered out · X B") while a filter is
+/// typed, so the count and size stay honest about the whole folder
+/// instead of only the matches. Zero when the field is empty.
+/// Counted *after* the hidden partition, so a hidden entry that also
+/// fails the needle is reported once, as hidden.
+///
+/// Same shape as [`HiddenSummary`] but a distinct type, so the two
+/// skipped-entry totals can never be swapped at a call site.
+#[derive(Clone, Copy, Default)]
+pub struct FilterSummary {
+    pub count: usize,
+    pub bytes: u64,
+}
+
 pub(super) enum LoadMsg {
     Batch(LoadBatch),
     /// End of stream: the enumeration error (if any) and the totals of
-    /// hidden entries skipped across the whole load. Carried on `Done`
-    /// rather than per-batch because `Done` is sent exactly once and
-    /// never dropped (empty batches are), and the status bar only needs
-    /// the final figure.
-    Done(Option<EnumerationError>, HiddenSummary),
+    /// entries skipped across the whole load — hidden ones, then the
+    /// ones the filter field excluded. Carried on `Done` rather than
+    /// per-batch because `Done` is sent exactly once and never dropped
+    /// (empty batches are), and the status bar only needs the final
+    /// figures.
+    Done(Option<EnumerationError>, HiddenSummary, FilterSummary),
+}
+
+/// Clock + local-zone context for resolving the filter's date tokens
+/// (`mod:today`, `created:>2026-01-01`). Built fresh per load so "today"
+/// stays honest across midnight; called on workers, never in paint.
+pub(super) fn filter_date_ctx() -> DateCtx {
+    DateCtx {
+        now_unix: ferail_core::now_unix(),
+        tz_offset_secs: ferail_fs_native::stat_info::local_tz_offset_secs(),
+    }
 }
 
 pub(super) fn run_directory_load_streaming(
@@ -49,25 +76,28 @@ pub(super) fn run_directory_load_streaming(
     cancel: Arc<AtomicBool>,
     tx: async_channel::Sender<LoadMsg>,
 ) {
-    let needle = filter_text.trim().to_lowercase();
+    let expr = FilterExpr::parse(filter_text.trim(), filter_date_ctx());
     let mut hidden = HiddenSummary::default();
+    let mut filtered = FilterSummary::default();
     let error = fs.enumerate_streaming(&path, DEFAULT_ENUMERATION_BATCH, &cancel, |entries| {
-        let (batch, skipped) = filter_directory_batch(&fs, entries, show_hidden, &needle);
+        let (batch, skipped, excluded) = filter_directory_batch(&fs, entries, show_hidden, &expr);
         hidden.count += skipped.count;
         hidden.bytes += skipped.bytes;
+        filtered.count += excluded.count;
+        filtered.bytes += excluded.bytes;
         if !batch.entries.is_empty() && tx.send_blocking(LoadMsg::Batch(batch)).is_err() {
             cancel.store(true, Ordering::Relaxed);
         }
     });
-    let _ = tx.send_blocking(LoadMsg::Done(error, hidden));
+    let _ = tx.send_blocking(LoadMsg::Done(error, hidden, filtered));
 }
 
 fn filter_directory_batch(
     fs: &NativeFs,
     entries: Vec<FileEntry>,
     show_hidden: bool,
-    needle: &str,
-) -> (LoadBatch, HiddenSummary) {
+    expr: &FilterExpr,
+) -> (LoadBatch, HiddenSummary, FilterSummary) {
     // Hidden partition FIRST, text filter second: the hidden summary
     // must not change while the user types a filter, so it counts every
     // hidden entry the listing dropped, needle or no needle.
@@ -81,28 +111,24 @@ fn filter_directory_batch(
         count: skipped.len(),
         bytes: skipped.iter().map(|e| e.size).sum(),
     };
-    let entries: Vec<FileEntry> = visible
-        .into_iter()
-        .filter(|e| {
-            if needle.is_empty() {
-                true
-            } else {
-                // Filter searches the visible Format value too —
-                // otherwise typing "pdf document" or "zip archive"
-                // misses rows where the magic-detected text is the
-                // only place those phrases appear.
-                let (format, _) = e.format_label();
-                e.name.to_lowercase().contains(needle) || format.to_lowercase().contains(needle)
-            }
-        })
-        .collect();
+    // `matches_entry` searches the visible Format value too —
+    // otherwise typing "pdf document" or "zip archive" misses rows
+    // where the magic-detected text is the only place those phrases
+    // appear. Structured tokens (size:, mod:, locked:, …) test the
+    // row's cached metadata fields — never fresh I/O.
+    let (entries, excluded): (Vec<FileEntry>, Vec<FileEntry>) =
+        visible.into_iter().partition(|e| expr.matches_entry(e));
+    let filtered = FilterSummary {
+        count: excluded.len(),
+        bytes: excluded.iter().map(|e| e.size).sum(),
+    };
     let mut paths = HashMap::with_capacity(entries.len());
     for entry in &entries {
         if let Some(path) = fs.path_for(entry.id) {
             paths.insert(entry.id, path);
         }
     }
-    (LoadBatch { entries, paths }, hidden)
+    (LoadBatch { entries, paths }, hidden, filtered)
 }
 
 #[cfg(test)]
@@ -126,6 +152,8 @@ mod filter_tests {
             is_quarantined: false,
             quarantine: None,
             hidden,
+            created_unix: None,
+            locked: false,
         }
     }
 
@@ -134,9 +162,23 @@ mod filter_tests {
         show_hidden: bool,
         needle: &str,
     ) -> (Vec<String>, HiddenSummary) {
+        let (names, hidden, _) = batch_full(entries, show_hidden, needle);
+        (names, hidden)
+    }
+
+    fn batch_full(
+        entries: Vec<FileEntry>,
+        show_hidden: bool,
+        needle: &str,
+    ) -> (Vec<String>, HiddenSummary, FilterSummary) {
         let fs = NativeFs::new();
-        let (batch, hidden) = filter_directory_batch(&fs, entries, show_hidden, needle);
-        (batch.entries.into_iter().map(|e| e.name).collect(), hidden)
+        let expr = FilterExpr::parse(needle, filter_date_ctx());
+        let (batch, hidden, filtered) = filter_directory_batch(&fs, entries, show_hidden, &expr);
+        (
+            batch.entries.into_iter().map(|e| e.name).collect(),
+            hidden,
+            filtered,
+        )
     }
 
     #[test]
@@ -189,6 +231,70 @@ mod filter_tests {
         assert!(names.is_empty());
         assert_eq!(hidden.count, 2);
         assert_eq!(hidden.bytes, 3);
+    }
+
+    #[test]
+    fn filter_summary_counts_and_sums_non_matches() {
+        let (names, _, filtered) = batch_full(
+            vec![
+                entry("report.pdf", 10, false),
+                entry("notes.txt", 200, false),
+                entry("photo.jpg", 3000, false),
+            ],
+            false,
+            "report",
+        );
+        assert_eq!(names, vec!["report.pdf"]);
+        assert_eq!(filtered.count, 2);
+        assert_eq!(filtered.bytes, 3200);
+    }
+
+    #[test]
+    fn empty_needle_filters_nothing() {
+        let (names, _, filtered) = batch_full(
+            vec![entry("a.txt", 10, false), entry("b.txt", 5, false)],
+            false,
+            "",
+        );
+        assert_eq!(names.len(), 2);
+        assert_eq!(filtered.count, 0);
+        assert_eq!(filtered.bytes, 0);
+    }
+
+    #[test]
+    fn value_tokens_filter_on_metadata() {
+        // `size:` reads the cached size field, no name involvement; the
+        // non-matching row still lands in the filtered-out summary.
+        let (names, _, filtered) = batch_full(
+            vec![entry("big.bin", 5000, false), entry("small.txt", 10, false)],
+            false,
+            "size:>1kb",
+        );
+        assert_eq!(names, vec!["big.bin"]);
+        assert_eq!(filtered.count, 1);
+        assert_eq!(filtered.bytes, 10);
+        // Tokens AND with plain text.
+        let (names, _, _) = batch_full(
+            vec![entry("big.bin", 5000, false), entry("huge.txt", 9000, false)],
+            false,
+            "size:>1kb huge",
+        );
+        assert_eq!(names, vec!["huge.txt"]);
+    }
+
+    #[test]
+    fn hidden_entries_are_not_counted_twice() {
+        // `.env` fails the needle too, but it was already dropped as
+        // hidden — the filter aggregate must not claim it as well.
+        let (names, hidden, filtered) = batch_full(
+            vec![entry("a.txt", 10, false), entry(".env", 5, true)],
+            false,
+            "zzz",
+        );
+        assert!(names.is_empty());
+        assert_eq!(hidden.count, 1);
+        assert_eq!(filtered.count, 1);
+        assert_eq!(filtered.bytes, 10);
     }
 }
 

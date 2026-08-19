@@ -114,6 +114,13 @@ pub enum TableEvent {
     /// Contains the row index, or `None` if right-clicked on an empty area.
     /// Use this event to show context menus for rows.
     RightClickedRow(Option<usize>),
+    /// Fork addition: the table's empty space (below the rows, or the empty
+    /// folder view — not a row, not the header) has been right-clicked and
+    /// the delegate's background context menu is about to open. Emitted at
+    /// menu-build time so a subscriber can stage what the menu's actions
+    /// need (the file list's Shell stages the current directory as
+    /// `context_target`).
+    RightClickedBackground,
     /// A cell has been right-clicked.
     ///
     /// Emitted when a cell is right-clicked in cell selection mode.
@@ -261,6 +268,13 @@ pub struct TableState<D: TableDelegate> {
     selected_row: Option<usize>,
     selection_mode: SelectionMode,
     right_clicked_row: Option<usize>,
+    /// Fork addition: `true` while the last right-click inside the table
+    /// landed on none of the interactive regions — no data row (set in the
+    /// capture phase, before a row's bubble handler can claim the click)
+    /// and not the header (whose bubble handler clears it again). The
+    /// context-menu builder reads it to offer the delegate's *background*
+    /// menu (New Folder / Paste / … for the file list) instead of nothing.
+    right_clicked_background: bool,
     right_clicked_cell: Option<(usize, usize)>,
     selected_col: Option<usize>,
     selected_cell: Option<(usize, usize)>,
@@ -292,6 +306,7 @@ where
             selection_mode: SelectionMode::Row,
             selected_row: None,
             right_clicked_row: None,
+            right_clicked_background: false,
             right_clicked_cell: None,
             selected_col: None,
             selected_cell: None,
@@ -436,6 +451,27 @@ where
         // Left-ish of the Name column: past the disclosure/icon gutter,
         // well clear of the vertical scrollbar on the right edge.
         Some(gpui::point(list.origin.x + px(80.), y))
+    }
+
+    /// Window-space point in the middle of the table body, below the
+    /// header. `None` before the first layout.
+    ///
+    /// The screenshot-harness sibling of [`Self::row_center`]
+    /// (`--context-menu-background`): a synthesised right-click here opens
+    /// the delegate's background context menu — provided the caller pointed
+    /// the harness at a folder whose rows don't reach the body's midpoint
+    /// (an empty folder being the canonical case). Derived from the table's
+    /// prepaint bounds rather than the row list's, because an empty folder
+    /// never lays the row list out.
+    pub fn body_center(&self) -> Option<Point<Pixels>> {
+        if self.bounds.size.width <= Pixels::ZERO || self.bounds.size.height <= Pixels::ZERO {
+            return None;
+        }
+        let header_rows = self.header_layout.len().max(1);
+        let header_height = self.options.size.table_row_height() * header_rows as f32;
+        let body_top = self.bounds.origin.y + header_height;
+        let y = body_top + (self.bounds.bottom() - body_top) / 2.;
+        Some(gpui::point(self.bounds.center().x, y))
     }
 
     // Scroll to the column at the given index.
@@ -723,6 +759,7 @@ where
         cx: &mut Context<Self>,
     ) {
         self.right_clicked_row = row_ix;
+        self.right_clicked_background = false;
         self.right_clicked_cell = None;
         cx.emit(TableEvent::RightClickedRow(row_ix));
     }
@@ -1813,6 +1850,16 @@ where
             .bg(cx.theme().table_head)
             .text_color(cx.theme().table_head_foreground)
             .refine_style(&style)
+            // Un-flag the capture-phase "background right-click" (see
+            // `render`): the header owns its clicks — its own `.context_menu`
+            // below decides whether a menu opens — so the table's background
+            // menu must not also fire here.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, _, _, _| {
+                    this.right_clicked_background = false;
+                }),
+            )
             .when(self.cell_selectable && self.row_selector, |this| {
                 this.child(self.render_row_selector_cell(0, true, cx))
             })
@@ -2483,6 +2530,22 @@ where
             .id("table-inner")
             .size_full()
             .overflow_hidden()
+            // Fork addition: every right-click starts life as a *background*
+            // click, decided in the capture phase so it runs before any
+            // row's bubble handler. A row that claims the click flips it to
+            // `right_clicked_row` (`on_row_right_click`), the header's own
+            // handler just clears the flag, and whatever region wins is what
+            // the deferred menu build below reads. This also retires stale
+            // `right_clicked_row` state from a previous open, so a right-
+            // click on empty space can no longer resurrect the last row's
+            // menu.
+            .capture_any_mouse_down(cx.listener(|this, ev: &MouseDownEvent, _window, _cx| {
+                if ev.button == MouseButton::Right {
+                    this.right_clicked_background = true;
+                    this.right_clicked_row = None;
+                    this.right_clicked_cell = None;
+                }
+            }))
             .child(self.render_table_header(left_columns_count, window, cx))
             // Fork's own context-menu element, not gpui-component's: an open
             // row menu must pick up content that could only be fetched
@@ -2499,6 +2562,16 @@ where
                         if let Some(row_ix) = view.read(cx).right_clicked_row {
                             view.update(cx, |menu, cx| {
                                 menu.delegate_mut().context_menu(row_ix, this, window, cx)
+                            })
+                        } else if view.read(cx).right_clicked_background {
+                            // Empty-space click: the delegate's background
+                            // menu (folder-scoped commands for the file
+                            // list; empty — and therefore suppressed — by
+                            // default). The event lets the subscriber stage
+                            // the menu's target before an item is picked.
+                            view.update(cx, |table, cx| {
+                                cx.emit(TableEvent::RightClickedBackground);
+                                table.delegate_mut().background_context_menu(this, window, cx)
                             })
                         } else {
                             this
@@ -2607,10 +2680,27 @@ where
                         }))
                     })
             })
-            .on_prepaint({
-                let state = cx.entity();
-                move |bounds, _, cx| state.update(cx, |state, _| state.bounds = bounds)
-            })
+            // Record the table's window-space bounds. Not `on_prepaint`:
+            // that helper's probe canvas is absolute with *auto* offsets,
+            // so it sits at its static position — after the full-height
+            // body, i.e. at the table's BOTTOM edge — and the recorded
+            // `origin.y` was the bottom, not the top. Everything reading
+            // only `bounds.size` never noticed; `scroll_list_by_drag`'s
+            // edge zones and `body_center` need the real origin, so the
+            // probe is pinned to the parent's top-left explicitly.
+            .child(
+                gpui::canvas(
+                    {
+                        let state = cx.entity();
+                        move |bounds, _, cx| state.update(cx, |state, _| state.bounds = bounds)
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
             // Auto-scroll the row list when a file drag hovers near the
             // top/bottom edge, so off-screen rows (folders) become
             // reachable as drop targets. Keyed on `ExternalPaths` so

@@ -784,6 +784,8 @@ impl ArchiveView {
                     is_quarantined: false,
                     quarantine: None,
                     hidden: false,
+                    created_unix: None,
+                    locked: false,
                 }
             })
             .collect();

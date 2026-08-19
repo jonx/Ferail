@@ -133,17 +133,22 @@ the render path touches a file, a process, or SQLite.
 ### stage.rs — zoom/pan geometry (pure, tested)
 
 ```rust
-pub enum ZoomMode { FitDown, Actual, Custom(f32) }   // FitDown = default
+pub enum ZoomMode { Fit, FitDown, Actual, Custom(f32) }   // Fit = default
 pub struct StageState {
     pub mode: ZoomMode,
     pub center: (f32, f32),   // pan position as fraction of image size, (0.5, 0.5) = centered
 }
 ```
 
-- `fit_down_scale(img, view) -> f32` — `min(vw/iw, vh/ih).min(1.0)`; small
-  images render at 100 %, never upscaled (decision: blurry upscale by
-  default looks broken; users zoom in deliberately).
-- `effective_scale(mode, img, view)` — Fit→fit_down, Actual→1.0, Custom→s.
+- `fit_scale(img, view) -> f32` — `min(vw/iw, vh/ih)`; media fills the
+  window, small media scales *up* (the default since the
+  `viewer_default_zoom` setting landed; the user picks the open-with mode
+  in Settings → Layout → Viewer).
+- `fit_down_scale(img, view) -> f32` — `fit_scale(...).min(1.0)`; small
+  images render at 100 %, never upscaled — the "Fit, never enlarge"
+  setting choice for those who find blurry upscale broken-looking.
+- `effective_scale(mode, img, view)` — Fit→fit, FitDown→fit_down,
+  Actual→1.0, Custom→s.
 - `layout(img, view, state) -> Rect` — on-screen rect; clamps pan so the
   image can't be dragged fully off-screen; centers when smaller than view.
 - `zoom_at(state, cursor, img, view, factor) -> StageState` — wheel zoom
@@ -158,15 +163,20 @@ pub struct StageState {
 `StageState` lives on the ViewerWindow, **not** per-image. Navigating to
 another entry keeps `{mode, center}` verbatim:
 
-- `FitDown` (default) → next image also fits. Matches slideshow expectations.
+- `Fit` (default) → next image also fills the window. Matches slideshow
+  expectations. The window's default mode comes from the
+  `viewer_default_zoom` setting ("fit" / "fit-down" / "actual", resolved
+  once at window open, like the video-backend pref).
 - `Custom(2.5)` + center (0.7, 0.3) → next image renders at 2.5× zoomed to
   the same *relative* region — comparing the same corner across screenshots
   or scans "just works".
 - `Actual` → next image at 100 % too.
-- Double-click toggles `FitDown` ↔ `Actual` (zoom-to-point on the click
-  position when going to Actual).
-- Explicit reset: `Cmd+0` **[mac key; win-parity Ctrl+0]** → `FitDown`,
-  center (0.5, 0.5).
+- Double-click toggles fit ↔ `Actual` (zoom-to-point on the click position
+  when going to Actual). "Fit" here is the user's default mode — unless
+  that default *is* `Actual`, in which case the toggle falls back to `Fit`
+  so it still has two distinct states.
+- Explicit reset: `Cmd+0` **[mac key; win-parity Ctrl+0]** → the default
+  mode, center (0.5, 0.5).
 
 ### window.rs — ViewerWindow
 

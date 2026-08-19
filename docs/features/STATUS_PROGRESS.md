@@ -78,6 +78,16 @@ The status bar shows:
   "0 B free" on a CD is true but buries the actual story. The macOS boot
   volume is exempt — its sealed snapshot statfs's read-only, but the
   Macintosh HD the user sees is writable via the firmlinked Data volume,
+- an "N filtered out · X B" companion beside the count whenever the filter
+  field is holding entries back, so a filtered listing never passes its
+  count and size off as the whole folder. Fed the same way as the hidden
+  chip — the enumeration's `Done` message (`loading::FilterSummary`, counted
+  *after* the hidden partition so nothing is reported twice, zeroed at load
+  start and when a search replaces the listing) — and suppressed in archive
+  mode. When the filter matches nothing, the count itself becomes
+  "All N items filtered out · X B" (never "Empty folder"), and the table's
+  empty state says "All N items filtered out." for the same reason:
+  a filtered-to-nothing folder is not an empty one,
 - task label or "N tasks running",
 - progress strip,
 - a passive "N hidden · X B" chip when *show hidden* is off and the folder

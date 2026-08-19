@@ -504,6 +504,14 @@ pub struct FileListDelegate {
     /// exit path funnels through. Deliberately NOT set at load start:
     /// fast local navigations would flash a skeleton every click.
     pub slow_load: Option<SharedString>,
+    /// How many entries the filter field excluded from the last
+    /// completed load (0 when the field is empty). Only read by the
+    /// empty state, which must say "filtered out" rather than "this
+    /// folder is empty" when a needle hid every row. Written by
+    /// `Shell::finish_directory_load_in_tab`; reset by `clear()` /
+    /// `replace_entries()` like `slow_load`, so a new load can't paint
+    /// the previous one's figure.
+    pub filtered_out: usize,
 }
 
 /// Drag payload for entries inside an archive.
@@ -591,6 +599,7 @@ impl FileListDelegate {
             cached_total_size: std::cell::Cell::new(None),
             cached_selected_size: std::cell::Cell::new(None),
             slow_load: None,
+            filtered_out: 0,
         }
     }
 
@@ -789,6 +798,7 @@ impl FileListDelegate {
     pub fn clear(&mut self) {
         self.invalidate_drag_snapshot();
         self.slow_load = None;
+        self.filtered_out = 0;
         self.entries.clear();
         self.paths.clear();
         self.heats.clear();
@@ -806,6 +816,7 @@ impl FileListDelegate {
     ) {
         self.invalidate_drag_snapshot();
         self.slow_load = None;
+        self.filtered_out = 0;
         // A normal directory load leaves archive mode behind.
         self.archive_rows.clear();
         self.archive_view = None;
@@ -868,6 +879,7 @@ impl FileListDelegate {
         debug_assert_eq!(entries.len(), rows.len());
         self.invalidate_drag_snapshot();
         self.slow_load = None;
+        self.filtered_out = 0;
         let n = entries.len();
         self.entries = entries;
         self.archive_rows = rows;
@@ -2062,6 +2074,53 @@ impl TableDelegate for FileListDelegate {
             .menu("Delete Immediately\u{2026}", Box::new(DeleteImmediately))
     }
 
+    fn background_context_menu(
+        &mut self,
+        menu: PopupMenu,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        // Archive rows are virtual — the "current folder" lives inside an
+        // archive, so the folder verbs below have no real path to act on.
+        // Returning the menu unchanged keeps the empty space inert there.
+        if self.is_archive_mode() {
+            return menu;
+        }
+        use crate::shell::{
+            AddCurrentFolderToFavorites, CopyContextPath, GetInfoAtContext, NewFolder,
+            OpenTerminalAtContext, PasteFiles, Refresh, RevealContextPath, SelectAll,
+        };
+
+        // Empty-space right-click: the menu targets the folder being
+        // browsed, never the selection. `NewFolder` / `PasteFiles` /
+        // `SelectAll` / `Refresh` already act on the current directory;
+        // the four context-path verbs act on `Shell::context_target`,
+        // which the `RightClickedBackground` subscriber staged to the
+        // current directory the instant this menu opened. Prime
+        // directive: labels and actions only — no filesystem or shell
+        // queries at menu-open time.
+        menu.action_context(self.shell_focus.clone())
+            .menu("New Folder", Box::new(NewFolder))
+            .separator()
+            .menu("Paste", Box::new(PasteFiles))
+            .menu("Select All", Box::new(SelectAll))
+            .separator()
+            .menu("Get Info", Box::new(GetInfoAtContext))
+            .menu(
+                ferail_core::commands::REVEAL_LABEL,
+                Box::new(RevealContextPath),
+            )
+            .menu("Copy Path", Box::new(CopyContextPath))
+            .menu("Open Terminal Here", Box::new(OpenTerminalAtContext))
+            .separator()
+            .menu(
+                "Add Folder to Favorites",
+                Box::new(AddCurrentFolderToFavorites),
+            )
+            .separator()
+            .menu("Refresh", Box::new(Refresh))
+    }
+
     fn move_column(
         &mut self,
         col_ix: usize,
@@ -2118,6 +2177,17 @@ impl TableDelegate for FileListDelegate {
         // Phase 10 polish: a centred, two-line empty state with the
         // Lucide inbox glyph above the copy reads "considered" rather
         // than "we forgot to handle this case."
+        //
+        // A folder whose rows were all excluded by the filter field is
+        // not an empty folder — saying so sends the user looking for
+        // missing files. Name the filter as the cause instead.
+        // Same words as the status bar's chip — "hidden" is already
+        // taken by the show-hidden toggle and would read as that.
+        let message = match self.filtered_out {
+            0 => "This folder is empty.".to_string(),
+            1 => "1 item filtered out.".to_string(),
+            n => format!("All {n} items filtered out."),
+        };
         gpui_component::v_flex()
             .size_full()
             .items_center()
@@ -2133,7 +2203,7 @@ impl TableDelegate for FileListDelegate {
                 div()
                     .text_scale_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child("This folder is empty."),
+                    .child(message),
             )
     }
 
@@ -2618,6 +2688,8 @@ mod sort_tests {
             is_quarantined: false,
             quarantine: None,
             hidden: false,
+            created_unix: None,
+            locked: false,
         }
     }
 
@@ -2725,6 +2797,8 @@ mod menu_targets_tests {
             is_quarantined: false,
             quarantine: None,
             hidden: false,
+            created_unix: None,
+            locked: false,
         }
     }
 

@@ -19,7 +19,12 @@
 # Usage:
 #   scripts/package-mac.sh                 # full release: sign + notarize + staple
 #   scripts/package-mac.sh --no-notarize   # sign + DMG only (offline dry run)
-#   FEATURES="--features mpv" scripts/package-mac.sh
+#   FEATURES="" scripts/package-mac.sh     # build without the mpv provider
+#
+# The mpv video provider is compiled in by default (bundle-mac.sh's FEATURES
+# default). libmpv itself is NOT bundled — the provider dlopens a
+# user-installed libmpv at runtime and falls back to the native player
+# without one, so the DMG stays MIT/Apache-clean.
 #
 # Config via env (defaults match the account in apple-codesigning.md):
 #   APPLE_DEV_ID        Developer ID Application identity string

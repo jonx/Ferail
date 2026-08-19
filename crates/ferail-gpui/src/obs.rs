@@ -338,6 +338,17 @@ fn write_compact_backtrace(out: &mut String, backtrace: &str) {
     }
 }
 
+/// Breadcrumb ring contents, oldest → newest. Shared by the panic report
+/// and the freeze watchdog's hang report (`crate::watchdog`).
+pub fn breadcrumb_lines() -> Vec<String> {
+    breadcrumbs()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .cloned()
+        .collect()
+}
+
 fn dump_breadcrumbs_for_panic(out: &mut String) {
     use std::fmt::Write as _;
     let guard = breadcrumbs().lock().unwrap_or_else(|e| e.into_inner());

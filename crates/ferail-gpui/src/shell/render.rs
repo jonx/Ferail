@@ -2825,6 +2825,10 @@ impl Render for Shell {
         // listing has no hidden-file concept, so archive mode zeroes it
         // below along with the other overrides.
         let hidden_summary = self.active_tab().hidden_summary;
+        // Same lifecycle: what the filter field excluded from the last
+        // completed load, so the count/size beside it can't pass a
+        // filtered view off as the whole folder.
+        let filter_summary = self.active_tab().filter_summary;
         // A docked archive workbench owns its own table, so the tab's delegate
         // is (correctly) empty — read the counts from the archive's table
         // instead, or the status bar would report "Empty folder" while the
@@ -2866,6 +2870,8 @@ impl Render for Shell {
             volume_read_only,
             hidden_count: if archive_mode { 0 } else { hidden_summary.count },
             hidden_bytes: if archive_mode { 0 } else { hidden_summary.bytes },
+            filtered_count: if archive_mode { 0 } else { filter_summary.count },
+            filtered_bytes: if archive_mode { 0 } else { filter_summary.bytes },
             // Filled in just before the status_bar::render call, where
             // the window id is in hand.
             stats: None,
@@ -3140,11 +3146,12 @@ impl Render for Shell {
                 // file body wrapper consumed the click events bound
                 // for the inner DataTable row menu, causing every
                 // file-row menu selection to dismiss without firing.
-                // The empty-space menu (New Folder / Refresh / etc.)
-                // is parked until we can split the file pane's
-                // background from the rows at the event-routing
-                // layer — the toolbar already exposes those actions
-                // so users aren't blocked.
+                // Don't reintroduce one here. The empty-space menu
+                // (New Folder / Paste / …) now lives INSIDE the
+                // table's own LiveContextMenu instead — see
+                // `FileListDelegate::background_context_menu` and the
+                // capture-phase region pick in `TableState::render` —
+                // so it can't fight the row menus for events.
                 // Drop target for OS file drags (Finder → Ferail,
                 // and row drag-outs landing back in our own pane):
                 // anywhere in the pane that a folder row didn't claim
