@@ -345,7 +345,7 @@ fn civil_to_unix(s: &str, tz_offset_secs: i64) -> Option<i64> {
     }
     let y = if m <= 2 { y - 1 } else { y };
     let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = (y - era * 400) as i64;
+    let yoe = y - era * 400;
     let mp = ((m as i64) + 9) % 12;
     let doy = (153 * mp + 2) / 5 + (d as i64) - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
