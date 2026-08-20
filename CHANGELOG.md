@@ -8,7 +8,18 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
-No user-visible changes yet.
+- **Ferail can now tell you when a newer version exists — if you ask it
+  to.** A new **Ferail → Check for Updates…** menu item asks GitHub
+  Releases for the latest version and shows the result in a Software
+  Update dialog: when something newer exists you can read the release
+  notes, download the right file for your machine (macOS disk image,
+  Windows zip, Debian/Ubuntu package for your CPU) straight into
+  Downloads with live progress, then open it or show it in the folder —
+  installing stays your step, Ferail never replaces itself. A separate
+  **Settings → About → Updates** switch turns on a *daily automatic*
+  check that posts a notification when a new version appears; it is
+  **off by default**, and with it off Ferail makes no network requests
+  on its own. Nothing is ever downloaded without you choosing to.
 
 ## 0.4.0 — 2026-08-19
 

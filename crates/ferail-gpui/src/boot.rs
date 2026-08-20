@@ -33,7 +33,7 @@ use gpui_component::Theme;
 // - `BringAllToFront` — Window ▸ Bring All to Front. Raises every open
 //                       window (shells, viewers, tool windows) above
 //                       other apps'. See `bring_all_to_front`.
-actions!(app, [Quit, OpenAbout, NewWindow, BringAllToFront]);
+actions!(app, [Quit, OpenAbout, CheckForUpdates, NewWindow, BringAllToFront]);
 
 pub fn run_gui(args: screenshot::Args) {
     // Windows shell: assign our own AppUserModelID so the taskbar
@@ -84,6 +84,18 @@ pub fn run_gui(args: screenshot::Args) {
         ferail_core::path_guard::mark_ui_thread();
         gpui_component::init(cx);
         crate::text::install_platform_font_families(cx);
+        // gpui boots with a NullHttpClient (every request errors); give
+        // `cx.http_client()` a real TLS-capable client so the update
+        // check can reach GitHub. Nothing else in the app talks HTTP
+        // today, and this client never sends a request on its own.
+        match reqwest_client::ReqwestClient::user_agent(concat!(
+            "Ferail/",
+            env!("CARGO_PKG_VERSION"),
+            " (+https://github.com/jonx/Ferail)"
+        )) {
+            Ok(client) => cx.set_http_client(std::sync::Arc::new(client)),
+            Err(e) => crate::log_warn!(90, "http client init failed: {e}"),
+        }
         crate::shell::init(cx);
         // Replace the dock / About icon. Has to happen after gpui
         // has built its NSApplication — calling from `main()` panics
@@ -193,6 +205,12 @@ pub fn run_gui(args: screenshot::Args) {
         cx.on_action(|_: &OpenAbout, cx| {
             crate::about::open_about_dialog(cx);
         });
+        // Software Update dialog + a fresh check (docs/features/UPDATES.md).
+        // Manual by definition — works whether or not the automatic daily
+        // check is enabled in Settings.
+        cx.on_action(|_: &CheckForUpdates, cx| {
+            crate::update_check::manual_check(cx);
+        });
 
         // Build the singleton ProcessState before opening any window
         // and stash it as a GPUI Global. Every Shell::new (this window,
@@ -234,6 +252,12 @@ pub fn run_gui(args: screenshot::Args) {
             // deterministic `--simulate-stats` label instead
             // (docs/features/SYSTEM_STATS.md).
             crate::system_stats::start_sampler(cx);
+
+            // Daily update check — a no-op unless the user opted in
+            // (Settings ▸ About ▸ Updates; off by default). The loop
+            // re-reads the setting each wake, so the toggle works
+            // without a relaunch.
+            crate::update_check::start_auto_loop(cx);
         }
 
         // Cmd+N → new window. The handler runs at App level so the
@@ -471,6 +495,10 @@ fn install_app_menus(cx: &mut App) {
             name: "Ferail".into(),
             items: vec![
                 MenuItem::action(title("app.about", "About Ferail"), OpenAbout),
+                MenuItem::action(
+                    title("app.check_updates", "Check for Updates\u{2026}"),
+                    CheckForUpdates,
+                ),
                 MenuItem::separator(),
                 MenuItem::action(title("app.settings", "Settings\u{2026}"), OpenSettings),
                 MenuItem::separator(),

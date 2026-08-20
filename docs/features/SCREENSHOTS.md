@@ -66,7 +66,10 @@ scratch). If a committed doc needs to reference an image, copy it into
   folder, or one whose rows stop above the midpoint).
 - **Panels & overlays** — `--preview`, `--properties` (Get Info),
   `--rename`, `--new-folder`, `--shortcuts-help[-filter]`, `--simulate-toast`,
-  `--simulate-progress`, `--simulate-task-panel`.
+  `--simulate-progress`, `--simulate-task-panel`, `--update-dialog <state>`
+  (Software Update dialog seeded with `checking` / `uptodate` / `available` /
+  `noasset` / `downloading` / `done` / `failed` — no network; `live` runs the
+  real GitHub check, the one networked capture).
 - **Alternate windows** — `--settings <page>`, `--disk-usage <path>`
   (`--du-depth`, `--du-coloring`), `--viewer <path>` (`--viewer-adjust`),
   `--drag-ghost N`.

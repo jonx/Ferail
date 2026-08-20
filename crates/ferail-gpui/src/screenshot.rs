@@ -126,6 +126,10 @@ pub struct Args {
     pub new_archive: bool,
     /// Open the Go to Folder prompt (Cmd+G).
     pub go_to_folder: bool,
+    /// Open the Software Update dialog seeded with a named state
+    /// (checking / uptodate / available / noasset / downloading / done /
+    /// failed) — pure UI, no network (docs/features/UPDATES.md).
+    pub update_dialog: Option<String>,
     /// Push a fake toast with the given message. Lands in Stage 5.
     pub simulate_toast: Option<String>,
     /// Show the footer progress strip: <0 → indeterminate, ≥0 →
@@ -302,6 +306,7 @@ pub fn parse_args() -> Args {
             "--bulk-rename" => args.bulk_rename = true,
             "--new-archive" => args.new_archive = true,
             "--go-to-folder" => args.go_to_folder = true,
+            "--update-dialog" => args.update_dialog = iter.next(),
             "--simulate-toast" => args.simulate_toast = iter.next(),
             "--simulate-progress" => {
                 args.simulate_progress = Some(
@@ -461,6 +466,15 @@ pub fn run(args: Args) -> Result<()> {
     app.run(move |cx| {
         gpui_component::init(cx);
         crate::text::install_platform_font_families(cx);
+        // Real HTTP client, as in boot.rs — only exercised by
+        // `--update-dialog live`; every other capture stays offline.
+        if let Ok(client) = reqwest_client::ReqwestClient::user_agent(concat!(
+            "Ferail/",
+            env!("CARGO_PKG_VERSION"),
+            " (+https://github.com/jonx/Ferail)"
+        )) {
+            cx.set_http_client(std::sync::Arc::new(client));
+        }
         crate::shell::init(cx);
         // Register the dock icon — see comment in main.rs::run_gui;
         // must happen post-NSApplication-init.
@@ -798,6 +812,7 @@ struct ShellArgs {
     bulk_rename: bool,
     new_archive: bool,
     go_to_folder: bool,
+    update_dialog: Option<String>,
     archive: Option<PathBuf>,
     archive_preview_row: Option<usize>,
     expand: Vec<PathBuf>,
@@ -846,6 +861,7 @@ impl From<&Args> for ShellArgs {
             bulk_rename: a.bulk_rename,
             new_archive: a.new_archive,
             go_to_folder: a.go_to_folder,
+            update_dialog: a.update_dialog.clone(),
             archive: a.archive.clone(),
             archive_preview_row: a.archive_preview_row,
             expand: a.expand.clone(),
@@ -1042,6 +1058,11 @@ impl ShellArgs {
                 shell.update(cx, |s, cx| {
                     s.open_go_to_folder_prompt(true, window, cx);
                 });
+            });
+        }
+        if let Some(state) = self.update_dialog.clone() {
+            let _ = cx.update_window((*handle).into(), |_, _window, cx| {
+                crate::update_check::seed_dialog_for_screenshot(&state, cx);
             });
         }
         if let Some(keys) = self.keys.clone() {

@@ -231,6 +231,14 @@ pub struct AppState {
     /// (defaults to `true`). See [`crate::redact`].
     pub redact_diagnostics: Option<bool>,
 
+    // ---- Updates ----
+    /// Opt-in automatic update check: once a day, ask GitHub Releases
+    /// whether a newer Ferail exists (docs/features/UPDATES.md). `None` ==
+    /// never set, which means **off** — no background network traffic
+    /// unless the user asked for it. The menu's manual Check for
+    /// Updates… works regardless of this flag.
+    pub update_check: Option<bool>,
+
     // ---- Sidebar Locations (Windows / OneDrive) ----
     /// Which root the sidebar's special folders resolve against when
     /// OneDrive has moved them: "auto" (shell default), "local"
@@ -467,6 +475,9 @@ fn load_from_disk() -> AppState {
             "redact_diagnostics" => {
                 out.redact_diagnostics = parse_bool(val);
             }
+            "update_check" => {
+                out.update_check = parse_bool(val);
+            }
             "special_folder_mode" => {
                 let v = val.trim().to_lowercase();
                 if matches!(v.as_str(), "auto" | "local" | "onedrive") {
@@ -605,6 +616,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(b) = state.redact_diagnostics {
         s.push_str(&format!("redact_diagnostics={b}\n"));
+    }
+    if let Some(b) = state.update_check {
+        s.push_str(&format!("update_check={b}\n"));
     }
     if let Some(m) = &state.special_folder_mode {
         s.push_str(&format!("special_folder_mode={m}\n"));

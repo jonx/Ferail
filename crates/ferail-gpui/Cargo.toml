@@ -42,6 +42,9 @@ gpui.workspace = true
 gpui_platform.workspace = true
 gpui-component.workspace = true
 gpui-component-assets.workspace = true
+# HttpClient impl behind cx.http_client() — see the workspace Cargo.toml
+# note. Update check only; everything else stays offline.
+reqwest_client.workspace = true
 # Phase 1 (next-level plan): bundle our own SVG icons alongside
 # the upstream gpui-component icon pack. Same major as the upstream
 # crate uses so we stay single-copy in the graph.
@@ -60,6 +63,9 @@ notify = "7.0"
 # Streaming directory enumeration sends worker batches to a GPUI task
 # without timer polling.
 async-channel = "2.5"
+# Async read of the update-download HTTP body (update_check.rs). Same
+# version smol/async-* already put in the graph — no new code compiled.
+futures-lite = "2"
 # Status-bar app-footprint segment: samples this process's CPU / RSS on the
 # background executor (docs/features/SYSTEM_STATS.md).
 sysinfo.workspace = true

@@ -203,6 +203,14 @@ fn persist_file_detail_scan(value: bool) {
     });
 }
 
+fn persist_update_check(value: bool) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        update_check: Some(value),
+        ..existing
+    });
+}
+
 pub(crate) fn persist_view_mode(value: &str) {
     let existing = app_state::load();
     app_state::save(&AppState {
@@ -1644,6 +1652,27 @@ fn shortcuts_page() -> SettingPage {
 fn about_page() -> SettingPage {
     SettingPage::new("About")
         .icon(Icon::empty().path("icons/info.svg"))
+        .group(
+            // Updates — the automatic check is opt-in; the menu's manual
+            // Check for Updates… works regardless (docs/features/UPDATES.md).
+            SettingGroup::new().title("Updates").item(switch_setting(
+                "Check for updates automatically",
+                "Once a day, ask GitHub whether a newer Ferail release exists, and show a \
+                 notification when one does. Off by default \u{2014} when off, Ferail makes no \
+                 network requests on its own. Nothing is ever downloaded or installed without \
+                 you choosing to; use Ferail \u{2192} Check for Updates\u{2026} to check by hand \
+                 at any time.",
+                |_cx: &App| app_state::load().update_check.unwrap_or(false),
+                |val: bool, cx: &mut App| {
+                    persist_update_check(val);
+                    if val {
+                        // Opting in mid-session: answer immediately rather
+                        // than at tomorrow's daily wake.
+                        crate::update_check::start_check_background(cx);
+                    }
+                },
+            )),
+        )
         .group(
             SettingGroup::new().item(SettingItem::render(|_options, _window, cx| {
                 let theme = cx.theme();

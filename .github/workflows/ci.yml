@@ -122,6 +122,12 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
 
+      # aws-lc-sys (rustls' default crypto provider, via the update check's
+      # reqwest_client) assembles with NASM on Windows MSVC; the runner
+      # image doesn't ship it.
+      - name: Install NASM (aws-lc-sys)
+        run: choco install nasm -y --no-progress; echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
       # No `-D warnings` here on purpose. `clippy::disallowed_methods` is a
       # crate-level `deny` (ferail-gpui/Cargo.toml [lints.clippy]), so the
       # Prime Directive tripwire still fails the build on its own — but the

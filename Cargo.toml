@@ -96,6 +96,12 @@ gpui = { git = "https://github.com/zed-industries/zed", features = ["test-suppor
 # and hits the unreachable arm. No-op on macOS/Windows (gpui_linux is
 # Linux-only there).
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "test-support", "wayland", "x11"] }
+# Real HTTP for gpui's `cx.http_client()` (gpui itself installs a
+# NullHttpClient). Same zed source as gpui — the lock resolves them to one
+# rev — and its `zed-reqwest`/tokio underpinnings are already in the graph
+# via gpui-component-assets, so this adds the thin wrapper only. Powers the
+# update check (docs/features/UPDATES.md).
+reqwest_client = { git = "https://github.com/zed-industries/zed" }
 # `tree-sitter-languages` pulls in the full tree-sitter grammar set so
 # the preview pane's TextView highlights fenced code blocks (and
 # markdown code) for every language (docs/features/PREVIEW.md). Each

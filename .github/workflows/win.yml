@@ -35,6 +35,12 @@ jobs:
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
 
+      # aws-lc-sys (rustls' default crypto provider, via the update check's
+      # reqwest_client) assembles with NASM on Windows MSVC; the runner
+      # image doesn't ship it.
+      - name: Install NASM (aws-lc-sys)
+        run: choco install nasm -y --no-progress; echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
       # -NoInstaller: the runner image ships Inno Setup, but the installer
       # path hasn't been exercised from CI — ship the portable ZIP that
       # matches what 0.2.2 distributed. Drop the flag once the installer is

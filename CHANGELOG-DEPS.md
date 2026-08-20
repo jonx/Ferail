@@ -13,6 +13,20 @@ copy that exact rev; when it leaves gpui unpinned (the style since ~2026-07),
 leave ours unpinned too and let the committed `Cargo.lock` carry the actual
 zed rev — bumped deliberately with `cargo update -p gpui`.
 
+## 2026-08-20 — add reqwest_client (same zed rev; no bumps)
+
+The update check needs real HTTP behind gpui's `cx.http_client()`, so
+`reqwest_client` joins from the **already-locked** zed rev (`38ca910`) —
+not a bump; `cargo update -p gpui --precise` was used to keep the whole
+zed set on that rev after cargo tried to ride the branch head. Its
+`zed-reqwest`/tokio underpinnings were already in the graph via
+`gpui-component-assets`; genuinely new transitives are the rustls TLS
+stack (`http_client_tls`, `rustls-platform-verifier`, `aws-lc-rs`,
+webpki roots) plus `futures-lite` as a direct dep. The vendored
+`stacker`/`tar`/`filetime` patches were verified still active after the
+re-resolve (a first attempt silently dropped the `stacker` patch — check
+`[[patch.unused]]` in Cargo.lock whenever touching the zed source).
+
 ## 2026-08-08 — bump gpui-component (~8 weeks), zed to current main
 
 | crate | from | to |

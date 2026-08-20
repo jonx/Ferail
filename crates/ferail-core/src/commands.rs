@@ -209,6 +209,12 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::App,
         shortcuts: &[Shortcut::primary(",")],
     },
+    CommandSpec {
+        id: CommandId("app.check_updates"),
+        title: "Check for Updates…",
+        category: Category::App,
+        shortcuts: &[],
+    },
     // File
     CommandSpec {
         id: CommandId("file.new_tab"),

@@ -69,6 +69,7 @@ pub mod thumbnails;
 pub mod tool_results;
 pub mod trail;
 pub mod tree;
+pub mod update_check;
 pub mod video_poster;
 pub mod viewer;
 pub mod watchdog;
