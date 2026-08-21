@@ -240,7 +240,13 @@ pub const PRESET_LANGUAGES: &[(&str, &str, &str)] = &[
 /// at most the bundled packs (embedded) and the user's languages folder —
 /// a startup read of the same kind as `app_state::load`.
 pub fn init(cx: &mut App) {
-    let selection = app_state::load().language.unwrap_or_else(|| SYSTEM.to_owned());
+    // `FERAIL_LANGUAGE=fr` overrides the persisted choice for this process
+    // only (screenshots, testing a pack without touching settings).
+    let selection = std::env::var("FERAIL_LANGUAGE")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| app_state::load().language)
+        .unwrap_or_else(|| SYSTEM.to_owned());
     let system_locale = core::system_locale();
     let packs = scan_packs();
     let mut langs = Languages {

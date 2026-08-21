@@ -459,7 +459,7 @@ impl Shell {
             let weak_for_menu = weak.clone();
             let path_for_menu = path.clone();
             let path_for_modclick = path.clone();
-            let item = SidebarMenuItem::new(SharedString::from(loc.label))
+            let item = SidebarMenuItem::new(crate::i18n::tr_static(loc.label))
                 .icon(
                     Icon::empty()
                         .path(loc.icon)

@@ -278,28 +278,28 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         #[cfg(target_os = "macos")]
         {
             &[
-                ("Home", None, "icons/nav/home.svg"),
+                (ferail_core::msgid!("Home"), None, "icons/nav/home.svg"),
                 // Absolute on purpose: Finder's sidebar "Applications" is the
                 // system-wide `/Applications`, not `~/Applications`. The
                 // per-user folder is surfaced separately below when it holds
                 // anything.
-                ("Applications", Some("/Applications"), "icons/nav/apps.svg"),
-                ("Desktop", Some("Desktop"), "icons/nav/desktop.svg"),
-                ("Documents", Some("Documents"), "icons/nav/documents.svg"),
-                ("Downloads", Some("Downloads"), "icons/nav/downloads.svg"),
-                ("Trash", Some(".Trash"), "icons/nav/trash.svg"),
-                ("Movies", Some("Movies"), "icons/nav/movies.svg"),
-                ("Music", Some("Music"), "icons/nav/music.svg"),
-                ("Pictures", Some("Pictures"), "icons/nav/pictures.svg"),
+                (ferail_core::msgid!("Applications"), Some("/Applications"), "icons/nav/apps.svg"),
+                (ferail_core::msgid!("Desktop"), Some("Desktop"), "icons/nav/desktop.svg"),
+                (ferail_core::msgid!("Documents"), Some("Documents"), "icons/nav/documents.svg"),
+                (ferail_core::msgid!("Downloads"), Some("Downloads"), "icons/nav/downloads.svg"),
+                (ferail_core::msgid!("Trash"), Some(".Trash"), "icons/nav/trash.svg"),
+                (ferail_core::msgid!("Movies"), Some("Movies"), "icons/nav/movies.svg"),
+                (ferail_core::msgid!("Music"), Some("Music"), "icons/nav/music.svg"),
+                (ferail_core::msgid!("Pictures"), Some("Pictures"), "icons/nav/pictures.svg"),
             ]
         }
         #[cfg(not(target_os = "macos"))]
         {
             &[
-                ("Home", None, "icons/nav/home.svg"),
-                ("Desktop", Some("Desktop"), "icons/nav/desktop.svg"),
-                ("Documents", Some("Documents"), "icons/nav/documents.svg"),
-                ("Downloads", Some("Downloads"), "icons/nav/downloads.svg"),
+                (ferail_core::msgid!("Home"), None, "icons/nav/home.svg"),
+                (ferail_core::msgid!("Desktop"), Some("Desktop"), "icons/nav/desktop.svg"),
+                (ferail_core::msgid!("Documents"), Some("Documents"), "icons/nav/documents.svg"),
+                (ferail_core::msgid!("Downloads"), Some("Downloads"), "icons/nav/downloads.svg"),
             ]
         }
     };
@@ -335,7 +335,7 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
             locations.insert(
                 at,
                 WellKnownLocation {
-                    label: "User Applications",
+                    label: ferail_core::msgid!("User Applications"),
                     path: user_apps,
                     icon: "icons/nav/apps.svg",
                 },
@@ -354,7 +354,7 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
         let icloud = home.join("Library/Mobile Documents/com~apple~CloudDocs");
         if icloud.is_dir() {
             locations.push(WellKnownLocation {
-                label: "iCloud Drive",
+                label: ferail_core::msgid!("iCloud Drive"),
                 path: icloud,
                 icon: "icons/nav/cloud.svg",
             });
@@ -395,7 +395,7 @@ pub fn well_known_locations_for(mode: SpecialFolderMode) -> Vec<WellKnownLocatio
     let mut out = vec![WellKnownLocation {
         // Home is the profile dir itself — never redirected, so `mode`
         // doesn't touch it.
-        label: "Home",
+        label: ferail_core::msgid!("Home"),
         path: home.clone(),
         icon: "icons/nav/home.svg",
     }];

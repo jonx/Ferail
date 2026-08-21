@@ -153,6 +153,8 @@ translated" rather than silently wrong text.
   counter; then `install` swaps the catalog, calls `gpui_component::set_locale`
   (so the widgets' own OK/Cancel follow where gpui-component has them),
   rebuilds the menu bar (`boot::install_app_menus`) and `refresh_windows()`.
+- `FERAIL_LANGUAGE=<code|en|system>` overrides the persisted choice for one
+  process (not saved) — handy for `--screenshot` runs and for trying a pack.
 - Because menus, the command palette and the shortcuts page all translate
   `CommandSpec.title` at display time, the catalogue itself stays static.
 
