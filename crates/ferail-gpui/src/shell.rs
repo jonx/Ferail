@@ -181,10 +181,11 @@ impl UndoOp {
                     // appeared at the origin since the move, undoing
                     // must not clobber it.
                     if from.exists() {
-                        return Err(format!(
-                            "{} exists again; not overwriting it",
-                            from.display()
-                        ));
+                        return Err(tr!(
+                            "{path} exists again; not overwriting it",
+                            path = from.display()
+                        )
+                        .to_string());
                     }
                     std::fs::rename(to, from).map_err(|e| e.to_string())?;
                 }
@@ -220,10 +221,11 @@ impl UndoOp {
             UndoOp::TrashRestore(pairs) => {
                 for (original, trashed) in pairs {
                     if original.exists() {
-                        return Err(format!(
-                            "{} exists again; not overwriting it",
-                            original.display()
-                        ));
+                        return Err(tr!(
+                            "{path} exists again; not overwriting it",
+                            path = original.display()
+                        )
+                        .to_string());
                     }
                     std::fs::rename(trashed, original).map_err(|e| e.to_string())?;
                 }
@@ -253,16 +255,16 @@ impl UndoOp {
         }
     }
 
-    fn label(&self) -> &'static str {
+    fn label(&self) -> SharedString {
         match self {
-            UndoOp::Rename { .. } => "Undid rename",
-            UndoOp::DeleteFolder(_) => "Removed new folder",
-            UndoOp::AddFavorite(_) => "Removed Favorite",
-            UndoOp::RemoveFavorite(_) => "Restored Favorite",
-            UndoOp::MoveBack(_) | UndoOp::MoveBackCross(_) => "Moved items back",
-            UndoOp::RemoveCreated(_) => "Removed pasted items",
-            UndoOp::TrashRestore(_) => "Restored from Trash",
-            UndoOp::RenameBatch(_) => "Undid bulk rename",
+            UndoOp::Rename { .. } => tr!("Undid rename"),
+            UndoOp::DeleteFolder(_) => tr!("Removed new folder"),
+            UndoOp::AddFavorite(_) => tr!("Removed Favorite"),
+            UndoOp::RemoveFavorite(_) => tr!("Restored Favorite"),
+            UndoOp::MoveBack(_) | UndoOp::MoveBackCross(_) => tr!("Moved items back"),
+            UndoOp::RemoveCreated(_) => tr!("Removed pasted items"),
+            UndoOp::TrashRestore(_) => tr!("Restored from Trash"),
+            UndoOp::RenameBatch(_) => tr!("Undid bulk rename"),
         }
     }
 
@@ -328,16 +330,18 @@ fn copy_back_moved_item(original: &Path, moved: &Path) -> Result<(), String> {
     // Same guard as MoveBack/TrashRestore: if something new appeared at
     // the origin since the move, undoing must not clobber it.
     if original.exists() {
-        return Err(format!(
-            "{} exists again; not overwriting it",
-            original.display()
-        ));
+        return Err(tr!(
+            "{path} exists again; not overwriting it",
+            path = original.display()
+        )
+        .to_string());
     }
     let Some(dest_dir) = original.parent() else {
-        return Err(format!(
-            "{}: no parent folder to restore into",
-            original.display()
-        ));
+        return Err(tr!(
+            "{path}: no parent folder to restore into",
+            path = original.display()
+        )
+        .to_string());
     };
     let prog = TransferProgress::new();
     let cancel = AtomicBool::new(false);
@@ -356,10 +360,11 @@ fn copy_back_moved_item(original: &Path, moved: &Path) -> Result<(), String> {
     let Some((_, landed)) = out.created.first() else {
         // Skip policy fired — the copy-back destination is occupied.
         let occupied = dest_dir.join(moved.file_name().unwrap_or_default());
-        return Err(format!(
-            "{} exists again; not overwriting it",
-            occupied.display()
-        ));
+        return Err(tr!(
+            "{path} exists again; not overwriting it",
+            path = occupied.display()
+        )
+        .to_string());
     };
     if landed != original {
         // The forward move Keep-Both-renamed the item; restore the
@@ -392,8 +397,16 @@ fn file_op_error_notification(
     operation: &str,
     err: &str,
 ) -> gpui_component::notification::Notification {
-    let advice = classify_error_text(err).advice();
-    error_notification(format!("{operation} failed: {err}. {advice}"))
+    let advice = crate::i18n::tr_static(classify_error_text(err).advice());
+    error_notification(
+        tr!(
+            "{operation} failed: {detail}. {advice}",
+            operation = operation,
+            detail = err,
+            advice = advice
+        )
+        .to_string(),
+    )
 }
 
 /// Best-effort classification of a stringly-typed error message (the mutation
@@ -491,25 +504,33 @@ pub(crate) fn file_op_failure_report(
 ) -> String {
     const SHOW: usize = 4;
     let total = done + failed.len() + skipped as usize;
-    let mut msg = format!(
-        "{operation}: {done} of {total} done \u{00b7} {} failed",
-        failed.len()
-    );
+    let mut msg = trn!(
+        "{operation}: {done} of {total} done \u{00b7} {n} failed",
+        "{operation}: {done} of {total} done \u{00b7} {n} failed",
+        failed.len(),
+        operation = operation,
+        done = done,
+        total = total
+    )
+    .to_string();
     for e in failed.iter().take(SHOW) {
-        msg.push_str(&format!(
-            "\n\u{2022} {} \u{2014} {}",
-            e.item_label(),
-            e.kind.summary()
+        msg.push('\n');
+        msg.push_str(&tr!(
+            "\u{2022} {item} \u{2014} {reason}",
+            item = e.item_label(),
+            reason = crate::i18n::tr_static(e.kind.summary())
         ));
     }
     if failed.len() > SHOW {
-        msg.push_str(&format!(
-            "\n\u{2022} \u{2026}and {} more",
+        msg.push('\n');
+        msg.push_str(&trn!(
+            "\u{2022} \u{2026}and {n} more",
+            "\u{2022} \u{2026}and {n} more",
             failed.len() - SHOW
         ));
     }
     msg.push('\n');
-    msg.push_str(dominant_failure_kind(failed).advice());
+    msg.push_str(&crate::i18n::tr_static(dominant_failure_kind(failed).advice()));
     msg
 }
 
@@ -556,9 +577,9 @@ pub(crate) fn error_notification(message: String) -> gpui_component::notificatio
                 row = row.child(
                     Button::new("toggle-error-details")
                         .label(if is_expanded {
-                            "Hide details"
+                            tr!("Hide details")
                         } else {
-                            "Details"
+                            tr!("Details")
                         })
                         .ghost()
                         .small()
@@ -571,7 +592,7 @@ pub(crate) fn error_notification(message: String) -> gpui_component::notificatio
             let for_copy = message.clone();
             row = row.child(
                 Button::new("copy-error-message")
-                    .label("Copy")
+                    .label(tr!("Copy"))
                     .ghost()
                     .small()
                     .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&for_copy)),
@@ -644,7 +665,7 @@ pub(crate) fn transfer_failure_notification(
         // lingering for the user to close.
         if offer_admin {
             Button::new("retry-elevated")
-                .label("Retry as administrator\u{2026}")
+                .label(tr!("Retry as administrator\u{2026}"))
                 .small()
                 .on_click(cx.listener(move |note, _, window, cx| {
                     let _ = r.shell.update(cx, |shell, cx| {
@@ -660,7 +681,7 @@ pub(crate) fn transfer_failure_notification(
                 }))
         } else {
             Button::new("retry-inproc")
-                .label("Retry")
+                .label(tr!("Retry"))
                 .small()
                 .on_click(cx.listener(move |note, _, window, cx| {
                     let _ = r.shell.update(cx, |shell, cx| {
@@ -686,7 +707,7 @@ pub(crate) fn transfer_failure_notification(
         let mut row = h_flex().gap_2().pt_1();
         row = row.child(
             Button::new("copy-failure")
-                .label("Copy")
+                .label(tr!("Copy"))
                 .ghost()
                 .small()
                 .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&copy_msg)),
@@ -695,7 +716,7 @@ pub(crate) fn transfer_failure_notification(
             let r = secondary.clone();
             row = row.child(
                 Button::new("retry-inproc-2")
-                    .label("Retry")
+                    .label(tr!("Retry"))
                     .ghost()
                     .small()
                     .on_click(cx.listener(move |note, _, window, cx| {
@@ -718,7 +739,7 @@ pub(crate) fn transfer_failure_notification(
             let r = secondary.clone();
             row = row.child(
                 Button::new("whats-using-it")
-                    .label("What's using it?")
+                    .label(tr!("What's using it?"))
                     .ghost()
                     .small()
                     .on_click(cx.listener(move |note, _, window, cx| {
@@ -767,15 +788,15 @@ pub(crate) fn trash_failure_notification(
     }
 
     let label = if retry.delete {
-        "Delete as administrator\u{2026}"
+        tr!("Delete as administrator\u{2026}")
     } else {
-        "Move to Trash as administrator\u{2026}"
+        tr!("Move to Trash as administrator\u{2026}")
     };
     let primary = retry.clone();
     let note = Notification::error(headline).action(move |_, _, cx| {
         let r = primary.clone();
         Button::new("trash-elevated")
-            .label(label)
+            .label(label.clone())
             .small()
             .on_click(cx.listener(move |note, _, window, cx| {
                 let _ = r.shell.update(cx, |shell, cx| {
@@ -795,7 +816,7 @@ pub(crate) fn trash_failure_notification(
             .pt_1()
             .child(
                 Button::new("copy-trash-failure")
-                    .label("Copy")
+                    .label(tr!("Copy"))
                     .ghost()
                     .small()
                     .on_click(move |_, _, _| {
@@ -808,15 +829,22 @@ pub(crate) fn trash_failure_notification(
 
 fn enumeration_error_message(operation: &str, err: &EnumerationError) -> String {
     match err {
-        EnumerationError::PermissionDenied => format!(
-            "{operation} failed: PermissionDenied. Grant Ferail access to this location or run with sufficient permissions, then try again."
-        ),
-        EnumerationError::NotFound => format!(
-            "{operation} failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again."
-        ),
-        EnumerationError::Other(raw) => format!(
-            "{operation} failed: {raw} (EnumerationError::Other). Refresh and try again; if it repeats, inspect the folder permissions or filesystem state."
-        ),
+        EnumerationError::PermissionDenied => tr!(
+            "{operation} failed: PermissionDenied. Grant Ferail access to this location or run with sufficient permissions, then try again.",
+            operation = operation
+        )
+        .to_string(),
+        EnumerationError::NotFound => tr!(
+            "{operation} failed: NotFound. The folder may have moved, been deleted, or been unmounted. Refresh the parent location and try again.",
+            operation = operation
+        )
+        .to_string(),
+        EnumerationError::Other(raw) => tr!(
+            "{operation} failed: {detail} (EnumerationError::Other). Refresh and try again; if it repeats, inspect the folder permissions or filesystem state.",
+            operation = operation,
+            detail = raw
+        )
+        .to_string(),
     }
 }
 
@@ -1573,7 +1601,7 @@ impl Shell {
         // Stage 9.b: shortcuts-help filter Input. Subscribed for
         // Change so typing updates `shortcuts_help_filter` live.
         let shortcuts_help_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search\u{2026}"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Search\u{2026}")));
         let shortcuts_help_subscription = cx.subscribe_in(&shortcuts_help_input, window, {
             let shortcuts_help_input = shortcuts_help_input.clone();
             move |this, _state, ev: &InputEvent, window, cx| {
@@ -1607,7 +1635,7 @@ impl Shell {
         // folders pop up as you type (background-enumerated; see
         // `crate::path_complete`).
         let breadcrumb_input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx).placeholder("/path/to/folder");
+            let mut state = InputState::new(window, cx).placeholder(tr!("/path/to/folder"));
             state.lsp.completion_provider =
                 Some(Rc::new(crate::path_complete::PathCompletionProvider));
             state
@@ -2044,10 +2072,11 @@ impl Shell {
         let generation = self.active_tab().load_generation;
         let task = self.process.tasks.borrow_mut().begin(
             TaskKind::Enumeration,
-            format!(
-                "Opening {}",
-                middle_truncate_path(&raw.to_string_lossy(), 40)
-            ),
+            tr!(
+                "Opening {path}",
+                path = middle_truncate_path(&raw.to_string_lossy(), 40)
+            )
+            .to_string(),
             false,
         );
         let tasks = self.process.tasks.clone();
@@ -2245,9 +2274,9 @@ impl Shell {
             // The return symbol U+23CE has no glyph in the AROS font stack
             // (renders as a tofu box); use a plain word there.
             #[cfg(target_os = "aros")]
-            let placeholder = "Filter \u{2026}  Enter to search subfolders";
+            let placeholder = tr!("Filter \u{2026}  Enter to search subfolders");
             #[cfg(not(target_os = "aros"))]
-            let placeholder = "Filter \u{2026}  \u{23CE} to search subfolders";
+            let placeholder = tr!("Filter \u{2026}  \u{23CE} to search subfolders");
             let mut state = InputState::new(window, cx).placeholder(placeholder);
             // Token autocomplete (`size:`, `mod:`, `locked:`, …) — a
             // static-table lookup, no I/O (filter_complete.rs).
@@ -2488,12 +2517,11 @@ impl Shell {
         // Power users can open many at once; `confirm_fanout` only asks
         // once the count crosses the threshold (then opens all).
         let count = entries.len();
-        let plural = if count == 1 { "item" } else { "items" };
         self.confirm_fanout(
             count,
-            "Open Items?",
-            format!("Open {count} {plural}?"),
-            "Open",
+            ferail_core::msgid!("Open Items?"),
+            trn!("Open {n} item?", "Open {n} items?", count).to_string(),
+            ferail_core::msgid!("Open"),
             window,
             cx,
             move |this, window, cx| {
@@ -2616,9 +2644,9 @@ impl Shell {
                 // poorly (Space bookkeeping); refuse instead of glitching.
                 if crate::platform_shell::window_is_fullscreen(ns_view) {
                     window.push_notification(
-                        gpui_component::notification::Notification::info(
-                            "Exit full screen before docking the window.",
-                        ),
+                        gpui_component::notification::Notification::info(tr!(
+                            "Exit full screen before docking the window."
+                        )),
                         cx,
                     );
                     return;
@@ -2833,7 +2861,7 @@ impl Shell {
         crate::trail::command("Go to Folder");
         let current = self.active_tab().current_dir.to_string_lossy().into_owned();
         let input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx).placeholder("/path/to/folder");
+            let mut state = InputState::new(window, cx).placeholder(tr!("/path/to/folder"));
             state.lsp.completion_provider =
                 Some(Rc::new(crate::path_complete::PathCompletionProvider));
             state
@@ -2863,7 +2891,7 @@ impl Shell {
             let commit_enter = commit.clone();
             let commit_click = commit.clone();
             dialog
-                .title("Go to Folder")
+                .title(tr!("Go to Folder"))
                 .child(Input::new(&input).small())
                 // A `Dialog` only draws buttons it's given a footer for;
                 // `button_props` alone renders nothing. Cancel first,
@@ -2872,13 +2900,13 @@ impl Shell {
                     DialogFooter::new()
                         .child(
                             Button::new("go-to-folder-cancel")
-                                .label("Cancel")
+                                .label(tr!("Cancel"))
                                 .small()
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
                         .child(
                             Button::new("go-to-folder-go")
-                                .label("Go")
+                                .label(tr!("Go"))
                                 .primary()
                                 .small()
                                 .on_click(move |_, window, cx| {
@@ -3333,7 +3361,10 @@ impl Shell {
             Err(e) => {
                 crate::log_warn!(90, "disk-usage: pop-out failed: {e:?}");
                 window.push_notification(
-                    error_notification(format!("Could not pop out Disk Usage: {e:?}")),
+                    error_notification(
+                        tr!("Could not pop out Disk Usage: {detail}", detail = format!("{e:?}"))
+                            .to_string(),
+                    ),
                     cx,
                 );
             }
@@ -3434,7 +3465,10 @@ impl Shell {
         }
         if playlist.is_empty() {
             use gpui_component::notification::Notification;
-            window.push_notification(Notification::info("No files to view in this folder"), cx);
+            window.push_notification(
+                Notification::info(tr!("No files to view in this folder")),
+                cx,
+            );
             return;
         }
         crate::viewer::open_viewer(playlist, start, window, cx);
@@ -3473,7 +3507,10 @@ impl Shell {
         }
         if playlist.is_empty() {
             use gpui_component::notification::Notification;
-            window.push_notification(Notification::info("No files to view in this folder"), cx);
+            window.push_notification(
+                Notification::info(tr!("No files to view in this folder")),
+                cx,
+            );
             return;
         }
         crate::viewer::open_viewer_playing(playlist, start, window, cx);
@@ -3520,12 +3557,16 @@ impl Shell {
         // FanOut: one Get Info window per file (each `entry_info::open`
         // spawns its own window). Guard the noisy case behind a confirm.
         let count = targets.len();
-        let plural = if count == 1 { "window" } else { "windows" };
         self.confirm_fanout(
             count,
-            "Get Info?",
-            format!("Open {count} Get Info {plural}?"),
-            "Get Info",
+            ferail_core::msgid!("Get Info?"),
+            trn!(
+                "Open {n} Get Info window?",
+                "Open {n} Get Info windows?",
+                count
+            )
+            .to_string(),
+            ferail_core::msgid!("Get Info"),
             window,
             cx,
             move |_this, _window, cx| {
@@ -3622,9 +3663,14 @@ impl Shell {
         }
         self.confirm_fanout(
             count,
-            "Open in New Tabs?",
-            format!("Open {count} folders in new tabs?"),
-            "Open",
+            ferail_core::msgid!("Open in New Tabs?"),
+            trn!(
+                "Open {n} folder in new tabs?",
+                "Open {n} folders in new tabs?",
+                count
+            )
+            .to_string(),
+            ferail_core::msgid!("Open"),
             window,
             cx,
             move |this, window, cx| {
@@ -3838,10 +3884,11 @@ impl Shell {
         }
         let task = self.process.tasks.borrow_mut().begin(
             TaskKind::Enumeration,
-            format!(
-                "Reading {}",
-                middle_truncate_path(&path.to_string_lossy(), 40)
-            ),
+            tr!(
+                "Reading {path}",
+                path = middle_truncate_path(&path.to_string_lossy(), 40)
+            )
+            .to_string(),
             true,
         );
         if let Some(previous) = self.tabs[tab_index].load_task.replace(task) {
@@ -4515,7 +4562,12 @@ impl Shell {
         }
         let task_id = self.process.tasks.borrow_mut().begin(
             TaskKind::ThumbnailPrefetch,
-            format!("Loading {} thumbnails\u{2026}", work.len()),
+            trn!(
+                "Loading {n} thumbnail\u{2026}",
+                "Loading {n} thumbnails\u{2026}",
+                work.len()
+            )
+            .to_string(),
             false,
         );
         let thumbs = self.process.thumbnails.clone();
@@ -4689,7 +4741,12 @@ impl Shell {
         }
         let task_id = self.process.tasks.borrow_mut().begin(
             TaskKind::IconPrefetch,
-            format!("Loading {} icons\u{2026}", items.len()),
+            trn!(
+                "Loading {n} icon\u{2026}",
+                "Loading {n} icons\u{2026}",
+                items.len()
+            )
+            .to_string(),
             false,
         );
         let icons = self.process.icons.clone();
@@ -5137,7 +5194,7 @@ impl Shell {
         crate::trail::command("Undo");
         use gpui_component::notification::Notification;
         let Some(op) = self.process.undo_stack.borrow_mut().pop_back() else {
-            window.push_notification(Notification::info("Nothing to undo"), cx);
+            window.push_notification(Notification::info(tr!("Nothing to undo")), cx);
             return;
         };
         let label = op.label();
@@ -5146,13 +5203,13 @@ impl Shell {
                 self.process.favorites().update(cx, |f, cx| {
                     f.remove(id, cx);
                 });
-                window.push_notification(Notification::success(label.to_string()), cx);
+                window.push_notification(Notification::success(label.clone()), cx);
             }
             UndoOp::RemoveFavorite(fav) => {
                 self.process.favorites().update(cx, |f, cx| {
                     f.restore(fav, cx);
                 });
-                window.push_notification(Notification::success(label.to_string()), cx);
+                window.push_notification(Notification::success(label.clone()), cx);
             }
             fs_op => {
                 // Prime Directive: `apply_fs` is an arbitrary-size
@@ -5189,7 +5246,7 @@ impl Shell {
                             Shell::broadcast_reload_for_process(&process, reload, cx);
                             let _ = win.update(cx, |_, window, cx| {
                                 window.push_notification(
-                                    Notification::success(label.to_string()),
+                                    Notification::success(label.clone()),
                                     cx,
                                 );
                             });
@@ -5197,7 +5254,7 @@ impl Shell {
                         Err(e) => {
                             let _ = win.update(cx, |_, window, cx| {
                                 window.push_notification(
-                                    Notification::error(format!("Undo failed: {e}")),
+                                    Notification::error(tr!("Undo failed: {detail}", detail = e)),
                                     cx,
                                 );
                             });
@@ -5232,7 +5289,7 @@ impl Shell {
         let target = self.resolve_favorite_target(cx);
         let Some((path, kind)) = target else {
             window.push_notification(
-                Notification::info("No folder available to add to Favorites."),
+                Notification::info(tr!("No folder available to add to Favorites.")),
                 cx,
             );
             return;
@@ -5256,7 +5313,7 @@ impl Shell {
             }
             FavoriteResolved::NotAFolder => {
                 window.push_notification(
-                    Notification::info("Only folders can be added to Favorites."),
+                    Notification::info(tr!("Only folders can be added to Favorites.")),
                     cx,
                 );
             }
@@ -5288,7 +5345,7 @@ impl Shell {
                 .read(cx)
                 .entry_by_id(id)
                 .map(|f| f.effective_label())
-                .unwrap_or_else(|| "favorite".to_string());
+                .unwrap_or_else(|| tr!("favorite").to_string());
             // Capture the full entry before removal so the undo
             // restores name + icon + sort_index + date_added.
             let removed_for_undo = self.process.favorites().read(cx).entry_by_id(id).cloned();
@@ -5297,8 +5354,9 @@ impl Shell {
                 self.push_undo(UndoOp::RemoveFavorite(fav));
             }
             window.push_notification(
-                Notification::info(format!(
-                    "Removed \u{201C}{label}\u{201D} from Favorites · Cmd+Z to undo"
+                Notification::info(tr!(
+                    "Removed \u{201C}{label}\u{201D} from Favorites · Cmd+Z to undo",
+                    label = label
                 )),
                 cx,
             );
@@ -5322,7 +5380,10 @@ impl Shell {
                 self.push_undo(UndoOp::AddFavorite(id));
             }
             window.push_notification(
-                Notification::success(format!("Added \u{201C}{label}\u{201D} to Favorites")),
+                Notification::success(tr!(
+                    "Added \u{201C}{label}\u{201D} to Favorites",
+                    label = label
+                )),
                 cx,
             );
         }
@@ -5499,8 +5560,8 @@ impl Shell {
         // A favorite's label is not a filesystem name, so skip filename
         // validation (it may legitimately contain `:`, trailing dots, etc.).
         self.open_named_prompt(
-            "Rename Favorite",
-            "New name",
+            tr!("Rename Favorite"),
+            tr!("New name"),
             current,
             false,
             move |this, new_name, _window, cx| {
@@ -5616,17 +5677,17 @@ impl Shell {
         let shell = cx.entity();
         let (title, body) = match state {
             FavoriteState::Unmounted => (
-                "Volume not mounted".to_string(),
-                format!(
-                    "\u{201C}{}\u{201D} isn\u{2019}t currently mounted. Locate it on a mounted volume, or remove the shortcut.",
-                    path.display()
+                tr!("Volume not mounted"),
+                tr!(
+                    "\u{201C}{path}\u{201D} isn\u{2019}t currently mounted. Locate it on a mounted volume, or remove the shortcut.",
+                    path = path.display()
                 ),
             ),
             _ => (
-                "Favorite can\u{2019}t be found".to_string(),
-                format!(
-                    "\u{201C}{}\u{201D} may have been moved or deleted. Locate it to repoint this shortcut, or remove it from Favorites.",
-                    path.display()
+                tr!("Favorite can\u{2019}t be found"),
+                tr!(
+                    "\u{201C}{path}\u{201D} may have been moved or deleted. Locate it to repoint this shortcut, or remove it from Favorites.",
+                    path = path.display()
                 ),
             ),
         };
@@ -5642,13 +5703,13 @@ impl Shell {
                     DialogFooter::new()
                         .child(
                             Button::new("fav-missing-keep")
-                                .label("Keep")
+                                .label(tr!("Keep"))
                                 .small()
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
                         .child(
                             Button::new("fav-missing-remove")
-                                .label("Remove from Favorites")
+                                .label(tr!("Remove from Favorites"))
                                 .danger()
                                 .small()
                                 .on_click(move |_, window, cx| {
@@ -5663,7 +5724,7 @@ impl Shell {
                                     let label = removed
                                         .as_ref()
                                         .map(|f| f.effective_label())
-                                        .unwrap_or_else(|| "favorite".to_string());
+                                        .unwrap_or_else(|| tr!("favorite").to_string());
                                     shell_remove.update(cx, |s, cx| {
                                         s.remove_favorite_collapsing(id, cx);
                                         if let Some(fav) = removed {
@@ -5671,8 +5732,9 @@ impl Shell {
                                         }
                                     });
                                     window.push_notification(
-                                        Notification::info(format!(
-                                            "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo"
+                                        Notification::info(tr!(
+                                            "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo",
+                                            label = label
                                         )),
                                         cx,
                                     );
@@ -5680,7 +5742,7 @@ impl Shell {
                         )
                         .child(
                             Button::new("fav-missing-locate")
-                                .label("Locate\u{2026}")
+                                .label(tr!("Locate\u{2026}"))
                                 .primary()
                                 .small()
                                 .on_click(move |_, window, cx| {
@@ -5784,8 +5846,9 @@ impl Shell {
         self.push_undo(UndoOp::RemoveFavorite(fav));
         self.focused_favorite = None;
         window.push_notification(
-            Notification::info(format!(
-                "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo"
+            Notification::info(tr!(
+                "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo",
+                label = label
             )),
             cx,
         );

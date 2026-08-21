@@ -97,15 +97,15 @@ pub(super) fn run_search_load(
         // Tag favorites (§9): a Spotlight `kMDItemUserTags` query. Finder
         // tags are a macOS concept, so there is no walker fallback — a
         // system without Spotlight simply returns no results.
-        let _ = tx.send_blocking(SearchMsg::Engine("Tag"));
+        let _ = tx.send_blocking(SearchMsg::Engine(ferail_core::msgid!("Tag")));
         run_tag_search(&fs, &config, &root, &tag, &cancel, &tx)
     } else if resolve_spotlight(config.engine) && !expr.text_needle().is_empty() {
         // Spotlight needs a query string; a token-only filter
         // (`mod:week` alone) has none, so it walks instead.
-        let _ = tx.send_blocking(SearchMsg::Engine("Spotlight"));
+        let _ = tx.send_blocking(SearchMsg::Engine(ferail_core::msgid!("Spotlight")));
         run_spotlight(&fs, &config, &root, &expr, &cancel, &tx)
     } else {
-        let _ = tx.send_blocking(SearchMsg::Engine("Subtree"));
+        let _ = tx.send_blocking(SearchMsg::Engine(ferail_core::msgid!("Subtree")));
         run_walker(&fs, &config, &root, expr.clone(), &cancel, &tx)
     };
     let _ = tx.send_blocking(SearchMsg::Done(error));
@@ -339,11 +339,11 @@ impl Shell {
         // until the worker's `SearchMsg::Engine` confirms/corrects it.
         let config = SearchConfig::load();
         let engine_label = if tag.is_some() {
-            "Tag"
+            ferail_core::msgid!("Tag")
         } else if matches!(config.engine, SearchEnginePref::Walker) {
-            "Subtree"
+            ferail_core::msgid!("Subtree")
         } else {
-            "Spotlight"
+            ferail_core::msgid!("Spotlight")
         };
 
         // Treat the search like a fresh load on this tab: bump the
@@ -379,7 +379,7 @@ impl Shell {
 
         let cancel = Arc::new(AtomicBool::new(false));
         self.tabs[idx].load_cancel = Some(cancel.clone());
-        let label = format!("Searching \u{201c}{}\u{201d}", needle);
+        let label = tr!("Searching \u{201c}{needle}\u{201d}", needle = needle).to_string();
         let task = self.process.tasks.borrow_mut().begin_with_cancel(
             TaskKind::Search,
             label,
@@ -459,19 +459,18 @@ impl Shell {
                 }
                 if let Some(window) = notify_window {
                     if let Some(error) = error {
-                        let message = super::enumeration_error_message("Search", &error);
+                        let message = super::enumeration_error_message(&tr!("Search"), &error);
                         let _ = window.update(cx, |_, window, cx| {
                             use gpui_component::notification::Notification;
                             window.push_notification(Notification::error(message), cx);
                         });
                     } else if surfaced {
-                        let message = if result_count == 1 {
-                            format!("Search finished: 1 result for \u{201c}{needle}\u{201d}")
-                        } else {
-                            format!(
-                                "Search finished: {result_count} results for \u{201c}{needle}\u{201d}"
-                            )
-                        };
+                        let message = trn!(
+                            "Search finished: {n} result for \u{201c}{needle}\u{201d}",
+                            "Search finished: {n} results for \u{201c}{needle}\u{201d}",
+                            result_count,
+                            needle = needle
+                        );
                         let _ = window.update(cx, |_, window, cx| {
                             use gpui_component::notification::Notification;
                             window.push_notification(Notification::success(message), cx);

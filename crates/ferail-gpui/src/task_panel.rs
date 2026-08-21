@@ -44,11 +44,9 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
     let surfaced: Vec<&crate::tasks::ActiveTask> =
         registry.iter().filter(|t| t.is_surfaced()).collect();
     let header_text = if surfaced.is_empty() {
-        "Background tasks".to_string()
-    } else if surfaced.len() == 1 {
-        "1 background task".to_string()
+        tr!("Background tasks")
     } else {
-        format!("{} background tasks", surfaced.len())
+        trn!("{n} background task", "{n} background tasks", surfaced.len())
     };
     let header = h_flex()
         .w_full()
@@ -64,7 +62,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                 .text_scale_sm()
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(theme_fg)
-                .child(SharedString::from(header_text)),
+                .child(header_text),
         );
 
     let body: AnyElement = if surfaced.is_empty() {
@@ -73,7 +71,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
             .py_3()
             .text_scale_xs()
             .text_color(theme_muted)
-            .child(SharedString::from("No active tasks."))
+            .child(tr!("No active tasks."))
             .into_any_element()
     } else {
         let rows = surfaced
@@ -81,7 +79,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
             .map(|t| {
                 let label = SharedString::from(t.label.clone());
                 let progress_text = match t.progress {
-                    TaskProgress::Indeterminate => "Running\u{2026}".to_string(),
+                    TaskProgress::Indeterminate => tr!("Running\u{2026}").to_string(),
                     TaskProgress::Determinate(p) => format!("{:.0}%", p * 100.0),
                 };
                 let elapsed = humanize_secs(t.started_at.elapsed().as_secs());
@@ -193,7 +191,9 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                 // A failed task appends its reason after the label so the
                 // user sees *why* without another surface.
                 let label = match &c.outcome {
-                    Outcome::Failed(msg) => format!("{} \u{2014} {msg}", c.label),
+                    Outcome::Failed(msg) => {
+                        tr!("{label} \u{2014} {detail}", label = c.label, detail = msg).to_string()
+                    }
                     _ => c.label.clone(),
                 };
                 h_flex()
@@ -239,7 +239,7 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
                         .text_scale_xs()
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme_muted)
-                        .child(SharedString::from("Recent")),
+                        .child(tr!("Recent")),
                 )
                 .child(
                     div()
@@ -336,14 +336,25 @@ fn humanize_bytes(b: u64) -> String {
 fn transfer_detail(s: &crate::tasks::TransferStats) -> String {
     let mut parts: Vec<String> = Vec::new();
     if s.items_total > 0 {
-        parts.push(format!("{} of {} items", s.items_done, s.items_total));
+        parts.push(
+            trn!(
+                "{done} of {n} item",
+                "{done} of {n} items",
+                s.items_total,
+                done = s.items_done
+            )
+            .to_string(),
+        );
     }
     if s.bytes_total > 0 {
-        parts.push(format!(
-            "{} of {}",
-            humanize_bytes(s.bytes_done),
-            humanize_bytes(s.bytes_total)
-        ));
+        parts.push(
+            tr!(
+                "{done} of {total}",
+                done = humanize_bytes(s.bytes_done),
+                total = humanize_bytes(s.bytes_total)
+            )
+            .to_string(),
+        );
     }
     if s.bytes_per_sec >= 1.0 {
         parts.push(format!("{}/s", humanize_bytes(s.bytes_per_sec as u64)));

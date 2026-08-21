@@ -108,41 +108,45 @@ pub(crate) fn count_labels(metrics: &StatusMetrics) -> (String, Option<String>) 
     let entries = metrics.entries;
     let filtered = metrics.filtered_count;
     if entries == 0 {
-        let label = match filtered {
-            0 => "Empty folder".to_string(),
-            1 => format!(
-                "1 item filtered out \u{00B7} {}",
-                humanize_bytes(metrics.filtered_bytes)
-            ),
-            n => format!(
-                "All {n} items filtered out \u{00B7} {}",
-                humanize_bytes(metrics.filtered_bytes)
-            ),
+        let label = if filtered == 0 {
+            tr!("Empty folder").to_string()
+        } else {
+            trn!(
+                "{n} item filtered out \u{00B7} {size}",
+                "All {n} items filtered out \u{00B7} {size}",
+                filtered,
+                size = humanize_bytes(metrics.filtered_bytes)
+            )
+            .to_string()
         };
         return (label, None);
     }
-    let count_label = if entries == 1 {
-        format!("1 item \u{00B7} {}", humanize_bytes(metrics.total_size))
-    } else if metrics.selected_count > 0 {
-        format!(
-            "{} of {} selected \u{00B7} {}",
+    let count_label = if entries != 1 && metrics.selected_count > 0 {
+        trn!(
+            "{n} of {total} selected \u{00B7} {size}",
+            "{n} of {total} selected \u{00B7} {size}",
             metrics.selected_count,
-            entries,
-            humanize_bytes(metrics.selected_size),
+            total = entries,
+            size = humanize_bytes(metrics.selected_size)
         )
+        .to_string()
     } else {
-        format!(
-            "{} items \u{00B7} {}",
+        trn!(
+            "{n} item \u{00B7} {size}",
+            "{n} items \u{00B7} {size}",
             entries,
-            humanize_bytes(metrics.total_size)
+            size = humanize_bytes(metrics.total_size)
         )
+        .to_string()
     };
     let filtered_label = (filtered > 0).then(|| {
-        format!(
-            "{} filtered out \u{00B7} {}",
+        trn!(
+            "{n} filtered out \u{00B7} {size}",
+            "{n} filtered out \u{00B7} {size}",
             filtered,
-            humanize_bytes(metrics.filtered_bytes)
+            size = humanize_bytes(metrics.filtered_bytes)
         )
+        .to_string()
     });
     (count_label, filtered_label)
 }
@@ -171,22 +175,25 @@ pub fn render(
     // Passive hidden-content summary, sitting right before the toggle
     // it explains. Only when something is actually hidden from view.
     let hidden_label = (metrics.hidden_count > 0).then(|| {
-        format!(
-            "{} hidden \u{00B7} {}",
+        trn!(
+            "{n} hidden \u{00B7} {size}",
+            "{n} hidden \u{00B7} {size}",
             metrics.hidden_count,
-            humanize_bytes(metrics.hidden_bytes)
+            size = humanize_bytes(metrics.hidden_bytes)
         )
     });
 
     let free_label = if metrics.volume_read_only {
         Some(match metrics.volume_name {
-            Some(name) => format!("{name} is read-only"),
-            None => "Read-only volume".to_string(),
+            Some(name) => tr!("{name} is read-only", name = name),
+            None => tr!("Read-only volume"),
         })
     } else {
         match (metrics.free_bytes, metrics.volume_name) {
-            (Some(b), Some(name)) => Some(format!("{} free on {}", humanize_bytes(b), name)),
-            (Some(b), None) => Some(format!("{} free", humanize_bytes(b))),
+            (Some(b), Some(name)) => {
+                Some(tr!("{size} free on {name}", size = humanize_bytes(b), name = name))
+            }
+            (Some(b), None) => Some(tr!("{size} free", size = humanize_bytes(b))),
             _ => None,
         }
     };
@@ -196,7 +203,7 @@ pub fn render(
     // never flickers a label into view.
     let surfaced = registry.iter().filter(|t| t.is_surfaced()).count();
     let task_label = if let Some(_p) = simulated_progress {
-        Some(SharedString::from("Simulating progress\u{2026}"))
+        Some(tr!("Simulating progress\u{2026}"))
     } else if surfaced == 0 {
         None
     } else if let Some(t) = registry.primary().filter(|t| t.is_surfaced()) {
@@ -207,10 +214,10 @@ pub fn render(
         if surfaced == 1 || t.kind.is_foreground() {
             Some(SharedString::from(label_with_rate(t)))
         } else {
-            Some(SharedString::from(format!("{surfaced} tasks running")))
+            Some(trn!("{n} task running", "{n} tasks running", surfaced))
         }
     } else {
-        Some(SharedString::from(format!("{surfaced} tasks running")))
+        Some(trn!("{n} task running", "{n} tasks running", surfaced))
     };
 
     // Right side: progress strip. Determinate fraction = the
@@ -252,7 +259,7 @@ pub fn render(
                 div()
                     .flex_shrink_0()
                     .text_color(theme_muted_fg.opacity(0.85))
-                    .child(SharedString::from(label)),
+                    .child(label),
             )
         })
         .when_some(task_label, |this, label| {
@@ -279,7 +286,7 @@ pub fn render(
                 div()
                     .flex_shrink_0()
                     .text_color(theme_muted_fg.opacity(0.85))
-                    .child(SharedString::from(label)),
+                    .child(label),
             )
         })
         // App-footprint stats (up · CPU · MEM · rps), precomputed by
@@ -325,13 +332,13 @@ pub fn render(
                 div()
                     .flex_shrink_0()
                     .text_color(theme_muted_fg.opacity(0.85))
-                    .child(SharedString::from(label)),
+                    .child(label),
             )
         })
         // Phase 7 user ask: Show-Hidden moved out of the toolbar
         // and lives here next to the count + task summary. View-mode
         // toggle belongs alongside the rest of the status-bar state.
-        .child(div().flex_shrink_0().child("Show hidden"))
+        .child(div().flex_shrink_0().child(tr!("Show hidden")))
         .child(
             gpui_component::switch::Switch::new("status-bar-hidden-toggle")
                 .checked(show_hidden)

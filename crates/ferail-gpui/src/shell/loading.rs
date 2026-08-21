@@ -8,6 +8,7 @@ use std::sync::{
 use ferail_core::filter_expr::{DateCtx, FilterExpr};
 use ferail_core::{EnumerationError, FileEntry, NodeId};
 use ferail_fs_native::{DEFAULT_ENUMERATION_BATCH, NativeFs};
+use gpui::SharedString;
 
 use crate::tree::TreeChild;
 
@@ -380,9 +381,9 @@ pub(super) const FULL_DISK_ACCESS_SETTINGS_URL: &str =
 /// link (label + settings URL) rendered as a separate affordance
 /// below the body so only the link itself is interactive.
 pub(super) struct ErrorCopy {
-    pub title: &'static str,
-    pub body: String,
-    pub link: Option<(&'static str, &'static str)>,
+    pub title: SharedString,
+    pub body: SharedString,
+    pub link: Option<(SharedString, &'static str)>,
 }
 
 /// Map an `EnumerationError` to error-pane copy. macOS users hitting
@@ -394,24 +395,25 @@ pub(super) struct ErrorCopy {
 pub(super) fn error_copy(err: &EnumerationError) -> ErrorCopy {
     match err {
         EnumerationError::PermissionDenied => ErrorCopy {
-            title: "Access required",
-            body: "Ferail needs permission to read this folder. The link below \
+            title: tr!("Access required"),
+            body: tr!(
+                "Ferail needs permission to read this folder. The link below \
                    opens Full Disk Access and copies Ferail's path so you can \
                    add it with the \"+\" button."
-                .to_string(),
+            ),
             link: Some((
-                "Open Full Disk Access settings",
+                tr!("Open Full Disk Access settings"),
                 FULL_DISK_ACCESS_SETTINGS_URL,
             )),
         },
         EnumerationError::NotFound => ErrorCopy {
-            title: "Folder not found",
-            body: "This location may have been moved, renamed, or unmounted.".to_string(),
+            title: tr!("Folder not found"),
+            body: tr!("This location may have been moved, renamed, or unmounted."),
             link: None,
         },
         EnumerationError::Other(msg) => ErrorCopy {
-            title: "Couldn't open this folder",
-            body: msg.clone(),
+            title: tr!("Couldn't open this folder"),
+            body: msg.clone().into(),
             link: None,
         },
     }

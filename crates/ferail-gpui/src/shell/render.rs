@@ -154,20 +154,24 @@ impl Shell {
             // on fonts without them (AROS bundled font).
             super::tab::ToolResultMode::Search(search) => Some(format!(
                 "{}  \u{00B7}  {}",
-                search.needle, search.engine_label
+                search.needle,
+                crate::i18n::tr_static(search.engine_label)
             )),
-            super::tab::ToolResultMode::Duplicates(dupe) => Some(format!(
-                "{} duplicate group{} \u{00B7} {} reclaimable",
-                dupe.groups,
-                if dupe.groups == 1 { "" } else { "s" },
-                ferail_fs_native::humanize_bytes(dupe.wasted_bytes),
-            )),
-            super::tab::ToolResultMode::DiskUsage(_) => Some("Disk Usage".to_string()),
+            super::tab::ToolResultMode::Duplicates(dupe) => Some(
+                trn!(
+                    "{n} duplicate group \u{00B7} {size} reclaimable",
+                    "{n} duplicate groups \u{00B7} {size} reclaimable",
+                    dupe.groups,
+                    size = ferail_fs_native::humanize_bytes(dupe.wasted_bytes)
+                )
+                .to_string(),
+            ),
+            super::tab::ToolResultMode::DiskUsage(_) => Some(tr!("Disk Usage").to_string()),
             super::tab::ToolResultMode::Archive(am) => Some(
                 am.archive
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Archive".to_string()),
+                    .unwrap_or_else(|| tr!("Archive").to_string()),
             ),
         }
     }
@@ -217,7 +221,7 @@ impl Shell {
         let mut rows: Vec<TreeRowSpec> = vec![TreeRowSpec {
             node_id,
             path: home.clone(),
-            label: SharedString::from("Home"),
+            label: tr!("Home"),
             depth: 0,
             guides: Vec::new(),
             is_expandable: true,
@@ -381,16 +385,16 @@ impl Shell {
                     let tx_go = tx.clone();
                     let tx_cancel = tx.clone();
                     dialog
-                        .title("Clear Recents?")
-                        .child(div().text_scale_sm().child(
+                        .title(tr!("Clear Recents?"))
+                        .child(div().text_scale_sm().child(tr!(
                             "Forget every folder in Recents? Your Ant Trail heat is \
                              kept \u{2014} only the recent list is emptied. This can't \
-                             be undone.",
-                        ))
+                             be undone."
+                        )))
                         .child(
                             h_flex().pt_2().child(
                                 Button::new("clear-recents-go")
-                                    .label("Clear Recents")
+                                    .label(tr!("Clear Recents"))
                                     .danger()
                                     .small()
                                     .on_click(move |_, window, cx| {
@@ -487,13 +491,13 @@ impl Shell {
                             shell.context_target = Some(path_for_menu.clone());
                         });
                     }
-                    menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
+                    menu.menu(tr!("Open in New Tab"), Box::new(OpenContextInNewTab))
                         .separator()
                         .menu(
-                            ferail_core::commands::REVEAL_LABEL,
+                            crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
                             Box::new(RevealContextPath),
                         )
-                        .menu("Copy Path", Box::new(CopyContextPath))
+                        .menu(tr!("Copy Path"), Box::new(CopyContextPath))
                 });
             // Trailing badges: a cloud for iCloud Locations (Desktop /
             // Documents under "Desktop & Documents Folders") — solid when the
@@ -770,10 +774,10 @@ impl Shell {
                             if let Some(path) = crate::platform_shell::app_bundle_path() {
                                 cx.write_to_clipboard(ClipboardItem::new_string(path));
                                 window.push_notification(
-                                    Notification::info(
+                                    Notification::info(tr!(
                                         "Ferail's path is copied. In the picker, click \
-                                         \"+\", press \u{2318}\u{21e7}G, paste, and add it.",
-                                    )
+                                         \"+\", press \u{2318}\u{21e7}G, paste, and add it."
+                                    ))
                                     .autohide(false),
                                     cx,
                                 );
@@ -1768,7 +1772,7 @@ impl Shell {
                     .xsmall()
                     .ghost()
                     .icon(gpui_component::Icon::empty().path("icons/nav/chevrons-left.svg"))
-                    .tooltip("Scroll tabs left")
+                    .tooltip(tr!("Scroll tabs left"))
                     .disabled(!can_left)
                     .on_click(cx.listener(|this, _, _, cx| this.scroll_tabs(TAB_SCROLL_STEP, cx))),
             );
@@ -1785,7 +1789,7 @@ impl Shell {
                     .xsmall()
                     .ghost()
                     .icon(gpui_component::Icon::empty().path("icons/nav/chevrons-right.svg"))
-                    .tooltip("Scroll tabs right")
+                    .tooltip(tr!("Scroll tabs right"))
                     .disabled(!can_right)
                     .on_click(cx.listener(|this, _, _, cx| this.scroll_tabs(-TAB_SCROLL_STEP, cx))),
             );
@@ -1948,7 +1952,7 @@ impl Shell {
                         .small()
                         .ghost()
                         .icon(gpui_component::Icon::empty().path("icons/nav/chevron-left.svg"))
-                        .tooltip("Back  \u{2318}\u{5B}")
+                        .tooltip(format!("{}  \u{2318}\u{5B}", tr!("Back")))
                         .disabled(!can_back)
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
@@ -1960,7 +1964,7 @@ impl Shell {
                         .small()
                         .ghost()
                         .icon(gpui_component::Icon::empty().path("icons/nav/chevron-right.svg"))
-                        .tooltip("Forward  \u{2318}\u{5D}")
+                        .tooltip(format!("{}  \u{2318}\u{5D}", tr!("Forward")))
                         .disabled(!can_forward)
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
@@ -1996,7 +2000,7 @@ impl Shell {
                                 .small()
                                 .ghost()
                                 .icon(gpui_component::Icon::empty().path("icons/circle-help.svg"))
-                                .tooltip("Filter syntax")
+                                .tooltip(tr!("Filter syntax"))
                                 .on_click(|_, window, cx| {
                                     crate::filter_help::open_filter_help_dialog(window, cx);
                                 }),
@@ -2032,26 +2036,26 @@ impl Shell {
                                 .small()
                                 .ghost()
                                 .icon(gpui_component::Icon::empty().path(sort_icon))
-                                .tooltip("Sort")
+                                .tooltip(tr!("Sort"))
                                 .dropdown_menu(move |menu, _window, _cx| {
                                     menu.action_context(sort_menu_focus.clone())
                                         .menu_with_check(
-                                            "Name",
+                                            tr!("Name"),
                                             sort_col == SortColumn::Name,
                                             Box::new(SortByName),
                                         )
                                         .menu_with_check(
-                                            "Size",
+                                            tr!("Size"),
                                             sort_col == SortColumn::Size,
                                             Box::new(SortBySize),
                                         )
                                         .menu_with_check(
-                                            "Kind",
+                                            tr!("Kind"),
                                             sort_col == SortColumn::Format,
                                             Box::new(SortByKind),
                                         )
                                         .menu_with_check(
-                                            "Date Modified",
+                                            tr!("Date Modified"),
                                             sort_col == SortColumn::Modified,
                                             Box::new(SortByModified),
                                         )
@@ -2066,7 +2070,7 @@ impl Shell {
                         .small()
                         .ghost()
                         .icon(gpui_component::Icon::empty().path("icons/nav/show-desktop.svg"))
-                        .tooltip_with_action("Show Desktop", &ShowDesktop, Some(SHELL_CONTEXT))
+                        .tooltip_with_action(tr!("Show Desktop"), &ShowDesktop, Some(SHELL_CONTEXT))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
@@ -2079,7 +2083,7 @@ impl Shell {
                         .small()
                         .ghost()
                         .icon(gpui_component::Icon::empty().path("icons/nav/folder.svg"))
-                        .tooltip_with_action("New Folder", &NewFolder, Some(SHELL_CONTEXT))
+                        .tooltip_with_action(tr!("New Folder"), &NewFolder, Some(SHELL_CONTEXT))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
@@ -2092,7 +2096,7 @@ impl Shell {
                         .small()
                         .ghost()
                         .icon(gpui_component::Icon::empty().path("icons/nav/refresh.svg"))
-                        .tooltip_with_action("Refresh", &Refresh, Some(SHELL_CONTEXT))
+                        .tooltip_with_action(tr!("Refresh"), &Refresh, Some(SHELL_CONTEXT))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
@@ -2119,24 +2123,24 @@ impl Shell {
                                     .ghost()
                                     .selected(dock_edge.is_some())
                                     .icon(gpui_component::Icon::empty().path("icons/dock.svg"))
-                                    .tooltip("Dock window to a screen edge")
+                                    .tooltip(tr!("Dock window to a screen edge"))
                                     .dropdown_menu(move |menu, _window, _cx| {
                                         menu.action_context(dock_menu_focus.clone())
                                             .menu_with_icon(
-                                                "Dock Left",
+                                                tr!("Dock Left"),
                                                 gpui_component::Icon::empty()
                                                     .path("icons/dock-left.svg"),
                                                 Box::new(DockLeft),
                                             )
                                             .menu_with_icon(
-                                                "Dock Right",
+                                                tr!("Dock Right"),
                                                 gpui_component::Icon::empty()
                                                     .path("icons/dock-right.svg"),
                                                 Box::new(DockRight),
                                             )
                                             .separator()
                                             .menu_with_icon(
-                                                "Undock",
+                                                tr!("Undock"),
                                                 gpui_component::Icon::empty()
                                                     .path("icons/undock.svg"),
                                                 Box::new(Undock),
@@ -2153,7 +2157,7 @@ impl Shell {
                         .ghost()
                         .selected(!is_grid)
                         .icon(gpui_component::Icon::empty().path("icons/view-list.svg"))
-                        .tooltip("List view")
+                        .tooltip(tr!("List view"))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
@@ -2167,7 +2171,7 @@ impl Shell {
                         .ghost()
                         .selected(is_grid)
                         .icon(gpui_component::Icon::empty().path("icons/view-grid.svg"))
-                        .tooltip("Icon view")
+                        .tooltip(tr!("Icon view"))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
@@ -2181,7 +2185,7 @@ impl Shell {
                         .small()
                         .ghost()
                         .icon(gpui_component::Icon::empty().path("icons/minus.svg"))
-                        .tooltip("Smaller icons")
+                        .tooltip(tr!("Smaller icons"))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
@@ -2194,7 +2198,7 @@ impl Shell {
                         .small()
                         .ghost()
                         .icon(gpui_component::Icon::empty().path("icons/plus.svg"))
-                        .tooltip("Larger icons")
+                        .tooltip(tr!("Larger icons"))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
@@ -2217,23 +2221,23 @@ impl Shell {
                                 .small()
                                 .ghost()
                                 .icon(gpui_component::Icon::empty().path("icons/ellipsis.svg"))
-                                .tooltip("More")
+                                .tooltip(tr!("More"))
                                 .dropdown_menu(move |menu, _window, _cx| {
                                     menu.action_context(overflow_menu_focus.clone())
                                         .menu_with_check(
-                                            "Show Hidden Files",
+                                            tr!("Show Hidden Files"),
                                             show_hidden,
                                             Box::new(ToggleHidden),
                                         )
                                         .separator()
-                                        .menu("Get Info", Box::new(GetInfo))
-                                        .menu("Open Viewer", Box::new(OpenViewer))
-                                        .menu("Disk Usage\u{2026}", Box::new(OpenDiskUsage))
-                                        .menu("Find Duplicates\u{2026}", Box::new(FindDuplicates))
+                                        .menu(tr!("Get Info"), Box::new(GetInfo))
+                                        .menu(tr!("Open Viewer"), Box::new(OpenViewer))
+                                        .menu(tr!("Disk Usage\u{2026}"), Box::new(OpenDiskUsage))
+                                        .menu(tr!("Find Duplicates\u{2026}"), Box::new(FindDuplicates))
                                         .separator()
-                                        .menu("Copy File List", Box::new(CopyFileList))
+                                        .menu(tr!("Copy File List"), Box::new(CopyFileList))
                                         .separator()
-                                        .menu("Empty Trash\u{2026}", Box::new(EmptyTrash))
+                                        .menu(tr!("Empty Trash\u{2026}"), Box::new(EmptyTrash))
                                 }),
                         ),
                 ),
@@ -2445,7 +2449,7 @@ impl Shell {
                         .px_1()
                         .text_scale_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child("in"),
+                        .child(tr!("in")),
                 );
         }
 
@@ -2554,9 +2558,9 @@ impl Shell {
                         false
                     };
                     let favorite_label = if favorited_now {
-                        "Remove from Favorites"
+                        tr!("Remove from Favorites")
                     } else {
-                        "Add to Favorites"
+                        tr!("Add to Favorites")
                     };
                     // "Go to Subfolder ▸" — jump to any child folder of
                     // this segment (Finder's column-view-style lateral
@@ -2565,19 +2569,19 @@ impl Shell {
                     // Directive), showing "Loading…" on the first open.
                     let weak_sub = weak_for_crumb.clone();
                     let path_sub = path_for_menu.clone();
-                    menu.menu("Open in New Tab", Box::new(OpenContextInNewTab))
+                    menu.menu(tr!("Open in New Tab"), Box::new(OpenContextInNewTab))
                         .separator()
                         .menu(
-                            ferail_core::commands::REVEAL_LABEL,
+                            crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
                             Box::new(RevealContextPath),
                         )
-                        .menu("Copy Path", Box::new(CopyContextPath))
+                        .menu(tr!("Copy Path"), Box::new(CopyContextPath))
                         .separator()
                         .menu(favorite_label, Box::new(ToggleFavoriteForTarget))
                         .separator()
-                        .menu("New Folder Here", Box::new(NewFolderHere))
+                        .menu(tr!("New Folder Here"), Box::new(NewFolderHere))
                         .separator()
-                        .submenu("Go to Subfolder", window, cx, move |mut sub, _w, c| {
+                        .submenu(tr!("Go to Subfolder"), window, cx, move |mut sub, _w, c| {
                             use gpui_component::menu::PopupMenuItem;
                             let Some(s) = weak_sub.upgrade() else {
                                 return sub;
@@ -2600,7 +2604,7 @@ impl Shell {
                                     sub
                                 }
                                 Some(Some(_)) => {
-                                    sub.item(PopupMenuItem::new("No subfolders").disabled(true))
+                                    sub.item(PopupMenuItem::new(tr!("No subfolders")).disabled(true))
                                 }
                                 _ => {
                                     // Cold or in-flight — kick a warm and show
@@ -2608,7 +2612,7 @@ impl Shell {
                                     s.update(c, |sh, cx| {
                                         sh.warm_breadcrumb_children(path_sub.clone(), cx);
                                     });
-                                    sub.item(PopupMenuItem::new("Loading\u{2026}").disabled(true))
+                                    sub.item(PopupMenuItem::new(tr!("Loading\u{2026}")).disabled(true))
                                 }
                             }
                         })
@@ -2627,7 +2631,7 @@ impl Shell {
                     Button::new("tool-result-pop-out")
                         .small()
                         .icon(gpui_component::Icon::empty().path("icons/maximize.svg"))
-                        .tooltip("Open in window")
+                        .tooltip(tr!("Open in window"))
                         .on_click(cx.listener(move |_, _, window, cx| {
                             if is_archive {
                                 window.dispatch_action(Box::new(PopOutArchive), cx);
@@ -2641,7 +2645,7 @@ impl Shell {
                 Button::new("tool-result-close")
                     .small()
                     .icon(gpui_component::Icon::empty().path("icons/close.svg"))
-                    .tooltip("Close results")
+                    .tooltip(tr!("Close results"))
                     .on_click(cx.listener(|_, _, window, cx| {
                         window.dispatch_action(Box::new(CloseToolResult), cx);
                     })),
@@ -2781,7 +2785,7 @@ impl Render for Shell {
             .collapsed(self.sidebar_collapsed)
             .w_full()
             .child(ShellSidebarItem::group(LabeledMenu::new(
-                "Locations",
+                tr!("Locations"),
                 locations_menu,
             )))
             .child(favorites_section);
@@ -2791,14 +2795,14 @@ impl Render for Shell {
             sidebar = sidebar.child(recents_section);
         }
         sidebar = sidebar.child(ShellSidebarItem::tree(TreeSection::new(
-            "Browse",
+            tr!("Browse"),
             browse_rows,
             weak.clone(),
             self.process.icons.clone(),
         )));
         if has_volumes {
             sidebar = sidebar.child(ShellSidebarItem::tree(TreeSection::new(
-                "Volumes",
+                tr!("Volumes"),
                 volumes_rows,
                 weak.clone(),
                 self.process.icons.clone(),
@@ -3157,7 +3161,7 @@ impl Render for Shell {
                         .read(cx)
                         .entry_by_id(id)
                         .map(|f| f.effective_label())
-                        .unwrap_or_else(|| "favorite".to_string());
+                        .unwrap_or_else(|| tr!("favorite").to_string());
                     let removed_for_undo =
                         this.process.favorites().read(cx).entry_by_id(id).cloned();
                     this.process.favorites().update(cx, |f, cx| {
@@ -3167,8 +3171,9 @@ impl Render for Shell {
                         this.push_undo(UndoOp::RemoveFavorite(fav));
                     }
                     window.push_notification(
-                        Notification::info(format!(
-                            "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo"
+                        Notification::info(tr!(
+                            "Removed \u{201C}{label}\u{201D} from Favorites \u{00B7} Cmd+Z to undo",
+                            label = label
                         )),
                         cx,
                     );
