@@ -1,6 +1,21 @@
---- a/crates/gpui_windows/src/directx_renderer.rs	2026-06-23 00:50:21.174261700 +0200
-+++ b/crates/gpui_windows/src/directx_renderer.rs	2026-06-23 03:17:52.630590700 +0200
-@@ -317,7 +317,14 @@
+diff --git a/crates/gpui_platform/Cargo.toml b/crates/gpui_platform/Cargo.toml
+index a41cb176..a502ff13 100644
+--- a/crates/gpui_platform/Cargo.toml
++++ b/crates/gpui_platform/Cargo.toml
+@@ -14,7 +14,7 @@ path = "src/gpui_platform.rs"
+ [features]
+ default = []
+ font-kit = ["gpui_macos/font-kit"]
+-test-support = ["gpui/test-support", "gpui_macos/test-support"]
++test-support = ["gpui/test-support", "gpui_macos/test-support", "gpui_windows/test-support"]
+ screen-capture = ["gpui/screen-capture", "gpui_macos/screen-capture", "gpui_windows/screen-capture", "gpui_linux/screen-capture"]
+ runtime_shaders = ["gpui_macos/runtime_shaders"]
+ wayland = ["gpui_linux/wayland"]
+diff --git a/crates/gpui_windows/src/directx_renderer.rs b/crates/gpui_windows/src/directx_renderer.rs
+index 5719c12f..8665be14 100644
+--- a/crates/gpui_windows/src/directx_renderer.rs
++++ b/crates/gpui_windows/src/directx_renderer.rs
+@@ -343,7 +343,14 @@ impl DirectXRenderer {
          })?;
  
          self.upload_scene_buffers(scene)?;
@@ -12,28 +27,32 @@
 +    /// Shared by [`draw`](Self::draw) (which then presents) and
 +    /// [`render_to_image`](Self::render_to_image) (which reads back instead).
 +    fn draw_batches(&mut self, scene: &Scene) -> Result<()> {
-         for batch in scene.batches() {
-             match batch {
-                 PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
-@@ -352,7 +359,78 @@
-                 scene.surfaces.len(),
-             ))?;
+         let annotation = self
+             .devices
+             .as_ref()
+@@ -388,7 +395,82 @@ impl DirectXRenderer {
+                 )
+             })?;
          }
 -        self.present()
 +        Ok(())
 +    }
 +
-+    /// Render `scene` to an offscreen CPU image **without presenting** — so the
-+    /// window need never be shown (the headless-screenshot path on macOS goes
-+    /// through MetalRenderer; this is the Windows analogue). Draws into the
-+    /// existing render target (created at window construction), copies it into a
-+    /// `D3D11_USAGE_STAGING` texture, maps it, and converts BGRA → RGBA.
++    /// Render `scene` to an offscreen CPU image **without presenting** so
++    /// the window need never be shown or visible (the macOS headless path
++    /// goes through MetalRenderer; this is the Windows analogue). Draws into
++    /// the existing render target, copies it into a `D3D11_USAGE_STAGING`
++    /// texture, maps it, and converts BGRA to RGBA.
 +    #[cfg(any(test, feature = "test-support"))]
 +    pub(crate) fn render_to_image(
 +        &mut self,
 +        scene: &Scene,
 +        background_appearance: WindowBackgroundAppearance,
 +    ) -> Result<image::RgbaImage> {
++        anyhow::ensure!(
++            !self.skip_draws,
++            "render_to_image unavailable while recovering from a lost device"
++        );
 +        self.pre_draw(&match background_appearance {
 +            WindowBackgroundAppearance::Opaque => [1.0f32; 4],
 +            _ => [0.0f32; 4],
@@ -95,9 +114,11 @@
      }
  
      pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
---- a/crates/gpui_windows/src/window.rs	2026-06-23 00:50:21.245099600 +0200
-+++ b/crates/gpui_windows/src/window.rs	2026-06-23 03:18:30.427266700 +0200
-@@ -947,6 +947,14 @@
+diff --git a/crates/gpui_windows/src/window.rs b/crates/gpui_windows/src/window.rs
+index af240716..d81efacc 100644
+--- a/crates/gpui_windows/src/window.rs
++++ b/crates/gpui_windows/src/window.rs
+@@ -996,6 +996,14 @@ impl PlatformWindow for WindowsWindow {
              .log_err();
      }
  
@@ -112,14 +133,3 @@
      fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
          self.state.renderer.borrow().sprite_atlas()
      }
---- a/crates/gpui_platform/Cargo.toml	2026-06-23 00:50:20.865813000 +0200
-+++ b/crates/gpui_platform/Cargo.toml	2026-06-23 03:26:28.645760100 +0200
-@@ -14,7 +14,7 @@
- [features]
- default = []
- font-kit = ["gpui_macos/font-kit"]
--test-support = ["gpui/test-support", "gpui_macos/test-support"]
-+test-support = ["gpui/test-support", "gpui_macos/test-support", "gpui_windows/test-support"]
- screen-capture = ["gpui/screen-capture", "gpui_macos/screen-capture", "gpui_windows/screen-capture", "gpui_linux/screen-capture"]
- runtime_shaders = ["gpui_macos/runtime_shaders"]
- wayland = ["gpui_linux/wayland"]

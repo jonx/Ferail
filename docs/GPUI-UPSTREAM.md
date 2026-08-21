@@ -266,6 +266,19 @@ actually wired into the root `Cargo.toml`.
 - The diff is captured at [`patches/gpui-windows-render-to-image.patch`](../patches/gpui-windows-render-to-image.patch)
   — ready to open as a zed PR. Once merged upstream, bump the gpui rev in the
   root `Cargo.toml` and drop the `[patch]` + the PrintWindow fallback.
+- **2026-08-21: rebased onto zed main `075520b9`** (branch
+  `ferail/render-to-image-windows` in `~/Source/zed-reference`, commit
+  message written for the PR; the patch file above is the regenerated diff).
+  Two upstream drifts absorbed: the trait became
+  `render_to_image(&self, scene)` (background appearance no longer a
+  parameter — the window impl reads it from state), and `draw` grew
+  `skip_draws` device-lost recovery + per-batch debug annotations (both live
+  in the shared `draw_batches`; `render_to_image` bails during device-lost).
+  Cross-checked from macOS with `cargo check -p gpui_windows
+  --no-default-features --features test-support --target
+  x86_64-pc-windows-msvc` (clang-cl/llvm-lib + xwin headers in `~/.xwin`;
+  `--no-default-features` skips only the `windows-manifest` embed-resource
+  step, irrelevant to the change).
 
 With the patch active, the screenshot harness opens the window with
 `show: false` and captures via `render_to_image` — **truly headless, no flash**.
