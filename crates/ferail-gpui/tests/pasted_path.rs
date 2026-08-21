@@ -108,7 +108,6 @@ fn tilde_expands() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn resolve_maps_a_file_to_its_folder() {
     let dir = std::env::temp_dir();
@@ -119,7 +118,6 @@ fn resolve_maps_a_file_to_its_folder() {
     assert_eq!(resolved, ferail_gpui::shell::canonicalize_for_identity(dir));
 }
 
-#[cfg(unix)]
 #[test]
 fn resolve_keeps_a_directory() {
     let dir = std::env::temp_dir();
