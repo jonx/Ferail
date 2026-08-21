@@ -4,13 +4,15 @@
 //! as `path_segments.rs`: the inline form overflows syn's parser inside
 //! this crate.
 
-// Every test below is `cfg(unix)`; gate the imports the same way so the
-// Windows clippy leg doesn't see them as unused.
+// The pasted-path parser tests are `cfg(unix)` (POSIX spellings); gate
+// their imports the same way so the Windows clippy leg doesn't see them
+// as unused. `resolve_go_to_target` is exercised on every platform.
 #[cfg(unix)]
 use std::path::PathBuf;
 
 #[cfg(unix)]
-use ferail_gpui::shell::{parse_pasted_path, resolve_go_to_target};
+use ferail_gpui::shell::parse_pasted_path;
+use ferail_gpui::shell::resolve_go_to_target;
 
 #[cfg(unix)]
 #[test]
@@ -105,6 +107,7 @@ fn tilde_expands() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn resolve_maps_a_file_to_its_folder() {
     let dir = std::env::temp_dir();
@@ -115,6 +118,7 @@ fn resolve_maps_a_file_to_its_folder() {
     assert_eq!(resolved, ferail_gpui::shell::canonicalize_for_identity(dir));
 }
 
+#[cfg(unix)]
 #[test]
 fn resolve_keeps_a_directory() {
     let dir = std::env::temp_dir();
