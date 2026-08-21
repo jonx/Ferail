@@ -284,7 +284,10 @@ actually wired into the root `Cargo.toml`.
   in the shared `draw_batches`; `render_to_image` bails during device-lost).
   Cross-checked from macOS with `cargo check -p gpui_windows
   --no-default-features --features test-support --target
-  x86_64-pc-windows-msvc` (clang-cl/llvm-lib + xwin headers in `~/.xwin`;
+  x86_64-pc-windows-msvc` (clang-cl/llvm-lib + xwin headers in `~/.xwin` —
+  regenerate with `xwin --accept-license splat --output ~/.xwin
+  --cache-dir /tmp/xwin-cache`; without `--cache-dir`, xwin drops a ~1 GB
+  download cache in the *current directory*;
   `--no-default-features` skips only the `windows-manifest` embed-resource
   step, irrelevant to the change).
 
