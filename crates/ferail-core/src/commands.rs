@@ -15,30 +15,32 @@
 //! the platform's responder chain unchanged. Only Ferail-owned
 //! behaviour goes here.
 
+use crate::msgid;
+
 /// User-facing label for "show in OS file browser" — Finder on macOS,
 /// Explorer on Windows, "File Manager" elsewhere.
 #[cfg(target_os = "macos")]
-pub const REVEAL_LABEL: &str = "Reveal in Finder";
+pub const REVEAL_LABEL: &str = msgid!("Reveal in Finder");
 #[cfg(windows)]
-pub const REVEAL_LABEL: &str = "Reveal in Explorer";
+pub const REVEAL_LABEL: &str = msgid!("Reveal in Explorer");
 #[cfg(not(any(target_os = "macos", windows)))]
-pub const REVEAL_LABEL: &str = "Reveal in File Manager";
+pub const REVEAL_LABEL: &str = msgid!("Reveal in File Manager");
 
 /// User-facing label for "send to OS trash" — macOS Trash, Windows
 /// Recycle Bin.
 #[cfg(target_os = "macos")]
-pub const TRASH_LABEL: &str = "Move to Trash";
+pub const TRASH_LABEL: &str = msgid!("Move to Trash");
 #[cfg(not(target_os = "macos"))]
-pub const TRASH_LABEL: &str = "Move to Recycle Bin";
+pub const TRASH_LABEL: &str = msgid!("Move to Recycle Bin");
 
 /// User-facing label for "remove the downloaded-from-the-Internet
 /// mark and its provenance record" — `com.apple.quarantine` +
 /// `kMDItemWhereFroms` on macOS, the `Zone.Identifier` ADS on
 /// Windows (where the verb of art is "Unblock").
 #[cfg(windows)]
-pub const CLEAR_QUARANTINE_LABEL: &str = "Unblock";
+pub const CLEAR_QUARANTINE_LABEL: &str = msgid!("Unblock");
 #[cfg(not(windows))]
-pub const CLEAR_QUARANTINE_LABEL: &str = "Clear Quarantine";
+pub const CLEAR_QUARANTINE_LABEL: &str = msgid!("Clear Quarantine");
 
 /// Stable identifier for a user-invokable action. Format
 /// `"category.action_name"`, lowercase, dot-separated. Use
@@ -199,50 +201,50 @@ const CATALOGUE: &[CommandSpec] = &[
     // App
     CommandSpec {
         id: CommandId("app.about"),
-        title: "About Ferail",
+        title: msgid!("About Ferail"),
         category: Category::App,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("app.settings"),
-        title: "Settings…",
+        title: msgid!("Settings…"),
         category: Category::App,
         shortcuts: &[Shortcut::primary(",")],
     },
     CommandSpec {
         id: CommandId("app.check_updates"),
-        title: "Check for Updates…",
+        title: msgid!("Check for Updates…"),
         category: Category::App,
         shortcuts: &[],
     },
     // File
     CommandSpec {
         id: CommandId("file.new_tab"),
-        title: "New Tab",
+        title: msgid!("New Tab"),
         category: Category::File,
         shortcuts: &[Shortcut::primary("T")],
     },
     CommandSpec {
         id: CommandId("file.close_tab"),
-        title: "Close Tab",
+        title: msgid!("Close Tab"),
         category: Category::File,
         shortcuts: &[Shortcut::primary("W")],
     },
     CommandSpec {
         id: CommandId("file.reopen_closed_tab"),
-        title: "Reopen Closed Tab",
+        title: msgid!("Reopen Closed Tab"),
         category: Category::File,
         shortcuts: &[Shortcut::primary_shift("T")],
     },
     CommandSpec {
         id: CommandId("file.new_folder"),
-        title: "New Folder",
+        title: msgid!("New Folder"),
         category: Category::File,
         shortcuts: &[Shortcut::primary_shift("N")],
     },
     CommandSpec {
         id: CommandId("file.get_info"),
-        title: "Get Info",
+        title: msgid!("Get Info"),
         category: Category::File,
         shortcuts: &[Shortcut::primary("I")],
     },
@@ -256,7 +258,7 @@ const CATALOGUE: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId("file.copy_path"),
-        title: "Copy Path",
+        title: msgid!("Copy Path"),
         category: Category::File,
         shortcuts: &[Shortcut::primary_shift("C")],
     },
@@ -265,13 +267,13 @@ const CATALOGUE: &[CommandSpec] = &[
     // shortcut — reached via the toolbar menu and command palette.
     CommandSpec {
         id: CommandId("file.copy_file_list"),
-        title: "Copy File List",
+        title: msgid!("Copy File List"),
         category: Category::File,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("file.delete_immediately"),
-        title: "Delete Immediately",
+        title: msgid!("Delete Immediately"),
         category: Category::File,
         // Shift+Delete [win/linux] / Option+Cmd+Delete [mac]; the keymap
         // installs the chords directly (the Shortcut DSL has no Delete
@@ -280,7 +282,7 @@ const CATALOGUE: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId("file.empty_trash"),
-        title: "Empty Trash",
+        title: msgid!("Empty Trash"),
         category: Category::File,
         // Finder's Cmd+Shift+Delete; the keymap installs the chord
         // directly (the Shortcut DSL has no Delete key yet).
@@ -291,25 +293,25 @@ const CATALOGUE: &[CommandSpec] = &[
     // plain Paste moves them (and clears the mark).
     CommandSpec {
         id: CommandId("file.copy"),
-        title: "Copy",
+        title: msgid!("Copy"),
         category: Category::File,
         shortcuts: &[Shortcut::primary("C")],
     },
     CommandSpec {
         id: CommandId("file.cut"),
-        title: "Cut",
+        title: msgid!("Cut"),
         category: Category::File,
         shortcuts: &[Shortcut::primary("X")],
     },
     CommandSpec {
         id: CommandId("file.paste"),
-        title: "Paste",
+        title: msgid!("Paste"),
         category: Category::File,
         shortcuts: &[Shortcut::primary("V")],
     },
     CommandSpec {
         id: CommandId("file.move_paste"),
-        title: "Move Items Here",
+        title: msgid!("Move Items Here"),
         category: Category::File,
         shortcuts: &[Shortcut::primary_alt("V")],
     },
@@ -321,38 +323,38 @@ const CATALOGUE: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId("file.refresh"),
-        title: "Refresh",
+        title: msgid!("Refresh"),
         category: Category::File,
         shortcuts: &[Shortcut::bare("F5")],
     },
     // View
     CommandSpec {
         id: CommandId("view.search"),
-        title: "Find",
+        title: msgid!("Find"),
         category: Category::View,
         shortcuts: &[Shortcut::primary("F")],
     },
     CommandSpec {
         id: CommandId("view.edit_breadcrumb"),
-        title: "Edit Path",
+        title: msgid!("Edit Path"),
         category: Category::View,
         shortcuts: &[Shortcut::primary("L")],
     },
     CommandSpec {
         id: CommandId("view.toggle_preview"),
-        title: "Show Preview Pane",
+        title: msgid!("Show Preview Pane"),
         category: Category::View,
         shortcuts: &[TOGGLE_PREVIEW_SHORTCUT],
     },
     CommandSpec {
         id: CommandId("view.open_viewer"),
-        title: "Open Viewer",
+        title: msgid!("Open Viewer"),
         category: Category::View,
         shortcuts: &[Shortcut::primary("Y")],
     },
     CommandSpec {
         id: CommandId("view.toggle_hidden"),
-        title: "Show Hidden Files",
+        title: msgid!("Show Hidden Files"),
         category: Category::View,
         shortcuts: &[Shortcut::primary_shift(".")],
     },
@@ -361,49 +363,49 @@ const CATALOGUE: &[CommandSpec] = &[
     // flips direction.
     CommandSpec {
         id: CommandId("view.sort_name"),
-        title: "Sort by Name",
+        title: msgid!("Sort by Name"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("view.sort_size"),
-        title: "Sort by Size",
+        title: msgid!("Sort by Size"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("view.sort_kind"),
-        title: "Sort by Kind",
+        title: msgid!("Sort by Kind"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("view.sort_modified"),
-        title: "Sort by Date Modified",
+        title: msgid!("Sort by Date Modified"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("view.cycle_focus"),
-        title: "Cycle Focus",
+        title: msgid!("Cycle Focus"),
         category: Category::View,
         shortcuts: &[Shortcut::bare("F6")],
     },
     CommandSpec {
         id: CommandId("view.zoom_in"),
-        title: "Zoom In",
+        title: msgid!("Zoom In"),
         category: Category::View,
         shortcuts: &[Shortcut::primary("="), Shortcut::primary("+")],
     },
     CommandSpec {
         id: CommandId("view.zoom_out"),
-        title: "Zoom Out",
+        title: msgid!("Zoom Out"),
         category: Category::View,
         shortcuts: &[Shortcut::primary("-")],
     },
     CommandSpec {
         id: CommandId("view.zoom_reset"),
-        title: "Actual Size",
+        title: msgid!("Actual Size"),
         category: Category::View,
         shortcuts: &[Shortcut::primary("0")],
     },
@@ -413,31 +415,31 @@ const CATALOGUE: &[CommandSpec] = &[
     // standalone pop-out path.
     CommandSpec {
         id: CommandId("view.disk_usage"),
-        title: "Disk Usage",
+        title: msgid!("Disk Usage"),
         category: Category::View,
         shortcuts: &[Shortcut::primary_shift("D")],
     },
     CommandSpec {
         id: CommandId("view.close_results"),
-        title: "Close Results",
+        title: msgid!("Close Results"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("disk_usage.open_in_window"),
-        title: "Open Disk Usage in Window",
+        title: msgid!("Open Disk Usage in Window"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("view.find_duplicates"),
-        title: "Find Duplicates",
+        title: msgid!("Find Duplicates"),
         category: Category::View,
         shortcuts: &[Shortcut::primary_shift("U")],
     },
     CommandSpec {
         id: CommandId("disk_usage.refresh"),
-        title: "Refresh Disk Usage",
+        title: msgid!("Refresh Disk Usage"),
         category: Category::View,
         // Cmd+R is a no-op when no DU window is open, so it's safe
         // to bind globally rather than gating on focus.
@@ -445,55 +447,55 @@ const CATALOGUE: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId("disk_usage.zoom_out"),
-        title: "Disk Usage: Zoom Out",
+        title: msgid!("Disk Usage: Zoom Out"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("disk_usage.toggle_topn"),
-        title: "Largest Files Panel",
+        title: msgid!("Largest Files Panel"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("disk_usage.toggle_packages"),
-        title: "Descend into Packages",
+        title: msgid!("Descend into Packages"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("disk_usage.toggle_follow_navigation"),
-        title: "Follow Tab Navigation",
+        title: msgid!("Follow Tab Navigation"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("disk_usage.coloring_category"),
-        title: "Color by File Type",
+        title: msgid!("Color by File Type"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("disk_usage.coloring_age"),
-        title: "Color by Age",
+        title: msgid!("Color by Age"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("disk_usage.coloring_depth"),
-        title: "Color by Depth Only",
+        title: msgid!("Color by Depth Only"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("disk_usage.size_apparent"),
-        title: "Size: Apparent",
+        title: msgid!("Size: Apparent"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("disk_usage.size_allocated"),
-        title: "Size: Allocated (on disk)",
+        title: msgid!("Size: Allocated (on disk)"),
         category: Category::View,
         shortcuts: &[],
     },
@@ -502,44 +504,44 @@ const CATALOGUE: &[CommandSpec] = &[
     // own label, so individual items just say "Light" / "Dark" / etc.
     CommandSpec {
         id: CommandId("view.theme_light"),
-        title: "Light",
+        title: msgid!("Light"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("view.theme_dark"),
-        title: "Dark",
+        title: msgid!("Dark"),
         category: Category::View,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("view.theme_system"),
-        title: "Match System",
+        title: msgid!("Match System"),
         category: Category::View,
         shortcuts: &[],
     },
     // Go
     CommandSpec {
         id: CommandId("go.back"),
-        title: "Back",
+        title: msgid!("Back"),
         category: Category::Go,
         shortcuts: &[Shortcut::primary("["), Shortcut::alt("Left")],
     },
     CommandSpec {
         id: CommandId("go.forward"),
-        title: "Forward",
+        title: msgid!("Forward"),
         category: Category::Go,
         shortcuts: &[Shortcut::primary("]"), Shortcut::alt("Right")],
     },
     CommandSpec {
         id: CommandId("go.parent"),
-        title: "Enclosing Folder",
+        title: msgid!("Enclosing Folder"),
         category: Category::Go,
         shortcuts: &[Shortcut::primary("Up"), Shortcut::bare("Backspace")],
     },
     CommandSpec {
         id: CommandId("go.home"),
-        title: "Home",
+        title: msgid!("Home"),
         category: Category::Go,
         shortcuts: &[Shortcut::primary_shift("H")],
     },
@@ -551,7 +553,7 @@ const CATALOGUE: &[CommandSpec] = &[
         // or in a new window when none is open. The ellipsis flags the
         // dialog (macOS HIG), same as Clear Recents below.
         id: CommandId("go.go_to_folder"),
-        title: "Go to Folder\u{2026}",
+        title: msgid!("Go to Folder\u{2026}"),
         category: Category::Go,
         shortcuts: &[Shortcut::primary("G")],
     },
@@ -561,7 +563,7 @@ const CATALOGUE: &[CommandSpec] = &[
         // two share one visit log). No default shortcut: destructive and
         // rarely needed, so it lives in the Go menu / command palette.
         id: CommandId("go.clear_recents"),
-        title: "Clear Recents\u{2026}",
+        title: msgid!("Clear Recents\u{2026}"),
         category: Category::Go,
         shortcuts: &[],
     },
@@ -572,67 +574,67 @@ const CATALOGUE: &[CommandSpec] = &[
     // search, dialog, breadcrumb edit) because those intercept first.
     CommandSpec {
         id: CommandId("selection.cursor_up"),
-        title: "Move Cursor Up",
+        title: msgid!("Move Cursor Up"),
         category: Category::Selection,
         shortcuts: &[Shortcut::bare("Up")],
     },
     CommandSpec {
         id: CommandId("selection.cursor_down"),
-        title: "Move Cursor Down",
+        title: msgid!("Move Cursor Down"),
         category: Category::Selection,
         shortcuts: &[Shortcut::bare("Down")],
     },
     CommandSpec {
         id: CommandId("selection.cursor_first"),
-        title: "Move Cursor to Top",
+        title: msgid!("Move Cursor to Top"),
         category: Category::Selection,
         shortcuts: &[Shortcut::bare("Home")],
     },
     CommandSpec {
         id: CommandId("selection.cursor_last"),
-        title: "Move Cursor to Bottom",
+        title: msgid!("Move Cursor to Bottom"),
         category: Category::Selection,
         shortcuts: &[Shortcut::bare("End")],
     },
     CommandSpec {
         id: CommandId("selection.page_up"),
-        title: "Page Up",
+        title: msgid!("Page Up"),
         category: Category::Selection,
         shortcuts: &[Shortcut::bare("PageUp")],
     },
     CommandSpec {
         id: CommandId("selection.page_down"),
-        title: "Page Down",
+        title: msgid!("Page Down"),
         category: Category::Selection,
         shortcuts: &[Shortcut::bare("PageDown")],
     },
     CommandSpec {
         id: CommandId("selection.activate"),
-        title: "Open Selection",
+        title: msgid!("Open Selection"),
         category: Category::Selection,
         shortcuts: &[Shortcut::bare("Enter")],
     },
     CommandSpec {
         id: CommandId("selection.start_rename"),
-        title: "Rename Selection",
+        title: msgid!("Rename Selection"),
         category: Category::Selection,
         shortcuts: &[Shortcut::bare("F2")],
     },
     CommandSpec {
         id: CommandId("selection.collapse_or_parent"),
-        title: "Collapse / Parent",
+        title: msgid!("Collapse / Parent"),
         category: Category::Selection,
         shortcuts: &[Shortcut::bare("Left")],
     },
     CommandSpec {
         id: CommandId("selection.expand_or_first_child"),
-        title: "Expand / First Child",
+        title: msgid!("Expand / First Child"),
         category: Category::Selection,
         shortcuts: &[Shortcut::bare("Right")],
     },
     CommandSpec {
         id: CommandId("selection.dismiss"),
-        title: "Dismiss / Exit",
+        title: msgid!("Dismiss / Exit"),
         category: Category::Selection,
         // Escape: closes Get Info if open, otherwise drops Tree focus,
         // otherwise quits. Quirky semantics handled in dispatch.
@@ -641,44 +643,44 @@ const CATALOGUE: &[CommandSpec] = &[
     // Window
     CommandSpec {
         id: CommandId("window.new_window"),
-        title: "New Window",
+        title: msgid!("New Window"),
         category: Category::Window,
         shortcuts: &[Shortcut::primary("N")],
     },
     CommandSpec {
         id: CommandId("window.close_window"),
-        title: "Close Window",
+        title: msgid!("Close Window"),
         category: Category::Window,
         shortcuts: &[Shortcut::primary_shift("W")],
     },
     CommandSpec {
         id: CommandId("window.next_tab"),
-        title: "Next Tab",
+        title: msgid!("Next Tab"),
         category: Category::Window,
         shortcuts: &[Shortcut::primary_shift("]")],
     },
     CommandSpec {
         id: CommandId("window.prev_tab"),
-        title: "Previous Tab",
+        title: msgid!("Previous Tab"),
         category: Category::Window,
         shortcuts: &[Shortcut::primary_shift("[")],
     },
     CommandSpec {
         id: CommandId("window.bring_all_to_front"),
-        title: "Bring All to Front",
+        title: msgid!("Bring All to Front"),
         category: Category::Window,
         shortcuts: &[],
     },
     // Help
     CommandSpec {
         id: CommandId("help.github"),
-        title: "Ferail on GitHub",
+        title: msgid!("Ferail on GitHub"),
         category: Category::Help,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("help.shortcuts"),
-        title: "Keyboard Shortcuts",
+        title: msgid!("Keyboard Shortcuts"),
         category: Category::Help,
         shortcuts: &[Shortcut::primary("/")],
     },
@@ -688,25 +690,25 @@ const CATALOGUE: &[CommandSpec] = &[
     // keyboard paths capture target differently.
     CommandSpec {
         id: CommandId("file.open"),
-        title: "Open",
+        title: msgid!("Open"),
         category: Category::Context,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("file.pin_to_favorites"),
-        title: "Pin to Favorites",
+        title: msgid!("Pin to Favorites"),
         category: Category::Context,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("file.remove_from_favorites"),
-        title: "Remove from Favorites",
+        title: msgid!("Remove from Favorites"),
         category: Category::Context,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("disk_usage.zoom_into"),
-        title: "Zoom into",
+        title: msgid!("Zoom into"),
         category: Category::Context,
         shortcuts: &[],
     },
@@ -717,37 +719,37 @@ const CATALOGUE: &[CommandSpec] = &[
     // later without changing the menu surface.
     CommandSpec {
         id: CommandId("file.quick_look"),
-        title: "Quick Look",
+        title: msgid!("Quick Look"),
         category: Category::Context,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("file.rename"),
-        title: "Rename",
+        title: msgid!("Rename"),
         category: Category::Context,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("file.duplicate"),
-        title: "Duplicate",
+        title: msgid!("Duplicate"),
         category: Category::Context,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("file.make_alias"),
-        title: "Make Alias",
+        title: msgid!("Make Alias"),
         category: Category::Context,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("file.compress"),
-        title: "Compress",
+        title: msgid!("Compress"),
         category: Category::Context,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("file.extract"),
-        title: "Extract",
+        title: msgid!("Extract"),
         category: Category::Context,
         shortcuts: &[],
     },
@@ -756,13 +758,13 @@ const CATALOGUE: &[CommandSpec] = &[
     // colours; `file.clear_tags` strips every tag in one shot.
     CommandSpec {
         id: CommandId("file.set_tag"),
-        title: "Set Tag",
+        title: msgid!("Set Tag"),
         category: Category::Context,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("file.clear_tags"),
-        title: "Clear Tags",
+        title: msgid!("Clear Tags"),
         category: Category::Context,
         shortcuts: &[],
     },
@@ -771,13 +773,13 @@ const CATALOGUE: &[CommandSpec] = &[
     // app's bundle path.
     CommandSpec {
         id: CommandId("file.open_with_app"),
-        title: "Open With",
+        title: msgid!("Open With"),
         category: Category::Context,
         shortcuts: &[],
     },
     CommandSpec {
         id: CommandId("file.share"),
-        title: "Share",
+        title: msgid!("Share"),
         category: Category::Context,
         shortcuts: &[],
     },
@@ -786,7 +788,7 @@ const CATALOGUE: &[CommandSpec] = &[
     // folder-menu action.
     CommandSpec {
         id: CommandId("file.open_in_new_tab"),
-        title: "Open in New Tab",
+        title: msgid!("Open in New Tab"),
         category: Category::Context,
         shortcuts: &[],
     },
@@ -795,7 +797,7 @@ const CATALOGUE: &[CommandSpec] = &[
     // right-click menus; no keyboard shortcut yet.
     CommandSpec {
         id: CommandId("file.open_terminal_here"),
-        title: "Open Terminal Here",
+        title: msgid!("Open Terminal Here"),
         category: Category::Context,
         shortcuts: &[],
     },

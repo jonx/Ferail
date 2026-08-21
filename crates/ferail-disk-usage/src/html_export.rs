@@ -20,6 +20,7 @@ use crate::file_category::FileCategory;
 use crate::model::{DiskUsageTree, NodeKind, SizeMode};
 use crate::{build_layout_node_with_mode, compute_treemap};
 use ferail_core::NodeId;
+use ferail_core::msgid;
 
 /// Canonical category palette as `(r, g, b, a)` bytes. The GPUI view
 /// converts these to its float color type; the HTML export emits them
@@ -36,16 +37,18 @@ pub fn category_color_rgba(cat: FileCategory) -> (u8, u8, u8, u8) {
     }
 }
 
-/// Human category name, shared with the view's filter chips.
+/// Human category name, shared with the view's filter chips. A msgid:
+/// the view translates it with `ferail_core::i18n::tr_raw`; the HTML
+/// export stays in English.
 pub fn category_label(cat: FileCategory) -> &'static str {
     match cat {
-        FileCategory::Image => "Image",
-        FileCategory::Video => "Video",
-        FileCategory::Audio => "Audio",
-        FileCategory::Archive => "Archive",
-        FileCategory::Document => "Document",
-        FileCategory::Executable => "Executable",
-        FileCategory::Other => "Other",
+        FileCategory::Image => msgid!("Image"),
+        FileCategory::Video => msgid!("Video"),
+        FileCategory::Audio => msgid!("Audio"),
+        FileCategory::Archive => msgid!("Archive"),
+        FileCategory::Document => msgid!("Document"),
+        FileCategory::Executable => msgid!("Executable"),
+        FileCategory::Other => msgid!("Other"),
     }
 }
 

@@ -95,7 +95,12 @@ fn filtered_groups(filter: &str) -> Vec<(Category, Vec<&'static CommandSpec>)> {
     let lower = filter.to_lowercase();
     let mut groups: Vec<(Category, Vec<&CommandSpec>)> = Vec::new();
     for spec in all_commands() {
-        let title_match = spec.title.to_lowercase().contains(&lower);
+        // Match the translated title (what the user sees) and the English
+        // catalogue title (so muscle memory keeps working in any language).
+        let title_match = spec.title.to_lowercase().contains(&lower)
+            || crate::i18n::tr_static(spec.title)
+                .to_lowercase()
+                .contains(&lower);
         let shortcut_match = spec
             .shortcuts
             .iter()
@@ -152,7 +157,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 .text_scale_lg()
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(foreground)
-                .child("Keyboard Shortcuts"),
+                .child(tr!("Keyboard Shortcuts")),
         )
         .child(Input::new(&input).small());
 
@@ -235,15 +240,15 @@ fn section(
     cx: &mut Context<Shell>,
 ) -> Div {
     let title = match cat {
-        Category::App => "App",
-        Category::File => "File",
-        Category::Edit => "Edit",
-        Category::View => "View",
-        Category::Go => "Go",
-        Category::Selection => "Selection",
-        Category::Window => "Window",
-        Category::Help => "Help",
-        Category::Context => "Context",
+        Category::App => tr!("App"),
+        Category::File => tr!("File"),
+        Category::Edit => tr!("Edit"),
+        Category::View => tr!("View"),
+        Category::Go => tr!("Go"),
+        Category::Selection => tr!("Selection"),
+        Category::Window => tr!("Window"),
+        Category::Help => tr!("Help"),
+        Category::Context => tr!("Context"),
     };
     let rows: Vec<AnyElement> = specs
         .into_iter()
@@ -300,7 +305,7 @@ fn row(
         div()
             .text_scale_sm()
             .text_color(title_color)
-            .child(SharedString::from(spec.title)),
+            .child(crate::i18n::tr_static(spec.title)),
     );
     if !dispatchable {
         // A trailing tag spells out *why* the row is dim, so it doesn't
@@ -309,7 +314,7 @@ fn row(
             div()
                 .text_scale_xs()
                 .text_color(muted)
-                .child(SharedString::from("\u{2014} unavailable here")),
+                .child(tr!("\u{2014} unavailable here")),
         );
     }
     row = row.child(title);

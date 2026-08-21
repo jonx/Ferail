@@ -94,9 +94,9 @@ impl MediaTags {
     /// `"stereo"`, `"mono"`, `"6 channels"`, or empty.
     pub fn channels_label(&self) -> String {
         match self.channels {
-            Some(1) => "mono".to_string(),
-            Some(2) => "stereo".to_string(),
-            Some(n) => format!("{n} channels"),
+            Some(1) => tr!("mono").into_string(),
+            Some(2) => tr!("stereo").into_string(),
+            Some(n) => tr!("{n} channels", n = n).into_string(),
             None => String::new(),
         }
     }
@@ -165,7 +165,7 @@ fn format_duration(secs: u64) -> String {
 /// `"3 of 12"` when both are known, `"3"` when only the number is, else empty.
 fn number_of(n: Option<u32>, total: Option<u32>) -> String {
     match (n, total) {
-        (Some(n), Some(t)) if t > 0 => format!("{n} of {t}"),
+        (Some(n), Some(t)) if t > 0 => tr!("{n} of {t}", n = n, t = t).into_string(),
         (Some(n), _) => format!("{n}"),
         _ => String::new(),
     }

@@ -36,17 +36,18 @@ pub enum HazardKind {
 }
 
 impl HazardKind {
-    /// Short human description for the segment's tooltip prefix.
+    /// Short human description for the segment's tooltip prefix — a msgid;
+    /// translate at the display site with `ferail_core::i18n::tr_raw`.
     pub fn summary(self) -> &'static str {
         match self {
-            HazardKind::LeadingSpace => "Leading whitespace",
-            HazardKind::TrailingSpace => "Trailing whitespace",
-            HazardKind::UnusualWhitespace => "Unusual whitespace",
-            HazardKind::ZeroWidth => "Zero-width character",
-            HazardKind::Control => "Control character",
-            HazardKind::Bidi => "Bidirectional override",
-            HazardKind::Homoglyph => "Look-alike character",
-            HazardKind::CombiningMark => "Combining mark",
+            HazardKind::LeadingSpace => msgid!("Leading whitespace"),
+            HazardKind::TrailingSpace => msgid!("Trailing whitespace"),
+            HazardKind::UnusualWhitespace => msgid!("Unusual whitespace"),
+            HazardKind::ZeroWidth => msgid!("Zero-width character"),
+            HazardKind::Control => msgid!("Control character"),
+            HazardKind::Bidi => msgid!("Bidirectional override"),
+            HazardKind::Homoglyph => msgid!("Look-alike character"),
+            HazardKind::CombiningMark => msgid!("Combining mark"),
         }
     }
 }
@@ -195,7 +196,7 @@ fn classify(
         return Some(hazard(
             c,
             HazardKind::Control,
-            format!("Control character (U+{cp:04X})"),
+            tr!("Control character (U+{code})", code = format_args!("{cp:04X}")).into_string(),
             Some(format!("⟨{cp:04X}⟩")),
         ));
     }
@@ -222,7 +223,7 @@ fn classify(
         return Some(hazard(
             c,
             HazardKind::CombiningMark,
-            format!("Stray combining mark (U+{cp:04X})"),
+            tr!("Stray combining mark (U+{code})", code = format_args!("{cp:04X}")).into_string(),
             Some(visible_codepoint(cp)),
         ));
     }
@@ -233,7 +234,14 @@ fn classify(
             return Some(hazard(
                 c,
                 HazardKind::Homoglyph,
-                format!("{script} '{c}' (U+{cp:04X}) — looks like '{ascii}'"),
+                tr!(
+                    "{script} '{c}' (U+{code}) — looks like '{ascii}'",
+                    script = crate::i18n::tr_raw(script),
+                    c = c,
+                    code = format_args!("{cp:04X}"),
+                    ascii = ascii
+                )
+                .into_string(),
                 None,
             ));
         }
@@ -266,48 +274,48 @@ fn ws_glyph(c: char) -> String {
 
 fn whitespace_name(cp: u32) -> String {
     let which = match cp {
-        0x20 => "space",
-        0x09 => "tab",
-        0x0A => "newline",
-        0x0D => "carriage return",
-        0xA0 => "no-break space",
-        0x2007 => "figure space",
-        0x202F => "narrow no-break space",
-        0x3000 => "ideographic space",
-        0x2000..=0x200A => "Unicode space",
-        _ => "whitespace",
+        0x20 => msgid!("space"),
+        0x09 => msgid!("tab"),
+        0x0A => msgid!("newline"),
+        0x0D => msgid!("carriage return"),
+        0xA0 => msgid!("no-break space"),
+        0x2007 => msgid!("figure space"),
+        0x202F => msgid!("narrow no-break space"),
+        0x3000 => msgid!("ideographic space"),
+        0x2000..=0x200A => msgid!("Unicode space"),
+        _ => msgid!("whitespace"),
     };
-    format!("{which} (U+{cp:04X})")
+    tr!("{which} (U+{code})", which = crate::i18n::tr_raw(which), code = format_args!("{cp:04X}")).into_string()
 }
 
 fn zero_width_name(cp: u32) -> String {
     let which = match cp {
-        0x200B => "zero-width space",
-        0x200C => "zero-width non-joiner",
-        0x200D => "zero-width joiner",
-        0x2060 => "word joiner",
-        0xFEFF => "byte-order mark",
-        _ => "zero-width character",
+        0x200B => msgid!("zero-width space"),
+        0x200C => msgid!("zero-width non-joiner"),
+        0x200D => msgid!("zero-width joiner"),
+        0x2060 => msgid!("word joiner"),
+        0xFEFF => msgid!("byte-order mark"),
+        _ => msgid!("zero-width character"),
     };
-    format!("{which} (U+{cp:04X})")
+    tr!("{which} (U+{code})", which = crate::i18n::tr_raw(which), code = format_args!("{cp:04X}")).into_string()
 }
 
 fn bidi_name(cp: u32) -> String {
     let which = match cp {
-        0x202A => "left-to-right embedding",
-        0x202B => "right-to-left embedding",
-        0x202C => "pop directional formatting",
-        0x202D => "left-to-right override",
-        0x202E => "right-to-left override",
-        0x2066 => "left-to-right isolate",
-        0x2067 => "right-to-left isolate",
-        0x2068 => "first strong isolate",
-        0x2069 => "pop directional isolate",
-        0x200E => "left-to-right mark",
-        0x200F => "right-to-left mark",
-        _ => "bidirectional control",
+        0x202A => msgid!("left-to-right embedding"),
+        0x202B => msgid!("right-to-left embedding"),
+        0x202C => msgid!("pop directional formatting"),
+        0x202D => msgid!("left-to-right override"),
+        0x202E => msgid!("right-to-left override"),
+        0x2066 => msgid!("left-to-right isolate"),
+        0x2067 => msgid!("right-to-left isolate"),
+        0x2068 => msgid!("first strong isolate"),
+        0x2069 => msgid!("pop directional isolate"),
+        0x200E => msgid!("left-to-right mark"),
+        0x200F => msgid!("right-to-left mark"),
+        _ => msgid!("bidirectional control"),
     };
-    format!("{which} (U+{cp:04X})")
+    tr!("{which} (U+{code})", which = crate::i18n::tr_raw(which), code = format_args!("{cp:04X}")).into_string()
 }
 
 /// Map a known confusable codepoint to (ascii lookalike, script name).
@@ -316,52 +324,52 @@ fn bidi_name(cp: u32) -> String {
 fn confusable(c: char) -> Option<(char, &'static str)> {
     // Fullwidth Latin (U+FF21..FF3A, U+FF41..FF5A).
     if ('\u{FF21}'..='\u{FF3A}').contains(&c) {
-        return Some(((c as u32 - 0xFF21 + b'A' as u32).try_into().ok()?, "Fullwidth"));
+        return Some(((c as u32 - 0xFF21 + b'A' as u32).try_into().ok()?, msgid!("Fullwidth")));
     }
     if ('\u{FF41}'..='\u{FF5A}').contains(&c) {
-        return Some(((c as u32 - 0xFF41 + b'a' as u32).try_into().ok()?, "Fullwidth"));
+        return Some(((c as u32 - 0xFF41 + b'a' as u32).try_into().ok()?, msgid!("Fullwidth")));
     }
     let mapped = match c {
         // Cyrillic lowercase lookalikes.
-        'а' => ('a', "Cyrillic"),
-        'е' => ('e', "Cyrillic"),
-        'о' => ('o', "Cyrillic"),
-        'р' => ('p', "Cyrillic"),
-        'с' => ('c', "Cyrillic"),
-        'у' => ('y', "Cyrillic"),
-        'х' => ('x', "Cyrillic"),
-        'і' => ('i', "Cyrillic"),
-        'ј' => ('j', "Cyrillic"),
-        'ѕ' => ('s', "Cyrillic"),
-        'ԁ' => ('d', "Cyrillic"),
-        'һ' => ('h', "Cyrillic"),
-        'ո' => ('n', "Armenian"),
+        'а' => ('a', msgid!("Cyrillic")),
+        'е' => ('e', msgid!("Cyrillic")),
+        'о' => ('o', msgid!("Cyrillic")),
+        'р' => ('p', msgid!("Cyrillic")),
+        'с' => ('c', msgid!("Cyrillic")),
+        'у' => ('y', msgid!("Cyrillic")),
+        'х' => ('x', msgid!("Cyrillic")),
+        'і' => ('i', msgid!("Cyrillic")),
+        'ј' => ('j', msgid!("Cyrillic")),
+        'ѕ' => ('s', msgid!("Cyrillic")),
+        'ԁ' => ('d', msgid!("Cyrillic")),
+        'һ' => ('h', msgid!("Cyrillic")),
+        'ո' => ('n', msgid!("Armenian")),
         // Cyrillic uppercase lookalikes.
-        'А' => ('A', "Cyrillic"),
-        'В' => ('B', "Cyrillic"),
-        'Е' => ('E', "Cyrillic"),
-        'К' => ('K', "Cyrillic"),
-        'М' => ('M', "Cyrillic"),
-        'Н' => ('H', "Cyrillic"),
-        'О' => ('O', "Cyrillic"),
-        'Р' => ('P', "Cyrillic"),
-        'С' => ('C', "Cyrillic"),
-        'Т' => ('T', "Cyrillic"),
-        'Х' => ('X', "Cyrillic"),
+        'А' => ('A', msgid!("Cyrillic")),
+        'В' => ('B', msgid!("Cyrillic")),
+        'Е' => ('E', msgid!("Cyrillic")),
+        'К' => ('K', msgid!("Cyrillic")),
+        'М' => ('M', msgid!("Cyrillic")),
+        'Н' => ('H', msgid!("Cyrillic")),
+        'О' => ('O', msgid!("Cyrillic")),
+        'Р' => ('P', msgid!("Cyrillic")),
+        'С' => ('C', msgid!("Cyrillic")),
+        'Т' => ('T', msgid!("Cyrillic")),
+        'Х' => ('X', msgid!("Cyrillic")),
         // Greek lookalikes.
-        'ο' => ('o', "Greek"),
-        'α' => ('a', "Greek"),
-        'ν' => ('v', "Greek"),
-        'ρ' => ('p', "Greek"),
-        'τ' => ('t', "Greek"),
-        'ι' => ('i', "Greek"),
-        'κ' => ('k', "Greek"),
-        'Α' => ('A', "Greek"),
-        'Β' => ('B', "Greek"),
-        'Ε' => ('E', "Greek"),
-        'Ο' => ('O', "Greek"),
-        'Ρ' => ('P', "Greek"),
-        'Τ' => ('T', "Greek"),
+        'ο' => ('o', msgid!("Greek")),
+        'α' => ('a', msgid!("Greek")),
+        'ν' => ('v', msgid!("Greek")),
+        'ρ' => ('p', msgid!("Greek")),
+        'τ' => ('t', msgid!("Greek")),
+        'ι' => ('i', msgid!("Greek")),
+        'κ' => ('k', msgid!("Greek")),
+        'Α' => ('A', msgid!("Greek")),
+        'Β' => ('B', msgid!("Greek")),
+        'Ε' => ('E', msgid!("Greek")),
+        'Ο' => ('O', msgid!("Greek")),
+        'Ρ' => ('P', msgid!("Greek")),
+        'Τ' => ('T', msgid!("Greek")),
         _ => return None,
     };
     Some(mapped)

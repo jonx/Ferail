@@ -7,6 +7,8 @@
 //! Directive). Content-based confirmation (real magic sniffing) happens
 //! off-thread in `ferail-fs-native` when an archive is actually opened.
 
+use ferail_core::msgid;
+
 /// A supported archive format.
 ///
 /// The set is intentionally bounded to the formats Ferail ships codecs for
@@ -164,13 +166,14 @@ pub enum CompressionLevel {
 }
 
 impl CompressionLevel {
-    /// A user-facing label for the create dialog.
+    /// A user-facing label for the create dialog — a msgid; translate at
+    /// the display site with `ferail_core::i18n::tr_raw`.
     pub fn label(self) -> &'static str {
         match self {
-            CompressionLevel::Store => "Store (no compression)",
-            CompressionLevel::Fast => "Fast",
-            CompressionLevel::Normal => "Normal",
-            CompressionLevel::Maximum => "Maximum",
+            CompressionLevel::Store => msgid!("Store (no compression)"),
+            CompressionLevel::Fast => msgid!("Fast"),
+            CompressionLevel::Normal => msgid!("Normal"),
+            CompressionLevel::Maximum => msgid!("Maximum"),
         }
     }
 }

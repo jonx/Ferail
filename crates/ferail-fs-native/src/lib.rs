@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
-use ferail_core::{EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId};
+use ferail_core::{tr, trn, EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId};
 
 pub mod archive;
 mod disk_usage_scanner;
@@ -1044,14 +1044,19 @@ pub fn humanize_bytes(bytes: u64) -> String {
 /// a folder with only files or only sub-folders drops the empty half,
 /// and a truly empty folder returns `"Empty"`.
 pub fn folder_contents_summary(file_count: u64, dir_count: u64) -> String {
-    fn part(n: u64, singular: &str, plural: &str) -> String {
-        format!("{} {}", group_thousands(n), if n == 1 { singular } else { plural })
+    // `{count}` (not the implicit `{n}`) so the number keeps its thousands
+    // grouping; the plural category is still chosen from the raw count.
+    fn files(n: u64) -> ferail_core::i18n::Text {
+        trn!("{count} file", "{count} files", n, count = group_thousands(n))
+    }
+    fn folders(n: u64) -> ferail_core::i18n::Text {
+        trn!("{count} folder", "{count} folders", n, count = group_thousands(n))
     }
     match (file_count, dir_count) {
-        (0, 0) => "Empty".to_string(),
-        (f, 0) => part(f, "file", "files"),
-        (0, d) => part(d, "folder", "folders"),
-        (f, d) => format!("{} \u{b7} {}", part(f, "file", "files"), part(d, "folder", "folders")),
+        (0, 0) => tr!("Empty").into_string(),
+        (f, 0) => files(f).into_string(),
+        (0, d) => folders(d).into_string(),
+        (f, d) => format!("{} \u{b7} {}", files(f), folders(d)),
     }
 }
 

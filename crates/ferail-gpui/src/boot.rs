@@ -115,7 +115,7 @@ pub fn run_gui(args: screenshot::Args) {
         // menu via cx.set_menus), so this is the lightweight path.
         crate::platform_shell::set_about_options(
             "Ferail",
-            "macOS file explorer",
+            &tr!("macOS file explorer"),
             env!("CARGO_PKG_VERSION"),
             "Copyright \u{00A9} 2026 John Knipper",
         );
@@ -478,7 +478,7 @@ pub(crate) fn install_app_menus(cx: &mut App) {
     if show_desktop_available {
         view_items.push(MenuItem::separator());
         view_items.push(MenuItem::action(
-            title("view.show_desktop", "Show Desktop"),
+            title("view.show_desktop", ferail_core::msgid!("Show Desktop")),
             ShowDesktop,
         ));
     }
@@ -506,12 +506,12 @@ pub(crate) fn install_app_menus(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action(title("app.settings", "Settings\u{2026}"), OpenSettings),
                 MenuItem::separator(),
-                MenuItem::action("Quit Ferail", Quit),
+                MenuItem::action(tr!("Quit Ferail"), Quit),
             ],
             disabled: false,
         },
         Menu {
-            name: "File".into(),
+            name: tr!("File"),
             items: vec![
                 MenuItem::action(title("window.new_window", "New Window"), NewWindow),
                 MenuItem::action(title("file.new_tab", "New Tab"), NewTab),
@@ -536,7 +536,7 @@ pub(crate) fn install_app_menus(cx: &mut App) {
                 // Favorites", so the command is discoverable without
                 // knowing the shortcut. Wording matches the context menu;
                 // on an already-favorited target it removes (toggle).
-                MenuItem::action("Add to Favorites", ToggleFavoriteForTarget),
+                MenuItem::action(tr!("Add to Favorites"), ToggleFavoriteForTarget),
                 MenuItem::separator(),
                 MenuItem::action(
                     title("file.move_to_trash", ferail_core::commands::TRASH_LABEL),
@@ -545,13 +545,13 @@ pub(crate) fn install_app_menus(cx: &mut App) {
                 // Ellipsis: each opens a confirmation dialog (macOS HIG).
                 // Delete Immediately is Finder's "Delete Immediately…" — a
                 // targeted permanent delete with no undo.
-                MenuItem::action("Delete Immediately\u{2026}", DeleteImmediately),
-                MenuItem::action("Empty Trash\u{2026}", EmptyTrash),
+                MenuItem::action(tr!("Delete Immediately\u{2026}"), DeleteImmediately),
+                MenuItem::action(tr!("Empty Trash\u{2026}"), EmptyTrash),
             ],
             disabled: false,
         },
         Menu {
-            name: "Edit".into(),
+            name: tr!("Edit"),
             items: vec![MenuItem::action(
                 title("file.copy_path", "Copy Path"),
                 CopyPath,
@@ -559,7 +559,7 @@ pub(crate) fn install_app_menus(cx: &mut App) {
             disabled: false,
         },
         Menu {
-            name: "Go".into(),
+            name: tr!("Go"),
             items: vec![
                 MenuItem::action(title("go.back", "Back"), NavigateBack),
                 MenuItem::action(title("go.forward", "Forward"), NavigateForward),
@@ -579,7 +579,7 @@ pub(crate) fn install_app_menus(cx: &mut App) {
             disabled: false,
         },
         Menu {
-            name: "View".into(),
+            name: tr!("View"),
             items: view_items,
             disabled: false,
         },
@@ -594,7 +594,7 @@ pub(crate) fn install_app_menus(cx: &mut App) {
             // that appended list. Windows/Linux's AppMenuBar renders
             // only the explicit items; the window list is a macOS
             // freebie until a cross-platform list is built by hand.
-            name: "Window".into(),
+            name: tr!("Window"),
             items: vec![
                 MenuItem::action(
                     title("window.bring_all_to_front", "Bring All to Front"),
@@ -637,8 +637,8 @@ fn bring_all_to_front(cx: &mut App) {
 /// every wired item.
 fn title(id: &'static str, fallback: &'static str) -> SharedString {
     find(CommandId(id))
-        .map(|spec| SharedString::from(spec.title))
-        .unwrap_or_else(|| SharedString::from(fallback))
+        .map(|spec| crate::i18n::tr_static(spec.title))
+        .unwrap_or_else(|| crate::i18n::tr_static(fallback))
 }
 
 #[cfg(all(test, target_os = "macos"))]

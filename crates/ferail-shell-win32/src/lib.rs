@@ -236,9 +236,9 @@ pub fn show_about_panel() {
         .and_then(|s| s.clone())
         .unwrap_or_default();
     let title = if info.app_name.is_empty() {
-        "About".to_string()
+        ferail_core::tr!("About").into_string()
     } else {
-        format!("About {}", info.app_name)
+        ferail_core::tr!("About {app_name}", app_name = info.app_name).into_string()
     };
     let body = {
         let mut parts: Vec<String> = Vec::new();
@@ -249,7 +249,7 @@ pub fn show_about_panel() {
             parts.push(info.tagline.clone());
         }
         if !info.version.is_empty() {
-            parts.push(format!("Version {}", info.version));
+            parts.push(ferail_core::tr!("Version {version}", version = info.version).into_string());
         }
         if !info.copyright.is_empty() {
             parts.push(info.copyright.clone());

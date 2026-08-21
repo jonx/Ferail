@@ -144,7 +144,7 @@ pub fn show_alert(title: &str, body: &str) {
         alert.setMessageText(&NSString::from_str(title));
         alert.setInformativeText(&NSString::from_str(body));
         alert.setAlertStyle(NSAlertStyle::Informational);
-        alert.addButtonWithTitle(&NSString::from_str("OK"));
+        alert.addButtonWithTitle(&NSString::from_str(&ferail_core::tr!("OK")));
         let _ = alert.runModal();
     }
 }

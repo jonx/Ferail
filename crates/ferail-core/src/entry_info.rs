@@ -13,6 +13,7 @@
 //! is data only, plus small pure helpers.
 
 use crate::commands::TagColor;
+use crate::msgid;
 
 /// What an [`EntryInfo`] describes. Drives which sections make sense and how
 /// the size row behaves (a file knows its size; a folder/volume calculates).
@@ -153,13 +154,14 @@ pub enum Attr {
 }
 
 impl Attr {
-    /// Stable label for the toggle row.
+    /// Stable label for the toggle row — a msgid; translate at the display
+    /// site with `ferail_core::i18n::tr_raw`.
     pub fn label(self) -> &'static str {
         match self {
-            Attr::Locked => "Locked",
-            Attr::Invisible => "Invisible",
-            Attr::HiddenExtension => "Hide extension",
-            Attr::Stationery => "Stationery pad",
+            Attr::Locked => msgid!("Locked"),
+            Attr::Invisible => msgid!("Invisible"),
+            Attr::HiddenExtension => msgid!("Hide extension"),
+            Attr::Stationery => msgid!("Stationery pad"),
         }
     }
 }

@@ -16,6 +16,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use ferail_core::commands::{all_commands, Category, CommandId, CommandSpec, Shortcut};
+use ferail_core::i18n::tr_raw;
+use ferail_core::tr;
 use objc2::declare_class;
 use objc2::msg_send;
 use objc2::msg_send_id;
@@ -234,18 +236,18 @@ pub fn install_app_menu(app_name: &str, tagline: &str, version: &str, copyright:
     main_menu.addItem(&build_app_submenu(mtm, &target, app_name));
     // File / View / Go / Edit / Window — pulled from the catalogue
     // (or hard-coded for built-in selectors).
-    if let Some(item) = build_category_submenu(mtm, &target, Category::File, "File") {
+    if let Some(item) = build_category_submenu(mtm, &target, Category::File, &tr!("File")) {
         main_menu.addItem(&item);
     }
     main_menu.addItem(&build_edit_submenu(mtm));
-    if let Some(item) = build_category_submenu(mtm, &target, Category::View, "View") {
+    if let Some(item) = build_category_submenu(mtm, &target, Category::View, &tr!("View")) {
         main_menu.addItem(&item);
     }
-    if let Some(item) = build_category_submenu(mtm, &target, Category::Go, "Go") {
+    if let Some(item) = build_category_submenu(mtm, &target, Category::Go, &tr!("Go")) {
         main_menu.addItem(&item);
     }
     main_menu.addItem(&build_window_submenu(mtm, &target));
-    if let Some(item) = build_category_submenu(mtm, &target, Category::Help, "Help") {
+    if let Some(item) = build_category_submenu(mtm, &target, Category::Help, &tr!("Help")) {
         main_menu.addItem(&item);
     }
 
@@ -298,7 +300,7 @@ fn build_app_submenu(
 
         // Built-in AppKit items below: hide/show/quit ride the
         // responder chain via NSApplication's selectors.
-        let hide_title = format!("Hide {app_name}");
+        let hide_title = tr!("Hide {app_name}", app_name = app_name);
         submenu.addItem(&make_responder_item(
             mtm,
             &hide_title,
@@ -309,7 +311,7 @@ fn build_app_submenu(
 
         let hide_others = make_responder_item(
             mtm,
-            "Hide Others",
+            &tr!("Hide Others"),
             sel!(hideOtherApplications:),
             "h",
             Some(
@@ -321,7 +323,7 @@ fn build_app_submenu(
 
         submenu.addItem(&make_responder_item(
             mtm,
-            "Show All",
+            &tr!("Show All"),
             sel!(unhideAllApplications:),
             "",
             None,
@@ -329,7 +331,7 @@ fn build_app_submenu(
 
         submenu.addItem(&NSMenuItem::separatorItem(mtm));
 
-        let quit_title = format!("Quit {app_name}");
+        let quit_title = tr!("Quit {app_name}", app_name = app_name);
         submenu.addItem(&make_responder_item(
             mtm,
             &quit_title,
@@ -369,7 +371,7 @@ fn build_category_submenu(
         }
         if !theme_cmds.is_empty() {
             submenu.addItem(&NSMenuItem::separatorItem(mtm));
-            submenu.addItem(&build_subgroup_submenu(mtm, target, "Theme", &theme_cmds));
+            submenu.addItem(&build_subgroup_submenu(mtm, target, &tr!("Theme"), &theme_cmds));
         }
         item.setSubmenu(Some(&submenu));
         Some(item)
@@ -402,12 +404,12 @@ fn build_edit_submenu(mtm: MainThreadMarker) -> Retained<NSMenuItem> {
     unsafe {
         let item = NSMenuItem::new(mtm);
         let submenu = NSMenu::new(mtm);
-        submenu.setTitle(&NSString::from_str("Edit"));
+        submenu.setTitle(&NSString::from_str(&tr!("Edit")));
 
-        submenu.addItem(&make_responder_item(mtm, "Undo", sel!(undo:), "z", None));
+        submenu.addItem(&make_responder_item(mtm, &tr!("Undo"), sel!(undo:), "z", None));
         submenu.addItem(&make_responder_item(
             mtm,
-            "Redo",
+            &tr!("Redo"),
             sel!(redo:),
             "z",
             Some(
@@ -418,15 +420,15 @@ fn build_edit_submenu(mtm: MainThreadMarker) -> Retained<NSMenuItem> {
 
         submenu.addItem(&NSMenuItem::separatorItem(mtm));
 
-        submenu.addItem(&make_responder_item(mtm, "Cut", sel!(cut:), "x", None));
-        submenu.addItem(&make_responder_item(mtm, "Copy", sel!(copy:), "c", None));
-        submenu.addItem(&make_responder_item(mtm, "Paste", sel!(paste:), "v", None));
+        submenu.addItem(&make_responder_item(mtm, &tr!("Cut"), sel!(cut:), "x", None));
+        submenu.addItem(&make_responder_item(mtm, &tr!("Copy"), sel!(copy:), "c", None));
+        submenu.addItem(&make_responder_item(mtm, &tr!("Paste"), sel!(paste:), "v", None));
 
         submenu.addItem(&NSMenuItem::separatorItem(mtm));
 
         submenu.addItem(&make_responder_item(
             mtm,
-            "Select All",
+            &tr!("Select All"),
             sel!(selectAll:),
             "a",
             None,
@@ -441,7 +443,7 @@ fn build_window_submenu(mtm: MainThreadMarker, target: &AppMenuTarget) -> Retain
     unsafe {
         let item = NSMenuItem::new(mtm);
         let submenu = NSMenu::new(mtm);
-        submenu.setTitle(&NSString::from_str("Window"));
+        submenu.setTitle(&NSString::from_str(&tr!("Window")));
 
         // Catalogue-driven entries first (next/prev tab).
         let cat_cmds: Vec<&CommandSpec> = all_commands()
@@ -459,14 +461,14 @@ fn build_window_submenu(mtm: MainThreadMarker, target: &AppMenuTarget) -> Retain
         // Built-in AppKit items.
         submenu.addItem(&make_responder_item(
             mtm,
-            "Minimize",
+            &tr!("Minimize"),
             sel!(performMiniaturize:),
             "m",
             None,
         ));
         submenu.addItem(&make_responder_item(
             mtm,
-            "Zoom",
+            &tr!("Zoom"),
             sel!(performZoom:),
             "",
             None,
@@ -476,7 +478,7 @@ fn build_window_submenu(mtm: MainThreadMarker, target: &AppMenuTarget) -> Retain
 
         submenu.addItem(&make_responder_item(
             mtm,
-            "Close Window",
+            &tr!("Close Window"),
             sel!(performClose:),
             "w",
             None,
@@ -504,7 +506,7 @@ unsafe fn build_command_item(
         idx
     });
 
-    let title = NSString::from_str(spec.title);
+    let title = NSString::from_str(&tr_raw(spec.title));
     let (key, mask) = match spec.primary_shortcut() {
         Some(sc) => (translate_key(sc.key), Some(translate_modifiers(sc))),
         None => (String::new(), None),

@@ -32,7 +32,7 @@
 //! directive; a metadata value the filesystem didn't provide
 //! (`created_unix == None`) quietly fails the predicate.
 
-use crate::{EntryKind, FileEntry};
+use crate::{msgid, EntryKind, FileEntry};
 
 /// Clock + zone context for resolving dates. `now_unix` is the current
 /// unix time; `tz_offset_secs` is the local zone's offset from UTC in
@@ -361,7 +361,8 @@ pub struct TokenHelp {
     /// Ready-to-insert example values for the value menu. Empty when
     /// the value is freeform (`ext:`).
     pub values: &'static [&'static str],
-    /// One-line description shown next to the key suggestion.
+    /// One-line description shown next to the key suggestion — a msgid;
+    /// translate at the display site with `ferail_core::i18n::tr_raw`.
     pub detail: &'static str,
 }
 
@@ -370,32 +371,32 @@ pub const TOKEN_HELP: &[TokenHelp] = &[
     TokenHelp {
         key: "kind:",
         values: &["folder", "file", "link"],
-        detail: "entry kind — kind:folder, kind:file, kind:link",
+        detail: msgid!("entry kind — kind:folder, kind:file, kind:link"),
     },
     TokenHelp {
         key: "ext:",
         values: &[],
-        detail: "file extension — ext:rs, ext:pdf",
+        detail: msgid!("file extension — ext:rs, ext:pdf"),
     },
     TokenHelp {
         key: "size:",
         values: &[">1mb", ">100mb", "<1mb", "1mb..100mb"],
-        detail: "file size — size:>10mb, size:1mb..1gb",
+        detail: msgid!("file size — size:>10mb, size:1mb..1gb"),
     },
     TokenHelp {
         key: "mod:",
         values: &["today", "yesterday", "week", "month", "year", ">2026-01-01"],
-        detail: "modified date — mod:today, mod:>2026-01-01, mod:2026-01-01..2026-03-31",
+        detail: msgid!("modified date — mod:today, mod:>2026-01-01, mod:2026-01-01..2026-03-31"),
     },
     TokenHelp {
         key: "created:",
         values: &["today", "yesterday", "week", "month", "year", ">2026-01-01"],
-        detail: "creation date — created:week, created:2026-01-01..2026-06-30",
+        detail: msgid!("creation date — created:week, created:2026-01-01..2026-06-30"),
     },
     TokenHelp {
         key: "locked:",
         values: &["yes", "no"],
-        detail: "locked (immutable / read-only) flag — locked:yes",
+        detail: msgid!("locked (immutable / read-only) flag — locked:yes"),
     },
 ];
 
