@@ -55,6 +55,8 @@ in the graph.
 
 ## 2. Table events don't carry click `Modifiers` — forced a full table fork
 
+**Filed upstream 2026-08-21:** [gpui-component#2795](https://github.com/longbridge/gpui-component/issues/2795).
+
 **Hit during:** original multi-select work; re-confirmed during the `c112e7b`
 bump (the fork is `crates/ferail-gpui/src/multi_table/`).
 
@@ -100,6 +102,8 @@ compile-and-fix exercise rather than a lockfile change.
 
 ## 4. `context_menu` keeps open/close state private — no callback
 
+**Filed upstream 2026-08-21:** [gpui-component#2796](https://github.com/longbridge/gpui-component/issues/2796).
+
 **Hit during:** breadcrumb tooltip-vs-menu overlap fix.
 
 `ContextMenuExt::context_menu` stores its `open` flag in private element
@@ -123,6 +127,8 @@ one-liner.
   menu currently open in this window".
 
 ## 4b. `context_menu` builds once and can never refresh its contents
+
+**Filed upstream 2026-08-21:** [gpui-component#2797](https://github.com/longbridge/gpui-component/issues/2797).
 
 **Hit during:** "Open With" arriving empty on the first right-click of a row
 (docs/features/CONTEXT_MENU.md).
@@ -241,6 +247,8 @@ previews is already in.
 
 ## 7. `gpui_windows` has no `Window::render_to_image` — headless capture needs a workaround
 
+**PR opened 2026-08-21:** [zed#63012](https://github.com/zed-industries/zed/pull/63012).
+
 **Hit during:** Windows port — the `--screenshot` CLI harness
 (`ferail-gpui/src/screenshot.rs`).
 
@@ -328,6 +336,8 @@ real on-disk paths only (`ExternalDragPayload::Files`) — nothing exists yet
 for promise-based/deferred content (our archive-entry drags stay in-window).
 
 ## 10. Drag-out operation mask is hardcoded to Copy — no move, no modifiers
+
+**Raised upstream 2026-08-21:** [zed discussion #63013](https://github.com/zed-industries/zed/discussions/63013) (their tracker routes feature requests to Discussions; posted in the "Zed GPUI" category, offering the PR once the API shape is agreed).
 
 **Hit during:** "drag out only copies; can a modifier make it a move?" —
 follow-up to #9.
