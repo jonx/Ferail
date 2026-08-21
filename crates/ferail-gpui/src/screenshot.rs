@@ -99,6 +99,8 @@ pub struct Args {
     /// (`DupePresentation::Panel`) regardless of the saved setting, so the
     /// card view can be captured headlessly. Implies `--find-duplicates`.
     pub dupe_panel: bool,
+    /// Open the filter-syntax cheat sheet dialog ((?) beside the filter).
+    pub filter_help: bool,
     /// Show the preview pane (`preview_visible` defaults to off; the
     /// pane also auto-hides under the viewport-width threshold, so
     /// pair with `--width` ≥ 900 when capturing it).
@@ -288,6 +290,7 @@ pub fn parse_args() -> Args {
                 args.find_duplicates = true;
                 args.dupe_panel = true;
             }
+            "--filter-help" => args.filter_help = true,
             "--preview" => args.preview = true,
             "--sort" => {
                 let raw = iter.next().unwrap_or_default();
@@ -387,6 +390,7 @@ OPTIONS
   --show-hidden            Include dotfiles.
   --filter <text>          Set the filter input value.
   --search                 Focus the filter input (Cmd+F).
+  --filter-help            Open the filter-syntax cheat sheet dialog.
   --preview                Show preview pane (always on today).
   --sort <column[-desc]>   Sort by name | size | kind | magic | mtime ± desc.
   --properties             Open Get Info pane. Lands in Stage 8.
@@ -677,7 +681,7 @@ pub fn run(args: Args) -> Result<()> {
             // tab's real load lands during it, and its first batch
             // would (correctly) clear a flag set any earlier.
             if let (Some(label), Some(shell)) = (simulate_slow_load, shell_for_late_flags) {
-                let _ = shell.update(cx, |s, cx| {
+                shell.update(cx, |s, cx| {
                     let table = s.active_tab().table.clone();
                     table.update(cx, |state, cx| {
                         state.delegate_mut().slow_load = Some(label.into());
@@ -796,6 +800,7 @@ struct ShellArgs {
     search_subtree: Option<String>,
     find_duplicates: bool,
     dupe_panel: bool,
+    filter_help: bool,
     select_row: Option<usize>,
     select_name: Option<String>,
     select_rows: Vec<usize>,
@@ -845,6 +850,7 @@ impl From<&Args> for ShellArgs {
             search_subtree: a.search_subtree.clone(),
             find_duplicates: a.find_duplicates,
             dupe_panel: a.dupe_panel,
+            filter_help: a.filter_help,
             select_row: a.select_row,
             select_name: a.select_name.clone(),
             select_rows: a.select_rows.clone(),
@@ -995,6 +1001,12 @@ impl ShellArgs {
                     });
                     s.start_subtree_search(tab_id, needle.clone(), None, cx);
                 });
+            });
+        }
+        if self.filter_help {
+            // Same entry point as the (?) button beside the filter field.
+            let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                crate::filter_help::open_filter_help_dialog(window, cx);
             });
         }
         if self.find_duplicates {

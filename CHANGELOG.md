@@ -99,6 +99,11 @@ unsigned (SHA-256 on the release page).
   it, and plain typing is never interrupted — the menu only appears when
   what you're typing looks like a token.
 
+- **A (?) button beside the filter field opens a filter-syntax cheat sheet.**
+  One click lists every supported token with its accepted values and
+  examples, plus the date and size rules, so you never have to remember the
+  syntax or hunt for it in the docs. Esc or a click outside closes it.
+
 - **The mpv video player now works in release downloads — no rebuild needed.**
   The optional mpv backend (plays virtually any video format, and powers live
   grading and the transparent chroma-key windows) used to require compiling

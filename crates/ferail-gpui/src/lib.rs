@@ -30,6 +30,7 @@ pub mod favorites_section;
 pub mod feature_settings;
 pub mod file_list;
 pub mod filter_complete;
+pub mod filter_help;
 pub mod folder_sizes;
 pub mod fs_watcher;
 pub mod grid;

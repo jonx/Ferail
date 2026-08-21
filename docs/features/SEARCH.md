@@ -84,6 +84,12 @@ cheat-sheet. Static table lookup only, `Task::ready`, no I/O; parser
 tests round-trip `TOKEN_HELP` so the menu can't advertise syntax the
 parser rejects.
 
+**Cheat sheet** (`filter_help.rs`): a (?) button to the right of the filter
+field opens a `Dialog` listing every `TOKEN_HELP` entry with its examples
+plus the date/size grammar — the stopgap discoverability surface until the
+filter grows chips. Same static table; `--filter-help` captures it
+headlessly.
+
 A token-only query (`mod:week` with no text) routes subtree search to the
 walker even when Spotlight is preferred — Spotlight needs a query string;
 the walker runs a pure metadata scan.

@@ -223,6 +223,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Empty table state | `IconName::Inbox` ↑ / `icons/inbox.svg` ↑ | Lucide | multi_table/delegate.rs:137, file_list.rs:1262 |
 | Format disguise (danger) | `icons/triangle-alert.svg` ↑ | Lucide | file_list.rs `render_td` "format" |
 | Format benign-mismatch cue | `icons/circle-help.svg` | **In-house** Lucide `circle-help` (house style; spare pool has `circle-check`/`circle-x`/`circle-user` but no neutral `?`-in-circle). Muted, non-danger. | file_list.rs `render_td` "format" |
+| Filter-syntax help — the (?) beside the filter field | `icons/circle-help.svg` | Same in-house `circle-help` as the format cue above. Deliberate share: both mean "explain this", and neither is a command glyph — the 1:1 command→icon rule is about commands. Revisit if the filter grows a chips UI. | render.rs `title_bar`, filter_help.rs |
 | Tool-result pop-out | `icons/maximize.svg` ↑ | Lucide | render.rs:2458 |
 | Tool-result close | `icons/close.svg` ↑ | Lucide | render.rs:2468 |
 | Task-panel dismiss | `icons/close.svg` ↑ | Lucide | task_panel.rs:101 |

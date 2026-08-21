@@ -1979,6 +1979,26 @@ impl Shell {
                         })
                         .child(Input::new(&self.active_tab().filter_input).small()),
                 )
+                // (?) — filter-syntax cheat sheet (filter_help.rs). A
+                // stopgap until the filter grows chips; same mouse-down
+                // stop as its neighbours for the Win32 title-bar drag.
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .child(
+                            Button::new("filter-help")
+                                .small()
+                                .ghost()
+                                .icon(gpui_component::Icon::empty().path("icons/circle-help.svg"))
+                                .tooltip("Filter syntax")
+                                .on_click(|_, window, cx| {
+                                    crate::filter_help::open_filter_help_dialog(window, cx);
+                                }),
+                        ),
+                )
                 .child(div().flex_1())
                 // Phase 7 follow-on: density buttons on the right —
                 // Refresh and New Folder. Icon-only with tooltips so

@@ -385,7 +385,7 @@ pub const TOKEN_HELP: &[TokenHelp] = &[
     TokenHelp {
         key: "mod:",
         values: &["today", "yesterday", "week", "month", "year", ">2026-01-01"],
-        detail: "modified date — mod:today, mod:>2026-01-01, mod:2026-01-01..2026-06-30",
+        detail: "modified date — mod:today, mod:>2026-01-01, mod:2026-01-01..2026-03-31",
     },
     TokenHelp {
         key: "created:",
