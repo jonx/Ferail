@@ -18,9 +18,13 @@
 //!
 //! Network: gpui's `cx.http_client()` (a real `ReqwestClient` installed at
 //! boot; gpui's own default is a `NullHttpClient` that errors). The check
-//! reuses zed's `http_client::github::latest_github_release`, which walks
-//! `/repos/{repo}/releases` and picks the newest non-prerelease with
-//! assets. This module's only requests are that one API call and the
+//! fetches `/repos/{repo}/releases` once — the same request zed's
+//! `http_client::github` helper makes, parsed into our own struct because
+//! that helper's drops the release `body` — and keeps every published,
+//! non-prerelease release newer than the running build: the newest one
+//! drives the download, and all of their notes become the dialog's
+//! "What's new", so the user decides with the changes in front of them.
+//! This module's only requests are that one API call and the
 //! user-initiated asset download — there is no telemetry channel here; an
 //! update check necessarily tells GitHub an app instance asked, which is
 //! why the automatic path ships opt-in.
@@ -37,12 +41,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::http_client::github::{GithubRelease, GithubReleaseAsset, latest_github_release};
 use gpui::http_client::{AsyncBody, HttpClient, HttpRequestExt as _, RedirectPolicy, http};
 use gpui::{
     App, AppContext as _, ClickEvent, ElementId, Global, InteractiveElement as _, IntoElement,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _, div, px,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
 };
+use serde::Deserialize;
 use gpui_component::{
     ActiveTheme as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
@@ -88,6 +92,24 @@ pub struct ReleaseInfo {
     pub tag: String,
     /// This platform's downloadable asset, when the release carries one.
     pub asset: Option<AssetInfo>,
+    /// Notes of every release newer than the running build, newest first
+    /// — `notes[0]` is this release's. More than one means the user
+    /// skipped versions; the dialog shows the whole span.
+    pub notes: Vec<ReleaseNotes>,
+}
+
+/// One release's notes, as written on its GitHub release page.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReleaseNotes {
+    /// Normalized "0.5.0".
+    pub version: String,
+    /// The release title on GitHub ("Ferail 0.5.0 — …"), or
+    /// "Ferail <version>" when none was set.
+    pub title: String,
+    /// Markdown body; empty when the release has no notes.
+    pub body: String,
+    /// Publication date as "YYYY-MM-DD", when GitHub reports one.
+    pub date: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -156,16 +178,6 @@ fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
     Some((maj, min, pat))
 }
 
-fn is_newer_than_current(remote_tag: &str) -> bool {
-    match (
-        parse_version(remote_tag),
-        parse_version(env!("CARGO_PKG_VERSION")),
-    ) {
-        (Some(r), Some(c)) => r > c,
-        _ => false,
-    }
-}
-
 /// Debian architecture string for the running build, matching the
 /// cargo-deb asset names CI publishes.
 fn deb_arch() -> &'static str {
@@ -192,24 +204,200 @@ fn pick_asset_index(names: &[&str]) -> Option<usize> {
     names.iter().position(|n| wanted(n))
 }
 
-fn release_info(release: &GithubRelease) -> ReleaseInfo {
+fn pick_asset(release: &GhRelease) -> Option<AssetInfo> {
     let names: Vec<&str> = release.assets.iter().map(|a| a.name.as_str()).collect();
-    let asset = pick_asset_index(&names).map(|ix| {
-        let a: &GithubReleaseAsset = &release.assets[ix];
-        AssetInfo {
-            name: a.name.clone(),
-            url: a.browser_download_url.clone(),
-        }
-    });
-    ReleaseInfo {
-        version: release.tag_name.trim_start_matches('v').to_string(),
-        tag: release.tag_name.clone(),
-        asset,
-    }
+    pick_asset_index(&names).map(|ix| AssetInfo {
+        name: release.assets[ix].name.clone(),
+        url: release.assets[ix].browser_download_url.clone(),
+    })
 }
 
 fn tag_url(tag: &str) -> String {
     format!("https://github.com/{REPO}/releases/tag/{tag}")
+}
+
+// ============================================================================
+// GitHub Releases: fetch + fold (fold is pure; unit-tested)
+// ============================================================================
+
+/// How many newer releases the dialog renders in full; anything older is
+/// summarized as a count with a pointer to GitHub.
+const NOTES_MAX: usize = 8;
+/// Releases to ask GitHub for — far beyond what anyone skips (the API
+/// default is 30 anyway; this just makes the contract explicit).
+const RELEASES_PER_PAGE: u32 = 30;
+
+/// The slice of GitHub's release JSON this module reads. Our own struct
+/// rather than zed's `GithubRelease` because that one drops `body` and
+/// `name` — the release notes — which are the point of "What's new".
+/// `#[serde(default)]` throughout: a field GitHub omits or nulls must
+/// degrade to "no notes", never fail the whole check.
+#[derive(Deserialize, Debug, Clone)]
+struct GhRelease {
+    tag_name: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    published_at: Option<String>,
+    #[serde(default)]
+    assets: Vec<GhAsset>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct GhAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+/// One `/releases` GET, parsed. Background executor only.
+async fn fetch_releases(client: Arc<dyn HttpClient>) -> anyhow::Result<Vec<GhRelease>> {
+    use anyhow::Context as _;
+    use futures_lite::io::AsyncReadExt as _;
+
+    let url =
+        format!("https://api.github.com/repos/{REPO}/releases?per_page={RELEASES_PER_PAGE}");
+    let mut request = http::Request::get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .follow_redirects(RedirectPolicy::FollowAll);
+    // Same courtesy zed's helper extends: a token lifts the anonymous
+    // rate limit (60 requests/hour/IP) for a developer who hits it.
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        request = request.header("Authorization", format!("Bearer {token}"));
+    }
+    let request = request.body(AsyncBody::default())?;
+    let mut response = client.send(request).await.context("fetching releases")?;
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .read_to_end(&mut body)
+        .await
+        .context("reading releases")?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "status error {}, response: {:?}",
+        response.status().as_u16(),
+        String::from_utf8_lossy(&body)
+            .lines()
+            .next()
+            .unwrap_or_default()
+    );
+    serde_json::from_slice::<Vec<GhRelease>>(&body).context("parsing releases")
+}
+
+/// What one fetched release list means for the running build.
+#[derive(Debug, PartialEq)]
+enum Outcome {
+    UpToDate { latest: String },
+    Available(ReleaseInfo),
+}
+
+/// Fold the release list into the check's outcome against `current`
+/// ("0.3.0"). Only published, non-prerelease releases that carry
+/// downloads count — a tag with nothing attached isn't an update — and a
+/// malformed tag is skipped rather than trusted. Newer releases all
+/// contribute their notes, newest first.
+fn summarize(releases: &[GhRelease], current: &str) -> anyhow::Result<Outcome> {
+    let mut eligible: Vec<(&GhRelease, (u64, u64, u64))> = releases
+        .iter()
+        .filter(|r| !r.prerelease && !r.draft && !r.assets.is_empty())
+        .filter_map(|r| parse_version(&r.tag_name).map(|v| (r, v)))
+        .collect();
+    // GitHub already returns newest-first; sort so the contract doesn't
+    // depend on it.
+    eligible.sort_by_key(|e| std::cmp::Reverse(e.1));
+    let Some(&(latest, latest_v)) = eligible.first() else {
+        anyhow::bail!("no published release with downloads found");
+    };
+    let latest_version = latest.tag_name.trim_start_matches('v').to_string();
+    let Some(cur) = parse_version(current) else {
+        anyhow::bail!("running version {current:?} is not a release version");
+    };
+    if latest_v <= cur {
+        return Ok(Outcome::UpToDate {
+            latest: latest_version,
+        });
+    }
+    let notes = eligible
+        .iter()
+        .filter(|(_, v)| *v > cur)
+        .map(|(r, _)| release_notes(r))
+        .collect();
+    Ok(Outcome::Available(ReleaseInfo {
+        version: latest_version,
+        tag: latest.tag_name.clone(),
+        asset: pick_asset(latest),
+        notes,
+    }))
+}
+
+fn release_notes(r: &GhRelease) -> ReleaseNotes {
+    let version = r.tag_name.trim_start_matches('v').to_string();
+    let title = r
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("Ferail {version}"));
+    // GitHub serves bodies with CRLF; the markdown renderer wants LF, and
+    // the surrounding whitespace is noise in a bordered box.
+    let body = r
+        .body
+        .as_deref()
+        .map(|b| b.replace("\r\n", "\n").trim().to_string())
+        .unwrap_or_default();
+    let date = r
+        .published_at
+        .as_deref()
+        .and_then(|s| s.get(..10))
+        .map(str::to_string);
+    ReleaseNotes {
+        version,
+        title,
+        body,
+        date,
+    }
+}
+
+/// The markdown rendered under "What's new". One newer release → just its
+/// body (the status line already names it). Several → each under its own
+/// heading, newest first, so a user who skipped versions sees the whole
+/// span; past `NOTES_MAX` the rest collapse to a count.
+fn notes_markdown(notes: &[ReleaseNotes]) -> String {
+    match notes {
+        [] => String::new(),
+        [one] => one.body.clone(),
+        many => {
+            let mut out = String::new();
+            for n in many.iter().take(NOTES_MAX) {
+                let date = n
+                    .date
+                    .as_deref()
+                    .map(|d| format!(" \u{b7} {d}"))
+                    .unwrap_or_default();
+                out.push_str(&format!("### {}{}\n\n", n.title, date));
+                out.push_str(if n.body.is_empty() {
+                    "_No notes were written for this release._"
+                } else {
+                    &n.body
+                });
+                out.push_str("\n\n");
+            }
+            if many.len() > NOTES_MAX {
+                out.push_str(&format!(
+                    "_\u{2026}and {} earlier release(s) \u{2014} see GitHub._\n",
+                    many.len() - NOTES_MAX
+                ));
+            }
+            out
+        }
+    }
 }
 
 // ============================================================================
@@ -280,16 +468,15 @@ fn start_check(manual: bool, cx: &mut App) {
     cx.spawn(async move |cx| {
         let result = cx
             .background_executor()
-            .spawn(async move { latest_github_release(REPO, true, false, client).await })
+            .spawn(async move {
+                let releases = fetch_releases(client).await?;
+                summarize(&releases, env!("CARGO_PKG_VERSION"))
+            })
             .await;
         cx.update(|cx| {
-            let status = match &result {
-                Ok(release) if is_newer_than_current(&release.tag_name) => {
-                    CheckStatus::Available(release_info(release))
-                }
-                Ok(release) => CheckStatus::UpToDate {
-                    latest: release.tag_name.trim_start_matches('v').to_string(),
-                },
+            let status = match result {
+                Ok(Outcome::Available(info)) => CheckStatus::Available(info),
+                Ok(Outcome::UpToDate { latest }) => CheckStatus::UpToDate { latest },
                 Err(e) => {
                     crate::log_warn!(90, "update check failed: {e:#}");
                     // First line only: the anyhow chain can quote a whole
@@ -563,7 +750,7 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
     let st = snapshot(cx);
     let dialog = dialog
         .title("Software Update")
-        .w(px(420.0))
+        .w(px(480.0))
         .overlay_closable(true)
         .keyboard(true)
         .close_button(true)
@@ -676,6 +863,7 @@ fn dialog_body(st: &UpdateState, cx: &App) -> impl IntoElement {
                     .text_color(fg)
                     .child(format!("Ferail {} is available.", info.version)),
             )
+            .child(whats_new(info, cx))
             .child(release_notes_row(info.tag.clone()))
             .into_any_element(),
         CheckStatus::Failed(e) => v_flex()
@@ -731,14 +919,66 @@ fn dialog_body(st: &UpdateState, cx: &App) -> impl IntoElement {
         .children(download_line)
 }
 
-/// Clickable "Release notes" link → the tag's GitHub page.
+/// "What's new" — the release notes GitHub holds for every version newer
+/// than this build, rendered as markdown in a bounded scroll box, so the
+/// user decides with the changes in front of them, before anything is
+/// downloaded.
+fn whats_new(info: &ReleaseInfo, cx: &App) -> impl IntoElement {
+    let muted = cx.theme().muted_foreground;
+    let src = notes_markdown(&info.notes);
+    let label = if info.notes.len() > 1 {
+        format!(
+            "What's new since {} ({} releases)",
+            env!("CARGO_PKG_VERSION"),
+            info.notes.len()
+        )
+    } else {
+        "What's new".to_string()
+    };
+    let body: gpui::AnyElement = if src.is_empty() {
+        div()
+            .text_scale_xs()
+            .text_color(muted)
+            .child("No release notes were written for this version.")
+            .into_any_element()
+    } else {
+        // Keyed on the version: a TextView caches its parse and selection
+        // under its id, so a different release must get a fresh one.
+        gpui_component::text::TextView::markdown(
+            ElementId::Name(format!("update-notes-{}", info.version).into()),
+            SharedString::from(src),
+        )
+        .selectable(true)
+        .into_any_element()
+    };
+    v_flex()
+        .gap_1()
+        .mt_1()
+        .child(div().text_scale_xs().text_color(muted).child(label))
+        .child(
+            div()
+                .id("update-notes-scroll")
+                .max_h(px(260.0))
+                .overflow_y_scroll()
+                .p_2()
+                .rounded(cx.theme().radius)
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().secondary.opacity(0.5))
+                .text_scale_sm()
+                .child(body),
+        )
+}
+
+/// Clickable link → the tag's GitHub page (the notes above are the same
+/// text; this is for the assets list, checksums, and discussion).
 fn release_notes_row(tag: String) -> impl IntoElement {
     div()
         .id(ElementId::Name("update-release-notes".into()))
         .cursor_pointer()
         .text_scale_xs()
         .underline()
-        .child("Release notes")
+        .child("Open the release page on GitHub")
         .on_click(move |_: &ClickEvent, _window, cx| {
             let url = tag_url(&tag);
             // LaunchServices/xdg-open can stall — worker, not UI thread.
@@ -770,6 +1010,28 @@ pub fn seed_dialog_for_screenshot(state: &str, cx: &mut App) {
             name: "Ferail-9.9.9.dmg".to_string(),
             url: String::new(),
         }),
+        // Two releases, so the screenshot shows the "skipped a version"
+        // shape: per-release headings, dates, markdown inline styles.
+        notes: vec![
+            ReleaseNotes {
+                version: "9.9.9".to_string(),
+                title: "Ferail 9.9.9 \u{2014} sample release".to_string(),
+                body: "- **Sample notes** for the screenshot harness — this text \
+                       is what the GitHub release page says.\n\
+                       - A second bullet with `inline code` and a \
+                       [link](https://github.com/jonx/Ferail/releases).\n\
+                       - Fixed: something that used to be wrong."
+                    .to_string(),
+                date: Some("2026-12-31".to_string()),
+            },
+            ReleaseNotes {
+                version: "9.9.8".to_string(),
+                title: "Ferail 9.9.8".to_string(),
+                body: "- An earlier release you skipped; its notes show too."
+                    .to_string(),
+                date: Some("2026-12-01".to_string()),
+            },
+        ],
     };
     let (status, download) = match state {
         "uptodate" => (
@@ -830,10 +1092,117 @@ mod tests {
     fn newer_comparison_uses_numeric_order() {
         // 0.10.0 > 0.9.0 must hold numerically, not lexically.
         assert!(parse_version("v0.10.0") > parse_version("v0.9.0"));
-        // Malformed remote tags never count as newer.
-        assert!(!is_newer_than_current("not-a-version"));
-        // The running version is never "newer" than itself.
-        assert!(!is_newer_than_current(env!("CARGO_PKG_VERSION")));
+    }
+
+    fn gh(tag: &str, assets: &[&str], body: Option<&str>, prerelease: bool) -> GhRelease {
+        GhRelease {
+            tag_name: tag.to_string(),
+            name: None,
+            body: body.map(str::to_string),
+            prerelease,
+            draft: false,
+            published_at: Some("2026-08-08T11:43:00Z".to_string()),
+            assets: assets
+                .iter()
+                .map(|n| GhAsset {
+                    name: n.to_string(),
+                    browser_download_url: format!("https://x/{n}"),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn summarize_collects_notes_for_every_newer_release() {
+        let rel = vec![
+            gh(
+                "v0.5.0",
+                &[
+                    "Ferail-0.5.0-win-x64.zip",
+                    "Ferail-0.5.0.dmg",
+                    "ferail_0.5.0-1_amd64.deb",
+                    "ferail_0.5.0-1_arm64.deb",
+                ],
+                Some("five\r\n- bullet\r\n"),
+                false,
+            ),
+            // Pre-releases are never offered, however new.
+            gh("v0.6.0-rc1", &["Ferail-0.6.0.dmg"], Some("rc"), true),
+            // Newer than current, no notes written.
+            gh("v0.4.0", &["Ferail-0.4.0.dmg"], None, false),
+            // Current — not "new".
+            gh("v0.3.0", &["Ferail-0.3.0.dmg"], Some("three"), false),
+            // Malformed tag: ignored, not trusted.
+            gh("nightly", &["Ferail-nightly.dmg"], Some("x"), false),
+        ];
+        match summarize(&rel, "0.3.0").unwrap() {
+            Outcome::Available(info) => {
+                assert_eq!(info.version, "0.5.0");
+                assert_eq!(info.tag, "v0.5.0");
+                assert_eq!(
+                    info.notes.iter().map(|n| n.version.as_str()).collect::<Vec<_>>(),
+                    ["0.5.0", "0.4.0"]
+                );
+                // CRLF normalized, trimmed; missing body → empty, not a failure.
+                assert_eq!(info.notes[0].body, "five\n- bullet");
+                assert_eq!(info.notes[0].title, "Ferail 0.5.0");
+                assert_eq!(info.notes[0].date.as_deref(), Some("2026-08-08"));
+                assert_eq!(info.notes[1].body, "");
+                assert!(info.asset.is_some() || std::env::consts::OS == "freebsd");
+            }
+            other => panic!("expected Available, got {other:?}"),
+        }
+        // At or past the latest: up to date, naming the latest.
+        for cur in ["0.5.0", "0.9.0"] {
+            assert_eq!(
+                summarize(&rel, cur).unwrap(),
+                Outcome::UpToDate {
+                    latest: "0.5.0".to_string()
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn summarize_ignores_releases_without_downloads() {
+        // A newer tag with nothing attached is not an update…
+        let rel = vec![
+            gh("v0.9.0", &[], Some("assets still uploading"), false),
+            gh("v0.4.0", &["Ferail-0.4.0.dmg"], None, false),
+        ];
+        match summarize(&rel, "0.3.0").unwrap() {
+            Outcome::Available(info) => assert_eq!(info.version, "0.4.0"),
+            other => panic!("{other:?}"),
+        }
+        // …and a list with none at all is an error, not "up to date".
+        assert!(summarize(&[gh("v0.9.0", &[], None, false)], "0.3.0").is_err());
+    }
+
+    #[test]
+    fn notes_markdown_single_is_bare_body_and_many_get_headings() {
+        let one = vec![ReleaseNotes {
+            version: "0.4.0".into(),
+            title: "Ferail 0.4.0".into(),
+            body: "- a".into(),
+            date: None,
+        }];
+        assert_eq!(notes_markdown(&one), "- a");
+        let two = vec![
+            one[0].clone(),
+            ReleaseNotes {
+                version: "0.3.1".into(),
+                title: "Ferail 0.3.1".into(),
+                body: String::new(),
+                date: Some("2026-08-01".into()),
+            },
+        ];
+        let md = notes_markdown(&two);
+        assert!(md.starts_with("### Ferail 0.4.0\n\n- a\n\n"));
+        assert!(md.contains("### Ferail 0.3.1 \u{b7} 2026-08-01\n\n_No notes"));
+        // Past the cap, the rest collapse into a count.
+        let many: Vec<_> = (0..NOTES_MAX + 2).map(|_| one[0].clone()).collect();
+        assert!(notes_markdown(&many).contains("and 2 earlier release(s)"));
+        assert!(notes_markdown(&[]).is_empty());
     }
 
     #[test]

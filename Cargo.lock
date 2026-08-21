@@ -2178,6 +2178,8 @@ dependencies = [
  "reqwest_client",
  "resvg 0.45.1",
  "rust-embed",
+ "serde",
+ "serde_json",
  "smallvec",
  "sysinfo",
  "windows-sys 0.59.0",

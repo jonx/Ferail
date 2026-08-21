@@ -39,8 +39,11 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 - **Ferail can now tell you when a newer version exists — if you ask it
   to.** A new **Ferail → Check for Updates…** menu item asks GitHub
   Releases for the latest version and shows the result in a Software
-  Update dialog: when something newer exists you can read the release
-  notes, download the right file for your machine (macOS disk image,
+  Update dialog: when something newer exists the dialog shows **what's
+  new** — the release notes from GitHub, rendered right there, and if you
+  skipped a few versions, the notes of every release you missed — so you
+  decide with the changes in front of you; then download the right file
+  for your machine (macOS disk image,
   Windows zip, Debian/Ubuntu package for your CPU) straight into
   Downloads with live progress, then open it or show it in the folder —
   installing stays your step, Ferail never replaces itself. A separate

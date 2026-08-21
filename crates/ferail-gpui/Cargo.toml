@@ -63,6 +63,11 @@ notify = "7.0"
 # Streaming directory enumeration sends worker batches to a GPUI task
 # without timer polling.
 async-channel = "2.5"
+# Update check (src/update_check.rs): parse GitHub's /releases JSON — tag,
+# assets, and the notes body the dialog shows as "What's new". Both crates
+# are already in the graph via gpui, so this adds no new code to build.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 # Async read of the update-download HTTP body (update_check.rs). Same
 # version smol/async-* already put in the graph — no new code compiled.
 futures-lite = "2"

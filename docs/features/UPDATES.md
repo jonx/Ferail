@@ -20,8 +20,17 @@ the dialog re-renders from every frame.
   toggling *on* checks immediately. Skipped entirely in safe mode.
 - **The dialog** — Installed version, check outcome, then per state:
   Download `<asset>` / Later; a live percent while downloading;
-  Open / Show in Folder once done. "Release notes" links to the tag's
-  GitHub page.
+  Open / Show in Folder once done. When something newer exists, a
+  **"What's new"** box renders the release notes — the markdown body of
+  the GitHub release — so the decision to update is made with the
+  changes in front of you. If the user skipped versions, *every* newer
+  release's notes appear, newest first, each under its own
+  `### <title> · <date>` heading (capped at `NOTES_MAX`; the rest
+  collapse to a count); a release with no notes says so rather than
+  vanishing. A link below still opens the tag's GitHub page (assets,
+  checksums). The box is a bounded `overflow_y_scroll` region with a
+  `TextView::markdown` keyed on the version, so a different release
+  gets a fresh parse/selection state.
 
 ## What "update" means (v1)
 
@@ -39,10 +48,16 @@ opening the release page.
 
 - **HTTP**: gpui ships a `NullHttpClient`; boot installs zed's
   `ReqwestClient` (same zed source as gpui, one locked rev — see the
-  workspace Cargo.toml note) behind `cx.http_client()`. The check
-  reuses `http_client::github::latest_github_release` (newest
-  non-prerelease with assets). Version compare is strict
-  `major.minor.patch` — a malformed remote tag is *never* "newer".
+  workspace Cargo.toml note) behind `cx.http_client()`. The check makes
+  one `GET /repos/jonx/Ferail/releases?per_page=30` (same shape as
+  zed's `http_client::github` helper — redirects followed, optional
+  `GITHUB_TOKEN` bearer — but parsed into our own `GhRelease` because
+  zed's struct drops the release `body`/`name`). `summarize()` (pure,
+  unit-tested) keeps published, non-prerelease releases *with assets*,
+  sorts by version, and against `CARGO_PKG_VERSION` yields either
+  UpToDate or Available{latest's asset + notes of every newer release}.
+  Version compare is strict `major.minor.patch` — a malformed remote
+  tag is skipped, *never* "newer".
 - **Prime Directive**: the API call, the download, and every filesystem
   touch run on the background executor; results cross back over an
   `async_channel` into the global on the foreground executor.
@@ -53,8 +68,9 @@ opening the release page.
 
 ## Testing
 
-- Pure logic (version parse/compare, per-platform asset pick, name
-  uniquifying) is unit-tested.
+- Pure logic (version parse/compare, per-platform asset pick, the
+  release-list fold incl. skipped-version notes and no-asset releases,
+  notes-markdown assembly, name uniquifying) is unit-tested.
 - `cargo test -p ferail-gpui update_check -- --ignored` runs the real
   download-path test (network; fetches a release asset, verifies size,
   cleans up).
