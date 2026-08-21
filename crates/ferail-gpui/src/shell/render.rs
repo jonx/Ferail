@@ -85,7 +85,11 @@ impl Render for ResizePreviewThumb {
 /// Truncated single-line URL for the preview pane's provenance rows,
 /// with the full URL in a hover tooltip — same treatment as the
 /// "Where" path row. Pure display; no parsing.
-pub(crate) fn truncated_url_value(key: &'static str, url: &str, id: ferail_core::NodeId) -> AnyElement {
+pub(crate) fn truncated_url_value(
+    key: &'static str,
+    url: &str,
+    id: ferail_core::NodeId,
+) -> AnyElement {
     let full = SharedString::from(url.to_string());
     let tip = full.clone();
     div()
@@ -271,11 +275,7 @@ impl Shell {
     /// (most-recent-first folders). Returns `None` when the feature is
     /// switched off or the cache is empty, so the section stays hidden
     /// for a disabled user or a brand-new profile — no clutter.
-    fn build_recents_section(
-        &self,
-        weak: WeakEntity<Self>,
-        cx: &App,
-    ) -> Option<ShellSidebarItem> {
+    fn build_recents_section(&self, weak: WeakEntity<Self>, cx: &App) -> Option<ShellSidebarItem> {
         if !crate::recents_section::recents_enabled(cx) {
             return None;
         }
@@ -565,7 +565,13 @@ impl Shell {
                     (Some(t), Some(a)) if t > 0 => Some((t, a)),
                     _ => None,
                 };
-                (v.path.clone(), v.name.clone(), cap, v.is_removable, !v.is_local)
+                (
+                    v.path.clone(),
+                    v.name.clone(),
+                    cap,
+                    v.is_removable,
+                    !v.is_local,
+                )
             })
             .collect();
         let mut entries: Vec<VolumeRowFav> = volume_paths
@@ -828,10 +834,10 @@ impl Shell {
     /// gesture through the same `Shell` methods. See `crate::grid`.
     fn grid_body(&self, cx: &mut Context<Self>) -> AnyElement {
         use crate::file_list::{DragBadge, GHOST_STACK_CAP};
+        use crate::multi_table::LiveContextMenuExt as _;
         use crate::thumbnails::THUMB_PX;
         use ferail_core::EntryKind;
         use gpui::ExternalPaths;
-        use crate::multi_table::LiveContextMenuExt as _;
         use smallvec::SmallVec;
         use std::sync::Arc;
 
@@ -941,10 +947,8 @@ impl Shell {
                     .map(|p| {
                         p.file_name()
                             .map(|n| {
-                                ferail_fs_native::paths::display_leaf(
-                                    n.to_string_lossy().as_ref(),
-                                )
-                                .into_owned()
+                                ferail_fs_native::paths::display_leaf(n.to_string_lossy().as_ref())
+                                    .into_owned()
                             })
                             .unwrap_or_default()
                             .into()
@@ -1071,51 +1075,52 @@ impl Shell {
                     // come only from already-warm caches, so building
                     // them never touches the filesystem.
                     let is_dir = matches!(entry.kind, EntryKind::Directory);
-                    let (drag_paths, drag_dirs, ghost_icons, ghost_names): GridCellDrag = if selected {
-                        match &sel_drag {
-                            Some((paths, dirs, gi, gn)) => (
-                                SmallVec::from_vec((**paths).clone()),
-                                SmallVec::from_vec((**dirs).clone()),
-                                gi.clone(),
-                                gn.clone(),
-                            ),
-                            None => (
-                                SmallVec::new(),
-                                SmallVec::new(),
-                                SmallVec::new(),
-                                SmallVec::new(),
-                            ),
-                        }
-                    } else {
-                        let mut gi: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
-                            SmallVec::new();
-                        let thumb = if show_thumbs {
-                            thumbs.borrow().get(&path, THUMB_PX)
+                    let (drag_paths, drag_dirs, ghost_icons, ghost_names): GridCellDrag =
+                        if selected {
+                            match &sel_drag {
+                                Some((paths, dirs, gi, gn)) => (
+                                    SmallVec::from_vec((**paths).clone()),
+                                    SmallVec::from_vec((**dirs).clone()),
+                                    gi.clone(),
+                                    gn.clone(),
+                                ),
+                                None => (
+                                    SmallVec::new(),
+                                    SmallVec::new(),
+                                    SmallVec::new(),
+                                    SmallVec::new(),
+                                ),
+                            }
                         } else {
-                            None
+                            let mut gi: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
+                                SmallVec::new();
+                            let thumb = if show_thumbs {
+                                thumbs.borrow().get(&path, THUMB_PX)
+                            } else {
+                                None
+                            };
+                            match thumb {
+                                Some(t) => gi.push(t),
+                                None => gi.push(icons.borrow_mut().icon_for(entry, &path)),
+                            }
+                            let name: SharedString = path
+                                .file_name()
+                                .map(|n| {
+                                    // Drag chip shows the display leaf (macOS `:` → `/`).
+                                    ferail_fs_native::paths::display_leaf(
+                                        n.to_string_lossy().as_ref(),
+                                    )
+                                    .into_owned()
+                                })
+                                .unwrap_or_default()
+                                .into();
+                            (
+                                SmallVec::from_vec(vec![path.clone()]),
+                                SmallVec::from_vec(vec![is_dir]),
+                                gi,
+                                SmallVec::from_vec(vec![name]),
+                            )
                         };
-                        match thumb {
-                            Some(t) => gi.push(t),
-                            None => gi.push(icons.borrow_mut().icon_for(entry, &path)),
-                        }
-                        let name: SharedString = path
-                            .file_name()
-                            .map(|n| {
-                                // Drag chip shows the display leaf (macOS `:` → `/`).
-                                ferail_fs_native::paths::display_leaf(
-                                    n.to_string_lossy().as_ref(),
-                                )
-                                .into_owned()
-                            })
-                            .unwrap_or_default()
-                            .into();
-                        (
-                            SmallVec::from_vec(vec![path.clone()]),
-                            SmallVec::from_vec(vec![is_dir]),
-                            gi,
-                            SmallVec::from_vec(vec![name]),
-                        )
-                    };
                     let drag_count = drag_paths.len();
                     let can_drag = !drag_paths.is_empty();
                     // Finder-style selection pill behind the label: full
@@ -1267,19 +1272,11 @@ impl Shell {
                             // Promote to a native drag session when the
                             // pointer leaves the window; dir-ness comes
                             // from the cached EntryKind, never a stat.
-                            .external_drag_payload::<ExternalPaths>(
-                                move |paths, _window, _cx| {
-                                    Some(gpui::ExternalDragPayload::Files(
-                                        gpui::FileDragPaths::new(
-                                            paths
-                                                .paths()
-                                                .iter()
-                                                .cloned()
-                                                .zip(drag_dirs.iter().copied()),
-                                        ),
-                                    ))
-                                },
-                            )
+                            .external_drag_payload::<ExternalPaths>(move |paths, _window, _cx| {
+                                Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new(
+                                    paths.paths().iter().cloned().zip(drag_dirs.iter().copied()),
+                                )))
+                            })
                         })
                         .when(is_dir, |d| {
                             // Folder cells are OS-drag drop targets (accent
@@ -1327,30 +1324,30 @@ impl Shell {
                                 }
                             },
                             move |menu, window, cx| {
-                            // Same right-click menu the table uses, reached
-                            // through the shared TableState delegate — so
-                            // icons mode gets Rename, Open With, tags, Trash,
-                            // everything the list row has, from one menu
-                            // definition. Mirrors TableEvent::RightClickedRow:
-                            // select the cell (unless it's already inside the
-                            // selection) and stash context_row so the menu's
-                            // actions (Rename included) target it.
-                            use crate::multi_table::TableDelegate as _;
-                            let Some(shell_ent) = weak_menu.upgrade() else {
-                                return menu;
-                            };
-                            shell_ent.update(cx, |this, cx| {
-                                let was_selected = this
-                                    .node_id_at_row(i, cx)
-                                    .map(|id| this.active_tab().selection.contains(&id))
-                                    .unwrap_or(false);
-                                this.apply_row_right_click(i, cx);
-                                this.context_row = if was_selected { None } else { Some(i) };
-                                let table = this.active_tab().table.clone();
-                                table.update(cx, |tbl, cx| {
-                                    tbl.delegate_mut().context_menu(i, menu, window, cx)
+                                // Same right-click menu the table uses, reached
+                                // through the shared TableState delegate — so
+                                // icons mode gets Rename, Open With, tags, Trash,
+                                // everything the list row has, from one menu
+                                // definition. Mirrors TableEvent::RightClickedRow:
+                                // select the cell (unless it's already inside the
+                                // selection) and stash context_row so the menu's
+                                // actions (Rename included) target it.
+                                use crate::multi_table::TableDelegate as _;
+                                let Some(shell_ent) = weak_menu.upgrade() else {
+                                    return menu;
+                                };
+                                shell_ent.update(cx, |this, cx| {
+                                    let was_selected = this
+                                        .node_id_at_row(i, cx)
+                                        .map(|id| this.active_tab().selection.contains(&id))
+                                        .unwrap_or(false);
+                                    this.apply_row_right_click(i, cx);
+                                    this.context_row = if was_selected { None } else { Some(i) };
+                                    let table = this.active_tab().table.clone();
+                                    table.update(cx, |tbl, cx| {
+                                        tbl.delegate_mut().context_menu(i, menu, window, cx)
+                                    })
                                 })
-                            })
                             },
                         );
                     row_el = row_el.child(cell);
@@ -1448,8 +1445,14 @@ impl Shell {
                 cx.listener(Self::on_grid_marquee_down),
             )
             .on_mouse_move(cx.listener(Self::on_grid_marquee_move))
-            .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::on_grid_marquee_up))
-            .on_mouse_up_out(gpui::MouseButton::Left, cx.listener(Self::on_grid_marquee_up))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(Self::on_grid_marquee_up),
+            )
+            .on_mouse_up_out(
+                gpui::MouseButton::Left,
+                cx.listener(Self::on_grid_marquee_up),
+            )
             .child(measure)
             .child(list)
             .when_some(marquee_rect, |d, (l, t, w, h)| {
@@ -2104,41 +2107,44 @@ impl Shell {
                 // gotcha, like the other dropdowns. macOS-only for now (the
                 // win32/linux window primitives are stubs) — hidden elsewhere
                 // so the menu isn't three silent no-ops.
-                .when(cfg!(target_os = "macos"), |bar| bar.child(
-                    div()
-                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
-                            cx.stop_propagation();
-                        })
-                        .child(
-                            Button::new("toolbar-dock")
-                                .small()
-                                .ghost()
-                                .selected(dock_edge.is_some())
-                                .icon(gpui_component::Icon::empty().path("icons/dock.svg"))
-                                .tooltip("Dock window to a screen edge")
-                                .dropdown_menu(move |menu, _window, _cx| {
-                                    menu.action_context(dock_menu_focus.clone())
-                                        .menu_with_icon(
-                                            "Dock Left",
-                                            gpui_component::Icon::empty()
-                                                .path("icons/dock-left.svg"),
-                                            Box::new(DockLeft),
-                                        )
-                                        .menu_with_icon(
-                                            "Dock Right",
-                                            gpui_component::Icon::empty()
-                                                .path("icons/dock-right.svg"),
-                                            Box::new(DockRight),
-                                        )
-                                        .separator()
-                                        .menu_with_icon(
-                                            "Undock",
-                                            gpui_component::Icon::empty().path("icons/undock.svg"),
-                                            Box::new(Undock),
-                                        )
-                                }),
-                        ),
-                ))
+                .when(cfg!(target_os = "macos"), |bar| {
+                    bar.child(
+                        div()
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .child(
+                                Button::new("toolbar-dock")
+                                    .small()
+                                    .ghost()
+                                    .selected(dock_edge.is_some())
+                                    .icon(gpui_component::Icon::empty().path("icons/dock.svg"))
+                                    .tooltip("Dock window to a screen edge")
+                                    .dropdown_menu(move |menu, _window, _cx| {
+                                        menu.action_context(dock_menu_focus.clone())
+                                            .menu_with_icon(
+                                                "Dock Left",
+                                                gpui_component::Icon::empty()
+                                                    .path("icons/dock-left.svg"),
+                                                Box::new(DockLeft),
+                                            )
+                                            .menu_with_icon(
+                                                "Dock Right",
+                                                gpui_component::Icon::empty()
+                                                    .path("icons/dock-right.svg"),
+                                                Box::new(DockRight),
+                                            )
+                                            .separator()
+                                            .menu_with_icon(
+                                                "Undock",
+                                                gpui_component::Icon::empty()
+                                                    .path("icons/undock.svg"),
+                                                Box::new(Undock),
+                                            )
+                                    }),
+                            ),
+                    )
+                })
                 // View switcher: list ⇄ icon grid (per-tab). The active
                 // mode's button is highlighted.
                 .child(
@@ -2234,14 +2240,14 @@ impl Shell {
         )
     }
 
-    /// Render-safe path resolution for a file-list row's preview.
-    ///
-    /// Reads the delegate's per-entry `paths` map (a pure in-memory
-    /// lookup populated at load for directory, search, AND duplicate
-    /// rows) so it works for results views whose files live outside
-    /// `current_dir` — without touching the guarded node store, which
-    /// would panic on the paint path. Falls back to `current_dir + name`
-    /// only when the map has no entry.
+    // Render-safe path resolution for a file-list row's preview.
+    //
+    // Reads the delegate's per-entry `paths` map (a pure in-memory
+    // lookup populated at load for directory, search, AND duplicate
+    // rows) so it works for results views whose files live outside
+    // `current_dir` — without touching the guarded node store, which
+    // would panic on the paint path. Falls back to `current_dir + name`
+    // only when the map has no entry.
 
     /// Build the breadcrumb row from `current_dir`. Each ancestor is
     /// clickable and navigates the pane to that level. The root `/`
@@ -2582,30 +2588,27 @@ impl Shell {
                                     for (name, child) in children.iter() {
                                         let child = child.clone();
                                         let weak_nav = weak_sub.clone();
-                                        sub = sub.item(
-                                            PopupMenuItem::new(name.clone()).on_click(
-                                                move |_ev, _w, cx| {
-                                                    let child = child.clone();
-                                                    let _ = weak_nav.update(cx, |sh, cx| {
-                                                        sh.navigate(child, cx);
-                                                    });
-                                                },
-                                            ),
-                                        );
+                                        sub = sub.item(PopupMenuItem::new(name.clone()).on_click(
+                                            move |_ev, _w, cx| {
+                                                let child = child.clone();
+                                                let _ = weak_nav.update(cx, |sh, cx| {
+                                                    sh.navigate(child, cx);
+                                                });
+                                            },
+                                        ));
                                     }
                                     sub
                                 }
-                                Some(Some(_)) => sub
-                                    .item(PopupMenuItem::new("No subfolders").disabled(true)),
+                                Some(Some(_)) => {
+                                    sub.item(PopupMenuItem::new("No subfolders").disabled(true))
+                                }
                                 _ => {
                                     // Cold or in-flight — kick a warm and show
                                     // a placeholder; a re-open shows the list.
                                     s.update(c, |sh, cx| {
                                         sh.warm_breadcrumb_children(path_sub.clone(), cx);
                                     });
-                                    sub.item(
-                                        PopupMenuItem::new("Loading\u{2026}").disabled(true),
-                                    )
+                                    sub.item(PopupMenuItem::new("Loading\u{2026}").disabled(true))
                                 }
                             }
                         })
@@ -2723,27 +2726,28 @@ impl Render for Shell {
         // Render never fetches icons (the path guard makes cache
         // misses return the blank placeholder), so collect the
         // sidebar paths whose icon isn't cached yet and schedule a
-        // background warm. `warm_folder_icon` caches even on fetch
-        // failure, so this set empties out instead of respawning
-        // every frame. Favorites ride along: their rows use the same
+        // background warm. A failed fetch caches the placeholder and
+        // in-flight keys are skipped, so this set empties out instead
+        // of respawning every frame. Favorites ride along: their rows use the same
         // path-keyed cache.
         let mut icon_warm: Vec<PathBuf> = Vec::new();
         {
             let icons = self.process.icons.borrow();
             for row in browse_rows.iter().chain(volumes_rows.iter()) {
-                if matches!(row.icon, TreeRowIcon::Folder) && !icons.has_folder_icon(&row.path) {
+                if matches!(row.icon, TreeRowIcon::Folder) && icons.needs_path_icon(&row.path, None)
+                {
                     icon_warm.push(row.path.clone());
                 }
             }
             for fav in self.process.favorites().read(cx).entries() {
                 if let ferail_core::favorites::FavoriteTarget::Path(p) = &fav.target {
-                    if fav.custom_icon.is_none() && !icons.has_folder_icon(p) {
+                    if fav.custom_icon.is_none() && icons.needs_path_icon(p, None) {
                         icon_warm.push(p.clone());
                     }
                 }
             }
             for p in self.process.recents.borrow().iter() {
-                if !icons.has_folder_icon(p) {
+                if icons.needs_path_icon(p, None) {
                     icon_warm.push(p.clone());
                 }
             }
@@ -2888,10 +2892,26 @@ impl Render for Shell {
             free_bytes,
             volume_name,
             volume_read_only,
-            hidden_count: if archive_mode { 0 } else { hidden_summary.count },
-            hidden_bytes: if archive_mode { 0 } else { hidden_summary.bytes },
-            filtered_count: if archive_mode { 0 } else { filter_summary.count },
-            filtered_bytes: if archive_mode { 0 } else { filter_summary.bytes },
+            hidden_count: if archive_mode {
+                0
+            } else {
+                hidden_summary.count
+            },
+            hidden_bytes: if archive_mode {
+                0
+            } else {
+                hidden_summary.bytes
+            },
+            filtered_count: if archive_mode {
+                0
+            } else {
+                filter_summary.count
+            },
+            filtered_bytes: if archive_mode {
+                0
+            } else {
+                filter_summary.bytes
+            },
             // Filled in just before the status_bar::render call, where
             // the window id is in hand.
             stats: None,
@@ -3138,7 +3158,8 @@ impl Render for Shell {
                         .entry_by_id(id)
                         .map(|f| f.effective_label())
                         .unwrap_or_else(|| "favorite".to_string());
-                    let removed_for_undo = this.process.favorites().read(cx).entry_by_id(id).cloned();
+                    let removed_for_undo =
+                        this.process.favorites().read(cx).entry_by_id(id).cloned();
                     this.process.favorites().update(cx, |f, cx| {
                         f.remove(id, cx);
                     });

@@ -45,9 +45,9 @@ mod dock;
 mod dupe_panel;
 mod dupes;
 mod file_ops;
-pub(crate) use file_ops::pick_destination_folder;
-pub(crate) use file_ops::TransferMode;
 pub use file_ops::ArchiveOpDone;
+pub(crate) use file_ops::TransferMode;
+pub(crate) use file_ops::pick_destination_folder;
 mod loading;
 mod path;
 pub(crate) mod render;
@@ -69,8 +69,7 @@ pub use tab::{ClosedTab, HistoryEntry, Tab, TabId, ToolResultSurface};
 
 /// Callback the disk-usage view invokes to re-root the dock owner at a
 /// new path. Boxed so the `Shell` can hand it out without naming itself.
-type DiskUsageDockOwner =
-    Rc<dyn Fn(PathBuf, Entity<crate::disk_usage::DiskUsageView>, &mut App)>;
+type DiskUsageDockOwner = Rc<dyn Fn(PathBuf, Entity<crate::disk_usage::DiskUsageView>, &mut App)>;
 
 /// Classification produced by `Shell::resolve_favorite_target` so
 /// the toggle handler can show the appropriate toast for files.
@@ -504,7 +503,10 @@ pub(crate) fn file_op_failure_report(
         ));
     }
     if failed.len() > SHOW {
-        msg.push_str(&format!("\n\u{2022} \u{2026}and {} more", failed.len() - SHOW));
+        msg.push_str(&format!(
+            "\n\u{2022} \u{2026}and {} more",
+            failed.len() - SHOW
+        ));
     }
     msg.push('\n');
     msg.push_str(dominant_failure_kind(failed).advice());
@@ -553,7 +555,11 @@ pub(crate) fn error_notification(message: String) -> gpui_component::notificatio
                 let toggle = expanded.clone();
                 row = row.child(
                     Button::new("toggle-error-details")
-                        .label(if is_expanded { "Hide details" } else { "Details" })
+                        .label(if is_expanded {
+                            "Hide details"
+                        } else {
+                            "Details"
+                        })
                         .ghost()
                         .small()
                         .on_click(cx.listener(move |_note, _ev, _window, cx| {
@@ -792,7 +798,9 @@ pub(crate) fn trash_failure_notification(
                     .label("Copy")
                     .ghost()
                     .small()
-                    .on_click(move |_, _, _| crate::platform_shell::copy_to_clipboard(&copy_detail)),
+                    .on_click(move |_, _, _| {
+                        crate::platform_shell::copy_to_clipboard(&copy_detail)
+                    }),
             )
             .into_any_element()
     })
@@ -1183,8 +1191,7 @@ fn window_title_for(dir: &Path) -> String {
         Some(name) if !name.is_empty() => {
             // Finder-parity leaf: a folder stored with `:` titles as `/` on macOS.
             let shown =
-                ferail_fs_native::paths::display_leaf(name.to_string_lossy().as_ref())
-                    .into_owned();
+                ferail_fs_native::paths::display_leaf(name.to_string_lossy().as_ref()).into_owned();
             format!("{shown}{SEP}Ferail")
         }
         _ => {
@@ -1461,18 +1468,22 @@ impl Shell {
             .recents_section_collapsed
             .set(persisted.recents_collapsed.unwrap_or(false));
         // Persisted state is an external boundary for the path-identity
-        // contract: validate + re-canonicalize the raw stored path here
-        // (the one-time startup consumer) so a symlinked spelling saved
-        // last session can't mint a second NodeId, and a vanished
-        // directory falls back to home. `app_state::load()` itself no
-        // longer stats — it's called from click handlers and render
-        // getters.
-        let start = persisted
-            .last_dir
-            .clone()
-            .filter(|p| p.is_dir())
-            .map(path::canonicalize_for_identity)
-            .unwrap_or_else(home_dir);
+        // contract: the raw stored path must be validated and
+        // re-canonicalized before it is trusted (a symlinked spelling
+        // saved last session must not mint a second NodeId; a vanished
+        // directory falls back to home). Both of those are disk I/O —
+        // `is_dir` + `canonicalize` block for seconds on a spun-down
+        // external drive or a network mount — and this runs on the UI
+        // thread at *every* window open (Cmd+N used to freeze for the
+        // duration). Prime Directive: the window boots on the raw
+        // spelling immediately and `resolve_start_path_then_load` does
+        // the I/O on the background executor, then loads the canonical
+        // path (or home). No persisted last-dir → home, which needs no
+        // I/O to trust, so that case loads straight away.
+        let (start, start_needs_resolution) = match persisted.last_dir.clone() {
+            Some(p) => (p, true),
+            None => (home_dir(), false),
+        };
         let start_id = process.fs.id_for_path(&start);
         // Seed the NodeStore with the start path so the very first
         // navigate doesn't re-mint a different NodeId. Idempotent —
@@ -1635,8 +1646,7 @@ impl Shell {
             // a change (see `RELOAD_DEBOUNCE`).
             let mut last_reload: std::collections::HashMap<PathBuf, std::time::Instant> =
                 std::collections::HashMap::new();
-            let mut pending: std::collections::HashSet<PathBuf> =
-                std::collections::HashSet::new();
+            let mut pending: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
             loop {
                 cx.background_executor().timer(POLL_INTERVAL).await;
                 if let Some(w) = poll_watcher.borrow().as_ref() {
@@ -1652,7 +1662,7 @@ impl Shell {
                 pending.retain(|p| {
                     let ready = last_reload
                         .get(p)
-                        .map_or(true, |t| now.duration_since(*t) >= RELOAD_DEBOUNCE);
+                        .is_none_or(|t| now.duration_since(*t) >= RELOAD_DEBOUNCE);
                     if ready {
                         due.push(p.clone());
                         false
@@ -1908,8 +1918,8 @@ impl Shell {
         // on computes sizes for every open tab's current listing without a
         // relaunch; turning it off stops any in-flight walks so the change
         // takes effect immediately.
-        let folder_size_subscription =
-            cx.observe_global::<crate::folder_sizes::FolderSizingEnabled>(|this, cx| {
+        let folder_size_subscription = cx
+            .observe_global::<crate::folder_sizes::FolderSizingEnabled>(|this, cx| {
                 if crate::folder_sizes::folder_sizing_enabled(cx) {
                     this.restart_folder_size_passes(false, cx);
                 } else {
@@ -1928,27 +1938,26 @@ impl Shell {
         // re-streams without flicker and re-fires the format-sniff + tag
         // passes under the new setting; turning it off cancels any
         // in-flight prefetch so scanning stops at once.
-        let scan_subscription =
-            cx.observe_global::<crate::prefetch::FileDetailScan>(|this, cx| {
-                if crate::prefetch::file_detail_scan_enabled(cx) {
-                    let targets: Vec<(TabId, PathBuf)> = this
-                        .tabs
-                        .iter()
-                        .filter(|t| t.tool_result.is_none())
-                        .map(|t| (t.id, t.current_dir.clone()))
-                        .collect();
-                    for (id, path) in targets {
-                        this.load_path_for_tab(id, path, cx);
-                    }
-                } else {
-                    for idx in 0..this.tabs.len() {
-                        if let Some(cancel) = this.tabs[idx].prefetch_cancel.take() {
-                            cancel.store(true, Ordering::Relaxed);
-                        }
+        let scan_subscription = cx.observe_global::<crate::prefetch::FileDetailScan>(|this, cx| {
+            if crate::prefetch::file_detail_scan_enabled(cx) {
+                let targets: Vec<(TabId, PathBuf)> = this
+                    .tabs
+                    .iter()
+                    .filter(|t| t.tool_result.is_none())
+                    .map(|t| (t.id, t.current_dir.clone()))
+                    .collect();
+                for (id, path) in targets {
+                    this.load_path_for_tab(id, path, cx);
+                }
+            } else {
+                for idx in 0..this.tabs.len() {
+                    if let Some(cancel) = this.tabs[idx].prefetch_cancel.take() {
+                        cancel.store(true, Ordering::Relaxed);
                     }
                 }
-                cx.notify();
-            });
+            }
+            cx.notify();
+        });
         shell._subscriptions.push(scan_subscription);
 
         // Esc cancels an in-progress drag. gpui only auto-cancels on
@@ -1968,13 +1977,13 @@ impl Shell {
                 this.spring_load = None;
                 this.tree_spring = None;
                 cx.notify();
-                return;
-            }
-            #[cfg(target_os = "macos")]
-            if crate::platform_shell::native_drag_session_active() {
-                crate::platform_shell::cancel_native_drag();
-                this.spring_load = None;
-                this.tree_spring = None;
+            } else {
+                #[cfg(target_os = "macos")]
+                if crate::platform_shell::native_drag_session_active() {
+                    crate::platform_shell::cancel_native_drag();
+                    this.spring_load = None;
+                    this.tree_spring = None;
+                }
             }
         });
         shell._subscriptions.push(drag_esc_subscription);
@@ -2009,8 +2018,67 @@ impl Shell {
         if !crate::safe_mode::enabled() {
             shell.start_metadata_load(cx);
         }
-        shell.load_path(start, cx);
+        if start_needs_resolution {
+            shell.resolve_start_path_then_load(start, cx);
+        } else {
+            shell.load_path(start, cx);
+        }
         shell
+    }
+
+    /// Second half of the window boot (see the `start` comment in
+    /// [`Shell::new`]): validate + canonicalize the persisted start path
+    /// on the background executor, then load. Until the answer lands the
+    /// tab shows its breadcrumbs over an empty list with an "Opening …"
+    /// task in the status bar — for a local disk that is a few
+    /// milliseconds; for a sleeping drive it is however long the spin-up
+    /// takes, with the window responsive the whole time.
+    ///
+    /// Staleness: if the tab navigated elsewhere before the answer (the
+    /// screenshot harness' `--navigate`, a quick Cmd+L) or was closed,
+    /// the result is dropped. When the canonical spelling differs from
+    /// the raw one (symlink, vanished → home), the tab's seed history
+    /// entry is retargeted too, so Back can't land on the raw spelling.
+    fn resolve_start_path_then_load(&mut self, raw: PathBuf, cx: &mut Context<Self>) {
+        let tab_id = self.active_tab().id;
+        let generation = self.active_tab().load_generation;
+        let task = self.process.tasks.borrow_mut().begin(
+            TaskKind::Enumeration,
+            format!(
+                "Opening {}",
+                middle_truncate_path(&raw.to_string_lossy(), 40)
+            ),
+            false,
+        );
+        let tasks = self.process.tasks.clone();
+        let probe = raw.clone();
+        cx.spawn(async move |this, cx| {
+            let resolved: Option<PathBuf> = cx
+                .background_executor()
+                .spawn(async move {
+                    probe
+                        .is_dir()
+                        .then(|| path::canonicalize_for_identity(probe))
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                tasks.borrow_mut().end(task);
+                let Some(tab) = this.tabs.iter_mut().find(|t| t.id == tab_id) else {
+                    return;
+                };
+                if tab.current_dir != raw || tab.load_generation != generation {
+                    return;
+                }
+                let target = resolved.unwrap_or_else(home_dir);
+                if target != raw
+                    && let Some(entry) = tab.history.get_mut(tab.history_index)
+                {
+                    entry.path = target.clone();
+                }
+                this.load_path_for_tab(tab_id, target, cx);
+            });
+        })
+        .detach();
     }
 
     /// Build a fresh `Tab` with its own `TableState` entity + table-
@@ -2555,9 +2623,8 @@ impl Shell {
                     );
                     return;
                 }
-                let Some(screen) =
-                    crate::platform_shell::screen_visible_frame_for_window(ns_view)
-                        .map(|(x, y, w, h)| ScreenFrame::new(x, y, w, h))
+                let Some(screen) = crate::platform_shell::screen_visible_frame_for_window(ns_view)
+                    .map(|(x, y, w, h)| ScreenFrame::new(x, y, w, h))
                 else {
                     return;
                 };
@@ -3015,16 +3082,16 @@ impl Shell {
     /// Open a specific archive in the workbench, bypassing the selection.
     /// Used by the screenshot harness; the context action goes through
     /// `on_open_archive`.
-    pub fn open_archive_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        self.dock_archive_view(path, window, cx);
-    }
-
-    fn dock_archive_view(
+    pub fn open_archive_path(
         &mut self,
-        archive: PathBuf,
+        path: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dock_archive_view(path, window, cx);
+    }
+
+    fn dock_archive_view(&mut self, archive: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         // The workbench owns its own table (so it can be popped out later) and
         // resolves the format itself, off-thread, from extension-or-content.
         let process = self.process.clone();
@@ -3047,7 +3114,6 @@ impl Shell {
         view: Entity<crate::archive::ArchiveView>,
         cx: &mut Context<Self>,
     ) {
-
         let tab_id = self.active_tab().id;
         let Some(idx) = self.tabs.iter().position(|t| t.id == tab_id) else {
             return;
@@ -3207,10 +3273,7 @@ impl Shell {
         })
     }
 
-    fn disk_usage_dock_owner(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> DiskUsageDockOwner {
+    fn disk_usage_dock_owner(&self, cx: &mut Context<Self>) -> DiskUsageDockOwner {
         let weak: WeakEntity<Self> = cx.weak_entity();
         Rc::new(move |root, view, cx| {
             if let Some(s) = weak.upgrade() {
@@ -4393,22 +4456,19 @@ impl Shell {
             }
         }
 
-        // Folders: synchronous main-thread NSWorkspace fetch (fast,
-        // cached). Only notify when something was actually fetched —
-        // otherwise the repaint would re-trigger this warm in a loop.
+        // Folders: the platform icon fetch on the background executor,
+        // same as the file thumbnails below. (It used to be a synchronous
+        // main-thread NSWorkspace call per uncached folder — one custom
+        // folder icon on a sleeping volume stalled the grid.)
         {
-            let mut icons = self.process.icons.borrow_mut();
-            let mut warmed = false;
-            for path in &folders {
-                if !icons.has_folder_icon_sized(path, icon_px) {
-                    icons.warm_folder_icon_sized(path, icon_px);
-                    warmed = true;
-                }
-            }
+            let icons = self.process.icons.borrow();
+            let wanted: Vec<(PathBuf, Option<u32>)> = folders
+                .iter()
+                .filter(|p| icons.needs_path_icon(p, Some(icon_px)))
+                .map(|p| (p.clone(), Some(icon_px)))
+                .collect();
             drop(icons);
-            if warmed {
-                cx.notify();
-            }
+            self.warm_path_icons_async(wanted, cx);
         }
 
         // Files: Quick Look on the background executor, in bounded
@@ -4601,30 +4661,75 @@ impl Shell {
     /// returns the blank placeholder under the render guard — so
     /// without this, rows revealed by expanding a folder kept their
     /// blank icon until some unrelated file-list warm happened to
-    /// cache the same path. `Shell::render` collects the not-yet-
-    /// cached paths each frame; `warm_folder_icon` caches even on
-    /// fetch failure, so this converges instead of respawning.
+    /// cache the same path. `Shell::render` collects the paths that
+    /// `needs_path_icon` says are neither cached nor in flight each
+    /// frame; a failed fetch caches the blank placeholder, so this
+    /// converges instead of respawning.
     fn start_tree_icon_warm(&self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
-        if paths.is_empty() {
+        let items = paths.into_iter().map(|p| (p, None)).collect();
+        self.warm_path_icons_async(items, cx);
+    }
+
+    /// Fetch path-keyed icons (sidebar tree rows at the small size, grid
+    /// folders at a crisp bucket) on the background executor and land
+    /// them in the shared `IconCache`, repainting once per wave. The
+    /// platform fetch (`fetch_icon_rgba`) can block on a sleeping volume
+    /// — a folder with custom artwork makes NSWorkspace stat it — so it
+    /// must never run on the UI thread (Prime Directive). Callers pass
+    /// only paths `needs_path_icon` approved; this marks them in flight
+    /// so the per-frame collectors don't re-request a pending fetch.
+    fn warm_path_icons_async(&self, items: Vec<(PathBuf, Option<u32>)>, cx: &mut Context<Self>) {
+        if items.is_empty() {
             return;
         }
+        {
+            let mut icons = self.process.icons.borrow_mut();
+            for (path, size) in &items {
+                icons.mark_path_icon_in_flight(path, *size);
+            }
+        }
+        let task_id = self.process.tasks.borrow_mut().begin(
+            TaskKind::IconPrefetch,
+            format!("Loading {} icons\u{2026}", items.len()),
+            false,
+        );
+        let icons = self.process.icons.clone();
+        let tasks = self.process.tasks.clone();
         cx.spawn(async move |this, cx| {
-            for chunk in paths.chunks(ICON_WARM_CHUNK) {
-                cx.background_executor().timer(ICON_WARM_INTERVAL).await;
-                let batch = chunk.to_vec();
-                if this
-                    .update(cx, |this, cx| {
-                        let mut icons = this.process.icons.borrow_mut();
-                        for path in &batch {
-                            icons.warm_folder_icon(path);
+            // Bounded waves, like the grid's thumbnail warm: a few fetches
+            // in parallel, land the wave, repaint, next wave.
+            for chunk in items.chunks(ICON_WARM_CHUNK) {
+                let handles: Vec<_> = chunk
+                    .iter()
+                    .cloned()
+                    .map(|(path, size)| {
+                        cx.background_executor().spawn(async move {
+                            let px = crate::icons::IconCache::path_icon_px(size);
+                            let fetched = ferail_fs_native::fetch_icon_rgba(&path, px);
+                            (path, size, fetched)
+                        })
+                    })
+                    .collect();
+                let mut landed = Vec::with_capacity(handles.len());
+                for handle in handles {
+                    landed.push(handle.await);
+                }
+                let alive = this
+                    .update(cx, |_, cx| {
+                        {
+                            let mut icons = icons.borrow_mut();
+                            for (path, size, fetched) in landed {
+                                icons.insert_path_icon(&path, size, fetched);
+                            }
                         }
                         cx.notify();
                     })
-                    .is_err()
-                {
+                    .is_ok();
+                if !alive {
                     break;
                 }
             }
+            tasks.borrow_mut().end(task_id);
         })
         .detach();
     }
@@ -4706,33 +4811,32 @@ impl Shell {
                     // hazard: hydrating empty with a writable DB
                     // attached lets the first reorder replace_all the
                     // real on-disk list with nothing.
-                    let favorites: Option<Vec<ferail_core::favorites::Favorite>> = match db
-                        .as_ref()
-                    {
-                        // No DB at all (e.g. no $HOME): an empty
-                        // in-memory list is honest.
-                        None => Some(Vec::new()),
-                        Some(d) => d.lock().ok().and_then(|g| g.load_favorites().ok()),
-                    }
-                    .map(|favs| {
-                        favs.into_iter()
-                            .map(|mut fav| {
-                                // Path-identity contract: persisted paths
-                                // re-enter the app here, so re-canonicalize
-                                // (already on the background executor; a
-                                // missing target falls through unchanged
-                                // and keeps its Missing-state handling).
-                                if let ferail_core::favorites::FavoriteTarget::Path(p) =
-                                    fav.target
-                                {
-                                    fav.target = ferail_core::favorites::FavoriteTarget::Path(
-                                        path::canonicalize_for_identity(p),
-                                    );
-                                }
-                                fav
-                            })
-                            .collect()
-                    });
+                    let favorites: Option<Vec<ferail_core::favorites::Favorite>> =
+                        match db.as_ref() {
+                            // No DB at all (e.g. no $HOME): an empty
+                            // in-memory list is honest.
+                            None => Some(Vec::new()),
+                            Some(d) => d.lock().ok().and_then(|g| g.load_favorites().ok()),
+                        }
+                        .map(|favs| {
+                            favs.into_iter()
+                                .map(|mut fav| {
+                                    // Path-identity contract: persisted paths
+                                    // re-enter the app here, so re-canonicalize
+                                    // (already on the background executor; a
+                                    // missing target falls through unchanged
+                                    // and keeps its Missing-state handling).
+                                    if let ferail_core::favorites::FavoriteTarget::Path(p) =
+                                        fav.target
+                                    {
+                                        fav.target = ferail_core::favorites::FavoriteTarget::Path(
+                                            path::canonicalize_for_identity(p),
+                                        );
+                                    }
+                                    fav
+                                })
+                                .collect()
+                        });
                     (db, ant_visits, ant_max, favs_collapsed, favorites, recents)
                 })
                 .await;
@@ -4891,7 +4995,7 @@ impl Shell {
         // UI thread (no-op when there are no path favorites). This is the
         // live Missing-transition hook (§8): favorite parents are watched
         // independently of the visible tabs (`watch_favorite_dirs`).
-        let _ = process
+        process
             .favorites()
             .update(cx, |f, cx| f.refresh_availability(cx));
     }
@@ -5074,7 +5178,7 @@ impl Shell {
                         .background_executor()
                         .spawn(async move { fs_op.apply_fs() })
                         .await;
-                    let _ = cx.update(|_| {
+                    cx.update(|_| {
                         let mut tasks = process.tasks.borrow_mut();
                         match &result {
                             Ok(()) => tasks.end(task_id),
@@ -6144,19 +6248,19 @@ impl Shell {
                     if !e.path().is_dir() {
                         continue;
                     }
-                    let display =
-                        ferail_fs_native::paths::display_leaf(&name).into_owned();
+                    let display = ferail_fs_native::paths::display_leaf(&name).into_owned();
                     out.push((SharedString::from(display), e.path()));
                 }
             }
-            out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+            out.sort_by_key(|a| a.0.to_lowercase());
             out.truncate(100);
             out
         });
         cx.spawn(async move |this, cx| {
             let children = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.breadcrumb_children.insert(path, Some(Rc::new(children)));
+                this.breadcrumb_children
+                    .insert(path, Some(Rc::new(children)));
                 cx.notify();
             });
         })
@@ -6477,10 +6581,8 @@ mod tests {
     /// Fresh per-test scratch dir (same pattern as ferail-fs-native's
     /// file-op tests).
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "ferail-shell-undo-{}-{name}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("ferail-shell-undo-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -6516,7 +6618,10 @@ mod tests {
             std::fs::read(original.join("sub/b.bin")).unwrap().len(),
             512
         );
-        assert!(!moved.exists(), "moved copy must be deleted after copy-back");
+        assert!(
+            !moved.exists(),
+            "moved copy must be deleted after copy-back"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -6604,7 +6709,10 @@ mod tests {
             "{s}"
         );
         assert!(s.contains("Report.pdf \u{2014} permission denied"), "{s}");
-        assert!(s.contains("notes.txt \u{2014} in use by another program"), "{s}");
+        assert!(
+            s.contains("notes.txt \u{2014} in use by another program"),
+            "{s}"
+        );
         // Permission denied dominates → elevation advice.
         assert!(s.contains("administrator"), "{s}");
     }
@@ -6622,7 +6730,10 @@ mod tests {
             })
             .collect();
         let s = file_op_failure_report("Empty Trash", 2, 1, &failed);
-        assert!(s.starts_with("Empty Trash: 2 of 9 done \u{00b7} 6 failed"), "{s}");
+        assert!(
+            s.starts_with("Empty Trash: 2 of 9 done \u{00b7} 6 failed"),
+            "{s}"
+        );
         assert!(s.contains("\u{2026}and 2 more"), "{s}");
     }
 
@@ -6630,7 +6741,10 @@ mod tests {
     fn short_single_line_error_is_shown_whole_with_no_details_toggle() {
         let (summary, has_more) = collapse_error_summary("Move to Trash failed: nope");
         assert_eq!(summary, "Move to Trash failed: nope");
-        assert!(!has_more, "a short, single-line error needs no Details toggle");
+        assert!(
+            !has_more,
+            "a short, single-line error needs no Details toggle"
+        );
     }
 
     #[test]
@@ -6638,7 +6752,10 @@ mod tests {
         let long = format!("Move to Trash failed: {}", "x".repeat(300));
         let (summary, has_more) = collapse_error_summary(&long);
         assert!(has_more, "a long error hides detail behind Details");
-        assert!(summary.ends_with('\u{2026}'), "truncation is marked with an ellipsis");
+        assert!(
+            summary.ends_with('\u{2026}'),
+            "truncation is marked with an ellipsis"
+        );
         assert!(
             summary.chars().count() <= 141,
             "headline stays one line: 140 chars + the ellipsis, got {}",

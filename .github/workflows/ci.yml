@@ -128,16 +128,15 @@ jobs:
       - name: Install NASM (aws-lc-sys)
         run: choco install nasm -y --no-progress; echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
-      # No `-D warnings` here on purpose. `clippy::disallowed_methods` is a
-      # crate-level `deny` (ferail-gpui/Cargo.toml [lints.clippy]), so the
-      # Prime Directive tripwire still fails the build on its own — but the
-      # app crate currently carries ~25 pre-existing style warnings, and
-      # gating on those would just wedge CI on work unrelated to the change
-      # under review. Add `-- -D warnings` once the crate is clean.
+      # `-D warnings` since 2026-08-21: the app crate is clippy-clean on all
+      # three hosts (the sweep that enabled this fixed ~30 warnings, incl. the
+      # cfg(windows)-only ones this leg alone can see). `clippy::disallowed_methods`
+      # stays a crate-level `deny` (ferail-gpui/Cargo.toml [lints.clippy]) —
+      # the Prime Directive tripwire — on top of that.
       #
       # The real value of running this per-OS is catching platform_shell
       # surface drift between the shell crates, and compile errors in
       # `cfg(windows)`/`cfg(target_os = "macos")` arms that only exist on
       # their own host.
       - name: clippy (also covers check)
-        run: cargo clippy -p ferail-gpui --all-targets
+        run: cargo clippy -p ferail-gpui --all-targets -- -D warnings

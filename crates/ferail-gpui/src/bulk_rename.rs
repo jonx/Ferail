@@ -959,7 +959,7 @@ fn apply(
             .await;
         let first_error = errors.first().cloned();
         let failed = errors.len();
-        let _ = cx.update(|_| {
+        cx.update(|_| {
             let mut tasks = process.tasks.borrow_mut();
             match &first_error {
                 None => tasks.end(task_id),
@@ -977,7 +977,7 @@ fn apply(
             }
             let pairs_for_undo = renamed.clone();
             if let Some(shell) = weak.upgrade() {
-                let _ = shell.update(cx, |this, cx| {
+                shell.update(cx, |this, cx| {
                     this.push_undo(UndoOp::RenameBatch(pairs_for_undo));
                     cx.notify();
                 });

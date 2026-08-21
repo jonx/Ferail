@@ -8,6 +8,17 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Opening a window no longer freezes when your last folder was on a
+  sleeping drive.** Ferail reopens at the folder you left off in; if that
+  folder lives on an external disk that has spun down (or a network share
+  that's slow to answer), every new window — including Cmd+N — used to sit
+  frozen for seconds while the disk woke up. The window now opens at once,
+  showing the folder's breadcrumbs with an "Opening …" note in the status
+  bar, and fills in when the disk answers. A folder that no longer exists
+  falls back to Home, as before. Folder icons in the icon grid and the
+  sidebar are fetched the same way now — one custom-icon folder on a slow
+  volume can't stall scrolling anymore.
+
 - **Ferail can now tell you when a newer version exists — if you ask it
   to.** A new **Ferail → Check for Updates…** menu item asks GitHub
   Releases for the latest version and shows the result in a Software

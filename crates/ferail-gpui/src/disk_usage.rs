@@ -766,9 +766,7 @@ impl DiskUsageView {
         // empty folder (this hid "canonicalize unsupported" on AROS).
         let summary = if let Some(err) = &self.error {
             let why = match err {
-                ferail_core::EnumerationError::PermissionDenied => {
-                    "permission denied".to_string()
-                }
+                ferail_core::EnumerationError::PermissionDenied => "permission denied".to_string(),
                 ferail_core::EnumerationError::NotFound => "folder not found".to_string(),
                 ferail_core::EnumerationError::Other(msg) => msg.clone(),
             };
@@ -1227,16 +1225,14 @@ impl DiskUsageView {
                         .menu("Save View as HTML\u{2026}", Box::new(DuSaveViewHtml)),
                     Some((_node, is_container)) => {
                         let single = count == 1;
-                        let mut menu = menu
-                            .menu("Open", Box::new(DuOpen))
-                            .menu(
-                                if cfg!(target_os = "macos") {
-                                    "Reveal in Finder"
-                                } else {
-                                    "Reveal in File Manager"
-                                },
-                                Box::new(DuReveal),
-                            );
+                        let mut menu = menu.menu("Open", Box::new(DuOpen)).menu(
+                            if cfg!(target_os = "macos") {
+                                "Reveal in Finder"
+                            } else {
+                                "Reveal in File Manager"
+                            },
+                            Box::new(DuReveal),
+                        );
                         if has_shell {
                             menu = menu.menu("Get Info", Box::new(DuGetInfo));
                         }
@@ -1568,7 +1564,7 @@ impl DiskUsageView {
                 .await;
             let (ok, failed, parents) = results;
             if let Some(this) = this.upgrade() {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     // The scan tree still counts the trashed bytes —
                     // rescan for an honest picture.
                     if ok > 0 {
@@ -1578,7 +1574,7 @@ impl DiskUsageView {
             }
             if let (Some(shell), false) = (shell, parents.is_empty()) {
                 if let Some(shell) = shell.upgrade() {
-                    let _ = shell.update(cx, |shell, cx| {
+                    shell.update(cx, |shell, cx| {
                         shell.reload_tabs_matching_paths(&parents, cx);
                     });
                 }
@@ -1776,8 +1772,7 @@ impl DiskUsageView {
                     );
                 }
                 Err(e) => {
-                    window
-                        .push_notification(Notification::error(format!("Save failed: {e}")), cx);
+                    window.push_notification(Notification::error(format!("Save failed: {e}")), cx);
                 }
             });
             if ok {

@@ -110,9 +110,8 @@ pub fn open(
         ..crate::base_window_options()
     };
     let _ = cx.open_window(opts, move |window, cx| {
-        let view = cx.new(|cx| {
-            EntryInfoView::new(path, name, target, known_size, shell, Some(cascade), cx)
-        });
+        let view = cx
+            .new(|cx| EntryInfoView::new(path, name, target, known_size, shell, Some(cascade), cx));
         cx.new(|cx| Root::new(view, window, cx))
     });
 }
@@ -728,7 +727,12 @@ impl Render for EntryInfoView {
                     .child(format!("\u{26A0} {warn}")),
             );
         }
-        let header = header.child(div().text_scale_xs().text_color(muted).child(self.kind.clone()));
+        let header = header.child(
+            div()
+                .text_scale_xs()
+                .text_color(muted)
+                .child(self.kind.clone()),
+        );
 
         v_flex()
             .key_context(ENTRY_INFO_CONTEXT)
@@ -902,67 +906,71 @@ impl EntryInfoView {
         // section above.
         #[cfg(target_os = "windows")]
         {
-            let label = if m.owner.write { "Read & write" } else { "Read-only" };
-            return div()
+            let label = if m.owner.write {
+                "Read & write"
+            } else {
+                "Read-only"
+            };
+            div()
                 .text_scale_sm()
                 .text_color(cx.theme().foreground)
                 .child(SharedString::from(label))
-                .into_any_element();
+                .into_any_element()
         }
 
         #[cfg(not(target_os = "windows"))]
         {
-        let classes: [(&str, PermBits); 3] =
-            [("Owner", m.owner), ("Group", m.group), ("Other", m.other)];
-        let mut grid = v_flex().gap_0p5();
-        for (ci, (label, bits)) in classes.into_iter().enumerate() {
-            let mut row = h_flex().gap_2().items_center().child(
+            let classes: [(&str, PermBits); 3] =
+                [("Owner", m.owner), ("Group", m.group), ("Other", m.other)];
+            let mut grid = v_flex().gap_0p5();
+            for (ci, (label, bits)) in classes.into_iter().enumerate() {
+                let mut row = h_flex().gap_2().items_center().child(
+                    div()
+                        .w(px(44.0))
+                        .text_scale_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(label),
+                );
+                // bit 2 = read, 1 = write, 0 = execute.
+                for (label, bit, on) in [
+                    ("r", 2u32, bits.read),
+                    ("w", 1, bits.write),
+                    ("x", 0, bits.execute),
+                ] {
+                    let base = m.clone();
+                    row = row.child(
+                        Checkbox::new(ElementId::Name(format!("perm-{ci}-{bit}").into()))
+                            // Match the dense token-xs labels around it; the
+                            // component default (Medium) renders the r/w/x
+                            // letters oversized.
+                            .xsmall()
+                            .label(label)
+                            .checked(on)
+                            .on_click(cx.listener(move |this, checked: &bool, window, cx| {
+                                let mut next = base.clone();
+                                let triple = match ci {
+                                    0 => &mut next.owner,
+                                    1 => &mut next.group,
+                                    _ => &mut next.other,
+                                };
+                                match bit {
+                                    2 => triple.read = *checked,
+                                    1 => triple.write = *checked,
+                                    _ => triple.execute = *checked,
+                                }
+                                this.apply_permissions(next.to_mode(), window, cx);
+                            })),
+                    );
+                }
+                grid = grid.child(row);
+            }
+            grid.child(
                 div()
-                    .w(px(44.0))
                     .text_scale_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(label),
-            );
-            // bit 2 = read, 1 = write, 0 = execute.
-            for (label, bit, on) in [
-                ("r", 2u32, bits.read),
-                ("w", 1, bits.write),
-                ("x", 0, bits.execute),
-            ] {
-                let base = m.clone();
-                row = row.child(
-                    Checkbox::new(ElementId::Name(format!("perm-{ci}-{bit}").into()))
-                        // Match the dense token-xs labels around it; the
-                        // component default (Medium) renders the r/w/x
-                        // letters oversized.
-                        .xsmall()
-                        .label(label)
-                        .checked(on)
-                        .on_click(cx.listener(move |this, checked: &bool, window, cx| {
-                            let mut next = base.clone();
-                            let triple = match ci {
-                                0 => &mut next.owner,
-                                1 => &mut next.group,
-                                _ => &mut next.other,
-                            };
-                            match bit {
-                                2 => triple.read = *checked,
-                                1 => triple.write = *checked,
-                                _ => triple.execute = *checked,
-                            }
-                            this.apply_permissions(next.to_mode(), window, cx);
-                        })),
-                );
-            }
-            grid = grid.child(row);
-        }
-        grid.child(
-            div()
-                .text_scale_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(m.symbolic()),
-        )
-        .into_any_element()
+                    .child(m.symbolic()),
+            )
+            .into_any_element()
         }
     }
 }

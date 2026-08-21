@@ -4,8 +4,12 @@
 //! as `path_segments.rs`: the inline form overflows syn's parser inside
 //! this crate.
 
+// Every test below is `cfg(unix)`; gate the imports the same way so the
+// Windows clippy leg doesn't see them as unused.
+#[cfg(unix)]
 use std::path::PathBuf;
 
+#[cfg(unix)]
 use ferail_gpui::shell::{parse_pasted_path, resolve_go_to_target};
 
 #[cfg(unix)]
@@ -108,10 +112,7 @@ fn resolve_maps_a_file_to_its_folder() {
     std::fs::write(&file, b"x").expect("write temp file");
     let resolved = resolve_go_to_target(file.clone());
     let _ = std::fs::remove_file(&file);
-    assert_eq!(
-        resolved,
-        ferail_gpui::shell::canonicalize_for_identity(dir)
-    );
+    assert_eq!(resolved, ferail_gpui::shell::canonicalize_for_identity(dir));
 }
 
 #[test]

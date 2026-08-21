@@ -107,6 +107,9 @@ struct PrefetchSeed {
 /// reading the Shell entity again from the same context would
 /// trigger the gpui "cannot read while already being updated"
 /// panic.
+// Ten parameters by design: each is a field handed across the `&mut self`
+// borrow described above; bundling them would just move the list.
+#[allow(clippy::too_many_arguments)]
 pub fn start(
     table: Entity<TableState<FileListDelegate>>,
     fs: Arc<NativeFs>,
@@ -543,7 +546,10 @@ mod tests {
         let path_str = path.to_string_lossy().into_owned();
 
         let db = Arc::new(Mutex::new(MetadataDb::in_memory().unwrap()));
-        db.lock().unwrap().upsert_file(&stale_record(&path_str)).unwrap();
+        db.lock()
+            .unwrap()
+            .upsert_file(&stale_record(&path_str))
+            .unwrap();
         let db_opt = Some(db.clone());
 
         // Cache-first (force = false): the stale DB row wins, no re-sniff.

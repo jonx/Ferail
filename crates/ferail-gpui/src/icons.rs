@@ -16,7 +16,7 @@
 //! NSWorkspace round-trip (~1 ms); subsequent renders for the same
 //! key are a HashMap hit.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -35,6 +35,10 @@ const ICON_PX: u32 = 32;
 #[derive(Default)]
 pub struct IconCache {
     by_kind: HashMap<String, Arc<RenderImage>>,
+    /// Path-keyed icons a background fetch is currently producing. The
+    /// per-frame collectors (grid viewport, sidebar tree) skip these so a
+    /// pending fetch isn't re-requested every paint.
+    in_flight: HashSet<String>,
     /// Single fallback icon used when fetch_icon_rgba returns None
     /// for a given kind, so we don't keep retrying NSWorkspace for
     /// a file the OS doesn't know how to render.
@@ -95,28 +99,48 @@ impl IconCache {
         }
     }
 
-    /// Whether a path-keyed (folder/sidebar) icon is already cached.
-    /// Lets the shell decide which rows still need a background warm
-    /// without mutating the cache from a render pass.
-    pub fn has_folder_icon(&self, path: &Path) -> bool {
-        self.by_kind
-            .contains_key(&format!("path:{}", path.display()))
+    /// Cache key for a path-keyed icon: `None` is the small list/tree
+    /// icon (`ICON_PX`), `Some` a grid bucket.
+    fn path_key(path: &Path, size_px: Option<u32>) -> String {
+        match size_px {
+            Some(s) => format!("path:{}@{}", path.display(), s),
+            None => format!("path:{}", path.display()),
+        }
     }
 
-    /// Fetch-and-cache a path-keyed icon outside the render path.
-    /// Unlike `folder_icon_for`, a failed NSWorkspace fetch caches the
-    /// blank placeholder under the key so the warm scheduler (which
-    /// re-collects "not cached yet" paths every render) converges
-    /// instead of re-requesting the same unfetchable path forever.
-    pub fn warm_folder_icon(&mut self, path: &Path) {
-        let key = format!("path:{}", path.display());
-        if self.by_kind.contains_key(&key) {
-            return;
-        }
-        if ferail_core::path_guard::is_rendering() {
-            return;
-        }
-        let icon = match fetch_icon_rgba(path, ICON_PX) {
+    /// Pixel size a path-keyed fetch should request for `size_px`.
+    pub fn path_icon_px(size_px: Option<u32>) -> u32 {
+        size_px.unwrap_or(ICON_PX)
+    }
+
+    /// Does this path icon still need a background fetch — neither
+    /// cached (warmed *or* failed-and-blanked) nor already in flight?
+    /// Non-mutating: safe from `render`, which is where the collectors
+    /// run.
+    pub fn needs_path_icon(&self, path: &Path, size_px: Option<u32>) -> bool {
+        let key = Self::path_key(path, size_px);
+        !self.by_kind.contains_key(&key) && !self.in_flight.contains(&key)
+    }
+
+    /// Claim a path icon for a background fetch. Call from the scheduler
+    /// before spawning, so the next frame's collector skips it.
+    pub fn mark_path_icon_in_flight(&mut self, path: &Path, size_px: Option<u32>) {
+        self.in_flight.insert(Self::path_key(path, size_px));
+    }
+
+    /// Land a background fetch. `None` (the platform couldn't produce an
+    /// icon) caches the blank placeholder so the collectors converge
+    /// instead of re-requesting the same unfetchable path forever;
+    /// render falls back to the type glyph via `is_blank`.
+    pub fn insert_path_icon(
+        &mut self,
+        path: &Path,
+        size_px: Option<u32>,
+        fetched: Option<(Vec<u8>, u32, u32)>,
+    ) {
+        let key = Self::path_key(path, size_px);
+        self.in_flight.remove(&key);
+        let icon = match fetched {
             Some((rgba, w, h)) => Arc::new(build_render_image(rgba, w, h)),
             None => self.blank_icon(),
         };
@@ -132,30 +156,6 @@ impl IconCache {
         self.by_kind
             .get(&format!("path:{}@{}", path.display(), size_px))
             .cloned()
-    }
-
-    /// Whether a grid-sized path icon is already cached (warmed or
-    /// failed). Lets the warm loop skip the notify when nothing new was
-    /// fetched, avoiding a render→warm→notify feedback loop.
-    pub fn has_folder_icon_sized(&self, path: &Path, size_px: u32) -> bool {
-        self.by_kind
-            .contains_key(&format!("path:{}@{}", path.display(), size_px))
-    }
-
-    /// Fetch-and-cache a path-keyed icon at `size_px`, off the render
-    /// path (NSWorkspace `iconForFile:` is main-thread-only, so this
-    /// must run from a deferred/non-render main-thread context). Caches
-    /// the blank placeholder on failure so the warm loop converges.
-    pub fn warm_folder_icon_sized(&mut self, path: &Path, size_px: u32) {
-        let key = format!("path:{}@{}", path.display(), size_px);
-        if self.by_kind.contains_key(&key) || ferail_core::path_guard::is_rendering() {
-            return;
-        }
-        let icon = match fetch_icon_rgba(path, size_px) {
-            Some((rgba, w, h)) => Arc::new(build_render_image(rgba, w, h)),
-            None => self.blank_icon(),
-        };
-        self.by_kind.insert(key, icon);
     }
 
     /// Whether `img` is the shared blank placeholder — i.e. the platform

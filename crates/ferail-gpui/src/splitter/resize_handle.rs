@@ -27,8 +27,11 @@ pub(crate) struct ResizeHandle<T: 'static, E: 'static + Render> {
     id: ElementId,
     axis: Axis,
     drag_value: Option<Rc<T>>,
-    on_drag: Option<Rc<dyn Fn(&Point<Pixels>, &mut Window, &mut App) -> Entity<E>>>,
+    on_drag: Option<DragHandler<E>>,
 }
+
+/// Drag callback: pointer position in → the entity that owns the new size.
+type DragHandler<E> = Rc<dyn Fn(&Point<Pixels>, &mut Window, &mut App) -> Entity<E>>;
 
 impl<T: 'static, E: 'static + Render> ResizeHandle<T, E> {
     fn new(id: impl Into<ElementId>, axis: Axis) -> Self {
@@ -176,7 +179,7 @@ impl<T: 'static, E: 'static + Render> Element for ResizeHandle<T, E> {
         request_layout.paint(window, cx);
 
         window.with_element_state(id.unwrap(), |state: Option<ResizeHandleState>, window| {
-            let state = state.unwrap_or(ResizeHandleState::default());
+            let state = state.unwrap_or_default();
 
             window.on_mouse_event({
                 let state = state.clone();

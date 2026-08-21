@@ -533,7 +533,7 @@ async fn refresh_volumes(cx: &mut gpui::AsyncApp) {
         .background_executor()
         .spawn(async { (list_volumes(), ferail_fs_native::cloud_synced_locations()) })
         .await;
-    let _ = cx.update(|cx| {
+    cx.update(|cx| {
         let process = process_state(cx);
         *process.volumes.borrow_mut() = vols;
         *process.cloud_locations.borrow_mut() = clouds;

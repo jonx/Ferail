@@ -987,26 +987,25 @@ impl Shell {
                 if holders.is_empty() {
                     // Whatever held it let go since the failure.
                     let r = retry.clone();
-                    let note =
-                        Notification::info("No process is holding these files anymore").action(
-                            move |_, _, cx| {
-                                let r = r.clone();
-                                Button::new("retry-after-lock").label("Retry").small().on_click(
-                                    cx.listener(move |note, _, window, cx| {
-                                        let _ = r.shell.update(cx, |shell, cx| {
-                                            shell.spawn_transfer_op(
-                                                r.sources.clone(),
-                                                r.dest.clone(),
-                                                r.mode,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                        note.dismiss(window, cx);
-                                    }),
-                                )
-                            },
-                        );
+                    let note = Notification::info("No process is holding these files anymore")
+                        .action(move |_, _, cx| {
+                            let r = r.clone();
+                            Button::new("retry-after-lock")
+                                .label("Retry")
+                                .small()
+                                .on_click(cx.listener(move |note, _, window, cx| {
+                                    let _ = r.shell.update(cx, |shell, cx| {
+                                        shell.spawn_transfer_op(
+                                            r.sources.clone(),
+                                            r.dest.clone(),
+                                            r.mode,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                    note.dismiss(window, cx);
+                                }))
+                        });
                     window.push_notification(note, cx);
                     return;
                 }
@@ -1017,8 +1016,8 @@ impl Shell {
                     .join(", ");
                 let pids: Vec<u32> = holders.iter().map(|h| h.pid).collect();
                 let r = retry.clone();
-                let note = Notification::warning(format!("In use by {names}")).action(
-                    move |_, _, cx| {
+                let note =
+                    Notification::warning(format!("In use by {names}")).action(move |_, _, cx| {
                         let r = r.clone();
                         let pids = pids.clone();
                         Button::new("close-and-retry")
@@ -1035,8 +1034,7 @@ impl Shell {
                                 });
                                 note.dismiss(window, cx);
                             }))
-                    },
-                );
+                    });
                 window.push_notification(note, cx);
             });
         })
@@ -1475,11 +1473,7 @@ impl Shell {
     /// override pointing into it is cleared — the ordinary preview
     /// follows the (now empty) selection by itself. Pure state
     /// mutation, no I/O. Returns whether anything was released.
-    fn release_volumes_locally(
-        &mut self,
-        roots: &[PathBuf],
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn release_volumes_locally(&mut self, roots: &[PathBuf], cx: &mut Context<Self>) -> bool {
         use super::tab::ToolResultMode;
         let under = |p: &Path| roots.iter().any(|r| p.starts_with(r));
 
@@ -1546,7 +1540,9 @@ impl Shell {
         let me = cx.entity_id();
         let shells: Vec<_> = self.process.shells.borrow().clone();
         for weak in shells {
-            let Some(shell) = weak.upgrade() else { continue };
+            let Some(shell) = weak.upgrade() else {
+                continue;
+            };
             if shell.entity_id() == me {
                 continue;
             }
@@ -1557,7 +1553,9 @@ impl Shell {
 
         let viewers: Vec<_> = self.process.viewers.borrow().clone();
         for (handle, weak) in viewers {
-            let Some(viewer) = weak.upgrade() else { continue };
+            let Some(viewer) = weak.upgrade() else {
+                continue;
+            };
             if viewer.read(cx).touches_any(roots) {
                 let _ = handle.update(cx, |_, window, _| window.remove_window());
                 released = true;
@@ -1629,9 +1627,7 @@ impl Shell {
                                 let paths: Vec<&Path> =
                                     many.iter().map(|(p, _)| p.as_path()).collect();
                                 match crate::platform_shell::eject_device(&paths) {
-                                    Ok(()) => {
-                                        ejected.extend(many.iter().map(|(_, n)| n.clone()))
-                                    }
+                                    Ok(()) => ejected.extend(many.iter().map(|(_, n)| n.clone())),
                                     Err(e) => {
                                         // Whoever holds a file open on *any* of the
                                         // device's volumes blocks the whole eject.
@@ -1702,27 +1698,29 @@ impl Shell {
                         failure.what
                     );
                     let busy = failure.busy;
-                    let note = Notification::error(msg).autohide(false).content(move |_, _, _| {
-                        use crate::text::TextScale as _;
-                        use gpui_component::Sizable as _;
-                        use gpui_component::button::ButtonVariants as _;
-                        h_flex()
-                            .pt_1()
-                            .gap_1()
-                            .flex_wrap()
-                            .children(busy.iter().enumerate().map(|(ix, app)| {
-                                let pid = app.pid;
-                                gpui_component::button::Button::new(("eject-busy-app", ix))
-                                    .label(app.name.clone())
-                                    .text_scale_xs()
-                                    .xsmall()
-                                    .outline()
-                                    .on_click(move |_, _, _| {
-                                        crate::platform_shell::activate_app(pid);
-                                    })
-                            }))
-                            .into_any_element()
-                    });
+                    let note = Notification::error(msg)
+                        .autohide(false)
+                        .content(move |_, _, _| {
+                            use crate::text::TextScale as _;
+                            use gpui_component::Sizable as _;
+
+                            h_flex()
+                                .pt_1()
+                                .gap_1()
+                                .flex_wrap()
+                                .children(busy.iter().enumerate().map(|(ix, app)| {
+                                    let pid = app.pid;
+                                    gpui_component::button::Button::new(("eject-busy-app", ix))
+                                        .label(app.name.clone())
+                                        .text_scale_xs()
+                                        .xsmall()
+                                        .outline()
+                                        .on_click(move |_, _, _| {
+                                            crate::platform_shell::activate_app(pid);
+                                        })
+                                }))
+                                .into_any_element()
+                        });
                     window.push_notification(note, cx);
                 }
             });
@@ -1802,13 +1800,13 @@ impl Shell {
                             Ok(()) => done += 1,
                             // Stringly-typed platform error — classify it
                             // so the report shares the one advice table.
-                            Err(e) => failures.push(
-                                ferail_fs_native::file_ops::FileOpError::other(
+                            Err(e) => {
+                                failures.push(ferail_fs_native::file_ops::FileOpError::other(
                                     path,
                                     super::classify_error_text(&e),
                                     e,
-                                ),
-                            ),
+                                ))
+                            }
                         }
                     }
                     (done, failures)
@@ -2130,9 +2128,8 @@ impl Shell {
                             // Trashed, but the resulting URL wasn't
                             // reported — done, just not undoable.
                             Ok(None) => done += 1,
-                            Err(e) => failures.push(
-                                ferail_fs_native::file_ops::FileOpError::from_io(&e, path),
-                            ),
+                            Err(e) => failures
+                                .push(ferail_fs_native::file_ops::FileOpError::from_io(&e, path)),
                         }
                     }
                     (pairs, done, failures)
@@ -2140,7 +2137,10 @@ impl Shell {
                 .await;
             let (pairs, done, failures) = result;
             match failures.first() {
-                Some(f) => process.tasks.borrow_mut().end_failed(task_id, f.to_string()),
+                Some(f) => process
+                    .tasks
+                    .borrow_mut()
+                    .end_failed(task_id, f.to_string()),
                 None => process.tasks.borrow_mut().end(task_id),
             }
             if let Some(shell) = weak.upgrade() {
@@ -2263,7 +2263,10 @@ impl Shell {
                     );
                 }
                 Err(e) if e == "cancelled" => {
-                    window.push_notification(Notification::info("Administrator action cancelled"), cx);
+                    window.push_notification(
+                        Notification::info("Administrator action cancelled"),
+                        cx,
+                    );
                 }
                 Err(e) => {
                     window.push_notification(
@@ -2540,9 +2543,8 @@ impl Shell {
                             };
                             match removed {
                                 Ok(()) => deleted += 1,
-                                Err(e) => failures.push(
-                                    ferail_fs_native::file_ops::FileOpError::from_io(&e, &p),
-                                ),
+                                Err(e) => failures
+                                    .push(ferail_fs_native::file_ops::FileOpError::from_io(&e, &p)),
                             }
                         }
                     }
@@ -2551,7 +2553,10 @@ impl Shell {
                 .await;
             let (deleted, failures, dirs) = result;
             match failures.first() {
-                Some(f) => process.tasks.borrow_mut().end_failed(task_id, f.to_string()),
+                Some(f) => process
+                    .tasks
+                    .borrow_mut()
+                    .end_failed(task_id, f.to_string()),
                 None => process.tasks.borrow_mut().end(task_id),
             }
             // Trash contents changed under any tab browsing it.
@@ -2772,6 +2777,7 @@ impl Shell {
     /// reserved names/chars, trailing dot/space) is caught up front and the
     /// dialog stays open with an explanation. Surfaces that name something
     /// *other* than a file — the favorite-shortcut label — pass `false`.
+    #[allow(clippy::too_many_arguments)] // one prompt builder, many knobs by design
     pub(crate) fn open_named_prompt(
         &mut self,
         title: impl Into<SharedString>,
@@ -3053,7 +3059,12 @@ impl Shell {
     }
 
     /// One-click Compress → a ZIP next to the selection (Finder shape).
-    pub(super) fn on_compress(&mut self, _: &Compress, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn on_compress(
+        &mut self,
+        _: &Compress,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.compress_selection_as(ferail_archive::Format::Zip, window, cx);
     }
 
@@ -3130,8 +3141,7 @@ impl Shell {
         self.spawn_archive_op(
             reload,
             move |progress, cancel| {
-                let targets: Vec<&std::path::Path> =
-                    sources.iter().map(|p| p.as_path()).collect();
+                let targets: Vec<&std::path::Path> = sources.iter().map(|p| p.as_path()).collect();
                 let opts = ferail_fs_native::CreateOptions {
                     level: Default::default(),
                     password: password.as_deref(),
@@ -3209,10 +3219,8 @@ impl Shell {
                     level,
                     password: password.as_deref(),
                 };
-                ferail_fs_native::create_archive(
-                    format, &targets, &output, opts, progress, cancel,
-                )
-                .map_err(|e| e.to_string())?;
+                ferail_fs_native::create_archive(format, &targets, &output, opts, progress, cancel)
+                    .map_err(|e| e.to_string())?;
                 Ok(vec![output])
             },
             "Create archive",
@@ -3399,11 +3407,11 @@ impl Shell {
         &mut self,
         reload_path: PathBuf,
         op: impl FnOnce(
-                &ferail_fs_native::file_ops::TransferProgress,
-                &AtomicBool,
-            ) -> Result<Vec<PathBuf>, String>
-            + Send
-            + 'static,
+            &ferail_fs_native::file_ops::TransferProgress,
+            &AtomicBool,
+        ) -> Result<Vec<PathBuf>, String>
+        + Send
+        + 'static,
         failure_label: &'static str,
         task_label: String,
         success_toast: FileOpSuccessToast,
@@ -3648,8 +3656,8 @@ impl Shell {
             progress: &ferail_fs_native::file_ops::TransferProgress,
             cancel: &AtomicBool,
         ) -> Result<Vec<PathBuf>, String> {
-            let toc = ferail_fs_native::read_archive_toc(archive, password)
-                .map_err(|e| e.to_string())?;
+            let toc =
+                ferail_fs_native::read_archive_toc(archive, password).map_err(|e| e.to_string())?;
             let opts = ferail_fs_native::ExtractOptions {
                 password,
                 overwrite: false,
@@ -3956,6 +3964,38 @@ fn round_eta(secs: u64) -> u64 {
     secs.div_ceil(step) * step
 }
 
+/// Ask the user for a destination folder, off the UI thread.
+///
+/// Uses **gpui's** path prompt rather than `platform_shell::pick_folder`,
+/// which is a `None` stub outside macOS/Windows — on AROS that made
+/// "Extract To…" silently do nothing, which is precisely the platform where
+/// it matters most: the archive's own folder is frequently on a read-only
+/// volume (`MacRO:`) or a full one, so extracting in place cannot work and
+/// choosing a destination is the only way through.
+///
+/// gpui implements this per backend (NSOpenPanel on macOS, an asl.library
+/// requester on AROS), so one call covers every target.
+pub(crate) async fn pick_destination_folder(
+    cx: &mut gpui::AsyncWindowContext,
+) -> Option<std::path::PathBuf> {
+    let rx = cx
+        .update(|_, cx| {
+            cx.prompt_for_paths(gpui::PathPromptOptions {
+                files: false,
+                directories: true,
+                multiple: false,
+                prompt: Some("Extract to".into()),
+            })
+        })
+        .ok()?;
+    // Outer: the channel (dismissed without answering). Middle: the platform
+    // reporting failure. Inner: the user cancelling.
+    rx.await
+        .ok()?
+        .ok()?
+        .and_then(|paths| paths.into_iter().next())
+}
+
 #[cfg(test)]
 mod transfer_rate_tests {
     use super::{round_eta, trimmed_window_rate};
@@ -4016,33 +4056,4 @@ mod transfer_rate_tests {
         assert_eq!(round_eta(3_081), 3_120); // whole minutes
         assert_eq!(round_eta(3_120), 3_120); // already on a step
     }
-}
-
-/// Ask the user for a destination folder, off the UI thread.
-///
-/// Uses **gpui's** path prompt rather than `platform_shell::pick_folder`,
-/// which is a `None` stub outside macOS/Windows — on AROS that made
-/// "Extract To…" silently do nothing, which is precisely the platform where
-/// it matters most: the archive's own folder is frequently on a read-only
-/// volume (`MacRO:`) or a full one, so extracting in place cannot work and
-/// choosing a destination is the only way through.
-///
-/// gpui implements this per backend (NSOpenPanel on macOS, an asl.library
-/// requester on AROS), so one call covers every target.
-pub(crate) async fn pick_destination_folder(
-    cx: &mut gpui::AsyncWindowContext,
-) -> Option<std::path::PathBuf> {
-    let rx = cx
-        .update(|_, cx| {
-            cx.prompt_for_paths(gpui::PathPromptOptions {
-                files: false,
-                directories: true,
-                multiple: false,
-                prompt: Some("Extract to".into()),
-            })
-        })
-        .ok()?;
-    // Outer: the channel (dismissed without answering). Middle: the platform
-    // reporting failure. Inner: the user cancelling.
-    rx.await.ok()?.ok()?.and_then(|paths| paths.into_iter().next())
 }

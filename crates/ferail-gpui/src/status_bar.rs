@@ -348,70 +348,6 @@ pub fn render(
         )
 }
 
-#[cfg(test)]
-mod count_label_tests {
-    // Deliberately *not* `use super::*`: that re-imports `gpui::*`,
-    // whose glob shadows the built-in `#[test]` with gpui's own test
-    // macro, and expanding that here blows the crate's recursion limit.
-    use super::{StatusMetrics, count_labels};
-
-    fn metrics(entries: usize, total: u64, filtered: usize, filtered_bytes: u64) -> StatusMetrics {
-        StatusMetrics {
-            entries,
-            total_size: total,
-            filtered_count: filtered,
-            filtered_bytes,
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn no_filter_keeps_the_plain_count() {
-        let (count, chip) = count_labels(&metrics(12, 3 * 1024 * 1024, 0, 0));
-        assert_eq!(count, "12 items \u{00B7} 3.0 MB");
-        assert!(chip.is_none());
-    }
-
-    #[test]
-    fn filter_adds_what_it_holds_back() {
-        let (count, chip) = count_labels(&metrics(12, 3 * 1024 * 1024, 48, 12 * 1024 * 1024));
-        assert_eq!(count, "12 items \u{00B7} 3.0 MB");
-        assert_eq!(chip.unwrap(), "48 filtered out \u{00B7} 12.0 MB");
-    }
-
-    #[test]
-    fn selection_still_wins_the_count_and_keeps_the_chip() {
-        let m = StatusMetrics {
-            selected_count: 3,
-            selected_size: 1024,
-            ..metrics(12, 3 * 1024 * 1024, 48, 1024)
-        };
-        let (count, chip) = count_labels(&m);
-        assert_eq!(count, "3 of 12 selected \u{00B7} 1.0 KB");
-        assert!(chip.is_some());
-    }
-
-    #[test]
-    fn everything_filtered_out_is_not_an_empty_folder() {
-        let (count, chip) = count_labels(&metrics(0, 0, 60, 15 * 1024 * 1024));
-        assert_eq!(count, "All 60 items filtered out \u{00B7} 15.0 MB");
-        assert!(chip.is_none());
-    }
-
-    #[test]
-    fn one_filtered_out_reads_singular() {
-        let (count, _) = count_labels(&metrics(0, 0, 1, 2048));
-        assert_eq!(count, "1 item filtered out \u{00B7} 2.0 KB");
-    }
-
-    #[test]
-    fn a_genuinely_empty_folder_still_says_so() {
-        let (count, chip) = count_labels(&metrics(0, 0, 0, 0));
-        assert_eq!(count, "Empty folder");
-        assert!(chip.is_none());
-    }
-}
-
 fn task_label_none(registry: &TaskRegistry, simulated_progress: Option<f32>) -> bool {
     !registry.iter().any(|t| t.is_surfaced()) && simulated_progress.is_none()
 }
@@ -498,4 +434,68 @@ fn progress_strip(indeterminate: bool, fraction: f32, _cx: &mut App) -> Div {
             .loading(indeterminate)
             .value(fraction.clamp(0.0, 1.0) * 100.0),
     )
+}
+
+#[cfg(test)]
+mod count_label_tests {
+    // Deliberately *not* `use super::*`: that re-imports `gpui::*`,
+    // whose glob shadows the built-in `#[test]` with gpui's own test
+    // macro, and expanding that here blows the crate's recursion limit.
+    use super::{StatusMetrics, count_labels};
+
+    fn metrics(entries: usize, total: u64, filtered: usize, filtered_bytes: u64) -> StatusMetrics {
+        StatusMetrics {
+            entries,
+            total_size: total,
+            filtered_count: filtered,
+            filtered_bytes,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn no_filter_keeps_the_plain_count() {
+        let (count, chip) = count_labels(&metrics(12, 3 * 1024 * 1024, 0, 0));
+        assert_eq!(count, "12 items \u{00B7} 3.0 MB");
+        assert!(chip.is_none());
+    }
+
+    #[test]
+    fn filter_adds_what_it_holds_back() {
+        let (count, chip) = count_labels(&metrics(12, 3 * 1024 * 1024, 48, 12 * 1024 * 1024));
+        assert_eq!(count, "12 items \u{00B7} 3.0 MB");
+        assert_eq!(chip.unwrap(), "48 filtered out \u{00B7} 12.0 MB");
+    }
+
+    #[test]
+    fn selection_still_wins_the_count_and_keeps_the_chip() {
+        let m = StatusMetrics {
+            selected_count: 3,
+            selected_size: 1024,
+            ..metrics(12, 3 * 1024 * 1024, 48, 1024)
+        };
+        let (count, chip) = count_labels(&m);
+        assert_eq!(count, "3 of 12 selected \u{00B7} 1.0 KB");
+        assert!(chip.is_some());
+    }
+
+    #[test]
+    fn everything_filtered_out_is_not_an_empty_folder() {
+        let (count, chip) = count_labels(&metrics(0, 0, 60, 15 * 1024 * 1024));
+        assert_eq!(count, "All 60 items filtered out \u{00B7} 15.0 MB");
+        assert!(chip.is_none());
+    }
+
+    #[test]
+    fn one_filtered_out_reads_singular() {
+        let (count, _) = count_labels(&metrics(0, 0, 1, 2048));
+        assert_eq!(count, "1 item filtered out \u{00B7} 2.0 KB");
+    }
+
+    #[test]
+    fn a_genuinely_empty_folder_still_says_so() {
+        let (count, chip) = count_labels(&metrics(0, 0, 0, 0));
+        assert_eq!(count, "Empty folder");
+        assert!(chip.is_none());
+    }
 }

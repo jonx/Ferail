@@ -697,7 +697,7 @@ impl FileListDelegate {
     fn push_ghost_icon(
         &self,
         entry: &FileEntry,
-        path: &PathBuf,
+        path: &std::path::Path,
         want_thumb: bool,
         out: &mut SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>,
     ) {
@@ -712,7 +712,6 @@ impl FileListDelegate {
         }
         out.push(self.icons.borrow_mut().icon_for(entry, path));
     }
-
 
     fn effective_sort(&self) -> (SortColumn, bool) {
         self.current_sort.unwrap_or((SortColumn::Name, true))
@@ -905,12 +904,10 @@ impl FileListDelegate {
         cx: &gpui::App,
     ) -> Option<ArchiveEntryDrag> {
         let view = self.archive_view.as_ref()?;
-        let (archive, password) = view
-            .upgrade()
-            .map(|v| {
-                let v = v.read(cx);
-                (v.archive_path().to_path_buf(), v.password_for_drag())
-            })?;
+        let (archive, password) = view.upgrade().map(|v| {
+            let v = v.read(cx);
+            (v.archive_path().to_path_buf(), v.password_for_drag())
+        })?;
         let entries: Vec<String> = if row_is_selected {
             self.archive_rows
                 .iter()
@@ -1207,11 +1204,7 @@ impl TableDelegate for FileListDelegate {
         // distinct from normal files, Finder-style. `else if`: a cut
         // hidden row keeps the stronger cut treatment (opacity doesn't
         // compound; the last call would win).
-        let is_hidden = self
-            .entries
-            .get(row_ix)
-            .map(|e| e.hidden)
-            .unwrap_or(false);
+        let is_hidden = self.entries.get(row_ix).map(|e| e.hidden).unwrap_or(false);
         if is_cut {
             row = row.opacity(0.45);
         } else if is_hidden {
@@ -1351,11 +1344,7 @@ impl TableDelegate for FileListDelegate {
                             )
                             .external_drag_payload::<ExternalPaths>(move |paths, _window, _cx| {
                                 Some(gpui::ExternalDragPayload::Files(gpui::FileDragPaths::new(
-                                    paths
-                                        .paths()
-                                        .iter()
-                                        .cloned()
-                                        .zip(dirs.iter().copied()),
+                                    paths.paths().iter().cloned().zip(dirs.iter().copied()),
                                 )))
                             });
                     }
@@ -1364,8 +1353,7 @@ impl TableDelegate for FileListDelegate {
                 // Unselected row: drags just itself — cheap, no snapshot.
                 let mut ghost_icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]> = smallvec![];
                 self.push_ghost_icon(entry, &path, show_thumbnails(cx), &mut ghost_icons);
-                let names: SmallVec<[SharedString; GHOST_STACK_CAP]> =
-                    smallvec![ghost_name(&path)];
+                let names: SmallVec<[SharedString; GHOST_STACK_CAP]> = smallvec![ghost_name(&path)];
                 let is_dir = matches!(entry.kind, EntryKind::Directory);
                 return row
                     .on_drag(
@@ -1496,10 +1484,13 @@ impl TableDelegate for FileListDelegate {
                 let display_name = entry.display_name.clone();
                 let tooltip_name = display_name.clone();
                 let name_child = if entry.name_has_hazards {
-                    div().flex_1().min_w_0().child(crate::entry_info::name_hazard_element(
-                        &display_name,
-                        SharedString::from(format!("file-row-name-{row_ix}")),
-                    ))
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(crate::entry_info::name_hazard_element(
+                            &display_name,
+                            SharedString::from(format!("file-row-name-{row_ix}")),
+                        ))
                 } else {
                     div()
                         .flex_1()
@@ -1757,17 +1748,16 @@ impl TableDelegate for FileListDelegate {
             }));
         }
         let state_reset = state.clone();
-        menu.separator()
-            .item(
-                PopupMenuItem::new("Reset Columns").on_click(move |_ev, _w, cx| {
-                    state_reset.update(cx, |s, cx| {
-                        s.delegate_mut().reset_columns();
-                        s.refresh(cx);
-                        let widths = s.col_widths();
-                        cx.emit(TableEvent::ColumnWidthsChanged(widths));
-                    });
-                }),
-            )
+        menu.separator().item(
+            PopupMenuItem::new("Reset Columns").on_click(move |_ev, _w, cx| {
+                state_reset.update(cx, |s, cx| {
+                    s.delegate_mut().reset_columns();
+                    s.refresh(cx);
+                    let widths = s.col_widths();
+                    cx.emit(TableEvent::ColumnWidthsChanged(widths));
+                });
+            }),
+        )
     }
 
     fn context_menu(
@@ -1787,8 +1777,7 @@ impl TableDelegate for FileListDelegate {
         use crate::shell::{
             BulkRenameSelected, ClearQuarantine, Compress, CompressSevenZ, CompressTar,
             CompressTarBz2, CompressTarGz, CompressTarXz, CopyPath, DeleteImmediately, Duplicate,
-            NewArchive,
-            Extract, ExtractTo, GetInfo, MakeAlias, MoveToTrash, OpenAsArchive,
+            Extract, ExtractTo, GetInfo, MakeAlias, MoveToTrash, NewArchive, OpenAsArchive,
             OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
             OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
             OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook,
@@ -2029,8 +2018,8 @@ impl TableDelegate for FileListDelegate {
                 // Cache miss — the warm fetch was kicked above, and its
                 // arrival rebuilds this menu in place. Placeholder until then.
                 None => {
-                    menu = menu
-                        .item(PopupMenuItem::new("Open With (loading\u{2026})").disabled(true));
+                    menu =
+                        menu.item(PopupMenuItem::new("Open With (loading\u{2026})").disabled(true));
                 }
             }
         }
@@ -2380,8 +2369,8 @@ impl std::str::FromStr for SortColumn {
     }
 }
 
-/// In-place sort with folders-first grouping (Finder convention).
-/// Pure logic, easy to extend.
+// In-place sort with folders-first grouping (Finder convention) lives in
+// `sort_entries` below; pure logic, easy to extend.
 
 /// The built-in column set, in default order.
 fn default_columns() -> Vec<Column> {
@@ -2552,7 +2541,12 @@ pub fn sort_in_place(entries: &mut [ferail_core::FileEntry], col: SortColumn, as
         }
         (SortColumn::Modified, false) => {
             entries.sort_by_cached_key(|e| {
-                (non_dir(e), Reverse(e.mtime_unix), name_key(e), e.id.as_raw())
+                (
+                    non_dir(e),
+                    Reverse(e.mtime_unix),
+                    name_key(e),
+                    e.id.as_raw(),
+                )
             });
         }
     }

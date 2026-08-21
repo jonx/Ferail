@@ -29,6 +29,9 @@ impl Render for DragPanel {
     }
 }
 
+/// Resize callback shared by the group element and its builder.
+type ResizeHandler = Rc<dyn Fn(&Entity<ResizableState>, &mut Window, &mut App)>;
+
 /// A group of resizable panels.
 #[derive(IntoElement)]
 pub struct ResizablePanelGroup {
@@ -36,7 +39,7 @@ pub struct ResizablePanelGroup {
     state: Option<Entity<ResizableState>>,
     axis: Axis,
     children: Vec<ResizablePanel>,
-    on_resize: Rc<dyn Fn(&Entity<ResizableState>, &mut Window, &mut App)>,
+    on_resize: ResizeHandler,
 }
 
 impl ResizablePanelGroup {
@@ -293,7 +296,7 @@ impl RenderOnce for ResizablePanel {
 
 struct ResizePanelGroupElement {
     state: Entity<ResizableState>,
-    on_resize: Rc<dyn Fn(&Entity<ResizableState>, &mut Window, &mut App)>,
+    on_resize: ResizeHandler,
     axis: Axis,
 }
 

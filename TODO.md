@@ -282,18 +282,15 @@ fallback). Remaining is the UX the system explorers have and we don't:
   the enforcement layers — `path_guard::assert_off_ui_thread`, the
   `disallowed-methods` clippy deny in ferail-gpui — are live, these are the
   surviving violations):
-  - `Shell::new` runs `last_dir.is_dir()` + `canonicalize_for_identity` on the
-    UI thread at **every window open** (shell.rs ~1373). A persisted last-dir
-    on a spun-down drive freezes Cmd+N for seconds. Needs an async window-boot
-    step: open at a placeholder immediately, resolve/canonicalize on the
-    background executor, then navigate.
-  - Grid-view icon warm (`warm_grid_viewport`) does one synchronous NSWorkspace
-    `iconForFile:` per uncached viewport folder in a post-paint `App::defer`
-    on the main thread. Move the RGBA fetch to the background executor like
-    the file-thumbnail path right next to it.
-  - `app_state::save()` writes config synchronously on the main thread on each
-    user toggle (create_dir + write + rename; local disk, ms-scale). Debounce
-    onto the background executor.
+  - ✅ `Shell::new` start-path validation (2026-08-21): the window now boots on
+    the raw persisted last-dir and `resolve_start_path_then_load` does the
+    `is_dir` + canonicalize on the background executor, then loads.
+  - ✅ Grid / sidebar folder-icon warms (2026-08-21): `warm_path_icons_async`
+    fetches on the background executor (`fetch_icon_rgba` made thread-safe
+    by drawing a copy of the shared NSImage); `IconCache` tracks in-flight
+    keys so the per-frame collectors converge.
+  - ✅ `app_state::save()` — was already coalesced onto a writer thread
+    (stale bullet; `app_state.rs` module docs describe it).
   - NSPasteboard reads/writes in copy/cut/paste handlers run on the main
     thread. Fast (no per-path stat — handlers pre-collect cached `is_dir`),
     listed for strict-compliance completeness only.

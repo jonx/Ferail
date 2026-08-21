@@ -224,7 +224,10 @@ pub fn manual_check(cx: &mut App) {
     open_update_dialog(cx);
     let st = snapshot(cx);
     let busy = st.status == CheckStatus::Checking
-        || !matches!(st.download, DownloadStatus::None | DownloadStatus::Failed(_));
+        || !matches!(
+            st.download,
+            DownloadStatus::None | DownloadStatus::Failed(_)
+        );
     if !busy {
         start_check(true, cx);
     }
@@ -318,7 +321,10 @@ fn notify_available(version: String, cx: &mut App) {
         return;
     }
     mutate(cx, |st| st.notified = Some(version.clone()));
-    let Some(host) = cx.active_window().or_else(|| cx.windows().into_iter().next()) else {
+    let Some(host) = cx
+        .active_window()
+        .or_else(|| cx.windows().into_iter().next())
+    else {
         return;
     };
     let msg = format!(
@@ -374,7 +380,11 @@ fn start_download(info: &ReleaseInfo, cx: &mut App) {
                 Err(e) => {
                     crate::log_warn!(90, "update download failed: {e:#}");
                     let brief = format!("{e:#}");
-                    let brief = brief.lines().next().unwrap_or("download failed").to_string();
+                    let brief = brief
+                        .lines()
+                        .next()
+                        .unwrap_or("download failed")
+                        .to_string();
                     tx.send(DlMsg::Failed(brief)).await
                 }
             };
@@ -411,7 +421,10 @@ fn surface_download_done(path: &Path, cx: &mut App) {
         .and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Downloads".to_string());
-    let Some(host) = cx.active_window().or_else(|| cx.windows().into_iter().next()) else {
+    let Some(host) = cx
+        .active_window()
+        .or_else(|| cx.windows().into_iter().next())
+    else {
         return;
     };
     let _ = host.update(cx, |_, window, cx| {
@@ -450,7 +463,11 @@ async fn download_worker(
 
     let dir = {
         let d = ferail_fs_native::home_dir().join("Downloads");
-        if d.is_dir() { d } else { ferail_fs_native::home_dir() }
+        if d.is_dir() {
+            d
+        } else {
+            ferail_fs_native::home_dir()
+        }
     };
     let dest = uniquify(&dir, name);
     let part = dest.with_file_name(format!(
@@ -481,10 +498,7 @@ async fn download_worker(
         }
         file.flush()?;
         if let Some(t) = total {
-            anyhow::ensure!(
-                got == t,
-                "download truncated: got {got} of {t} bytes"
-            );
+            anyhow::ensure!(got == t, "download truncated: got {got} of {t} bytes");
         }
     }
     std::fs::rename(&part, &dest)?;
@@ -527,7 +541,10 @@ pub fn open_update_dialog(cx: &mut App) {
     }
     mutate(cx, |st| st.dialog_open = true);
     cx.defer(|cx| {
-        let Some(host) = cx.active_window().or_else(|| cx.windows().into_iter().next()) else {
+        let Some(host) = cx
+            .active_window()
+            .or_else(|| cx.windows().into_iter().next())
+        else {
             mutate(cx, |st| st.dialog_open = false);
             return;
         };
@@ -587,10 +604,7 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
                                 let p = open_path.clone();
                                 cx.background_spawn(async move {
                                     if let Err(e) = ferail_fs_native::open_with_default(&p) {
-                                        crate::log_warn!(
-                                            90,
-                                            "open downloaded update failed: {e}"
-                                        );
+                                        crate::log_warn!(90, "open downloaded update failed: {e}");
                                     }
                                 })
                                 .detach();
@@ -650,7 +664,9 @@ fn dialog_body(st: &UpdateState, cx: &App) -> impl IntoElement {
         CheckStatus::UpToDate { latest } => div()
             .text_scale_sm()
             .text_color(fg)
-            .child(format!("You're up to date — {latest} is the latest release."))
+            .child(format!(
+                "You're up to date — {latest} is the latest release."
+            ))
             .into_any_element(),
         CheckStatus::Available(info) => v_flex()
             .gap_1()
@@ -733,91 +749,6 @@ fn release_notes_row(tag: String) -> impl IntoElement {
         })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn version_parsing() {
-        assert_eq!(parse_version("v0.4.0"), Some((0, 4, 0)));
-        assert_eq!(parse_version("1.2.3"), Some((1, 2, 3)));
-        assert_eq!(parse_version("v1.2"), None);
-        assert_eq!(parse_version("v1.2.3.4"), None);
-        assert_eq!(parse_version("v1.2.3-rc1"), None);
-        assert_eq!(parse_version("abc"), None);
-    }
-
-    #[test]
-    fn newer_comparison_uses_numeric_order() {
-        // 0.10.0 > 0.9.0 must hold numerically, not lexically.
-        assert!(parse_version("v0.10.0") > parse_version("v0.9.0"));
-        // Malformed remote tags never count as newer.
-        assert!(!is_newer_than_current("not-a-version"));
-        // The running version is never "newer" than itself.
-        assert!(!is_newer_than_current(env!("CARGO_PKG_VERSION")));
-    }
-
-    #[test]
-    fn asset_pick_matches_ci_names() {
-        let names = [
-            "Ferail-0.5.0-win-x64.zip",
-            "Ferail-0.5.0.dmg",
-            "ferail_0.5.0-1_amd64.deb",
-            "ferail_0.5.0-1_arm64.deb",
-        ];
-        let picked = pick_asset_index(&names);
-        match std::env::consts::OS {
-            "macos" => assert_eq!(picked, Some(1)),
-            "windows" => assert_eq!(picked, Some(0)),
-            "linux" => {
-                let expect = if deb_arch() == "amd64" { 2 } else { 3 };
-                assert_eq!(picked, Some(expect));
-            }
-            _ => assert_eq!(picked, None),
-        }
-    }
-
-    /// Real network + real release asset — run explicitly with
-    /// `cargo test -p ferail-gpui update_check -- --ignored`.
-    /// Exercises the whole download path: redirect-following GET,
-    /// content-length accounting, `.part` write, rename.
-    #[test]
-    #[ignore = "network: downloads a real GitHub release asset"]
-    fn download_worker_fetches_a_real_asset() {
-        let client: Arc<dyn HttpClient> = Arc::new(
-            reqwest_client::ReqwestClient::user_agent("Ferail-test").unwrap(),
-        );
-        // Smallest stable asset: the 0.4.0 arm64 .deb (~14 MB).
-        let url = format!(
-            "https://github.com/{REPO}/releases/download/v0.4.0/ferail_0.4.0-1_arm64.deb"
-        );
-        // Progress messages pile up unread in the unbounded channel; fine.
-        let (tx, _rx) = async_channel::unbounded::<DlMsg>();
-        let path = futures_lite::future::block_on(download_worker(
-            client,
-            &url,
-            "ferail-update-test.deb",
-            &tx,
-        ))
-        .unwrap();
-        // download_worker writes to ~/Downloads; clean up after ourselves.
-        let meta = std::fs::metadata(&path).unwrap();
-        assert!(meta.len() > 10_000_000, "suspiciously small: {}", meta.len());
-        std::fs::remove_file(&path).unwrap();
-    }
-
-    #[test]
-    fn uniquify_appends_counter_before_extension() {
-        let dir = std::env::temp_dir().join(format!("ferail-uniq-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let first = uniquify(&dir, "a.dmg");
-        assert_eq!(first, dir.join("a.dmg"));
-        std::fs::write(&first, b"x").unwrap();
-        assert_eq!(uniquify(&dir, "a.dmg"), dir.join("a (2).dmg"));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
 // ============================================================================
 // Screenshot harness
 // ============================================================================
@@ -879,4 +810,91 @@ pub fn seed_dialog_for_screenshot(state: &str, cx: &mut App) {
         st.download = download;
     });
     open_update_dialog(cx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_parsing() {
+        assert_eq!(parse_version("v0.4.0"), Some((0, 4, 0)));
+        assert_eq!(parse_version("1.2.3"), Some((1, 2, 3)));
+        assert_eq!(parse_version("v1.2"), None);
+        assert_eq!(parse_version("v1.2.3.4"), None);
+        assert_eq!(parse_version("v1.2.3-rc1"), None);
+        assert_eq!(parse_version("abc"), None);
+    }
+
+    #[test]
+    fn newer_comparison_uses_numeric_order() {
+        // 0.10.0 > 0.9.0 must hold numerically, not lexically.
+        assert!(parse_version("v0.10.0") > parse_version("v0.9.0"));
+        // Malformed remote tags never count as newer.
+        assert!(!is_newer_than_current("not-a-version"));
+        // The running version is never "newer" than itself.
+        assert!(!is_newer_than_current(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn asset_pick_matches_ci_names() {
+        let names = [
+            "Ferail-0.5.0-win-x64.zip",
+            "Ferail-0.5.0.dmg",
+            "ferail_0.5.0-1_amd64.deb",
+            "ferail_0.5.0-1_arm64.deb",
+        ];
+        let picked = pick_asset_index(&names);
+        match std::env::consts::OS {
+            "macos" => assert_eq!(picked, Some(1)),
+            "windows" => assert_eq!(picked, Some(0)),
+            "linux" => {
+                let expect = if deb_arch() == "amd64" { 2 } else { 3 };
+                assert_eq!(picked, Some(expect));
+            }
+            _ => assert_eq!(picked, None),
+        }
+    }
+
+    /// Real network + real release asset — run explicitly with
+    /// `cargo test -p ferail-gpui update_check -- --ignored`.
+    /// Exercises the whole download path: redirect-following GET,
+    /// content-length accounting, `.part` write, rename.
+    #[test]
+    #[ignore = "network: downloads a real GitHub release asset"]
+    fn download_worker_fetches_a_real_asset() {
+        let client: Arc<dyn HttpClient> =
+            Arc::new(reqwest_client::ReqwestClient::user_agent("Ferail-test").unwrap());
+        // Smallest stable asset: the 0.4.0 arm64 .deb (~14 MB).
+        let url =
+            format!("https://github.com/{REPO}/releases/download/v0.4.0/ferail_0.4.0-1_arm64.deb");
+        // Progress messages pile up unread in the unbounded channel; fine.
+        let (tx, _rx) = async_channel::unbounded::<DlMsg>();
+        let path = futures_lite::future::block_on(download_worker(
+            client,
+            &url,
+            "ferail-update-test.deb",
+            &tx,
+        ))
+        .unwrap();
+        // download_worker writes to ~/Downloads; clean up after ourselves.
+        let meta = std::fs::metadata(&path).unwrap();
+        assert!(
+            meta.len() > 10_000_000,
+            "suspiciously small: {}",
+            meta.len()
+        );
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn uniquify_appends_counter_before_extension() {
+        let dir = std::env::temp_dir().join(format!("ferail-uniq-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let first = uniquify(&dir, "a.dmg");
+        assert_eq!(first, dir.join("a.dmg"));
+        std::fs::write(&first, b"x").unwrap();
+        assert_eq!(uniquify(&dir, "a.dmg"), dir.join("a (2).dmg"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

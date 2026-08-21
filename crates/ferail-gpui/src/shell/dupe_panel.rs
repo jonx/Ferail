@@ -14,6 +14,10 @@
 //! trash worker as `on_move_to_trash`, then prunes the model and rebuilds the
 //! card list from what survived.
 
+// Windows clippy reports `TextScale` (and `ButtonVariants` below) unused:
+// the dupe body's styling calls resolve through traits already in scope
+// there. Keep the imports for the other platforms, silence that one leg.
+#[cfg_attr(target_os = "windows", allow(unused_imports))]
 use crate::text::{IconScale as _, TextScale as _};
 use std::{
     ops::Range,
@@ -22,6 +26,7 @@ use std::{
 };
 
 use ferail_core::NodeId;
+#[cfg_attr(target_os = "windows", allow(unused_imports))]
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::Scrollbar;
 
@@ -414,10 +419,7 @@ impl Shell {
 
     // ===== Group actions =====
 
-    fn dupe_group_mut(
-        groups: &mut [DupeGroupView],
-        group_no: usize,
-    ) -> Option<&mut DupeGroupView> {
+    fn dupe_group_mut(groups: &mut [DupeGroupView], group_no: usize) -> Option<&mut DupeGroupView> {
         groups.iter_mut().find(|g| g.group_no == group_no)
     }
 

@@ -4,8 +4,9 @@ use gpui::{
     RenderOnce, StyleRefinement, Styled, Window, div, prelude::FluentBuilder as _, px, relative,
 };
 use gpui_component::{
-    IconName, Sizable, Size, StyledExt, h_flex,
+    IconName, Sizable, Size, StyledExt,
     group_box::GroupBoxVariant,
+    h_flex,
     input::{Input, InputState},
     sidebar::{Sidebar, SidebarMenu, SidebarMenuItem},
 };
@@ -136,7 +137,7 @@ impl Settings {
     ) -> impl IntoElement {
         let selected_index = state.read(cx).selected_index;
 
-        for (ix, page) in pages.into_iter().enumerate() {
+        for (ix, page) in pages.iter().enumerate() {
             if selected_index.page_ix == ix {
                 return page
                     .render(ix, state, &options, window, cx)
@@ -303,13 +304,7 @@ impl RenderOnce for Settings {
                     .flex_1()
                     .h_full()
                     .min_w_0()
-                    .child(self.render_active_page(
-                        &state,
-                        &filtered_pages,
-                        &options,
-                        window,
-                        cx,
-                    )),
+                    .child(self.render_active_page(&state, &filtered_pages, &options, window, cx)),
             )
     }
 }

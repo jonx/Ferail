@@ -159,7 +159,11 @@ impl Shell {
     /// surprise: do nothing. The names apply when the post-op reload's rows
     /// land (`apply_pending_select_names`), which also scrolls the first one
     /// into view.
-    pub(super) fn queue_select_names_if_current(&mut self, dir: &std::path::Path, names: Vec<String>) {
+    pub(super) fn queue_select_names_if_current(
+        &mut self,
+        dir: &std::path::Path,
+        names: Vec<String>,
+    ) {
         if names.is_empty() {
             return;
         }
@@ -745,8 +749,8 @@ impl Shell {
     fn grid_cols(&self, cx: &App) -> usize {
         let icon_px = crate::grid::icon_size(cx);
         let gap = crate::grid::cell_gap(cx);
-        let w = f32::from(self.active_tab().grid_pane_width)
-            .max(crate::grid::cell_width(icon_px, gap));
+        let w =
+            f32::from(self.active_tab().grid_pane_width).max(crate::grid::cell_width(icon_px, gap));
         crate::grid::cols_per_row(w, icon_px, gap)
     }
 
@@ -1136,7 +1140,7 @@ impl Shell {
         let expired = self
             .typeahead
             .as_ref()
-            .map_or(true, |(_, t)| now.duration_since(*t) > TYPEAHEAD_TIMEOUT);
+            .is_none_or(|(_, t)| now.duration_since(*t) > TYPEAHEAD_TIMEOUT);
         let prev = if expired {
             String::new()
         } else {
@@ -1170,23 +1174,23 @@ impl Shell {
 
         // 1. Extend the prefix: first entry (from the top) matching the
         //    full accumulated candidate.
-        let (matched, buffer) = if let Some(i) = names.iter().position(|n| n.starts_with(&candidate))
-        {
-            (Some(i), candidate)
-        } else if prev.is_empty() || prev.chars().all(|c| c == ch) {
-            // 2. Same single character repeated with no longer match →
-            //    cycle to the next entry starting with `ch`, wrapping.
-            let single = ch.to_string();
-            let start = cur.map_or(0, |i| i + 1);
-            let next = (0..ids.len())
-                .map(|k| (start + k) % ids.len())
-                .find(|&k| names[k].starts_with(&single));
-            (next, single)
-        } else {
-            // 3. Multi-character prefix that matches nothing: keep the
-            //    old buffer and don't move (but stay grouped in time).
-            (None, prev)
-        };
+        let (matched, buffer) =
+            if let Some(i) = names.iter().position(|n| n.starts_with(&candidate)) {
+                (Some(i), candidate)
+            } else if prev.is_empty() || prev.chars().all(|c| c == ch) {
+                // 2. Same single character repeated with no longer match →
+                //    cycle to the next entry starting with `ch`, wrapping.
+                let single = ch.to_string();
+                let start = cur.map_or(0, |i| i + 1);
+                let next = (0..ids.len())
+                    .map(|k| (start + k) % ids.len())
+                    .find(|&k| names[k].starts_with(&single));
+                (next, single)
+            } else {
+                // 3. Multi-character prefix that matches nothing: keep the
+                //    old buffer and don't move (but stay grouped in time).
+                (None, prev)
+            };
 
         self.typeahead = Some((buffer, now));
 

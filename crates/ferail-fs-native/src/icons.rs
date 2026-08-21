@@ -11,20 +11,22 @@ use std::path::Path;
 /// Fetch the system icon for `path` at `size_px`, rasterized to straight
 /// (non-premultiplied) RGBA8.
 ///
-/// **macOS: main-thread only.** This calls
-/// `NSWorkspace.sharedWorkspace().iconForFile:`, which is not safe to invoke
-/// from worker threads. Callers that want to keep the UI thread free should
-/// schedule the fetch via the event loop in chunks (see
-/// `App::prefetch_icons` / `IconChunkTick`), not spawn a worker.
+/// **Safe to call from worker threads** (and meant to be — it can block on
+/// a spun-down volume when the folder carries custom artwork, so the UI
+/// thread must never call it; see the Prime Directive). `iconForFile:`
+/// itself is thread-safe, and the one hazard in this function — resizing
+/// the shared, cached `NSImage` the workspace hands back — is avoided by
+/// drawing a private copy. Rasterization goes through a per-thread
+/// `NSGraphicsContext`, so concurrent fetches don't share drawing state.
 #[cfg(target_os = "macos")]
 pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
-    use objc2::msg_send;
     use objc2::ClassType;
+    use objc2::msg_send;
     use objc2_app_kit::{
         NSBitmapFormat, NSBitmapImageRep, NSCompositingOperation, NSDeviceRGBColorSpace,
         NSGraphicsContext, NSWorkspace,
     };
-    use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+    use objc2_foundation::{NSCopying, NSPoint, NSRect, NSSize, NSString};
 
     let path_str = path.to_str()?;
     let size_f = size_px as f64;
@@ -32,7 +34,9 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
     unsafe {
         let workspace = NSWorkspace::sharedWorkspace();
         let ns_path = NSString::from_str(path_str);
-        let image = workspace.iconForFile(&ns_path);
+        // `iconForFile:` returns a shared, cached NSImage; `setSize:` on it
+        // would race any other thread drawing the same icon. Copy first.
+        let image = workspace.iconForFile(&ns_path).copy();
         image.setSize(NSSize::new(size_f, size_f));
 
         let alloc = NSBitmapImageRep::alloc();
@@ -102,15 +106,13 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
 #[cfg(windows)]
 pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     use std::os::windows::ffi::OsStrExt;
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::SIZE;
-    use windows::Win32::Graphics::Gdi::{DeleteObject, GetObjectW, DIBSECTION, HBITMAP};
-    use windows::Win32::System::Com::{
-        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
-    };
+    use windows::Win32::Graphics::Gdi::{DIBSECTION, DeleteObject, GetObjectW, HBITMAP};
+    use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
     use windows::Win32::UI::Shell::{
         IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_ICONONLY, SIIGBF_RESIZETOFIT,
     };
+    use windows::core::PCWSTR;
 
     let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
     wide.push(0);
@@ -195,7 +197,7 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
 
 #[cfg(target_os = "linux")]
 mod linux_icons {
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::sync::OnceLock;
 
     use xdg_mime::SharedMimeInfo;
@@ -251,7 +253,7 @@ mod linux_icons {
 
     /// Rasterize a theme icon file (PNG or SVG) to straight RGBA8 at
     /// `size_px` square.
-    fn rasterize(icon_path: &PathBuf, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
+    fn rasterize(icon_path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
         let is_svg = icon_path
             .extension()
             .and_then(|e| e.to_str())

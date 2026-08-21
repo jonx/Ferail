@@ -654,7 +654,7 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
 #[cfg(target_os = "linux")]
 pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
     trash::delete(path)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
     Ok(None)
 }
 

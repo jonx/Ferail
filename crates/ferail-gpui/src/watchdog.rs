@@ -94,9 +94,7 @@ fn install_debug_freeze(cx: &mut App) {
         "FERAIL_DEBUG_FREEZE: will block the UI thread for {secs}s (test hook)"
     );
     cx.spawn(async move |cx| {
-        cx.background_executor()
-            .timer(Duration::from_secs(3))
-            .await;
+        cx.background_executor().timer(Duration::from_secs(3)).await;
         cx.update(|_| {
             // Blocking the UI thread is the entire point here.
             std::thread::sleep(Duration::from_secs(secs));
@@ -256,7 +254,12 @@ fn render_report_body(reason: &str) -> String {
     const TRAIL_TAIL: usize = 40;
     let trail = crate::trail::render_lines_sanitized();
     let skipped = trail.len().saturating_sub(TRAIL_TAIL);
-    let _ = writeln!(r, "activity trail (last {} of {}):", trail.len() - skipped, trail.len());
+    let _ = writeln!(
+        r,
+        "activity trail (last {} of {}):",
+        trail.len() - skipped,
+        trail.len()
+    );
     if trail.is_empty() {
         let _ = writeln!(r, "    <none>");
     } else {
@@ -385,8 +388,11 @@ fn capture_thread_stacks() -> Option<(&'static str, String)> {
     let result = run_stack_tool("eu-stack", &["-p", &pid])
         .map(|text| ("eu-stack", text))
         .or_else(|| {
-            run_stack_tool("gdb", &["--batch", "-p", &pid, "-ex", "thread apply all bt"])
-                .map(|text| ("gdb", text))
+            run_stack_tool(
+                "gdb",
+                &["--batch", "-p", &pid, "-ex", "thread apply all bt"],
+            )
+            .map(|text| ("gdb", text))
         });
     unsafe {
         libc::prctl(libc::PR_SET_PTRACER, 0, 0, 0, 0);
@@ -485,7 +491,11 @@ mod unix_signals {
                 // like the default disposition would have.
                 libc::SIGINT | libc::SIGTERM => {
                     if super::ui_thread_stalled() {
-                        let name = if signo == libc::SIGINT { "SIGINT" } else { "SIGTERM" };
+                        let name = if signo == libc::SIGINT {
+                            "SIGINT"
+                        } else {
+                            "SIGTERM"
+                        };
                         super::write_hang_report(&format!(
                             "{name} received while the UI thread was unresponsive"
                         ));
@@ -517,12 +527,8 @@ mod windows_console {
                 super::write_hang_report("Ctrl+Break received (freeze dump requested)");
             }
             // Ctrl+C: dump only when already frozen; healthy quits stay quiet.
-            CTRL_C_EVENT => {
-                if super::ui_thread_stalled() {
-                    super::write_hang_report(
-                        "Ctrl+C received while the UI thread was unresponsive",
-                    );
-                }
+            CTRL_C_EVENT if super::ui_thread_stalled() => {
+                super::write_hang_report("Ctrl+C received while the UI thread was unresponsive");
             }
             _ => {}
         }

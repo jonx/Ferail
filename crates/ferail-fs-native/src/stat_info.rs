@@ -66,7 +66,12 @@ pub fn read_stat_info(path: &Path) -> Option<StatInfo> {
     }
 
     let mode = st.st_mode as u32;
+    // `mode_t` is u16 on macOS and u32 on Linux: the casts are load-bearing
+    // on one and a no-op on the other, so clippy's same-type lint is wrong
+    // on exactly one platform.
+    #[allow(clippy::unnecessary_cast)]
     let is_symlink = (mode & libc::S_IFMT as u32) == libc::S_IFLNK as u32;
+    #[allow(clippy::unnecessary_cast)]
     let is_dir = (mode & libc::S_IFMT as u32) == libc::S_IFDIR as u32;
 
     #[cfg(target_os = "macos")]
