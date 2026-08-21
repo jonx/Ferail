@@ -18,6 +18,7 @@
 //!
 //! Never touches UI, pasteboard, SQLite, or AppKit.
 
+use ferail_core::msgid;
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
@@ -72,14 +73,14 @@ impl FileOpErrorKind {
     /// "Documents — in use by another program".
     pub fn summary(self) -> &'static str {
         match self {
-            Self::PermissionDenied => "permission denied",
-            Self::Locked => "in use by another program",
-            Self::NotFound => "no longer exists",
-            Self::NoSpace => "no space left on the destination",
-            Self::ReadOnly => "destination is read-only",
-            Self::NameTooLong => "name too long",
-            Self::AlreadyExists => "already exists",
-            Self::Other => "could not be completed",
+            Self::PermissionDenied => msgid!("permission denied"),
+            Self::Locked => msgid!("in use by another program"),
+            Self::NotFound => msgid!("no longer exists"),
+            Self::NoSpace => msgid!("no space left on the destination"),
+            Self::ReadOnly => msgid!("destination is read-only"),
+            Self::NameTooLong => msgid!("name too long"),
+            Self::AlreadyExists => msgid!("already exists"),
+            Self::Other => msgid!("could not be completed"),
         }
     }
 
@@ -93,12 +94,12 @@ impl FileOpErrorKind {
             Self::Locked => {
                 "The file is open in another program. Close it and retry, or see what's using it."
             }
-            Self::NotFound => "The item may have moved or been deleted. Refresh the folder and try again.",
-            Self::NoSpace => "Free space on the destination volume or choose another destination.",
-            Self::ReadOnly => "The destination is read-only. Choose a writable folder or change the volume's permissions.",
-            Self::NameTooLong => "Use a shorter name or move the item to a path with fewer nested folders.",
-            Self::AlreadyExists => "Choose a different name or remove the existing item, then try again.",
-            Self::Other => "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager.",
+            Self::NotFound => msgid!("The item may have moved or been deleted. Refresh the folder and try again."),
+            Self::NoSpace => msgid!("Free space on the destination volume or choose another destination."),
+            Self::ReadOnly => msgid!("The destination is read-only. Choose a writable folder or change the volume's permissions."),
+            Self::NameTooLong => msgid!("Use a shorter name or move the item to a path with fewer nested folders."),
+            Self::AlreadyExists => msgid!("Choose a different name or remove the existing item, then try again."),
+            Self::Other => msgid!("Refresh the folder and try again. If it keeps failing, inspect the item in your file manager."),
         }
     }
 

@@ -65,6 +65,25 @@ pub fn tr_static(msgid: &'static str) -> SharedString {
     sh(core::tr_raw(msgid))
 }
 
+/// Translate a runtime string (e.g. an entry's cached `display_kind`) when
+/// the active pack knows it, else hand back the string itself. Render-safe:
+/// `None` fast-path under English, one hash probe otherwise.
+pub fn tr_dyn(text: &str) -> SharedString {
+    match core::tr_dynamic(text) {
+        Some(t) => SharedString::from(t),
+        None => SharedString::from(text.to_owned()),
+    }
+}
+
+/// Like [`tr_dyn`] but keeps an already-owned `SharedString` when there is
+/// no translation (no copy).
+pub fn tr_dyn_shared(text: SharedString) -> SharedString {
+    match core::tr_dynamic(&text) {
+        Some(t) => SharedString::from(t),
+        None => text,
+    }
+}
+
 // =============================================================================
 // Registry
 // =============================================================================

@@ -1591,7 +1591,9 @@ impl TableDelegate for FileListDelegate {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .child(SharedString::from(label.clone())),
+                            // `label` is the cached kind/magic word; translate
+                            // placeholder kinds ("Folder", "File") at render.
+                            .child(crate::i18n::tr_dyn(&label)),
                     );
                 match flag {
                     FormatFlag::Alert => {

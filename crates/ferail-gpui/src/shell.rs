@@ -2519,9 +2519,9 @@ impl Shell {
         let count = entries.len();
         self.confirm_fanout(
             count,
-            ferail_core::msgid!("Open Items?"),
+            tr!("Open Items?"),
             trn!("Open {n} item?", "Open {n} items?", count).to_string(),
-            ferail_core::msgid!("Open"),
+            tr!("Open"),
             window,
             cx,
             move |this, window, cx| {
@@ -3559,14 +3559,14 @@ impl Shell {
         let count = targets.len();
         self.confirm_fanout(
             count,
-            ferail_core::msgid!("Get Info?"),
+            tr!("Get Info?"),
             trn!(
                 "Open {n} Get Info window?",
                 "Open {n} Get Info windows?",
                 count
             )
             .to_string(),
-            ferail_core::msgid!("Get Info"),
+            tr!("Get Info"),
             window,
             cx,
             move |_this, _window, cx| {
@@ -3663,14 +3663,14 @@ impl Shell {
         }
         self.confirm_fanout(
             count,
-            ferail_core::msgid!("Open in New Tabs?"),
+            tr!("Open in New Tabs?"),
             trn!(
                 "Open {n} folder in new tabs?",
                 "Open {n} folders in new tabs?",
                 count
             )
             .to_string(),
-            ferail_core::msgid!("Open"),
+            tr!("Open"),
             window,
             cx,
             move |this, window, cx| {
@@ -5171,7 +5171,10 @@ impl Shell {
                 Err(e) => {
                     crate::log_warn!(90, "{failure_label} failed: {e}");
                     let _ = win.update(cx, |_, window, cx| {
-                        window.push_notification(file_op_error_notification(failure_label, &e), cx);
+                        window.push_notification(
+                            file_op_error_notification(&crate::i18n::tr_static(failure_label), &e),
+                            cx,
+                        );
                     });
                 }
             }

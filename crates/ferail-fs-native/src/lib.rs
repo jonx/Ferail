@@ -1012,11 +1012,15 @@ pub fn cloud_synced_locations() -> std::collections::HashMap<PathBuf, CloudState
 
 pub fn describe_kind(kind: EntryKind, name: &str) -> String {
     match kind {
-        EntryKind::Directory => "Folder".to_string(),
-        EntryKind::Symlink => "Symlink".to_string(),
+        // English on purpose: `display_kind` doubles as data
+        // (`ferail_core::formats_compatible` matches these words), so the
+        // UI translates it at render time with `tr_dyn`; the `msgid!`
+        // marks put the words into the catalog.
+        EntryKind::Directory => ferail_core::msgid!("Folder").to_string(),
+        EntryKind::Symlink => ferail_core::msgid!("Symlink").to_string(),
         EntryKind::File => match name.rsplit_once('.') {
             Some((_, ext)) if !ext.is_empty() && ext.len() <= 8 => ext.to_uppercase(),
-            _ => "File".to_string(),
+            _ => ferail_core::msgid!("File").to_string(),
         },
     }
 }

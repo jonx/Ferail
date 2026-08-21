@@ -305,6 +305,22 @@ pub fn tr_raw(msgid: &'static str) -> Text {
     }
 }
 
+/// Translate a msgid that is only known at runtime (a kind word such as
+/// `"Folder"` cached inside a `FileEntry`, a label persisted as data).
+/// `None` when the active language has no entry — including always under
+/// English — so the caller displays its own string without copying. The
+/// literal must still appear in a `msgid!` somewhere for extraction.
+pub fn tr_dynamic(msgid: &str) -> Option<Arc<str>> {
+    let cat = active_cell().load();
+    if cat.is_english() {
+        return None;
+    }
+    match cat.lookup(msgid) {
+        Some(Entry::One(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
 /// Translate a msgid under a disambiguating context (`trc!`).
 pub fn trc_raw(ctx: &'static str, msgid: &'static str) -> Text {
     let cat = active_cell().load();
