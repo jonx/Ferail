@@ -156,7 +156,7 @@ impl SettingPage {
                                     .icon(IconName::Undo2)
                                     .ghost()
                                     .small()
-                                    .tooltip("Reset All")
+                                    .tooltip(tr!("Reset All"))
                                     .on_click({
                                         let page = self.clone();
                                         move |_, window, cx| {

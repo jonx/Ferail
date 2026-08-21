@@ -260,7 +260,7 @@ impl RenderOnce for Settings {
         let state = window.use_keyed_state(self.id.clone(), cx, |window, cx| {
             let search_input = cx.new(|cx| {
                 InputState::new(window, cx)
-                    .placeholder("Search...")
+                    .placeholder(tr!("Search..."))
                     .default_value("")
             });
 

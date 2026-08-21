@@ -30,6 +30,7 @@ use crate::setting_panel::{
 };
 
 use ferail_core::commands::{Category, all_commands};
+use ferail_core::msgid;
 
 use crate::app_state::{self, AppState};
 
@@ -69,17 +70,19 @@ impl SettingsCategory {
         SettingsCategory::About,
     ];
 
+    /// The page's English title as a `msgid!` literal — translate it for
+    /// display with `crate::i18n::tr_static`.
     pub fn title(self) -> &'static str {
         match self {
-            SettingsCategory::Appearance => "Appearance",
-            SettingsCategory::Files => "Files",
-            SettingsCategory::Performance => "Performance",
-            SettingsCategory::SearchDupes => "Search & Duplicates",
-            SettingsCategory::Plugins => "Plugins",
-            SettingsCategory::Layout => "Layout",
-            SettingsCategory::Shortcuts => "Keyboard Shortcuts",
-            SettingsCategory::Diagnostics => "Diagnostics",
-            SettingsCategory::About => "About",
+            SettingsCategory::Appearance => msgid!("Appearance"),
+            SettingsCategory::Files => msgid!("Files"),
+            SettingsCategory::Performance => msgid!("Performance"),
+            SettingsCategory::SearchDupes => msgid!("Search & Duplicates"),
+            SettingsCategory::Plugins => msgid!("Plugins"),
+            SettingsCategory::Layout => msgid!("Layout"),
+            SettingsCategory::Shortcuts => msgid!("Keyboard Shortcuts"),
+            SettingsCategory::Diagnostics => msgid!("Diagnostics"),
+            SettingsCategory::About => msgid!("About"),
         }
     }
 
@@ -132,11 +135,11 @@ impl ThemePref {
         }
     }
 
-    fn label(self) -> &'static str {
+    fn label(self) -> SharedString {
         match self {
-            ThemePref::Light => "Light",
-            ThemePref::Dark => "Dark",
-            ThemePref::System => "System",
+            ThemePref::Light => tr!("Light"),
+            ThemePref::Dark => tr!("Dark"),
+            ThemePref::System => tr!("System"),
         }
     }
 
@@ -496,7 +499,7 @@ pub fn open_settings_window(cx: &mut App) {
         // titlebar suits this dialog — the brand/custom titlebar is for the
         // main browser window.
         titlebar: Some(gpui::TitlebarOptions {
-            title: Some(SharedString::from("Settings")),
+            title: Some(tr!("Settings")),
             ..Default::default()
         }),
         ..crate::base_window_options()
@@ -534,8 +537,8 @@ pub fn open_settings_window(cx: &mut App) {
 /// when a pick also has to apply live (recompute a global), use
 /// [`dropdown_setting_with`], which hands the setter `&mut App`.
 fn dropdown_setting(
-    title: &'static str,
-    description: &'static str,
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
     options: &'static [(&'static str, &'static str)],
     // Option values rendered greyed and unselectable (e.g. a provider this
     // build can't honour). Empty for an unrestricted dropdown.
@@ -562,9 +565,13 @@ fn dropdown_setting(
 /// what a pick does. `on_pick` runs with `&mut App`, so a live setting can
 /// recompute a global and repaint — not just persist. `Copy` so every menu
 /// item can capture its own copy.
+///
+/// `options` is a static `(value, label)` table whose labels are `msgid!`
+/// literals; they are translated here, at render time, so the menu follows a
+/// language switch without rebuilding the page.
 fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
-    title: &'static str,
-    description: &'static str,
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
     options: &'static [(&'static str, &'static str)],
     disabled: &'static [&'static str],
     get: fn() -> String,
@@ -578,7 +585,7 @@ fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
                 .iter()
                 .map(|(value, label)| DropdownOption {
                     value: (*value).to_owned(),
-                    label: SharedString::new_static(label),
+                    label: crate::i18n::tr_static(label),
                     disabled: disabled.contains(value),
                 })
                 .collect()
@@ -718,12 +725,14 @@ fn dropdown_setting_dyn(
 /// narrow left column next to the control. `value` reads the current state;
 /// `set_value` persists a toggle.
 fn switch_setting(
-    title: &'static str,
+    title: impl Into<SharedString>,
     description: impl Into<SharedString>,
     value: impl Fn(&App) -> bool + 'static,
     set_value: impl Fn(bool, &mut App) + 'static,
 ) -> SettingItem {
+    let title = title.into();
     let description = description.into();
+    let keyword_title = title.clone();
     let keyword_description = description.clone();
     // The SettingItem render closure is `Fn` (re-invoked each frame), so the
     // setter (moved into the switch's `on_click`) must be shareable: `Rc` it
@@ -736,6 +745,7 @@ fn switch_setting(
         let fg = cx.theme().foreground;
         let checked = value(cx);
         let set_value = set_value.clone();
+        let title = title.clone();
         let description = description.clone();
 
         gpui_component::v_flex()
@@ -755,7 +765,7 @@ fn switch_setting(
                             .pr(px(SETTINGS_SWITCH_LANE + SETTINGS_CONTROL_GAP))
                             .text_scale_sm()
                             .text_color(fg)
-                            .child(title),
+                            .child(title.clone()),
                     )
                     .child(
                         div()
@@ -792,7 +802,7 @@ fn switch_setting(
                     .child(description),
             )
     })
-    .keywords([SharedString::from(title), keyword_description])
+    .keywords([keyword_title, keyword_description])
 }
 
 fn build_pages(
@@ -823,19 +833,19 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
     use crate::diagnostics::Status;
 
     let Some(report) = report else {
-        return SettingPage::new("Diagnostics")
+        return SettingPage::new(tr!("Diagnostics"))
             .icon(Icon::empty().path("icons/activity.svg"))
             .group(
                 SettingGroup::new().item(SettingItem::render(move |_o, _w, cx| {
                     div()
                         .text_scale_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child("Running health checks\u{2026}")
+                        .child(tr!("Running health checks\u{2026}"))
                 })),
             );
     };
 
-    let mut page = SettingPage::new("Diagnostics").icon(Icon::empty().path("icons/activity.svg"));
+    let mut page = SettingPage::new(tr!("Diagnostics")).icon(Icon::empty().path("icons/activity.svg"));
 
     // Summary header.
     {
@@ -848,14 +858,19 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                 gpui_component::v_flex()
                     .w_full()
                     .gap_1()
-                    .child(div().text_scale_sm().text_color(fg).child(format!(
-                        "Ferail v{} · {}/{} · {ok} OK, {warn} WARN, {fail} FAIL",
-                        report.app_version, report.os, report.arch
+                    .child(div().text_scale_sm().text_color(fg).child(tr!(
+                        "Ferail v{version} · {os}/{arch} · {ok} OK, {warn} WARN, {fail} FAIL",
+                        version = report.app_version,
+                        os = report.os,
+                        arch = report.arch,
+                        ok = ok,
+                        warn = warn,
+                        fail = fail
                     )))
-                    .child(div().w_full().text_scale_xs().text_color(muted).child(
+                    .child(div().w_full().text_scale_xs().text_color(muted).child(tr!(
                         "Health check of the app's storage and environment. \
-                     Run `ferail --doctor` for the same report from a terminal.",
-                    ))
+                     Run `ferail --doctor` for the same report from a terminal."
+                    )))
             })),
         );
     }
@@ -864,14 +879,14 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
     // Placed up front (right under the summary) so it's the first thing a user
     // sees before reading or sharing the report.
     page = page.group(
-        SettingGroup::new().title("Privacy").item(switch_setting(
-            "Redact file names & paths",
-            "When on (the default), the report below, the bundle you can save, and the \
+        SettingGroup::new().title(tr!("Privacy")).item(switch_setting(
+            tr!("Redact file names & paths"),
+            tr!("When on (the default), the report below, the bundle you can save, and the \
              activity trail all replace every file and folder name with \u{201c}\u{2026}\u{201d}. \
              We see only the shape of what you did \u{2014} how deep a folder was, what file \
              type \u{2014} never the names. So you can share a report with us and we learn \
              nothing about your files. Turn it off only if a maintainer asks for real paths \
-             to reproduce a bug.",
+             to reproduce a bug."),
             |_cx: &App| app_state::load().redact_diagnostics.unwrap_or(true),
             |val: bool, _cx: &mut App| {
                 persist_redact_diagnostics(val);
@@ -882,7 +897,7 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
 
     // One group per check group, one row per check.
     for (gi, group) in report.groups.iter().enumerate() {
-        let mut sg = SettingGroup::new().title(group.title);
+        let mut sg = SettingGroup::new().title(crate::i18n::tr_static(group.title));
         for ci in 0..group.checks.len() {
             let report = report.clone();
             sg = sg.item(SettingItem::render(move |_o, _w, cx| {
@@ -927,7 +942,7 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                                 Button::new(SharedString::from(format!(
                                     "diag-reveal-{gi}-{ci}"
                                 )))
-                                .label("Reveal")
+                                .label(tr!("Reveal"))
                                 .outline()
                                 .xsmall()
                                 .on_click(move |_, _w, cx| {
@@ -951,20 +966,20 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
     // redaction the bundle uses, so the user sees exactly what would be shared.
     page = page.group(
         SettingGroup::new()
-            .title("Activity trail")
+            .title(tr!("Activity trail"))
             .item(SettingItem::render(move |_o, _w, cx| {
                 let muted = cx.theme().muted_foreground;
                 let lines = crate::trail::render_lines_sanitized();
                 let body = if lines.is_empty() {
-                    "No activity recorded yet.".to_string()
+                    tr!("No activity recorded yet.")
                 } else {
                     let start = lines.len().saturating_sub(20);
-                    lines[start..].join("\n")
+                    SharedString::from(lines[start..].join("\n"))
                 };
                 let caption = if crate::redact::enabled() {
-                    "Names are redacted \u{2014} this is exactly what a shared report contains."
+                    tr!("Names are redacted \u{2014} this is exactly what a shared report contains.")
                 } else {
-                    "Redaction is off \u{2014} a shared report would include these real paths."
+                    tr!("Redaction is off \u{2014} a shared report would include these real paths.")
                 };
                 gpui_component::v_flex()
                     .w_full()
@@ -974,7 +989,7 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                             .w_full()
                             .text_scale_xs()
                             .text_color(muted)
-                            .child(SharedString::from(body)),
+                            .child(body),
                     )
                     .child(div().w_full().text_scale_xs().text_color(muted).child(caption))
             })),
@@ -991,7 +1006,7 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                 .gap_2()
                 .child(
                     Button::new("diag-copy")
-                        .label("Copy report")
+                        .label(tr!("Copy report"))
                         .outline()
                         .small()
                         .on_click(move |_, _w, _cx| {
@@ -1011,7 +1026,7 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                 )
                 .child(
                     Button::new("diag-report")
-                        .label("Create report bundle\u{2026}")
+                        .label(tr!("Create report bundle\u{2026}"))
                         .outline()
                         .small()
                         .on_click(|_, window, _cx| crate::report::open_reporter(window)),
@@ -1023,22 +1038,22 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
 }
 
 fn search_dupes_page() -> SettingPage {
-    SettingPage::new("Search & Duplicates")
+    SettingPage::new(tr!("Search & Duplicates"))
         .icon(Icon::empty().path("icons/search.svg"))
         // ---- Search engine ----
         .group(
             SettingGroup::new()
-                .title("Search")
+                .title(tr!("Search"))
                 .item(dropdown_setting(
-                    "Search engine",
-                    "Automatic uses Spotlight's live index when available \u{2014} instant, \
+                    tr!("Search engine"),
+                    tr!("Automatic uses Spotlight's live index when available \u{2014} instant, \
                      content-aware, near-zero CPU \u{2014} and falls back to the built-in \
                      recursive walker where Spotlight is disabled or blind (some external / \
-                     network volumes). Force one if you prefer.",
+                     network volumes). Force one if you prefer."),
                     &[
-                        ("auto", "Automatic (recommended)"),
-                        ("spotlight", "Spotlight"),
-                        ("walker", "Built-in walker"),
+                        ("auto", msgid!("Automatic (recommended)")),
+                        ("spotlight", msgid!("Spotlight")),
+                        ("walker", msgid!("Built-in walker")),
                     ],
                     &[],
                     || {
@@ -1049,14 +1064,14 @@ fn search_dupes_page() -> SettingPage {
                     persist_search_engine,
                 ))
                 .item(switch_setting(
-                    "Match full path",
-                    "Match the relative path, not just the file name.",
+                    tr!("Match full path"),
+                    tr!("Match the relative path, not just the file name."),
                     |_cx: &App| app_state::load().search_match_path.unwrap_or(false),
                     |val: bool, _cx: &mut App| persist_search_match_path(val),
                 ))
                 .item(switch_setting(
-                    "Include hidden files",
-                    "Search dot-files and otherwise-hidden items too.",
+                    tr!("Include hidden files"),
+                    tr!("Search dot-files and otherwise-hidden items too."),
                     |_cx: &App| {
                         let s = app_state::load();
                         s.search_include_hidden.or(s.show_hidden).unwrap_or(false)
@@ -1067,15 +1082,15 @@ fn search_dupes_page() -> SettingPage {
         // ---- Duplicate finder ----
         .group(
             SettingGroup::new()
-                .title("Duplicate finder")
+                .title(tr!("Duplicate finder"))
                 .item(dropdown_setting(
-                    "Results view",
-                    "How duplicate groups are shown. Grouped rows reuse the file list \
+                    tr!("Results view"),
+                    tr!("How duplicate groups are shown. Grouped rows reuse the file list \
                      (selection, sort, preview, context menu); the dedicated panel offers \
-                     group-level actions like keep-newest.",
+                     group-level actions like keep-newest."),
                     &[
-                        ("grouped", "Grouped rows in a tab"),
-                        ("panel", "Dedicated panel"),
+                        ("grouped", msgid!("Grouped rows in a tab")),
+                        ("panel", msgid!("Dedicated panel")),
                     ],
                     &[],
                     || {
@@ -1086,35 +1101,35 @@ fn search_dupes_page() -> SettingPage {
                     persist_dupe_presentation,
                 ))
                 .item(dropdown_setting(
-                    "Ignore small files",
-                    "Skip files below this size \u{2014} the big wins are large files.",
+                    tr!("Ignore small files"),
+                    tr!("Skip files below this size \u{2014} the big wins are large files."),
                     &[
-                        ("0", "Compare all files"),
-                        ("1", "Skip under 1 MB"),
-                        ("10", "Skip under 10 MB"),
-                        ("100", "Skip under 100 MB"),
+                        ("0", msgid!("Compare all files")),
+                        ("1", msgid!("Skip under 1 MB")),
+                        ("10", msgid!("Skip under 10 MB")),
+                        ("100", msgid!("Skip under 100 MB")),
                     ],
                     &[],
                     || app_state::load().dupe_min_size_mb.unwrap_or(0).to_string(),
                     |v| persist_dupe_min_size_mb(v.parse().unwrap_or(0)),
                 ))
                 .item(switch_setting(
-                    "Skip cloud placeholders",
-                    "Don't download undownloaded iCloud files just to hash them.",
+                    tr!("Skip cloud placeholders"),
+                    tr!("Don't download undownloaded iCloud files just to hash them."),
                     |_cx: &App| app_state::load().dupe_skip_cloud.unwrap_or(true),
                     |val: bool, _cx: &mut App| persist_dupe_skip_cloud(val),
                 ))
                 .item(switch_setting(
-                    "Compare inside app bundles",
-                    "Descend into .app / .bundle packages and compare their inner files. \
-                     Off keeps packages opaque.",
+                    tr!("Compare inside app bundles"),
+                    tr!("Descend into .app / .bundle packages and compare their inner files. \
+                     Off keeps packages opaque."),
                     |_cx: &App| app_state::load().dupe_include_packages.unwrap_or(false),
                     |val: bool, _cx: &mut App| persist_dupe_include_packages(val),
                 ))
                 .item(switch_setting(
-                    "Byte-for-byte verify",
-                    "Confirm each match byte-for-byte after hashing. Removes any \
-                     hash-collision doubt at the cost of re-reading confirmed groups.",
+                    tr!("Byte-for-byte verify"),
+                    tr!("Confirm each match byte-for-byte after hashing. Removes any \
+                     hash-collision doubt at the cost of re-reading confirmed groups."),
                     |_cx: &App| app_state::load().dupe_paranoid.unwrap_or(false),
                     |val: bool, _cx: &mut App| persist_dupe_paranoid(val),
                 )),
@@ -1129,20 +1144,20 @@ fn search_dupes_page() -> SettingPage {
 fn language_group() -> SettingGroup {
     use crate::i18n::{self, ENGLISH, SYSTEM};
     SettingGroup::new()
-        .title("Language")
+        .title(tr!("Language"))
         .item(dropdown_setting_dyn(
-            "Language",
-            "Follow the system language, or pick an installed language pack. \
-             Strings a pack doesn't cover stay in English.",
+            tr!("Language"),
+            tr!("Follow the system language, or pick an installed language pack. \
+             Strings a pack doesn't cover stay in English."),
             |cx| {
                 let langs = i18n::languages(cx);
                 let mut out = Vec::with_capacity(langs.packs.len() + 2);
                 let system_label = match langs.system_locale.as_deref() {
-                    Some(loc) => format!("System ({loc})"),
-                    None => "System".to_owned(),
+                    Some(loc) => tr!("System ({loc})", loc = loc),
+                    None => tr!("System"),
                 };
-                out.push(DropdownOption { value: SYSTEM.to_owned(), label: system_label.into(), disabled: false });
-                out.push(DropdownOption { value: ENGLISH.to_owned(), label: "English".into(), disabled: false });
+                out.push(DropdownOption { value: SYSTEM.to_owned(), label: system_label, disabled: false });
+                out.push(DropdownOption { value: ENGLISH.to_owned(), label: tr!("English"), disabled: false });
                 for p in &langs.packs {
                     out.push(DropdownOption { value: p.code.clone(), label: p.label().into(), disabled: false });
                 }
@@ -1166,20 +1181,27 @@ fn language_group() -> SettingGroup {
                     .map(|d| crate::report::redact_username(&d.display().to_string()))
                     .unwrap_or_default();
                 let summary = if langs.packs.is_empty() {
-                    "No language packs installed.".to_owned()
+                    tr!("No language packs installed.")
                 } else {
                     let list: Vec<String> = langs
                         .packs
                         .iter()
                         .map(|p| {
                             let origin = match p.origin {
-                                i18n::Origin::Bundled => "built in",
-                                i18n::Origin::User => "your file",
+                                i18n::Origin::Bundled => tr!("built in"),
+                                i18n::Origin::User => tr!("your file"),
                             };
-                            format!("{} \u{2014} {} of {} strings, {origin}", p.name, p.translated, p.total)
+                            tr!(
+                                "{name} \u{2014} {translated} of {total} strings, {origin}",
+                                name = p.name,
+                                translated = p.translated,
+                                total = p.total,
+                                origin = origin
+                            )
+                            .to_string()
                         })
                         .collect();
-                    format!("Installed: {}.", list.join("; "))
+                    tr!("Installed: {list}.", list = list.join("; "))
                 };
                 gpui_component::v_flex()
                     .w_full()
@@ -1191,7 +1213,7 @@ fn language_group() -> SettingGroup {
                             .gap_2()
                             .child(
                                 Button::new("lang-new")
-                                    .label("New language\u{2026}")
+                                    .label(tr!("New language\u{2026}"))
                                     .dropdown_caret(true)
                                     .outline()
                                     .small()
@@ -1210,48 +1232,50 @@ fn language_group() -> SettingGroup {
                             )
                             .child(
                                 Button::new("lang-import")
-                                    .label("Import\u{2026}")
+                                    .label(tr!("Import\u{2026}"))
                                     .outline()
                                     .small()
                                     .on_click(|_, window, cx| i18n::import_file(window, cx)),
                             )
                             .child(
                                 Button::new("lang-export")
-                                    .label("Export\u{2026}")
+                                    .label(tr!("Export\u{2026}"))
                                     .outline()
                                     .small()
                                     .on_click(|_, window, cx| i18n::export_current(window, cx)),
                             )
                             .child(
                                 Button::new("lang-folder")
-                                    .label("Show folder")
+                                    .label(tr!("Show folder"))
                                     .outline()
                                     .small()
                                     .on_click(|_, _window, cx| i18n::reveal_folder(cx)),
                             )
                             .child(
                                 Button::new("lang-reload")
-                                    .label("Reload")
+                                    .label(tr!("Reload"))
                                     .outline()
                                     .small()
                                     .on_click(|_, _window, cx| i18n::reload(cx)),
                             )
                             .child(
                                 Button::new("lang-instructions")
-                                    .label("Copy instructions")
+                                    .label(tr!("Copy instructions"))
                                     .outline()
                                     .small()
                                     .on_click(|_, _window, cx| i18n::copy_instructions(cx)),
                             ),
                     )
                     .child(
-                        div().w_full().text_scale_sm().text_color(muted).child(SharedString::from(format!(
+                        div().w_full().text_scale_sm().text_color(muted).child(tr!(
                             "To add a language: New language\u{2026} writes a template into {folder}. \
                              Give that file to a translator or an AI assistant (Claude, ChatGPT, \u{2026}) \
                              \u{2014} the instructions are inside it \u{2014} then Import\u{2026} the result. \
                              Export\u{2026} saves the current language the same way, for translating the \
-                             missing strings or sharing it. {summary}"
-                        ))),
+                             missing strings or sharing it. {summary}",
+                            folder = folder,
+                            summary = summary
+                        )),
                     )
             })
             .keywords(["language", "translation", "locale", "import", "export"]),
@@ -1262,27 +1286,27 @@ fn appearance_page(
     selection_picker: Entity<ColorPickerState>,
     ant_trail_picker: Entity<ColorPickerState>,
 ) -> SettingPage {
-    SettingPage::new("Appearance")
+    SettingPage::new(tr!("Appearance"))
         .icon(Icon::empty().path("icons/palette.svg"))
         .group(language_group())
         .group(
-            SettingGroup::new().title("Theme").item(
+            SettingGroup::new().title(tr!("Theme")).item(
                 // Vertical layout so the three fixed-width tiles drop
                 // below the title rather than competing with it for
                 // horizontal space — previous default-horizontal layout
                 // clipped the System tile on the right edge.
                 SettingItem::new(
-                    "Theme",
+                    tr!("Theme"),
                     SettingField::render(|_options, _window, _cx| {
                         theme_tile_strip().into_any_element()
                     }),
                 )
                 .layout(Axis::Vertical)
-                .description("Match the system, or pick a side."),
+                .description(tr!("Match the system, or pick a side.")),
             ),
         )
         .group(
-            SettingGroup::new().title("Selection").item(
+            SettingGroup::new().title(tr!("Selection")).item(
                 // The picker is a stateful entity owned by `SettingsView`;
                 // here we render a fresh stateless `ColorPicker` over it
                 // each frame. Changes flow through the entity's
@@ -1290,27 +1314,27 @@ fn appearance_page(
                 // `SettingsView::new`), which updates the live global and
                 // persists — so the file list and grid recolor at once.
                 SettingItem::new(
-                    "Selection color",
+                    tr!("Selection color"),
                     SettingField::render(move |_options, _window, _cx| {
                         ColorPicker::new(&selection_picker).into_any_element()
                     }),
                 )
                 .layout(Axis::Vertical)
-                .description(
+                .description(tr!(
                     "The highlight behind selected files in the list and grid. \
-                     Clear it to follow the theme's blue.",
-                ),
+                     Clear it to follow the theme's blue."
+                )),
             )
             .item(dropdown_setting_with(
-                "Icon spacing",
-                "Gap between the selection highlights in icon view. Wider spacing \
-                 lets the boxes breathe; None packs them edge-to-edge.",
+                tr!("Icon spacing"),
+                tr!("Gap between the selection highlights in icon view. Wider spacing \
+                 lets the boxes breathe; None packs them edge-to-edge."),
                 &[
-                    ("0", "None"),
-                    ("2", "Tight"),
-                    ("4", "Default"),
-                    ("8", "Comfortable"),
-                    ("12", "Spacious"),
+                    ("0", msgid!("None")),
+                    ("2", msgid!("Tight")),
+                    ("4", msgid!("Default")),
+                    ("8", msgid!("Comfortable")),
+                    ("12", msgid!("Spacious")),
                 ],
                 &[],
                 || format!("{:.0}", crate::grid::clamp_cell_gap(
@@ -1326,14 +1350,14 @@ fn appearance_page(
         )
         .group(
             SettingGroup::new()
-                .title("Ant Trail")
+                .title(tr!("Ant Trail"))
                 // Master switch. Persists *and* updates the live global so the
                 // tint appears/vanishes in open windows without a relaunch.
                 .item(switch_setting(
-                    "Show Ant Trail",
-                    "Tint your most-visited folders so the ones you open most stand out. \
+                    tr!("Show Ant Trail"),
+                    tr!("Tint your most-visited folders so the ones you open most stand out. \
                      Off hides the tint entirely \u{2014} your visit history still feeds \
-                     Recents.",
+                     Recents."),
                     |cx: &App| crate::ant_trail::enabled(cx),
                     |val: bool, cx: &mut App| {
                         persist_ant_trail_enabled(val);
@@ -1346,25 +1370,25 @@ fn appearance_page(
                     // (set up in `SettingsView::new`) updates the live
                     // `AntTrailColor` global and persists.
                     SettingItem::new(
-                        "Ant Trail color",
+                        tr!("Ant Trail color"),
                         SettingField::render(move |_options, _window, _cx| {
                             ColorPicker::new(&ant_trail_picker).into_any_element()
                         }),
                     )
                     .layout(Axis::Vertical)
-                    .description(
+                    .description(tr!(
                         "The tint behind your most-visited folders in the list and grid. \
-                         Brightness still tracks visit frequency. Clear it for the stock orange.",
-                    ),
+                         Brightness still tracks visit frequency. Clear it for the stock orange."
+                    )),
                 )
                 // Persists *and* updates the live policy global so the change
                 // takes effect on the next favorite click without a relaunch.
                 .item(switch_setting(
-                    "Don't track favorites",
-                    "When on, opening a folder from your Favorites doesn't count toward \
+                    tr!("Don't track favorites"),
+                    tr!("When on, opening a folder from your Favorites doesn't count toward \
                      its Ant Trail heat or add it to Recents \u{2014} so deliberate \
                      shortcuts don't crowd out folders you actually browse to. Reaching \
-                     the same folder any other way still counts.",
+                     the same folder any other way still counts."),
                     |_cx: &App| {
                         app_state::load()
                             .exclude_favorites_from_tracking
@@ -1378,15 +1402,15 @@ fn appearance_page(
         )
         .group(
             SettingGroup::new()
-                .title("Recents")
+                .title(tr!("Recents"))
                 // Master switch. Persists *and* updates the live global so the
                 // sidebar section appears/vanishes without a relaunch. Use
                 // "Clear Recents\u{2026}" (Go menu / \u{2318}K) to wipe the list.
                 .item(switch_setting(
-                    "Show Recents",
-                    "List the folders you've opened recently in the sidebar, most \
+                    tr!("Show Recents"),
+                    tr!("List the folders you've opened recently in the sidebar, most \
                      recent first. Off hides the section and stops adding to it \
-                     \u{2014} your Ant Trail heat is unaffected.",
+                     \u{2014} your Ant Trail heat is unaffected."),
                     |cx: &App| crate::recents_section::recents_enabled(cx),
                     |val: bool, cx: &mut App| {
                         persist_recents_enabled(val);
@@ -1401,19 +1425,19 @@ fn appearance_page(
 /// persist and update a process global so open windows react without a
 /// relaunch.
 fn performance_page() -> SettingPage {
-    SettingPage::new("Performance")
+    SettingPage::new(tr!("Performance"))
         .icon(Icon::empty().path("icons/cpu.svg"))
         .group(
             SettingGroup::new()
-                .title("Background work")
+                .title(tr!("Background work"))
                 // Quick Look previews vs. generic type icons. Moved here
                 // from Files because rendering real previews is one of the
                 // per-folder background costs (see `warm_*_viewport`).
                 .item(switch_setting(
-                    "Show file previews",
-                    "Draw photos, videos, and PDFs as their actual content in the file \
+                    tr!("Show file previews"),
+                    tr!("Draw photos, videos, and PDFs as their actual content in the file \
                      list and grid. Off uses generic type icons \u{2014} lighter, since \
-                     Quick Look never runs.",
+                     Quick Look never runs."),
                     |cx: &App| crate::thumbnails::show_thumbnails(cx),
                     |val: bool, cx: &mut App| {
                         persist_show_thumbnails(val);
@@ -1425,10 +1449,10 @@ fn performance_page() -> SettingPage {
                 // window activation. Off leaves folder rows with a dash in
                 // the Size column.
                 .item(switch_setting(
-                    "Calculate folder sizes",
-                    "Recursively total each folder so the Size column shows how big it is. \
+                    tr!("Calculate folder sizes"),
+                    tr!("Recursively total each folder so the Size column shows how big it is. \
                      This walks the whole subtree in the background \u{2014} the biggest \
-                     disk cost on large folders. Off shows a dash for folder sizes.",
+                     disk cost on large folders. Off shows a dash for folder sizes."),
                     |cx: &App| crate::folder_sizes::folder_sizing_enabled(cx),
                     |val: bool, cx: &mut App| {
                         persist_folder_sizing(val);
@@ -1439,11 +1463,11 @@ fn performance_page() -> SettingPage {
                 // reads (tag dots) — the two remaining per-row disk costs on
                 // every folder load. Bundled into one switch.
                 .item(switch_setting(
-                    "Detect file types and tags",
-                    "Read each file's contents to name its type in the Format column and \
+                    tr!("Detect file types and tags"),
+                    tr!("Read each file's contents to name its type in the Format column and \
                      read its Finder tags for the colour dots. Both are per-file disk \
                      reads on every folder. Off falls back to types from the file \
-                     extension and hides tag dots.",
+                     extension and hides tag dots."),
                     |cx: &App| crate::prefetch::file_detail_scan_enabled(cx),
                     |val: bool, cx: &mut App| {
                         persist_file_detail_scan(val);
@@ -1461,19 +1485,20 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
     // windows. A shared-observer rewire is on the Phase 10 audit
     // list; in the meantime the wording matches reality.
     let description = match home_hidden_count {
-        Some(n) if n > 0 => format!(
-            "Reveal items that start with a dot \u{2014} {} in your home folder. Takes effect on next launch.",
+        Some(n) if n > 0 => trn!(
+            "Reveal items that start with a dot \u{2014} {n} in your home folder. Takes effect on next launch.",
+            "Reveal items that start with a dot \u{2014} {n} in your home folder. Takes effect on next launch.",
             n
         ),
-        _ => "Reveal items that start with a dot, like .config and .ssh. Takes effect on next launch.".to_string(),
+        _ => tr!("Reveal items that start with a dot, like .config and .ssh. Takes effect on next launch."),
     };
-    let page = SettingPage::new("Files")
+    let page = SettingPage::new(tr!("Files"))
         .icon(Icon::empty().path("icons/folder.svg"))
         .group(
             SettingGroup::new()
-                .title("Visibility")
+                .title(tr!("Visibility"))
                 .item(switch_setting(
-                    "Show hidden files",
+                    tr!("Show hidden files"),
                     description,
                     |_cx: &App| app_state::load().show_hidden.unwrap_or(false),
                     |val: bool, _cx: &mut App| persist_show_hidden(val),
@@ -1485,7 +1510,7 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
     #[cfg(target_os = "windows")]
     let page = page.group(
         SettingGroup::new()
-            .title("Locations")
+            .title(tr!("Locations"))
             .item(locations_mode_setting()),
     );
     page.group(terminal_group())
@@ -1497,10 +1522,10 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
 /// [`crate::feature_settings::TerminalConfig`].
 fn terminal_group() -> SettingGroup {
     SettingGroup::new()
-        .title("Terminal")
+        .title(tr!("Terminal"))
         .item(
             SettingItem::new(
-                "Terminal application",
+                tr!("Terminal application"),
                 SettingField::input(
                     |_cx: &App| {
                         SharedString::from(app_state::load().terminal_path.unwrap_or_default())
@@ -1509,16 +1534,16 @@ fn terminal_group() -> SettingGroup {
                 ),
             )
             .layout(Axis::Vertical)
-            .description(
+            .description(tr!(
                 "Which terminal \u{201C}Open Terminal Here\u{201D} launches \u{2014} an app name \
                  or .app bundle on macOS, a program path, or a command on PATH. Blank uses the \
                  platform default: Terminal.app on macOS, Windows Terminal on Windows, and \
-                 auto-detection ($TERMINAL, then common emulators) on Linux.",
-            ),
+                 auto-detection ($TERMINAL, then common emulators) on Linux."
+            )),
         )
         .item(
             SettingItem::new(
-                "Arguments",
+                tr!("Arguments"),
                 SettingField::input(
                     |_cx: &App| {
                         SharedString::from(app_state::load().terminal_args.unwrap_or_default())
@@ -1527,19 +1552,21 @@ fn terminal_group() -> SettingGroup {
                 ),
             )
             .layout(Axis::Vertical)
-            .description(
+            // `{dir}` here is the terminal's own placeholder, shown to the
+            // reader verbatim (no `tr!` arguments, so nothing is filled in).
+            .description(tr!(
                 "Extra launch arguments. {dir} expands to the folder; double quotes group a \
                  value with spaces (e.g. --working-directory \"{dir}\"). Without {dir} the \
                  terminal starts in the folder via its working directory. Blank uses the \
-                 terminal's defaults.",
-            ),
+                 terminal's defaults."
+            )),
         )
         .item(dropdown_setting(
-            "Launch mode",
-            "Standard opens the terminal normally. Administrator opens it with elevated \
+            tr!("Launch mode"),
+            tr!("Standard opens the terminal normally. Administrator opens it with elevated \
              rights \u{2014} a UAC prompt on Windows; on macOS and Linux the window opens \
-             into a root shell, with sudo asking for your password inside the terminal.",
-            &[("standard", "Standard"), ("admin", "Administrator")],
+             into a root shell, with sudo asking for your password inside the terminal."),
+            &[("standard", msgid!("Standard")), ("admin", msgid!("Administrator"))],
             &[],
             || {
                 app_state::load()
@@ -1583,16 +1610,16 @@ fn persist_terminal_mode(value: &str) {
 #[cfg(target_os = "windows")]
 fn locations_mode_setting() -> SettingItem {
     dropdown_setting_with(
-        "Special folders",
-        "When OneDrive moves your Desktop, Documents, or Pictures into the cloud it often \
+        tr!("Special folders"),
+        tr!("When OneDrive moves your Desktop, Documents, or Pictures into the cloud it often \
          leaves a local copy behind, so \u{201C}where is my Documents?\u{201D} has two answers. \
          Automatic follows Windows (cloud where it moved them, local otherwise). Local prefers \
          your %USERPROFILE% copy; OneDrive prefers the OneDrive copy \u{2014} each falls back to \
-         the other when its copy doesn\u{2019}t exist, so a shortcut never opens to nothing.",
+         the other when its copy doesn\u{2019}t exist, so a shortcut never opens to nothing."),
         &[
-            ("auto", "Automatic (recommended)"),
-            ("local", "Local profile"),
-            ("onedrive", "OneDrive"),
+            ("auto", msgid!("Automatic (recommended)")),
+            ("local", msgid!("Local profile")),
+            ("onedrive", msgid!("OneDrive")),
         ],
         &[],
         || {
@@ -1610,32 +1637,32 @@ fn locations_mode_setting() -> SettingItem {
 }
 
 fn layout_page() -> SettingPage {
-    SettingPage::new("Layout")
+    SettingPage::new(tr!("Layout"))
         .icon(Icon::empty().path("icons/settings-2.svg"))
-        .group(SettingGroup::new().title("Interface").item(dropdown_setting(
-            "UI scale",
-            "Overall interface zoom. Restart the app or open a new window for the change to apply.",
+        .group(SettingGroup::new().title(tr!("Interface")).item(dropdown_setting(
+            tr!("UI scale"),
+            tr!("Overall interface zoom. Restart the app or open a new window for the change to apply."),
             &[
-                ("0.85", "Small (85%)"),
-                ("1.00", "Default (100%)"),
-                ("1.15", "Medium (115%)"),
-                ("1.30", "Large (130%)"),
+                ("0.85", msgid!("Small (85%)")),
+                ("1.00", msgid!("Default (100%)")),
+                ("1.15", msgid!("Medium (115%)")),
+                ("1.30", msgid!("Large (130%)")),
             ],
             &[],
             || format!("{:.2}", app_state::load().ui_scale.unwrap_or(1.0)),
             |v| persist_ui_scale(v.parse().unwrap_or(1.0)),
         )))
-        .group(SettingGroup::new().title("Viewer").item(dropdown_setting(
-            "Default zoom",
-            "How media is sized when the viewer opens, and what zoom reset returns to. \
+        .group(SettingGroup::new().title(tr!("Viewer")).item(dropdown_setting(
+            tr!("Default zoom"),
+            tr!("How media is sized when the viewer opens, and what zoom reset returns to. \
              \u{201C}Fit to window\u{201D} scales large media down and small media up to fill \
              the window; \u{201C}Fit, never enlarge\u{201D} stops at the media's real size, so \
              small images stay pixel-true; \u{201C}Actual size\u{201D} always shows 1:1. \
-             Takes effect on the next viewer window.",
+             Takes effect on the next viewer window."),
             &[
-                ("fit", "Fit to window"),
-                ("fit-down", "Fit, never enlarge"),
-                ("actual", "Actual size (100%)"),
+                ("fit", msgid!("Fit to window")),
+                ("fit-down", msgid!("Fit, never enlarge")),
+                ("actual", msgid!("Actual size (100%)")),
             ],
             &[],
             || {
@@ -1676,35 +1703,35 @@ fn plugins_page() -> SettingPage {
     // The mpv provider is only compiled in with the `mpv` feature. In a stock
     // build, grey the "mpv" option out (unselectable) and say why in the
     // description, so it's discoverable but can't be picked into a no-op.
-    let (player_desc, player_disabled): (&'static str, &'static [&'static str]) =
+    let (player_desc, player_disabled): (SharedString, &'static [&'static str]) =
         if cfg!(feature = "mpv") {
             (
-                "The built-in player uses the platform's native media frameworks \
+                tr!("The built-in player uses the platform's native media frameworks \
                  (AVFoundation on macOS, Media Foundation on Windows). mpv plays virtually \
                  any container/codec and applies colour adjustments and a transparent-colour \
                  key to the video itself. libmpv must be installed; a change takes effect on \
-                 the next viewer window.",
+                 the next viewer window."),
                 &[],
             )
         } else {
             (
-                "The built-in player uses the platform's native media frameworks. \
+                tr!("The built-in player uses the platform's native media frameworks. \
                  mpv plays virtually any container/codec, but this build was compiled \
                  without the `mpv` feature, so mpv is unavailable \u{2014} rebuild with \
                  `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) \
-                 to enable it.",
+                 to enable it."),
                 &["mpv"],
             )
         };
-    SettingPage::new("Plugins")
+    SettingPage::new(tr!("Plugins"))
         .icon(Icon::empty().path("icons/settings.svg"))
         .group(
             SettingGroup::new()
-                .title("Video player")
+                .title(tr!("Video player"))
                 .item(dropdown_setting(
-                    "Player",
+                    tr!("Player"),
                     player_desc,
-                    &[("builtin", "Built-in"), ("mpv", "mpv")],
+                    &[("builtin", msgid!("Built-in")), ("mpv", msgid!("mpv"))],
                     player_disabled,
                     || {
                         app_state::load()
@@ -1715,7 +1742,7 @@ fn plugins_page() -> SettingPage {
                 ))
                 .item(
                     SettingItem::new(
-                        "mpv library",
+                        tr!("mpv library"),
                         SettingField::input(
                             |_cx: &App| {
                                 SharedString::from(app_state::load().mpv_path.unwrap_or_else(
@@ -1726,10 +1753,10 @@ fn plugins_page() -> SettingPage {
                         ),
                     )
                     .layout(Axis::Vertical)
-                    .description(
+                    .description(tr!(
                         "Where libmpv is loaded from — the dylib, a directory containing it, \
-                         or mpv.app on macOS. Blank uses the platform default (Homebrew).",
-                    ),
+                         or mpv.app on macOS. Blank uses the platform default (Homebrew)."
+                    )),
                 ),
         )
 }
@@ -1749,8 +1776,8 @@ fn shortcuts_page() -> SettingPage {
             .first()
             .map(crate::keyboard_help::format_shortcut)
             .unwrap_or_default();
-        let title = SharedString::from(spec.title);
-        let cat_name = SharedString::from(category_name(spec.category));
+        let title = crate::i18n::tr_static(spec.title);
+        let cat_name = crate::i18n::tr_static(category_name(spec.category));
         let chord_for_render = chord.clone();
         let title_for_render = title.clone();
         let cat_for_render = cat_name.clone();
@@ -1805,7 +1832,11 @@ fn shortcuts_page() -> SettingPage {
                         .w_full()
                         .text_scale_sm()
                         .text_color(theme.muted_foreground)
-                        .child(format!("{cat_for_render} \u{00B7} {chord_for_render}")),
+                        .child(tr!(
+                            "{category} \u{00B7} {chord}",
+                            category = cat_for_render,
+                            chord = chord_for_render
+                        )),
                 )
                 .into_any_element()
         })
@@ -1823,9 +1854,9 @@ fn shortcuts_page() -> SettingPage {
     }
 
     let mut page =
-        SettingPage::new("Keyboard Shortcuts").icon(Icon::empty().path("icons/keyboard.svg"));
+        SettingPage::new(tr!("Keyboard Shortcuts")).icon(Icon::empty().path("icons/keyboard.svg"));
     for (cat, items) in groups_by_cat {
-        let title = category_name(cat);
+        let title = crate::i18n::tr_static(category_name(cat));
         let mut group = SettingGroup::new().title(title);
         for item in items {
             group = group.item(item);
@@ -1836,18 +1867,18 @@ fn shortcuts_page() -> SettingPage {
 }
 
 fn about_page() -> SettingPage {
-    SettingPage::new("About")
+    SettingPage::new(tr!("About"))
         .icon(Icon::empty().path("icons/info.svg"))
         .group(
             // Updates — the automatic check is opt-in; the menu's manual
             // Check for Updates… works regardless (docs/features/UPDATES.md).
-            SettingGroup::new().title("Updates").item(switch_setting(
-                "Check for updates automatically",
-                "Once a day, ask GitHub whether a newer Ferail release exists, and show a \
+            SettingGroup::new().title(tr!("Updates")).item(switch_setting(
+                tr!("Check for updates automatically"),
+                tr!("Once a day, ask GitHub whether a newer Ferail release exists, and show a \
                  notification when one does. Off by default \u{2014} when off, Ferail makes no \
                  network requests on its own. Nothing is ever downloaded or installed without \
                  you choosing to; use Ferail \u{2192} Check for Updates\u{2026} to check by hand \
-                 at any time.",
+                 at any time."),
                 |_cx: &App| app_state::load().update_check.unwrap_or(false),
                 |val: bool, cx: &mut App| {
                     persist_update_check(val);
@@ -1877,40 +1908,39 @@ fn about_page() -> SettingPage {
                         div()
                             .text_scale_xs()
                             .text_color(theme.muted_foreground)
-                            .child(SharedString::from(concat!(
-                                "Version ",
-                                env!("CARGO_PKG_VERSION")
-                            ))),
+                            .child(tr!("Version {version}", version = env!("CARGO_PKG_VERSION"))),
                     )
                     .child(
                         div()
                             .mt_2()
                             .text_scale_sm()
                             .text_color(theme.foreground)
-                            .child("The macOS port of Ferail — a Finder-class file explorer."),
+                            .child(tr!("The macOS port of Ferail — a Finder-class file explorer.")),
                     )
                     .child(
                         div()
                             .text_scale_xs()
                             .text_color(theme.muted_foreground)
-                            .child("Built for speed, predictability, and a calm UI."),
+                            .child(tr!("Built for speed, predictability, and a calm UI.")),
                     )
                     .into_any_element()
             })),
         )
 }
 
+/// English name of a command category as a `msgid!` literal — translate it
+/// for display with `crate::i18n::tr_static`.
 fn category_name(c: Category) -> &'static str {
     match c {
-        Category::App => "App",
-        Category::File => "File",
-        Category::Edit => "Edit",
-        Category::View => "View",
-        Category::Go => "Go",
-        Category::Selection => "Selection",
-        Category::Window => "Window",
-        Category::Help => "Help",
-        Category::Context => "Context",
+        Category::App => msgid!("App"),
+        Category::File => msgid!("File"),
+        Category::Edit => msgid!("Edit"),
+        Category::View => msgid!("View"),
+        Category::Go => msgid!("Go"),
+        Category::Selection => msgid!("Selection"),
+        Category::Window => msgid!("Window"),
+        Category::Help => msgid!("Help"),
+        Category::Context => msgid!("Context"),
     }
 }
 

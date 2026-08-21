@@ -92,7 +92,7 @@ fn open_about_dialog_now(cx: &mut App) -> bool {
 
 fn build_dialog(dialog: Dialog) -> Dialog {
     dialog
-        .title("About Ferail")
+        .title(tr!("About Ferail"))
         .w(px(380.0))
         .overlay_closable(true)
         .keyboard(true)
@@ -135,15 +135,15 @@ fn about_body() -> impl IntoElement {
                 .items_center()
                 .gap_1()
                 .child(WithTheme::wordmark())
-                .child(WithTheme::muted(format!("Version {version}")))
-                .child(WithTheme::tagline("A fast, calm file explorer.")),
+                .child(WithTheme::muted(tr!("Version {version}", version = version)))
+                .child(WithTheme::tagline(tr!("A fast, calm file explorer."))),
         )
         .child(
             v_flex()
                 .gap_1()
                 .items_center()
-                .child(meta_row("Platform", format!("{os_label} \u{00B7} {arch}")))
-                .child(meta_row("Author", "John Knipper".to_string()))
+                .child(meta_row(tr!("Platform"), format!("{os_label} \u{00B7} {arch}")))
+                .child(meta_row(tr!("Author"), "John Knipper".to_string()))
                 .child(website_row("github.com/jonx/Ferail")),
         )
         .child(WithTheme::copyright("Copyright \u{00A9} 2026 John Knipper"))
@@ -192,10 +192,10 @@ impl WithTheme {
 /// strength. We avoid pulling `theme.muted_foreground` here because
 /// the helper doesn't have a `&App`; opacity gets us the same visual
 /// weight on both light and dark themes.
-fn meta_row(label: &'static str, value: String) -> impl IntoElement {
+fn meta_row(label: impl Into<SharedString>, value: String) -> impl IntoElement {
     h_flex()
         .gap_2()
-        .child(div().text_scale_xs().opacity(0.65).child(label))
+        .child(div().text_scale_xs().opacity(0.65).child(label.into()))
         .child(div().text_scale_xs().child(value))
 }
 
@@ -204,7 +204,7 @@ fn meta_row(label: &'static str, value: String) -> impl IntoElement {
 fn website_row(url: &'static str) -> impl IntoElement {
     h_flex()
         .gap_2()
-        .child(div().text_scale_xs().opacity(0.65).child("Website"))
+        .child(div().text_scale_xs().opacity(0.65).child(tr!("Website")))
         .child(
             div()
                 .id(ElementId::Name("about-website-link".into()))

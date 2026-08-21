@@ -16,6 +16,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::app_state;
+use ferail_core::msgid;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Status {
@@ -66,6 +67,8 @@ impl Check {
 }
 
 /// A titled group of checks (App / Storage / Dependencies / Environment).
+/// `title` is a `msgid!` literal: the plain-text report prints it in English,
+/// the Settings page translates it for display.
 pub struct Group {
     pub title: &'static str,
     pub checks: Vec<Check>,
@@ -151,7 +154,7 @@ fn app_group() -> Group {
         ),
     };
     Group {
-        title: "App",
+        title: msgid!("App"),
         checks: vec![
             Check::new("Version", Status::Ok, env!("CARGO_PKG_VERSION")),
             Check::new("Build", Status::Ok, build),
@@ -163,7 +166,7 @@ fn app_group() -> Group {
 
 fn storage_group() -> Group {
     Group {
-        title: "Storage",
+        title: msgid!("Storage"),
         checks: vec![check_config_dir(), check_settings_file(), check_metadata_db()],
     }
 }
@@ -193,7 +196,7 @@ fn dependencies_group() -> Group {
         )
     };
     Group {
-        title: "Dependencies",
+        title: msgid!("Dependencies"),
         checks: vec![check],
     }
 }
@@ -214,7 +217,7 @@ fn environment_group() -> Group {
         ));
     }
     Group {
-        title: "Environment",
+        title: msgid!("Environment"),
         checks,
     }
 }
