@@ -315,6 +315,32 @@ grid ended up rendering its `r`/`w`/`x` labels oversized).
 chrome icons with `icon_px`, component widgets with `Sizable`; never add a raw
 `.text_xs()` or a bare `px(N)` font/icon size for chrome.
 
+## Localization
+
+Every user-visible string goes through `tr!` / `trc!` / `trn!` (gpui crate:
+returns `SharedString`; core and shell crates: `ferail_core::tr!` returns
+`ferail_core::i18n::Text`), with **the English text as the key** — there are
+no abstract string ids and no second file to keep in sync. Static tables
+(the command catalogue, option labels) mark their literals with `msgid!` and
+translate at display time with `tr_raw` / `tr_static`.
+
+- `ferail_core::i18n` owns the catalog (an `ArcSwap<Catalog>`; `tr!` is one
+  lock-free load + one hash probe and returns the `&'static str` untouched
+  while English is active — render-safe), the JSON language-pack format,
+  CLDR plural rules, and the extractor.
+- `locales/en.json` is **generated** from the sources by
+  `FERAIL_I18N_UPDATE=1 cargo test -p ferail-core i18n::extract`; a test
+  fails when it is stale. `locales/fr.json` / `de.json` are bundled via
+  `include_str!`; user packs live in `<config_dir>/languages/`.
+- `ferail_gpui::i18n` holds the `Languages` global, boots the persisted
+  language synchronously before the first window (no flash of English),
+  loads later switches on the background executor, and on install rebuilds
+  the menu bar and refreshes every window. Settings › Appearance › Language
+  is the UI; import/export/new-language are file operations (no LLM call).
+
+Full design, conventions and the translation workflow:
+[docs/features/LOCALIZATION.md](features/LOCALIZATION.md).
+
 ## Context Menus And Native Actions
 
 Context menus use gpui-component menus where possible. Menu handlers set

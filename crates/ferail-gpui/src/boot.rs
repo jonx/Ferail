@@ -96,6 +96,10 @@ pub fn run_gui(args: screenshot::Args) {
             Ok(client) => cx.set_http_client(std::sync::Arc::new(client)),
             Err(e) => crate::log_warn!(90, "http client init failed: {e}"),
         }
+        // UI language: read the persisted choice and install the matching
+        // catalog *before* any window renders or the menu bar is built, so
+        // there is no flash of English (docs/features/LOCALIZATION.md).
+        crate::i18n::init(cx);
         crate::shell::init(cx);
         // Replace the dock / About icon. Has to happen after gpui
         // has built its NSApplication — calling from `main()` panics
@@ -458,7 +462,7 @@ fn open_shell_window_then(
 /// Per-item dynamic disable (e.g. Move to Trash when nothing is
 /// selected) is deferred to a polish iter — the action handler
 /// no-ops silently in that case today.
-fn install_app_menus(cx: &mut App) {
+pub(crate) fn install_app_menus(cx: &mut App) {
     // Show Desktop is gated on the private Dock symbol resolving on a
     // supported macOS. Resolving here also warms the cache before the
     // first render reads it (keeps the render-time check nonblocking).

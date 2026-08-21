@@ -570,20 +570,67 @@ fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
     get: fn() -> String,
     on_pick: F,
 ) -> SettingItem {
+    dropdown_setting_dyn(
+        title,
+        description,
+        move |_cx| {
+            options
+                .iter()
+                .map(|(value, label)| DropdownOption {
+                    value: (*value).to_owned(),
+                    label: SharedString::new_static(label),
+                    disabled: disabled.contains(value),
+                })
+                .collect()
+        },
+        move |_cx| get(),
+        on_pick,
+    )
+}
+
+/// One entry of a [`dropdown_setting_dyn`] menu.
+struct DropdownOption {
+    value: String,
+    label: SharedString,
+    /// Greyed and unselectable (e.g. a provider this build can't honour).
+    disabled: bool,
+}
+
+/// The dropdown row every `dropdown_setting*` helper renders: title on the
+/// left, the current value as a small outline button with a caret on the
+/// right, and the description spanning the full width below. `options` and
+/// `get` run on every render, so the menu can reflect live state (installed
+/// language packs, for instance) — keep them cheap and I/O-free.
+fn dropdown_setting_dyn(
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
+    options: impl Fn(&App) -> Vec<DropdownOption> + 'static,
+    get: impl Fn(&App) -> String + 'static,
+    on_pick: impl Fn(&str, &mut App) + 'static,
+) -> SettingItem {
+    let title = title.into();
+    let description = description.into();
+    let keyword_title = title.clone();
+    let keyword_description = description.clone();
+    let on_pick = std::rc::Rc::new(on_pick);
     SettingItem::render(move |_options, _window, cx| {
         use gpui_component::{
             ActiveTheme as _, Sizable as _,
             button::Button,
             menu::{DropdownMenu as _, PopupMenuItem},
         };
-        let current = get();
+        let current = get(cx);
+        let options = std::rc::Rc::new(options(cx));
         let current_label = options
             .iter()
-            .find(|(value, _)| *value == current.as_str())
-            .map(|(_, label)| *label)
-            .unwrap_or("");
+            .find(|o| o.value == current)
+            .map(|o| o.label.clone())
+            .unwrap_or_default();
         let muted = cx.theme().muted_foreground;
         let fg = cx.theme().foreground;
+        let on_pick = on_pick.clone();
+        let title = title.clone();
+        let description = description.clone();
 
         gpui_component::v_flex()
             .w_full()
@@ -602,7 +649,7 @@ fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
                             .pr(px(SETTINGS_DROPDOWN_LANE + SETTINGS_CONTROL_GAP))
                             .text_scale_sm()
                             .text_color(fg)
-                            .child(title),
+                            .child(title.clone()),
                     )
                     .child(
                         div()
@@ -624,30 +671,31 @@ fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
                                     .dropdown_menu_with_anchor(
                                         gpui::Anchor::TopRight,
                                         move |menu, _window, _cx| {
-                                        options.iter().fold(menu, |menu, opt| {
-                                            let (value, label) = *opt;
-                                            let checked = value == current.as_str();
-                                            // A disabled item is greyed and its
-                                            // click handler is dropped by the menu
-                                            // (see PopupMenuItem render), so it
-                                            // can't be selected.
-                                            menu.item(
-                                                PopupMenuItem::new(label)
-                                                    .checked(checked)
-                                                    .disabled(disabled.contains(&value))
-                                                    .on_click(move |_, _window: &mut Window, cx: &mut App| {
-                                                        // `on_pick` persists and repaints
-                                                        // (and, for a live setting, also
-                                                        // recomputes its global). The
-                                                        // refresh inside must hit every
-                                                        // window — this fires in the popup,
-                                                        // so a window-local refresh would
-                                                        // repaint the popup, not the page
-                                                        // behind it.
-                                                        on_pick(value, cx);
-                                                    }),
-                                            )
-                                        })
+                                            options.iter().fold(menu, |menu, opt| {
+                                                let checked = opt.value == current;
+                                                let value = opt.value.clone();
+                                                let on_pick = on_pick.clone();
+                                                // A disabled item is greyed and its
+                                                // click handler is dropped by the menu
+                                                // (see PopupMenuItem render), so it
+                                                // can't be selected.
+                                                menu.item(
+                                                    PopupMenuItem::new(opt.label.clone())
+                                                        .checked(checked)
+                                                        .disabled(opt.disabled)
+                                                        .on_click(move |_, _window: &mut Window, cx: &mut App| {
+                                                            // `on_pick` persists and repaints
+                                                            // (and, for a live setting, also
+                                                            // recomputes its global). The
+                                                            // refresh inside must hit every
+                                                            // window — this fires in the popup,
+                                                            // so a window-local refresh would
+                                                            // repaint the popup, not the page
+                                                            // behind it.
+                                                            on_pick(&value, cx);
+                                                        }),
+                                                )
+                                            })
                                         },
                                     ),
                             ),
@@ -661,7 +709,7 @@ fn dropdown_setting_with<F: Fn(&str, &mut App) + Copy + 'static>(
                     .child(description),
             )
     })
-    .keywords([title, description])
+    .keywords([keyword_title, keyword_description])
 }
 
 /// A boolean setting laid out like [`dropdown_setting`]: the title and the
@@ -1073,12 +1121,150 @@ fn search_dupes_page() -> SettingPage {
         )
 }
 
+/// Appearance › Language: pick the UI language, and the import / export /
+/// new-language tools behind it (docs/features/LOCALIZATION.md). No LLM is
+/// called from inside the app: the user creates a template file, hands it to
+/// a translator or an AI chat together with the embedded instructions, and
+/// imports the result.
+fn language_group() -> SettingGroup {
+    use crate::i18n::{self, ENGLISH, SYSTEM};
+    SettingGroup::new()
+        .title("Language")
+        .item(dropdown_setting_dyn(
+            "Language",
+            "Follow the system language, or pick an installed language pack. \
+             Strings a pack doesn't cover stay in English.",
+            |cx| {
+                let langs = i18n::languages(cx);
+                let mut out = Vec::with_capacity(langs.packs.len() + 2);
+                let system_label = match langs.system_locale.as_deref() {
+                    Some(loc) => format!("System ({loc})"),
+                    None => "System".to_owned(),
+                };
+                out.push(DropdownOption { value: SYSTEM.to_owned(), label: system_label.into(), disabled: false });
+                out.push(DropdownOption { value: ENGLISH.to_owned(), label: "English".into(), disabled: false });
+                for p in &langs.packs {
+                    out.push(DropdownOption { value: p.code.clone(), label: p.label().into(), disabled: false });
+                }
+                out
+            },
+            |cx| i18n::languages(cx).selection.clone(),
+            i18n::set_selection,
+        ))
+        .item(
+            SettingItem::render(|_o, _w, cx| {
+                use gpui_component::{
+                    ActiveTheme as _, Sizable as _,
+                    button::Button,
+                    menu::{DropdownMenu as _, PopupMenuItem},
+                };
+                let langs = i18n::languages(cx);
+                let muted = cx.theme().muted_foreground;
+                let installed: std::collections::BTreeSet<String> =
+                    langs.packs.iter().map(|p| p.code.clone()).collect();
+                let folder = i18n::user_dir()
+                    .map(|d| crate::report::redact_username(&d.display().to_string()))
+                    .unwrap_or_default();
+                let summary = if langs.packs.is_empty() {
+                    "No language packs installed.".to_owned()
+                } else {
+                    let list: Vec<String> = langs
+                        .packs
+                        .iter()
+                        .map(|p| {
+                            let origin = match p.origin {
+                                i18n::Origin::Bundled => "built in",
+                                i18n::Origin::User => "your file",
+                            };
+                            format!("{} \u{2014} {} of {} strings, {origin}", p.name, p.translated, p.total)
+                        })
+                        .collect();
+                    format!("Installed: {}.", list.join("; "))
+                };
+                gpui_component::v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        gpui_component::h_flex()
+                            .w_full()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(
+                                Button::new("lang-new")
+                                    .label("New language\u{2026}")
+                                    .dropdown_caret(true)
+                                    .outline()
+                                    .small()
+                                    .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, _window, _cx| {
+                                        i18n::PRESET_LANGUAGES.iter().fold(menu, |menu, (code, name, english)| {
+                                            let (code, name, english) = (*code, *name, *english);
+                                            menu.item(
+                                                PopupMenuItem::new(SharedString::from(format!("{name} \u{2014} {english}")))
+                                                    .disabled(installed.contains(code))
+                                                    .on_click(move |_, window: &mut Window, cx: &mut App| {
+                                                        i18n::create_template(code, name, english, window, cx);
+                                                    }),
+                                            )
+                                        })
+                                    }),
+                            )
+                            .child(
+                                Button::new("lang-import")
+                                    .label("Import\u{2026}")
+                                    .outline()
+                                    .small()
+                                    .on_click(|_, window, cx| i18n::import_file(window, cx)),
+                            )
+                            .child(
+                                Button::new("lang-export")
+                                    .label("Export\u{2026}")
+                                    .outline()
+                                    .small()
+                                    .on_click(|_, window, cx| i18n::export_current(window, cx)),
+                            )
+                            .child(
+                                Button::new("lang-folder")
+                                    .label("Show folder")
+                                    .outline()
+                                    .small()
+                                    .on_click(|_, _window, cx| i18n::reveal_folder(cx)),
+                            )
+                            .child(
+                                Button::new("lang-reload")
+                                    .label("Reload")
+                                    .outline()
+                                    .small()
+                                    .on_click(|_, _window, cx| i18n::reload(cx)),
+                            )
+                            .child(
+                                Button::new("lang-instructions")
+                                    .label("Copy instructions")
+                                    .outline()
+                                    .small()
+                                    .on_click(|_, _window, cx| i18n::copy_instructions(cx)),
+                            ),
+                    )
+                    .child(
+                        div().w_full().text_scale_sm().text_color(muted).child(SharedString::from(format!(
+                            "To add a language: New language\u{2026} writes a template into {folder}. \
+                             Give that file to a translator or an AI assistant (Claude, ChatGPT, \u{2026}) \
+                             \u{2014} the instructions are inside it \u{2014} then Import\u{2026} the result. \
+                             Export\u{2026} saves the current language the same way, for translating the \
+                             missing strings or sharing it. {summary}"
+                        ))),
+                    )
+            })
+            .keywords(["language", "translation", "locale", "import", "export"]),
+        )
+}
+
 fn appearance_page(
     selection_picker: Entity<ColorPickerState>,
     ant_trail_picker: Entity<ColorPickerState>,
 ) -> SettingPage {
     SettingPage::new("Appearance")
         .icon(Icon::empty().path("icons/palette.svg"))
+        .group(language_group())
         .group(
             SettingGroup::new().title("Theme").item(
                 // Vertical layout so the three fixed-width tiles drop

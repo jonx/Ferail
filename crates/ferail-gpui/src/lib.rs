@@ -10,6 +10,10 @@
 // recommendation comes straight from rustc's error message.
 #![recursion_limit = "256"]
 
+// First, and `#[macro_use]`, so `tr!` / `trc!` / `trn!` are in textual
+// scope for every module below (docs/features/LOCALIZATION.md).
+#[macro_use]
+pub mod i18n;
 pub mod about;
 pub mod ant_trail;
 pub mod app_icon;

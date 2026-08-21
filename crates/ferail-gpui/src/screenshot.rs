@@ -469,6 +469,9 @@ pub fn run(args: Args) -> Result<()> {
     let app = gpui_platform::application().with_assets(FeraAssets);
     app.run(move |cx| {
         gpui_component::init(cx);
+        // Same language bootstrap as the live app, so screenshots can be
+        // taken in any installed language.
+        crate::i18n::init(cx);
         crate::text::install_platform_font_families(cx);
         // Real HTTP client, as in boot.rs — only exercised by
         // `--update-dialog live`; every other capture stays offline.

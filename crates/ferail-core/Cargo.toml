@@ -9,3 +9,10 @@ description = "Core domain types for Ferail — filesystem-agnostic, UI-agnostic
 
 [dependencies]
 uuid = { version = "1", features = ["v4"] }
+# Localization (src/i18n): lock-free catalog swap, the JSON language-pack
+# format, and the OS UI-language probe. All three are already in the
+# dependency graph through gpui / gpui-component.
+arc-swap = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sys-locale = "0.3"

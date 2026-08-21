@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "code": "en",
+  "name": "English",
+  "english_name": "English",
+  "strings": {
+    "Copy": "Copy",
+    "Couldn't create the language file": "Couldn't create the language file",
+    "Couldn't export the language pack": "Couldn't export the language pack",
+    "Couldn't import that language pack": "Couldn't import that language pack",
+    "Created {file}. Give it to a translator or an AI assistant, then use Import…": "Created {file}. Give it to a translator or an AI assistant, then use Import…",
+    "Import": "Import",
+    "Imported {language}: {translated} of {total} strings translated": "Imported {language}: {translated} of {total} strings translated",
+    "Saved {file}": "Saved {file}"
+  }
+}

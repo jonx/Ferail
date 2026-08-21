@@ -231,6 +231,11 @@ pub struct AppState {
     /// (defaults to `true`). See [`crate::redact`].
     pub redact_diagnostics: Option<bool>,
 
+    // ---- Language (docs/features/LOCALIZATION.md) ----
+    /// UI language: `"system"` (follow the OS), `"en"`, or a language-pack
+    /// code (`"fr"`, `"pt-BR"`). `None` == never set == system.
+    pub language: Option<String>,
+
     // ---- Updates ----
     /// Opt-in automatic update check: once a day, ask GitHub Releases
     /// whether a newer Ferail exists (docs/features/UPDATES.md). `None` ==
@@ -347,6 +352,12 @@ fn load_from_disk() -> AppState {
             }
             "list_columns" if !val.trim().is_empty() => {
                 out.list_columns = Some(val.trim().to_string());
+            }
+            "language" => {
+                let v = val.trim();
+                if !v.is_empty() {
+                    out.language = Some(v.to_string());
+                }
             }
             "theme_pref" => {
                 let v = val.trim().to_lowercase();
@@ -535,6 +546,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(p) = &state.theme_pref {
         s.push_str(&format!("theme_pref={p}\n"));
+    }
+    if let Some(l) = &state.language {
+        s.push_str(&format!("language={l}\n"));
     }
     if let Some(c) = &state.selection_color {
         s.push_str(&format!("selection_color={c}\n"));

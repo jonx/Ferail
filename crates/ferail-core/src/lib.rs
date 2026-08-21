@@ -7,6 +7,8 @@ pub mod commands;
 pub mod entry_info;
 pub mod favorites;
 pub mod filter_expr;
+#[macro_use]
+pub mod i18n;
 pub mod media;
 pub mod name_hazards;
 pub mod navigation;

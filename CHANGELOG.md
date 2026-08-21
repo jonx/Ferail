@@ -8,6 +8,17 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Ferail can now speak your language.** Settings › Appearance has a new
+  Language group: follow the system language, or pick a language pack —
+  French and German ship built in, and anyone can add another without a
+  code change. *New language…* writes a template file with every string
+  and a set of translation instructions; give that file to a translator or
+  to an AI assistant (Claude, ChatGPT, a local model — Ferail itself never
+  calls one and needs no API key), then *Import…* the result. *Export…*
+  saves a language to finish or share it, and the dropdown shows how much
+  of the UI each pack covers. Switching takes effect immediately, menus
+  included; anything a pack doesn't cover stays in English.
+
 - **Every failure toast with real error text can now be expanded and
   copied.** The "Show details" / "Copy" controls that the structured
   failure reports already had now also cover the trash, de-duplicate,

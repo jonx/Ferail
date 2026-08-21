@@ -306,6 +306,18 @@ fallback). Remaining is the UX the system explorers have and we don't:
 
 ## Settings, Commands & Accessibility
 
+- **Localization follow-ups** (docs/features/LOCALIZATION.md — the catalog,
+  packs, Settings UI and the export → translate → import flow ship):
+  - Translate backend error text (`ferail-fs-native`, `ferail-archive`) and
+    the failure-report bodies, once bug reports can carry the English
+    alongside.
+  - Locale-aware numbers, sizes and dates.
+  - RTL mirroring (blocked on gpui layout support).
+  - Contribute Ferail's languages to gpui-component's own `ui.yml` so the
+    widgets' OK/Cancel follow too.
+  - Optional in-app translation provider on top of the same file format
+    (deliberately left out of v1 to avoid API-key handling).
+
 - Diagnostics, activity trail & issue reporter
   ([docs/features/DIAGNOSTICS.md](docs/features/DIAGNOSTICS.md)). Phases 1-3
   shipped: the activity-trail ring buffer + hooks; `diagnostics.rs` health

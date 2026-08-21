@@ -2096,6 +2096,10 @@ dependencies = [
 name = "ferail-core"
 version = "0.4.0"
 dependencies = [
+ "arc-swap",
+ "serde",
+ "serde_json",
+ "sys-locale",
  "uuid",
 ]
 
