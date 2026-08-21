@@ -17,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ferail_core::{EnumerationError, FileEntry};
 use ferail_fs_native::{DEFAULT_DUPE_BATCH, DupeFact, DupeHashCache, DupeOpts, NativeFs};
-use gpui::{AnyWindowHandle, Context};
+use gpui::{AnyWindowHandle, Context, SharedString};
 use gpui_component::WindowExt;
 
 use super::Shell;
@@ -150,21 +150,23 @@ pub(super) fn member_row(
             Err(_) => parent.to_string_lossy().into_owned(),
         })
         .unwrap_or_default();
-    let note = storage_note(is_hardlink, is_clone);
-    entry.display_description = format!("#{group_no} \u{00B7} {location}{note}");
+    let location = location_with_note(&location, is_hardlink, is_clone);
+    entry.display_description =
+        tr!("#{group} \u{00B7} {location}", group = group_no, location = location).to_string();
     Some((entry, path.to_path_buf()))
 }
 
-/// Trailing " · hard link" / " · clone — no extra space" note for a
-/// member that reclaims nothing, or empty for a storage-owning copy.
-/// Shared by the row description and the panel's member line.
-pub(super) fn storage_note(is_hardlink: bool, is_clone: bool) -> &'static str {
+/// The member's location with a trailing " · hard link" / " · clone — no
+/// extra space" note when it reclaims nothing, or the bare location for a
+/// storage-owning copy. Shared by the row description and the panel's
+/// member line.
+pub(super) fn location_with_note(location: &str, is_hardlink: bool, is_clone: bool) -> SharedString {
     if is_hardlink {
-        " \u{00B7} hard link"
+        tr!("{location} \u{00B7} hard link", location = location)
     } else if is_clone {
-        " \u{00B7} clone \u{2014} no extra space"
+        tr!("{location} \u{00B7} clone \u{2014} no extra space", location = location)
     } else {
-        ""
+        SharedString::from(location.to_owned())
     }
 }
 
@@ -219,7 +221,7 @@ impl Shell {
 
         let cancel = Arc::new(AtomicBool::new(false));
         self.tabs[idx].load_cancel = Some(cancel.clone());
-        let label = format!("Finding duplicates in {}", short_root(&root));
+        let label = tr!("Finding duplicates in {root}", root = short_root(&root));
         let task = self.process.tasks.borrow_mut().begin_with_cancel(
             TaskKind::DuplicateScan,
             label,
@@ -325,19 +327,21 @@ impl Shell {
                 }
                 if let Some(window) = notify_window {
                     if let Some(error) = error {
-                        let message = super::enumeration_error_message("Duplicate scan", &error);
+                        let message =
+                            super::enumeration_error_message(&tr!("Duplicate scan"), &error);
                         let _ = window.update(cx, |_, window, cx| {
                             use gpui_component::notification::Notification;
                             window.push_notification(Notification::error(message), cx);
                         });
                     } else if surfaced {
                         let message = if groups == 0 {
-                            "Duplicate scan finished: no duplicates found".to_string()
+                            tr!("Duplicate scan finished: no duplicates found")
                         } else {
-                            format!(
-                                "Duplicate scan finished: {groups} group{} \u{00B7} {} reclaimable",
-                                if groups == 1 { "" } else { "s" },
-                                ferail_fs_native::humanize_bytes(reclaimable)
+                            trn!(
+                                "Duplicate scan finished: {n} group \u{00B7} {reclaimable} reclaimable",
+                                "Duplicate scan finished: {n} groups \u{00B7} {reclaimable} reclaimable",
+                                groups,
+                                reclaimable = ferail_fs_native::humanize_bytes(reclaimable)
                             )
                         };
                         let _ = window.update(cx, |_, window, cx| {

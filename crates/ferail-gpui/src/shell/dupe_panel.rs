@@ -30,7 +30,7 @@ use ferail_core::NodeId;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::Scrollbar;
 
-use super::dupes::storage_note;
+use super::dupes::location_with_note;
 use super::tab::DupeGroupView;
 use super::*;
 
@@ -54,11 +54,11 @@ impl Shell {
         // Toolbar: a running summary plus the global actions. "Reclaimable"
         // is the whole-scan figure; the selected count tells the user how
         // much the Trash button will act on.
-        let summary = format!(
-            "{} group{} \u{00B7} {} reclaimable",
+        let summary = trn!(
+            "{n} group \u{00B7} {reclaimable} reclaimable",
+            "{n} groups \u{00B7} {reclaimable} reclaimable",
             dm.groups,
-            if dm.groups == 1 { "" } else { "s" },
-            ferail_fs_native::humanize_bytes(dm.wasted_bytes),
+            reclaimable = ferail_fs_native::humanize_bytes(dm.wasted_bytes)
         );
         let toolbar = h_flex()
             .w_full()
@@ -80,7 +80,7 @@ impl Shell {
                     div()
                         .text_scale_xs()
                         .text_color(theme.muted_foreground)
-                        .child("scanning\u{2026}"),
+                        .child(tr!("scanning\u{2026}")),
                 )
             })
             .child(div().flex_1())
@@ -88,15 +88,15 @@ impl Shell {
                 Button::new("dupe-keep-newest-all")
                     .small()
                     .ghost()
-                    .label("Keep newest everywhere")
-                    .tooltip("Mark every copy except the most recent in each group")
+                    .label(tr!("Keep newest everywhere"))
+                    .tooltip(tr!("Mark every copy except the most recent in each group"))
                     .on_click(cx.listener(|this, _, _, cx| this.dupe_stage_keep_newest_all(cx))),
             )
             .child(
                 Button::new("dupe-clear")
                     .small()
                     .ghost()
-                    .label("Clear")
+                    .label(tr!("Clear"))
                     .disabled(selected == 0)
                     .on_click(cx.listener(|this, _, _, cx| this.dupe_clear_marks(cx))),
             )
@@ -105,9 +105,9 @@ impl Shell {
                     .small()
                     .danger()
                     .label(if selected == 0 {
-                        "Trash marked".to_string()
+                        tr!("Trash marked")
                     } else {
-                        format!("Trash {selected} marked")
+                        tr!("Trash {n} marked", n = selected)
                     })
                     .disabled(selected == 0)
                     .on_click(
@@ -125,9 +125,9 @@ impl Shell {
                         .text_scale_sm()
                         .text_color(theme.muted_foreground)
                         .child(if scanning {
-                            "Scanning for duplicates\u{2026}"
+                            tr!("Scanning for duplicates\u{2026}")
                         } else {
-                            "No duplicates found."
+                            tr!("No duplicates found.")
                         }),
                 )
                 .into_any_element()
@@ -216,8 +216,8 @@ impl Shell {
                 Button::new(ElementId::Name(format!("dupe-clone-{group_no}").into()))
                     .xsmall()
                     .ghost()
-                    .label("Dedup \u{2192} clones")
-                    .tooltip("Replace extra copies with APFS clones (keeps every file)")
+                    .label(tr!("Dedup \u{2192} clones"))
+                    .tooltip(tr!("Replace extra copies with APFS clones (keeps every file)"))
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.dupe_dedup_group(group_no, window, cx)
@@ -264,10 +264,12 @@ impl Shell {
                     div()
                         .text_scale_xs()
                         .text_color(theme.muted_foreground)
-                        .child(format!(
-                            "{copies} copies \u{00B7} {} each \u{00B7} {} reclaimable",
-                            ferail_fs_native::humanize_bytes(group.bytes_each),
-                            ferail_fs_native::humanize_bytes(reclaimable),
+                        .child(trn!(
+                            "{n} copy \u{00B7} {each} each \u{00B7} {reclaimable} reclaimable",
+                            "{n} copies \u{00B7} {each} each \u{00B7} {reclaimable} reclaimable",
+                            copies,
+                            each = ferail_fs_native::humanize_bytes(group.bytes_each),
+                            reclaimable = ferail_fs_native::humanize_bytes(reclaimable)
                         )),
                 )
                 .child(div().flex_1())
@@ -275,7 +277,7 @@ impl Shell {
                     Button::new(ElementId::Name(format!("dupe-newest-{group_no}").into()))
                         .xsmall()
                         .ghost()
-                        .label("Keep newest")
+                        .label(tr!("Keep newest"))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.dupe_stage_keep_newest(group_no, cx)
@@ -285,7 +287,7 @@ impl Shell {
                     Button::new(ElementId::Name(format!("dupe-allbutone-{group_no}").into()))
                         .xsmall()
                         .ghost()
-                        .label("All but one")
+                        .label(tr!("All but one"))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.dupe_stage_all_but_one(group_no, cx)
@@ -313,7 +315,7 @@ impl Shell {
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 let location = member_location(&member.path, root);
-                let note = storage_note(member.is_hardlink, member.is_clone);
+                let location = location_with_note(&location, member.is_hardlink, member.is_clone);
 
                 // Marked-for-trash checkbox.
                 let check = div()
@@ -404,10 +406,7 @@ impl Shell {
                             // path the LAST folders are what tell two
                             // duplicates apart, so keep both ends visible
                             // instead of tail-ellipsizing the useful half.
-                            .child(super::loading::middle_truncate_path(
-                                &format!("{location}{note}"),
-                                42,
-                            )),
+                            .child(super::loading::middle_truncate_path(&location, 42)),
                     );
                 body = body.child(row);
             }
@@ -522,12 +521,10 @@ impl Shell {
             return;
         }
         let count = paths.len();
-        let name = format!("{count} duplicate{}", if count == 1 { "" } else { "s" });
-
         let process = self.process.clone();
         let task_id = self.process.tasks.borrow_mut().begin(
             crate::tasks::TaskKind::FileOp,
-            format!("Trashing {name}"),
+            trn!("Trashing {n} duplicate", "Trashing {n} duplicates", count),
             false,
         );
         let weak = cx.weak_entity();
@@ -563,11 +560,20 @@ impl Shell {
                 });
             }
             let _ = win.update(cx, |_, window, cx| match &error {
-                None => window
-                    .push_notification(Notification::info(format!("Moved {name} to Trash")), cx),
-                Some(e) => {
-                    window.push_notification(crate::shell::error_notification(format!("Trash failed: {e}")), cx)
-                }
+                None => window.push_notification(
+                    Notification::info(trn!(
+                        "Moved {n} duplicate to Trash",
+                        "Moved {n} duplicates to Trash",
+                        count
+                    )),
+                    cx,
+                ),
+                Some(e) => window.push_notification(
+                    crate::shell::error_notification(
+                        tr!("Trash failed: {detail}", detail = e).to_string(),
+                    ),
+                    cx,
+                ),
             });
         })
         .detach();
@@ -628,18 +634,21 @@ impl Shell {
                 window.open_dialog(cx, move |dialog, _window, _cx| {
                     let tx_go = tx.clone();
                     let tx_cancel = tx.clone();
-                    let body = format!(
-                        "Replace {count} extra cop{} with APFS clones of \u{201C}{keeper_name}\u{201D}? \
+                    let body = trn!(
+                        "Replace {n} extra copy with APFS clones of \u{201C}{keeper}\u{201D}? \
                          Every file stays; the duplicated bytes are freed.",
-                        if count == 1 { "y" } else { "ies" },
+                        "Replace {n} extra copies with APFS clones of \u{201C}{keeper}\u{201D}? \
+                         Every file stays; the duplicated bytes are freed.",
+                        count,
+                        keeper = keeper_name
                     );
                     dialog
-                        .title("Dedup with clones?")
+                        .title(tr!("Dedup with clones?"))
                         .child(div().text_scale_sm().child(body))
                         .child(
                             h_flex().pt_2().child(
                                 Button::new("dupe-clone-go")
-                                    .label("Dedup")
+                                    .label(tr!("Dedup"))
                                     .primary()
                                     .small()
                                     .on_click(move |_, window, cx| {
@@ -659,7 +668,7 @@ impl Shell {
             }
             let task_id = process.tasks.borrow_mut().begin(
                 crate::tasks::TaskKind::FileOp,
-                format!("Cloning {count} duplicate{}", if count == 1 { "" } else { "s" }),
+                trn!("Cloning {n} duplicate", "Cloning {n} duplicates", count),
                 false,
             );
             let victim_paths: Vec<PathBuf> = victims.iter().map(|(_, p)| p.clone()).collect();
@@ -696,15 +705,19 @@ impl Shell {
             }
             let _ = win.update(cx, |_, window, cx| match &error {
                 None => window.push_notification(
-                    Notification::info(format!(
-                        "Replaced {count} cop{} with clones",
-                        if count == 1 { "y" } else { "ies" }
+                    Notification::info(trn!(
+                        "Replaced {n} copy with clones",
+                        "Replaced {n} copies with clones",
+                        count
                     )),
                     cx,
                 ),
-                Some(e) => {
-                    window.push_notification(crate::shell::error_notification(format!("Dedup failed: {e}")), cx)
-                }
+                Some(e) => window.push_notification(
+                    crate::shell::error_notification(
+                        tr!("Dedup failed: {detail}", detail = e).to_string(),
+                    ),
+                    cx,
+                ),
             });
         })
         .detach();

@@ -175,7 +175,7 @@ pub fn start(
 
     let task_id = tasks.borrow_mut().begin(
         TaskKind::FolderSize,
-        format!("Sizing {seed_count} folders\u{2026}"),
+        trn!("Sizing {n} folder\u{2026}", "Sizing {n} folders\u{2026}", seed_count),
         false,
     );
 

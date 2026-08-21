@@ -74,13 +74,13 @@ pub struct SegmentParts {
 impl SegmentParts {
     pub fn from_values(run_secs: u64, cpu_pct: f32, mem_bytes: u64, rps: f32) -> Self {
         Self {
-            up: format!("up {}", format_uptime(run_secs)).into(),
-            cpu: format!("CPU {}", format_cpu(cpu_pct)).into(),
-            mem: format!("MEM {}", crate::status_bar::humanize_bytes(mem_bytes)).into(),
+            up: tr!("up {uptime}", uptime = format_uptime(run_secs)),
+            cpu: tr!("CPU {pct}", pct = format_cpu(cpu_pct)),
+            mem: tr!("MEM {bytes}", bytes = crate::status_bar::humanize_bytes(mem_bytes)),
             // Floor, don't round: an idle window whose only redraws
             // are this sampler's own 0.5 Hz notify ticks averages
             // ~0.5 and must read an honest 0, not flicker to 1.
-            rps: format!("{} rps", rps.max(0.0) as u64).into(),
+            rps: tr!("{n} rps", n = rps.max(0.0) as u64),
         }
     }
 

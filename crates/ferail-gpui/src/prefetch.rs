@@ -156,7 +156,7 @@ pub fn start(
     // panel is honest about what's happening.
     let task_id = tasks.borrow_mut().begin(
         TaskKind::MagicPrefetch,
-        format!("Indexing {seed_count} entries\u{2026}"),
+        trn!("Indexing {n} entry\u{2026}", "Indexing {n} entries\u{2026}", seed_count),
         false,
     );
 

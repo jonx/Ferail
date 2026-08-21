@@ -45,7 +45,7 @@ impl Shell {
             items.iter().map(|(p, d)| (p.as_path(), *d)).collect();
         if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
             window.push_notification(
-                Notification::error("File clipboard isn't available on this platform yet."),
+                Notification::error(tr!("File clipboard isn't available on this platform yet.")),
                 cx,
             );
             return;
@@ -53,11 +53,11 @@ impl Shell {
         // A fresh Copy cancels any pending Cut.
         self.process.cut_marker.borrow_mut().clear();
         let msg = match items.as_slice() {
-            [(single, _)] => format!(
-                "Copied \u{201c}{}\u{201d}",
-                single.file_name().unwrap_or_default().to_string_lossy()
+            [(single, _)] => tr!(
+                "Copied \u{201c}{name}\u{201d}",
+                name = single.file_name().unwrap_or_default().to_string_lossy()
             ),
-            many => format!("Copied {} items", many.len()),
+            many => trn!("Copied {n} item", "Copied {n} items", many.len()),
         };
         window.push_notification(Notification::success(msg), cx);
         cx.notify();
@@ -93,18 +93,18 @@ impl Shell {
             // Don't dim rows for a Cut that can never complete its
             // move — the stub platform has no file clipboard.
             window.push_notification(
-                Notification::error("File clipboard isn't available on this platform yet."),
+                Notification::error(tr!("File clipboard isn't available on this platform yet.")),
                 cx,
             );
             return;
         }
         let paths: Vec<PathBuf> = items.into_iter().map(|(p, _)| p).collect();
         let msg = match paths.as_slice() {
-            [single] => format!(
-                "Cut \u{201c}{}\u{201d}",
-                single.file_name().unwrap_or_default().to_string_lossy()
+            [single] => tr!(
+                "Cut \u{201c}{name}\u{201d}",
+                name = single.file_name().unwrap_or_default().to_string_lossy()
             ),
-            many => format!("Cut {} items", many.len()),
+            many => trn!("Cut {n} item", "Cut {n} items", many.len()),
         };
         *self.process.cut_marker.borrow_mut() = paths;
         window.push_notification(Notification::info(msg), cx);
@@ -123,7 +123,7 @@ impl Shell {
         use gpui_component::notification::Notification;
         let sources = crate::platform_shell::clipboard_read_file_urls();
         if sources.is_empty() {
-            window.push_notification(Notification::info("No files on the clipboard"), cx);
+            window.push_notification(Notification::info(tr!("No files on the clipboard")), cx);
             return;
         }
         // Pasting the exact set that was Cut → move + clear the mark.
@@ -164,7 +164,7 @@ impl Shell {
         // boundary as Quick Look — never from render.
         let sources = crate::platform_shell::clipboard_read_file_urls();
         if sources.is_empty() {
-            window.push_notification(Notification::info("No files on the clipboard"), cx);
+            window.push_notification(Notification::info(tr!("No files on the clipboard")), cx);
             return;
         }
         let dest = self.active_tab().current_dir.clone();
@@ -203,7 +203,7 @@ impl Shell {
                     }
                     Ok(created)
                 },
-                "Create alias",
+                ferail_core::msgid!("Create alias"),
                 None,
                 FileOpSuccessToast::None,
                 FileOpUndo::None,
@@ -283,17 +283,20 @@ impl Shell {
         use gpui_component::notification::Notification;
 
         let cancel = Arc::new(AtomicBool::new(false));
+        // English verb for the power assertion's reason string (a system
+        // diagnostic, not UI); every user-facing label is built by the
+        // `transfer_*_label` helpers below, which translate.
         let verb = match mode {
             TransferMode::Copy => "Copying",
             TransferMode::Move => "Moving",
             TransferMode::Auto => "Transferring",
         };
         let noun = match sources.as_slice() {
-            [single] => format!(
-                "\u{201c}{}\u{201d}",
-                single.file_name().unwrap_or_default().to_string_lossy()
+            [single] => tr!(
+                "\u{201c}{name}\u{201d}",
+                name = single.file_name().unwrap_or_default().to_string_lossy()
             ),
-            many => format!("{} items", many.len()),
+            many => trn!("{n} item", "{n} items", many.len()),
         };
         // "Moving “D4Mac” to “Backup”…" — the destination is part of the
         // label so the task panel answers *where to* without a hover.
@@ -301,7 +304,7 @@ impl Shell {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| dest.display().to_string());
-        let base_label = format!("{verb} {noun} to \u{201c}{dest_name}\u{201d}\u{2026}");
+        let base_label = transfer_running_label(mode, &noun, &dest_name).to_string();
         let task_id = self.process.tasks.borrow_mut().begin_with_cancel(
             crate::tasks::TaskKind::FileOp,
             base_label.clone(),
@@ -379,7 +382,7 @@ impl Shell {
                     };
                     let planned = prog.planned();
                     let label = if planning {
-                        format!("{verb} \u{2014} preparing ({planned} items)\u{2026}")
+                        transfer_preparing_label(mode, planned).to_string()
                     } else {
                         live_label
                             .lock()
@@ -441,7 +444,7 @@ impl Shell {
                     end_task(cx);
                     let _ = win.update(cx, |_, window, cx| {
                         window.push_notification(
-                            crate::shell::error_notification(format!("{verb} failed: {e}")),
+                            crate::shell::error_notification(transfer_failed_message(mode, &e)),
                             cx,
                         );
                     });
@@ -474,11 +477,13 @@ impl Shell {
                     .await
             };
             if mode == TransferMode::Auto {
-                let resolved = if all_same_pre { "Moving" } else { "Copying" };
+                let resolved = if all_same_pre {
+                    TransferMode::Move
+                } else {
+                    TransferMode::Copy
+                };
                 if let Ok(mut g) = live_label_run.lock() {
-                    *g = format!(
-                        "{resolved} {noun_run} to \u{201c}{dest_name_run}\u{201d}\u{2026}"
-                    );
+                    *g = transfer_running_label(resolved, &noun_run, &dest_name_run).to_string();
                 }
             }
             if let Some((avail, total)) = space {
@@ -490,11 +495,15 @@ impl Shell {
                         .unwrap_or_else(|| dest.display().to_string());
                     let _ = win.update(cx, |_, window, cx| {
                         window.push_notification(
-                            crate::shell::error_notification(format!(
-                                "Not enough space on \u{201c}{dest_name}\u{201d} \u{2014} needs {}, only {} free",
-                                ferail_fs_native::humanize_bytes(total),
-                                ferail_fs_native::humanize_bytes(avail),
-                            )),
+                            crate::shell::error_notification(
+                                tr!(
+                                    "Not enough space on \u{201c}{dest}\u{201d} \u{2014} needs {needed}, only {free} free",
+                                    dest = dest_name,
+                                    needed = ferail_fs_native::humanize_bytes(total),
+                                    free = ferail_fs_native::humanize_bytes(avail),
+                                )
+                                .to_string(),
+                            ),
                             cx,
                         );
                     });
@@ -565,7 +574,7 @@ impl Shell {
                             .pt_2()
                             .child(
                                 Button::new("collision-keep-both")
-                                    .label("Keep Both")
+                                    .label(tr!("Keep Both"))
                                     .primary()
                                     .small()
                                     .on_click(move |_, window, cx| {
@@ -578,7 +587,7 @@ impl Shell {
                             )
                             .child(
                                 Button::new("collision-replace")
-                                    .label("Replace")
+                                    .label(tr!("Replace"))
                                     .small()
                                     .on_click(move |_, window, cx| {
                                         let _ = tx_replace.try_send(Some((
@@ -590,7 +599,7 @@ impl Shell {
                             )
                             .child(
                                 Button::new("collision-skip")
-                                    .label("Skip")
+                                    .label(tr!("Skip"))
                                     .small()
                                     .on_click(move |_, window, cx| {
                                         let _ = tx_skip.try_send(Some((
@@ -601,18 +610,20 @@ impl Shell {
                                     }),
                             );
                         let mut d = dialog
-                            .title("An item already exists")
-                            .child(div().text_scale_sm().child(format!(
-                                "\u{201c}{name}\u{201d} already exists in \u{201c}{dest_label}\u{201d}."
+                            .title(tr!("An item already exists"))
+                            .child(div().text_scale_sm().child(tr!(
+                                "\u{201c}{name}\u{201d} already exists in \u{201c}{dest}\u{201d}.",
+                                name = name,
+                                dest = dest_label
                             )));
                         if remaining > 1 {
                             d = d.child(
                                 gpui_component::checkbox::Checkbox::new("collision-apply-rest")
                                     .small()
-                                    .label(format!(
-                                        "Apply to the remaining {} item{}",
-                                        remaining - 1,
-                                        if remaining - 1 == 1 { "" } else { "s" }
+                                    .label(trn!(
+                                        "Apply to the remaining {n} item",
+                                        "Apply to the remaining {n} items",
+                                        remaining - 1
                                     ))
                                     .checked(f_box.get())
                                     .on_click(move |checked, window, _cx| {
@@ -772,10 +783,10 @@ impl Shell {
                         // when a permission denial could be fixed by elevating.
                         if outcome.has_failures() {
                             let op_noun = match effective {
-                                TransferMode::Move => "Move",
-                                _ => "Copy",
+                                TransferMode::Move => tr!("Move"),
+                                _ => tr!("Copy"),
                             };
-                            let summary = file_op_outcome_summary(op_noun, outcome);
+                            let summary = file_op_outcome_summary(&op_noun, outcome);
                             // The failed top-level sources: those with a failure
                             // recorded against them (path equals or sits under
                             // the source). Excludes succeeded and skipped items.
@@ -826,22 +837,29 @@ impl Shell {
                         if !surfaced && !outcome.cancelled && outcome.skipped == 0 {
                             return;
                         }
-                        let done_verb = match effective {
-                            TransferMode::Move => "Moved",
-                            _ => "Copied",
-                        };
                         let n = outcome.created.len();
-                        let items = if n == 1 { "item" } else { "items" };
-                        let mut msg = if outcome.cancelled {
-                            format!(
-                                "Cancelled \u{2014} {n} {items} {}",
-                                done_verb.to_lowercase()
-                            )
-                        } else {
-                            format!("{done_verb} {n} {items}")
+                        let is_move = matches!(effective, TransferMode::Move);
+                        let mut msg = match (outcome.cancelled, is_move) {
+                            (true, true) => trn!(
+                                "Cancelled \u{2014} {n} item moved",
+                                "Cancelled \u{2014} {n} items moved",
+                                n
+                            ),
+                            (true, false) => trn!(
+                                "Cancelled \u{2014} {n} item copied",
+                                "Cancelled \u{2014} {n} items copied",
+                                n
+                            ),
+                            (false, true) => trn!("Moved {n} item", "Moved {n} items", n),
+                            (false, false) => trn!("Copied {n} item", "Copied {n} items", n),
                         };
                         if outcome.skipped > 0 {
-                            msg.push_str(&format!(", {} skipped", outcome.skipped));
+                            msg = trn!(
+                                "{summary}, {n} skipped",
+                                "{summary}, {n} skipped",
+                                outcome.skipped,
+                                summary = msg
+                            );
                         }
                         let note = if outcome.cancelled {
                             Notification::info(msg)
@@ -852,7 +870,7 @@ impl Shell {
                     }
                     Err(e) => {
                         window.push_notification(
-                            crate::shell::error_notification(format!("{verb} failed: {e}")),
+                            crate::shell::error_notification(transfer_failed_message(mode, e)),
                             cx,
                         );
                     }
@@ -910,21 +928,22 @@ impl Shell {
 
             let _ = win.update(cx, |_, window, cx| match result {
                 Ok(r) if r.failures.is_empty() => {
-                    let items = if r.ok == 1 { "item" } else { "items" };
                     window.push_notification(
-                        Notification::success(format!(
-                            "Completed {} {items} as administrator",
+                        Notification::success(trn!(
+                            "Completed {n} item as administrator",
+                            "Completed {n} items as administrator",
                             r.ok
                         )),
                         cx,
                     );
                 }
                 Ok(r) => {
-                    let mut msg = format!(
-                        "As administrator: {} done \u{00b7} {} still failed",
-                        r.ok,
-                        r.failures.len()
-                    );
+                    let mut msg = tr!(
+                        "As administrator: {done} done \u{00b7} {failed} still failed",
+                        done = r.ok,
+                        failed = r.failures.len()
+                    )
+                    .to_string();
                     for (kind, path) in r.failures.iter().take(4) {
                         let name = path
                             .file_name()
@@ -935,12 +954,16 @@ impl Shell {
                     window.push_notification(error_notification(msg), cx);
                 }
                 Err(e) if e == "cancelled" => {
-                    window
-                        .push_notification(Notification::info("Administrator retry cancelled"), cx);
+                    window.push_notification(
+                        Notification::info(tr!("Administrator retry cancelled")),
+                        cx,
+                    );
                 }
                 Err(e) => {
                     window.push_notification(
-                        error_notification(format!("Retry as administrator failed: {e}")),
+                        error_notification(
+                            tr!("Retry as administrator failed: {detail}", detail = e).to_string(),
+                        ),
                         cx,
                     );
                 }
@@ -987,11 +1010,11 @@ impl Shell {
                 if holders.is_empty() {
                     // Whatever held it let go since the failure.
                     let r = retry.clone();
-                    let note = Notification::info("No process is holding these files anymore")
+                    let note = Notification::info(tr!("No process is holding these files anymore"))
                         .action(move |_, _, cx| {
                             let r = r.clone();
                             Button::new("retry-after-lock")
-                                .label("Retry")
+                                .label(tr!("Retry"))
                                 .small()
                                 .on_click(cx.listener(move |note, _, window, cx| {
                                     let _ = r.shell.update(cx, |shell, cx| {
@@ -1016,12 +1039,12 @@ impl Shell {
                     .join(", ");
                 let pids: Vec<u32> = holders.iter().map(|h| h.pid).collect();
                 let r = retry.clone();
-                let note =
-                    Notification::warning(format!("In use by {names}")).action(move |_, _, cx| {
+                let note = Notification::warning(tr!("In use by {names}", names = names)).action(
+                    move |_, _, cx| {
                         let r = r.clone();
                         let pids = pids.clone();
                         Button::new("close-and-retry")
-                            .label("Close & retry")
+                            .label(tr!("Close & retry"))
                             .small()
                             .on_click(cx.listener(move |note, _, window, cx| {
                                 let _ = r.shell.update(cx, |shell, cx| {
@@ -1034,7 +1057,8 @@ impl Shell {
                                 });
                                 note.dismiss(window, cx);
                             }))
-                    });
+                    },
+                );
                 window.push_notification(note, cx);
             });
         })
@@ -1070,7 +1094,9 @@ impl Shell {
                 }
                 Err(e) => {
                     window.push_notification(
-                        error_notification(format!("Couldn't close the apps: {e}")),
+                        error_notification(
+                            tr!("Couldn't close the apps: {detail}", detail = e).to_string(),
+                        ),
                         cx,
                     );
                 }
@@ -1102,9 +1128,13 @@ impl Shell {
                 .join("\n"),
         ));
         let msg = if paths.len() == 1 {
-            "Path copied to clipboard".to_string()
+            tr!("Path copied to clipboard")
         } else {
-            format!("{} paths copied to clipboard", paths.len())
+            trn!(
+                "{n} path copied to clipboard",
+                "{n} paths copied to clipboard",
+                paths.len()
+            )
         };
         window.push_notification(Notification::success(msg), cx);
     }
@@ -1136,7 +1166,11 @@ impl Shell {
                 .collect::<Vec<_>>()
                 .join("\n"),
         ));
-        let msg = format!("Copied list of {} items to clipboard", paths.len());
+        let msg = trn!(
+            "Copied list of {n} item to clipboard",
+            "Copied list of {n} items to clipboard",
+            paths.len()
+        );
         window.push_notification(Notification::success(msg), cx);
     }
 
@@ -1157,18 +1191,20 @@ impl Shell {
         // FanOut: each path is revealed in its own platform file manager, so a
         // large selection is guarded behind a confirm.
         let count = paths.len();
-        let plural = if count == 1 { "item" } else { "items" };
+        // The platform file manager's name is a product name, so it rides
+        // along as a placeholder rather than being translated.
         let reveal_target = if cfg!(windows) { "Explorer" } else { "Finder" };
-        let reveal_title = if cfg!(windows) {
-            "Reveal in Explorer?"
-        } else {
-            "Reveal in Finder?"
-        };
         self.confirm_fanout(
             count,
-            reveal_title,
-            format!("Reveal {count} {plural} in {reveal_target}?"),
-            "Reveal",
+            tr!("Reveal in {app}?", app = reveal_target),
+            trn!(
+                "Reveal {n} item in {app}?",
+                "Reveal {n} items in {app}?",
+                count,
+                app = reveal_target
+            )
+            .to_string(),
+            tr!("Reveal"),
             window,
             cx,
             move |_this, window, cx| {
@@ -1179,9 +1215,18 @@ impl Shell {
                         .and_then(|s| s.to_str())
                         .unwrap_or("item")
                         .to_string();
-                    format!("Showing \u{201C}{}\u{201D} in {}", name, reveal_target)
+                    tr!(
+                        "Showing \u{201C}{name}\u{201D} in {app}",
+                        name = name,
+                        app = reveal_target
+                    )
                 } else {
-                    format!("Showing {} items in {}", paths.len(), reveal_target)
+                    trn!(
+                        "Showing {n} item in {app}",
+                        "Showing {n} items in {app}",
+                        paths.len(),
+                        app = reveal_target
+                    )
                 };
                 // Reveal is a process spawn on mac/win but a blocking
                 // D-Bus round-trip per path on Linux — run the loop on
@@ -1350,17 +1395,21 @@ impl Shell {
         }
         let (choice_tx, choice_rx) = async_channel::bounded::<EjectChoice>(1);
         let total = siblings.len() + 1;
-        let body = format!(
-            "\u{201C}{name}\u{201D} is one of {total} volumes on its disk. \
-             Do you want to eject \u{201C}{name}\u{201D} only, or all volumes on the disk?"
+        let body = trn!(
+            "\u{201C}{name}\u{201D} is one of {n} volume on its disk. \
+             Do you want to eject \u{201C}{name}\u{201D} only, or all volumes on the disk?",
+            "\u{201C}{name}\u{201D} is one of {n} volumes on its disk. \
+             Do you want to eject \u{201C}{name}\u{201D} only, or all volumes on the disk?",
+            total,
+            name = name
         );
-        let only_label = format!("Eject \u{201C}{name}\u{201D} Only");
+        let only_label = tr!("Eject \u{201C}{name}\u{201D} Only", name = name);
         window.open_dialog(cx, move |dialog, _window, _cx| {
             let tx_all = choice_tx.clone();
             let tx_one = choice_tx.clone();
             let tx_cancel = choice_tx.clone();
             dialog
-                .title("Eject")
+                .title(tr!("Eject"))
                 .child(div().text_scale_sm().child(body.clone()))
                 .child(
                     h_flex()
@@ -1368,7 +1417,7 @@ impl Shell {
                         .gap_2()
                         .child(
                             Button::new("eject-all")
-                                .label("Eject All")
+                                .label(tr!("Eject All"))
                                 .primary()
                                 .small()
                                 .on_click(move |_, window, cx| {
@@ -1618,7 +1667,7 @@ impl Shell {
                             [(path, name)] => match crate::platform_shell::eject_volume(path) {
                                 Ok(()) => ejected.push(name.clone()),
                                 Err(e) => failures.push(EjectFailure {
-                                    what: format!("\u{201C}{name}\u{201D}"),
+                                    what: tr!("\u{201C}{name}\u{201D}", name = name).to_string(),
                                     err: e,
                                     busy: crate::platform_shell::volume_busy_processes(path),
                                 }),
@@ -1641,7 +1690,7 @@ impl Shell {
                                         busy.dedup_by(|a, b| a.name == b.name);
                                         busy.truncate(5);
                                         failures.push(EjectFailure {
-                                            what: "the disk".into(),
+                                            what: tr!("the disk").to_string(),
                                             err: e,
                                             busy,
                                         });
@@ -1674,8 +1723,8 @@ impl Shell {
             let _ = win.update(cx, |_, window, cx| {
                 if failures.is_empty() && !ejected.is_empty() {
                     let msg = match ejected.as_slice() {
-                        [name] => format!("Ejected \u{201C}{name}\u{201D}"),
-                        names => format!("Ejected {} volumes", names.len()),
+                        [name] => tr!("Ejected \u{201C}{name}\u{201D}", name = name),
+                        names => trn!("Ejected {n} volume", "Ejected {n} volumes", names.len()),
                     };
                     window.push_notification(Notification::info(msg), cx);
                 }
@@ -1688,14 +1737,18 @@ impl Shell {
                     // open (no autohide) so it survives the app switch;
                     // the hover ✕ dismisses it.
                     if failure.busy.is_empty() {
-                        let msg = format!("Couldn’t eject {}: {}", failure.what, failure.err);
+                        let msg = tr!(
+                            "Couldn’t eject {what}: {detail}",
+                            what = failure.what,
+                            detail = failure.err
+                        );
                         window.push_notification(Notification::error(msg), cx);
                         continue;
                     }
-                    let msg = format!(
-                        "Couldn’t eject {} — these apps have files open on it. \
+                    let msg = tr!(
+                        "Couldn’t eject {what} — these apps have files open on it. \
                          Click one to bring it forward, close the files, and try again.",
-                        failure.what
+                        what = failure.what
                     );
                     let busy = failure.busy;
                     let note = Notification::error(msg)
@@ -1816,7 +1869,8 @@ impl Shell {
                 crate::log_warn!(90, "tag toggle: {} item(s) failed", failures.len());
                 // Quiet on success; failures surface through the same
                 // structured "N of M · why" report as the other mutations.
-                let summary = crate::shell::file_op_failure_report("Tag", done, 0, &failures);
+                let summary =
+                    crate::shell::file_op_failure_report(&tr!("Tag"), done, 0, &failures);
                 let _ = win.update(cx, |_, window, cx| {
                     window.push_notification(super::error_notification(summary), cx);
                 });
@@ -2081,15 +2135,11 @@ impl Shell {
             return;
         }
         let count = paths.len();
-        let name = if count == 1 {
-            paths[0]
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("item")
-                .to_string()
-        } else {
-            format!("{count} items")
-        };
+        let name = paths[0]
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("item")
+            .to_string();
         let cur = self.active_tab().current_dir.clone();
         // Bespoke worker (not spawn_file_op): trashItemAtURL reports
         // each item's resulting location inside the Trash [mac], and
@@ -2103,7 +2153,11 @@ impl Shell {
         // inside SURFACE_DELAY and never flicker. (docs/features/FILE_OPS.md)
         let task_id = self.process.tasks.borrow_mut().begin(
             crate::tasks::TaskKind::FileOp,
-            format!("Moving {name} to Trash"),
+            if count == 1 {
+                tr!("Moving {name} to Trash", name = name)
+            } else {
+                trn!("Moving {n} item to Trash", "Moving {n} items to Trash", count)
+            },
             false,
         );
         let weak = cx.weak_entity();
@@ -2155,17 +2209,23 @@ impl Shell {
             let weak = weak.clone();
             let _ = win.update(cx, move |_, window, cx| {
                 if failures.is_empty() {
-                    window.push_notification(
-                        Notification::info(format!("Moved \u{201C}{}\u{201D} to Trash", name)),
-                        cx,
-                    );
+                    let msg = if count == 1 {
+                        tr!("Moved \u{201C}{name}\u{201D} to Trash", name = name)
+                    } else {
+                        trn!("Moved {n} item to Trash", "Moved {n} items to Trash", count)
+                    };
+                    window.push_notification(Notification::info(msg), cx);
                     return;
                 }
                 // The structured "N of M · why" report shared with the
                 // copy/move path; the raw OS detail rides along for the
                 // Copy action.
-                let summary =
-                    crate::shell::file_op_failure_report("Move to Trash", done, 0, &failures);
+                let summary = crate::shell::file_op_failure_report(
+                    &tr!("Move to Trash"),
+                    done,
+                    0,
+                    &failures,
+                );
                 let detail = failures
                     .iter()
                     .map(|f| f.to_string())
@@ -2244,33 +2304,46 @@ impl Shell {
             let _ = win.update(cx, move |_, window, cx| match result {
                 Ok(r) if r.failed.is_empty() => {
                     let n = if delete { total } else { r.trashed.len() };
-                    let items = if n == 1 { "item" } else { "items" };
                     let note = if delete {
-                        format!("Deleted {n} {items} as administrator")
+                        trn!(
+                            "Deleted {n} item as administrator",
+                            "Deleted {n} items as administrator",
+                            n
+                        )
                     } else {
-                        format!("Moved {n} {items} to Trash as administrator")
+                        trn!(
+                            "Moved {n} item to Trash as administrator",
+                            "Moved {n} items to Trash as administrator",
+                            n
+                        )
                     };
                     window.push_notification(Notification::success(note), cx);
                 }
                 Ok(r) => {
                     let done = total.saturating_sub(r.failed.len());
                     window.push_notification(
-                        super::error_notification(format!(
-                            "As administrator: {done} done \u{00b7} {} still failed",
-                            r.failed.len()
-                        )),
+                        super::error_notification(
+                            tr!(
+                                "As administrator: {done} done \u{00b7} {failed} still failed",
+                                done = done,
+                                failed = r.failed.len()
+                            )
+                            .to_string(),
+                        ),
                         cx,
                     );
                 }
                 Err(e) if e == "cancelled" => {
                     window.push_notification(
-                        Notification::info("Administrator action cancelled"),
+                        Notification::info(tr!("Administrator action cancelled")),
                         cx,
                     );
                 }
                 Err(e) => {
                     window.push_notification(
-                        super::error_notification(format!("Elevated action failed: {e}")),
+                        super::error_notification(
+                            tr!("Elevated action failed: {detail}", detail = e).to_string(),
+                        ),
                         cx,
                     );
                 }
@@ -2302,15 +2375,11 @@ impl Shell {
             return;
         }
         let count = paths.len();
-        let name = if count == 1 {
-            paths[0]
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("item")
-                .to_string()
-        } else {
-            format!("{count} items")
-        };
+        let name = paths[0]
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("item")
+            .to_string();
         let cur = self.active_tab().current_dir.clone();
         let process = self.process.clone();
         let win = window.window_handle();
@@ -2324,20 +2393,25 @@ impl Shell {
                 window.open_dialog(cx, move |dialog, _window, _cx| {
                     let tx_go = tx.clone();
                     let tx_cancel = tx.clone();
-                    let plural = if count == 1 { "item" } else { "items" };
-                    let what = if count == 1 {
-                        format!("\u{201C}{name}\u{201D}")
+                    let body = if count == 1 {
+                        tr!(
+                            "Permanently delete \u{201C}{name}\u{201D}? This can\u{2019}t be undone.",
+                            name = name
+                        )
                     } else {
-                        format!("{count} {plural}")
+                        trn!(
+                            "Permanently delete {n} item? This can\u{2019}t be undone.",
+                            "Permanently delete {n} items? This can\u{2019}t be undone.",
+                            count
+                        )
                     };
-                    let body = format!("Permanently delete {what}? This can\u{2019}t be undone.");
                     dialog
-                        .title("Delete Immediately?")
+                        .title(tr!("Delete Immediately?"))
                         .child(div().text_scale_sm().child(body))
                         .child(
                             h_flex().pt_2().child(
                                 Button::new("delete-now-go")
-                                    .label("Delete")
+                                    .label(tr!("Delete"))
                                     .danger()
                                     .small()
                                     .on_click(move |_, window, cx| {
@@ -2358,7 +2432,11 @@ impl Shell {
 
             let task_id = process.tasks.borrow_mut().begin(
                 crate::tasks::TaskKind::FileOp,
-                format!("Deleting {name}"),
+                if count == 1 {
+                    tr!("Deleting {name}", name = name)
+                } else {
+                    trn!("Deleting {n} item", "Deleting {n} items", count)
+                },
                 false,
             );
             let to_delete = paths;
@@ -2396,23 +2474,32 @@ impl Shell {
             }
             Shell::broadcast_reload_for_process(&process, vec![cur], cx);
             let _ = win.update(cx, move |_, window, cx| {
-                let plural = if deleted == 1 { "item" } else { "items" };
                 match first_err {
                     None => window.push_notification(
-                        Notification::success(format!("Deleted {deleted} {plural}")),
+                        Notification::success(trn!(
+                            "Deleted {n} item",
+                            "Deleted {n} items",
+                            deleted
+                        )),
                         cx,
                     ),
                     Some(e) => {
-                        let detail = format!("Deleted {deleted} {plural} with errors: {e}");
+                        let detail = trn!(
+                            "Deleted {n} item with errors: {detail}",
+                            "Deleted {n} items with errors: {detail}",
+                            deleted,
+                            detail = e
+                        )
+                        .to_string();
                         let headline = if failed_perm.is_empty() {
                             detail.clone()
-                        } else if failed_perm.len() == 1 {
-                            "1 item needs administrator rights to delete.".to_string()
                         } else {
-                            format!(
-                                "{} items need administrator rights to delete.",
+                            trn!(
+                                "{n} item needs administrator rights to delete.",
+                                "{n} items need administrator rights to delete.",
                                 failed_perm.len()
                             )
+                            .to_string()
                         };
                         let retry = crate::shell::TrashRetry {
                             shell: this,
@@ -2469,7 +2556,7 @@ impl Shell {
             let (dirs, items, unreadable) = preview;
             if items == 0 && !unreadable {
                 let _ = win.update(cx, |_, window, cx| {
-                    window.push_notification(Notification::info("Trash is already empty"), cx);
+                    window.push_notification(Notification::info(tr!("Trash is already empty")), cx);
                 });
                 return;
             }
@@ -2479,21 +2566,23 @@ impl Shell {
                 window.open_dialog(cx, move |dialog, _window, _cx| {
                     let tx_go = tx.clone();
                     let tx_cancel = tx.clone();
-                    let plural = if items == 1 { "item" } else { "items" };
                     let body = if items > 0 {
-                        format!("Permanently delete {items} {plural}? This can't be undone.")
+                        trn!(
+                            "Permanently delete {n} item? This can't be undone.",
+                            "Permanently delete {n} items? This can't be undone.",
+                            items
+                        )
                     } else {
                         // Count unknown (Trash unreadable right now).
-                        "Permanently delete everything in the Trash? This can't be undone."
-                            .to_string()
+                        tr!("Permanently delete everything in the Trash? This can't be undone.")
                     };
                     dialog
-                        .title("Empty Trash?")
+                        .title(tr!("Empty Trash?"))
                         .child(div().text_scale_sm().child(body))
                         .child(
                             h_flex().pt_2().child(
                                 Button::new("empty-trash-go")
-                                    .label("Empty Trash")
+                                    .label(tr!("Empty Trash"))
                                     .danger()
                                     .small()
                                     .on_click(move |_, window, cx| {
@@ -2516,7 +2605,7 @@ impl Shell {
             // volume) can take real time. (docs/features/FILE_OPS.md)
             let task_id = process.tasks.borrow_mut().begin(
                 crate::tasks::TaskKind::FileOp,
-                "Emptying Trash",
+                tr!("Emptying Trash"),
                 false,
             );
             let result = cx
@@ -2562,20 +2651,21 @@ impl Shell {
             // Trash contents changed under any tab browsing it.
             Shell::broadcast_reload_for_process(&process, dirs, cx);
             let _ = win.update(cx, move |_, window, cx| {
-                let plural = if deleted == 1 { "item" } else { "items" };
                 if failures.is_empty() {
                     if deleted == 0 && unreadable {
                         window.push_notification(
-                            Notification::error(
+                            Notification::error(tr!(
                                 "Couldn't read the Trash (permission denied). Grant Ferail \
-                                 Files & Folders access and try again.",
-                            ),
+                                 Files & Folders access and try again."
+                            )),
                             cx,
                         );
                     } else {
                         window.push_notification(
-                            Notification::success(format!(
-                                "Emptied Trash \u{2014} {deleted} {plural} deleted"
+                            Notification::success(trn!(
+                                "Emptied Trash \u{2014} {n} item deleted",
+                                "Emptied Trash \u{2014} {n} items deleted",
+                                deleted
                             )),
                             cx,
                         );
@@ -2586,8 +2676,12 @@ impl Shell {
                 // copy/move path uses. Root-owned trash items can be
                 // finished as admin; when nothing is recoverable this
                 // falls back to the plain expandable/copyable toast.
-                let summary =
-                    crate::shell::file_op_failure_report("Empty Trash", deleted, 0, &failures);
+                let summary = crate::shell::file_op_failure_report(
+                    &tr!("Empty Trash"),
+                    deleted,
+                    0,
+                    &failures,
+                );
                 let detail = failures
                     .iter()
                     .map(|f| f.to_string())
@@ -2630,9 +2724,9 @@ impl Shell {
     pub(super) fn confirm_fanout(
         &mut self,
         count: usize,
-        title: &'static str,
+        title: impl Into<SharedString>,
         body: String,
-        ok_label: &'static str,
+        ok_label: impl Into<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
         work: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
@@ -2643,6 +2737,8 @@ impl Shell {
             work(self, window, cx);
             return;
         }
+        let title = title.into();
+        let ok_label = ok_label.into();
         let (go_tx, go_rx) = async_channel::bounded::<bool>(1);
         let win = window.window_handle();
         window.open_dialog(cx, move |dialog, _window, _cx| {
@@ -2650,12 +2746,12 @@ impl Shell {
             let tx_cancel = go_tx.clone();
             let body = body.clone();
             dialog
-                .title(title)
+                .title(title.clone())
                 .child(div().text_sm().child(body))
                 .child(
                     h_flex().pt_2().child(
                         Button::new("confirm-fanout-go")
-                            .label(ok_label)
+                            .label(ok_label.clone())
                             .small()
                             .on_click(move |_, window, cx| {
                                 let _ = tx_go.try_send(true);
@@ -2715,8 +2811,8 @@ impl Shell {
         // is just a hint) so an empty submit is a no-op, matching the
         // old behavior, and a typed name creates the folder.
         self.open_text_prompt(
-            "New Folder",
-            "Untitled folder",
+            tr!("New Folder"),
+            tr!("Untitled folder"),
             String::new(),
             move |this, name, window, cx| {
                 // A typed `/` is the Finder-displayed slash → store a `:` on
@@ -2734,7 +2830,7 @@ impl Shell {
                         std::fs::create_dir(&op_path).map_err(|e| e.to_string())?;
                         Ok(vec![op_path])
                     },
-                    "New folder",
+                    ferail_core::msgid!("New folder"),
                     None,
                     FileOpSuccessToast::None,
                     FileOpUndo::DeleteFolder(undo_path),
@@ -2868,8 +2964,8 @@ impl Shell {
         };
         let parent = self.active_tab().current_dir.clone();
         self.open_text_prompt(
-            "Rename",
-            "New name",
+            tr!("Rename"),
+            tr!("New name"),
             // Pre-fill the name the user sees (display leaf, macOS `:` → `/`);
             // `on_disk_leaf` below maps any edit back to on-disk bytes, so an
             // unchanged value round-trips to a no-op.
@@ -2892,7 +2988,7 @@ impl Shell {
                         // path, so plain selection preservation loses it).
                         Ok(vec![op_new_path])
                     },
-                    "Rename",
+                    ferail_core::msgid!("Rename"),
                     None,
                     FileOpSuccessToast::None,
                     FileOpUndo::Rename {
@@ -2990,22 +3086,19 @@ impl Shell {
         }
         let cur = self.active_tab().current_dir.clone();
         let count = paths.len();
-        let task_label = format!(
-            "Duplicating {}",
-            if count == 1 {
-                paths[0]
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("item")
-                    .to_string()
-            } else {
-                format!("{count} items")
-            }
-        );
-        let success = if count == 1 {
-            "Duplicated item".to_string()
+        let task_label = if count == 1 {
+            let name = paths[0]
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("item");
+            tr!("Duplicating {name}", name = name)
         } else {
-            format!("Duplicated {count} items")
+            trn!("Duplicating {n} item", "Duplicating {n} items", count)
+        };
+        let success = if count == 1 {
+            tr!("Duplicated item")
+        } else {
+            trn!("Duplicated {n} item", "Duplicated {n} items", count)
         };
         self.spawn_file_op(
             cur,
@@ -3016,9 +3109,9 @@ impl Shell {
                 }
                 Ok(created)
             },
-            "Duplicate",
-            Some(task_label),
-            FileOpSuccessToast::IfSurfaced(success),
+            ferail_core::msgid!("Duplicate"),
+            Some(task_label.to_string()),
+            FileOpSuccessToast::IfSurfaced(success.to_string()),
             FileOpUndo::RemoveCreatedResult,
             window,
             cx,
@@ -3049,7 +3142,7 @@ impl Shell {
                 }
                 Ok(created)
             },
-            "Make alias",
+            ferail_core::msgid!("Make alias"),
             None,
             FileOpSuccessToast::None,
             FileOpUndo::None,
@@ -3129,11 +3222,10 @@ impl Shell {
             return;
         }
         let count = sources.len();
-        let plural = if count == 1 { "" } else { "s" };
         let name = archive
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "archive".to_string());
+            .unwrap_or_else(|| tr!("archive").to_string());
         let reload = archive
             .parent()
             .map(|p| p.to_path_buf())
@@ -3152,16 +3244,31 @@ impl Shell {
                 // Names already in the archive are skipped rather than
                 // shadowed — say so instead of reporting a clean success.
                 if !outcome.skipped_existing.is_empty() && outcome.added == 0 {
-                    return Err(format!(
-                        "Already in the archive: {}",
-                        outcome.skipped_existing.join(", ")
-                    ));
+                    return Err(tr!(
+                        "Already in the archive: {names}",
+                        names = outcome.skipped_existing.join(", ")
+                    )
+                    .to_string());
                 }
                 Ok(Vec::new())
             },
-            "Add to archive",
-            format!("Adding {count} item{plural} to {name}"),
-            FileOpSuccessToast::IfSurfaced(format!("Added {count} item{plural} to {name}")),
+            tr!("Add to archive"),
+            trn!(
+                "Adding {n} item to {archive}",
+                "Adding {n} items to {archive}",
+                count,
+                archive = name
+            )
+            .to_string(),
+            FileOpSuccessToast::IfSurfaced(
+                trn!(
+                    "Added {n} item to {archive}",
+                    "Added {n} items to {archive}",
+                    count,
+                    archive = name
+                )
+                .to_string(),
+            ),
             // The archive is modified in place, so there is nothing created to
             // remove; undoing an add would mean rewriting the archive without
             // those entries, which the engine can't do yet.
@@ -3205,7 +3312,7 @@ impl Shell {
         let name = output
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "archive".to_string());
+            .unwrap_or_else(|| tr!("archive").to_string());
         let reload = output
             .parent()
             .map(|p| p.to_path_buf())
@@ -3223,12 +3330,17 @@ impl Shell {
                     .map_err(|e| e.to_string())?;
                 Ok(vec![output])
             },
-            "Create archive",
-            format!("Creating {name}"),
-            FileOpSuccessToast::IfSurfaced(format!(
-                "Created {name} from {count} item{}",
-                if count == 1 { "" } else { "s" }
-            )),
+            tr!("Create archive"),
+            tr!("Creating {archive}", archive = name).to_string(),
+            FileOpSuccessToast::IfSurfaced(
+                trn!(
+                    "Created {archive} from {n} item",
+                    "Created {archive} from {n} items",
+                    count,
+                    archive = name
+                )
+                .to_string(),
+            ),
             FileOpUndo::RemoveCreatedResult,
             None,
             window,
@@ -3263,14 +3375,18 @@ impl Shell {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("item");
-            format!("Compressing {name}")
+            tr!("Compressing {name}", name = name)
         } else {
-            format!("Compressing {count} items")
+            trn!("Compressing {n} item", "Compressing {n} items", count)
         };
         let success = if count == 1 {
-            "Created archive".to_string()
+            tr!("Created archive")
         } else {
-            format!("Created archive from {count} items")
+            trn!(
+                "Created archive from {n} item",
+                "Created archive from {n} items",
+                count
+            )
         };
 
         /// `parent/<stem>.<ext>`, deduped with a `" 2"`, `" 3"`… suffix.
@@ -3307,10 +3423,12 @@ impl Shell {
             move |progress, cancel| {
                 let parent = paths[0]
                     .parent()
-                    .ok_or_else(|| format!("no parent directory for {}", paths[0].display()))?
+                    .ok_or_else(|| {
+                        tr!("no parent directory for {path}", path = paths[0].display()).to_string()
+                    })?
                     .to_path_buf();
                 let output = pick_archive_name(&parent, &paths, format)
-                    .ok_or_else(|| "exhausted archive index range".to_string())?;
+                    .ok_or_else(|| tr!("exhausted archive index range").to_string())?;
                 let targets: Vec<&std::path::Path> =
                     paths.iter().map(|path| path.as_path()).collect();
                 ferail_fs_native::create_archive(
@@ -3324,9 +3442,9 @@ impl Shell {
                 .map_err(|e| e.to_string())?;
                 Ok(vec![output])
             },
-            "Compress",
-            task_label,
-            FileOpSuccessToast::IfSurfaced(success),
+            tr!("Compress"),
+            task_label.to_string(),
+            FileOpSuccessToast::IfSurfaced(success.to_string()),
             FileOpUndo::RemoveCreatedResult,
             None,
             window,
@@ -3412,7 +3530,7 @@ impl Shell {
         ) -> Result<Vec<PathBuf>, String>
         + Send
         + 'static,
-        failure_label: &'static str,
+        failure_label: SharedString,
         task_label: String,
         success_toast: FileOpSuccessToast,
         undo: FileOpUndo,
@@ -3607,7 +3725,7 @@ impl Shell {
                     }
                     crate::log_warn!(90, "{failure_label} failed: {e}");
                     let _ = win.update(cx, |_, window, cx| {
-                        window.push_notification(file_op_error_notification(failure_label, &e), cx);
+                        window.push_notification(file_op_error_notification(&failure_label, &e), cx);
                     });
                 }
             }
@@ -3632,9 +3750,9 @@ impl Shell {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("archive");
-            format!("Extracting {name}")
+            tr!("Extracting {name}", name = name)
         } else {
-            format!("Extracting {count} archives")
+            trn!("Extracting {n} archive", "Extracting {n} archives", count)
         };
         // Named after the destination, because that is the question the
         // confirmation answers: extraction writes into the archive's folder,
@@ -3644,9 +3762,14 @@ impl Shell {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| dest_parent.to_string_lossy().into_owned());
         let success = if count == 1 {
-            format!("Extracted to {dest_name} \u{2014} click to show")
+            tr!("Extracted to {dest} \u{2014} click to show", dest = dest_name)
         } else {
-            format!("Extracted {count} archives to {dest_name} \u{2014} click to show")
+            trn!(
+                "Extracted {n} archive to {dest} \u{2014} click to show",
+                "Extracted {n} archives to {dest} \u{2014} click to show",
+                count,
+                dest = dest_name
+            )
         };
 
         fn extract_one_archive(
@@ -3722,9 +3845,9 @@ impl Shell {
                 }
                 Ok(created)
             },
-            "Extract",
-            task_label,
-            FileOpSuccessToast::Always(success),
+            tr!("Extract"),
+            task_label.to_string(),
+            FileOpSuccessToast::Always(success.to_string()),
             FileOpUndo::RemoveCreatedResult,
             None,
             window,
@@ -3750,14 +3873,20 @@ impl Shell {
             return;
         }
         let count = entries.len();
-        let plural = if count == 1 { "" } else { "s" };
-        let task_label = format!("Extracting {count} item{plural}");
-        let success = format!("Extracted {count} item{plural}");
+        let task_label = trn!("Extracting {n} item", "Extracting {n} items", count);
         let success = match dest_parent.file_name() {
-            Some(name) => format!("{success} to {}", name.to_string_lossy()),
-            None => success,
+            Some(name) => trn!(
+                "Extracted {n} item to {dest} \u{2014} click to show",
+                "Extracted {n} items to {dest} \u{2014} click to show",
+                count,
+                dest = name.to_string_lossy()
+            ),
+            None => trn!(
+                "Extracted {n} item \u{2014} click to show",
+                "Extracted {n} items \u{2014} click to show",
+                count
+            ),
         };
-        let success = format!("{success} \u{2014} click to show");
         self.spawn_archive_op(
             dest_parent.clone(),
             move |progress, cancel| {
@@ -3788,9 +3917,9 @@ impl Shell {
                 .map_err(|e| e.to_string())?;
                 Ok(vec![dest])
             },
-            "Extract",
-            task_label,
-            FileOpSuccessToast::Always(success),
+            tr!("Extract"),
+            task_label.to_string(),
+            FileOpSuccessToast::Always(success.to_string()),
             FileOpUndo::RemoveCreatedResult,
             None,
             window,
@@ -3895,9 +4024,13 @@ impl Shell {
             }
             cx.notify();
             let msg = if cleared.len() == 1 {
-                "Mark of the Web cleared".to_string()
+                tr!("Mark of the Web cleared")
             } else {
-                format!("Mark of the Web cleared from {} files", cleared.len())
+                trn!(
+                    "Mark of the Web cleared from {n} file",
+                    "Mark of the Web cleared from {n} files",
+                    cleared.len()
+                )
             };
             window.push_notification(Notification::success(msg), cx);
         }
@@ -3907,7 +4040,7 @@ impl Shell {
             // the shared error toast).
             window.push_notification(
                 super::error_notification(crate::shell::file_op_failure_report(
-                    "Clear quarantine",
+                    &tr!("Clear quarantine"),
                     cleared.len(),
                     0,
                     failures,
@@ -3916,6 +4049,62 @@ impl Shell {
             );
         }
     }
+}
+
+/// The running-phase task label for a transfer — "Moving “D4Mac” to
+/// “Backup”…" — as a whole translated sentence per mode, so word order is
+/// the translator's call. `what` is the already-built noun (a quoted name
+/// or "{n} items").
+fn transfer_running_label(mode: TransferMode, what: &str, dest: &str) -> SharedString {
+    match mode {
+        TransferMode::Copy => tr!(
+            "Copying {what} to \u{201c}{dest}\u{201d}\u{2026}",
+            what = what,
+            dest = dest
+        ),
+        TransferMode::Move => tr!(
+            "Moving {what} to \u{201c}{dest}\u{201d}\u{2026}",
+            what = what,
+            dest = dest
+        ),
+        TransferMode::Auto => tr!(
+            "Transferring {what} to \u{201c}{dest}\u{201d}\u{2026}",
+            what = what,
+            dest = dest
+        ),
+    }
+}
+
+/// The planning-phase task label ("Copying — preparing (N items)…").
+fn transfer_preparing_label(mode: TransferMode, planned: u64) -> SharedString {
+    match mode {
+        TransferMode::Copy => trn!(
+            "Copying \u{2014} preparing ({n} item)\u{2026}",
+            "Copying \u{2014} preparing ({n} items)\u{2026}",
+            planned
+        ),
+        TransferMode::Move => trn!(
+            "Moving \u{2014} preparing ({n} item)\u{2026}",
+            "Moving \u{2014} preparing ({n} items)\u{2026}",
+            planned
+        ),
+        TransferMode::Auto => trn!(
+            "Transferring \u{2014} preparing ({n} item)\u{2026}",
+            "Transferring \u{2014} preparing ({n} items)\u{2026}",
+            planned
+        ),
+    }
+}
+
+/// "Copying failed: <engine detail>" — the sentence is ours, the detail is
+/// the backend's (kept English by design, see LOCALIZATION.md).
+fn transfer_failed_message(mode: TransferMode, detail: &str) -> String {
+    match mode {
+        TransferMode::Copy => tr!("Copying failed: {detail}", detail = detail),
+        TransferMode::Move => tr!("Moving failed: {detail}", detail = detail),
+        TransferMode::Auto => tr!("Transferring failed: {detail}", detail = detail),
+    }
+    .to_string()
 }
 
 /// Windowed throughput for the transfer sampler: the mean of the
@@ -3984,7 +4173,7 @@ pub(crate) async fn pick_destination_folder(
                 files: false,
                 directories: true,
                 multiple: false,
-                prompt: Some("Extract to".into()),
+                prompt: Some(tr!("Extract to")),
             })
         })
         .ok()?;
