@@ -1963,7 +1963,7 @@ impl ViewerWindow {
                 Err(e) => {
                     let _ = win.update(cx, move |_, window, cx| {
                         window.push_notification(
-                            Notification::error(format!("Move to Trash failed: {e}")),
+                            crate::shell::error_notification(format!("Move to Trash failed: {e}")),
                             cx,
                         );
                     });

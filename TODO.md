@@ -19,14 +19,13 @@ and let git history plus release notes carry the record.
     now covers cross-volume moves.
   - ✅ **Actionable raw-error messages** — shipped on main (`b2c5ca3`): structured
     failure reports across the mutation surfaces.
-  - **Error-notification UX** — add a **copy** button so the user can copy the
-    message (and full technical detail) to the clipboard, and an
-    **expand/unfold** control to reveal the complete technical error when the
-    toast text is truncated. Notifications render through the gpui-component
-    `Notification` (`window.push_notification`, `Root::render_notification_layer`),
-    so this needs either an extension to the pinned gpui-component fork or a
-    custom notification body that carries a short summary plus the collapsible
-    full error.
+  - ✅ **Error-notification UX** — shipped: `shell::error_notification` shows a
+    one-line headline with **Show details** (full message, scrollable) and
+    **Copy** (whole message to the clipboard), and keeps the toast from
+    auto-hiding; the structured failure reports route through it. 2026-08-21:
+    the nine remaining dynamic-text error toasts (trash/dedup/save/move
+    failures, disk-full) were moved onto it too; the plain `Notification::error`
+    sites left are short fixed strings where expand/copy adds nothing.
 - ✅ **Persist file-table column order** — shipped on main (`c0f1de2`): column
   order AND widths now persist across launches.
 

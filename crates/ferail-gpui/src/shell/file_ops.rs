@@ -441,7 +441,7 @@ impl Shell {
                     end_task(cx);
                     let _ = win.update(cx, |_, window, cx| {
                         window.push_notification(
-                            Notification::error(format!("{verb} failed: {e}")),
+                            crate::shell::error_notification(format!("{verb} failed: {e}")),
                             cx,
                         );
                     });
@@ -490,7 +490,7 @@ impl Shell {
                         .unwrap_or_else(|| dest.display().to_string());
                     let _ = win.update(cx, |_, window, cx| {
                         window.push_notification(
-                            Notification::error(format!(
+                            crate::shell::error_notification(format!(
                                 "Not enough space on \u{201c}{dest_name}\u{201d} \u{2014} needs {}, only {} free",
                                 ferail_fs_native::humanize_bytes(total),
                                 ferail_fs_native::humanize_bytes(avail),
@@ -852,7 +852,7 @@ impl Shell {
                     }
                     Err(e) => {
                         window.push_notification(
-                            Notification::error(format!("{verb} failed: {e}")),
+                            crate::shell::error_notification(format!("{verb} failed: {e}")),
                             cx,
                         );
                     }

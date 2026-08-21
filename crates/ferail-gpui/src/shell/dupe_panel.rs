@@ -566,7 +566,7 @@ impl Shell {
                 None => window
                     .push_notification(Notification::info(format!("Moved {name} to Trash")), cx),
                 Some(e) => {
-                    window.push_notification(Notification::error(format!("Trash failed: {e}")), cx)
+                    window.push_notification(crate::shell::error_notification(format!("Trash failed: {e}")), cx)
                 }
             });
         })
@@ -703,7 +703,7 @@ impl Shell {
                     cx,
                 ),
                 Some(e) => {
-                    window.push_notification(Notification::error(format!("Dedup failed: {e}")), cx)
+                    window.push_notification(crate::shell::error_notification(format!("Dedup failed: {e}")), cx)
                 }
             });
         })

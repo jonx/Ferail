@@ -3332,9 +3332,8 @@ impl Shell {
             }
             Err(e) => {
                 crate::log_warn!(90, "disk-usage: pop-out failed: {e:?}");
-                use gpui_component::notification::Notification;
                 window.push_notification(
-                    Notification::error(format!("Could not pop out Disk Usage: {e:?}")),
+                    error_notification(format!("Could not pop out Disk Usage: {e:?}")),
                     cx,
                 );
             }

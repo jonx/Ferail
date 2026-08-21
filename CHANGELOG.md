@@ -8,6 +8,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Every failure toast with real error text can now be expanded and
+  copied.** The "Show details" / "Copy" controls that the structured
+  failure reports already had now also cover the trash, de-duplicate,
+  save-report, move-to-trash and disk-full failures, which used to show a
+  clipped one-liner you couldn't read in full or paste into a bug report.
+
 - **Opening a window no longer freezes when your last folder was on a
   sleeping drive.** Ferail reopens at the folder you left off in; if that
   folder lives on an external disk that has spun down (or a network share

@@ -1589,7 +1589,7 @@ impl DiskUsageView {
                     window.push_notification(Notification::success(msg), cx);
                 } else {
                     window.push_notification(
-                        Notification::error(format!(
+                        crate::shell::error_notification(format!(
                             "Trashed {ok}, {} failed \u{2014} {}",
                             failed.len(),
                             failed.first().cloned().unwrap_or_default()
@@ -1772,7 +1772,7 @@ impl DiskUsageView {
                     );
                 }
                 Err(e) => {
-                    window.push_notification(Notification::error(format!("Save failed: {e}")), cx);
+                    window.push_notification(crate::shell::error_notification(format!("Save failed: {e}")), cx);
                 }
             });
             if ok {
