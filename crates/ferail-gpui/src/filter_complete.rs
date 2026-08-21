@@ -102,7 +102,7 @@ fn suggestions_for(upto: &str) -> Vec<CompletionItem> {
         .map(|h| {
             item(
                 h.key.to_string(),
-                Some(h.detail.to_string()),
+                Some(crate::i18n::tr_static(h.detail).to_string()),
                 replace_word,
                 h.key.to_string(),
             )

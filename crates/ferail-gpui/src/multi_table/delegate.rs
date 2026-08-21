@@ -22,6 +22,15 @@ pub trait TableDelegate: Sized + 'static {
     /// This only call on Table prepare or refresh.
     fn column(&self, col_ix: usize, cx: &App) -> Column;
 
+    /// The text shown for the column at `col_ix` — in the header cell,
+    /// the drag ghost, the column picker and the autofit measurement.
+    /// Defaults to [`Column::name`]; a delegate whose headers are
+    /// localized overrides this so the label is looked up at render time
+    /// (a language switch repaints without rebuilding the columns).
+    fn column_name(&self, col_ix: usize, cx: &App) -> SharedString {
+        self.column(col_ix, cx).name.clone()
+    }
+
     /// Perform sort on the column at the given index.
     fn perform_sort(
         &mut self,
@@ -77,9 +86,7 @@ pub trait TableDelegate: Sized + 'static {
         window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        div()
-            .size_full()
-            .child(self.column(col_ix, cx).name.clone())
+        div().size_full().child(self.column_name(col_ix, cx))
     }
 
     /// Render the row at the given row and column.

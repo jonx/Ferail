@@ -642,8 +642,7 @@ where
         let columns_count = self.delegate.columns_count(cx);
         let mut headers = Vec::with_capacity(columns_count);
         for col_ix in 0..columns_count {
-            let column = self.delegate.column(col_ix, cx);
-            headers.push(column.name.to_string());
+            headers.push(self.delegate.column_name(col_ix, cx).to_string());
         }
 
         // Get data rows
@@ -720,7 +719,7 @@ where
         let mut leaf_row = Vec::with_capacity(self.col_groups.len());
         for (ix, group) in self.col_groups.iter().enumerate() {
             leaf_row.push(HeaderCell {
-                label: group.column.name.clone(),
+                label: self.delegate.column_name(ix, cx),
                 width: group.width,
                 col_span: 1,
                 is_leaf: true,
@@ -1273,7 +1272,7 @@ where
         if !col_group.is_resizable() {
             return;
         }
-        let header = col_group.column.name.clone();
+        let header = self.delegate.column_name(ix, cx);
 
         // Measure against the window's current text style — an
         // approximation of the cell font (good enough for a fit hint;
@@ -1680,7 +1679,7 @@ where
 
         let movable = self.col_movable && col_group.column.movable;
         let paddings = col_group.column.paddings;
-        let name = col_group.column.name.clone();
+        let name = self.delegate.column_name(col_ix, cx);
 
         h_flex()
             .h_full()

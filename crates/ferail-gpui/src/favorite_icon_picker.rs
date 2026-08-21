@@ -64,7 +64,8 @@ impl IconPickerView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter icons\u{2026}"));
+        let filter =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Filter icons\u{2026}")));
         // Re-render the grid on every keystroke so the visible glyphs
         // narrow to the substring match.
         let _filter_sub = cx.subscribe(&filter, |_this, _input, _event: &InputEvent, cx| {
@@ -136,9 +137,9 @@ impl Render for IconPickerView {
         let total = self.icons.len();
         let shown = cells.len();
         let count_label: SharedString = if query.is_empty() {
-            format!("{total} glyphs").into()
+            trn!("{n} glyph", "{n} glyphs", total)
         } else {
-            format!("{shown} of {total}").into()
+            tr!("{shown} of {total}", shown = shown, total = total)
         };
         v_flex()
             .size_full()
@@ -181,7 +182,7 @@ pub fn open_window(cx: &mut App, favorites: Entity<Favorites>, target: FavoriteI
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(560.0), px(560.0)), cx)),
         titlebar: Some(TitlebarOptions {
-            title: Some(SharedString::from("Choose Favorite Icon")),
+            title: Some(tr!("Choose Favorite Icon")),
             ..Default::default()
         }),
         ..crate::base_window_options()

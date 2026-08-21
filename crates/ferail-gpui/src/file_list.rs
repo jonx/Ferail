@@ -164,7 +164,7 @@ impl Render for DragBadge {
                     div()
                         .text_scale_xs()
                         .text_color(theme.muted_foreground)
-                        .child(format!("+{} more", self.count - shown)),
+                        .child(trn!("+{n} more", "+{n} more", self.count - shown)),
                 );
             }
             let chip = div()
@@ -1104,7 +1104,12 @@ impl FileListDelegate {
         // flicker a row in. (docs/features/FILE_OPS.md)
         let task_id = self.tasks.borrow_mut().begin(
             TaskKind::ThumbnailPrefetch,
-            format!("Loading {} thumbnails\u{2026}", todo.len()),
+            trn!(
+                "Loading {n} thumbnail\u{2026}",
+                "Loading {n} thumbnails\u{2026}",
+                todo.len()
+            )
+            .to_string(),
             false,
         );
         let thumbnails = self.thumbnails.clone();
@@ -1166,6 +1171,11 @@ impl TableDelegate for FileListDelegate {
 
     fn column(&self, col_ix: usize, _cx: &App) -> Column {
         self.columns[col_ix].clone()
+    }
+
+    /// Header text, translated at render time (see [`column_title`]).
+    fn column_name(&self, col_ix: usize, _cx: &App) -> SharedString {
+        crate::i18n::tr_static(column_title(&self.columns[col_ix].key))
     }
 
     fn render_tr(
@@ -1594,10 +1604,11 @@ impl TableDelegate for FileListDelegate {
                                     .text_color(alert_color),
                             )
                             .tooltip(move |window, cx| {
-                                Tooltip::new(SharedString::from(format!(
-                                    "Extension says \u{201C}{}\u{201D} but the content is \u{201C}{}\u{201D} — possible disguised file.",
-                                    tip_kind, tip_magic
-                                )))
+                                Tooltip::new(tr!(
+                                    "Extension says \u{201C}{kind}\u{201D} but the content is \u{201C}{magic}\u{201D} — possible disguised file.",
+                                    kind = tip_kind,
+                                    magic = tip_magic
+                                ))
                                 .build(window, cx)
                             });
                     }
@@ -1611,10 +1622,11 @@ impl TableDelegate for FileListDelegate {
                                     .text_color(cue_color),
                             )
                             .tooltip(move |window, cx| {
-                                Tooltip::new(SharedString::from(format!(
-                                    "Extension says \u{201C}{}\u{201D} but the content looks like \u{201C}{}\u{201D}.",
-                                    tip_kind, tip_magic
-                                )))
+                                Tooltip::new(tr!(
+                                    "Extension says \u{201C}{kind}\u{201D} but the content looks like \u{201C}{magic}\u{201D}.",
+                                    kind = tip_kind,
+                                    magic = tip_magic
+                                ))
                                 .build(window, cx)
                             });
                     }
@@ -1730,10 +1742,11 @@ impl TableDelegate for FileListDelegate {
             let key = col.key.to_string();
             let visible = self.is_column_visible(&key);
             // A leading check marks the shown columns (Finder-style).
+            let title = crate::i18n::tr_static(column_title(&key));
             let label = if visible {
-                format!("\u{2713} {}", col.name)
+                format!("\u{2713} {title}")
             } else {
-                format!("\u{2007}\u{2007}{}", col.name)
+                format!("\u{2007}\u{2007}{title}")
             };
             let state_toggle = state.clone();
             menu = menu.item(PopupMenuItem::new(label).on_click(move |_ev, _w, cx| {
@@ -1748,16 +1761,17 @@ impl TableDelegate for FileListDelegate {
             }));
         }
         let state_reset = state.clone();
-        menu.separator().item(
-            PopupMenuItem::new("Reset Columns").on_click(move |_ev, _w, cx| {
-                state_reset.update(cx, |s, cx| {
-                    s.delegate_mut().reset_columns();
-                    s.refresh(cx);
-                    let widths = s.col_widths();
-                    cx.emit(TableEvent::ColumnWidthsChanged(widths));
-                });
-            }),
-        )
+        menu.separator()
+            .item(
+                PopupMenuItem::new(tr!("Reset Columns")).on_click(move |_ev, _w, cx| {
+                    state_reset.update(cx, |s, cx| {
+                        s.delegate_mut().reset_columns();
+                        s.refresh(cx);
+                        let widths = s.col_widths();
+                        cx.emit(TableEvent::ColumnWidthsChanged(widths));
+                    });
+                }),
+            )
     }
 
     fn context_menu(
@@ -1863,51 +1877,55 @@ impl TableDelegate for FileListDelegate {
 
         let already_favorited = self.is_favorited.get(row_ix).copied().unwrap_or(false);
         let favorite_label = if already_favorited {
-            "Remove from Favorites"
+            tr!("Remove from Favorites")
         } else {
-            "Add to Favorites"
+            tr!("Add to Favorites")
         };
 
-        let mut menu = menu.menu("Open", Box::new(OpenSelected));
+        let mut menu = menu.menu(tr!("Open"), Box::new(OpenSelected));
         if show_new_tab {
-            menu = menu.menu("Open in New Tab", Box::new(OpenInNewTab));
+            menu = menu.menu(tr!("Open in New Tab"), Box::new(OpenInNewTab));
         }
         let mut menu = menu
             .separator()
-            .menu("Get Info", Box::new(GetInfo))
-            .menu("Quick Look", Box::new(QuickLook));
+            .menu(tr!("Get Info"), Box::new(GetInfo))
+            .menu(tr!("Quick Look"), Box::new(QuickLook));
         if show_slideshow {
             // Anchor command: start the viewer slideshow anchored to the
             // clicked file (docs/features/VIEWER.md). Folder anchors can't
             // start a slideshow, so the item is file-anchored.
-            menu = menu.menu("Slideshow from Here", Box::new(SlideshowFromHere));
+            menu = menu.menu(tr!("Slideshow from Here"), Box::new(SlideshowFromHere));
         }
         let mut menu = menu.separator().menu(
-            ferail_core::commands::REVEAL_LABEL,
+            crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
             Box::new(RevealInFinder),
         );
         if show_single_only {
             // SingleOnly: copying one path is the row action; copying many
             // joined paths is a deliberate, separate gesture, so this hides
             // past a single target rather than silently concatenating.
-            menu = menu.menu("Copy Path", Box::new(CopyPath));
+            menu = menu.menu(tr!("Copy Path"), Box::new(CopyPath));
         }
         if show_terminal {
             // Anchor command: open a terminal at the clicked directory,
             // grouped with the path-oriented actions above.
-            menu = menu.menu("Open Terminal Here", Box::new(OpenTerminalHere));
+            menu = menu.menu(tr!("Open Terminal Here"), Box::new(OpenTerminalHere));
         }
         let mut menu = menu.separator();
         if show_single_only {
             // SingleOnly: Rename targets one file (single-target, like
             // Finder's inline rename); hidden on a multi-selection.
-            menu = menu.menu("Rename\u{2026}", Box::new(RenameSelected));
+            menu = menu.menu(tr!("Rename\u{2026}"), Box::new(RenameSelected));
         }
         if bulk_rename_count >= 2 {
             // Multi-selection twin of Rename: the pattern-rule modal
             // over every resolved target (docs/features/BULK_RENAME.md).
             menu = menu.menu(
-                format!("Rename {bulk_rename_count} Items\u{2026}"),
+                trn!(
+                    "Rename {n} Item\u{2026}",
+                    "Rename {n} Items\u{2026}",
+                    bulk_rename_count
+                ),
                 Box::new(BulkRenameSelected),
             );
         }
@@ -1920,7 +1938,7 @@ impl TableDelegate for FileListDelegate {
                 .menu("Bzip2", Box::new(CompressTarBz2))
                 .menu("XZ", Box::new(CompressTarXz))
                 .separator()
-                .menu("Uncompressed", Box::new(CompressTar))
+                .menu(tr!("Uncompressed"), Box::new(CompressTar))
         });
         let compress_submenu = PopupMenu::build(window, cx, move |m, _w, _c| {
             m.menu("ZIP", Box::new(Compress))
@@ -1929,24 +1947,24 @@ impl TableDelegate for FileListDelegate {
                 // One-click entries above use sensible defaults; this opens the
                 // dialog for format + compression level + password.
                 .separator()
-                .menu("New Archive\u{2026}", Box::new(NewArchive))
+                .menu(tr!("New Archive\u{2026}"), Box::new(NewArchive))
         });
         let mut menu = menu
-            .menu("Duplicate", Box::new(Duplicate))
-            .menu("Make Alias", Box::new(MakeAlias))
-            .item(PopupMenuItem::submenu("Compress", compress_submenu));
+            .menu(tr!("Duplicate"), Box::new(Duplicate))
+            .menu(tr!("Make Alias"), Box::new(MakeAlias))
+            .item(PopupMenuItem::submenu(tr!("Compress"), compress_submenu));
         if show_extract {
             // Capability command: shown when any target is an archive
             // (docs/features/CONTEXT_MENU.md). "Extract Here" unpacks into the
             // current folder; "Extract To…" opens a folder picker first. Both
             // choose a smart destination per archive.
             let extract_submenu = PopupMenu::build(window, cx, |m, _w, _c| {
-                m.menu("Extract Here", Box::new(Extract))
-                    .menu("Extract To\u{2026}", Box::new(ExtractTo))
+                m.menu(tr!("Extract Here"), Box::new(Extract))
+                    .menu(tr!("Extract To\u{2026}"), Box::new(ExtractTo))
             });
             menu = menu
-                .item(PopupMenuItem::submenu("Extract", extract_submenu))
-                .menu("Open as Archive", Box::new(OpenAsArchive));
+                .item(PopupMenuItem::submenu(tr!("Extract"), extract_submenu))
+                .menu(tr!("Open as Archive"), Box::new(OpenAsArchive));
         }
         if show_clear_quarantine {
             // Capability command (docs/features/CONTEXT_MENU.md): show when
@@ -1958,7 +1976,7 @@ impl TableDelegate for FileListDelegate {
             // mixed selection now offers the command too, instead of hiding
             // it based on the single clicked row.
             menu = menu.separator().menu(
-                ferail_core::commands::CLEAR_QUARANTINE_LABEL,
+                crate::i18n::tr_static(ferail_core::commands::CLEAR_QUARANTINE_LABEL),
                 Box::new(ClearQuarantine),
             );
         }
@@ -1988,7 +2006,7 @@ impl TableDelegate for FileListDelegate {
                         PopupMenu::build(window, app_cx, move |mut m, _w, _c| {
                             for (i, cand) in candidates_for_build.iter().take(12).enumerate() {
                                 let label = if cand.is_default {
-                                    SharedString::from(format!("{} (default)", cand.name))
+                                    tr!("{name} (default)", name = cand.name)
                                 } else {
                                     SharedString::from(cand.name.clone())
                                 };
@@ -2010,7 +2028,7 @@ impl TableDelegate for FileListDelegate {
                             }
                             m
                         });
-                    menu = menu.item(PopupMenuItem::submenu("Open With", open_with_submenu));
+                    menu = menu.item(PopupMenuItem::submenu(tr!("Open With"), open_with_submenu));
                 }
                 // Cache warm but LaunchServices offered nothing: omit the
                 // submenu entirely (pre-existing behavior for empty sets).
@@ -2018,8 +2036,9 @@ impl TableDelegate for FileListDelegate {
                 // Cache miss — the warm fetch was kicked above, and its
                 // arrival rebuilds this menu in place. Placeholder until then.
                 None => {
-                    menu =
-                        menu.item(PopupMenuItem::new("Open With (loading\u{2026})").disabled(true));
+                    menu = menu.item(
+                        PopupMenuItem::new(tr!("Open With (loading\u{2026})")).disabled(true),
+                    );
                 }
             }
         }
@@ -2030,13 +2049,13 @@ impl TableDelegate for FileListDelegate {
             applied_tags.iter().map(|c| c.name().to_string()).collect();
         let tags_submenu = PopupMenu::build(window, app_cx, move |m, _w, _c| {
             let mut m = m
-                .menu_with_check("Red", tag_red_on, Box::new(ToggleTagRed))
-                .menu_with_check("Orange", tag_orange_on, Box::new(ToggleTagOrange))
-                .menu_with_check("Yellow", tag_yellow_on, Box::new(ToggleTagYellow))
-                .menu_with_check("Green", tag_green_on, Box::new(ToggleTagGreen))
-                .menu_with_check("Blue", tag_blue_on, Box::new(ToggleTagBlue))
-                .menu_with_check("Purple", tag_purple_on, Box::new(ToggleTagPurple))
-                .menu_with_check("Gray", tag_gray_on, Box::new(ToggleTagGray));
+                .menu_with_check(tr!("Red"), tag_red_on, Box::new(ToggleTagRed))
+                .menu_with_check(tr!("Orange"), tag_orange_on, Box::new(ToggleTagOrange))
+                .menu_with_check(tr!("Yellow"), tag_yellow_on, Box::new(ToggleTagYellow))
+                .menu_with_check(tr!("Green"), tag_green_on, Box::new(ToggleTagGreen))
+                .menu_with_check(tr!("Blue"), tag_blue_on, Box::new(ToggleTagBlue))
+                .menu_with_check(tr!("Purple"), tag_purple_on, Box::new(ToggleTagPurple))
+                .menu_with_check(tr!("Gray"), tag_gray_on, Box::new(ToggleTagGray));
             // Pin each applied tag to the sidebar. Closure items add the
             // Tag favorite directly through the process-global entity —
             // no per-tag action needed (writes are off the paint path).
@@ -2044,7 +2063,7 @@ impl TableDelegate for FileListDelegate {
                 m = m.separator();
                 for name in &applied_tag_names {
                     let name = name.clone();
-                    let label = format!("Pin \u{201c}{name}\u{201d} to Sidebar");
+                    let label = tr!("Pin \u{201c}{name}\u{201d} to Sidebar", name = name);
                     m = m.item(PopupMenuItem::new(label).on_click(move |_ev, _w, cx| {
                         let favs = crate::process_state::process_state(cx).favorites().clone();
                         let name = name.clone();
@@ -2056,11 +2075,17 @@ impl TableDelegate for FileListDelegate {
             }
             m
         });
-        menu = menu.item(PopupMenuItem::submenu("Tags", tags_submenu));
+        menu = menu.item(PopupMenuItem::submenu(tr!("Tags"), tags_submenu));
 
         menu.separator()
-            .menu(ferail_core::commands::TRASH_LABEL, Box::new(MoveToTrash))
-            .menu("Delete Immediately\u{2026}", Box::new(DeleteImmediately))
+            .menu(
+                crate::i18n::tr_static(ferail_core::commands::TRASH_LABEL),
+                Box::new(MoveToTrash),
+            )
+            .menu(
+                tr!("Delete Immediately\u{2026}"),
+                Box::new(DeleteImmediately),
+            )
     }
 
     fn background_context_menu(
@@ -2089,25 +2114,25 @@ impl TableDelegate for FileListDelegate {
         // directive: labels and actions only — no filesystem or shell
         // queries at menu-open time.
         menu.action_context(self.shell_focus.clone())
-            .menu("New Folder", Box::new(NewFolder))
+            .menu(tr!("New Folder"), Box::new(NewFolder))
             .separator()
-            .menu("Paste", Box::new(PasteFiles))
-            .menu("Select All", Box::new(SelectAll))
+            .menu(tr!("Paste"), Box::new(PasteFiles))
+            .menu(tr!("Select All"), Box::new(SelectAll))
             .separator()
-            .menu("Get Info", Box::new(GetInfoAtContext))
+            .menu(tr!("Get Info"), Box::new(GetInfoAtContext))
             .menu(
-                ferail_core::commands::REVEAL_LABEL,
+                crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
                 Box::new(RevealContextPath),
             )
-            .menu("Copy Path", Box::new(CopyContextPath))
-            .menu("Open Terminal Here", Box::new(OpenTerminalAtContext))
+            .menu(tr!("Copy Path"), Box::new(CopyContextPath))
+            .menu(tr!("Open Terminal Here"), Box::new(OpenTerminalAtContext))
             .separator()
             .menu(
-                "Add Folder to Favorites",
+                tr!("Add Folder to Favorites"),
                 Box::new(AddCurrentFolderToFavorites),
             )
             .separator()
-            .menu("Refresh", Box::new(Refresh))
+            .menu(tr!("Refresh"), Box::new(Refresh))
     }
 
     fn move_column(
@@ -2173,9 +2198,8 @@ impl TableDelegate for FileListDelegate {
         // Same words as the status bar's chip — "hidden" is already
         // taken by the show-hidden toggle and would read as that.
         let message = match self.filtered_out {
-            0 => "This folder is empty.".to_string(),
-            1 => "1 item filtered out.".to_string(),
-            n => format!("All {n} items filtered out."),
+            0 => tr!("This folder is empty."),
+            n => trn!("{n} item filtered out.", "All {n} items filtered out.", n),
         };
         gpui_component::v_flex()
             .size_full()
@@ -2228,7 +2252,10 @@ impl TableDelegate for FileListDelegate {
                     .py_4()
                     .text_scale_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(format!("Reading \u{201c}{label}\u{201d}\u{2026}")),
+                    .child(tr!(
+                        "Reading \u{201c}{label}\u{201d}\u{2026}",
+                        label = label
+                    )),
             )
     }
 }
@@ -2372,13 +2399,38 @@ impl std::str::FromStr for SortColumn {
 // In-place sort with folders-first grouping (Finder convention) lives in
 // `sort_entries` below; pure logic, easy to extend.
 
-/// The built-in column set, in default order.
+/// The header label (English msgid) for a column key. The persisted key
+/// (`"name"`, `"size"`, …) is the identity; the label is translated where
+/// it is shown — `column_name` for the header / drag ghost / autofit, and
+/// the header's show-hide menu — so a language switch repaints without
+/// rebuilding the columns.
+fn column_title(key: &str) -> &'static str {
+    match key {
+        "name" => ferail_core::msgid!("Name"),
+        "size" => ferail_core::msgid!("Size"),
+        "format" => ferail_core::msgid!("Format"),
+        "modified" => ferail_core::msgid!("Modified"),
+        "description" => ferail_core::msgid!("Description"),
+        _ => "",
+    }
+}
+
+/// The built-in column set, in default order. `Column::name` holds the
+/// English msgid; see [`column_title`].
 fn default_columns() -> Vec<Column> {
     vec![
-        Column::new("name", "Name").width(360.0).sortable(),
-        Column::new("size", "Size").width(100.0).sortable(),
-        Column::new("format", "Format").width(220.0).sortable(),
-        Column::new("modified", "Modified").width(160.0).sortable(),
+        Column::new("name", column_title("name"))
+            .width(360.0)
+            .sortable(),
+        Column::new("size", column_title("size"))
+            .width(100.0)
+            .sortable(),
+        Column::new("format", column_title("format"))
+            .width(220.0)
+            .sortable(),
+        Column::new("modified", column_title("modified"))
+            .width(160.0)
+            .sortable(),
         // Description column: rich ` · `-joined facts derived
         // from the magic-byte parse (bitness/arch/subsystem
         // for binaries, w×h for images, channels/kHz/duration
@@ -2388,7 +2440,7 @@ fn default_columns() -> Vec<Column> {
         // description strings groups MP3s near MP4s but
         // separates 32-bit from 64-bit binaries, which is
         // confusing. Revisit if users ask.
-        Column::new("description", "Description").width(320.0),
+        Column::new("description", column_title("description")).width(320.0),
     ]
 }
 

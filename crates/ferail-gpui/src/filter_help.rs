@@ -26,7 +26,7 @@ pub fn open_filter_help_dialog(window: &mut Window, cx: &mut App) {
 
 fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
     dialog
-        .title("Filter syntax")
+        .title(tr!("Filter syntax"))
         .w(px(560.0))
         .overlay_closable(true)
         .keyboard(true)
@@ -50,12 +50,17 @@ fn body(cx: &App) -> impl IntoElement {
                 .collect::<Vec<_>>()
                 .join("   ")
         };
-        rows = rows.child(token_row(help.key, help.detail, examples, muted));
+        rows = rows.child(token_row(
+            help.key,
+            crate::i18n::tr_static(help.detail),
+            examples,
+            muted,
+        ));
     }
     rows = rows.child(token_row(
         "\"…\"",
-        "quoted phrase — match the words together, spaces included",
-        "\"final report\"".to_string(),
+        tr!("quoted phrase — match the words together, spaces included"),
+        tr!("\"final report\"").to_string(),
         muted,
     ));
 
@@ -65,7 +70,7 @@ fn body(cx: &App) -> impl IntoElement {
         .child(
             div()
                 .text_scale_sm()
-                .child("Type words to match names and formats. Add tokens to filter by value. Everything you type must match (AND)."),
+                .child(tr!("Type words to match names and formats. Add tokens to filter by value. Everything you type must match (AND).")),
         )
         .child(rows)
         .child(div().h(px(1.0)).bg(border))
@@ -74,15 +79,15 @@ fn body(cx: &App) -> impl IntoElement {
                 .gap_1()
                 .text_scale_xs()
                 .text_color(muted)
-                .child("Dates: YYYY-MM-DD, with >, >=, <, <= or a range a..b — or today, yesterday, week, month, year.")
-                .child("Sizes: b, kb, mb, gb, tb (1024-based, like the Size column); >, <, >=, <= or a range a..b.")
-                .child("Anything unrecognised is matched as plain text. Press \u{23CE} to run the same query as a search of subfolders."),
+                .child(tr!("Dates: YYYY-MM-DD, with >, >=, <, <= or a range a..b — or today, yesterday, week, month, year."))
+                .child(tr!("Sizes: b, kb, mb, gb, tb (1024-based, like the Size column); >, <, >=, <= or a range a..b."))
+                .child(tr!("Anything unrecognised is matched as plain text. Press \u{23CE} to run the same query as a search of subfolders.")),
         )
 }
 
 fn token_row(
     key: &'static str,
-    detail: &'static str,
+    detail: SharedString,
     examples: String,
     muted: Hsla,
 ) -> impl IntoElement {

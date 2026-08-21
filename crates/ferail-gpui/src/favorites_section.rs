@@ -246,7 +246,7 @@ impl SidebarItem for FavoritesSection {
                             .text_color(theme.muted_foreground),
                     ),
             )
-            .child(div().flex_1().child("Favorites"))
+            .child(div().flex_1().child(tr!("Favorites")))
             .child(plus_button)
             .on_click(move |_, _window, cx| {
                 if let Some(shell) = shell_for_click.upgrade() {
@@ -263,20 +263,23 @@ impl SidebarItem for FavoritesSection {
                 let _ = shell_for_header_menu.clone();
                 let _ = cx;
                 menu.menu(
-                    "Add Current Folder to Favorites",
+                    tr!("Add Current Folder to Favorites"),
                     Box::new(AddCurrentFolderToFavorites),
                 )
                 .separator()
-                .menu("Sort by Name (A\u{2013}Z)", Box::new(SortFavoritesByName))
                 .menu(
-                    "Sort by Date Added (newest)",
+                    tr!("Sort by Name (A\u{2013}Z)"),
+                    Box::new(SortFavoritesByName),
+                )
+                .menu(
+                    tr!("Sort by Date Added (newest)"),
                     Box::new(SortFavoritesByDateAddedNewest),
                 )
                 .menu(
-                    "Sort by Date Added (oldest)",
+                    tr!("Sort by Date Added (oldest)"),
                     Box::new(SortFavoritesByDateAddedOldest),
                 )
-                .menu("Sort by Kind", Box::new(SortFavoritesByKind))
+                .menu(tr!("Sort by Kind"), Box::new(SortFavoritesByKind))
             });
 
         if section_collapsed || self.icon_only {
@@ -313,7 +316,7 @@ impl SidebarItem for FavoritesSection {
                 .bg(theme.sidebar_accent.opacity(0.35))
                 .text_scale_xs()
                 .text_color(theme.muted_foreground.opacity(0.85))
-                .child("Drag folders here for quick access.")
+                .child(tr!("Drag folders here for quick access."))
                 .drag_over::<ExternalPaths>(move |style, _payload, _window, _cx| {
                     style.bg(accent)
                 })
@@ -608,7 +611,7 @@ fn render_favorite_row(
                         shell.focused_favorite = Some(fav_id);
                     });
                 }
-                menu.menu("Remove from Favorites", Box::new(DeleteFavorite))
+                menu.menu(tr!("Remove from Favorites"), Box::new(DeleteFavorite))
             })
             .into_any_element(),
             anim,
@@ -677,19 +680,22 @@ fn render_favorite_row(
             // §7 "Change Icon…" opens the Lucide icon-picker window
             // (favorite_icon_picker); "Reset Icon" clears back to the
             // kind+target default. The old curated emoji submenu is gone.
-            menu.menu("Rename\u{2026}", Box::new(RenameFavorite))
-                .menu("Reset to Original Name", Box::new(ResetFavoriteName))
-                .menu("Change Icon\u{2026}", Box::new(OpenFavoriteIconPicker))
-                .menu("Reset Icon", Box::new(ResetFavoriteIcon))
-                .menu("Locate\u{2026}", Box::new(LocateFavorite))
+            menu.menu(tr!("Rename\u{2026}"), Box::new(RenameFavorite))
+                .menu(tr!("Reset to Original Name"), Box::new(ResetFavoriteName))
+                .menu(tr!("Change Icon\u{2026}"), Box::new(OpenFavoriteIconPicker))
+                .menu(tr!("Reset Icon"), Box::new(ResetFavoriteIcon))
+                .menu(tr!("Locate\u{2026}"), Box::new(LocateFavorite))
                 .separator()
                 .menu(
-                    ferail_core::commands::REVEAL_LABEL,
+                    crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
                     Box::new(RevealContextPath),
                 )
-                .menu("Copy Path", Box::new(CopyContextPath))
+                .menu(tr!("Copy Path"), Box::new(CopyContextPath))
                 .separator()
-                .menu("Remove from Favorites", Box::new(ToggleFavoriteForTarget))
+                .menu(
+                    tr!("Remove from Favorites"),
+                    Box::new(ToggleFavoriteForTarget),
+                )
         })
         .into_any_element(),
         menu_anim,

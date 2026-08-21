@@ -701,9 +701,9 @@ fn render_tree_row(
     let shell_for_menu = shell.clone();
     let path_for_menu = path.clone();
     let favorite_label = if favorited {
-        "Remove from Favorites"
+        tr!("Remove from Favorites")
     } else {
-        "Add to Favorites"
+        tr!("Add to Favorites")
     };
     let attach_menu = move |el: gpui::Stateful<gpui::Div>| {
         el.context_menu(move |menu, _window, cx| {
@@ -722,24 +722,24 @@ fn render_tree_row(
                 });
             }
             let menu = menu
-                .menu("Open in New Tab", Box::new(OpenContextInNewTab))
+                .menu(tr!("Open in New Tab"), Box::new(OpenContextInNewTab))
                 .separator()
-                .menu("Get Info", Box::new(GetInfoAtContext))
+                .menu(tr!("Get Info"), Box::new(GetInfoAtContext))
                 .separator()
                 .menu(
-                    ferail_core::commands::REVEAL_LABEL,
+                    crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
                     Box::new(RevealContextPath),
                 )
-                .menu("Copy Path", Box::new(CopyContextPath))
-                .menu("Open Terminal Here", Box::new(OpenTerminalAtContext))
+                .menu(tr!("Copy Path"), Box::new(CopyContextPath))
+                .menu(tr!("Open Terminal Here"), Box::new(OpenTerminalAtContext))
                 .separator()
-                .menu(favorite_label, Box::new(ToggleFavoriteForTarget))
+                .menu(favorite_label.clone(), Box::new(ToggleFavoriteForTarget))
                 .separator()
-                .menu("New Folder Here", Box::new(NewFolderHere));
+                .menu(tr!("New Folder Here"), Box::new(NewFolderHere));
             // Eject only for removable/external volumes (the boot
             // volume and folders never get it).
             if ejectable {
-                menu.separator().menu("Eject", Box::new(EjectVolume))
+                menu.separator().menu(tr!("Eject"), Box::new(EjectVolume))
             } else {
                 menu
             }

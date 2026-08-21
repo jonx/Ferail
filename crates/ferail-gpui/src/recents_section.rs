@@ -136,7 +136,7 @@ impl SidebarItem for RecentsSection {
                             .text_color(theme.muted_foreground),
                     ),
             )
-            .child(div().flex_1().child("Recents"))
+            .child(div().flex_1().child(tr!("Recents")))
             .on_click(move |_, _window, cx| {
                 if let Some(shell) = shell_for_header.upgrade() {
                     shell.update(cx, |s, cx| s.toggle_recents_section_collapsed(cx));
@@ -144,7 +144,7 @@ impl SidebarItem for RecentsSection {
             })
             .context_menu(move |menu, _window, _cx| {
                 menu.menu(
-                    "Clear Recents\u{2026}",
+                    tr!("Clear Recents\u{2026}"),
                     Box::new(crate::shell::ClearRecents),
                 )
             });
@@ -263,12 +263,12 @@ fn render_recent_row(
             });
         }
         menu.menu(
-            ferail_core::commands::REVEAL_LABEL,
+            crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
             Box::new(RevealContextPath),
         )
         .separator()
-        .menu("Remove from Recents", Box::new(RemoveFromRecents))
-        .menu("Clear Recents\u{2026}", Box::new(ClearRecents))
+        .menu(tr!("Remove from Recents"), Box::new(RemoveFromRecents))
+        .menu(tr!("Clear Recents\u{2026}"), Box::new(ClearRecents))
     })
     .into_any_element()
 }
