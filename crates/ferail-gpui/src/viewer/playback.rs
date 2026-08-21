@@ -45,7 +45,7 @@ impl Playback {
     }
 
     pub fn interval_label(secs: u64) -> String {
-        format!("{secs} s")
+        tr!("{secs} s", secs = secs).to_string()
     }
 }
 

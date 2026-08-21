@@ -92,7 +92,7 @@ pub fn open(
     shell: WeakEntity<Shell>,
     cx: &mut App,
 ) {
-    let title: SharedString = format!("Get Info \u{2014} {name}").into();
+    let title: SharedString = tr!("Get Info \u{2014} {name}", name = name);
     // Claim the next spiral slot; the guard rides along in the view and
     // releases the slot when the window closes.
     let cascade = CascadeGuard::claim();
@@ -174,23 +174,24 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
         .clone()
         .or_else(|| fsn::detect_magic(path).map(str::to_string))
         .unwrap_or_else(|| match target {
-            InfoTarget::Volume => "Volume".into(),
-            InfoTarget::Folder => "Folder".into(),
-            InfoTarget::File => "Document".into(),
+            InfoTarget::Volume => tr!("Volume").to_string(),
+            InfoTarget::Folder => tr!("Folder").to_string(),
+            InfoTarget::File => tr!("Document").to_string(),
         });
 
     let fmt_date = fsn::stat_info::format_local_datetime;
 
     // ---- General ----
-    let mut general = InfoSection::new("General").text_if("Kind", kind.clone());
+    let mut general =
+        InfoSection::new(tr!("General").to_string()).text_if(tr!("Kind").to_string(), kind.clone());
     if let Some(uti) = sh.uti.clone() {
-        general = general.text_if("Type", uti);
+        general = general.text_if(tr!("Type").to_string(), uti);
     }
     match target {
         InfoTarget::File => {
             let bytes = stat.as_ref().map(|s| s.size).unwrap_or(0);
             general = general.row(
-                "Size",
+                tr!("Size").to_string(),
                 InfoValue::Size(SizeValue::Known {
                     bytes,
                     display: fsn::humanize_bytes(bytes),
@@ -209,26 +210,29 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
                 },
                 _ => SizeValue::Calculable,
             };
-            general = general.row("Size", InfoValue::Size(size));
+            general = general.row(tr!("Size").to_string(), InfoValue::Size(size));
         }
         InfoTarget::Volume => {}
     }
     if let Some(s) = &stat {
         if let Some(c) = s.created_unix {
-            general = general.text_if("Created", fmt_date(c));
+            general = general.text_if(tr!("Created").to_string(), fmt_date(c));
         }
-        general = general.text_if("Modified", fmt_date(s.modified_unix));
+        general = general.text_if(tr!("Modified").to_string(), fmt_date(s.modified_unix));
         if let Some(a) = s.accessed_unix {
-            general = general.text_if("Last opened", fmt_date(a));
+            general = general.text_if(tr!("Last opened").to_string(), fmt_date(a));
         }
     }
     if let Some(added) = sh.added_unix {
-        general = general.text_if("Added", fmt_date(added));
+        general = general.text_if(tr!("Added").to_string(), fmt_date(added));
     }
     if let Some(app) = default_app {
-        general = general.text_if("Application", app);
+        general = general.text_if(tr!("Application").to_string(), app);
     }
-    general = general.text_if("Where", ferail_fs_native::paths::display_path(path));
+    general = general.text_if(
+        tr!("Where").to_string(),
+        ferail_fs_native::paths::display_path(path),
+    );
 
     // ---- Media (audio tags + properties) ----
     // Files only, and only when lofty recognizes the container as audio — the
@@ -236,39 +240,39 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     // appear for non-media files (the `filter(!rows.is_empty())` below drops an
     // empty section). Reading tags is native I/O, which is fine here: `gather`
     // already runs on the background executor, never the paint path.
-    let mut media = InfoSection::new("Media");
+    let mut media = InfoSection::new(tr!("Media").to_string());
     if target == InfoTarget::File {
         if let Some(t) = fsn::media::read_media_tags(path) {
             media = media
-                .text_if("Title", t.title.clone())
-                .text_if("Artist", t.artist.clone())
-                .text_if("Album", t.album.clone())
-                .text_if("Genre", t.genre.clone())
-                .text_if("Year", t.year.map(|y| y.to_string()).unwrap_or_default())
-                .text_if("Track", t.track_label())
-                .text_if("Disc", t.disc_label())
-                .text_if("Duration", t.duration_label())
-                .text_if("Format", t.codec.clone())
-                .text_if("Channels", t.channels_label())
-                .text_if("Sample rate", t.sample_rate_label())
-                .text_if("Bit depth", t.bit_depth_label())
-                .text_if("Bit rate", t.bitrate_label());
+                .text_if(tr!("Title").to_string(), t.title.clone())
+                .text_if(tr!("Artist").to_string(), t.artist.clone())
+                .text_if(tr!("Album").to_string(), t.album.clone())
+                .text_if(tr!("Genre").to_string(), t.genre.clone())
+                .text_if(tr!("Year").to_string(), t.year.map(|y| y.to_string()).unwrap_or_default())
+                .text_if(tr!("Track").to_string(), t.track_label())
+                .text_if(tr!("Disc").to_string(), t.disc_label())
+                .text_if(tr!("Duration").to_string(), t.duration_label())
+                .text_if(tr!("Format").to_string(), t.codec.clone())
+                .text_if(tr!("Channels").to_string(), t.channels_label())
+                .text_if(tr!("Sample rate").to_string(), t.sample_rate_label())
+                .text_if(tr!("Bit depth").to_string(), t.bit_depth_label())
+                .text_if(tr!("Bit rate").to_string(), t.bitrate_label());
         }
     }
 
     // ---- Attributes ----
-    let mut attributes = InfoSection::new("Attributes");
+    let mut attributes = InfoSection::new(tr!("Attributes").to_string());
     if let Some(s) = &stat {
         attributes = attributes
             .row(
-                Attr::Locked.label(),
+                crate::i18n::tr_static(Attr::Locked.label()).to_string(),
                 InfoValue::Toggle {
                     on: s.is_locked,
                     attr: Attr::Locked,
                 },
             )
             .row(
-                Attr::Invisible.label(),
+                crate::i18n::tr_static(Attr::Invisible.label()).to_string(),
                 InfoValue::Toggle {
                     on: s.is_invisible,
                     attr: Attr::Invisible,
@@ -277,7 +281,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     }
     if let Some(he) = sh.hidden_extension {
         attributes = attributes.row(
-            Attr::HiddenExtension.label(),
+            crate::i18n::tr_static(Attr::HiddenExtension.label()).to_string(),
             InfoValue::Toggle {
                 on: he,
                 attr: Attr::HiddenExtension,
@@ -285,7 +289,7 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
         );
     }
     attributes = attributes.row(
-        "Tags",
+        tr!("Tags").to_string(),
         InfoValue::Tags {
             colors,
             custom: Vec::new(),
@@ -293,14 +297,14 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     );
 
     // ---- Ownership & Permissions ----
-    let mut permissions = InfoSection::new("Ownership & Permissions");
+    let mut permissions = InfoSection::new(tr!("Ownership & Permissions").to_string());
     if let Some(s) = &stat {
         let mode = s.mode & 0o7777;
         permissions = permissions
-            .text_if("Owner", s.owner_name.clone())
-            .text_if("Group", s.group_name.clone())
+            .text_if(tr!("Owner").to_string(), s.owner_name.clone())
+            .text_if(tr!("Group").to_string(), s.group_name.clone())
             .row(
-                "Permissions",
+                tr!("Permissions").to_string(),
                 InfoValue::Permissions(PermMatrix {
                     owner_name: s.owner_name.clone(),
                     group_name: s.group_name.clone(),
@@ -314,31 +318,34 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
     }
 
     // ---- Volume ----
-    let mut volume = InfoSection::new("Volume");
+    let mut volume = InfoSection::new(tr!("Volume").to_string());
     if let Some(v) = &vol {
-        volume = volume.text_if("Volume", v.name.clone());
+        volume = volume.text_if(tr!("Volume").to_string(), v.name.clone());
         if let Some(t) = v.total_bytes {
-            volume = volume.text_if("Capacity", fsn::humanize_bytes(t));
+            volume = volume.text_if(tr!("Capacity").to_string(), fsn::humanize_bytes(t));
         }
         if let Some(a) = v.available_bytes {
-            volume = volume.text_if("Available", fsn::humanize_bytes(a));
+            volume = volume.text_if(tr!("Available").to_string(), fsn::humanize_bytes(a));
         }
         // Finder parity: Capacity / Available / Used. Used is derived —
         // statfs reports total and free, not a used counter.
         if let (Some(t), Some(a)) = (v.total_bytes, v.available_bytes) {
-            volume = volume.text_if("Used", fsn::humanize_bytes(t.saturating_sub(a)));
+            volume = volume.text_if(
+                tr!("Used").to_string(),
+                fsn::humanize_bytes(t.saturating_sub(a)),
+            );
         }
         if let Some(f) = v.format.clone() {
-            volume = volume.text_if("Format", f);
+            volume = volume.text_if(tr!("Format").to_string(), f);
         }
         // Only worth a row when it constrains the user; a writable
         // volume is the unremarkable default.
         if v.read_only {
-            volume = volume.text_if("Access", "Read-only");
+            volume = volume.text_if(tr!("Access").to_string(), tr!("Read-only").to_string());
         }
-        volume = volume.text_if("Mount point", v.path.display().to_string());
+        volume = volume.text_if(tr!("Mount point").to_string(), v.path.display().to_string());
         if let Some(d) = v.bsd_device.clone() {
-            volume = volume.text_if("Device", d);
+            volume = volume.text_if(tr!("Device").to_string(), d);
         }
     }
 
@@ -623,7 +630,7 @@ impl EntryInfoView {
                 Attr::Locked => stat_info::set_locked(&path, on),
                 Attr::Invisible => stat_info::set_invisible(&path, on),
                 Attr::HiddenExtension => crate::platform_shell::set_hidden_extension(&path, on),
-                Attr::Stationery => Err("Stationery editing is not supported yet".into()),
+                Attr::Stationery => Err(tr!("Stationery editing is not supported yet").to_string()),
             },
             window,
             cx,
@@ -685,7 +692,7 @@ impl Render for EntryInfoView {
                 div()
                     .text_scale_sm()
                     .text_color(muted)
-                    .child("Gathering details\u{2026}"),
+                    .child(tr!("Gathering details\u{2026}")),
             ),
             GatherState::Ready(info) => {
                 let mut col = v_flex().gap_3();
@@ -724,7 +731,7 @@ impl Render for EntryInfoView {
                 div()
                     .text_scale_xs()
                     .text_color(gpui::rgb(0xC2410C))
-                    .child(format!("\u{26A0} {warn}")),
+                    .child(tr!("\u{26A0} {warning}", warning = warn)),
             );
         }
         let header = header.child(
@@ -873,7 +880,7 @@ impl EntryInfoView {
                             Button::new("entry-info-recalc-size")
                                 .label("\u{21BB}")
                                 .xsmall()
-                                .tooltip("Recalculate size")
+                                .tooltip(tr!("Recalculate size"))
                                 .on_click(
                                     cx.listener(|this, _, _window, cx| this.calculate_size(cx)),
                                 ),
@@ -885,10 +892,10 @@ impl EntryInfoView {
                 }
                 SizeValue::Calculating => div()
                     .text_color(cx.theme().muted_foreground)
-                    .child("Calculating\u{2026}")
+                    .child(tr!("Calculating\u{2026}"))
                     .into_any_element(),
                 SizeValue::Calculable => Button::new("entry-info-calc-size")
-                    .label("Calculate")
+                    .label(tr!("Calculate"))
                     .xsmall()
                     .on_click(cx.listener(|this, _, _window, cx| this.calculate_size(cx)))
                     .into_any_element(),
@@ -907,21 +914,24 @@ impl EntryInfoView {
         #[cfg(target_os = "windows")]
         {
             let label = if m.owner.write {
-                "Read & write"
+                tr!("Read & write")
             } else {
-                "Read-only"
+                tr!("Read-only")
             };
             div()
                 .text_scale_sm()
                 .text_color(cx.theme().foreground)
-                .child(SharedString::from(label))
+                .child(label)
                 .into_any_element()
         }
 
         #[cfg(not(target_os = "windows"))]
         {
-            let classes: [(&str, PermBits); 3] =
-                [("Owner", m.owner), ("Group", m.group), ("Other", m.other)];
+            let classes: [(SharedString, PermBits); 3] = [
+                (tr!("Owner"), m.owner),
+                (tr!("Group"), m.group),
+                (tr!("Other"), m.other),
+            ];
             let mut grid = v_flex().gap_0p5();
             for (ci, (label, bits)) in classes.into_iter().enumerate() {
                 let mut row = h_flex().gap_2().items_center().child(
@@ -1034,5 +1044,9 @@ pub(crate) fn name_hazard_warning(name: &str) -> Option<String> {
     kinds.dedup();
     kinds.sort_unstable();
     kinds.dedup();
-    Some(format!("Deceptive name: {}", kinds.join(", ")))
+    let kinds: Vec<String> = kinds
+        .into_iter()
+        .map(|k| crate::i18n::tr_static(k).to_string())
+        .collect();
+    Some(tr!("Deceptive name: {kinds}", kinds = kinds.join(", ")).to_string())
 }

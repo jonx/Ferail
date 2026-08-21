@@ -157,7 +157,7 @@ pub fn build_plan(rule: &RenameRule, items: &[(String, i64)]) -> RenamePlan {
                         .collect(),
                     renamed: 0,
                     conflicts: 0,
-                    error: Some(format!("Invalid regex: {condensed}")),
+                    error: Some(tr!("Invalid regex: {detail}", detail = condensed).to_string()),
                 };
             }
         }
@@ -235,16 +235,16 @@ pub fn build_plan(rule: &RenameRule, items: &[(String, i64)]) -> RenamePlan {
         let status = if after == before {
             RowStatus::Unchanged
         } else if after.trim().is_empty() {
-            RowStatus::Conflict("empty name")
+            RowStatus::Conflict(ferail_core::msgid!("empty name"))
         } else if target_counts
             .get(&after.to_lowercase())
             .copied()
             .unwrap_or(0)
             > 1
         {
-            RowStatus::Conflict("duplicate target")
+            RowStatus::Conflict(ferail_core::msgid!("duplicate target"))
         } else if unchanged_lower.contains(&after.to_lowercase()) {
-            RowStatus::Conflict("name already taken")
+            RowStatus::Conflict(ferail_core::msgid!("name already taken"))
         } else {
             RowStatus::Renamed
         };
@@ -426,10 +426,13 @@ pub(crate) fn run_renames(
         let Some(i) = (0..n).find(|&i| !done[i] && !parked[i]) else {
             for i in 0..n {
                 if !done[i] {
-                    errors.push(format!(
-                        "{}: rename cycle could not be resolved",
-                        leaf_str(&pairs[i].0)
-                    ));
+                    errors.push(
+                        tr!(
+                            "{name}: rename cycle could not be resolved",
+                            name = leaf_str(&pairs[i].0)
+                        )
+                        .to_string(),
+                    );
                 }
             }
             break;
@@ -472,11 +475,12 @@ fn rename_guarded(old: &Path, new: &Path) -> Result<(), String> {
             .map(|old_meta| same_entry(&old_meta, &new_meta, old, new))
             .unwrap_or(false);
         if !same {
-            return Err(format!(
-                "{} \u{2192} {}: an item with that name already exists",
-                leaf_str(old),
-                leaf_str(new)
-            ));
+            return Err(tr!(
+                "{old} \u{2192} {new}: an item with that name already exists",
+                old = leaf_str(old),
+                new = leaf_str(new)
+            )
+            .to_string());
         }
     }
     std::fs::rename(old, new).map_err(|e| format!("{}: {e}", leaf_str(old)))
@@ -562,11 +566,17 @@ impl BulkRenameView {
                 .map(|(_, name, mtime)| (name.clone(), *mtime))
                 .collect(),
         );
-        let find_input = cx.new(|cx| InputState::new(window, cx).placeholder("Text or pattern"));
-        let replace_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Replacement ($1\u{2026}$9)"));
+        let find_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Text or pattern")));
+        let replace_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(tr!("Replacement ($1\u{2026}$9)"))
+        });
+        // `{name}` / `{n}` / `{ext}` here are the user's template tokens, not
+        // `tr!` placeholders — there are no arguments, so nothing is filled
+        // and the braces render as typed.
         let template_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("{name} {n}.{ext} \u{2014} leave empty to skip")
+            InputState::new(window, cx)
+                .placeholder(tr!("{name} {n}.{ext} \u{2014} leave empty to skip"))
         });
         let start_input = cx.new(|cx| InputState::new(window, cx).default_value("1"));
         let pad_input = cx.new(|cx| InputState::new(window, cx).default_value("3"));
@@ -682,7 +692,7 @@ impl Render for BulkRenameView {
         let muted = cx.theme().muted_foreground;
         let danger = cx.theme().danger;
         let fg = cx.theme().foreground;
-        let label = |text: &'static str| div().text_scale_xs().text_color(muted).child(text);
+        let label = |text: SharedString| div().text_scale_xs().text_color(muted).child(text);
 
         let total = self.items.len();
         let renamed = self.plan.renamed;
@@ -691,10 +701,10 @@ impl Render for BulkRenameView {
 
         let mut preview = v_flex().gap_1();
         for row in self.plan.rows.iter().take(PREVIEW_ROWS) {
-            let (after_color, note): (Hsla, Option<&'static str>) = match row.status {
+            let (after_color, note): (Hsla, Option<SharedString>) = match row.status {
                 RowStatus::Unchanged => (muted, None),
                 RowStatus::Renamed => (fg, None),
-                RowStatus::Conflict(reason) => (danger, Some(reason)),
+                RowStatus::Conflict(reason) => (danger, Some(crate::i18n::tr_static(reason))),
             };
             let before_color = if matches!(row.status, RowStatus::Unchanged) {
                 muted
@@ -702,7 +712,7 @@ impl Render for BulkRenameView {
                 fg
             };
             let after_text: SharedString = if row.after.is_empty() {
-                "(empty)".into()
+                tr!("(empty)")
             } else {
                 row.after.clone().into()
             };
@@ -739,7 +749,7 @@ impl Render for BulkRenameView {
                 div()
                     .text_scale_xxs()
                     .text_color(muted)
-                    .child(format!("\u{2026}and {overflow} more")),
+                    .child(tr!("\u{2026}and {overflow} more", overflow = overflow)),
             );
         }
 
@@ -749,9 +759,9 @@ impl Render for BulkRenameView {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(label("Find"))
+                    .child(label(tr!("Find")))
                     .child(div().flex_1().child(Input::new(&self.find_input).small()))
-                    .child(label("Replace"))
+                    .child(label(tr!("Replace")))
                     .child(
                         div()
                             .flex_1()
@@ -760,7 +770,7 @@ impl Render for BulkRenameView {
                     .child(
                         Checkbox::new("bulk-rename-regex")
                             .small()
-                            .label("Regex")
+                            .label(tr!("Regex"))
                             .checked(self.use_regex)
                             .on_click(cx.listener(|this, checked: &bool, _window, cx| {
                                 this.use_regex = *checked;
@@ -772,29 +782,29 @@ impl Render for BulkRenameView {
                 el.child(div().text_scale_xs().text_color(danger).child(err))
             })
             .child(
-                h_flex().gap_2().items_center().child(label("Case")).child(
+                h_flex().gap_2().items_center().child(label(tr!("Case"))).child(
                     ButtonGroup::new("bulk-rename-case")
                         .small()
                         .outline()
                         .compact()
                         .child(
                             Button::new("bulk-rename-case-none")
-                                .label("None")
+                                .label(tr!("None"))
                                 .selected(self.case == CaseTransform::None),
                         )
                         .child(
                             Button::new("bulk-rename-case-lower")
-                                .label("lower")
+                                .label(tr!("lower"))
                                 .selected(self.case == CaseTransform::Lower),
                         )
                         .child(
                             Button::new("bulk-rename-case-upper")
-                                .label("UPPER")
+                                .label(tr!("UPPER"))
                                 .selected(self.case == CaseTransform::Upper),
                         )
                         .child(
                             Button::new("bulk-rename-case-title")
-                                .label("Title")
+                                .label(tr!("Title"))
                                 .selected(self.case == CaseTransform::Title),
                         )
                         .on_click(cx.listener(|this, clicks: &Vec<usize>, _window, cx| {
@@ -815,19 +825,19 @@ impl Render for BulkRenameView {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(label("Template"))
+                    .child(label(tr!("Template")))
                     .child(
                         div()
                             .flex_1()
                             .child(Input::new(&self.template_input).small()),
                     )
-                    .child(label("Start"))
+                    .child(label(tr!("Start")))
                     .child(
                         div()
                             .w(px(64.))
                             .child(Input::new(&self.start_input).small()),
                     )
-                    .child(label("Pad"))
+                    .child(label(tr!("Pad")))
                     .child(div().w(px(52.)).child(Input::new(&self.pad_input).small())),
             )
             .child(
@@ -839,12 +849,17 @@ impl Render for BulkRenameView {
                         div()
                             .text_scale_xs()
                             .text_color(muted)
-                            .child(format!("{renamed} of {total} will be renamed")),
+                            .child(tr!(
+                                "{renamed} of {total} will be renamed",
+                                renamed = renamed,
+                                total = total
+                            )),
                     )
                     .when(conflicts > 0, |el| {
-                        el.child(div().text_scale_xs().text_color(danger).child(format!(
-                            "\u{b7} {conflicts} conflict{}",
-                            if conflicts == 1 { "" } else { "s" }
+                        el.child(div().text_scale_xs().text_color(danger).child(trn!(
+                            "\u{b7} {n} conflict",
+                            "\u{b7} {n} conflicts",
+                            conflicts
                         )))
                     }),
             )
@@ -872,7 +887,7 @@ pub fn open(
     let state = cx.new(|cx| BulkRenameView::new(items, window, cx));
     let shell_entity = cx.entity();
     let state_for_dialog = state.clone();
-    let title: SharedString = format!("Rename {count} Items").into();
+    let title: SharedString = trn!("Rename {n} Item", "Rename {n} Items", count);
     window.open_dialog(cx, move |dialog, _window, _cx| {
         let state = state_for_dialog.clone();
         let shell = shell_entity.clone();
@@ -892,14 +907,14 @@ pub fn open(
                     .child(
                         div().w(px(96.)).child(
                             DialogClose::new()
-                                .child(Button::new("bulk-rename-cancel").label("Cancel").small()),
+                                .child(Button::new("bulk-rename-cancel").label(tr!("Cancel")).small()),
                         ),
                     )
                     .child(
                         div().w(px(96.)).child(
                             DialogAction::new().child(
                                 Button::new("bulk-rename-ok")
-                                    .label("Rename")
+                                    .label(tr!("Rename"))
                                     .primary()
                                     .small(),
                             ),
@@ -949,7 +964,7 @@ fn apply(
     let win = window.window_handle();
     let task_id = process.tasks.borrow_mut().begin(
         crate::tasks::TaskKind::FileOp,
-        format!("Renaming {count} items\u{2026}"),
+        trn!("Renaming {n} item\u{2026}", "Renaming {n} items\u{2026}", count).to_string(),
         false,
     );
     cx.spawn(async move |weak, cx| {
@@ -989,15 +1004,22 @@ fn apply(
             use gpui_component::notification::Notification;
             if failed == 0 {
                 window.push_notification(
-                    Notification::success(format!("Renamed {renamed_count} items")),
+                    Notification::success(trn!(
+                        "Renamed {n} item",
+                        "Renamed {n} items",
+                        renamed_count
+                    )),
                     cx,
                 );
             } else {
                 window.push_notification(
-                    crate::shell::error_notification(format!(
-                        "Renamed {renamed_count} items, {failed} failed \u{2014} {}",
-                        first_error.unwrap_or_default()
-                    )),
+                    crate::shell::error_notification(tr!(
+                        "Renamed {renamed} items, {failed} failed \u{2014} {detail}",
+                        renamed = renamed_count,
+                        failed = failed,
+                        detail = first_error.unwrap_or_default()
+                    )
+                    .to_string()),
                     cx,
                 );
             }

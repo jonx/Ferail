@@ -202,9 +202,9 @@ impl ArchiveView {
             },
         );
         let password_input =
-            cx.new(|cx| InputState::new(window, cx).masked(true).placeholder("Password"));
+            cx.new(|cx| InputState::new(window, cx).masked(true).placeholder(tr!("Password")));
         let filter_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Filter contents\u{2026}"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Filter contents\u{2026}")));
         // Re-project on every keystroke in the filter box.
         cx.subscribe(&filter_input, |this: &mut Self, input, ev, cx| {
             if matches!(ev, gpui_component::input::InputEvent::Change) {
@@ -401,12 +401,14 @@ impl ArchiveView {
         window.open_dialog(cx, move |dialog, _window, _cx| {
             let (path, this) = (path.clone(), this.clone());
             dialog
-                .title(SharedString::from("Preview this file?"))
+                .title(tr!("Preview this file?"))
                 .child(
                     div()
                         .text_scale_sm()
-                        .child(format!(
-                            "\u{201c}{name}\u{201d} is {human}. Previewing it writes a temporary copy out of the archive first."
+                        .child(tr!(
+                            "\u{201c}{name}\u{201d} is {human}. Previewing it writes a temporary copy out of the archive first.",
+                            name = name,
+                            human = human
                         )),
                 )
                 .on_ok(move |_, _window, cx: &mut App| {
@@ -687,7 +689,7 @@ impl ArchiveView {
             let Some(format) = probe else {
                 let _ = this.update(cx, |this, cx| {
                     this.load = ArchiveLoad::Failed(
-                        "This file isn't an archive Ferail can open.".to_string(),
+                        tr!("This file isn't an archive Ferail can open.").to_string(),
                     );
                     cx.notify();
                 });
@@ -721,7 +723,7 @@ impl ArchiveView {
                     }
                     Err(ArchiveError::WrongPassword) => {
                         this.load = ArchiveLoad::NeedsPassword {
-                            error: Some("Incorrect password — try again.".to_string()),
+                            error: Some(tr!("Incorrect password — try again.").to_string()),
                         }
                     }
                     Err(e) => this.load = ArchiveLoad::Failed(e.to_string()),
@@ -948,27 +950,31 @@ impl ArchiveView {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let label = self.format.map(|f| f.label()).unwrap_or("Archive");
+        let label: SharedString = self
+            .format
+            .map(|f| SharedString::new_static(f.label()))
+            .unwrap_or_else(|| tr!("Archive"));
 
         let subtitle = match &self.load {
-            ArchiveLoad::Loading => "Reading\u{2026}".to_string(),
-            ArchiveLoad::NeedsPassword { .. } => format!("{label} \u{00b7} encrypted"),
-            ArchiveLoad::Failed(_) => "Unreadable".to_string(),
+            ArchiveLoad::Loading => tr!("Reading\u{2026}").to_string(),
+            ArchiveLoad::NeedsPassword { .. } => {
+                tr!("{label} \u{00b7} encrypted", label = label).to_string()
+            }
+            ArchiveLoad::Failed(_) => tr!("Unreadable").to_string(),
             ArchiveLoad::Loaded(toc) => {
-                let files = toc.file_count();
-                let size = toc
-                    .total_uncompressed()
-                    .map(|b| format!(" \u{00b7} {}", ferail_fs_native::humanize_bytes(b)))
-                    .unwrap_or_default();
-                let encrypted = if toc.needs_password {
-                    " \u{00b7} encrypted"
-                } else {
-                    ""
-                };
-                format!(
-                    "{label} \u{00b7} {files} file{}{size}{encrypted}",
-                    if files == 1 { "" } else { "s" }
-                )
+                // `label · N files · size · encrypted`, each piece a whole
+                // phrase so translations stay word-order independent.
+                let mut parts = vec![
+                    label.to_string(),
+                    trn!("{n} file", "{n} files", toc.file_count()).to_string(),
+                ];
+                if let Some(b) = toc.total_uncompressed() {
+                    parts.push(ferail_fs_native::humanize_bytes(b));
+                }
+                if toc.needs_password {
+                    parts.push(tr!("encrypted").to_string());
+                }
+                parts.join(" \u{00b7} ")
             }
         };
 
@@ -1022,7 +1028,7 @@ impl ArchiveView {
                         .bg(theme.muted)
                         .text_scale_xs()
                         .text_color(theme.muted_foreground)
-                        .child("Read-only"),
+                        .child(tr!("Read-only")),
                 )
             })
             // Below this the filter box would leave the name a few pixels, so
@@ -1041,9 +1047,9 @@ impl ArchiveView {
                     .small()
                     .icon(gpui_component::Icon::empty().path("icons/eye.svg"))
                     .tooltip(if self.preview_enabled {
-                        "Hide preview"
+                        tr!("Hide preview")
                     } else {
-                        "Preview selected file"
+                        tr!("Preview selected file")
                     })
                     .selected(self.preview_enabled)
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_preview(window, cx))),
@@ -1051,9 +1057,9 @@ impl ArchiveView {
             .child(
                 Button::new("archive-extract-selected")
                     .label(if selected > 0 {
-                        format!("Extract {selected} Selected")
+                        tr!("Extract {selected} Selected", selected = selected)
                     } else {
-                        "Extract Selected".to_string()
+                        tr!("Extract Selected")
                     })
                     .small()
                     .disabled(!can_extract || selected == 0)
@@ -1068,7 +1074,7 @@ impl ArchiveView {
                         Button::new("archive-dock")
                             .small()
                             .icon(gpui_component::Icon::empty().path("icons/minimize.svg"))
-                            .tooltip("Dock in tab")
+                            .tooltip(tr!("Dock in tab"))
                             .on_click(cx.listener(move |_, _, window, cx| {
                                 let view = cx.entity().clone();
                                 let app: &mut App = std::borrow::BorrowMut::borrow_mut(cx);
@@ -1083,15 +1089,15 @@ impl ArchiveView {
             )
             .child(
                 Button::new("archive-extract-to")
-                    .label("Extract To\u{2026}")
+                    .label(tr!("Extract To\u{2026}"))
                     .small()
-                    .tooltip("Extract to a folder you choose (selection, or all)")
+                    .tooltip(tr!("Extract to a folder you choose (selection, or all)"))
                     .disabled(!can_extract)
                     .on_click(cx.listener(|this, _, window, cx| this.extract_to(window, cx))),
             )
             .child(
                 Button::new("archive-extract-all")
-                    .label("Extract All")
+                    .label(tr!("Extract All"))
                     .small()
                     .disabled(!can_extract)
                     .on_click(cx.listener(|this, _, window, cx| this.extract_all(window, cx))),
@@ -1099,7 +1105,12 @@ impl ArchiveView {
             .into_any_element()
     }
 
-    fn password_form(&self, prompt: &str, error: Option<&str>, cx: &mut Context<Self>) -> AnyElement {
+    fn password_form(
+        &self,
+        prompt: SharedString,
+        error: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = cx.theme();
         v_flex()
             .gap_1()
@@ -1107,7 +1118,7 @@ impl ArchiveView {
                 div()
                     .text_scale_sm()
                     .text_color(theme.muted_foreground)
-                    .child(prompt.to_string()),
+                    .child(prompt),
             )
             .child(
                 h_flex()
@@ -1116,7 +1127,7 @@ impl ArchiveView {
                     .child(div().w(px(220.0)).child(Input::new(&self.password_input).small()))
                     .child(
                         Button::new("archive-unlock")
-                            .label("Unlock")
+                            .label(tr!("Unlock"))
                             .small()
                             .on_click(cx.listener(|this, _, _window, cx| this.submit_password(cx))),
                     ),
@@ -1168,7 +1179,7 @@ impl Render for ArchiveView {
 
         let locked_strip = self.locked_contents().then(|| {
             let form = self.password_form(
-                "This archive's contents are encrypted. Enter its password to extract.",
+                tr!("This archive's contents are encrypted. Enter its password to extract."),
                 None,
                 cx,
             );
@@ -1182,11 +1193,11 @@ impl Render for ArchiveView {
         });
 
         let body = match &self.load {
-            ArchiveLoad::Loading => self.centered_message("Reading archive\u{2026}", cx),
+            ArchiveLoad::Loading => self.centered_message(tr!("Reading archive\u{2026}"), cx),
             ArchiveLoad::NeedsPassword { error } => {
                 let error = error.clone();
                 let form = self.password_form(
-                    "This archive is encrypted. Enter its password to view the contents.",
+                    tr!("This archive is encrypted. Enter its password to view the contents."),
                     error.as_deref(),
                     cx,
                 );
@@ -1273,13 +1284,13 @@ pub fn open_existing_window(
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(900.0), px(640.0)), cx)),
         titlebar: Some(TitlebarOptions {
-            title: Some(SharedString::from(format!(
-                "Archive \u{2014} {}",
-                archive
+            title: Some(tr!(
+                "Archive \u{2014} {name}",
+                name = archive
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default()
-            ))),
+            )),
             ..Default::default()
         }),
         ..crate::base_window_options()

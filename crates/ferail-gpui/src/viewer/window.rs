@@ -222,19 +222,19 @@ impl SliderId {
             SliderId::Blend => 10,
         }
     }
-    fn label(self) -> &'static str {
+    fn label(self) -> SharedString {
         match self {
-            SliderId::Brightness => "Brightness",
-            SliderId::Contrast => "Contrast",
-            SliderId::Saturation => "Color",
-            SliderId::Hue => "Hue",
-            SliderId::Gamma => "Gamma",
-            SliderId::Denoise => "Denoise",
-            SliderId::Sharpen => "Sharpen",
-            SliderId::Banding => "Debanding",
-            SliderId::Grain => "Film grain",
-            SliderId::Similarity => "Similarity",
-            SliderId::Blend => "Blend",
+            SliderId::Brightness => tr!("Brightness"),
+            SliderId::Contrast => tr!("Contrast"),
+            SliderId::Saturation => tr!("Color"),
+            SliderId::Hue => tr!("Hue"),
+            SliderId::Gamma => tr!("Gamma"),
+            SliderId::Denoise => tr!("Denoise"),
+            SliderId::Sharpen => tr!("Sharpen"),
+            SliderId::Banding => tr!("Debanding"),
+            SliderId::Grain => tr!("Film grain"),
+            SliderId::Similarity => tr!("Similarity"),
+            SliderId::Blend => tr!("Blend"),
         }
     }
     /// `(min, max)` of the value, and whether it detents to zero at centre.
@@ -919,13 +919,14 @@ impl ViewerWindow {
     /// text changed, so per-frame cost is one string compare.
     fn sync_title(&mut self, window: &mut Window) {
         let title = match self.current() {
-            Some(e) => format!(
-                "{} \u{2014} {} of {}",
-                e.name,
-                self.index + 1,
-                self.playlist.len()
-            ),
-            None => "Viewer".to_string(),
+            Some(e) => tr!(
+                "{name} \u{2014} {index} of {total}",
+                name = e.name,
+                index = self.index + 1,
+                total = self.playlist.len()
+            )
+            .to_string(),
+            None => tr!("Viewer").to_string(),
         };
         if title != self.last_title {
             window.set_window_title(&title);
@@ -1951,9 +1952,9 @@ impl ViewerWindow {
                             window.remove_window();
                         } else {
                             window.push_notification(
-                                Notification::info(format!(
-                                    "Moved \u{201C}{}\u{201D} to Trash",
-                                    entry.name
+                                Notification::info(tr!(
+                                    "Moved \u{201C}{name}\u{201D} to Trash",
+                                    name = entry.name
                                 )),
                                 cx,
                             );
@@ -1963,7 +1964,9 @@ impl ViewerWindow {
                 Err(e) => {
                     let _ = win.update(cx, move |_, window, cx| {
                         window.push_notification(
-                            crate::shell::error_notification(format!("Move to Trash failed: {e}")),
+                            crate::shell::error_notification(
+                                tr!("Move to Trash failed: {detail}", detail = e).to_string(),
+                            ),
                             cx,
                         );
                     });
@@ -2416,7 +2419,7 @@ impl ViewerWindow {
             Button::new("viewer-overflow")
                 .icon(gpui_component::Icon::empty().path("icons/ellipsis.svg"))
                 .small()
-                .tooltip("More")
+                .tooltip(tr!("More"))
                 .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |mut menu, _window, _cx| {
                     menu = menu.action_context(focus.clone());
                     let mut sep = false;
@@ -2425,16 +2428,16 @@ impl ViewerWindow {
                         menu = menu
                             .menu(
                                 if playing {
-                                    "Pause Slideshow"
+                                    tr!("Pause Slideshow")
                                 } else {
-                                    "Play Slideshow"
+                                    tr!("Play Slideshow")
                                 },
                                 Box::new(ViewerTogglePlay),
                             )
                             .item(
-                                PopupMenuItem::new(format!(
-                                    "Slideshow Interval: {}",
-                                    Playback::interval_label(interval_secs)
+                                PopupMenuItem::new(tr!(
+                                    "Slideshow Interval: {interval}",
+                                    interval = Playback::interval_label(interval_secs)
                                 ))
                                 .on_click(move |_, _, cx| {
                                     e.update(cx, |this, cx| this.cycle_interval(cx));
@@ -2447,10 +2450,10 @@ impl ViewerWindow {
                             menu = menu.separator();
                         }
                         menu = menu
-                            .menu("Zoom In", Box::new(ViewerZoomIn))
-                            .menu("Zoom Out", Box::new(ViewerZoomOut))
+                            .menu(tr!("Zoom In"), Box::new(ViewerZoomIn))
+                            .menu(tr!("Zoom Out"), Box::new(ViewerZoomOut))
                             .menu(
-                                if actual { "Fit to Window" } else { "Actual Size" },
+                                if actual { tr!("Fit to Window") } else { tr!("Actual Size") },
                                 Box::new(ViewerActualSize),
                             );
                         sep = true;
@@ -2460,14 +2463,14 @@ impl ViewerWindow {
                             menu = menu.separator();
                         }
                         menu = menu
-                            .menu("Rotate Clockwise", Box::new(ViewerRotateCw))
+                            .menu(tr!("Rotate Clockwise"), Box::new(ViewerRotateCw))
                             .menu_with_check(
-                                "Adjust Colours",
+                                tr!("Adjust Colours"),
                                 adjust_open,
                                 Box::new(ViewerToggleAdjust),
                             )
                             .menu(
-                                ferail_core::commands::TRASH_LABEL,
+                                crate::i18n::tr_static(ferail_core::commands::TRASH_LABEL),
                                 Box::new(ViewerDelete),
                             );
                         sep = true;
@@ -2479,26 +2482,28 @@ impl ViewerWindow {
                         if is_video {
                             let e = menu_entity.clone();
                             menu = menu.item(
-                                PopupMenuItem::new("Back One Frame").on_click(move |_, _, cx| {
+                                PopupMenuItem::new(tr!("Back One Frame")).on_click(move |_, _, cx| {
                                     e.update(cx, |this, cx| this.step_video(-1, cx));
                                 }),
                             );
                             let e = menu_entity.clone();
-                            menu = menu.item(PopupMenuItem::new("Forward One Frame").on_click(
+                            menu = menu.item(PopupMenuItem::new(tr!("Forward One Frame")).on_click(
                                 move |_, _, cx| {
                                     e.update(cx, |this, cx| this.step_video(1, cx));
                                 },
                             ));
                         }
                         let e = menu_entity.clone();
-                        menu = menu.item(PopupMenuItem::new("Loop").checked(video_loop).on_click(
-                            move |_, _, cx| {
-                                e.update(cx, |this, cx| {
-                                    this.video_loop = !this.video_loop;
-                                    cx.notify();
-                                });
-                            },
-                        ));
+                        menu = menu.item(
+                            PopupMenuItem::new(tr!("Loop")).checked(video_loop).on_click(
+                                move |_, _, cx| {
+                                    e.update(cx, |this, cx| {
+                                        this.video_loop = !this.video_loop;
+                                        cx.notify();
+                                    });
+                                },
+                            ),
+                        );
                         sep = true;
                     }
                     if hide_toggles {
@@ -2507,7 +2512,7 @@ impl ViewerWindow {
                         }
                         let e = menu_entity.clone();
                         menu = menu.item(
-                            PopupMenuItem::new("Stay on Top").checked(stay_on_top).on_click(
+                            PopupMenuItem::new(tr!("Stay on Top")).checked(stay_on_top).on_click(
                                 move |_, window, cx| {
                                     let on = !stay_on_top;
                                     let ns_view = content_ns_view(window);
@@ -2523,7 +2528,7 @@ impl ViewerWindow {
                         );
                         let e = menu_entity.clone();
                         menu = menu.item(
-                            PopupMenuItem::new("Transparent").checked(transparent).on_click(
+                            PopupMenuItem::new(tr!("Transparent")).checked(transparent).on_click(
                                 move |_, window, cx| {
                                     let on = !transparent;
                                     window.set_background_appearance(if on {
@@ -2620,7 +2625,7 @@ impl ViewerWindow {
                     )
                     .child(
                         Button::new("viewer-actual")
-                            .label(if actual { "Fit" } else { "1:1" })
+                            .label(if actual { tr!("Fit") } else { "1:1".into() })
                             .small()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.on_actual_size(&ViewerActualSize, window, cx)
@@ -2672,7 +2677,7 @@ impl ViewerWindow {
                 bar.when(is_video && !hide_av_extra, |bar| {
                     bar.child(
                         Button::new("viewer-video-step-back")
-                            .label("\u{2212}1f")
+                            .label(tr!("\u{2212}1f"))
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| this.step_video(-1, cx))),
                     )
@@ -2690,7 +2695,7 @@ impl ViewerWindow {
                 .when(is_video && !hide_av_extra, |bar| {
                     bar.child(
                         Button::new("viewer-video-step-fwd")
-                            .label("+1f")
+                            .label(tr!("+1f"))
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| this.step_video(1, cx))),
                     )
@@ -2712,7 +2717,7 @@ impl ViewerWindow {
                     bar.child(
                         Checkbox::new("viewer-video-loop")
                             .small()
-                            .label("Loop")
+                            .label(tr!("Loop"))
                             .checked(video_loop)
                             .on_click(move |checked, _window, app| {
                                 let on = *checked;
@@ -2729,7 +2734,7 @@ impl ViewerWindow {
                 bar.child(
                     Checkbox::new("viewer-stay-on-top")
                         .small()
-                        .label("Stay on top")
+                        .label(tr!("Stay on top"))
                         .checked(stay_on_top)
                         .on_click(move |checked, window, app| {
                             let on = *checked;
@@ -2751,7 +2756,7 @@ impl ViewerWindow {
                 bar.child(
                     Checkbox::new("viewer-transparent")
                         .small()
-                        .label("Transparent")
+                        .label(tr!("Transparent"))
                         .checked(transparent)
                         .on_click(move |checked, window, app| {
                             let on = *checked;
@@ -2893,7 +2898,7 @@ impl ViewerWindow {
                     div()
                         .text_scale_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child("Can't decode this video"),
+                        .child(tr!("Can't decode this video")),
                 );
             }
         }
@@ -2945,7 +2950,7 @@ impl ViewerWindow {
                 div()
                     .text_scale_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child("No preview available"),
+                    .child(tr!("No preview available")),
             ),
             // Pending (or first paint before the request lands): show
             // the shared 512 px info-pane thumbnail as an instant
@@ -2973,7 +2978,7 @@ impl ViewerWindow {
                         div()
                             .text_scale_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Loading\u{2026}"),
+                            .child(tr!("Loading\u{2026}")),
                     ),
                 }
             }
@@ -2994,7 +2999,7 @@ impl ViewerWindow {
 
     /// A small muted group label inside the adjustments popup, separating the
     /// Colour / Enhance / Transparent-colour sections.
-    fn section_header(&self, label: &'static str, cx: &mut Context<Self>) -> Div {
+    fn section_header(&self, label: SharedString, cx: &mut Context<Self>) -> Div {
         div()
             .mt_1()
             .text_scale_xs()
@@ -3033,7 +3038,7 @@ impl ViewerWindow {
                     .text_scale_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(foreground)
-                    .child("Adjustments"),
+                    .child(tr!("Adjustments")),
             )
             .child(
                 h_flex()
@@ -3049,7 +3054,7 @@ impl ViewerWindow {
                     )
                     .child(
                         Button::new("viewer-adjust-reset")
-                            .label("Reset")
+                            .label(tr!("Reset"))
                             .small()
                             .on_click(cx.listener(|this, _, _, cx| this.reset_adjust(cx))),
                     ),
@@ -3096,7 +3101,7 @@ impl ViewerWindow {
                 }),
             )
             .child(header)
-            .child(self.section_header("Colour", cx))
+            .child(self.section_header(tr!("Colour"), cx))
             .child(self.slider_row(SliderId::Brightness, cx))
             .child(self.slider_row(SliderId::Contrast, cx))
             .child(self.slider_row(SliderId::Saturation, cx))
@@ -3109,7 +3114,7 @@ impl ViewerWindow {
             })
             .when(show_enhance, |d| {
                 let d = d
-                    .child(self.section_header("Enhance", cx))
+                    .child(self.section_header(tr!("Enhance"), cx))
                     .child(self.slider_row(SliderId::Denoise, cx))
                     .child(self.slider_row(SliderId::Sharpen, cx));
                 // Debanding + film grain are mpv-only filters (gradfun /
@@ -3144,11 +3149,11 @@ impl ViewerWindow {
                                 .text_scale_xs()
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(cx.theme().muted_foreground)
-                                .child("Transparent colour"),
+                                .child(tr!("Transparent colour")),
                         )
                         .child(
                             Button::new("viewer-chroma-toggle")
-                                .label(if chroma_on { "On" } else { "Off" })
+                                .label(if chroma_on { tr!("On") } else { tr!("Off") })
                                 .small()
                                 .selected(chroma_on)
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -3195,7 +3200,11 @@ impl ViewerWindow {
                         .child(div().flex_1().text_scale_xs().text_color(foreground).child(hex))
                         .child(
                             Button::new("viewer-chroma-pick")
-                                .label(if chroma_armed { "Picking\u{2026}" } else { "Pick" })
+                                .label(if chroma_armed {
+                                    tr!("Picking\u{2026}")
+                                } else {
+                                    tr!("Pick")
+                                })
                                 .small()
                                 .selected(chroma_armed)
                                 .on_click(cx.listener(|this, _, _, cx| {
@@ -3209,7 +3218,7 @@ impl ViewerWindow {
                         div()
                             .text_scale_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Click the video to sample a colour."),
+                            .child(tr!("Click the video to sample a colour.")),
                     )
                 })
                 .child(self.slider_row(SliderId::Similarity, cx))
@@ -3334,7 +3343,7 @@ impl ViewerWindow {
                     .w(px(64.0))
                     .text_scale_xs()
                     .text_color(muted)
-                    .child("Upscale"),
+                    .child(tr!("Upscale")),
             )
             .child(
                 h_flex()
@@ -3385,10 +3394,10 @@ impl ViewerWindow {
                 .map(|f| format!("{}\u{00d7}{}", f.w, f.h))
                 .unwrap_or_default()
         };
-        let pos = format!(
-            "{} of {}",
-            (self.index + 1).min(self.playlist.len()),
-            self.playlist.len()
+        let pos = tr!(
+            "{index} of {total}",
+            index = (self.index + 1).min(self.playlist.len()),
+            total = self.playlist.len()
         );
         h_flex()
             .h(px(STATUS_H))
@@ -3403,9 +3412,9 @@ impl ViewerWindow {
             .child(pos)
             .when(!dims.is_empty(), |this| this.child(dims))
             .when(self.playback.playing, |this| {
-                this.child(format!(
-                    "Slideshow \u{00b7} {}",
-                    Playback::interval_label(self.playback.interval_secs)
+                this.child(tr!(
+                    "Slideshow \u{00b7} {interval}",
+                    interval = Playback::interval_label(self.playback.interval_secs)
                 ))
             })
             // Seek bar (with In/Out cues) + elapsed/total for the video or

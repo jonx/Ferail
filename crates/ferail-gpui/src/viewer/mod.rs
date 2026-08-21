@@ -18,7 +18,7 @@ pub mod window;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use gpui::{
-    App, AppContext as _, Bounds, SharedString, Styled, TitlebarOptions, Window,
+    App, AppContext as _, Bounds, Styled, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowOptions, px, size,
 };
 use gpui_component::Root;
@@ -86,7 +86,7 @@ fn open_viewer_inner(
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         display_id,
         titlebar: Some(TitlebarOptions {
-            title: Some(SharedString::from("Viewer")),
+            title: Some(tr!("Viewer")),
             ..Default::default()
         }),
         // Open opaque, matching the default (toggle-off) state. The in-viewer

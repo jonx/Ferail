@@ -160,14 +160,14 @@ impl PreviewPanel {
                     .text_scale_xs()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.muted_foreground)
-                    .child("Preview"),
+                    .child(tr!("Preview")),
             )
             .child(
                 gpui_component::button::Button::new("preview-close")
                     .small()
                     .ghost()
                     .icon(gpui_component::Icon::empty().path("icons/close.svg"))
-                    .tooltip("Hide preview")
+                    .tooltip(tr!("Hide preview"))
                     .on_click(cx.listener(|_, _, _window, cx| {
                         cx.emit(PreviewCloseRequested);
                     })),
@@ -399,14 +399,14 @@ impl PreviewPanel {
                     .text_scale_xs()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(cx.theme().muted_foreground)
-                    .child("Preview"),
+                    .child(tr!("Preview")),
             )
             .child(
                 Button::new("preview-close")
                     .small()
                     .ghost()
                     .icon(gpui_component::Icon::empty().path("icons/close.svg"))
-                    .tooltip("Hide preview")
+                    .tooltip(tr!("Hide preview"))
                     .on_click(cx.listener(|_, _, _window, cx| {
                         cx.emit(PreviewCloseRequested);
                     })),
@@ -425,7 +425,7 @@ impl PreviewPanel {
                 .justify_center()
                 .text_scale_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child("No selection")
+                .child(tr!("No selection"))
                 .into_any_element(),
             (Some(entry), _) => {
                 // Same render-safe resolution as `selected_path` above.
@@ -513,7 +513,7 @@ impl PreviewPanel {
                         block
                             .font_family(cx.theme().mono_font_family.clone())
                             .text_color(cx.theme().muted_foreground)
-                            .child(SharedString::from("(empty file)"))
+                            .child(tr!("(empty file)"))
                     } else {
                         let md = crate::text_preview::to_markdown_source(&entry.name, &text);
                         // Compact mono in code blocks, and don't wrap —
@@ -645,7 +645,7 @@ impl PreviewPanel {
                             .bg(cx.theme().secondary.opacity(0.5))
                             .text_scale_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Loading preview\u{2026}"),
+                            .child(tr!("Loading preview\u{2026}")),
                     );
                     col = col.child(self.preview_thumb_resize_grip(cx));
                 }
@@ -700,18 +700,20 @@ impl PreviewPanel {
                                     .text_scale_xs()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(gpui::rgb(0xFF3B30))
-                                    .child("Quarantined \u{00B7} Mark of the Web"),
+                                    .child(tr!("Quarantined \u{00B7} Mark of the Web")),
                             )
                             .child(
                                 Button::new("preview-clear-quarantine")
-                                    .label(ferail_core::commands::CLEAR_QUARANTINE_LABEL)
+                                    .label(crate::i18n::tr_static(
+                                        ferail_core::commands::CLEAR_QUARANTINE_LABEL,
+                                    ))
                                     .xsmall()
                                     .outline()
                                     .flex_shrink_0()
-                                    .tooltip(
+                                    .tooltip(tr!(
                                         "Remove the mark and its \
                                          downloaded-from record",
-                                    )
+                                    ))
                                     .on_click(cx.listener(|_, _, window, cx| {
                                         window.dispatch_action(Box::new(ClearQuarantine), cx);
                                     })),
@@ -731,7 +733,7 @@ impl PreviewPanel {
                         // rendered a notch larger than the rest of the
                         // pane.)
                         let muted = cx.theme().muted_foreground;
-                        let prov_row = |label: &str, value: AnyElement| {
+                        let prov_row = |label: SharedString, value: AnyElement| {
                             v_flex()
                                 .gap_0p5()
                                 .min_w_0()
@@ -740,7 +742,7 @@ impl PreviewPanel {
                                         .text_scale_xs()
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(muted)
-                                        .child(label.to_string()),
+                                        .child(label),
                                 )
                                 .child(div().min_w_0().text_scale_xs().child(value))
                         };
@@ -748,14 +750,14 @@ impl PreviewPanel {
                         let mut has_rows = false;
                         if let Some(src) = q.where_from.first() {
                             prov = prov.child(prov_row(
-                                "Source",
+                                tr!("Source"),
                                 truncated_url_value("prov-source", src, entry.id),
                             ));
                             has_rows = true;
                         }
                         if let Some(referrer) = q.where_from.get(1) {
                             prov = prov.child(prov_row(
-                                "Referrer",
+                                tr!("Referrer"),
                                 truncated_url_value("prov-referrer", referrer, entry.id),
                             ));
                             has_rows = true;
@@ -768,7 +770,7 @@ impl PreviewPanel {
                                 (None, None) => unreachable!(),
                             };
                             prov = prov.child(prov_row(
-                                "Downloaded via",
+                                tr!("Downloaded via"),
                                 div().child(SharedString::from(via)).into_any_element(),
                             ));
                             has_rows = true;
@@ -794,7 +796,7 @@ impl PreviewPanel {
                             .icon(gpui_component::Icon::empty().path("icons/external-link.svg"))
                             .xsmall()
                             .ghost()
-                            .tooltip_with_action("Open", &OpenSelected, Some(SHELL_CONTEXT))
+                            .tooltip_with_action(tr!("Open"), &OpenSelected, Some(SHELL_CONTEXT))
                             .on_click(cx.listener(|_, _, window, cx| {
                                 window.dispatch_action(Box::new(OpenSelected), cx);
                             })),
@@ -805,7 +807,7 @@ impl PreviewPanel {
                             .xsmall()
                             .ghost()
                             .tooltip_with_action(
-                                ferail_core::commands::REVEAL_LABEL,
+                                crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
                                 &RevealInFinder,
                                 Some(SHELL_CONTEXT),
                             )
@@ -818,7 +820,7 @@ impl PreviewPanel {
                             .icon(gpui_component::Icon::empty().path("icons/copy.svg"))
                             .xsmall()
                             .ghost()
-                            .tooltip_with_action("Copy Path", &CopyPath, Some(SHELL_CONTEXT))
+                            .tooltip_with_action(tr!("Copy Path"), &CopyPath, Some(SHELL_CONTEXT))
                             .on_click(cx.listener(|_, _, window, cx| {
                                 window.dispatch_action(Box::new(CopyPath), cx);
                             })),

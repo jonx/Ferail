@@ -73,7 +73,7 @@ impl NewArchiveView {
         let password_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .masked(true)
-                .placeholder("Optional")
+                .placeholder(tr!("Optional"))
         });
         Self {
             sources,
@@ -111,7 +111,7 @@ impl NewArchiveView {
         (!pw.is_empty()).then_some(pw)
     }
 
-    fn row(label: &str, control: impl IntoElement, cx: &App) -> impl IntoElement {
+    fn row(label: SharedString, control: impl IntoElement, cx: &App) -> impl IntoElement {
         h_flex()
             .w_full()
             .gap_3()
@@ -122,7 +122,7 @@ impl NewArchiveView {
                     .flex_none()
                     .text_scale_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(label.to_string()),
+                    .child(label),
             )
             .child(div().flex_1().min_w_0().child(control))
     }
@@ -156,10 +156,10 @@ impl Render for NewArchiveView {
             levels = levels.child(
                 Button::new(("new-archive-level", i))
                     .label(match l {
-                        CompressionLevel::Store => "Store",
-                        CompressionLevel::Fast => "Fast",
-                        CompressionLevel::Normal => "Normal",
-                        CompressionLevel::Maximum => "Maximum",
+                        CompressionLevel::Store => tr!("Store"),
+                        CompressionLevel::Fast => tr!("Fast"),
+                        CompressionLevel::Normal => tr!("Normal"),
+                        CompressionLevel::Maximum => tr!("Maximum"),
                     })
                     .selected(*l == self.level),
             );
@@ -180,7 +180,7 @@ impl Render for NewArchiveView {
             .gap_3()
             .py_2()
             .child(Self::row(
-                "Name",
+                tr!("Name"),
                 h_flex()
                     .gap_1()
                     .items_center()
@@ -188,12 +188,12 @@ impl Render for NewArchiveView {
                     .child(div().text_scale_sm().text_color(muted).child(ext)),
                 cx,
             ))
-            .child(Self::row("Format", formats, cx))
-            .child(Self::row("Compression", levels, cx))
+            .child(Self::row(tr!("Format"), formats, cx))
+            .child(Self::row(tr!("Compression"), levels, cx))
             // A format that can't carry a password gets an explanation rather
             // than a dead-but-typable field.
             .child(Self::row(
-                "Password",
+                tr!("Password"),
                 if caps.supports_password {
                     div()
                         .child(Input::new(&self.password_input).small())
@@ -202,9 +202,9 @@ impl Render for NewArchiveView {
                     div()
                         .text_scale_sm()
                         .text_color(muted)
-                        .child(format!(
-                            "Not supported by {} archives.",
-                            self.format.label()
+                        .child(tr!(
+                            "Not supported by {format} archives.",
+                            format = self.format.label()
                         ))
                         .into_any_element()
                 },
@@ -214,9 +214,10 @@ impl Render for NewArchiveView {
                 div()
                     .text_scale_xs()
                     .text_color(muted)
-                    .child(format!(
-                        "{count} item{} will be added.",
-                        if count == 1 { "" } else { "s" }
+                    .child(trn!(
+                        "{n} item will be added.",
+                        "{n} items will be added.",
+                        count
                     )),
             )
     }
@@ -238,7 +239,7 @@ pub fn open_dialog(
         let state = state_for_dialog.clone();
         let shell = shell_entity.clone();
         dialog
-            .title(SharedString::from("New Archive"))
+            .title(tr!("New Archive"))
             .w(px(560.))
             .child(state.clone())
             .footer(
@@ -246,14 +247,14 @@ pub fn open_dialog(
                     .child(
                         div().w(px(96.)).child(
                             DialogClose::new()
-                                .child(Button::new("new-archive-cancel").label("Cancel").small()),
+                                .child(Button::new("new-archive-cancel").label(tr!("Cancel")).small()),
                         ),
                     )
                     .child(
                         div().w(px(96.)).child(
                             DialogAction::new().child(
                                 Button::new("new-archive-ok")
-                                    .label("Create")
+                                    .label(tr!("Create"))
                                     .primary()
                                     .small(),
                             ),

@@ -395,7 +395,7 @@ impl DiskUsageView {
         // owning Shell's status-bar progress strip shows indeterminate
         // motion for the duration. Cancellable: the status bar / task
         // panel will pick that up when we wire the cancel button.
-        let task_label = format!("Scanning {}", short_path(&self.root_path));
+        let task_label = tr!("Scanning {path}", path = short_path(&self.root_path)).to_string();
         let task_id = self.with_tasks(cx, |reg| reg.begin(TaskKind::DiskUsage, task_label, true));
         self.task_id = Some(task_id);
 
@@ -753,7 +753,7 @@ impl DiskUsageView {
     fn header(&self, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let title = if self.host == ToolHostContext::Docked {
-            "Disk Usage".to_string()
+            tr!("Disk Usage").to_string()
         } else {
             ferail_fs_native::paths::display_path(&self.root_path)
         };
@@ -766,15 +766,28 @@ impl DiskUsageView {
         // empty folder (this hid "canonicalize unsupported" on AROS).
         let summary = if let Some(err) = &self.error {
             let why = match err {
-                ferail_core::EnumerationError::PermissionDenied => "permission denied".to_string(),
-                ferail_core::EnumerationError::NotFound => "folder not found".to_string(),
+                ferail_core::EnumerationError::PermissionDenied => {
+                    tr!("permission denied").to_string()
+                }
+                ferail_core::EnumerationError::NotFound => tr!("folder not found").to_string(),
                 ferail_core::EnumerationError::Other(msg) => msg.clone(),
             };
-            format!("Scan failed \u{2014} {why}")
+            tr!("Scan failed \u{2014} {detail}", detail = why).to_string()
         } else if self.scan_complete {
-            format!("{files} files, {folders} folders, {scanned}")
+            tr!(
+                "{files} files, {folders} folders, {scanned}",
+                files = files,
+                folders = folders,
+                scanned = scanned
+            )
+            .to_string()
         } else {
-            format!("Scanning\u{2026} {files} files, {scanned}")
+            tr!(
+                "Scanning\u{2026} {files} files, {scanned}",
+                files = files,
+                scanned = scanned
+            )
+            .to_string()
         };
         let summary_color = if self.error.is_some() {
             theme.danger
@@ -789,13 +802,13 @@ impl DiskUsageView {
             Button::new("du-cancel")
                 .small()
                 .icon(Icon::empty().path("icons/close.svg"))
-                .tooltip("Cancel scan")
+                .tooltip(tr!("Cancel scan"))
                 .on_click(cx.listener(|this, _, _, cx| this.cancel_scan(cx)))
         } else {
             Button::new("du-refresh")
                 .small()
                 .icon(Icon::empty().path("icons/nav/refresh.svg"))
-                .tooltip("Refresh")
+                .tooltip(tr!("Refresh"))
                 .on_click(cx.listener(|this, _, _, cx| this.restart_scan(cx)))
         };
         let dock_button = self.dock_owner.as_ref().map(|dock| {
@@ -804,7 +817,7 @@ impl DiskUsageView {
             Button::new("du-dock")
                 .small()
                 .icon(Icon::empty().path("icons/minimize.svg"))
-                .tooltip("Dock in tab")
+                .tooltip(tr!("Dock in tab"))
                 .on_click(cx.listener(move |_, _, window, cx| {
                     let view = cx.entity().clone();
                     let app: &mut App = std::borrow::BorrowMut::borrow_mut(cx);
@@ -841,7 +854,7 @@ impl DiskUsageView {
                         Button::new("du-up")
                             .small()
                             .icon(Icon::empty().path("icons/arrow-up.svg"))
-                            .tooltip("Zoom out")
+                            .tooltip(tr!("Zoom out"))
                             .disabled(self.zoom_path.is_empty())
                             .on_click(cx.listener(|this, _, _, cx| this.zoom_out(cx))),
                     )
@@ -855,9 +868,9 @@ impl DiskUsageView {
                                 "icons/panel-right-open.svg"
                             }))
                             .tooltip(if self.topn_visible {
-                                "Hide largest-files panel"
+                                tr!("Hide largest-files panel")
                             } else {
-                                "Show largest-files panel"
+                                tr!("Show largest-files panel")
                             })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.topn_visible = !this.topn_visible;
@@ -886,12 +899,12 @@ impl DiskUsageView {
                             .compact()
                             .child(
                                 Button::new("du-size-apparent")
-                                    .label("Apparent")
+                                    .label(tr!("Apparent"))
                                     .selected(self.size_mode == SizeMode::Apparent),
                             )
                             .child(
                                 Button::new("du-size-allocated")
-                                    .label("Allocated")
+                                    .label(tr!("Allocated"))
                                     .selected(self.size_mode == SizeMode::Allocated),
                             )
                             .on_click(cx.listener(|this, clicks: &Vec<usize>, _, cx| {
@@ -913,7 +926,7 @@ impl DiskUsageView {
                                 .icon(Icon::empty().path("icons/nav/package.svg"))
                                 .selected(self.descend_packages)
                                 .disabled(scanning)
-                                .tooltip("Scan package folders as containers")
+                                .tooltip(tr!("Scan package folders as containers"))
                                 .on_click(cx.listener(|this, _, _, cx| this.toggle_packages(cx))),
                         )
                     }),
@@ -929,11 +942,11 @@ impl DiskUsageView {
                     let fill_w = bar_w * frac;
                     let track_bg = theme.muted_foreground.opacity(0.25);
                     let fill_bg = theme.muted_foreground.opacity(0.85);
-                    let label = format!(
-                        "{} free of {} on {}",
-                        humanize_bytes(avail),
-                        humanize_bytes(total),
-                        v.name
+                    let label = tr!(
+                        "{free} free of {total} on {volume}",
+                        free = humanize_bytes(avail),
+                        total = humanize_bytes(total),
+                        volume = v.name
                     );
                     col = col.child(
                         h_flex()
@@ -952,7 +965,7 @@ impl DiskUsageView {
                                 div()
                                     .text_scale_xs()
                                     .text_color(theme.muted_foreground)
-                                    .child(SharedString::from(label)),
+                                    .child(label),
                             ),
                     );
                 }
@@ -1044,7 +1057,7 @@ impl DiskUsageView {
                     .text_scale_xs()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.muted_foreground)
-                    .child("Largest files"),
+                    .child(tr!("Largest files")),
             )
             .child(
                 div()
@@ -1061,7 +1074,7 @@ impl DiskUsageView {
                                 .py_2()
                                 .text_scale_xs()
                                 .text_color(theme.muted_foreground)
-                                .child("No matching files yet"),
+                                .child(tr!("No matching files yet")),
                         )
                     } else {
                         v_flex().w_full().children(rows)
@@ -1074,16 +1087,17 @@ impl DiskUsageView {
     fn legend(&self, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let entries = [
-            (FileCategory::Image, "Image"),
-            (FileCategory::Video, "Video"),
-            (FileCategory::Audio, "Audio"),
-            (FileCategory::Document, "Document"),
-            (FileCategory::Archive, "Archive"),
-            (FileCategory::Executable, "Executable"),
-            (FileCategory::Other, "Other"),
+            FileCategory::Image,
+            FileCategory::Video,
+            FileCategory::Audio,
+            FileCategory::Document,
+            FileCategory::Archive,
+            FileCategory::Executable,
+            FileCategory::Other,
         ];
-        let chips = entries.iter().enumerate().map(|(ix, (cat, label))| {
+        let chips = entries.iter().enumerate().map(|(ix, cat)| {
             let cat = *cat;
+            let label = crate::i18n::tr_static(category_label(cat));
             let selected = self.category_filter == Some(cat);
             h_flex()
                 .id(("du-category", ix))
@@ -1115,7 +1129,7 @@ impl DiskUsageView {
                         } else {
                             theme.muted_foreground
                         })
-                        .child(SharedString::from(*label)),
+                        .child(label),
                 )
         });
         let selection = match self.selected.len() {
@@ -1137,14 +1151,20 @@ impl DiskUsageView {
                         size_for_mode(node.size_bytes, node.allocated_bytes, self.size_mode)
                     })
                     .sum();
-                Some(format!("{n} selected  {}", humanize_bytes(total)))
+                Some(tr!("{n} selected  {size}", n = n, size = humanize_bytes(total)).to_string())
             }
         }
         .or_else(|| {
             self.category_filter
-                .map(|cat| format!("Filtering {}", category_label(cat)))
+                .map(|cat| {
+                    tr!(
+                        "Filtering {category}",
+                        category = crate::i18n::tr_static(category_label(cat))
+                    )
+                    .to_string()
+                })
         })
-        .unwrap_or_else(|| "All categories".to_owned());
+        .unwrap_or_else(|| tr!("All categories").to_string());
         h_flex()
             .w_full()
             .items_center()
@@ -1219,55 +1239,55 @@ impl DiskUsageView {
                 let menu = menu.action_context(bg_focus.clone());
                 match target {
                     None => menu
-                        .menu_with_disabled("Zoom Out", Box::new(DuZoomOut), !zoomed)
+                        .menu_with_disabled(tr!("Zoom Out"), Box::new(DuZoomOut), !zoomed)
                         .separator()
-                        .menu("Copy View as HTML", Box::new(DuCopyViewHtml))
-                        .menu("Save View as HTML\u{2026}", Box::new(DuSaveViewHtml)),
+                        .menu(tr!("Copy View as HTML"), Box::new(DuCopyViewHtml))
+                        .menu(tr!("Save View as HTML\u{2026}"), Box::new(DuSaveViewHtml)),
                     Some((_node, is_container)) => {
                         let single = count == 1;
-                        let mut menu = menu.menu("Open", Box::new(DuOpen)).menu(
+                        let mut menu = menu.menu(tr!("Open"), Box::new(DuOpen)).menu(
                             if cfg!(target_os = "macos") {
-                                "Reveal in Finder"
+                                tr!("Reveal in Finder")
                             } else {
-                                "Reveal in File Manager"
+                                tr!("Reveal in File Manager")
                             },
                             Box::new(DuReveal),
                         );
                         if has_shell {
-                            menu = menu.menu("Get Info", Box::new(DuGetInfo));
+                            menu = menu.menu(tr!("Get Info"), Box::new(DuGetInfo));
                         }
                         menu = menu
                             .separator()
-                            .menu("Copy", Box::new(DuCopyFiles))
+                            .menu(tr!("Copy"), Box::new(DuCopyFiles))
                             .menu(
-                                if single { "Copy Path" } else { "Copy Paths" },
+                                if single { tr!("Copy Path") } else { tr!("Copy Paths") },
                                 Box::new(DuCopyPaths),
                             )
                             .separator()
-                            .submenu("Export as HTML", window, cx, move |menu, _, _| {
+                            .submenu(tr!("Export as HTML"), window, cx, move |menu, _, _| {
                                 menu.menu_with_disabled(
-                                    "Copy This Folder",
+                                    tr!("Copy This Folder"),
                                     Box::new(DuCopyHtml),
                                     !(single && is_container),
                                 )
                                 .menu_with_disabled(
-                                    "Save This Folder\u{2026}",
+                                    tr!("Save This Folder\u{2026}"),
                                     Box::new(DuSaveHtml),
                                     !(single && is_container),
                                 )
                                 .separator()
-                                .menu("Copy Whole View", Box::new(DuCopyViewHtml))
-                                .menu("Save Whole View\u{2026}", Box::new(DuSaveViewHtml))
+                                .menu(tr!("Copy Whole View"), Box::new(DuCopyViewHtml))
+                                .menu(tr!("Save Whole View\u{2026}"), Box::new(DuSaveViewHtml))
                             })
                             .separator()
                             .menu_with_disabled(
-                                "Zoom In",
+                                tr!("Zoom In"),
                                 Box::new(DuZoomIn),
                                 !(single && is_container),
                             )
-                            .menu_with_disabled("Zoom Out", Box::new(DuZoomOut), !zoomed)
+                            .menu_with_disabled(tr!("Zoom Out"), Box::new(DuZoomOut), !zoomed)
                             .separator()
-                            .menu("Move to Trash", Box::new(DuTrash));
+                            .menu(tr!("Move to Trash"), Box::new(DuTrash));
                         menu
                     }
                 }
@@ -1463,9 +1483,10 @@ impl DiskUsageView {
         }
         if paths.len() > GET_INFO_CAP {
             window.push_notification(
-                Notification::info(format!(
-                    "Showing info for the first {GET_INFO_CAP} of {} items.",
-                    paths.len()
+                Notification::info(tr!(
+                    "Showing info for the first {cap} of {total} items.",
+                    cap = GET_INFO_CAP,
+                    total = paths.len()
                 )),
                 cx,
             );
@@ -1494,18 +1515,18 @@ impl DiskUsageView {
             items.iter().map(|(p, d, _)| (p.as_path(), *d)).collect();
         if !crate::platform_shell::clipboard_copy_file_urls(&refs) {
             window.push_notification(
-                Notification::error("File clipboard isn't available on this platform yet."),
+                Notification::error(tr!("File clipboard isn't available on this platform yet.")),
                 cx,
             );
             return;
         }
         let msg = if items.len() == 1 {
-            format!(
-                "Copied \u{201C}{}\u{201D}",
-                items[0].0.file_name().unwrap_or_default().to_string_lossy()
+            tr!(
+                "Copied \u{201C}{name}\u{201D}",
+                name = items[0].0.file_name().unwrap_or_default().to_string_lossy()
             )
         } else {
-            format!("Copied {} items", items.len())
+            trn!("Copied {n} item", "Copied {n} items", items.len())
         };
         window.push_notification(Notification::success(msg), cx);
     }
@@ -1522,11 +1543,7 @@ impl DiskUsageView {
             .collect::<Vec<_>>()
             .join("\n");
         crate::platform_shell::copy_to_clipboard(&text);
-        let msg = if items.len() == 1 {
-            "Copied path".to_owned()
-        } else {
-            format!("Copied {} paths", items.len())
-        };
+        let msg = trn!("Copied path", "Copied {n} paths", items.len());
         window.push_notification(Notification::success(msg), cx);
     }
 
@@ -1581,19 +1598,17 @@ impl DiskUsageView {
             }
             let _ = win.update(cx, |_, window, cx| {
                 if failed.is_empty() {
-                    let msg = if ok == 1 {
-                        "Moved 1 item to Trash".to_owned()
-                    } else {
-                        format!("Moved {ok} items to Trash")
-                    };
+                    let msg = trn!("Moved {n} item to Trash", "Moved {n} items to Trash", ok);
                     window.push_notification(Notification::success(msg), cx);
                 } else {
                     window.push_notification(
-                        crate::shell::error_notification(format!(
-                            "Trashed {ok}, {} failed \u{2014} {}",
-                            failed.len(),
-                            failed.first().cloned().unwrap_or_default()
-                        )),
+                        crate::shell::error_notification(tr!(
+                            "Trashed {ok}, {failed} failed \u{2014} {detail}",
+                            ok = ok,
+                            failed = failed.len(),
+                            detail = failed.first().cloned().unwrap_or_default()
+                        )
+                        .to_string()),
                         cx,
                     );
                 }
@@ -1697,7 +1712,9 @@ impl DiskUsageView {
         let html = self.export_html(target, false);
         crate::platform_shell::copy_to_clipboard(&html);
         window.push_notification(
-            Notification::success("Treemap HTML copied \u{2014} paste into any page or document."),
+            Notification::success(tr!(
+                "Treemap HTML copied \u{2014} paste into any page or document."
+            )),
             cx,
         );
     }
@@ -1764,15 +1781,20 @@ impl DiskUsageView {
             let _ = win.update(cx, |_, window, cx| match &result {
                 Ok(()) => {
                     window.push_notification(
-                        Notification::success(format!(
-                            "Saved {}",
-                            path.file_name().unwrap_or_default().to_string_lossy()
+                        Notification::success(tr!(
+                            "Saved {name}",
+                            name = path.file_name().unwrap_or_default().to_string_lossy()
                         )),
                         cx,
                     );
                 }
                 Err(e) => {
-                    window.push_notification(crate::shell::error_notification(format!("Save failed: {e}")), cx);
+                    window.push_notification(
+                        crate::shell::error_notification(
+                            tr!("Save failed: {detail}", detail = e).to_string(),
+                        ),
+                        cx,
+                    );
                 }
             });
             if ok {
@@ -1930,15 +1952,18 @@ fn size_for_mode(apparent: u64, allocated: u64, mode: SizeMode) -> u64 {
     }
 }
 
+/// Legend / filter label for a category, as a msgid — translate at the
+/// display site with `crate::i18n::tr_static`.
 fn category_label(cat: FileCategory) -> &'static str {
+    use ferail_core::msgid;
     match cat {
-        FileCategory::Image => "Image",
-        FileCategory::Video => "Video",
-        FileCategory::Audio => "Audio",
-        FileCategory::Archive => "Archive",
-        FileCategory::Document => "Document",
-        FileCategory::Executable => "Executable",
-        FileCategory::Other => "Other",
+        FileCategory::Image => msgid!("Image"),
+        FileCategory::Video => msgid!("Video"),
+        FileCategory::Audio => msgid!("Audio"),
+        FileCategory::Archive => msgid!("Archive"),
+        FileCategory::Document => msgid!("Document"),
+        FileCategory::Executable => msgid!("Executable"),
+        FileCategory::Other => msgid!("Other"),
     }
 }
 
@@ -1981,10 +2006,10 @@ pub fn open_existing_window(
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(960.0), px(720.0)), cx)),
         titlebar: Some(TitlebarOptions {
-            title: Some(SharedString::from(format!(
-                "Disk Usage \u{2014} {}",
-                ferail_fs_native::paths::display_path(&root)
-            ))),
+            title: Some(tr!(
+                "Disk Usage \u{2014} {path}",
+                path = ferail_fs_native::paths::display_path(&root)
+            )),
             ..Default::default()
         }),
         ..crate::base_window_options()
