@@ -4,15 +4,16 @@
 //! as `path_segments.rs`: the inline form overflows syn's parser inside
 //! this crate.
 
-// The pasted-path parser tests are `cfg(unix)` (POSIX spellings); gate
-// their imports the same way so the Windows clippy leg doesn't see them
-// as unused. `resolve_go_to_target` is exercised on every platform.
+// Every test below is `cfg(unix)` (POSIX path spellings; the resolve tests
+// compare against `canonicalize_for_identity`, whose Windows answer can
+// carry a `\\?\` prefix). Gate the imports the same way so the Windows
+// clippy leg — which compiles this file under `-D warnings` — doesn't see
+// them as unused.
 #[cfg(unix)]
 use std::path::PathBuf;
 
 #[cfg(unix)]
-use ferail_gpui::shell::parse_pasted_path;
-use ferail_gpui::shell::resolve_go_to_target;
+use ferail_gpui::shell::{parse_pasted_path, resolve_go_to_target};
 
 #[cfg(unix)]
 #[test]
