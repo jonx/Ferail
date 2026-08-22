@@ -30,9 +30,11 @@ pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
         return Some(sniff_ico(buf));
     }
     if buf.len() >= 8
-        && (buf.starts_with(&[0x49, 0x49, 0x2a, 0x00]) || buf.starts_with(&[0x4d, 0x4d, 0x00, 0x2a])) {
-            return Some(sniff_tiff(buf));
-        }
+        && (buf.starts_with(&[0x49, 0x49, 0x2a, 0x00])
+            || buf.starts_with(&[0x4d, 0x4d, 0x00, 0x2a]))
+    {
+        return Some(sniff_tiff(buf));
+    }
     // HEIC: ftyp box with brand "heic" (or "heix" / "mif1" with HEIC inside)
     if buf.len() >= 12 && &buf[4..8] == b"ftyp" {
         let brand = &buf[8..12];
@@ -51,7 +53,12 @@ fn sniff_png(buf: &[u8]) -> MagicInfo {
         return info;
     }
     let off = 16;
-    info.width = Some(u32::from_be_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]));
+    info.width = Some(u32::from_be_bytes([
+        buf[off],
+        buf[off + 1],
+        buf[off + 2],
+        buf[off + 3],
+    ]));
     info.height = Some(u32::from_be_bytes([
         buf[off + 4],
         buf[off + 5],
@@ -156,7 +163,11 @@ fn sniff_ico(buf: &[u8]) -> MagicInfo {
     for i in 0..count.min(10) {
         let entry = 6 + i * 16;
         // Width / height field of 0 means 256 in the spec.
-        let w = if buf[entry] == 0 { 256 } else { buf[entry] as u32 };
+        let w = if buf[entry] == 0 {
+            256
+        } else {
+            buf[entry] as u32
+        };
         let h = if buf[entry + 1] == 0 {
             256
         } else {

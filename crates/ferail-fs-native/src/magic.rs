@@ -53,11 +53,7 @@ const HEADER_BYTES: usize = 4096;
 pub fn detect_magic(path: &Path) -> Option<&'static str> {
     let info = detect_magic_info(path)?;
     let label = info.magic_type.display_name();
-    if label.is_empty() {
-        None
-    } else {
-        Some(label)
-    }
+    if label.is_empty() { None } else { Some(label) }
 }
 
 /// Return full structured info derived from the file's first ~4 KB,
@@ -155,11 +151,7 @@ fn read_at(path: &Path, offset: u64, len: usize) -> Option<Vec<u8>> {
         }
     }
     buf.truncate(total);
-    if buf.is_empty() {
-        None
-    } else {
-        Some(buf)
-    }
+    if buf.is_empty() { None } else { Some(buf) }
 }
 
 /// Read the last [`HEADER_BYTES`] of `path` into `buf`. Returns
@@ -183,11 +175,7 @@ fn read_tail_into(path: &Path, buf: &mut [u8; HEADER_BYTES]) -> Option<(usize, u
             Err(_) => return None,
         }
     }
-    if total == 0 {
-        None
-    } else {
-        Some((total, len))
-    }
+    if total == 0 { None } else { Some((total, len)) }
 }
 
 /// Pure dispatch over an already-read buffer. Useful for tests and
@@ -252,9 +240,7 @@ pub fn sniff_bytes_info(buf: &[u8]) -> MagicInfo {
     let sample = &buf[..buf.len().min(512)];
     let printable = sample
         .iter()
-        .filter(|&&b| {
-            b.is_ascii_graphic() || b == b' ' || b == b'\n' || b == b'\r' || b == b'\t'
-        })
+        .filter(|&&b| b.is_ascii_graphic() || b == b' ' || b == b'\n' || b == b'\r' || b == b'\t')
         .count();
     if printable * 100 / sample.len().max(1) < 85 {
         return MagicInfo::new(MagicType::Binary);
@@ -319,8 +305,8 @@ fn sniff_signature_table(buf: &[u8]) -> Option<MagicType> {
             magic: MagicType::Lnk,
             offset: 0,
             bytes: &[
-                0x4c, 0x00, 0x00, 0x00, 0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0,
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
+                0x4c, 0x00, 0x00, 0x00, 0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
             ],
         },
         // TAR: "ustar" magic at offset 257
@@ -422,11 +408,7 @@ fn read_header(path: &Path, buf: &mut [u8; HEADER_BYTES]) -> Option<usize> {
             Err(_) => return None,
         }
     }
-    if total == 0 {
-        None
-    } else {
-        Some(total)
-    }
+    if total == 0 { None } else { Some(total) }
 }
 
 #[cfg(test)]
@@ -536,7 +518,10 @@ mod tests {
         assert_eq!(info.channels, Some(2));
         assert_eq!(info.sample_rate, Some(44_100));
         assert_eq!(info.duration_secs, Some(2));
-        assert_eq!(info.description(), "AIFF \u{b7} stereo \u{b7} 44.1 kHz \u{b7} 00:02");
+        assert_eq!(
+            info.description(),
+            "AIFF \u{b7} stereo \u{b7} 44.1 kHz \u{b7} 00:02"
+        );
     }
 
     #[test]
@@ -617,8 +602,8 @@ mod tests {
 
 #[cfg(test)]
 mod amiga_tests {
-    use super::types::{CpuArch, MagicType};
     use super::sniff_bytes_info;
+    use super::types::{CpuArch, MagicType};
 
     /// A `HUNK_HEADER` program: magic, empty resident-library list, then a
     /// 3-entry hunk table.
@@ -633,7 +618,10 @@ mod amiga_tests {
         let info = sniff_bytes_info(&buf);
         assert_eq!(info.magic_type, MagicType::ExeAmiga);
         assert_eq!(info.arch, CpuArch::M68k);
-        assert_eq!(info.description(), "Amiga executable \u{b7} 68k \u{b7} 3 hunks");
+        assert_eq!(
+            info.description(),
+            "Amiga executable \u{b7} 68k \u{b7} 3 hunks"
+        );
     }
 
     #[test]
@@ -669,7 +657,10 @@ mod amiga_tests {
         buf[48] = 3; // WBTOOL
         let info = sniff_bytes_info(&buf);
         assert_eq!(info.magic_type, MagicType::AmigaIcon);
-        assert_eq!(info.description(), "Amiga icon \u{b7} tool \u{b7} 48\u{d7}24");
+        assert_eq!(
+            info.description(),
+            "Amiga icon \u{b7} tool \u{b7} 48\u{d7}24"
+        );
     }
 
     /// ILBM with a BMHD chunk — the classic 320x256, 5 planes (32 colours).
@@ -685,7 +676,10 @@ mod amiga_tests {
         buf[28] = 5; // nPlanes
         let info = sniff_bytes_info(&buf);
         assert_eq!(info.magic_type, MagicType::Ilbm);
-        assert_eq!(info.description(), "IFF ILBM image \u{b7} 320\u{d7}256 \u{b7} 5-bit");
+        assert_eq!(
+            info.description(),
+            "IFF ILBM image \u{b7} 320\u{d7}256 \u{b7} 5-bit"
+        );
     }
 
     /// 8SVX with a VHDR: samplesPerSec sits after three u32 counts.
@@ -699,7 +693,10 @@ mod amiga_tests {
         buf[32..34].copy_from_slice(&8363u16.to_be_bytes()); // samplesPerSec
         let info = sniff_bytes_info(&buf);
         assert_eq!(info.magic_type, MagicType::Svx8);
-        assert_eq!(info.description(), "IFF 8SVX audio \u{b7} mono \u{b7} 8.4 kHz");
+        assert_eq!(
+            info.description(),
+            "IFF 8SVX audio \u{b7} mono \u{b7} 8.4 kHz"
+        );
     }
 
     /// AIFF is IFF too, but the audio parser handles it properly — the Amiga

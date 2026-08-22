@@ -189,8 +189,7 @@ fn sniff_pe(buf: &[u8]) -> MagicInfo {
         return info;
     }
 
-    let pe_offset =
-        u32::from_le_bytes([buf[0x3c], buf[0x3d], buf[0x3e], buf[0x3f]]) as usize;
+    let pe_offset = u32::from_le_bytes([buf[0x3c], buf[0x3d], buf[0x3e], buf[0x3f]]) as usize;
 
     if buf.len() < pe_offset + 4 || &buf[pe_offset..pe_offset + 4] != b"PE\0\0" {
         return info;

@@ -26,6 +26,7 @@ use std::{
 };
 
 use ferail_core::NodeId;
+use ferail_fs_native::DupeMode;
 #[cfg_attr(target_os = "windows", allow(unused_imports))]
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::Scrollbar;
@@ -84,14 +85,18 @@ impl Shell {
                 )
             })
             .child(div().flex_1())
-            .child(
-                Button::new("dupe-keep-newest-all")
-                    .small()
-                    .ghost()
-                    .label(tr!("Keep newest everywhere"))
-                    .tooltip(tr!("Mark every copy except the most recent in each group"))
-                    .on_click(cx.listener(|this, _, _, cx| this.dupe_stage_keep_newest_all(cx))),
-            )
+            .when(dm.mode == DupeMode::Exact, |this| {
+                this.child(
+                    Button::new("dupe-keep-newest-all")
+                        .small()
+                        .ghost()
+                        .label(tr!("Keep newest everywhere"))
+                        .tooltip(tr!("Mark every copy except the most recent in each group"))
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.dupe_stage_keep_newest_all(cx)),
+                        ),
+                )
+            })
             .child(
                 Button::new("dupe-clear")
                     .small()
@@ -120,14 +125,32 @@ impl Shell {
                 .id("dupe-panel-empty")
                 .flex_1()
                 .child(
-                    div()
+                    v_flex()
+                        .gap_1()
                         .p_8()
-                        .text_scale_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(if scanning {
-                            tr!("Scanning for duplicates\u{2026}")
-                        } else {
-                            tr!("No duplicates found.")
+                        .child(
+                            div()
+                                .text_scale_sm()
+                                .text_color(theme.muted_foreground)
+                                .child(if scanning && dm.mode == DupeMode::Similar {
+                                    tr!("Scanning for similar images\u{2026}")
+                                } else if scanning {
+                                    tr!("Scanning for duplicates\u{2026}")
+                                } else if dm.mode == DupeMode::Similar {
+                                    tr!("No similar images found.")
+                                } else {
+                                    tr!("No duplicates found.")
+                                }),
+                        )
+                        .when(dm.mode == DupeMode::Similar, |this| {
+                            this.child(
+                                div()
+                                    .text_scale_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(tr!(
+                                        "Supported image formats: JPEG, PNG, GIF, WebP, BMP, and TIFF."
+                                    )),
+                            )
                         }),
                 )
                 .into_any_element()
@@ -211,13 +234,18 @@ impl Shell {
         // with clones of the keeper — frees the bytes without deleting any
         // file. Hidden off macOS; surfaces a toast if the volume isn't
         // APFS (clonefile errors there).
-        let dedup_btn = if cfg!(target_os = "macos") && group.distinct_occupants() > 1 {
+        let dedup_btn = if group.mode == DupeMode::Exact
+            && cfg!(target_os = "macos")
+            && group.distinct_occupants() > 1
+        {
             Some(
                 Button::new(ElementId::Name(format!("dupe-clone-{group_no}").into()))
                     .xsmall()
                     .ghost()
                     .label(tr!("Dedup \u{2192} clones"))
-                    .tooltip(tr!("Replace extra copies with APFS clones (keeps every file)"))
+                    .tooltip(tr!(
+                        "Replace extra copies with APFS clones (keeps every file)"
+                    ))
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.dupe_dedup_group(group_no, window, cx)
@@ -227,53 +255,64 @@ impl Shell {
             None
         };
 
-        let header =
-            h_flex()
-                .id(ElementId::Name(format!("dupe-card-{group_no}").into()))
-                .w_full()
-                .items_center()
-                .gap_2()
-                .px_2()
-                .py_1p5()
-                .cursor_pointer()
-                .hover(|this| this.bg(theme.secondary))
-                .on_click(cx.listener(move |this, _, _, cx| this.dupe_toggle_group(group_no, cx)))
-                // SVG disclosure (same asset as the sidebar tree), not the
-                // ▾/▸ text glyphs — the AROS-bundled font lacks them and
-                // drew tofu boxes.
-                .child(
-                    div().w(px(14.0)).flex().items_center().child(
-                        gpui::svg()
-                            .path(if group.expanded {
-                                "icons/nav/disclosure-down.svg"
-                            } else {
-                                "icons/nav/disclosure-right.svg"
-                            })
-                            .icon_px(9.0)
-                            .text_color(theme.muted_foreground),
-                    ),
-                )
-                .child(
-                    div()
-                        .text_scale_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme.foreground)
-                        .child(format!("#{group_no}")),
-                )
-                .child(
-                    div()
-                        .text_scale_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(trn!(
-                            "{n} copy \u{00B7} {each} each \u{00B7} {reclaimable} reclaimable",
-                            "{n} copies \u{00B7} {each} each \u{00B7} {reclaimable} reclaimable",
-                            copies,
-                            each = ferail_fs_native::humanize_bytes(group.bytes_each),
-                            reclaimable = ferail_fs_native::humanize_bytes(reclaimable)
-                        )),
-                )
-                .child(div().flex_1())
-                .child(
+        let group_summary = if group.mode == DupeMode::Similar {
+            trn!(
+                "{n} image · {reclaimable} reclaimable",
+                "{n} images · {reclaimable} reclaimable",
+                copies,
+                reclaimable = ferail_fs_native::humanize_bytes(reclaimable)
+            )
+        } else {
+            trn!(
+                "{n} copy · {each} each · {reclaimable} reclaimable",
+                "{n} copies · {each} each · {reclaimable} reclaimable",
+                copies,
+                each = ferail_fs_native::humanize_bytes(group.bytes_each),
+                reclaimable = ferail_fs_native::humanize_bytes(reclaimable)
+            )
+        };
+
+        let header = h_flex()
+            .id(ElementId::Name(format!("dupe-card-{group_no}").into()))
+            .w_full()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1p5()
+            .cursor_pointer()
+            .hover(|this| this.bg(theme.secondary))
+            .on_click(cx.listener(move |this, _, _, cx| this.dupe_toggle_group(group_no, cx)))
+            // SVG disclosure (same asset as the sidebar tree), not the
+            // ▾/▸ text glyphs — the AROS-bundled font lacks them and
+            // drew tofu boxes.
+            .child(
+                div().w(px(14.0)).flex().items_center().child(
+                    gpui::svg()
+                        .path(if group.expanded {
+                            "icons/nav/disclosure-down.svg"
+                        } else {
+                            "icons/nav/disclosure-right.svg"
+                        })
+                        .icon_px(9.0)
+                        .text_color(theme.muted_foreground),
+                ),
+            )
+            .child(
+                div()
+                    .text_scale_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.foreground)
+                    .child(format!("#{group_no}")),
+            )
+            .child(
+                div()
+                    .text_scale_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(group_summary),
+            )
+            .child(div().flex_1())
+            .when(group.mode == DupeMode::Exact, |this| {
+                this.child(
                     Button::new(ElementId::Name(format!("dupe-newest-{group_no}").into()))
                         .xsmall()
                         .ghost()
@@ -283,17 +322,24 @@ impl Shell {
                             this.dupe_stage_keep_newest(group_no, cx)
                         })),
                 )
-                .child(
-                    Button::new(ElementId::Name(format!("dupe-allbutone-{group_no}").into()))
-                        .xsmall()
-                        .ghost()
-                        .label(tr!("All but one"))
-                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(cx.listener(move |this, _, _, cx| {
+            })
+            .child(
+                Button::new(ElementId::Name(format!("dupe-allbutone-{group_no}").into()))
+                    .xsmall()
+                    .ghost()
+                    .label(if group.mode == DupeMode::Similar {
+                        tr!("Mark others")
+                    } else {
+                        tr!("All but one")
+                    })
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| {
                             this.dupe_stage_all_but_one(group_no, cx)
-                        })),
-                )
-                .children(dedup_btn);
+                        }),
+                    ),
+            )
+            .children(dedup_btn);
 
         let mut card = v_flex()
             .w_full()
@@ -307,7 +353,11 @@ impl Shell {
             let mut body = v_flex().w_full().px_2().pb_1();
             for member in &group.members {
                 let node = member.node;
-                let marked = selection.contains(&node);
+                let can_view_group = group.mode == DupeMode::Similar;
+                let focused = self.active_tab().dupe_panel_focus == Some((group_no, node));
+                let is_similar_keeper =
+                    group.mode == DupeMode::Similar && group.keeper == Some(node);
+                let marked = selection.contains(&node) && !is_similar_keeper;
                 let is_keeper = group.keeper == Some(node);
                 let name = member
                     .path
@@ -316,6 +366,62 @@ impl Shell {
                     .unwrap_or_default();
                 let location = member_location(&member.path, root);
                 let location = location_with_note(&location, member.is_hardlink, member.is_clone);
+                let thumbnail = member.image.as_ref().and_then(|image| {
+                    image.thumbnail.as_ref().map(|thumbnail| {
+                        div()
+                            .flex_shrink_0()
+                            .w(px(64.0))
+                            .h(px(64.0))
+                            .rounded(theme.radius)
+                            .overflow_hidden()
+                            .bg(theme.secondary)
+                            .child(
+                                img(thumbnail.clone())
+                                    .size_full()
+                                    .object_fit(gpui::ObjectFit::Contain),
+                            )
+                    })
+                });
+                let image_detail = member.image.as_ref().map(|image| {
+                    let similarity = similarity_summary(image.dhash_distance, image.phash_distance);
+                    let tooltip = tr!(
+                        "Compared with the group reference: dHash {structure}/64 (structure), pHash {detail}/64 (detail). Lower numbers mean greater similarity.",
+                        structure = image.dhash_distance,
+                        detail = image.phash_distance
+                    );
+                    div()
+                        .id(ElementId::Name(
+                            format!("dupe-similarity-{}", node.as_raw()).into(),
+                        ))
+                        .text_scale_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(tr!(
+                            "{width} × {height} · {similarity}",
+                            width = image.width,
+                            height = image.height,
+                            similarity = similarity
+                        ))
+                        .tooltip(move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(tooltip.clone())
+                                .build(window, cx)
+                        })
+                });
+                let best_badge = member
+                    .image
+                    .as_ref()
+                    .is_some_and(|image| image.is_best)
+                    .then(|| {
+                        div()
+                            .flex_shrink_0()
+                            .rounded(px(3.0))
+                            .px_1()
+                            .py_0p5()
+                            .bg(theme.secondary)
+                            .text_scale_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.primary)
+                            .child(tr!("Best copy"))
+                    });
 
                 // Marked-for-trash checkbox.
                 let check = div()
@@ -341,6 +447,7 @@ impl Shell {
                                 .child("\u{2713}"),
                         )
                     })
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, _, cx| this.dupe_toggle_mark(node, cx)));
 
                 // Keep-this radio.
@@ -366,47 +473,71 @@ impl Shell {
                         .when(is_keeper, |this| {
                             this.child(div().w(px(7.0)).h(px(7.0)).rounded_full().bg(theme.primary))
                         })
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.dupe_pick_keeper(group_no, node, cx)
                         }));
 
                 let shares = member.shares_storage();
                 let row = h_flex()
+                    .id(ElementId::Name(
+                        format!("dupe-member-{group_no}-{}", node.as_raw()).into(),
+                    ))
                     .w_full()
                     .items_center()
                     .gap_2()
-                    .py_0p5()
+                    .py_1()
+                    .px_1()
+                    .rounded(theme.radius)
+                    .when(focused, |this| this.bg(theme.secondary))
+                    .when(can_view_group, |this| {
+                        this.cursor_pointer().on_click(cx.listener(
+                            move |this, event: &gpui::ClickEvent, window, cx| {
+                                window.focus(&this.focus_handle, cx);
+                                this.active_tab_mut().dupe_panel_focus = Some((group_no, node));
+                                if event.click_count() >= 2 {
+                                    this.dupe_open_similar_group_viewer(group_no, node, window, cx);
+                                }
+                                cx.notify();
+                            },
+                        ))
+                    })
                     .child(check)
                     .child(radio)
-                    // Name takes the bulk and ellipsizes when too long
-                    // (build-artifact names can be enormous); the location
-                    // gets a bounded tail. `min_w_0` lets the flex child
-                    // shrink below its content so truncation can kick in.
+                    .children(thumbnail)
                     .child(
-                        div()
+                        v_flex()
                             .flex_1()
                             .min_w_0()
-                            .truncate()
-                            .text_scale_sm()
-                            .text_color(if shares {
-                                theme.muted_foreground
-                            } else {
-                                theme.foreground
-                            })
-                            .child(name),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .max_w(px(280.0))
-                            .truncate()
-                            .text_scale_xs()
-                            .text_color(theme.muted_foreground)
-                            // Middle-truncated (macOS-style): with a deep
-                            // path the LAST folders are what tell two
-                            // duplicates apart, so keep both ends visible
-                            // instead of tail-ellipsizing the useful half.
-                            .child(super::loading::middle_truncate_path(&location, 42)),
+                            .gap_0p5()
+                            .child(
+                                h_flex()
+                                    .min_w_0()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_scale_sm()
+                                            .text_color(if shares {
+                                                theme.muted_foreground
+                                            } else {
+                                                theme.foreground
+                                            })
+                                            .child(name),
+                                    )
+                                    .children(best_badge),
+                            )
+                            .child(
+                                div()
+                                    .max_w(px(520.0))
+                                    .truncate()
+                                    .text_scale_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(super::loading::middle_truncate_path(&location, 58)),
+                            )
+                            .children(image_detail),
                     );
                 body = body.child(row);
             }
@@ -414,6 +545,165 @@ impl Shell {
         }
 
         card.into_any_element()
+    }
+
+    /// Open one Similar Images group as an explicit, in-memory viewer
+    /// playlist. The surrounding folder is deliberately excluded: arrow-key
+    /// navigation stays inside the candidate series and the paths live only
+    /// as long as the result surface / viewer window.
+    fn dupe_open_similar_group_viewer(
+        &self,
+        group_no: usize,
+        start_node: NodeId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(group) = self
+            .active_tab()
+            .dupe_groups
+            .iter()
+            .find(|group| group.group_no == group_no && group.mode == DupeMode::Similar)
+        else {
+            return false;
+        };
+
+        let mut start = 0;
+        let playlist = group
+            .members
+            .iter()
+            .enumerate()
+            .map(|(index, member)| {
+                if member.node == start_node {
+                    start = index;
+                }
+                crate::viewer::PlaylistEntry {
+                    name: member
+                        .path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    path: member.path.clone(),
+                }
+            })
+            .collect::<Vec<_>>();
+        if playlist.is_empty() {
+            return false;
+        }
+        crate::viewer::open_viewer(playlist, start, window, cx);
+        true
+    }
+
+    /// Spacebar entry point. Returns true only while a Similar Images panel
+    /// can open a group, letting the ordinary Quick Look handler run on every
+    /// other surface. Before the first click, use the first group's keeper
+    /// (normally the ranked best copy) as a useful default.
+    pub(super) fn dupe_open_focused_similar_group_viewer(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let tab = self.active_tab();
+        let is_similar_panel = tab
+            .tool_result
+            .as_ref()
+            .and_then(|surface| surface.dupe_mode())
+            .is_some_and(|mode| {
+                mode.mode == DupeMode::Similar
+                    && mode.presentation == crate::feature_settings::DupePresentation::Panel
+            });
+        if !is_similar_panel {
+            return false;
+        }
+
+        let target = tab
+            .dupe_panel_focus
+            .filter(|(group_no, node)| {
+                tab.dupe_groups.iter().any(|group| {
+                    group.group_no == *group_no
+                        && group.members.iter().any(|member| member.node == *node)
+                })
+            })
+            .or_else(|| {
+                tab.dupe_groups.first().and_then(|group| {
+                    group
+                        .keeper
+                        .or_else(|| group.best())
+                        .or_else(|| group.members.first().map(|member| member.node))
+                        .map(|node| (group.group_no, node))
+                })
+            });
+        let Some((group_no, node)) = target else {
+            return false;
+        };
+        self.active_tab_mut().dupe_panel_focus = Some((group_no, node));
+        let opened = self.dupe_open_similar_group_viewer(group_no, node, window, cx);
+        if opened {
+            cx.notify();
+        }
+        opened
+    }
+
+    /// Move the keyboard focus by one member in the Similar Images panel.
+    /// This deliberately changes only presentation focus: the panel's
+    /// `selection` remains the marked-for-trash set and arrow navigation must
+    /// never stage a destructive action. Crossing a group boundary expands
+    /// the destination card and asks the virtual list to reveal it.
+    pub(super) fn dupe_move_similar_focus(
+        &mut self,
+        forward: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let tab = self.active_tab();
+        let is_similar_panel = tab
+            .tool_result
+            .as_ref()
+            .and_then(|surface| surface.dupe_mode())
+            .is_some_and(|mode| {
+                mode.mode == DupeMode::Similar
+                    && mode.presentation == crate::feature_settings::DupePresentation::Panel
+            });
+        if !is_similar_panel {
+            return false;
+        }
+
+        let members = tab
+            .dupe_groups
+            .iter()
+            .enumerate()
+            .flat_map(|(group_index, group)| {
+                group
+                    .members
+                    .iter()
+                    .map(move |member| (group_index, group.group_no, member.node))
+            })
+            .collect::<Vec<_>>();
+        if members.is_empty() {
+            return true;
+        }
+
+        let current = tab.dupe_panel_focus.and_then(|focus| {
+            members
+                .iter()
+                .position(|(_, group_no, node)| (*group_no, *node) == focus)
+        });
+        let Some(next) = stepped_focus_index(members.len(), current, forward) else {
+            return true;
+        };
+        let (group_index, group_no, node) = members[next];
+
+        let tab = self.active_tab_mut();
+        if let Some(group) = tab
+            .dupe_groups
+            .iter_mut()
+            .find(|group| group.group_no == group_no)
+        {
+            group.expanded = true;
+        }
+        tab.dupe_panel_focus = Some((group_no, node));
+        tab.dupe_panel_scroll
+            .scroll_to_item(group_index, gpui::ScrollStrategy::Center);
+        cx.notify();
+        true
     }
 
     // ===== Group actions =====
@@ -433,19 +723,52 @@ impl Shell {
     /// Pick a keeper (the "keep this" radio) and mark every other member
     /// of that group for trashing.
     fn dupe_pick_keeper(&mut self, group_no: usize, keeper: NodeId, cx: &mut Context<Self>) {
-        let victims = {
-            let groups = &mut self.active_tab_mut().dupe_groups;
-            let Some(g) = Self::dupe_group_mut(groups, group_no) else {
+        let tab = self.active_tab_mut();
+        let (members, victims) = {
+            let Some(group) = Self::dupe_group_mut(&mut tab.dupe_groups, group_no) else {
                 return;
             };
-            g.keeper = Some(keeper);
-            g.victims_for_keeper(keeper)
+            if !group.members.iter().any(|member| member.node == keeper) {
+                return;
+            }
+            group.keeper = Some(keeper);
+            (
+                group
+                    .members
+                    .iter()
+                    .map(|member| member.node)
+                    .collect::<Vec<_>>(),
+                group.victims_for_keeper(keeper),
+            )
         };
-        self.dupe_mark(&victims, cx);
+        for member in members {
+            tab.selection.remove(&member);
+        }
+        tab.selection.extend(victims);
+        if let Some(dm) = tab
+            .tool_result
+            .as_mut()
+            .and_then(|surface| surface.dupe_mode_mut())
+        {
+            dm.wasted_bytes = tab
+                .dupe_groups
+                .iter()
+                .map(DupeGroupView::reclaimable_bytes)
+                .sum();
+        }
+        cx.notify();
     }
 
     /// Toggle one member in/out of the marked-for-trash set.
     fn dupe_toggle_mark(&mut self, node: NodeId, cx: &mut Context<Self>) {
+        let is_protected_keeper = self
+            .active_tab()
+            .dupe_groups
+            .iter()
+            .any(|group| group.mode == DupeMode::Similar && group.keeper == Some(node));
+        if is_protected_keeper {
+            return;
+        }
         let sel = &mut self.active_tab_mut().selection;
         if !sel.remove(&node) {
             sel.insert(node);
@@ -455,23 +778,53 @@ impl Shell {
 
     /// Mark this group's all-but-newest for trashing.
     fn dupe_stage_keep_newest(&mut self, group_no: usize, cx: &mut Context<Self>) {
-        let victims = Self::dupe_group_mut(&mut self.active_tab_mut().dupe_groups, group_no)
-            .map(|g| g.victims_keep_newest())
-            .unwrap_or_default();
-        self.dupe_mark(&victims, cx);
+        let staged =
+            Self::dupe_group_mut(&mut self.active_tab_mut().dupe_groups, group_no).map(|group| {
+                let keeper = group.newest();
+                group.keeper = keeper;
+                (
+                    group
+                        .members
+                        .iter()
+                        .map(|member| member.node)
+                        .collect::<Vec<_>>(),
+                    group.victims_keep_newest(),
+                )
+            });
+        if let Some((members, victims)) = staged {
+            self.dupe_replace_group_marks(&members, &victims, cx);
+        }
     }
 
     /// Mark this group's all-but-keeper (defaults to the first member).
     fn dupe_stage_all_but_one(&mut self, group_no: usize, cx: &mut Context<Self>) {
-        let victims = Self::dupe_group_mut(&mut self.active_tab_mut().dupe_groups, group_no)
-            .map(|g| g.victims_all_but_one())
-            .unwrap_or_default();
-        self.dupe_mark(&victims, cx);
+        let staged =
+            Self::dupe_group_mut(&mut self.active_tab_mut().dupe_groups, group_no).map(|group| {
+                let members = group
+                    .members
+                    .iter()
+                    .map(|member| member.node)
+                    .collect::<Vec<_>>();
+                let victims = group.victims_all_but_one();
+                (members, victims)
+            });
+        if let Some((members, victims)) = staged {
+            self.dupe_replace_group_marks(&members, &victims, cx);
+        }
     }
 
     /// Global "keep newest everywhere": union of every group's
     /// all-but-newest.
     fn dupe_stage_keep_newest_all(&mut self, cx: &mut Context<Self>) {
+        if self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .and_then(|surface| surface.dupe_mode())
+            .is_some_and(|mode| mode.mode != DupeMode::Exact)
+        {
+            return;
+        }
         let victims: Vec<NodeId> = self
             .active_tab()
             .dupe_groups
@@ -479,6 +832,20 @@ impl Shell {
             .flat_map(|g| g.victims_keep_newest())
             .collect();
         self.dupe_mark(&victims, cx);
+    }
+
+    fn dupe_replace_group_marks(
+        &mut self,
+        members: &[NodeId],
+        victims: &[NodeId],
+        cx: &mut Context<Self>,
+    ) {
+        let selection = &mut self.active_tab_mut().selection;
+        for member in members {
+            selection.remove(member);
+        }
+        selection.extend(victims.iter().copied());
+        cx.notify();
     }
 
     /// Add nodes to the marked-for-trash set.
@@ -513,9 +880,12 @@ impl Shell {
             .active_tab()
             .dupe_groups
             .iter()
-            .flat_map(|g| g.members.iter())
-            .filter(|m| marked.contains(&m.node))
-            .map(|m| m.path.clone())
+            .flat_map(|group| group.members.iter().map(move |member| (group, member)))
+            .filter(|(group, member)| {
+                marked.contains(&member.node)
+                    && !(group.mode == DupeMode::Similar && group.keeper == Some(member.node))
+            })
+            .map(|(_, member)| member.path.clone())
             .collect();
         if paths.is_empty() {
             return;
@@ -596,6 +966,11 @@ impl Shell {
             else {
                 return;
             };
+            // Similar files are intentionally different bytes. Replacing one
+            // with another via clonefile would be silent data loss.
+            if g.mode != DupeMode::Exact {
+                return;
+            }
             let Some(keeper) = g.keeper.or_else(|| g.newest()) else {
                 return;
             };
@@ -804,10 +1179,14 @@ impl Shell {
 fn dupe_group_card_estimated_size(group: &DupeGroupView) -> Size<Pixels> {
     const HEADER_H: f32 = 36.0;
     const BODY_PAD_H: f32 = 8.0;
-    const MEMBER_ROW_H: f32 = 25.0;
+    let member_row_h = if group.mode == DupeMode::Similar {
+        72.0
+    } else {
+        25.0
+    };
 
     let body_h = if group.expanded {
-        BODY_PAD_H + MEMBER_ROW_H * group.members.len() as f32
+        BODY_PAD_H + member_row_h * group.members.len() as f32
     } else {
         0.0
     };
@@ -827,4 +1206,67 @@ fn member_location(path: &Path, root: &Path) -> String {
             Err(_) => parent.to_string_lossy().into_owned(),
         })
         .unwrap_or_default()
+}
+
+/// Human wording for the two perceptual distances stored against the group's
+/// medoid/reference. The closest half of each accepted range gets the stronger
+/// label; the exact 0/0 member is the reference itself, not necessarily a
+/// byte-identical file.
+fn similarity_summary(structure: u32, detail: u32) -> SharedString {
+    if structure == 0 && detail == 0 {
+        return tr!("Group reference");
+    }
+    if structure <= 3 && detail <= 6 {
+        tr!(
+            "Very similar · structure {structure}/64 · detail {detail}/64",
+            structure = structure,
+            detail = detail
+        )
+    } else {
+        tr!(
+            "Similar · structure {structure}/64 · detail {detail}/64",
+            structure = structure,
+            detail = detail
+        )
+    }
+}
+
+/// List-style one-step navigation: clamp at the ends, and choose the first
+/// (Down) or last (Up) item when the panel has no focus yet.
+fn stepped_focus_index(item_count: usize, current: Option<usize>, forward: bool) -> Option<usize> {
+    if item_count == 0 {
+        return None;
+    }
+    Some(
+        match (current.filter(|index| *index < item_count), forward) {
+            (Some(index), true) => (index + 1).min(item_count - 1),
+            (Some(index), false) => index.saturating_sub(1),
+            (None, true) => 0,
+            (None, false) => item_count - 1,
+        },
+    )
+}
+
+#[cfg(test)]
+mod focus_navigation_tests {
+    use super::stepped_focus_index;
+
+    #[test]
+    fn arrows_choose_an_edge_without_an_existing_focus() {
+        assert_eq!(stepped_focus_index(4, None, true), Some(0));
+        assert_eq!(stepped_focus_index(4, None, false), Some(3));
+    }
+
+    #[test]
+    fn arrows_step_and_clamp_at_the_ends() {
+        assert_eq!(stepped_focus_index(4, Some(1), true), Some(2));
+        assert_eq!(stepped_focus_index(4, Some(2), false), Some(1));
+        assert_eq!(stepped_focus_index(4, Some(3), true), Some(3));
+        assert_eq!(stepped_focus_index(4, Some(0), false), Some(0));
+    }
+
+    #[test]
+    fn an_empty_panel_has_nowhere_to_focus() {
+        assert_eq!(stepped_focus_index(0, None, true), None);
+    }
 }

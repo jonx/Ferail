@@ -21,13 +21,13 @@ use crate::shell::{
     self, ClearFilter, CloseTab, CloseToolResult, CloseWindow, CopyFiles, CopyPath, CursorDown,
     CursorDownExtend, CursorFirst, CursorFirstExtend, CursorLast, CursorLastExtend, CursorUp,
     CursorUpExtend, CutFiles, DeleteImmediately, EditBreadcrumb, EmptyTrash, FindDuplicates,
-    FocusFilter, GetInfo, GoHome, GoToFolder, GridDown, GridDownExtend, GridLeft, GridLeftExtend,
-    GridRight, GridRightExtend, GridUp, GridUpExtend, MovePasteFiles, MoveToTrash, NavigateBack,
-    NavigateForward, NavigateParent, NewFolder, NewTab, NextTab, OpenDiskUsage, OpenInNewTab,
-    OpenSelected, OpenSettings, OpenViewer, PageDown, PageDownExtend, PageUp, PageUpExtend,
-    PasteFiles, PopOutDiskUsage, PrevTab, QuickLook, Refresh, RenameSelected, ReopenClosedTab,
-    RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn, ZoomOut,
-    ZoomReset,
+    FindSimilarImages, FocusFilter, GetInfo, GoHome, GoToFolder, GridDown, GridDownExtend,
+    GridLeft, GridLeftExtend, GridRight, GridRightExtend, GridUp, GridUpExtend, MovePasteFiles,
+    MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab, NextTab,
+    OpenDiskUsage, OpenInNewTab, OpenSelected, OpenSettings, OpenViewer, PageDown, PageDownExtend,
+    PageUp, PageUpExtend, PasteFiles, PopOutDiskUsage, PrevTab, QuickLook, Refresh, RenameSelected,
+    ReopenClosedTab, RevealInFinder, SelectAll, ShortcutsHelp, ToggleHidden, TogglePreview, ZoomIn,
+    ZoomOut, ZoomReset,
 };
 use crate::viewer::window::{
     VIEWER_CONTEXT, ViewerActualSize, ViewerDelete, ViewerDismiss, ViewerLeft, ViewerNext,
@@ -222,6 +222,9 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
             cx.bind_keys([KeyBinding::new(kb_str, PopOutDiskUsage, ctx)])
         }
         "view.find_duplicates" => cx.bind_keys([KeyBinding::new(kb_str, FindDuplicates, ctx)]),
+        "view.find_similar_images" => {
+            cx.bind_keys([KeyBinding::new(kb_str, FindSimilarImages, ctx)])
+        }
 
         // -- Go ---------------------------------------------------
         "go.back" => cx.bind_keys([KeyBinding::new(kb_str, NavigateBack, ctx)]),
@@ -337,7 +340,11 @@ pub(crate) fn install_extras(cx: &mut App) {
             Some(shell::SHELL_CONTEXT),
         ),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("shift-delete", DeleteImmediately, Some(shell::SHELL_CONTEXT)),
+        KeyBinding::new(
+            "shift-delete",
+            DeleteImmediately,
+            Some(shell::SHELL_CONTEXT),
+        ),
         // Favorites toggle on the currently-selected folder
         // (docs/features/FAVORITES.md). Cmd+D mirrors Finder's
         // "Add to Sidebar" muscle memory and avoids the Cmd+T
@@ -447,7 +454,11 @@ pub(crate) fn install_extras(cx: &mut App) {
         KeyBinding::new("secondary--", ViewerZoomOut, Some(VIEWER_CONTEXT)),
         KeyBinding::new("secondary-0", ViewerZoomReset, Some(VIEWER_CONTEXT)),
         KeyBinding::new("secondary-1", ViewerActualSize, Some(VIEWER_CONTEXT)),
-        KeyBinding::new("secondary-ctrl-f", ViewerToggleFullscreen, Some(VIEWER_CONTEXT)),
+        KeyBinding::new(
+            "secondary-ctrl-f",
+            ViewerToggleFullscreen,
+            Some(VIEWER_CONTEXT),
+        ),
         // View-only per-item rotation (docs/features/VIEWER.md): R turns
         // clockwise, Shift-R counter-clockwise.
         KeyBinding::new("r", ViewerRotateCw, Some(VIEWER_CONTEXT)),

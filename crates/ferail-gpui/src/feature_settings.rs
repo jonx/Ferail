@@ -3,8 +3,8 @@
 //! persisted string/bool fields into the concrete config the workers
 //! want, so the settings UI and the shell never disagree about a default.
 
-use ferail_core::terminal::{split_args, TerminalMode, TerminalSpec};
-use ferail_fs_native::{DupeOpts, SearchQuery};
+use ferail_core::terminal::{TerminalMode, TerminalSpec, split_args};
+use ferail_fs_native::{DupeMode, DupeOpts, SearchQuery};
 
 use crate::app_state::{self, AppState};
 
@@ -134,6 +134,7 @@ impl DupeConfig {
     pub fn opts(&self) -> DupeOpts {
         let min_size = self.min_size_mb.saturating_mul(1024 * 1024).max(1);
         DupeOpts {
+            mode: DupeMode::Exact,
             paranoid: self.paranoid,
             scan_cloud: !self.skip_cloud,
             follow_packages: self.include_packages,

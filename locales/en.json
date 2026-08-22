@@ -78,6 +78,8 @@
     "Back One Frame": "Back One Frame",
     "Background tasks": "Background tasks",
     "Background work": "Background work",
+    "Best copy": "Best copy",
+    "Best fit": "Best fit",
     "Bidirectional override": "Bidirectional override",
     "Bit depth": "Bit depth",
     "Bit rate": "Bit rate",
@@ -142,6 +144,7 @@
     "Comfortable": "Comfortable",
     "Compare all files": "Compare all files",
     "Compare inside app bundles": "Compare inside app bundles",
+    "Compared with the group reference: dHash {structure}/64 (structure), pHash {detail}/64 (detail). Lower numbers mean greater similarity.": "Compared with the group reference: dHash {structure}/64 (structure), pHash {detail}/64 (detail). Lower numbers mean greater similarity.",
     "Completed {n} item as administrator": {
       "one": "Completed {n} item as administrator",
       "other": "Completed {n} items as administrator"
@@ -405,6 +408,7 @@
     "File": "File",
     "File clipboard isn't available on this platform yet.": "File clipboard isn't available on this platform yet.",
     "Files": "Files",
+    "Fill frame": "Fill frame",
     "Film grain": "Film grain",
     "Filter contents…": "Filter contents…",
     "Filter icons…": "Filter icons…",
@@ -415,10 +419,15 @@
     "Find": "Find",
     "Find Duplicates": "Find Duplicates",
     "Find Duplicates…": "Find Duplicates…",
+    "Find Similar Images": "Find Similar Images",
+    "Find Similar Images…": "Find Similar Images…",
     "Finding duplicates in {root}": "Finding duplicates in {root}",
+    "Finding similar images in {root}": "Finding similar images in {root}",
     "Fit": "Fit",
+    "Fit height": "Fit height",
     "Fit to Window": "Fit to Window",
     "Fit to window": "Fit to window",
+    "Fit width": "Fit width",
     "Fit, never enlarge": "Fit, never enlarge",
     "Folder": "Folder",
     "Folder not found": "Folder not found",
@@ -449,6 +458,7 @@
     "Greek": "Greek",
     "Green": "Green",
     "Group": "Group",
+    "Group reference": "Group reference",
     "Grouped rows in a tab": "Grouped rows in a tab",
     "Health check of the app's storage and environment. Run `ferail --doctor` for the same report from a terminal.": "Health check of the app's storage and environment. Run `ferail --doctor` for the same report from a terminal.",
     "Help": "Help",
@@ -459,9 +469,11 @@
     "Hide preview": "Hide preview",
     "Hide {app_name}": "Hide {app_name}",
     "Home": "Home",
+    "How a photo or preview fills its square in icon view. Best fit shows the whole image with bars beside it; Fill frame crops the edges so the image fills the icon completely.": "How a photo or preview fills its square in icon view. Best fit shows the whole image with bars beside it; Fill frame crops the edges so the image fills the icon completely.",
     "How duplicate groups are shown. Grouped rows reuse the file list (selection, sort, preview, context menu); the dedicated panel offers group-level actions like keep-newest.": "How duplicate groups are shown. Grouped rows reuse the file list (selection, sort, preview, context menu); the dedicated panel offers group-level actions like keep-newest.",
     "How media is sized when the viewer opens, and what zoom reset returns to. “Fit to window” scales large media down and small media up to fill the window; “Fit, never enlarge” stops at the media's real size, so small images stay pixel-true; “Actual size” always shows 1:1. Takes effect on the next viewer window.": "How media is sized when the viewer opens, and what zoom reset returns to. “Fit to window” scales large media down and small media up to fill the window; “Fit, never enlarge” stops at the media's real size, so small images stay pixel-true; “Actual size” always shows 1:1. Takes effect on the next viewer window.",
     "Hue": "Hue",
+    "Icon fit": "Icon fit",
     "Icon spacing": "Icon spacing",
     "Icon view": "Icon view",
     "Ignore small files": "Ignore small files",
@@ -526,6 +538,7 @@
       "one": "Mark of the Web cleared from {n} file",
       "other": "Mark of the Web cleared from {n} files"
     },
+    "Mark others": "Mark others",
     "Match System": "Match System",
     "Match full path": "Match full path",
     "Match the relative path, not just the file name.": "Match the relative path, not just the file name.",
@@ -605,6 +618,7 @@
     "No process is holding these files anymore": "No process is holding these files anymore",
     "No release notes were written for this version.": "No release notes were written for this version.",
     "No selection": "No selection",
+    "No similar images found.": "No similar images found.",
     "No subfolders": "No subfolders",
     "None": "None",
     "Normal": "Normal",
@@ -763,6 +777,7 @@
     "Reset All": "Reset All",
     "Reset Columns": "Reset Columns",
     "Reset Icon": "Reset Icon",
+    "Reset icon size": "Reset icon size",
     "Reset to Original Name": "Reset to Original Name",
     "Restored Favorite": "Restored Favorite",
     "Restored from Trash": "Restored from Trash",
@@ -808,6 +823,7 @@
     "Scan failed — {detail}": "Scan failed — {detail}",
     "Scan package folders as containers": "Scan package folders as containers",
     "Scanning for duplicates…": "Scanning for duplicates…",
+    "Scanning for similar images…": "Scanning for similar images…",
     "Scanning {path}": "Scanning {path}",
     "Scanning… {files} files, {scanned}": "Scanning… {files} files, {scanned}",
     "Scroll tabs left": "Scroll tabs left",
@@ -844,6 +860,13 @@
       "other": "Showing {n} items in {app}"
     },
     "Showing “{name}” in {app}": "Showing “{name}” in {app}",
+    "Similar image scan": "Similar image scan",
+    "Similar image scan finished: no similar images found": "Similar image scan finished: no similar images found",
+    "Similar image scan finished: {n} group · {reclaimable} reclaimable": {
+      "one": "Similar image scan finished: {n} group · {reclaimable} reclaimable",
+      "other": "Similar image scan finished: {n} groups · {reclaimable} reclaimable"
+    },
+    "Similar · structure {structure}/64 · detail {detail}/64": "Similar · structure {structure}/64 · detail {detail}/64",
     "Similarity": "Similarity",
     "Simulating progress…": "Simulating progress…",
     "Size": "Size",
@@ -891,7 +914,9 @@
     "Store": "Store",
     "Store (no compression)": "Store (no compression)",
     "Stray combining mark (U+{code})": "Stray combining mark (U+{code})",
+    "Stretch": "Stretch",
     "Subtree": "Subtree",
+    "Supported image formats: JPEG, PNG, GIF, WebP, BMP, and TIFF.": "Supported image formats: JPEG, PNG, GIF, WebP, BMP, and TIFF.",
     "Symlink": "Symlink",
     "System": "System",
     "System ({loc})": "System ({loc})",
@@ -976,6 +1001,7 @@
     "Used": "Used",
     "User Applications": "User Applications",
     "Version {version}": "Version {version}",
+    "Very similar · structure {structure}/64 · detail {detail}/64": "Very similar · structure {structure}/64 · detail {detail}/64",
     "Video": "Video",
     "Video player": "Video player",
     "View": "View",
@@ -1137,6 +1163,10 @@
       "one": "{n} hidden · {size}",
       "other": "{n} hidden · {size}"
     },
+    "{n} image · {reclaimable} reclaimable": {
+      "one": "{n} image · {reclaimable} reclaimable",
+      "other": "{n} images · {reclaimable} reclaimable"
+    },
     "{n} item": {
       "one": "{n} item",
       "other": "{n} items"
@@ -1176,6 +1206,10 @@
     },
     "{n} rps": "{n} rps",
     "{n} selected  {size}": "{n} selected  {size}",
+    "{n} similar-image group · {size} reclaimable": {
+      "one": "{n} similar-image group · {size} reclaimable",
+      "other": "{n} similar-image groups · {size} reclaimable"
+    },
     "{n} task running": {
       "one": "{n} task running",
       "other": "{n} tasks running"
@@ -1208,6 +1242,7 @@
       "other": "{summary}, {n} skipped"
     },
     "{which} (U+{code})": "{which} (U+{code})",
+    "{width} × {height} · {similarity}": "{width} × {height} · {similarity}",
     "· {n} conflict": {
       "one": "· {n} conflict",
       "other": "· {n} conflicts"

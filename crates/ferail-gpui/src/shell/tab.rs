@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, atomic::AtomicBool};
 
 use ferail_core::{EnumerationError, FileEntry, NodeId, navigation::NavigationState};
+use ferail_fs_native::{DupeMode, PerceptualThumbnail};
 use gpui::{
-    AppContext, Entity, FocusHandle, Pixels, SharedString, Subscription, UniformListScrollHandle,
-    px,
+    AppContext, Entity, FocusHandle, Pixels, RenderImage, SharedString, Subscription,
+    UniformListScrollHandle, px,
 };
 use gpui_component::input::InputState;
 
@@ -61,6 +62,7 @@ impl ToolResultSurface {
     pub fn duplicates(
         root: PathBuf,
         presentation: crate::feature_settings::DupePresentation,
+        mode: DupeMode,
     ) -> Self {
         Self {
             mode: ToolResultMode::Duplicates(DupeViewMode {
@@ -68,6 +70,7 @@ impl ToolResultSurface {
                 groups: 0,
                 wasted_bytes: 0,
                 presentation,
+                mode,
             }),
         }
     }
@@ -191,31 +194,49 @@ pub struct DupeViewMode {
     pub root: PathBuf,
     /// Confirmed duplicate groups seen so far.
     pub groups: usize,
-    /// Reclaimable bytes = sum over groups of `bytes_each * (distinct
-    /// occupants - 1)` — extra on-disk copies, hard links and clones
-    /// excluded.
+    /// Reclaimable bytes. Exact groups use `bytes_each * (distinct occupants
+    /// - 1)`; Similar groups sum every non-keeper member's own byte size.
     pub wasted_bytes: u64,
     /// Presentation resolved once at scan launch (from `DupeConfig`) and
     /// cached here so the per-frame render never reads settings off disk.
     /// Grouped → adjacent table rows; Panel → the dedicated card view.
     pub presentation: crate::feature_settings::DupePresentation,
+    /// Exact byte duplicates or perceptually similar images.
+    pub mode: DupeMode,
+}
+
+/// Similar-image-only display data. The decoded preview begins as raw RGBA
+/// from the worker and is converted once on the UI thread. Both forms live
+/// only on this result surface and are dropped when it closes.
+#[derive(Clone)]
+pub struct SimilarImageView {
+    pub width: u32,
+    pub height: u32,
+    pub dhash_distance: u32,
+    pub phash_distance: u32,
+    pub is_best: bool,
+    pub raw_thumbnail: Option<PerceptualThumbnail>,
+    pub thumbnail: Option<Arc<RenderImage>>,
 }
 
 /// One member of a retained duplicate group (the backing model the
 /// dedicated panel renders and the group actions operate on). Mirrors
 /// the worker's `DupeMember`, minus the bits only the funnel needs.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DupeGroupMember {
     pub node: NodeId,
     pub path: PathBuf,
     /// Last-modified time (Unix seconds) — drives "keep newest".
     pub mtime_unix: i64,
+    /// Logical bytes of this member. Similar-image members can differ.
+    pub bytes: u64,
     /// Shares an inode with an earlier member (hard link): reclaims
     /// nothing.
     pub is_hardlink: bool,
     /// Shares physical storage with an earlier member via an APFS clone:
     /// reclaims nothing.
     pub is_clone: bool,
+    pub image: Option<SimilarImageView>,
 }
 
 impl DupeGroupMember {
@@ -232,20 +253,21 @@ impl DupeGroupMember {
 /// Kept on [`Tab`] (not in `DupeViewMode`, which is `.clone()`d every
 /// frame for the breadcrumb) so the per-frame breadcrumb path never
 /// copies the whole group list.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DupeGroupView {
     /// 1-based group number, matching the row tags.
     pub group_no: usize,
     /// BLAKE3 hex of the content (empty in paranoid mode).
     pub full_hash: String,
+    pub mode: DupeMode,
     /// Logical bytes of each copy.
     pub bytes_each: u64,
     pub members: Vec<DupeGroupMember>,
     /// Card expand/collapse state in the panel.
     pub expanded: bool,
-    /// User-picked keeper (per-row "keep this" radio). When `None` the
-    /// group-level actions fall back to a sensible default (newest for
-    /// keep-newest, first for select-all-but-one).
+    /// User-picked keeper (per-row "keep this" radio). Similar groups begin
+    /// with their ranked best copy; Exact actions can fall back to newest or
+    /// first as appropriate.
     pub keeper: Option<NodeId>,
 }
 
@@ -255,12 +277,32 @@ impl DupeGroupView {
         self.members.iter().filter(|m| !m.shares_storage()).count()
     }
 
-    /// Reclaimable bytes if the group is reduced to a single copy:
-    /// `bytes_each * (distinct_occupants - 1)`. Hard links and clones
-    /// reclaim nothing and are already excluded from the occupant count.
+    /// Reclaimable bytes if the group is reduced to its keeper. Similar image
+    /// members have distinct sizes, so the value changes with that choice.
     pub fn reclaimable_bytes(&self) -> u64 {
+        if self.mode == DupeMode::Similar {
+            let keeper = self
+                .keeper
+                .or_else(|| self.best())
+                .or_else(|| self.members.first().map(|member| member.node));
+            return self
+                .members
+                .iter()
+                .filter(|member| Some(member.node) != keeper)
+                .map(|member| member.bytes)
+                .sum();
+        }
         let distinct = self.distinct_occupants() as u64;
         self.bytes_each.saturating_mul(distinct.saturating_sub(1))
+    }
+
+    /// The worker ranks the best similar-image keeper first, and marks it
+    /// explicitly so seeded/test state remains order-independent.
+    pub fn best(&self) -> Option<NodeId> {
+        self.members
+            .iter()
+            .find(|member| member.image.as_ref().is_some_and(|image| image.is_best))
+            .map(|member| member.node)
     }
 
     /// The newest member by mtime (ties broken by original order). The
@@ -293,7 +335,10 @@ impl DupeGroupView {
     /// Victims for "select all but one": everything but the user-picked
     /// keeper, or the first member when none is picked.
     pub fn victims_all_but_one(&self) -> Vec<NodeId> {
-        let keeper = self.keeper.or_else(|| self.members.first().map(|m| m.node));
+        let keeper = self
+            .keeper
+            .or_else(|| self.best())
+            .or_else(|| self.members.first().map(|m| m.node));
         match keeper {
             Some(keeper) => self.victims_for_keeper(keeper),
             None => Vec::new(),
@@ -465,6 +510,10 @@ pub struct Tab {
     /// rows in `apply_dupe_batch_in_tab`; the panel render borrows it without
     /// copying.
     pub dupe_groups: Vec<DupeGroupView>,
+    /// Member last focused in the duplicate-card panel. Similar Images uses
+    /// this as the starting item when Space opens the current group in the
+    /// full-size viewer. It is presentation state only and never persisted.
+    pub dupe_panel_focus: Option<(usize, NodeId)>,
     /// Scroll handle for the dedicated duplicate-card panel. Per-tab so
     /// switching tabs preserves the result-list position, and so the
     /// visible scrollbar can drive the virtual list.
@@ -576,6 +625,7 @@ impl Tab {
             load_staging: None,
             tool_result: None,
             dupe_groups: Vec::new(),
+            dupe_panel_focus: None,
             dupe_panel_scroll: VirtualListScrollHandle::new(),
             last_error: None,
             volume_free_bytes: None,
@@ -679,8 +729,9 @@ pub fn chip_drop_gap_index(from_idx: usize, chip_idx: usize) -> usize {
 
 #[cfg(test)]
 mod dupe_group_tests {
-    use super::{DupeGroupMember, DupeGroupView};
+    use super::{DupeGroupMember, DupeGroupView, SimilarImageView};
     use ferail_core::NodeId;
+    use ferail_fs_native::DupeMode;
     use std::path::PathBuf;
 
     fn member(id: u64, mtime: i64) -> DupeGroupMember {
@@ -688,8 +739,10 @@ mod dupe_group_tests {
             node: NodeId::from(id),
             path: PathBuf::from(format!("/f/{id}")),
             mtime_unix: mtime,
+            bytes: 1000,
             is_hardlink: false,
             is_clone: false,
+            image: None,
         }
     }
 
@@ -697,11 +750,35 @@ mod dupe_group_tests {
         DupeGroupView {
             group_no: 1,
             full_hash: "deadbeef".into(),
+            mode: DupeMode::Exact,
             bytes_each: 1000,
             members,
             expanded: true,
             keeper: None,
         }
+    }
+
+    #[test]
+    fn similar_reclaim_changes_with_the_keeper_size() {
+        let mut members = vec![member(1, 100), member(2, 200), member(3, 300)];
+        members[0].bytes = 8_000;
+        members[1].bytes = 3_000;
+        members[2].bytes = 1_000;
+        members[0].image = Some(SimilarImageView {
+            width: 4000,
+            height: 3000,
+            dhash_distance: 0,
+            phash_distance: 0,
+            is_best: true,
+            raw_thumbnail: None,
+            thumbnail: None,
+        });
+        let mut group = group(members);
+        group.mode = DupeMode::Similar;
+        group.keeper = Some(NodeId::from(1));
+        assert_eq!(group.reclaimable_bytes(), 4_000);
+        group.keeper = Some(NodeId::from(3));
+        assert_eq!(group.reclaimable_bytes(), 11_000);
     }
 
     #[test]

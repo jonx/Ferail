@@ -88,18 +88,28 @@ impl FileOpErrorKind {
     /// the GPUI notification used to string-match into existence).
     pub fn advice(self) -> &'static str {
         match self {
-            Self::PermissionDenied => {
-                "Retry as administrator, or check the item's permissions."
-            }
+            Self::PermissionDenied => "Retry as administrator, or check the item's permissions.",
             Self::Locked => {
                 "The file is open in another program. Close it and retry, or see what's using it."
             }
-            Self::NotFound => msgid!("The item may have moved or been deleted. Refresh the folder and try again."),
-            Self::NoSpace => msgid!("Free space on the destination volume or choose another destination."),
-            Self::ReadOnly => msgid!("The destination is read-only. Choose a writable folder or change the volume's permissions."),
-            Self::NameTooLong => msgid!("Use a shorter name or move the item to a path with fewer nested folders."),
-            Self::AlreadyExists => msgid!("Choose a different name or remove the existing item, then try again."),
-            Self::Other => msgid!("Refresh the folder and try again. If it keeps failing, inspect the item in your file manager."),
+            Self::NotFound => {
+                msgid!("The item may have moved or been deleted. Refresh the folder and try again.")
+            }
+            Self::NoSpace => {
+                msgid!("Free space on the destination volume or choose another destination.")
+            }
+            Self::ReadOnly => msgid!(
+                "The destination is read-only. Choose a writable folder or change the volume's permissions."
+            ),
+            Self::NameTooLong => {
+                msgid!("Use a shorter name or move the item to a path with fewer nested folders.")
+            }
+            Self::AlreadyExists => {
+                msgid!("Choose a different name or remove the existing item, then try again.")
+            }
+            Self::Other => msgid!(
+                "Refresh the folder and try again. If it keeps failing, inspect the item in your file manager."
+            ),
         }
     }
 
@@ -207,13 +217,13 @@ fn classify_os_code(code: Option<i32>) -> FileOpErrorKind {
         // compiles on Windows, so it can't be exercised from the macOS build;
         // it's a pure data mapping, verified against the SDK headers.
         match code {
-            5 => FileOpErrorKind::PermissionDenied,        // ERROR_ACCESS_DENIED
-            32 | 33 => FileOpErrorKind::Locked,            // SHARING / LOCK_VIOLATION
-            39 | 112 => FileOpErrorKind::NoSpace,          // HANDLE_DISK_FULL / DISK_FULL
-            19 => FileOpErrorKind::ReadOnly,               // ERROR_WRITE_PROTECT
-            206 => FileOpErrorKind::NameTooLong,           // ERROR_FILENAME_EXCED_RANGE
-            2 | 3 => FileOpErrorKind::NotFound,            // FILE / PATH_NOT_FOUND
-            80 | 183 => FileOpErrorKind::AlreadyExists,    // FILE_EXISTS / ALREADY_EXISTS
+            5 => FileOpErrorKind::PermissionDenied, // ERROR_ACCESS_DENIED
+            32 | 33 => FileOpErrorKind::Locked,     // SHARING / LOCK_VIOLATION
+            39 | 112 => FileOpErrorKind::NoSpace,   // HANDLE_DISK_FULL / DISK_FULL
+            19 => FileOpErrorKind::ReadOnly,        // ERROR_WRITE_PROTECT
+            206 => FileOpErrorKind::NameTooLong,    // ERROR_FILENAME_EXCED_RANGE
+            2 | 3 => FileOpErrorKind::NotFound,     // FILE / PATH_NOT_FOUND
+            80 | 183 => FileOpErrorKind::AlreadyExists, // FILE_EXISTS / ALREADY_EXISTS
             _ => FileOpErrorKind::Other,
         }
     }
@@ -472,13 +482,13 @@ pub fn same_volume(a: &Path, b: &Path) -> bool {
         // the serial is the ground truth MoveFileEx itself honors.
         fn serial_of(p: &Path) -> Option<u32> {
             use std::os::windows::ffi::OsStrExt;
-            use windows::core::PCWSTR;
             use windows::Win32::Foundation::CloseHandle;
             use windows::Win32::Storage::FileSystem::{
-                CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-                FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
-                FILE_SHARE_WRITE, OPEN_EXISTING,
+                BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_FLAG_BACKUP_SEMANTICS,
+                FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle,
+                OPEN_EXISTING,
             };
+            use windows::core::PCWSTR;
             let wide: Vec<u16> = p.as_os_str().encode_wide().chain(Some(0)).collect();
             // Access rights 0: attribute-only query; BACKUP_SEMANTICS lets
             // CreateFileW open directories.
@@ -542,7 +552,11 @@ pub fn available_space(path: &Path) -> Option<u64> {
     }
     // f_bavail counts blocks available to non-root; f_frsize is the
     // fundamental block size (fall back to f_bsize if it's 0).
-    let frsize = if s.f_frsize != 0 { s.f_frsize } else { s.f_bsize };
+    let frsize = if s.f_frsize != 0 {
+        s.f_frsize
+    } else {
+        s.f_bsize
+    };
     Some((s.f_bavail as u64).saturating_mul(frsize as u64))
 }
 
@@ -668,7 +682,8 @@ fn resolve_dest(
     match policy {
         CollisionPolicy::Skip => Ok(Resolution::Skip),
         CollisionPolicy::Replace => {
-            let meta = fs::symlink_metadata(&plain).map_err(|e| FileOpError::from_io(&e, &plain))?;
+            let meta =
+                fs::symlink_metadata(&plain).map_err(|e| FileOpError::from_io(&e, &plain))?;
             let removed = if meta.is_dir() && !meta.is_symlink() {
                 fs::remove_dir_all(&plain)
             } else {
@@ -680,22 +695,23 @@ fn resolve_dest(
                 replaced: true,
             })
         }
-        CollisionPolicy::KeepBoth => match pick_available_name(dest_dir, name, NameScheme::Numbered)
-        {
-            Some(dst) => Ok(Resolution::Proceed {
-                dst,
-                replaced: false,
-            }),
-            None => Err(FileOpError::other(
-                &plain,
-                FileOpErrorKind::AlreadyExists,
-                format!(
-                    "no free name for {} in {}",
-                    name.to_string_lossy(),
-                    dest_dir.display()
-                ),
-            )),
-        },
+        CollisionPolicy::KeepBoth => {
+            match pick_available_name(dest_dir, name, NameScheme::Numbered) {
+                Some(dst) => Ok(Resolution::Proceed {
+                    dst,
+                    replaced: false,
+                }),
+                None => Err(FileOpError::other(
+                    &plain,
+                    FileOpErrorKind::AlreadyExists,
+                    format!(
+                        "no free name for {} in {}",
+                        name.to_string_lossy(),
+                        dest_dir.display()
+                    ),
+                )),
+            }
+        }
     }
 }
 
@@ -839,7 +855,8 @@ fn recreate_symlink(src: &Path, dst: &Path) -> Result<(), FileOpError> {
         let resolved = if target.is_absolute() {
             target.clone()
         } else {
-            src.parent().map_or_else(|| target.clone(), |p| p.join(&target))
+            src.parent()
+                .map_or_else(|| target.clone(), |p| p.join(&target))
         };
         let is_dir = fs::metadata(&resolved).map(|m| m.is_dir()).unwrap_or(false);
         let made = if is_dir {
@@ -988,7 +1005,9 @@ pub fn run_move(
                         } else {
                             fs::remove_file(src)
                         };
-                        removed.map(|_| true).map_err(|e| FileOpError::from_io(&e, src))
+                        removed
+                            .map(|_| true)
+                            .map_err(|e| FileOpError::from_io(&e, src))
                     }
                     Err(e) => Err(FileOpError::from_io(&e, src)),
                 },
@@ -1180,7 +1199,8 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ferail-fileops-{}-{name}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("ferail-fileops-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -1275,8 +1295,7 @@ mod tests {
 
         // Duplicate flavor keeps the full extension too.
         let picked =
-            pick_available_name(&dest, std::ffi::OsStr::new("a.tar.gz"), NameScheme::Copy)
-                .unwrap();
+            pick_available_name(&dest, std::ffi::OsStr::new("a.tar.gz"), NameScheme::Copy).unwrap();
         assert_eq!(picked, dest.join("a.tar copy.gz"));
         let _ = fs::remove_dir_all(&root);
     }
@@ -1422,7 +1441,10 @@ mod tests {
         run_copy(&plan, &|_| CollisionPolicy::KeepBoth, &prog, &cancel).unwrap();
         let copied_link = dest.join("dir/link");
         assert!(fs::symlink_metadata(&copied_link).unwrap().is_symlink());
-        assert_eq!(fs::read_link(&copied_link).unwrap(), PathBuf::from("real.txt"));
+        assert_eq!(
+            fs::read_link(&copied_link).unwrap(),
+            PathBuf::from("real.txt")
+        );
         let _ = fs::remove_dir_all(&root);
     }
 

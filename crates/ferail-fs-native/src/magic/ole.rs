@@ -51,8 +51,12 @@ pub(super) fn refine_with_directory(
         return;
     }
     let sector_size = 1usize << sector_shift;
-    let first_dir_sector =
-        u32::from_le_bytes([header_buf[48], header_buf[49], header_buf[50], header_buf[51]]);
+    let first_dir_sector = u32::from_le_bytes([
+        header_buf[48],
+        header_buf[49],
+        header_buf[50],
+        header_buf[51],
+    ]);
     if first_dir_sector >= 0xFFFF_FFFA {
         // ENDOFCHAIN / FREESECT / FAT markers — no directory to read.
         return;
@@ -124,10 +128,7 @@ mod tests {
         let dir_off = 512 + dir_sector as usize * 512;
         for (i, name) in names.iter().enumerate() {
             let entry = &mut file[dir_off + i * 128..dir_off + (i + 1) * 128];
-            let utf16: Vec<u8> = name
-                .encode_utf16()
-                .flat_map(|u| u.to_le_bytes())
-                .collect();
+            let utf16: Vec<u8> = name.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
             entry[..utf16.len()].copy_from_slice(&utf16);
             entry[64..66].copy_from_slice(&((utf16.len() as u16 + 2).to_le_bytes()));
         }
@@ -163,11 +164,7 @@ mod tests {
 
     #[test]
     fn encrypted_ooxml_detected_as_encrypted_office() {
-        let file = build_cfbf(
-            0,
-            1,
-            &["Root Entry", "EncryptionInfo", "EncryptedPackage"],
-        );
+        let file = build_cfbf(0, 1, &["Root Entry", "EncryptionInfo", "EncryptedPackage"]);
         let info = classify(&file, 4096);
         assert_eq!(info.magic_type, MagicType::OleCompound);
         assert!(info.is_encrypted);

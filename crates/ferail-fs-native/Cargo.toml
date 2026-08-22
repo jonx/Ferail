@@ -19,6 +19,10 @@ ferail-disk-usage.workspace = true
 ferail-archive.workspace = true
 xxhash-rust.workspace = true
 blake3.workspace = true
+# Similar-image analysis decodes locally and keeps every derived value in
+# memory only. Keep the codec set explicit: no network/native service and no
+# persisted thumbnails or perceptual hashes.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 
 # Archive codec layer (crates/ferail-fs-native/src/archive). Pure-Rust
 # codecs, all platforms — Ferail no longer shells out to `ditto` for
@@ -99,7 +103,6 @@ xattr = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 freedesktop-icons = "0.4"
-image = { version = "0.25", default-features = false, features = ["png"] }
 resvg = "0.45"
 # move_to_trash → the freedesktop Trash spec (XDG Trash + per-volume
 # .Trash-<uid>). Pure-Rust freedesktop implementation, no D-Bus.

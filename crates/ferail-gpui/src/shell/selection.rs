@@ -980,6 +980,9 @@ impl Shell {
     }
 
     pub(super) fn on_cursor_up(&mut self, _: &CursorUp, _: &mut Window, cx: &mut Context<Self>) {
+        if self.dupe_move_similar_focus(false, cx) {
+            return;
+        }
         self.move_selection(SelectionDelta::Up, false, cx);
     }
     pub(super) fn on_cursor_down(
@@ -988,6 +991,9 @@ impl Shell {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.dupe_move_similar_focus(true, cx) {
+            return;
+        }
         self.move_selection(SelectionDelta::Down, false, cx);
     }
     pub(super) fn on_cursor_first(

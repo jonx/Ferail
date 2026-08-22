@@ -988,6 +988,16 @@ pub struct Shell {
     /// Input state for the shortcuts-help filter. Always allocated;
     /// only rendered when the overlay is visible.
     pub shortcuts_help_input: Entity<InputState>,
+    /// Painted bounds of the toolbar's grid icon-size track, captured each
+    /// render through a `canvas` so a cursor x maps back to a size. Zero
+    /// until the track has painted once (it only exists in grid view, on a
+    /// window wide enough to hold it).
+    pub icon_size_track: Bounds<Pixels>,
+    /// True while that track is being scrubbed. Held on the Shell rather
+    /// than the track element so the drag keeps following the cursor after
+    /// it leaves the 96-px bar — the same reason the viewer's adjustment
+    /// sliders track their drag at panel level.
+    pub icon_size_dragging: bool,
     /// Whether the right-side preview pane is visible. Cmd+P toggles
     /// it; Cmd+I focuses the preview's Get Info section (today it's
     /// the only thing in the pane).
@@ -1352,8 +1362,7 @@ fn open_metadata_db() -> Option<Arc<Mutex<ferail_meta::MetadataDb>>> {
 pub fn open_window_at(cx: &mut App, path: PathBuf) {
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(1180.0), px(760.0)), cx)),
-        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
-        ..crate::base_window_options()
+        ..crate::shell_window_options()
     };
     let _ = cx.open_window(opts, |window, cx| {
         let process = crate::process_state::process_state(cx);
@@ -1409,8 +1418,7 @@ pub fn reveal_path_in_app(cx: &mut App, path: PathBuf) {
     // fresh window at the parent with the selection queued.
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(1180.0), px(760.0)), cx)),
-        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
-        ..crate::base_window_options()
+        ..crate::shell_window_options()
     };
     let _ = cx.open_window(opts, |window, cx| {
         let process = crate::process_state::process_state(cx);
@@ -1546,6 +1554,10 @@ impl Shell {
         // Seed the live grid selection-gutter size from persisted settings.
         cx.set_global(crate::grid::CellGap(crate::grid::clamp_cell_gap(
             persisted.cell_gap.unwrap_or(crate::grid::DEFAULT_CELL_GAP),
+        )));
+        // Seed the live grid thumbnail fit mode from persisted settings.
+        cx.set_global(crate::grid::ThumbFitMode(crate::grid::ThumbFit::from_str(
+            persisted.thumb_fit.as_deref().unwrap_or("best"),
         )));
         // Seed the folder-size walker master switch. Default true (on).
         cx.set_global(crate::folder_sizes::FolderSizingEnabled(
@@ -1850,6 +1862,8 @@ impl Shell {
             last_window_title: String::new(),
             was_window_active: true,
             typeahead: None,
+            icon_size_track: Bounds::default(),
+            icon_size_dragging: false,
             _subscriptions: vec![breadcrumb_subscription, shortcuts_help_subscription],
         };
         shell.process.register_shell(cx.weak_entity());
@@ -1873,6 +1887,7 @@ impl Shell {
             cx.notify();
         });
         shell._subscriptions.push(fav_subscription);
+
         // §2.2 add/dedup animation signals. The observe above repaints;
         // this captures *which* favorite changed so the section can play
         // the fade-in (Added) or the dedup pulse (DedupPulse). Hydrate
@@ -3420,7 +3435,30 @@ impl Shell {
     ) {
         crate::trail::command("Find Duplicates");
         let tab_id = self.active_tab().id;
-        self.start_duplicate_scan(tab_id, Some(window.window_handle()), cx);
+        self.start_duplicate_scan(
+            tab_id,
+            ferail_fs_native::DupeMode::Exact,
+            Some(window.window_handle()),
+            cx,
+        );
+    }
+
+    /// Find Similar Images — the duplicate finder panel with a perceptual,
+    /// entirely in-memory image funnel.
+    pub fn on_find_similar_images(
+        &mut self,
+        _: &FindSimilarImages,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::trail::command("Find Similar Images");
+        let tab_id = self.active_tab().id;
+        self.start_duplicate_scan(
+            tab_id,
+            ferail_fs_native::DupeMode::Similar,
+            Some(window.window_handle()),
+            cx,
+        );
     }
 
     /// Toolbar Sort menu. Each `SortBy*` action picks a column;

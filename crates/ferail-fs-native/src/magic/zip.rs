@@ -117,10 +117,7 @@ pub(super) fn refine_with_central_directory(
         n == "word/vbaProject.bin" || n == "xl/vbaProject.bin" || n == "ppt/vbaProject.bin"
     });
 
-    let is_zip_family = matches!(
-        info.magic_type,
-        MagicType::Zip | MagicType::ZipEncrypted
-    );
+    let is_zip_family = matches!(info.magic_type, MagicType::Zip | MagicType::ZipEncrypted);
     if !is_zip_family {
         return;
     }
@@ -410,11 +407,17 @@ mod tests {
         let header = &buf[..buf.len().min(4096)];
         let tail = &buf[buf.len().saturating_sub(4096)..];
         let mut info = sniff(header).expect("zip detected");
-        refine_with_central_directory(&mut info, header, tail, buf.len() as u64, &mut |off, len| {
-            let start = off as usize;
-            let end = (start + len).min(buf.len());
-            (start < end).then(|| buf[start..end].to_vec())
-        });
+        refine_with_central_directory(
+            &mut info,
+            header,
+            tail,
+            buf.len() as u64,
+            &mut |off, len| {
+                let start = off as usize;
+                let end = (start + len).min(buf.len());
+                (start < end).then(|| buf[start..end].to_vec())
+            },
+        );
         info
     }
 
@@ -467,11 +470,7 @@ mod tests {
 
     #[test]
     fn apk_detected_from_android_manifest() {
-        let zip = build_zip(&[
-            "META-INF/MANIFEST.MF",
-            "AndroidManifest.xml",
-            "classes.dex",
-        ]);
+        let zip = build_zip(&["META-INF/MANIFEST.MF", "AndroidManifest.xml", "classes.dex"]);
         let info = classify(&zip);
         assert_eq!(info.magic_type, MagicType::AppApk);
     }
@@ -515,7 +514,10 @@ mod tests {
         }
         let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
         let zip = build_zip(&name_refs);
-        assert!(zip.len() > 2 * 4096, "test premise: file larger than both windows");
+        assert!(
+            zip.len() > 2 * 4096,
+            "test premise: file larger than both windows"
+        );
 
         let info = classify_windowed(&zip);
         assert_eq!(info.magic_type, MagicType::DocPowerPoint);

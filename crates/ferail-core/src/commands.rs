@@ -154,19 +154,44 @@ pub struct Shortcut {
 
 impl Shortcut {
     pub const fn primary(key: &'static str) -> Self {
-        Self { key, primary: true, shift: false, alt: false }
+        Self {
+            key,
+            primary: true,
+            shift: false,
+            alt: false,
+        }
     }
     pub const fn primary_shift(key: &'static str) -> Self {
-        Self { key, primary: true, shift: true, alt: false }
+        Self {
+            key,
+            primary: true,
+            shift: true,
+            alt: false,
+        }
     }
     pub const fn primary_alt(key: &'static str) -> Self {
-        Self { key, primary: true, shift: false, alt: true }
+        Self {
+            key,
+            primary: true,
+            shift: false,
+            alt: true,
+        }
     }
     pub const fn bare(key: &'static str) -> Self {
-        Self { key, primary: false, shift: false, alt: false }
+        Self {
+            key,
+            primary: false,
+            shift: false,
+            alt: false,
+        }
     }
     pub const fn alt(key: &'static str) -> Self {
-        Self { key, primary: false, shift: false, alt: true }
+        Self {
+            key,
+            primary: false,
+            shift: false,
+            alt: true,
+        }
     }
 }
 
@@ -436,6 +461,12 @@ const CATALOGUE: &[CommandSpec] = &[
         title: msgid!("Find Duplicates"),
         category: Category::View,
         shortcuts: &[Shortcut::primary_shift("U")],
+    },
+    CommandSpec {
+        id: CommandId("view.find_similar_images"),
+        title: msgid!("Find Similar Images"),
+        category: Category::View,
+        shortcuts: &[Shortcut::primary_shift("S")],
     },
     CommandSpec {
         id: CommandId("disk_usage.refresh"),

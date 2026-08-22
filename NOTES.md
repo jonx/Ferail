@@ -1628,3 +1628,96 @@ Verified end-to-end on macOS (only the literal auth prompt is the manual step).
 `ShellExecuteExW` runas for `run_elevated_self`; Restart Manager for
 `processes_using`; `RmShutdown`/`TerminateProcess` for `force_close_processes`;
 then flip the two `*_available()` bools true.
+
+## 2026-08-22 — Grid icon-size slider + thumbnail fit modes
+
+Toolbar gets a continuous icon-size slider and a reset button beside the
+existing −/＋ stepper; Settings › Layout gets **Icon fit**, which decides how a
+thumbnail fills the square icon slot. Size range widened from 64–256 to
+32–512.
+
+### Design choices
+
+- **Five fit modes, three gpui object-fits.** `ThumbFit::object_fit` maps the
+  modes onto `gpui::ObjectFit` using the image's own orientation. The slot is
+  always square, which is what collapses them: scaling by width is the
+  *smaller* scale factor for a landscape image (`Contain`) and the *larger*
+  one for a portrait (`Cover`), so "Fit width" is just Contain-or-Cover chosen
+  per image. The first design computed the target rect ourselves and drew with
+  `ObjectFit::Fill`; letting gpui crop instead keeps the painted element
+  exactly slot-sized — a 4:1 panorama in Fill frame would otherwise lay out an
+  element several thousand px wide purely to have it clipped back. The mapping
+  is a pure function with unit tests; the renderer just asks for it.
+
+- **The size control is hand-rolled, and has no knob.** It is a
+  click-anywhere two-tone fill bar: bright left = current size, dim right =
+  headroom. gpui-component's `Slider` cannot express that — it always draws a
+  thumb, and its thumb ring and track are both tinted from a single colour, so
+  there is no way to keep the two-tone bar and lose the knob (only `disabled`
+  hides the thumb, and that kills interaction too). Its thumb size and track
+  thickness are hardcoded as well. Copies the viewer's `slider_row` shape:
+  bounds captured via `canvas`, cursor x mapped back to a value.
+
+  Two things fell out of dropping the component. The value now lives in
+  exactly one place (the `IconSize` global), so the entity, the subscription
+  and the whole two-writer sync problem are gone — the −/＋ buttons and the
+  bar are just two callers of the same setter. And the scrub no longer goes
+  through gpui's drag system, so dragging the size no longer makes
+  `cx.has_active_drag()` true app-wide (which had been livening up drop
+  targets and spring-load for the duration of a gesture).
+
+- **The scrub persists on release, not on move.** Mouse-move only writes the
+  live global — that is what makes cells resize under the cursor. Persisting
+  per move would enqueue a settings write on every frame of one gesture. The
+  drag is tracked on the Shell and serviced from the *window root*, not the
+  bar, so it keeps following the cursor past either end of a 96-px track;
+  `on_mouse_up_out` commits a release that happens outside the window.
+
+- **The fill keeps a round nub at minimum size.** At 32 px the fill is
+  zero-width, and an empty bar reads as a dead control rather than as "all the
+  way down". A knobless bar has no other "you are here" cue at the extremes.
+
+- **Steppers now take the next stop *past* the current size**, not the
+  nearest. Off-stop sizes used to be impossible and are now the norm; with
+  nearest-stop, ＋ from 100 px picks 96 and reads as the button going the wrong
+  way.
+
+- **Magnifying fit modes step up one fetch bucket.** Covering scales until the
+  short edge fills the slot, so the same thumbnail is stretched further than
+  Best fit stretches it. The step reuses the existing 128/256/512 ladder rather
+  than adding a 1024 rung — that would cost ~4 MB per entry against a
+  512-entry LRU, and only helps at the largest sizes.
+
+- **The window claimed its own titlebar drag** (`shell_window_options`,
+  `app_owns_titlebar_drag: true`). This is the bug that made the first cut of
+  the slider unusable: dragging it moved the window. Every toolbar control
+  already wraps itself in a mouse-down-stopping div for the Win32 title-bar
+  drag, and I assumed that covered macOS too. It does not. With gpui's default
+  `app_owns_titlebar_drag: false`, `_opaqueRectForWindowMoveWhenInTitlebar`
+  reports an empty rect and **AppKit drags the window from the titlebar rect
+  below gpui entirely** — `cx.stop_propagation()` cannot reach it, because
+  AppKit never asks gpui. gpui-component's `TitleBar` carries an app-side
+  window-move (`should_move` → `start_window_move`) that was simply dead code
+  here. A *button* never exposes this (a click is not a drag), so the slider is
+  the first control in that bar to hit it. Only the shell window sets the flag
+  — it is the only one that renders a `gpui_component::TitleBar` and so the
+  only one with an app-side move to fall back on; Settings / Get Info / the
+  icon picker draw no custom titlebar and must keep AppKit's.
+
+- **The slider hides below a 1060-px window.** The shell title bar has no
+  width tiering (the viewer's toolbar does), and without a gate the slider
+  pushed the whole right-hand cluster — overflow menu included — off the edge
+  of a narrow window. Deliberately one local gate rather than a tier system.
+
+### Trade-offs / with more time
+
+- A 512-px cell shows a 512-px thumbnail at 1:1, not 2× retina. A 1024 bucket
+  would fix it but needs `CACHE_CAP` lowered in the same change.
+- In Fill frame there is no letterbox margin left, so the favorite star, the
+  quarantine badge and the tag dots now sit on image content. `ADORN_MIN_ICON`
+  already hides most of that below 96 px; Finder has the same overlap.
+- Fit width / Fit height only become distinct *looks* on a non-square slot.
+  Aspect-aware (masonry) cells would make them earn their place — separate
+  feature, not attempted.
+- No "Actual size" (never enlarge) mode; it is one more arm in the same match
+  if a small PNG blown up to 512 px turns out to bother anyone.

@@ -209,6 +209,12 @@ fallback). Remaining is the UX the system explorers have and we don't:
   shows cost, precise/scrubbing seek (`seekToTime:` tolerance-zero), volume
   control. Windows parity: Ctrl/F11 chords, `IShellItemImageFactory` fallback,
   Media Foundation video frame source feeding the shared `RenderImage` path.
+- Similar Images comparison extension: turn the group-scoped viewer into an
+  A/B workspace — pin one reference, compare the current candidate beside it
+  with synchronized zoom/pan, then add optional opacity overlay, draggable
+  wipe, and press-and-hold flicker. Keep side-by-side as the safe default for
+  cropped or shifted images; evaluate automatic alignment separately. All
+  comparison paths and decoded pixels must remain window-scoped and ephemeral.
 - ✅ **mpv video backend → retire VLC** — shipped on main
   ([docs/features/VIDEO-MPV.md](docs/features/VIDEO-MPV.md)): libmpv provider behind
   the `VideoBackend` seam (runtime load, SW render into the BGRA pull buffer) with

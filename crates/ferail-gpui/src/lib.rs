@@ -105,6 +105,34 @@ pub fn base_window_options() -> gpui::WindowOptions {
     }
 }
 
+/// [`gpui::WindowOptions`] for a file-manager shell window.
+///
+/// Adds the half of gpui-component's `TitleBar` contract that is easy to
+/// miss. That component draws our own toolbar across the titlebar row *and*
+/// carries the code to move the window itself (it flags a mouse-down in the
+/// bar, then calls `start_window_move` on the next mouse-move). But that code
+/// is dead unless the window also claims the drag: left at gpui's default,
+/// `_opaqueRectForWindowMoveWhenInTitlebar` reports an empty rect and **macOS
+/// keeps dragging the window natively from the whole titlebar rect, below
+/// gpui entirely**. A button up there never notices — a click is not a drag —
+/// but any control that *drags* (the grid icon-size slider) moves the window
+/// instead, and no amount of `cx.stop_propagation()` can prevent it, because
+/// AppKit never asks gpui in the first place. Claiming the drag routes it
+/// back through gpui-component, where stopping propagation works, and also
+/// drops the titlebar click delay macOS 27 added.
+///
+/// Only the shell sets this: it is the only window that renders a
+/// `gpui_component::TitleBar`, so it is the only one with an app-side
+/// window-move to fall back on. Settings, Get Info and the icon picker draw
+/// no custom titlebar and must keep AppKit's.
+pub fn shell_window_options() -> gpui::WindowOptions {
+    gpui::WindowOptions {
+        app_owns_titlebar_drag: true,
+        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
+        ..base_window_options()
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub use ferail_shell_linux as platform_shell;
 /// Platform shell abstraction. Resolves to `ferail_shell_mac` on

@@ -119,7 +119,8 @@ mod tests {
             "icons/close.svg", "icons/minimize.svg", "icons/maximize.svg",
             "icons/arrow-up.svg", "icons/panel-right-close.svg", "icons/panel-right-open.svg",
             "icons/sort-ascending.svg", "icons/sort-descending.svg", "icons/view-list.svg",
-            "icons/view-grid.svg", "icons/ellipsis.svg", "icons/dock.svg", "icons/dock-left.svg",
+            "icons/view-grid.svg", "icons/undo-2.svg", "icons/ellipsis.svg",
+            "icons/dock.svg", "icons/dock-left.svg",
             "icons/dock-right.svg", "icons/undock.svg", "icons/external-link.svg",
             "icons/folder-open.svg", "icons/copy.svg", "icons/network.svg",
             // Status / adornments

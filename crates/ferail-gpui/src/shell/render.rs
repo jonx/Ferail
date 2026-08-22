@@ -158,12 +158,21 @@ impl Shell {
                 crate::i18n::tr_static(search.engine_label)
             )),
             super::tab::ToolResultMode::Duplicates(dupe) => Some(
-                trn!(
-                    "{n} duplicate group \u{00B7} {size} reclaimable",
-                    "{n} duplicate groups \u{00B7} {size} reclaimable",
-                    dupe.groups,
-                    size = ferail_fs_native::humanize_bytes(dupe.wasted_bytes)
-                )
+                if dupe.mode == ferail_fs_native::DupeMode::Similar {
+                    trn!(
+                        "{n} similar-image group · {size} reclaimable",
+                        "{n} similar-image groups · {size} reclaimable",
+                        dupe.groups,
+                        size = ferail_fs_native::humanize_bytes(dupe.wasted_bytes)
+                    )
+                } else {
+                    trn!(
+                        "{n} duplicate group · {size} reclaimable",
+                        "{n} duplicate groups · {size} reclaimable",
+                        dupe.groups,
+                        size = ferail_fs_native::humanize_bytes(dupe.wasted_bytes)
+                    )
+                }
                 .to_string(),
             ),
             super::tab::ToolResultMode::DiskUsage(_) => Some(tr!("Disk Usage").to_string()),
@@ -766,7 +775,12 @@ impl Shell {
 
         let icon_px = crate::grid::icon_size(cx);
         let slot = icon_px as f32;
-        let bucket = crate::grid::thumb_bucket(icon_px);
+        // How thumbnails fill the square slot (Settings → Layout → Icon
+        // fit). It also picks the fetch bucket: every mode but Best fit
+        // magnifies the image past shrink-to-fit, so it needs more source
+        // pixels to stay crisp.
+        let fit = crate::grid::thumb_fit(cx);
+        let bucket = crate::grid::thumb_bucket(icon_px, fit);
         let icon_bucket = crate::grid::folder_icon_bucket(icon_px);
         let show_thumbs = crate::thumbnails::show_thumbnails(cx);
         let gap = crate::grid::cell_gap(cx);
@@ -977,7 +991,21 @@ impl Shell {
                                 None
                             };
                             if let Some(t) = thumb {
-                                img(t).max_w(px(slot)).max_h(px(slot)).into_any_element()
+                                // Always paint a full slot-sized element and
+                                // let gpui's object-fit letterbox or crop
+                                // inside it. Sizing the element to the scaled
+                                // image instead would have Fill frame lay out
+                                // an enormous element (a panorama covering a
+                                // 512-px slot is ~100,000 px wide) purely to
+                                // have it clipped back to the slot.
+                                let dims = t.size(0);
+                                let object_fit =
+                                    fit.object_fit(u32::from(dims.width), u32::from(dims.height));
+                                img(t)
+                                    .w(px(slot))
+                                    .h(px(slot))
+                                    .object_fit(object_fit)
+                                    .into_any_element()
                             } else {
                                 let fi = crate::icons::file_type_icon(entry);
                                 let tint = crate::icons::tint_color(fi.tint, app);
@@ -1288,36 +1316,39 @@ impl Shell {
                                         window.refresh();
                                     }
                                 })
-                                .on_mouse_up(gpui::MouseButton::Left, {
-                                    let weak_native_drop = weak.clone();
-                                    move |_event, window, app| {
-                                        if app.has_active_drag() {
-                                            return;
-                                        }
-                                        let Some(drag) =
-                                            crate::file_list::take_native_archive_drag()
-                                        else {
-                                            return;
-                                        };
-                                        app.stop_propagation();
-                                        if !accepts {
-                                            return;
-                                        }
-                                        let _ = weak_native_drop.update(app, |this, cx| {
-                                            let Some(target) = this.path_for_row(i, cx) else {
+                                .on_mouse_up(
+                                    gpui::MouseButton::Left,
+                                    {
+                                        let weak_native_drop = weak.clone();
+                                        move |_event, window, app| {
+                                            if app.has_active_drag() {
+                                                return;
+                                            }
+                                            let Some(drag) =
+                                                crate::file_list::take_native_archive_drag()
+                                            else {
                                                 return;
                                             };
-                                            this.add_archive_entries_to_archive(
-                                                drag.archive,
-                                                drag.entries,
-                                                drag.password,
-                                                target,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                })
+                                            app.stop_propagation();
+                                            if !accepts {
+                                                return;
+                                            }
+                                            let _ = weak_native_drop.update(app, |this, cx| {
+                                                let Some(target) = this.path_for_row(i, cx) else {
+                                                    return;
+                                                };
+                                                this.add_archive_entries_to_archive(
+                                                    drag.archive,
+                                                    drag.entries,
+                                                    drag.password,
+                                                    target,
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    },
+                                )
                             },
                         )
                         .when(is_dir, |d| {
@@ -1390,8 +1421,7 @@ impl Shell {
                                     if app.has_active_drag() {
                                         return;
                                     }
-                                    let Some(drag) =
-                                        crate::file_list::take_native_archive_drag()
+                                    let Some(drag) = crate::file_list::take_native_archive_drag()
                                     else {
                                         return;
                                     };
@@ -1613,32 +1643,188 @@ impl Shell {
         cx.notify();
     }
 
+    /// Set the live grid icon size without touching the settings file.
+    ///
+    /// The grid reads `grid::icon_size` during render, so writing the global
+    /// is what makes cells resize under the cursor. Scrubbing the track goes
+    /// through here on every mouse-move; only the release persists.
+    fn set_icon_size_live(&self, px: u32, cx: &mut Context<Self>) {
+        let px = crate::grid::clamp_icon_size(px);
+        if crate::grid::icon_size(cx) != px {
+            cx.set_global(crate::grid::IconSize(px));
+            cx.notify();
+        }
+    }
+
+    /// Set the grid icon size and persist it — the discrete controls
+    /// (−/＋ and reset), where one click is one deliberate size.
+    fn apply_icon_size(&self, px: u32, cx: &mut Context<Self>) {
+        let px = crate::grid::clamp_icon_size(px);
+        if crate::grid::icon_size(cx) == px {
+            return;
+        }
+        self.set_icon_size_live(px, cx);
+        crate::settings::persist_icon_size(px);
+    }
+
     /// Step the grid icon size one stop along [`crate::grid::ICON_SIZES`]
-    /// (toolbar −/＋). Updates the live global so the grid re-lays-out
-    /// immediately, and persists the new default.
+    /// (toolbar −/＋). Only the sign of `delta` is read.
+    ///
+    /// Now that the track exists the current size is usually *not* on a
+    /// stop, so this takes the next stop strictly past it rather than the
+    /// nearest one: from 100 px, ＋ has to reach 128, and picking the
+    /// nearest would pick 96 and read as the button moving the wrong way.
     fn step_icon_size(&self, delta: i32, cx: &mut Context<Self>) {
         let sizes = crate::grid::ICON_SIZES;
         let cur = crate::grid::icon_size(cx);
-        let idx = sizes.iter().position(|&s| s == cur).unwrap_or_else(|| {
-            // Not exactly on a stop — start from the nearest.
-            let mut best = 0usize;
-            let mut best_d = i64::MAX;
-            for (i, &s) in sizes.iter().enumerate() {
-                let d = (s as i64 - cur as i64).abs();
-                if d < best_d {
-                    best_d = d;
-                    best = i;
-                }
-            }
-            best
-        });
-        let new_idx = (idx as i32 + delta).clamp(0, sizes.len() as i32 - 1) as usize;
-        let new = sizes[new_idx];
-        if new != cur {
-            cx.set_global(crate::grid::IconSize(new));
-            crate::settings::persist_icon_size(new);
-            cx.notify();
+        let next = if delta >= 0 {
+            sizes.iter().copied().find(|&s| s > cur)
+        } else {
+            sizes.iter().copied().rev().find(|&s| s < cur)
+        };
+        // Already past the last stop in that direction: nothing to do.
+        if let Some(next) = next {
+            self.apply_icon_size(next, cx);
         }
+    }
+
+    /// Reset the grid icon size to [`crate::grid::DEFAULT_ICON_SIZE`]
+    /// (the toolbar ⟲ beside the stepper). One click back to sane after
+    /// the track has been dragged somewhere extreme.
+    fn reset_icon_size(&self, cx: &mut Context<Self>) {
+        self.apply_icon_size(crate::grid::DEFAULT_ICON_SIZE, cx);
+    }
+
+    /// The size a cursor x maps to on the icon-size track. `None` before
+    /// the track has painted (so there are no bounds to map against).
+    fn icon_size_at(&self, x: Pixels) -> Option<u32> {
+        let b = self.icon_size_track;
+        let w = b.size.width.as_f32();
+        if w <= 0.0 {
+            return None;
+        }
+        let lo = crate::grid::MIN_ICON_SIZE as f32;
+        let hi = crate::grid::MAX_ICON_SIZE as f32;
+        let frac = ((x.as_f32() - b.origin.x.as_f32()) / w).clamp(0.0, 1.0);
+        // Snap to 4 px: the grid re-lays-out on every change, and nobody can
+        // see a 1-px difference at these sizes, so a 96-px-wide drag emits a
+        // fraction of the sizes it has pixels.
+        let snapped = ((lo + frac * (hi - lo)) / 4.0).round() * 4.0;
+        Some(crate::grid::clamp_icon_size(snapped as u32))
+    }
+
+    /// Scrub in progress. Lives on the shell root so the drag keeps
+    /// following the cursor once it leaves the 96-px bar — dragging past
+    /// either end should peg to that end, not stop responding.
+    pub(super) fn on_icon_size_drag(
+        &mut self,
+        e: &gpui::MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.icon_size_dragging {
+            return;
+        }
+        // A release we never saw (outside the window, say) ends the scrub.
+        if e.pressed_button != Some(gpui::MouseButton::Left) {
+            self.end_icon_size_drag(cx);
+            return;
+        }
+        if let Some(px) = self.icon_size_at(e.position.x) {
+            self.set_icon_size_live(px, cx);
+        }
+    }
+
+    /// End a scrub and write the size the user landed on. This is the only
+    /// place a drag reaches the settings file: persisting per mouse-move
+    /// would enqueue a settings write on every frame of one gesture.
+    pub(super) fn end_icon_size_drag(&mut self, cx: &mut Context<Self>) {
+        if !self.icon_size_dragging {
+            return;
+        }
+        self.icon_size_dragging = false;
+        crate::settings::persist_icon_size(crate::grid::icon_size(cx));
+        cx.notify();
+    }
+
+    /// The grid icon-size track: a click-anywhere fill bar with no knob.
+    /// The bright left side reads as how big icons are now, the dim right
+    /// side as how much bigger they could get.
+    ///
+    /// Hand-rolled rather than gpui-component's `Slider` because that one
+    /// always draws a thumb, and its thumb ring and track are tinted from a
+    /// single colour — there is no way to keep the two-tone bar and lose the
+    /// knob. Doing it here also keeps the scrub out of gpui's drag system,
+    /// so dragging it no longer makes `cx.has_active_drag()` true for the
+    /// whole app.
+    fn icon_size_track(&self, icon_px: u32, cx: &mut Context<Self>) -> Div {
+        const TRACK_W: f32 = 96.0;
+        const TRACK_H: f32 = 6.0;
+        // The visible bar is 6 px; the grab box is much taller, because a
+        // 6-px target in a toolbar is a miss waiting to happen.
+        const TRACK_HIT_H: f32 = 20.0;
+
+        let lo = crate::grid::MIN_ICON_SIZE as f32;
+        let hi = crate::grid::MAX_ICON_SIZE as f32;
+        let frac = ((icon_px as f32 - lo) / (hi - lo)).clamp(0.0, 1.0);
+        let filled = cx.theme().foreground;
+        let rest = cx.theme().muted_foreground.opacity(0.25);
+        let entity = cx.entity();
+
+        div()
+            .relative()
+            .flex_shrink_0()
+            .w(px(TRACK_W))
+            .h(px(TRACK_HIT_H))
+            .cursor_pointer()
+            // Capture the painted bounds so a cursor x maps back to a size.
+            .child(
+                canvas(
+                    move |bounds, _, cx| {
+                        entity.update(cx, |this, _| this.icon_size_track = bounds)
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(TRACK_HIT_H / 2.0 - TRACK_H / 2.0))
+                    .left_0()
+                    .right_0()
+                    .h(px(TRACK_H))
+                    .rounded_full()
+                    .bg(rest)
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left_0()
+                            .w(relative(frac))
+                            // At the minimum size the fill would otherwise be
+                            // zero-width, leaving a bar that reads as empty
+                            // rather than as "all the way down". Keep a round
+                            // nub so the control still shows where it is.
+                            .min_w(px(TRACK_H))
+                            .rounded_full()
+                            .bg(filled),
+                    ),
+            )
+            // Press anywhere on the bar jumps there and starts scrubbing.
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, e: &gpui::MouseDownEvent, _window, cx| {
+                    cx.stop_propagation();
+                    this.icon_size_dragging = true;
+                    if let Some(size) = this.icon_size_at(e.position.x) {
+                        this.set_icon_size_live(size, cx);
+                    }
+                    cx.notify();
+                }),
+            )
     }
 
     /// Tabstrip above the toolbar. Each tab is a clickable pill
@@ -1974,7 +2160,7 @@ impl Shell {
     /// Show-Hidden moved out of here entirely and lives in the
     /// status bar now (paired with the item count, where view-mode
     /// state belongs).
-    fn title_bar(&self, cx: &mut Context<Self>) -> TitleBar {
+    fn title_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
         use crate::file_list::SortColumn;
         use gpui_component::menu::DropdownMenu;
         use gpui_component::sidebar::SidebarToggleButton;
@@ -2002,9 +2188,28 @@ impl Shell {
         // on a supported macOS. Cached after first resolve, so this is a
         // cheap render-time read (prewarmed at startup).
         let show_desktop_available = crate::platform_shell::show_desktop_available();
-        // View switcher + grid size stepper state.
+        // View switcher + grid size control state.
         let view_mode = self.active_tab().view_mode;
         let is_grid = matches!(view_mode, crate::grid::ViewMode::Grid);
+        // Live grid icon size — drives the slider's readout and greys the
+        // reset button out when there is nothing to reset. Render-time
+        // global read, no I/O.
+        let icon_px = crate::grid::icon_size(cx);
+        let readout_color = cx.theme().muted_foreground;
+        // Narrowest window (logical px at `ui_scale == 1`) with room for the
+        // slider + readout beside everything else up here. Below it they
+        // fold away and the -/+/reset stepper — which is what the toolbar
+        // had before the slider — carries the size on its own; without the
+        // gate the whole right-hand cluster, overflow menu included, is
+        // pushed off the edge of a narrow window.
+        //
+        // Deliberately a single local gate, not a tier system: the shell
+        // title bar has no width tiering (the viewer's toolbar does, and
+        // building the shell one is its own change).
+        const SLIDER_MIN_WINDOW_PX: f32 = 1060.0;
+        let ui_scale = window.rem_size().as_f32() / crate::text::BASE_REM_PX;
+        let show_size_slider =
+            is_grid && window.viewport_size().width.as_f32() >= SLIDER_MIN_WINDOW_PX * ui_scale;
         // SHELL_CONTEXT-bearing handle for the toolbar dropdowns, so
         // their items resolve keyboard-shortcut hints against the
         // shell's stable dispatch path instead of the focus-sensitive
@@ -2308,6 +2513,50 @@ impl Shell {
                             this.step_icon_size(1, cx);
                         }))
                 }))
+                // Reset the icon size to the default, beside the stepper it
+                // undoes. Disabled when already there, so the button states
+                // what it would do.
+                .children(is_grid.then(|| {
+                    Button::new("toolbar-icon-reset")
+                        .small()
+                        .ghost()
+                        .icon(gpui_component::Icon::empty().path("icons/undo-2.svg"))
+                        .tooltip(tr!("Reset icon size"))
+                        .disabled(icon_px == crate::grid::DEFAULT_ICON_SIZE)
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.reset_icon_size(cx);
+                        }))
+                }))
+                // Continuous icon-size slider — the exact size the −/＋
+                // stops cannot express — plus a live px readout.
+                //
+                // The mouse-down-stopping wrapper is the same title-bar
+                // drag guard the buttons use, but it matters more here:
+                // TitleBar starts a window move on the first mouse-move
+                // after a mouse-down it saw, and a slider *is* a drag, so
+                // without this every size drag would drag the window
+                // instead.
+                .children(show_size_slider.then(|| {
+                    h_flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .gap_2()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .child(self.icon_size_track(icon_px, cx))
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .min_w(rems(1.6))
+                                .text_scale_xs()
+                                .text_color(readout_color)
+                                .child(format!("{icon_px}")),
+                        )
+                }))
                 // Overflow menu — the less-frequent view + action verbs
                 // that don't each warrant a toolbar button. Items
                 // dispatch existing actions, so they target the current
@@ -2335,7 +2584,14 @@ impl Shell {
                                         .menu(tr!("Get Info"), Box::new(GetInfo))
                                         .menu(tr!("Open Viewer"), Box::new(OpenViewer))
                                         .menu(tr!("Disk Usage\u{2026}"), Box::new(OpenDiskUsage))
-                                        .menu(tr!("Find Duplicates\u{2026}"), Box::new(FindDuplicates))
+                                        .menu(
+                                            tr!("Find Duplicates\u{2026}"),
+                                            Box::new(FindDuplicates),
+                                        )
+                                        .menu(
+                                            tr!("Find Similar Images\u{2026}"),
+                                            Box::new(FindSimilarImages),
+                                        )
                                         .separator()
                                         .menu(tr!("Copy File List"), Box::new(CopyFileList))
                                         .separator()
@@ -2614,7 +2870,9 @@ impl Shell {
                     let native_dragging = crate::file_list::native_archive_drag_active();
                     move |this| {
                         if native_dragging {
-                            this.border_1().border_color(accent).bg(accent.opacity(0.18))
+                            this.border_1()
+                                .border_color(accent)
+                                .bg(accent.opacity(0.18))
                         } else {
                             this.bg(secondary)
                         }
@@ -2789,16 +3047,17 @@ impl Shell {
                                     }
                                     sub
                                 }
-                                Some(Some(_)) => {
-                                    sub.item(PopupMenuItem::new(tr!("No subfolders")).disabled(true))
-                                }
+                                Some(Some(_)) => sub
+                                    .item(PopupMenuItem::new(tr!("No subfolders")).disabled(true)),
                                 _ => {
                                     // Cold or in-flight — kick a warm and show
                                     // a placeholder; a re-open shows the list.
                                     s.update(c, |sh, cx| {
                                         sh.warm_breadcrumb_children(path_sub.clone(), cx);
                                     });
-                                    sub.item(PopupMenuItem::new(tr!("Loading\u{2026}")).disabled(true))
+                                    sub.item(
+                                        PopupMenuItem::new(tr!("Loading\u{2026}")).disabled(true),
+                                    )
                                 }
                             }
                         })
@@ -3250,6 +3509,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_close_tool_result))
             .on_action(cx.listener(Self::on_pop_out_disk_usage))
             .on_action(cx.listener(Self::on_find_duplicates))
+            .on_action(cx.listener(Self::on_find_similar_images))
             .on_action(cx.listener(Self::on_open_viewer))
             .on_action(cx.listener(Self::on_slideshow_from_here))
             .on_action(cx.listener(Self::on_sort_by_name))
@@ -3628,12 +3888,26 @@ impl Render for Shell {
                 } else {
                     splitter
                 };
-                let title_bar = self.title_bar(cx);
+                let title_bar = self.title_bar(window, cx);
                 let menu_bar = self.menu_bar.clone();
                 let dock_handle = self.dock_handle(cx);
                 v_flex()
                     .relative()
                     .size_full()
+                    // Icon-size scrub, tracked at the window root so the drag
+                    // keeps following the cursor once it leaves the 96-px bar
+                    // (and so a release anywhere still commits the size).
+                    // Both handlers return immediately unless a scrub is
+                    // actually in flight.
+                    .on_mouse_move(cx.listener(Self::on_icon_size_drag))
+                    .on_mouse_up(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _, _, cx| this.end_icon_size_drag(cx)),
+                    )
+                    .on_mouse_up_out(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _, _, cx| this.end_icon_size_drag(cx)),
+                    )
                     // Phase 7: TitleBar sits across the top with the
                     // app name + filter input + back/forward
                     // navigation. Replaces the sidebar-header brand

@@ -42,6 +42,48 @@ physical block mapping with `fcntl(F_LOG2PHYS_EXT)`). The panel also offers
 keeper, reclaiming the bytes without deleting any file (behind a confirm,
 macOS/APFS only).
 
+**Similar Images mode.** **Find Similar Images** reuses the same walk,
+cancellation, cloud-placeholder, package, minimum-size, hard-link, and clone
+handling, then branches into a perceptual-image funnel. It computes dHash-64
+and DCT pHash-64 plus mean RGB, uses eight 8-bit dHash bands for candidate
+search, requires both hashes to pass their thresholds, and verifies each
+group around a real medoid so transitive A≈B≈C chains cannot drift unchecked.
+Resized thumbnails and ordinary JPEG recompressions are intended matches.
+The local decoder currently covers PNG, JPEG, GIF, WebP, BMP, and TIFF; HEIC
+and camera RAW remain out of scope until they have a private cross-platform
+decoder that does not route personal images through an external service.
+
+Similar results always use the existing virtualized card panel, with small
+in-card previews, dimensions, hash distance, and a **Best copy** badge. The
+default keeper is ranked by pixel area, then encoded bytes, then oldest mtime.
+Its reclaim total is keeper-dependent (`sum(member bytes) - keeper bytes`) and
+updates immediately when the keeper changes. The exact-mode global “keep
+newest” sweep is absent, and clone dedup is both hidden and hard-gated: similar
+images are not byte-identical, so replacing one with another would lose data.
+Up/Down moves a non-destructive focus highlight through the members, while
+double-clicking a member or pressing Space opens the focused image in the
+existing full-size viewer on an explicit snapshot of that group only. Viewer
+navigation therefore moves between the current candidates without enumerating
+or retaining the surrounding photo library. **Find Similar Images** is available
+through Cmd+Shift+S (Ctrl+Shift+S on Windows/Linux), as well as the View menu and
+command palette.
+
+### Similar Images privacy boundary
+
+Perceptual signatures, decoded pixels, generated thumbnails, and candidate
+paths live only in the active worker/result surface. Similar mode does not
+read or write `DupeHashCache`, does not add database columns or rows, does not
+use the process-level thumbnail cache or Quick Look, and performs no network
+I/O. It also bypasses both process-wide NodeId-to-path registries. Full decoded
+pixels are dropped after signature calculation; result paths and previews are
+retained only by the active matched-group cards and any explicitly opened group
+viewer, then dropped when those surfaces close. The viewer's full-size decode
+cache is likewise scoped to that window and is never persisted. Decode errors
+are deliberately path-free. A regression test
+supplies a cache implementation that panics on any access and verifies result
+ids resolve to no process-registered path; the synthetic
+`--similar-images` screenshot fixture scans no filesystem at all.
+
 ## Target pipeline (the funnel)
 
 Every standalone tool worth copying — rmlint, czkawka, jdupes — converges on
@@ -149,13 +191,16 @@ pub struct DupeMember {
     pub node: NodeId,
     pub path: PathBuf,
     pub mtime_unix: i64,           // drives "keep newest"
+    pub bytes: u64,                // differs inside Similar groups
     pub file_id: Option<(u64, u64)>,
     pub is_hardlink: bool,         // shares an inode — no extra bytes
     pub is_clone: bool,            // APFS clone — distinct inode, shared blocks
+    pub image: Option<SimilarImageInfo>, // in-memory Similar result data
 }
 
 pub enum DupeFact {
     Group {
+        mode: DupeMode,
         full_hash: String,         // empty in paranoid mode
         bytes_each: u64,
         members: Vec<DupeMember>,
@@ -167,7 +212,7 @@ impl NativeFs {
     pub fn find_duplicates(
         &self,
         root: &Path,
-        opts: &DupeOpts,            // paranoid, scan_cloud, follow_packages, min_size
+        opts: &DupeOpts,            // mode + shared walk/exact options
         cache: Option<&dyn DupeHashCache>,
         batch_size: usize,
         cancel: &AtomicBool,
@@ -214,6 +259,9 @@ suppressed. `clone_dedup` (macOS) backs "Dedup → clones".
 - Results stream incrementally; the app stays navigable during scans.
 - Scans are cancellable at every stage; stale results are dropped by generation.
 - Progress is visible in the status bar / task panel.
+- Similar-image paths, pixels, hashes, and previews are never persisted or sent
+  over the network.
+- `clone_dedup` is permitted only for `DupeMode::Exact`.
 
 ## Shipped
 
@@ -225,9 +273,17 @@ suppressed. `clone_dedup` (macOS) backs "Dedup → clones".
 - Tests: funnel correctness, cache hit on rescan, hardlink/clone
   classification + reclaim exclusion, keep-newest / all-but-one selection,
   cancellation, stale-result drop.
+- Similar Images: dual perceptual hashes, exact banded candidate recall through
+  dHash distance 7, medoid-bounded grouping, best-copy selection, dynamic
+  reclaim, in-card previews, and cache-isolation/privacy regression tests.
 
 ## Follow-ups
 
+- Similar-image comparison workspace: pin a reference image, show the current
+  candidate beside it with synchronized zoom/pan, then optionally compare via
+  an opacity overlay, draggable wipe, or press-and-hold flicker. Side-by-side
+  should remain the safe default because crops and small framing shifts make a
+  raw overlay ambiguous; automatic alignment can be evaluated separately.
 - Whole-bundle (`*.app`) comparison as a unit, not inner-file dupes.
 - APFS-volume gating for "Dedup → clones" (today it's macOS-gated and falls
   back to a toast on non-APFS); per-physical-disk reader pool.

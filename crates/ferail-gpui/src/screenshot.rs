@@ -99,6 +99,9 @@ pub struct Args {
     /// (`DupePresentation::Panel`) regardless of the saved setting, so the
     /// card view can be captured headlessly. Implies `--find-duplicates`.
     pub dupe_panel: bool,
+    /// Seed the Similar Images panel with synthetic, path-free fixture data.
+    /// Performs no filesystem scan and never touches a personal photo.
+    pub similar_images: bool,
     /// Open the filter-syntax cheat sheet dialog ((?) beside the filter).
     pub filter_help: bool,
     /// Show the preview pane (`preview_visible` defaults to off; the
@@ -292,6 +295,7 @@ pub fn parse_args() -> Args {
                 args.find_duplicates = true;
                 args.dupe_panel = true;
             }
+            "--similar-images" => args.similar_images = true,
             "--filter-help" => args.filter_help = true,
             "--preview" => args.preview = true,
             "--sort" => {
@@ -394,6 +398,7 @@ OPTIONS
   --filter <text>          Set the filter input value.
   --search                 Focus the filter input (Cmd+F).
   --filter-help            Open the filter-syntax cheat sheet dialog.
+  --similar-images         Seed the Similar Images panel with synthetic fixtures.
   --preview                Show preview pane (always on today).
   --sort <column[-desc]>   Sort by name | size | kind | magic | mtime ± desc.
   --properties             Open Get Info pane. Lands in Stage 8.
@@ -524,10 +529,9 @@ pub fn run(args: Args) -> Result<()> {
                 // captures the same chrome the user actually sees —
                 // gpui-component's TitleBar widget replaces the OS
                 // default and hosts our brand + filter + nav row.
-                titlebar: Some(gpui_component::TitleBar::title_bar_options()),
                 show: false,
                 focus: false,
-                ..crate::base_window_options()
+                ..crate::shell_window_options()
             };
             // Open the window. Whether we hand back an
             // `Option<Entity<Shell>>` so the CLI flags can drive it
@@ -806,6 +810,7 @@ struct ShellArgs {
     search_subtree: Option<String>,
     find_duplicates: bool,
     dupe_panel: bool,
+    similar_images: bool,
     filter_help: bool,
     select_row: Option<usize>,
     select_name: Option<String>,
@@ -857,6 +862,7 @@ impl From<&Args> for ShellArgs {
             search_subtree: a.search_subtree.clone(),
             find_duplicates: a.find_duplicates,
             dupe_panel: a.dupe_panel,
+            similar_images: a.similar_images,
             filter_help: a.filter_help,
             select_row: a.select_row,
             select_name: a.select_name.clone(),
@@ -1021,7 +1027,7 @@ impl ShellArgs {
             let force_panel = self.dupe_panel;
             shell.update(cx, |s, cx| {
                 let tab_id = s.active_tab().id;
-                s.start_duplicate_scan(tab_id, None, cx);
+                s.start_duplicate_scan(tab_id, ferail_fs_native::DupeMode::Exact, None, cx);
                 if force_panel {
                     if let Some(dm) = s
                         .active_tab_mut()
@@ -1033,6 +1039,9 @@ impl ShellArgs {
                     }
                 }
             });
+        }
+        if self.similar_images {
+            shell.update(cx, |shell, cx| shell.seed_similar_images_for_screenshot(cx));
         }
         if self.preview {
             shell.update(cx, |s, cx| {

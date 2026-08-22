@@ -163,9 +163,7 @@ impl MagicType {
 
             // Office — extension is more familiar to users than
             // "Document (Word)" style. Keep concise.
-            MagicType::DocWord | MagicType::DocWordMacro | MagicType::DocWordOle => {
-                "Word document"
-            }
+            MagicType::DocWord | MagicType::DocWordMacro | MagicType::DocWordOle => "Word document",
             MagicType::DocExcel | MagicType::DocExcelMacro | MagicType::DocExcelOle => {
                 "Excel spreadsheet"
             }
@@ -453,7 +451,11 @@ impl MagicInfo {
             MagicType::ExeWindows | MagicType::DllWindows | MagicType::ExeWindowsNet => {
                 parts.push("Windows PE".into());
                 if let Some(is_64) = self.is_64bit {
-                    parts.push(if is_64 { "64-bit".into() } else { "32-bit".into() });
+                    parts.push(if is_64 {
+                        "64-bit".into()
+                    } else {
+                        "32-bit".into()
+                    });
                 }
                 let arch = self.arch.as_str();
                 if !arch.is_empty() {
@@ -473,7 +475,11 @@ impl MagicInfo {
             MagicType::ExeLinux | MagicType::SoLinux => {
                 parts.push("ELF".into());
                 if let Some(is_64) = self.is_64bit {
-                    parts.push(if is_64 { "64-bit".into() } else { "32-bit".into() });
+                    parts.push(if is_64 {
+                        "64-bit".into()
+                    } else {
+                        "32-bit".into()
+                    });
                 }
                 let kind = if self.is_relocatable {
                     "relocatable"
@@ -495,15 +501,17 @@ impl MagicInfo {
             MagicType::ExeMac | MagicType::DylibMac => {
                 parts.push("Mach-O".into());
                 if let Some(is_64) = self.is_64bit {
-                    parts.push(if is_64 { "64-bit".into() } else { "32-bit".into() });
-                }
-                parts.push(
-                    if matches!(self.magic_type, MagicType::DylibMac) {
-                        "dylib".into()
+                    parts.push(if is_64 {
+                        "64-bit".into()
                     } else {
-                        "executable".into()
-                    },
-                );
+                        "32-bit".into()
+                    });
+                }
+                parts.push(if matches!(self.magic_type, MagicType::DylibMac) {
+                    "dylib".into()
+                } else {
+                    "executable".into()
+                });
                 let arch = self.arch.as_str();
                 if !arch.is_empty() {
                     parts.push(arch.into());
@@ -645,7 +653,11 @@ impl MagicInfo {
             MagicType::Svx8 => {
                 parts.push("IFF 8SVX audio".into());
                 if let Some(ch) = self.channels {
-                    parts.push(if ch == 1 { "mono".into() } else { "stereo".into() });
+                    parts.push(if ch == 1 {
+                        "mono".into()
+                    } else {
+                        "stereo".into()
+                    });
                 }
                 if let Some(sr) = self.sample_rate {
                     let khz = sr as f32 / 1000.0;
@@ -775,7 +787,11 @@ impl MagicInfo {
                 };
                 parts.push(kind.into());
                 if let Some(ch) = self.channels {
-                    parts.push(if ch == 1 { "mono".into() } else { "stereo".into() });
+                    parts.push(if ch == 1 {
+                        "mono".into()
+                    } else {
+                        "stereo".into()
+                    });
                 }
                 if let Some(sr) = self.sample_rate {
                     let khz = sr as f32 / 1000.0;
@@ -885,7 +901,10 @@ mod tests {
         let mut info = MagicInfo::new(MagicType::ExeLinux);
         info.is_64bit = Some(true);
         info.arch = CpuArch::X64;
-        assert_eq!(info.description(), "ELF \u{b7} 64-bit \u{b7} executable \u{b7} x86-64");
+        assert_eq!(
+            info.description(),
+            "ELF \u{b7} 64-bit \u{b7} executable \u{b7} x86-64"
+        );
     }
 
     #[test]
@@ -894,7 +913,10 @@ mod tests {
         info.width = Some(1920);
         info.height = Some(1080);
         info.has_alpha = true;
-        assert_eq!(info.description(), "PNG image \u{00b7} 1920\u{00d7}1080 \u{00b7} alpha");
+        assert_eq!(
+            info.description(),
+            "PNG image \u{00b7} 1920\u{00d7}1080 \u{00b7} alpha"
+        );
     }
 
     #[test]

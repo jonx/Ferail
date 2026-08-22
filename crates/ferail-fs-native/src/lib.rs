@@ -11,11 +11,13 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
 
-use ferail_core::{tr, trn, EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId};
+use ferail_core::{
+    EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId, tr, trn,
+};
 
 pub mod archive;
 mod disk_usage_scanner;
@@ -25,39 +27,40 @@ mod icons;
 mod magic;
 pub mod media;
 pub mod paths;
+pub mod perceptual;
 mod search;
 pub mod stat_info;
 mod volumes;
 pub mod xattr_info;
 pub use archive::scratch;
 pub use archive::{
-    add_to_archive, archive_stamp, commit_archive_edits, convert_archive, create_archive,
-    materialize_archive_entry,
-    read_entry_bytes as read_archive_entry_bytes, extract_all as extract_archive,
-    inspect_archive_additions, probe_format as probe_archive_format,
-    extract_entries as extract_archive_entries, read_summary as read_archive_summary,
-    read_toc as read_archive_toc, AddOutcome, ArchiveAddition, ArchiveEditPlan, ArchiveError,
-    ArchiveRename, ArchiveStamp, ArchiveSummary, ConvertOptions, ConvertOutcome, CreateOptions,
-    ExtractOptions, ExtractOutcome, SkipReason, SkippedEntry,
+    AddOutcome, ArchiveAddition, ArchiveEditPlan, ArchiveError, ArchiveRename, ArchiveStamp,
+    ArchiveSummary, ConvertOptions, ConvertOutcome, CreateOptions, ExtractOptions, ExtractOutcome,
+    SkipReason, SkippedEntry, add_to_archive, archive_stamp, commit_archive_edits, convert_archive,
+    create_archive, extract_all as extract_archive, extract_entries as extract_archive_entries,
+    inspect_archive_additions, materialize_archive_entry, probe_format as probe_archive_format,
+    read_entry_bytes as read_archive_entry_bytes, read_summary as read_archive_summary,
+    read_toc as read_archive_toc,
 };
-pub use disk_usage_scanner::{recursive_size, recursive_totals, SubtreeTotals, DEFAULT_DU_BATCH};
+pub use disk_usage_scanner::{DEFAULT_DU_BATCH, SubtreeTotals, recursive_size, recursive_totals};
 pub use dupes::{
-    clone_dedup, DupeFact, DupeHashCache, DupeMember, DupeOpts, DupeStats, DEFAULT_DUPE_BATCH,
-    PARTIAL_HASH_BYTES,
+    DEFAULT_DUPE_BATCH, DupeFact, DupeHashCache, DupeMember, DupeMode, DupeOpts, DupeStats,
+    PARTIAL_HASH_BYTES, SimilarImageInfo, clone_dedup,
 };
+pub use perceptual::PerceptualThumbnail;
 pub use icons::fetch_icon_rgba;
 pub use magic::{
-    detect_magic, detect_magic_info, sniff_bytes_info, CpuArch, ElfOs, MagicInfo, MagicType,
-    PeSubsystem, MAGIC_REVISION,
+    CpuArch, ElfOs, MAGIC_REVISION, MagicInfo, MagicType, PeSubsystem, detect_magic,
+    detect_magic_info, sniff_bytes_info,
 };
 pub use paths::home_dir;
-pub use search::{SearchHit, SearchQuery, SearchStats, DEFAULT_SEARCH_BATCH};
+pub use search::{DEFAULT_SEARCH_BATCH, SearchHit, SearchQuery, SearchStats};
 pub use volumes::list_volumes;
 #[cfg(not(target_os = "macos"))]
 pub use volumes::volume_info_for_path;
 pub use xattr_info::{
-    clear_quarantine, details_from as quarantine_details_from, fetch_quarantine_info,
-    QuarantineInfo,
+    QuarantineInfo, clear_quarantine, details_from as quarantine_details_from,
+    fetch_quarantine_info,
 };
 
 const ROOT_NODE_RAW: u64 = 1;
@@ -530,16 +533,16 @@ pub fn trash_dirs() -> Vec<PathBuf> {
 #[cfg(windows)]
 pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
     use std::os::windows::ffi::OsStrExt;
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-        COINIT_APARTMENTTHREADED,
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+        CoUninitialize,
     };
     use windows::Win32::UI::Shell::{
-        FileOperation, IFileOperation, IShellItem, SHCreateItemFromParsingName, FOF_ALLOWUNDO,
-        FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FOFX_RECYCLEONDELETE,
+        FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FOFX_RECYCLEONDELETE,
+        FileOperation, IFileOperation, IShellItem, SHCreateItemFromParsingName,
     };
+    use windows::core::PCWSTR;
 
     struct ComGuard(bool);
     impl Drop for ComGuard {
@@ -657,8 +660,7 @@ pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
 /// isn't surfaced (the file list refreshes from disk), so returns `Ok(None)`.
 #[cfg(target_os = "linux")]
 pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
-    trash::delete(path)
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    trash::delete(path).map_err(|e| std::io::Error::other(e.to_string()))?;
     Ok(None)
 }
 
@@ -777,16 +779,15 @@ pub struct VolumeInfo {
 #[cfg(target_os = "macos")]
 pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
     ferail_core::path_guard::assert_off_ui_thread("volume_info_for_path");
+    use objc2::ClassType;
     use objc2::msg_send;
     use objc2::msg_send_id;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
-    use objc2::ClassType;
     use objc2_foundation::{
-        NSArray, NSString, NSURLResourceKey, NSURLVolumeAvailableCapacityKey,
+        NSArray, NSString, NSURL, NSURLResourceKey, NSURLVolumeAvailableCapacityKey,
         NSURLVolumeIsEjectableKey, NSURLVolumeIsInternalKey, NSURLVolumeIsLocalKey,
         NSURLVolumeIsRemovableKey, NSURLVolumeLocalizedNameKey, NSURLVolumeTotalCapacityKey,
-        NSURL,
     };
 
     let path_str = path.to_str()?;
@@ -831,11 +832,7 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
         let lookup_u64 = |key: &NSURLResourceKey| -> Option<u64> {
             let obj: &AnyObject = dict.get(key)?;
             let v: std::os::raw::c_longlong = msg_send![obj, longLongValue];
-            if v < 0 {
-                None
-            } else {
-                Some(v as u64)
-            }
+            if v < 0 { None } else { Some(v as u64) }
         };
         let lookup_bool = |key: &NSURLResourceKey| -> Option<bool> {
             let obj: &AnyObject = dict.get(key)?;
@@ -932,12 +929,12 @@ pub fn path_is_cloud_synced(_path: &Path) -> bool {
 /// item). Mirrors the cached-key discipline of `volume_info_for_path`.
 #[cfg(target_os = "macos")]
 fn url_is_ubiquitous(path: &Path) -> Option<bool> {
+    use objc2::ClassType;
     use objc2::msg_send;
     use objc2::msg_send_id;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
-    use objc2::ClassType;
-    use objc2_foundation::{NSArray, NSString, NSURLIsUbiquitousItemKey, NSURLResourceKey, NSURL};
+    use objc2_foundation::{NSArray, NSString, NSURL, NSURLIsUbiquitousItemKey, NSURLResourceKey};
 
     let path_str = path.to_str()?;
     unsafe {
@@ -1055,10 +1052,20 @@ pub fn folder_contents_summary(file_count: u64, dir_count: u64) -> String {
     // `{count}` (not the implicit `{n}`) so the number keeps its thousands
     // grouping; the plural category is still chosen from the raw count.
     fn files(n: u64) -> ferail_core::i18n::Text {
-        trn!("{count} file", "{count} files", n, count = group_thousands(n))
+        trn!(
+            "{count} file",
+            "{count} files",
+            n,
+            count = group_thousands(n)
+        )
     }
     fn folders(n: u64) -> ferail_core::i18n::Text {
-        trn!("{count} folder", "{count} folders", n, count = group_thousands(n))
+        trn!(
+            "{count} folder",
+            "{count} folders",
+            n,
+            count = group_thousands(n)
+        )
     }
     match (file_count, dir_count) {
         (0, 0) => tr!("Empty").into_string(),
@@ -1171,18 +1178,12 @@ mod tests {
     fn id_for_path_folds_mechanical_spellings() {
         let fs = NativeFs::new();
         let canonical = fs.id_for_path(Path::new("/tmp/ferail-id-test"));
-        assert_eq!(
-            fs.id_for_path(Path::new("/tmp/ferail-id-test/")),
-            canonical
-        );
+        assert_eq!(fs.id_for_path(Path::new("/tmp/ferail-id-test/")), canonical);
         assert_eq!(
             fs.id_for_path(Path::new("/tmp/./ferail-id-test")),
             canonical
         );
-        assert_eq!(
-            fs.id_for_path(Path::new("/tmp//ferail-id-test")),
-            canonical
-        );
+        assert_eq!(fs.id_for_path(Path::new("/tmp//ferail-id-test")), canonical);
         // Stored path is the normalized spelling.
         assert_eq!(
             fs.path_for(canonical),
@@ -1190,10 +1191,7 @@ mod tests {
         );
         // Case variants stay distinct (per-volume property; see
         // ferail_core::node_store::normalize_path_key).
-        assert_ne!(
-            fs.id_for_path(Path::new("/tmp/FERAIL-ID-TEST")),
-            canonical
-        );
+        assert_ne!(fs.id_for_path(Path::new("/tmp/FERAIL-ID-TEST")), canonical);
     }
 
     #[test]
@@ -1244,8 +1242,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn uf_hidden_flag_is_hidden_on_macos() {
-        let dir =
-            std::env::temp_dir().join(format!("ferail-ufhidden-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ferail-ufhidden-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let flagged = dir.join("flagged.txt");
         std::fs::write(&flagged, b"x").unwrap();

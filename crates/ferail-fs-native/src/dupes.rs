@@ -35,17 +35,26 @@ use std::time::Instant;
 use ferail_core::{EnumerationError, NodeId};
 
 use crate::disk_usage_scanner::is_mac_package;
-use crate::{map_io_error, NativeFs};
+use crate::{NativeFs, map_io_error};
 
 /// Bytes hashed for the partial-hash filter stage.
 pub const PARTIAL_HASH_BYTES: usize = 64 * 1024;
 /// Default fact-batch size.
 pub const DEFAULT_DUPE_BATCH: usize = 64;
 const PROGRESS_THROTTLE_MS: u128 = 250;
+const SIMILAR_THUMBNAIL_PX: u32 = 128;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DupeMode {
+    #[default]
+    Exact,
+    Similar,
+}
 
 /// Scan options.
 #[derive(Clone, Debug)]
 pub struct DupeOpts {
+    pub mode: DupeMode,
     /// Verify byte-for-byte within each full-hash group, splitting off any
     /// member that doesn't actually match. Removes hash-collision risk at
     /// the cost of re-reading confirmed groups.
@@ -64,6 +73,7 @@ pub struct DupeOpts {
 impl Default for DupeOpts {
     fn default() -> Self {
         Self {
+            mode: DupeMode::Exact,
             paranoid: false,
             scan_cloud: false,
             follow_packages: false,
@@ -80,6 +90,9 @@ pub struct DupeMember {
     /// Last-modified time (Unix seconds), so the UI can offer
     /// "keep newest" without re-stat-ing each row.
     pub mtime_unix: i64,
+    /// Logical file bytes. Exact groups all share one size; similar-image
+    /// groups do not.
+    pub bytes: u64,
     /// `(dev, inode)` identity. Members sharing this are hard links to the
     /// same bytes — one occupant of disk, several names.
     pub file_id: Option<(u64, u64)>,
@@ -90,6 +103,19 @@ pub struct DupeMember {
     /// storage with an earlier member via an APFS clone (`clonefile`):
     /// deleting it reclaims nothing either. Always `false` off macOS.
     pub is_clone: bool,
+    /// Present only for Similar Images results. Kept in memory and dropped
+    /// with the result surface; never written to the metadata database.
+    pub image: Option<SimilarImageInfo>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SimilarImageInfo {
+    pub width: u32,
+    pub height: u32,
+    pub dhash_distance: u32,
+    pub phash_distance: u32,
+    pub thumbnail: Option<crate::perceptual::PerceptualThumbnail>,
+    pub is_best: bool,
 }
 
 impl DupeMember {
@@ -106,6 +132,7 @@ impl DupeMember {
 pub enum DupeFact {
     /// A confirmed group of ≥2 byte-identical files.
     Group {
+        mode: DupeMode,
         /// BLAKE3 hex of the content (empty in `paranoid` mode, where
         /// grouping is by byte-equality rather than a digest).
         full_hash: String,
@@ -139,6 +166,7 @@ pub trait DupeHashCache {
 }
 
 /// A candidate file gathered during the walk.
+#[derive(Clone)]
 struct Candidate {
     node: NodeId,
     path: PathBuf,
@@ -178,8 +206,15 @@ impl NativeFs {
         let mut stats = DupeStats::default();
         let mut last_progress = Instant::now();
 
-        // Stage 1: walk + bucket by size.
+        // Shared stage: one privacy-preserving local walk. Exact mode buckets
+        // by size immediately; Similar mode keeps only supported image paths
+        // and performs all decoding after the walk.
         let mut by_size: HashMap<u64, Vec<Candidate>> = HashMap::new();
+        let mut similar_candidates: Vec<Candidate> = Vec::new();
+        // Similar-result ids are tab-local handles. Keep them out of
+        // NativeFs's process-wide NodeId→path registry so private photo paths
+        // disappear when the active result surface is dropped.
+        let mut similar_node_raw = 1u64 << 63;
         let mut stack: Vec<PathBuf> = vec![canonical_root];
         while let Some(dir) = stack.pop() {
             if cancel.load(Ordering::Relaxed) {
@@ -219,19 +254,47 @@ impl NativeFs {
                     continue;
                 }
                 stats.files_scanned = stats.files_scanned.saturating_add(1);
-                let node = self.id_for_path(&path);
-                by_size.entry(size).or_default().push(Candidate {
+                let node = match opts.mode {
+                    DupeMode::Exact => self.id_for_path(&path),
+                    DupeMode::Similar => {
+                        let node = NodeId::from_raw(similar_node_raw).expect("nonzero similar id");
+                        similar_node_raw = similar_node_raw.wrapping_add(1).max(1u64 << 63);
+                        node
+                    }
+                };
+                let candidate = Candidate {
                     node,
                     path,
                     size,
                     mtime_unix: mtime_unix(&meta),
                     file_id: file_id(&meta),
-                });
+                };
+                match opts.mode {
+                    DupeMode::Exact => by_size.entry(size).or_default().push(candidate),
+                    DupeMode::Similar
+                        if crate::perceptual::is_supported_image_path(&candidate.path) =>
+                    {
+                        similar_candidates.push(candidate)
+                    }
+                    DupeMode::Similar => {}
+                }
             }
             if last_progress.elapsed().as_millis() >= PROGRESS_THROTTLE_MS {
                 on_progress(stats);
                 last_progress = Instant::now();
             }
+        }
+
+        if opts.mode == DupeMode::Similar {
+            find_similar_images(
+                similar_candidates,
+                batch_size,
+                cancel,
+                &mut stats,
+                &mut on_batch,
+                &mut on_progress,
+            );
+            return None;
         }
 
         // Stage 2 + 3: within each size collision, partial-hash, then
@@ -318,6 +381,7 @@ impl NativeFs {
                             members.iter().filter(|m| !m.shares_storage()).count();
                         stats.groups_found = stats.groups_found.saturating_add(1);
                         buffer.push(DupeFact::Group {
+                            mode: DupeMode::Exact,
                             full_hash: if opts.paranoid {
                                 String::new()
                             } else {
@@ -342,6 +406,134 @@ impl NativeFs {
         on_progress(stats);
         None
     }
+}
+
+struct IndexedCandidate {
+    candidate: Candidate,
+    signature: crate::perceptual::PerceptualSignature,
+}
+
+/// Similar-image branch. Every signature and thumbnail is process memory only;
+/// the exact duplicate cache is intentionally not accepted by this function.
+fn find_similar_images(
+    candidates: Vec<Candidate>,
+    batch_size: usize,
+    cancel: &AtomicBool,
+    stats: &mut DupeStats,
+    on_batch: &mut impl FnMut(Vec<DupeFact>),
+    on_progress: &mut impl FnMut(DupeStats),
+) {
+    let mut indexed = Vec::with_capacity(candidates.len());
+    let mut last_progress = Instant::now();
+    for candidate in candidates {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        let Ok(signature) = crate::perceptual::signature_path(&candidate.path) else {
+            continue;
+        };
+        stats.bytes_hashed = stats.bytes_hashed.saturating_add(candidate.size);
+        indexed.push(IndexedCandidate {
+            candidate,
+            signature,
+        });
+        if last_progress.elapsed().as_millis() >= PROGRESS_THROTTLE_MS {
+            on_progress(*stats);
+            last_progress = Instant::now();
+        }
+    }
+
+    let signatures: Vec<_> = indexed.iter().map(|item| item.signature).collect();
+    let clusters = crate::perceptual::similarity_clusters(&signatures);
+    let mut buffer = Vec::with_capacity(batch_size);
+    for cluster in clusters {
+        if cancel.load(Ordering::Relaxed) {
+            if !buffer.is_empty() {
+                on_batch(std::mem::take(&mut buffer));
+            }
+            return;
+        }
+        let medoid = signatures[cluster.medoid];
+        let mut group: Vec<(Candidate, crate::perceptual::PerceptualSignature, u32, u32)> = cluster
+            .members
+            .into_iter()
+            .map(|index| {
+                let item = &indexed[index];
+                let (dhash_distance, phash_distance) =
+                    crate::perceptual::hash_distances(medoid, item.signature);
+                (
+                    item.candidate.clone(),
+                    item.signature,
+                    dhash_distance,
+                    phash_distance,
+                )
+            })
+            .collect();
+        // Default keeper: pixel area → encoded bytes → oldest mtime. Put it
+        // first so storage-sharing flags are relative to the survivor.
+        group.sort_by(|a, b| {
+            b.1.pixel_area()
+                .cmp(&a.1.pixel_area())
+                .then_with(|| b.0.size.cmp(&a.0.size))
+                .then_with(|| {
+                    let a_time = if a.0.mtime_unix > 0 {
+                        a.0.mtime_unix
+                    } else {
+                        i64::MAX
+                    };
+                    let b_time = if b.0.mtime_unix > 0 {
+                        b.0.mtime_unix
+                    } else {
+                        i64::MAX
+                    };
+                    a_time.cmp(&b_time)
+                })
+                .then_with(|| a.0.path.cmp(&b.0.path))
+        });
+
+        let raw_members: Vec<Candidate> = group.iter().map(|item| item.0.clone()).collect();
+        let mut members = build_members(raw_members);
+        for (index, (member, (_, signature, dhash_distance, phash_distance))) in
+            members.iter_mut().zip(group).enumerate()
+        {
+            // Re-decode only actual result members to produce the small visual
+            // chooser. Non-results never retain thumbnails.
+            let thumbnail = crate::perceptual::index_path(&member.path, SIMILAR_THUMBNAIL_PX)
+                .ok()
+                .map(|indexed| indexed.thumbnail);
+            member.image = Some(SimilarImageInfo {
+                width: signature.width,
+                height: signature.height,
+                dhash_distance,
+                phash_distance,
+                thumbnail,
+                is_best: index == 0,
+            });
+        }
+        if members.len() < 2 {
+            continue;
+        }
+        let distinct_occupants = members
+            .iter()
+            .filter(|member| !member.shares_storage())
+            .count();
+        stats.groups_found = stats.groups_found.saturating_add(1);
+        buffer.push(DupeFact::Group {
+            mode: DupeMode::Similar,
+            full_hash: String::new(),
+            bytes_each: 0,
+            members,
+            distinct_occupants,
+        });
+        if buffer.len() >= batch_size {
+            on_batch(std::mem::take(&mut buffer));
+            buffer.reserve(batch_size);
+        }
+    }
+    if !buffer.is_empty() {
+        on_batch(buffer);
+    }
+    on_progress(*stats);
 }
 
 /// Turn confirmed candidates into [`DupeMember`]s, flagging storage
@@ -370,9 +562,11 @@ fn build_members(group: Vec<Candidate>) -> Vec<DupeMember> {
                 node: c.node,
                 path: c.path,
                 mtime_unix: c.mtime_unix,
+                bytes: c.size,
                 file_id: c.file_id,
                 is_hardlink,
                 is_clone: false,
+                image: None,
             }
         })
         .collect();
@@ -569,8 +763,8 @@ fn is_dataless(_meta: &fs::Metadata) -> bool {
 /// exactly like hard links.
 #[cfg(target_os = "macos")]
 mod clone_detect {
-    use std::collections::hash_map::Entry;
     use std::collections::HashMap;
+    use std::collections::hash_map::Entry;
     use std::fs::File;
     use std::os::unix::io::AsRawFd;
     use std::path::Path;
@@ -637,6 +831,7 @@ mod clone_detect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::{DynamicImage, ImageBuffer, Rgba};
     use std::io::Write;
     use std::sync::atomic::AtomicU32;
 
@@ -678,6 +873,84 @@ mod tests {
         let mut facts = Vec::new();
         fs.find_duplicates(root, &opts, None, 8, &cancel, |b| facts.extend(b), |_| {});
         facts
+    }
+
+    struct RejectingCache;
+
+    impl DupeHashCache for RejectingCache {
+        fn get_full(&self, _path: &Path, _size: u64, _mtime_unix: i64) -> Option<String> {
+            panic!("similar-image scans must not read the persistent hash cache")
+        }
+
+        fn put_full(&self, _path: &Path, _size: u64, _mtime_unix: i64, _hash: &str) {
+            panic!("similar-image scans must not write the persistent hash cache")
+        }
+    }
+
+    fn photo_fixture(width: u32, height: u32) -> DynamicImage {
+        DynamicImage::ImageRgba8(ImageBuffer::from_fn(width, height, |x, y| {
+            let checker = (((x / 12 + y / 17) % 2) * 52) as u8;
+            Rgba([
+                (x as u8).wrapping_add(checker),
+                (y as u8).wrapping_mul(2),
+                (x as u8 ^ y as u8).wrapping_add(checker),
+                255,
+            ])
+        }))
+    }
+
+    #[test]
+    fn similar_mode_finds_a_photo_and_thumbnail_without_using_persistent_cache() {
+        let fx = fixture();
+        let original = photo_fixture(640, 480);
+        original.save(fx.path().join("original.png")).unwrap();
+        original
+            .resize_exact(160, 120, image::imageops::FilterType::Lanczos3)
+            .save(fx.path().join("thumbnail.png"))
+            .unwrap();
+
+        let fs = NativeFs::new();
+        let cancel = AtomicBool::new(false);
+        let mut facts = Vec::new();
+        let opts = DupeOpts {
+            mode: DupeMode::Similar,
+            ..DupeOpts::default()
+        };
+        fs.find_duplicates(
+            fx.path(),
+            &opts,
+            Some(&RejectingCache),
+            8,
+            &cancel,
+            |batch| facts.extend(batch),
+            |_| {},
+        );
+
+        assert_eq!(facts.len(), 1);
+        let DupeFact::Group { mode, members, .. } = &facts[0];
+        assert_eq!(*mode, DupeMode::Similar);
+        assert_eq!(members.len(), 2);
+        assert!(members[0].image.as_ref().is_some_and(|image| image.is_best));
+        assert_eq!(
+            members[0]
+                .image
+                .as_ref()
+                .map(|image| (image.width, image.height)),
+            Some((640, 480))
+        );
+        assert!(members.iter().all(|member| {
+            member
+                .image
+                .as_ref()
+                .and_then(|image| image.thumbnail.as_ref())
+                .is_some()
+        }));
+        assert!(
+            members
+                .iter()
+                .all(|member| fs.path_for(member.node).is_none()),
+            "similar-image paths must not enter NativeFs's process-wide registry"
+        );
     }
 
     #[test]

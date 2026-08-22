@@ -12,9 +12,9 @@ use crate::{
     settings::{SettingsView, category_from_arg},
     shell::{
         ClearRecents, CloseTab, CloseWindow, CopyPath, DeleteImmediately, EmptyTrash,
-        FindDuplicates, FocusFilter, GoHome, GoToFolder, MoveToTrash, NavigateBack,
-        NavigateForward, NavigateParent, NewFolder, NewTab, OpenDiskUsage, OpenSelected,
-        OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell, ShowDesktop,
+        FindDuplicates, FindSimilarImages, FocusFilter, GoHome, GoToFolder, MoveToTrash,
+        NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab, OpenDiskUsage,
+        OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell, ShowDesktop,
         ToggleFavoriteForTarget, ToggleHidden, TogglePreview,
     },
 };
@@ -33,7 +33,10 @@ use gpui_component::Theme;
 // - `BringAllToFront` — Window ▸ Bring All to Front. Raises every open
 //                       window (shells, viewers, tool windows) above
 //                       other apps'. See `bring_all_to_front`.
-actions!(app, [Quit, OpenAbout, CheckForUpdates, NewWindow, BringAllToFront]);
+actions!(
+    app,
+    [Quit, OpenAbout, CheckForUpdates, NewWindow, BringAllToFront]
+);
 
 pub fn run_gui(args: screenshot::Args) {
     // Windows shell: assign our own AppUserModelID so the taskbar
@@ -106,9 +109,7 @@ pub fn run_gui(args: screenshot::Args) {
         // has built its NSApplication — calling from `main()` panics
         // ("Ivar platform not found on class NSApplication").
 
-        let icon_result = crate::platform_shell::set_app_icon_from_png_bytes(
-            crate::app_icon::PNG,
-        );
+        let icon_result = crate::platform_shell::set_app_icon_from_png_bytes(crate::app_icon::PNG);
         crate::log_info!(90, "set_app_icon: {:?}", icon_result);
         // Populate the About-panel dictionary so OpenAbout brings up a
         // dialog with our name + version instead of the AppKit bare
@@ -125,9 +126,7 @@ pub fn run_gui(args: screenshot::Args) {
         //   2. `FERAIL_THEME` env var (light / dark / system)
         //   3. Persisted `theme_pref` in app_state
         //   4. macOS Appearance via `system_is_dark()`
-        let env_theme = std::env::var("FERAIL_THEME")
-            .ok()
-            .map(|s| s.to_lowercase());
+        let env_theme = std::env::var("FERAIL_THEME").ok().map(|s| s.to_lowercase());
         let persisted_theme = crate::app_state::load().theme_pref;
         let resolve_string = |s: &str| -> Option<gpui_component::ThemeMode> {
             match s {
@@ -155,10 +154,7 @@ pub fn run_gui(args: screenshot::Args) {
         // Sync native chrome (titlebars, traffic lights, menus) to the
         // app theme so secondary windows don't show system-dark chrome
         // under a light theme (or vice versa).
-        crate::platform_shell::set_app_appearance(matches!(
-            mode,
-            gpui_component::ThemeMode::Dark
-        ));
+        crate::platform_shell::set_app_appearance(matches!(mode, gpui_component::ThemeMode::Dark));
 
         // Phase 10 polish: System-Appearance follow via a global
         // AtomicBool the Shell polls on each render. The native
@@ -386,9 +382,9 @@ fn open_shell_window_sized(
         window_bounds: Some(WindowBounds::centered(size(px(w), px(h)), cx)),
         // gpui-component's TitleBar replaces the macOS default title
         // text + adopts the traffic-light area so our custom title-
-        // bar content (brand + filter + nav) sits flush across the top.
-        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
-        ..crate::base_window_options()
+        // bar content (brand + filter + nav) sits flush across the top,
+        // and claims the titlebar drag so that bar's own controls work.
+        ..crate::shell_window_options()
     };
     cx.spawn(async move |cx| {
         // The main window failing to open is fatal to a useful session, but a
@@ -439,8 +435,7 @@ fn open_shell_window_then(
 ) {
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(1180.0), px(760.0)), cx)),
-        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
-        ..crate::base_window_options()
+        ..crate::shell_window_options()
     };
     cx.spawn(async move |cx| {
         match cx.open_window(opts, |window, cx| {
@@ -483,6 +478,10 @@ pub(crate) fn install_app_menus(cx: &mut App) {
         MenuItem::action(
             title("view.find_duplicates", "Find Duplicates"),
             FindDuplicates,
+        ),
+        MenuItem::action(
+            title("view.find_similar_images", "Find Similar Images"),
+            FindSimilarImages,
         ),
         MenuItem::action(title("view.disk_usage", "Disk Usage"), OpenDiskUsage),
     ];
@@ -534,10 +533,7 @@ pub(crate) fn install_app_menus(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action(title("selection.activate", "Open"), OpenSelected),
                 MenuItem::action(
-                    title(
-                        "file.reveal_in_finder",
-                        ferail_core::commands::REVEAL_LABEL,
-                    ),
+                    title("file.reveal_in_finder", ferail_core::commands::REVEAL_LABEL),
                     RevealInFinder,
                 ),
                 MenuItem::separator(),

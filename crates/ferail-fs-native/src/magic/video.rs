@@ -70,8 +70,8 @@ fn sniff_mp4(buf: &[u8]) -> MagicInfo {
 
     let mut pos = 0usize;
     while pos + 8 < buf.len() {
-        let box_size = u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
-            as usize;
+        let box_size =
+            u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]]) as usize;
         if box_size < 8 || pos + box_size > buf.len() {
             break;
         }

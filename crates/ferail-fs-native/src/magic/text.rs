@@ -82,7 +82,10 @@ pub(super) fn sniff(buf: &[u8]) -> Option<MagicInfo> {
 }
 
 fn sniff_shebang(buf: &[u8]) -> (MagicType, Option<&'static str>) {
-    let end = buf.iter().position(|&b| b == b'\n').unwrap_or(buf.len().min(128));
+    let end = buf
+        .iter()
+        .position(|&b| b == b'\n')
+        .unwrap_or(buf.len().min(128));
     let line = String::from_utf8_lossy(&buf[2..end]).to_ascii_lowercase();
     if line.contains("bash") || line.contains("/sh") || line.contains(" sh") {
         (MagicType::ScriptBash, Some("bash"))

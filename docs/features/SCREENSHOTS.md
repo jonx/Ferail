@@ -54,7 +54,7 @@ scratch). If a committed doc needs to reference an image, copy it into
   `--select-rows a,b,c` (first = anchor, last = lead), `--sort <col[-desc]>`,
   `--view grid|list`.
 - **Search & dupes** — `--filter <text>`, `--search`, `--search-subtree <needle>`,
-  `--find-duplicates`, `--dupe-panel`.
+  `--find-duplicates`, `--dupe-panel`, `--similar-images`.
 - **Live input simulation** — `--breadcrumb <text>` (enters Cmd+L edit mode and
   *types* through the completion provider), `--keys "<gpui keystrokes>"`
   (dispatched through the real window key path; `pause` token waits out async UI
@@ -118,6 +118,10 @@ cargo run --bin ferail-gpui -- \
 
 `--dupe-panel` implies `--find-duplicates` and forces the dedicated card
 presentation regardless of the saved `DupePresentation` setting.
+
+`--similar-images` opens the same panel with a deterministic synthetic group,
+including previews, dimensions, distances, and the best-copy keeper. It does
+not enumerate the selected folder or read any personal image.
 
 ### Breadcrumb autocomplete, then drive it with the keyboard
 

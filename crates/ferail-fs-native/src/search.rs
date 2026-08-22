@@ -21,7 +21,7 @@ use std::time::Instant;
 use ferail_core::{EnumerationError, FileEntry};
 
 use crate::disk_usage_scanner::{is_icloud_path, is_mac_package};
-use crate::{map_io_error, NativeFs};
+use crate::{NativeFs, map_io_error};
 
 /// Default match-batch size, mirroring `DEFAULT_ENUMERATION_BATCH`.
 pub const DEFAULT_SEARCH_BATCH: usize = 256;
@@ -188,7 +188,10 @@ impl NativeFs {
                     // same cached fields Tier 0 filters on.
                     if let Some(entry) = self.dirent_to_file_entry(&dirent) {
                         if expr.is_none_or(|e| e.metadata_matches(&entry)) {
-                            buffer.push(SearchHit { entry, path: child_path.clone() });
+                            buffer.push(SearchHit {
+                                entry,
+                                path: child_path.clone(),
+                            });
                             stats.matches = stats.matches.saturating_add(1);
                             if buffer.len() >= batch_size {
                                 on_batch(std::mem::take(&mut buffer));
@@ -261,16 +264,32 @@ mod tests {
         // tmp/{readme.txt, notes.md, sub/{report.txt, image.png}, .hidden/secret.txt}
         static SEQ: AtomicU32 = AtomicU32::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("ferail-searchfix-{}-{}", std::process::id(), n));
+        let root =
+            std::env::temp_dir().join(format!("ferail-searchfix-{}-{}", std::process::id(), n));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        File::create(root.join("readme.txt")).unwrap().write_all(b"x").unwrap();
-        File::create(root.join("notes.md")).unwrap().write_all(b"x").unwrap();
+        File::create(root.join("readme.txt"))
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+        File::create(root.join("notes.md"))
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
         fs::create_dir(root.join("sub")).unwrap();
-        File::create(root.join("sub").join("report.txt")).unwrap().write_all(b"x").unwrap();
-        File::create(root.join("sub").join("image.png")).unwrap().write_all(b"x").unwrap();
+        File::create(root.join("sub").join("report.txt"))
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+        File::create(root.join("sub").join("image.png"))
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
         fs::create_dir(root.join(".hidden")).unwrap();
-        File::create(root.join(".hidden").join("secret.txt")).unwrap().write_all(b"x").unwrap();
+        File::create(root.join(".hidden").join("secret.txt"))
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
         Fixture { root }
     }
 
@@ -296,7 +315,12 @@ mod tests {
         let tmp = fixture();
         let hits = run(
             tmp.path(),
-            SearchQuery { needle: "txt".into(), match_path: false, include_hidden: false, expr: None },
+            SearchQuery {
+                needle: "txt".into(),
+                match_path: false,
+                include_hidden: false,
+                expr: None,
+            },
         );
         // readme.txt + sub/report.txt; .hidden/secret.txt excluded.
         assert_eq!(hits, vec!["readme.txt", "report.txt"]);
@@ -307,7 +331,12 @@ mod tests {
         let tmp = fixture();
         let hits = run(
             tmp.path(),
-            SearchQuery { needle: "REPORT".into(), match_path: false, include_hidden: false, expr: None },
+            SearchQuery {
+                needle: "REPORT".into(),
+                match_path: false,
+                include_hidden: false,
+                expr: None,
+            },
         );
         assert_eq!(hits, vec!["report.txt"]);
     }
@@ -317,7 +346,12 @@ mod tests {
         let tmp = fixture();
         let hits = run(
             tmp.path(),
-            SearchQuery { needle: "secret".into(), match_path: false, include_hidden: true, expr: None },
+            SearchQuery {
+                needle: "secret".into(),
+                match_path: false,
+                include_hidden: true,
+                expr: None,
+            },
         );
         assert_eq!(hits, vec!["secret.txt"]);
     }
@@ -327,7 +361,12 @@ mod tests {
         let tmp = fixture();
         let hits = run(
             tmp.path(),
-            SearchQuery { needle: String::new(), match_path: false, include_hidden: false, expr: None },
+            SearchQuery {
+                needle: String::new(),
+                match_path: false,
+                include_hidden: false,
+                expr: None,
+            },
         );
         assert!(hits.is_empty());
     }
@@ -340,7 +379,12 @@ mod tests {
         let mut count = 0;
         let err = fs.search_subtree(
             tmp.path(),
-            &SearchQuery { needle: "txt".into(), match_path: false, include_hidden: false, expr: None },
+            &SearchQuery {
+                needle: "txt".into(),
+                match_path: false,
+                include_hidden: false,
+                expr: None,
+            },
             8,
             &cancel,
             false,

@@ -15,13 +15,13 @@ use std::sync::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ferail_core::{EnumerationError, FileEntry};
-use ferail_fs_native::{DEFAULT_DUPE_BATCH, DupeFact, DupeHashCache, DupeOpts, NativeFs};
+use ferail_core::{EnumerationError, FileEntry, NodeId};
+use ferail_fs_native::{DEFAULT_DUPE_BATCH, DupeFact, DupeHashCache, DupeMode, DupeOpts, NativeFs};
 use gpui::{AnyWindowHandle, Context, SharedString};
 use gpui_component::WindowExt;
 
 use super::Shell;
-use super::tab::{DupeGroupMember, DupeGroupView, TabId, ToolResultSurface};
+use super::tab::{DupeGroupMember, DupeGroupView, SimilarImageView, TabId, ToolResultSurface};
 use crate::dupe_cache::DbHashCache;
 use crate::feature_settings::DupeConfig;
 use crate::tasks::TaskKind;
@@ -81,6 +81,7 @@ pub(super) fn run_dupe_load(
             let mut batch = DupeBatch::default();
             for fact in facts {
                 let DupeFact::Group {
+                    mode,
                     full_hash,
                     bytes_each,
                     members,
@@ -89,38 +90,71 @@ pub(super) fn run_dupe_load(
                 group_no += 1;
                 let mut gv_members = Vec::with_capacity(members.len());
                 for m in members {
-                    // file_entry_for_path is the only I/O here, and we're
-                    // on the worker thread — exactly where it belongs.
-                    let Some((entry, path)) =
-                        member_row(&fs, &m.path, &root, group_no, m.is_hardlink, m.is_clone)
-                    else {
-                        continue;
+                    // Similar mode deliberately does not call
+                    // file_entry_for_path: that helper registers paths in
+                    // NativeFs's process-wide node map. Its cards need only
+                    // this scan-local member model.
+                    let (node, path, entry) = if mode == DupeMode::Similar {
+                        (m.node, m.path.clone(), None)
+                    } else {
+                        let Some((entry, path)) = member_row(
+                            &fs,
+                            &m.path,
+                            &root,
+                            group_no,
+                            m.is_hardlink,
+                            m.is_clone,
+                        ) else {
+                            continue;
+                        };
+                        (entry.id, path, Some(entry))
                     };
                     gv_members.push(DupeGroupMember {
-                        node: entry.id,
+                        node,
                         path: path.clone(),
                         mtime_unix: m.mtime_unix,
+                        bytes: m.bytes,
                         is_hardlink: m.is_hardlink,
                         is_clone: m.is_clone,
+                        image: m.image.map(|image| SimilarImageView {
+                            width: image.width,
+                            height: image.height,
+                            dhash_distance: image.dhash_distance,
+                            phash_distance: image.phash_distance,
+                            is_best: image.is_best,
+                            raw_thumbnail: image.thumbnail,
+                            thumbnail: None,
+                        }),
                     });
-                    batch.paths.insert(entry.id, path);
-                    batch.entries.push(entry);
+                    if let Some(entry) = entry {
+                        batch.paths.insert(node, path);
+                        batch.entries.push(entry);
+                    }
                 }
                 if gv_members.len() < 2 {
                     continue; // a member vanished mid-scan; no longer a group
                 }
+                let keeper = if mode == DupeMode::Similar {
+                    gv_members
+                        .iter()
+                        .find(|member| member.image.as_ref().is_some_and(|image| image.is_best))
+                        .map(|member| member.node)
+                } else {
+                    None
+                };
                 let view = DupeGroupView {
                     group_no,
                     full_hash,
+                    mode,
                     bytes_each,
                     members: gv_members,
                     expanded: true,
-                    keeper: None,
+                    keeper,
                 };
                 batch.reclaimable = batch.reclaimable.saturating_add(view.reclaimable_bytes());
                 batch.groups.push(view);
             }
-            if !batch.entries.is_empty() && tx.send_blocking(DupeMsg::Batch(batch)).is_err() {
+            if !batch.groups.is_empty() && tx.send_blocking(DupeMsg::Batch(batch)).is_err() {
                 cancel.store(true, Ordering::Relaxed);
             }
         },
@@ -151,8 +185,12 @@ pub(super) fn member_row(
         })
         .unwrap_or_default();
     let location = location_with_note(&location, is_hardlink, is_clone);
-    entry.display_description =
-        tr!("#{group} \u{00B7} {location}", group = group_no, location = location).to_string();
+    entry.display_description = tr!(
+        "#{group} \u{00B7} {location}",
+        group = group_no,
+        location = location
+    )
+    .to_string();
     Some((entry, path.to_path_buf()))
 }
 
@@ -160,11 +198,18 @@ pub(super) fn member_row(
 /// extra space" note when it reclaims nothing, or the bare location for a
 /// storage-owning copy. Shared by the row description and the panel's
 /// member line.
-pub(super) fn location_with_note(location: &str, is_hardlink: bool, is_clone: bool) -> SharedString {
+pub(super) fn location_with_note(
+    location: &str,
+    is_hardlink: bool,
+    is_clone: bool,
+) -> SharedString {
     if is_hardlink {
         tr!("{location} \u{00B7} hard link", location = location)
     } else if is_clone {
-        tr!("{location} \u{00B7} clone \u{2014} no extra space", location = location)
+        tr!(
+            "{location} \u{00B7} clone \u{2014} no extra space",
+            location = location
+        )
     } else {
         SharedString::from(location.to_owned())
     }
@@ -176,6 +221,7 @@ impl Shell {
     pub fn start_duplicate_scan(
         &mut self,
         tab_id: TabId,
+        mode: DupeMode,
         notify_window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
@@ -184,8 +230,13 @@ impl Shell {
         };
         let root = self.tabs[idx].current_dir.clone();
         let config = DupeConfig::load();
-        let presentation = config.presentation;
-        let opts = config.opts();
+        let presentation = if mode == DupeMode::Similar {
+            crate::feature_settings::DupePresentation::Panel
+        } else {
+            config.presentation
+        };
+        let mut opts = config.opts();
+        opts.mode = mode;
 
         self.tabs[idx].load_generation = self.tabs[idx].load_generation.wrapping_add(1);
         let generation = self.tabs[idx].load_generation;
@@ -209,9 +260,13 @@ impl Shell {
         self.tabs[idx].lead = None;
         self.tabs[idx].range_live = false;
         self.tabs[idx].filtered_out.clear();
-        self.tabs[idx].tool_result =
-            Some(ToolResultSurface::duplicates(root.clone(), presentation));
+        self.tabs[idx].tool_result = Some(ToolResultSurface::duplicates(
+            root.clone(),
+            presentation,
+            mode,
+        ));
         self.tabs[idx].dupe_groups.clear();
+        self.tabs[idx].dupe_panel_focus = None;
         self.tabs[idx].dupe_panel_scroll = crate::multi_table::VirtualListScrollHandle::new();
         let table = self.tabs[idx].table.clone();
         table.update(cx, |state, cx| {
@@ -221,7 +276,11 @@ impl Shell {
 
         let cancel = Arc::new(AtomicBool::new(false));
         self.tabs[idx].load_cancel = Some(cancel.clone());
-        let label = tr!("Finding duplicates in {root}", root = short_root(&root));
+        let label = if mode == DupeMode::Similar {
+            tr!("Finding similar images in {root}", root = short_root(&root))
+        } else {
+            tr!("Finding duplicates in {root}", root = short_root(&root))
+        };
         let task = self.process.tasks.borrow_mut().begin_with_cancel(
             TaskKind::DuplicateScan,
             label,
@@ -231,14 +290,18 @@ impl Shell {
             self.process.tasks.borrow_mut().end(previous);
         }
 
-        // DB-backed hash cache so a rescan skips full hashing.
-        let cache = self.process.db_snapshot().map(|db| {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            DbHashCache::new(db, now)
-        });
+        // Exact hashes may use the metadata DB. Similar-image signatures and
+        // previews are deliberately scan-local and never persisted.
+        let cache = (mode == DupeMode::Exact)
+            .then(|| self.process.db_snapshot())
+            .flatten()
+            .map(|db| {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                DbHashCache::new(db, now)
+            });
         let fs = self.process.fs.clone();
         let (tx, rx) = async_channel::unbounded();
         cx.background_executor()
@@ -317,6 +380,12 @@ impl Shell {
                     .and_then(|surface| surface.dupe_mode())
                     .map(|mode| mode.wasted_bytes)
                     .unwrap_or(0);
+                let mode = self.tabs[idx]
+                    .tool_result
+                    .as_ref()
+                    .and_then(|surface| surface.dupe_mode())
+                    .map(|mode| mode.mode)
+                    .unwrap_or(DupeMode::Exact);
                 let mut surfaced = false;
                 if let Some(tab) = self.tabs.get_mut(idx) {
                     if let Some(id) = tab.load_task.take() {
@@ -327,15 +396,28 @@ impl Shell {
                 }
                 if let Some(window) = notify_window {
                     if let Some(error) = error {
-                        let message =
-                            super::enumeration_error_message(&tr!("Duplicate scan"), &error);
+                        let title = if mode == DupeMode::Similar {
+                            tr!("Similar image scan")
+                        } else {
+                            tr!("Duplicate scan")
+                        };
+                        let message = super::enumeration_error_message(&title, &error);
                         let _ = window.update(cx, |_, window, cx| {
                             use gpui_component::notification::Notification;
                             window.push_notification(Notification::error(message), cx);
                         });
                     } else if surfaced {
-                        let message = if groups == 0 {
+                        let message = if mode == DupeMode::Similar && groups == 0 {
+                            tr!("Similar image scan finished: no similar images found")
+                        } else if groups == 0 {
                             tr!("Duplicate scan finished: no duplicates found")
+                        } else if mode == DupeMode::Similar {
+                            trn!(
+                                "Similar image scan finished: {n} group · {reclaimable} reclaimable",
+                                "Similar image scan finished: {n} groups · {reclaimable} reclaimable",
+                                groups,
+                                reclaimable = ferail_fs_native::humanize_bytes(reclaimable)
+                            )
                         } else {
                             trn!(
                                 "Duplicate scan finished: {n} group \u{00B7} {reclaimable} reclaimable",
@@ -357,21 +439,46 @@ impl Shell {
     /// Apply one worker-built batch. Pure data shuffling — the rows and
     /// the panel model were already built off the UI thread, so this only
     /// registers node ids, bumps the running totals, and appends.
-    fn apply_dupe_batch_in_tab(&mut self, idx: usize, batch: DupeBatch, cx: &mut Context<Self>) {
-        if batch.entries.is_empty() {
+    fn apply_dupe_batch_in_tab(
+        &mut self,
+        idx: usize,
+        mut batch: DupeBatch,
+        cx: &mut Context<Self>,
+    ) {
+        if batch.entries.is_empty() && batch.groups.is_empty() {
             return;
         }
-        let panel_mode = self
+        let dupe_display = self
             .tabs
             .get(idx)
             .and_then(|t| t.tool_result.as_ref())
             .and_then(|surface| surface.dupe_mode())
-            .is_some_and(|dm| dm.presentation == crate::feature_settings::DupePresentation::Panel);
-        for (id, path) in &batch.paths {
-            self.process
-                .node_store
-                .borrow_mut()
-                .get_or_create_path_with_id(path.clone(), *id);
+            .map(|dm| (dm.presentation, dm.mode));
+        let panel_mode = dupe_display.is_some_and(|(presentation, _)| {
+            presentation == crate::feature_settings::DupePresentation::Panel
+        });
+        // Similar-image paths belong only to the active panel. Do not copy
+        // them into the process-wide node store, where they could outlive it.
+        if !dupe_display.is_some_and(|(_, mode)| mode == DupeMode::Similar) {
+            for (id, path) in &batch.paths {
+                self.process
+                    .node_store
+                    .borrow_mut()
+                    .get_or_create_path_with_id(path.clone(), *id);
+            }
+        }
+        for group in &mut batch.groups {
+            for member in &mut group.members {
+                let Some(image) = member.image.as_mut() else {
+                    continue;
+                };
+                let Some(raw) = image.raw_thumbnail.take() else {
+                    continue;
+                };
+                image.thumbnail = Some(Arc::new(crate::icons::build_render_image(
+                    raw.rgba, raw.width, raw.height,
+                )));
+            }
         }
         {
             let Some(dm) = self.tabs.get_mut(idx).and_then(|t| {
@@ -411,6 +518,124 @@ impl Shell {
         self.apply_pending_select_row_in_tab(idx, cx);
         cx.notify();
     }
+
+    /// Deterministic Similar Images state for the headless screenshot harness.
+    /// The paths and pixels are synthetic; no filesystem or metadata DB is read.
+    pub(crate) fn seed_similar_images_for_screenshot(&mut self, cx: &mut Context<Self>) {
+        if let Some(cancel) = self.active_tab_mut().load_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        let root = PathBuf::from("/Sample Library");
+        let specs = [
+            (
+                9_100_001,
+                "coast-original.jpg",
+                4032,
+                3024,
+                7_800_000,
+                0,
+                0,
+                true,
+                0x3e87a8,
+            ),
+            (
+                9_100_002,
+                "coast-edited.jpg",
+                3024,
+                2268,
+                4_200_000,
+                3,
+                5,
+                false,
+                0x4a91ad,
+            ),
+            (
+                9_100_003,
+                "coast-thumbnail.jpg",
+                800,
+                600,
+                310_000,
+                4,
+                7,
+                false,
+                0x5799b2,
+            ),
+        ];
+        let members = specs
+            .into_iter()
+            .map(
+                |(id, name, width, height, bytes, dhash, phash, is_best, color)| DupeGroupMember {
+                    node: NodeId::from(id),
+                    path: root.join(name),
+                    mtime_unix: 1_700_000_000 + id as i64,
+                    bytes,
+                    is_hardlink: false,
+                    is_clone: false,
+                    image: Some(SimilarImageView {
+                        width,
+                        height,
+                        dhash_distance: dhash,
+                        phash_distance: phash,
+                        is_best,
+                        raw_thumbnail: None,
+                        thumbnail: Some(similar_fixture_preview(color)),
+                    }),
+                },
+            )
+            .collect::<Vec<_>>();
+        let group = DupeGroupView {
+            group_no: 1,
+            full_hash: String::new(),
+            mode: DupeMode::Similar,
+            bytes_each: 0,
+            keeper: Some(NodeId::from(9_100_001)),
+            members,
+            expanded: true,
+        };
+        let reclaimable = group.reclaimable_bytes();
+        let tab = self.active_tab_mut();
+        tab.current_dir = root.clone();
+        tab.selection.clear();
+        tab.dupe_groups = vec![group];
+        tab.dupe_panel_focus = Some((1, NodeId::from(9_100_001)));
+        tab.tool_result = Some(ToolResultSurface::duplicates(
+            root,
+            crate::feature_settings::DupePresentation::Panel,
+            DupeMode::Similar,
+        ));
+        if let Some(dm) = tab
+            .tool_result
+            .as_mut()
+            .and_then(|surface| surface.dupe_mode_mut())
+        {
+            dm.groups = 1;
+            dm.wasted_bytes = reclaimable;
+        }
+        cx.notify();
+    }
+}
+
+fn similar_fixture_preview(color: u32) -> Arc<gpui::RenderImage> {
+    const WIDTH: u32 = 96;
+    const HEIGHT: u32 = 64;
+    let base = [
+        ((color >> 16) & 0xff) as u8,
+        ((color >> 8) & 0xff) as u8,
+        (color & 0xff) as u8,
+    ];
+    let mut rgba = Vec::with_capacity((WIDTH * HEIGHT * 4) as usize);
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let light = ((x + y) % 29) as u8;
+            rgba.extend_from_slice(&[
+                base[0].saturating_add(light / 3),
+                base[1].saturating_add(light / 2),
+                base[2].saturating_add(light),
+                255,
+            ]);
+        }
+    }
+    Arc::new(crate::icons::build_render_image(rgba, WIDTH, HEIGHT))
 }
 
 fn absorb_dupe_msg(

@@ -26,7 +26,12 @@ pub struct QuarantineInfo {
 
 impl QuarantineInfo {
     pub fn empty() -> Self {
-        Self { quarantined: false, agent: None, downloaded_at: None, where_from: Vec::new() }
+        Self {
+            quarantined: false,
+            agent: None,
+            downloaded_at: None,
+            where_from: Vec::new(),
+        }
     }
 }
 
@@ -163,7 +168,10 @@ pub fn fetch_quarantine_info(path: &Path) -> QuarantineInfo {
 #[cfg(target_os = "macos")]
 pub fn clear_quarantine(path: &Path) -> std::io::Result<()> {
     let mut result = Ok(());
-    for attr in ["com.apple.quarantine", "com.apple.metadata:kMDItemWhereFroms"] {
+    for attr in [
+        "com.apple.quarantine",
+        "com.apple.metadata:kMDItemWhereFroms",
+    ] {
         // Only attempt removal when present — xattr::remove on a
         // missing attr returns ENOATTR, which isn't a failure for us.
         if let Ok(Some(_)) = xattr::get(path, attr) {
@@ -264,11 +272,7 @@ pub fn parse_url_host(url: &str) -> Option<&str> {
         .unwrap_or(url);
     let end = rest.find(['/', '?', '#', ':']).unwrap_or(rest.len());
     let host = &rest[..end];
-    if host.is_empty() {
-        None
-    } else {
-        Some(host)
-    }
+    if host.is_empty() { None } else { Some(host) }
 }
 
 /// Linux: freedesktop download provenance. Browsers (Firefox, Chromium, …)
@@ -379,7 +383,10 @@ mod tests {
         let info = fetch_quarantine_info(&f);
         assert!(info.quarantined, "origin url marks it downloaded");
         assert_eq!(info.where_from[0], "https://example.com/file.bin");
-        assert!(info.where_from.contains(&"https://example.com/".to_string()));
+        assert!(
+            info.where_from
+                .contains(&"https://example.com/".to_string())
+        );
 
         clear_quarantine(&f).unwrap();
         assert!(
@@ -433,7 +440,10 @@ mod tests {
         let zt = parse_zone_identifier(text);
         assert_eq!(zt.zone_id, Some(3));
         assert!(zt.internet_or_restricted());
-        assert_eq!(zt.host_url.as_deref(), Some("https://cdn.example.com/file.zip"));
+        assert_eq!(
+            zt.host_url.as_deref(),
+            Some("https://cdn.example.com/file.zip")
+        );
         assert_eq!(zt.referrer.as_deref(), Some("https://example.com/page"));
     }
 
@@ -494,9 +504,18 @@ mod tests {
 
     #[test]
     fn url_host_extraction() {
-        assert_eq!(parse_url_host("https://cdn.example.com/a/b.zip"), Some("cdn.example.com"));
-        assert_eq!(parse_url_host("http://example.com:8080/x"), Some("example.com"));
-        assert_eq!(parse_url_host("ftp://files.example.org"), Some("files.example.org"));
+        assert_eq!(
+            parse_url_host("https://cdn.example.com/a/b.zip"),
+            Some("cdn.example.com")
+        );
+        assert_eq!(
+            parse_url_host("http://example.com:8080/x"),
+            Some("example.com")
+        );
+        assert_eq!(
+            parse_url_host("ftp://files.example.org"),
+            Some("files.example.org")
+        );
         assert_eq!(parse_url_host("bare-host/path"), Some("bare-host"));
         assert_eq!(parse_url_host("https://"), None);
         assert_eq!(parse_url_host(""), None);

@@ -52,7 +52,7 @@ SVG bundles; Apache-2.0 covers the upstream crate.
 ## Spare upstream icons (check here before vendoring)
 
 The upstream `gpui-component-assets` bundle ships **99 Lucide glyphs**; we use
-~33. The other ~66 are **already compiled into the binary** — reference any with
+~34. The other ~65 are **already compiled into the binary** — reference any with
 `icons/<name>.svg` at zero cost (no new file, no normalization), they just render
 at Lucide's heavier stroke `2`. **When you need a new icon, look here first**: a
 spare-pool glyph is free; a local copy is only worth it for primary chrome that
@@ -67,7 +67,7 @@ Snapshot at rev `c112e7b` — re-run the listing below if you bump gpui-componen
 - **Theme / view** — `sun` `moon` `eye` `eye-off` `layout-dashboard` `chart-pie`
 - **Text / search controls** — `a-large-small` `case-sensitive` `asterisk` `dash` `check` `replace`
 - **System / hardware** — `memory-stick` `square-terminal` `bot` `inspector` `loader` `loader-circle` `battery` (+ `-charging` `-full` `-medium` `-low` `-warning`) (`cpu` now used by the Settings → Performance page; `network` now used for network-mount volume rows)
-- **People / misc** — `user` `circle-user` `delete` `bell` `calendar` `book-open` `building-2` `globe` `github` `map` `menu` `ellipsis-vertical` `undo` `undo-2` `redo-2`
+- **People / misc** — `user` `circle-user` `delete` `bell` `calendar` `book-open` `building-2` `globe` `github` `map` `menu` `ellipsis-vertical` `undo` `redo-2` (`undo-2` now used by the toolbar's Reset-icon-size button)
 
 ```sh
 # Regenerate after a gpui-component bump:
@@ -217,7 +217,8 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | → Undock (menu item) | `icons/undock.svg` | **In-house** (house style) — a plain window (rect + titlebar line), i.e. "back to a free-floating window". | dock dropdown |
 | List view | `icons/view-list.svg` | Lucide `list` | render.rs:1604 |
 | Icon view | `icons/view-grid.svg` | Lucide `layout-grid` | render.rs:1618 |
-| Smaller / larger icons | `icons/minus.svg` / `plus.svg` ↑ | Lucide | render.rs:1632 |
+| Smaller / larger icons | `icons/minus.svg` / `plus.svg` ↑ | Lucide | render.rs `title_bar` |
+| Reset icon size | `icons/undo-2.svg` | Lucide `undo-2` (from the spare upstream pool, stroke 2 — it sits in the all-upstream ±/ellipsis cluster, so the heavier weight is the consistent one here). A revert arrow, not a refresh circle: `nav/refresh.svg` is the Refresh *command* two buttons away and the two must not read alike. Grid view only, beside the −/＋ stepper it undoes. | render.rs `title_bar` |
 | Overflow menu | `icons/ellipsis.svg` ↑ | Lucide | render.rs:1668 |
 | Column sort header | `IconName::SortAscending` / `SortDescending` / `ChevronsUpDown` ↑ | Lucide | multi_table/state.rs:1509 |
 | Empty table state | `IconName::Inbox` ↑ / `icons/inbox.svg` ↑ | Lucide | multi_table/delegate.rs:137, file_list.rs:1262 |

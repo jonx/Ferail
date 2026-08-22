@@ -322,7 +322,9 @@ pub(super) fn append(
                 .add_directory(&item.rel, entry_opts)
                 .map_err(map_zip_err)?;
         } else {
-            writer.start_file(&item.rel, entry_opts).map_err(map_zip_err)?;
+            writer
+                .start_file(&item.rel, entry_opts)
+                .map_err(map_zip_err)?;
             progress.note_current(&item.abs);
             let src = File::open(&item.abs)?;
             super::copy_stream(src, &mut writer, progress, cancel)?;

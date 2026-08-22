@@ -25,7 +25,7 @@ use ferail_core::media::MediaTags;
 use lofty::config::ParseOptions;
 use lofty::file::{FileType, TaggedFileExt};
 use lofty::picture::PictureType;
-use lofty::prelude::{AudioFile, Accessor};
+use lofty::prelude::{Accessor, AudioFile};
 use lofty::probe::Probe;
 
 /// Read embedded tags and decoded audio properties for `path`, **without**
@@ -76,11 +76,7 @@ pub fn read_media_tags(path: &Path) -> Option<MediaTags> {
         tags.year = tag.date().map(|d| d.year);
     }
 
-    if tags.is_empty() {
-        None
-    } else {
-        Some(tags)
-    }
+    if tags.is_empty() { None } else { Some(tags) }
 }
 
 /// Read the embedded cover art for `path`, if any: the front cover when the
@@ -171,8 +167,7 @@ mod tests {
     }
 
     fn write_temp(name: &str, bytes: &[u8]) -> std::path::PathBuf {
-        let path = std::env::temp_dir()
-            .join(format!("ferail-media-{}-{name}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("ferail-media-{}-{name}", std::process::id()));
         let mut f = std::fs::File::create(&path).expect("create temp");
         f.write_all(bytes).expect("write temp");
         path

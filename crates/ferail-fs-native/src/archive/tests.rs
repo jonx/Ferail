@@ -13,8 +13,8 @@ use ferail_archive::Format;
 use super::{
     ArchiveAddition, ArchiveEditPlan, ArchiveError, ArchiveRename, ConvertOptions, CreateOptions,
     ExtractOptions, SkipReason, archive_stamp, commit_archive_edits, convert_archive,
-    create_archive, extract_all, extract_entries, format_of, probe_format, read_summary, read_toc,
-    materialize_archive_entry,
+    create_archive, extract_all, extract_entries, format_of, materialize_archive_entry,
+    probe_format, read_summary, read_toc,
 };
 use crate::file_ops::TransferProgress;
 
@@ -415,21 +415,21 @@ fn file_promise_materializes_exact_leaf_and_cleans_private_stage() {
     materialize_archive_entry(archive.path(), "nested/report.txt", &target, None).unwrap();
 
     assert_eq!(fs::read(&target).unwrap(), b"promised");
-    let error = materialize_archive_entry(
-        archive.path(),
-        "nested/report.txt",
-        &target,
-        None,
-    )
-    .unwrap_err();
+    let error =
+        materialize_archive_entry(archive.path(), "nested/report.txt", &target, None).unwrap_err();
     assert!(matches!(error, ArchiveError::Io(_)));
     assert_eq!(fs::read(&target).unwrap(), b"promised");
-    assert!(fs::read_dir(destination.path()).unwrap().flatten().all(|entry| {
-        !entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with(".ferail-archive-drag-")
-    }));
+    assert!(
+        fs::read_dir(destination.path())
+            .unwrap()
+            .flatten()
+            .all(|entry| {
+                !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".ferail-archive-drag-")
+            })
+    );
 }
 
 #[test]
@@ -1470,7 +1470,12 @@ fn cancelled_add_leaves_the_original_archive_untouched() {
     // Scoped to this archive's own name: the temp parent is shared with other
     // tests, whose in-flight staging files are none of this test's business.
     let parent = arc.path().parent().unwrap();
-    let leaf = arc.path().file_name().unwrap().to_string_lossy().into_owned();
+    let leaf = arc
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     let leftovers: Vec<_> = fs::read_dir(parent)
         .unwrap()
         .filter_map(|e| e.ok())
@@ -1630,24 +1635,24 @@ fn members_extracted_from_one_archive_can_be_appended_to_another() {
     // 2. Append them by leaf, the way the drop does.
     let staged: Vec<std::path::PathBuf> = entries
         .iter()
-        .map(|e| e.split('/').fold(staging.path().to_path_buf(), |a, p| a.join(p)))
+        .map(|e| {
+            e.split('/')
+                .fold(staging.path().to_path_buf(), |a, p| a.join(p))
+        })
         .collect();
     assert!(staged.iter().all(|p| p.exists()), "staging incomplete");
     let refs: Vec<&Path> = staged.iter().map(|p| p.as_path()).collect();
     let (p3, c3) = rig();
-    let outcome = super::add_to_archive(
-        target.path(),
-        &refs,
-        CreateOptions::default(),
-        &p3,
-        &c3,
-    )
-    .unwrap();
+    let outcome =
+        super::add_to_archive(target.path(), &refs, CreateOptions::default(), &p3, &c3).unwrap();
     assert_eq!(outcome.added, 2);
 
     let toc = read_toc(target.path(), None).unwrap();
     let names: Vec<&str> = toc.entries.iter().map(|e| e.path.as_str()).collect();
-    assert!(names.contains(&"seed.txt"), "original member lost: {names:?}");
+    assert!(
+        names.contains(&"seed.txt"),
+        "original member lost: {names:?}"
+    );
     assert!(names.contains(&"alpha.txt"), "{names:?}");
     // Leaf, not `payload/inner/gamma.txt`.
     assert!(names.contains(&"gamma.txt"), "{names:?}");

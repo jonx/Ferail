@@ -8,6 +8,37 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Icon view has a size bar, and it reaches much smaller and much larger
+  sizes than before.** Click or drag anywhere along it to pick any size you
+  like instead of stepping between five fixed ones, and watch the grid
+  re-lay-out as you drag. The
+  range now runs from 32 px — small enough to skim a big folder — up to
+  512 px, where a photo is genuinely previewable. The − and ＋ buttons stay,
+  and now jump to the next stop past the size you are on rather than snapping
+  to the nearest one, so ＋ always makes icons bigger. A new reset button
+  beside them returns to the default 128 px in one click. The slider hides
+  itself on windows too narrow to hold it, leaving the buttons in charge.
+
+- **You can choose how a photo fills its icon.** Settings › Layout › **Icon
+  fit** offers *Best fit* (the whole image with bars beside it — what icon
+  view has always done, and still the default), *Fill frame* (crop the edges
+  so the image fills the square completely), *Fit width* and *Fit height*
+  (match one edge and let the other letterbox or crop), and *Stretch*. The
+  filling modes pull a slightly larger preview than Best fit does, since they
+  magnify the image further; at the very largest icon sizes they can still
+  look a little softer than Best fit.
+
+- **Find Similar Images extends the duplicate finder without exposing your
+  photo library.** It groups resized and recompressed versions using dual
+  perceptual hashes and a chain-resistant similarity pass, then reuses the
+  virtualized duplicate cards with private in-memory thumbnails, dimensions,
+  distance, and a best-copy keeper. Reclaim totals follow the chosen keeper;
+  unsafe bulk keep-newest and clone replacement are unavailable. Paths,
+  pixels, thumbnails, and perceptual hashes are neither persisted nor sent
+  over the network. Use Cmd+Shift+S to start a scan; in its results, Up/Down
+  moves through candidates and Space or a double-click opens the current group
+  in the full-size viewer.
+
 - **The update check no longer hides an update you can actually install.**
   When a release ships for some platforms before others, Ferail now offers the
   newest release that has a download for your operating system and processor,

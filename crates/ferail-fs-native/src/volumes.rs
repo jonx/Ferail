@@ -19,10 +19,10 @@ use crate::VolumeInfo;
 
 #[cfg(windows)]
 pub fn list_volumes() -> Vec<VolumeInfo> {
-    use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{
         GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
     };
+    use windows::core::PCWSTR;
 
     // GetDriveTypeW return codes. Hardcoded because the `windows`
     // crate 0.58 doesn't re-export these constants — they've been
@@ -92,8 +92,10 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
                 ) {
                     Ok(()) => {
                         read_only = fs_flags & FILE_READ_ONLY_VOLUME != 0;
-                        let len =
-                            name_buf.iter().position(|&c| c == 0).unwrap_or(name_buf.len());
+                        let len = name_buf
+                            .iter()
+                            .position(|&c| c == 0)
+                            .unwrap_or(name_buf.len());
                         let label = String::from_utf16_lossy(&name_buf[..len]);
                         if label.is_empty() {
                             format!("{letter}:")
@@ -168,17 +170,17 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
 /// failure (CD-ROM volumes and RAM disks have no disk extents).
 #[cfg(windows)]
 fn probe_volume_device(letter: char) -> (Option<String>, bool) {
-    use windows::core::PCWSTR;
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Storage::FileSystem::{
         BusTypeUsb, CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
         IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, OPEN_EXISTING,
     };
-    use windows::Win32::System::Ioctl::{
-        PropertyStandardQuery, StorageDeviceProperty, IOCTL_STORAGE_QUERY_PROPERTY,
-        STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY, VOLUME_DISK_EXTENTS,
-    };
     use windows::Win32::System::IO::DeviceIoControl;
+    use windows::Win32::System::Ioctl::{
+        IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, STORAGE_DEVICE_DESCRIPTOR,
+        STORAGE_PROPERTY_QUERY, StorageDeviceProperty, VOLUME_DISK_EXTENTS,
+    };
+    use windows::core::PCWSTR;
 
     let device = format!(r"\\.\{letter}:");
     let wide: Vec<u16> = device.encode_utf16().chain(std::iter::once(0)).collect();
@@ -301,10 +303,33 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
 
     // Virtual / pseudo filesystems that are never user "volumes".
     const PSEUDO_FS: &[&str] = &[
-        "proc", "sysfs", "tmpfs", "devtmpfs", "devpts", "cgroup", "cgroup2", "mqueue",
-        "hugetlbfs", "debugfs", "tracefs", "securityfs", "pstore", "bpf", "configfs",
-        "fusectl", "binfmt_misc", "autofs", "ramfs", "rpc_pipefs", "nsfs", "overlay",
-        "squashfs", "efivarfs", "selinuxfs", "fuse.gvfsd-fuse", "fuse.portal",
+        "proc",
+        "sysfs",
+        "tmpfs",
+        "devtmpfs",
+        "devpts",
+        "cgroup",
+        "cgroup2",
+        "mqueue",
+        "hugetlbfs",
+        "debugfs",
+        "tracefs",
+        "securityfs",
+        "pstore",
+        "bpf",
+        "configfs",
+        "fusectl",
+        "binfmt_misc",
+        "autofs",
+        "ramfs",
+        "rpc_pipefs",
+        "nsfs",
+        "overlay",
+        "squashfs",
+        "efivarfs",
+        "selinuxfs",
+        "fuse.gvfsd-fuse",
+        "fuse.portal",
     ];
 
     let Ok(file) = std::fs::File::open("/proc/self/mountinfo") else {
@@ -369,7 +394,8 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
     out.sort_by(|a, b| {
         let ar = a.path == std::path::Path::new("/");
         let br = b.path == std::path::Path::new("/");
-        br.cmp(&ar).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        br.cmp(&ar)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     out
 }
@@ -544,7 +570,10 @@ fn linux_device_group(source: &str) -> Option<String> {
     if sys.join("partition").exists() {
         // Partition: the sysfs node lives at …/block/<disk>/<part>.
         if let Ok(target) = std::fs::read_link(&sys) {
-            if let Some(disk) = target.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str())
+            if let Some(disk) = target
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|s| s.to_str())
             {
                 if disk != "block" {
                     return Some(disk.to_string());
@@ -577,8 +606,14 @@ mod tests {
     fn linux_parent_disk_parses_partitions_only() {
         assert_eq!(linux_parent_disk_name("sdb1").as_deref(), Some("sdb"));
         assert_eq!(linux_parent_disk_name("xvdf3").as_deref(), Some("xvdf"));
-        assert_eq!(linux_parent_disk_name("nvme0n1p2").as_deref(), Some("nvme0n1"));
-        assert_eq!(linux_parent_disk_name("mmcblk0p1").as_deref(), Some("mmcblk0"));
+        assert_eq!(
+            linux_parent_disk_name("nvme0n1p2").as_deref(),
+            Some("nvme0n1")
+        );
+        assert_eq!(
+            linux_parent_disk_name("mmcblk0p1").as_deref(),
+            Some("mmcblk0")
+        );
         // Whole devices and unknown shapes stay ungrouped.
         assert_eq!(linux_parent_disk_name("sdb"), None);
         assert_eq!(linux_parent_disk_name("nvme0n1"), None);

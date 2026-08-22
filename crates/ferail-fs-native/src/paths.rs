@@ -79,10 +79,9 @@ pub fn display_path(path: &std::path::Path) -> String {
 pub fn validate_leaf(name: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
-        if let Some(bad) = name
-            .chars()
-            .find(|c| matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '\\' | '/') || (*c as u32) < 0x20)
-        {
+        if let Some(bad) = name.chars().find(|c| {
+            matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '\\' | '/') || (*c as u32) < 0x20
+        }) {
             return Err(match bad {
                 '\\' | '/' => "A name can’t contain a slash.".to_string(),
                 c if (c as u32) < 0x20 => "A name can’t contain control characters.".to_string(),
@@ -283,23 +282,67 @@ pub fn well_known_locations_for(_mode: SpecialFolderMode) -> Vec<WellKnownLocati
                 // system-wide `/Applications`, not `~/Applications`. The
                 // per-user folder is surfaced separately below when it holds
                 // anything.
-                (ferail_core::msgid!("Applications"), Some("/Applications"), "icons/nav/apps.svg"),
-                (ferail_core::msgid!("Desktop"), Some("Desktop"), "icons/nav/desktop.svg"),
-                (ferail_core::msgid!("Documents"), Some("Documents"), "icons/nav/documents.svg"),
-                (ferail_core::msgid!("Downloads"), Some("Downloads"), "icons/nav/downloads.svg"),
-                (ferail_core::msgid!("Trash"), Some(".Trash"), "icons/nav/trash.svg"),
-                (ferail_core::msgid!("Movies"), Some("Movies"), "icons/nav/movies.svg"),
-                (ferail_core::msgid!("Music"), Some("Music"), "icons/nav/music.svg"),
-                (ferail_core::msgid!("Pictures"), Some("Pictures"), "icons/nav/pictures.svg"),
+                (
+                    ferail_core::msgid!("Applications"),
+                    Some("/Applications"),
+                    "icons/nav/apps.svg",
+                ),
+                (
+                    ferail_core::msgid!("Desktop"),
+                    Some("Desktop"),
+                    "icons/nav/desktop.svg",
+                ),
+                (
+                    ferail_core::msgid!("Documents"),
+                    Some("Documents"),
+                    "icons/nav/documents.svg",
+                ),
+                (
+                    ferail_core::msgid!("Downloads"),
+                    Some("Downloads"),
+                    "icons/nav/downloads.svg",
+                ),
+                (
+                    ferail_core::msgid!("Trash"),
+                    Some(".Trash"),
+                    "icons/nav/trash.svg",
+                ),
+                (
+                    ferail_core::msgid!("Movies"),
+                    Some("Movies"),
+                    "icons/nav/movies.svg",
+                ),
+                (
+                    ferail_core::msgid!("Music"),
+                    Some("Music"),
+                    "icons/nav/music.svg",
+                ),
+                (
+                    ferail_core::msgid!("Pictures"),
+                    Some("Pictures"),
+                    "icons/nav/pictures.svg",
+                ),
             ]
         }
         #[cfg(not(target_os = "macos"))]
         {
             &[
                 (ferail_core::msgid!("Home"), None, "icons/nav/home.svg"),
-                (ferail_core::msgid!("Desktop"), Some("Desktop"), "icons/nav/desktop.svg"),
-                (ferail_core::msgid!("Documents"), Some("Documents"), "icons/nav/documents.svg"),
-                (ferail_core::msgid!("Downloads"), Some("Downloads"), "icons/nav/downloads.svg"),
+                (
+                    ferail_core::msgid!("Desktop"),
+                    Some("Desktop"),
+                    "icons/nav/desktop.svg",
+                ),
+                (
+                    ferail_core::msgid!("Documents"),
+                    Some("Documents"),
+                    "icons/nav/documents.svg",
+                ),
+                (
+                    ferail_core::msgid!("Downloads"),
+                    Some("Downloads"),
+                    "icons/nav/downloads.svg",
+                ),
             ]
         }
     };
@@ -401,7 +444,12 @@ pub fn well_known_locations_for(mode: SpecialFolderMode) -> Vec<WellKnownLocatio
     }];
 
     // (label, known-folder id, subfolder name, icon)
-    let specs: &[(&'static str, &windows::core::GUID, &'static str, &'static str)] = &[
+    let specs: &[(
+        &'static str,
+        &windows::core::GUID,
+        &'static str,
+        &'static str,
+    )] = &[
         (
             "Desktop",
             &FOLDERID_Desktop,
@@ -468,7 +516,7 @@ fn prefer_if_exists(preferred: PathBuf, fallback: PathBuf) -> PathBuf {
 fn known_folder_path(rfid: &windows::core::GUID) -> Option<PathBuf> {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::Com::CoTaskMemFree;
-    use windows::Win32::UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+    use windows::Win32::UI::Shell::{KF_FLAG_DEFAULT, SHGetKnownFolderPath};
 
     unsafe {
         let pwstr = SHGetKnownFolderPath(rfid, KF_FLAG_DEFAULT, HANDLE::default()).ok()?;
@@ -488,8 +536,14 @@ mod leaf_tests {
     #[test]
     fn clean_leaf_is_borrowed_unchanged() {
         // No separator chars → identity, and no allocation.
-        assert!(matches!(display_leaf("report.pdf"), Cow::Borrowed("report.pdf")));
-        assert!(matches!(on_disk_leaf("report.pdf"), Cow::Borrowed("report.pdf")));
+        assert!(matches!(
+            display_leaf("report.pdf"),
+            Cow::Borrowed("report.pdf")
+        ));
+        assert!(matches!(
+            on_disk_leaf("report.pdf"),
+            Cow::Borrowed("report.pdf")
+        ));
     }
 
     #[test]
@@ -541,14 +595,21 @@ mod leaf_tests {
     #[test]
     fn display_path_leaves_plain_paths_unchanged() {
         // A path with no verbatim prefix round-trips as-is on every platform.
-        let p = Path::new(if cfg!(windows) { r"C:\Users\me\file.txt" } else { "/home/me/file.txt" });
+        let p = Path::new(if cfg!(windows) {
+            r"C:\Users\me\file.txt"
+        } else {
+            "/home/me/file.txt"
+        });
         assert_eq!(display_path(p), p.to_string_lossy());
     }
 
     #[cfg(windows)]
     #[test]
     fn display_path_strips_verbatim_disk_prefix() {
-        assert_eq!(display_path(Path::new(r"\\?\C:\Source\ferail")), r"C:\Source\ferail");
+        assert_eq!(
+            display_path(Path::new(r"\\?\C:\Source\ferail")),
+            r"C:\Source\ferail"
+        );
         assert_eq!(display_path(Path::new(r"\\?\C:\")), r"C:\");
     }
 
@@ -571,7 +632,9 @@ mod leaf_tests {
     #[cfg(windows)]
     #[test]
     fn validate_leaf_rejects_reserved_chars() {
-        for bad in [r"a<b", r"a>b", "a:b", "a\"b", "a|b", "a?b", "a*b", r"a\b", "a/b"] {
+        for bad in [
+            r"a<b", r"a>b", "a:b", "a\"b", "a|b", "a?b", "a*b", r"a\b", "a/b",
+        ] {
             assert!(validate_leaf(bad).is_err(), "{bad:?} should be rejected");
         }
     }
@@ -580,7 +643,9 @@ mod leaf_tests {
     #[test]
     fn validate_leaf_rejects_reserved_device_names() {
         // Bare, any case, and with an extension are all reserved.
-        for bad in ["CON", "con", "NUL", "PRN", "AUX", "COM1", "LPT9", "CON.txt", "nul.log"] {
+        for bad in [
+            "CON", "con", "NUL", "PRN", "AUX", "COM1", "LPT9", "CON.txt", "nul.log",
+        ] {
             assert!(validate_leaf(bad).is_err(), "{bad:?} should be rejected");
         }
         // COM0 / LPT0 and multi-digit are NOT reserved device names.

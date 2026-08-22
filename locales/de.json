@@ -78,6 +78,8 @@
     "Back One Frame": "Ein Bild zurück",
     "Background tasks": "Hintergrundaufgaben",
     "Background work": "Hintergrundarbeit",
+    "Best copy": "Beste Kopie",
+    "Best fit": "Optimal einpassen",
     "Bidirectional override": "Bidirektionale Überschreibung",
     "Bit depth": "Bittiefe",
     "Bit rate": "Bitrate",
@@ -142,6 +144,7 @@
     "Comfortable": "Bequem",
     "Compare all files": "Alle Dateien vergleichen",
     "Compare inside app bundles": "Innerhalb von App-Bundles vergleichen",
+    "Compared with the group reference: dHash {structure}/64 (structure), pHash {detail}/64 (detail). Lower numbers mean greater similarity.": "Verglichen mit dem Gruppenreferenzbild: dHash {structure}/64 (Struktur), pHash {detail}/64 (Detail). Niedrigere Werte bedeuten größere Ähnlichkeit.",
     "Completed {n} item as administrator": {
       "one": "{n} Objekt als Administrator abgeschlossen",
       "other": "{n} Objekte als Administrator abgeschlossen"
@@ -405,6 +408,7 @@
     "File": "Datei",
     "File clipboard isn't available on this platform yet.": "Die Datei-Zwischenablage ist auf dieser Plattform noch nicht verfügbar.",
     "Files": "Dateien",
+    "Fill frame": "Rahmen füllen",
     "Film grain": "Filmkorn",
     "Filter contents…": "Inhalt filtern …",
     "Filter icons…": "Symbole filtern …",
@@ -415,10 +419,15 @@
     "Find": "Suchen",
     "Find Duplicates": "Duplikate suchen",
     "Find Duplicates…": "Duplikate suchen …",
+    "Find Similar Images": "Ähnliche Bilder suchen",
+    "Find Similar Images…": "Ähnliche Bilder suchen …",
     "Finding duplicates in {root}": "Duplikate werden in {root} gesucht",
+    "Finding similar images in {root}": "Ähnliche Bilder werden in {root} gesucht",
     "Fit": "Einpassen",
+    "Fit height": "Höhe einpassen",
     "Fit to Window": "An Fenster anpassen",
     "Fit to window": "An Fenster anpassen",
+    "Fit width": "Breite einpassen",
     "Fit, never enlarge": "Einpassen, nie vergrößern",
     "Folder": "Ordner",
     "Folder not found": "Ordner nicht gefunden",
@@ -449,6 +458,7 @@
     "Greek": "Griechisch",
     "Green": "Grün",
     "Group": "Gruppe",
+    "Group reference": "Referenzbild der Gruppe",
     "Grouped rows in a tab": "Gruppierte Zeilen in einem Tab",
     "Health check of the app's storage and environment. Run `ferail --doctor` for the same report from a terminal.": "Zustandsprüfung von Speicher und Umgebung der App. Führe `ferail --doctor` aus, um denselben Bericht im Terminal zu erhalten.",
     "Help": "Hilfe",
@@ -459,9 +469,11 @@
     "Hide preview": "Vorschau ausblenden",
     "Hide {app_name}": "{app_name} ausblenden",
     "Home": "Benutzerordner",
+    "How a photo or preview fills its square in icon view. Best fit shows the whole image with bars beside it; Fill frame crops the edges so the image fills the icon completely.": "Wie ein Foto oder eine Vorschau sein Quadrat in der Symbolansicht ausfüllt. „Optimal einpassen“ zeigt das ganze Bild mit Balken an den Seiten; „Rahmen füllen“ beschneidet die Ränder, sodass das Bild das Symbol vollständig ausfüllt.",
     "How duplicate groups are shown. Grouped rows reuse the file list (selection, sort, preview, context menu); the dedicated panel offers group-level actions like keep-newest.": "Wie Duplikatgruppen angezeigt werden. Gruppierte Zeilen nutzen die Dateiliste (Auswahl, Sortierung, Vorschau, Kontextmenü); das eigene Panel bietet Aktionen auf Gruppenebene wie „Neueste behalten“.",
     "How media is sized when the viewer opens, and what zoom reset returns to. “Fit to window” scales large media down and small media up to fill the window; “Fit, never enlarge” stops at the media's real size, so small images stay pixel-true; “Actual size” always shows 1:1. Takes effect on the next viewer window.": "Wie Medien beim Öffnen des Viewers skaliert werden und wohin das Zurücksetzen des Zooms führt. „An Fenster anpassen“ verkleinert große und vergrößert kleine Medien, bis sie das Fenster füllen; „Einpassen, nie vergrößern“ stoppt bei der tatsächlichen Größe, sodass kleine Bilder pixelgenau bleiben; „Originalgröße“ zeigt immer 1:1. Gilt ab dem nächsten Viewer-Fenster.",
     "Hue": "Farbton",
+    "Icon fit": "Symbolfüllung",
     "Icon spacing": "Symbolabstand",
     "Icon view": "Symbolansicht",
     "Ignore small files": "Kleine Dateien ignorieren",
@@ -526,6 +538,7 @@
       "one": "Mark of the Web von {n} Datei entfernt",
       "other": "Mark of the Web von {n} Dateien entfernt"
     },
+    "Mark others": "Andere markieren",
     "Match System": "System folgen",
     "Match full path": "Ganzen Pfad prüfen",
     "Match the relative path, not just the file name.": "Den relativen Pfad prüfen, nicht nur den Dateinamen.",
@@ -605,6 +618,7 @@
     "No process is holding these files anymore": "Kein Prozess hält diese Dateien mehr offen",
     "No release notes were written for this version.": "Für diese Version wurden keine Versionshinweise verfasst.",
     "No selection": "Keine Auswahl",
+    "No similar images found.": "Keine ähnlichen Bilder gefunden.",
     "No subfolders": "Keine Unterordner",
     "None": "Keiner",
     "Normal": "Normal",
@@ -763,6 +777,7 @@
     "Reset All": "Alle zurücksetzen",
     "Reset Columns": "Spalten zurücksetzen",
     "Reset Icon": "Symbol zurücksetzen",
+    "Reset icon size": "Symbolgröße zurücksetzen",
     "Reset to Original Name": "Auf ursprünglichen Namen zurücksetzen",
     "Restored Favorite": "Favorit wiederhergestellt",
     "Restored from Trash": "Aus dem Papierkorb wiederhergestellt",
@@ -808,6 +823,7 @@
     "Scan failed — {detail}": "Scan fehlgeschlagen — {detail}",
     "Scan package folders as containers": "Paketordner als Container scannen",
     "Scanning for duplicates…": "Suche nach Duplikaten …",
+    "Scanning for similar images…": "Suche nach ähnlichen Bildern …",
     "Scanning {path}": "{path} wird gescannt",
     "Scanning… {files} files, {scanned}": "Wird gescannt … {files} Dateien, {scanned}",
     "Scroll tabs left": "Tabs nach links scrollen",
@@ -844,6 +860,13 @@
       "other": "{n} Objekte werden im {app} angezeigt"
     },
     "Showing “{name}” in {app}": "„{name}“ wird im {app} angezeigt",
+    "Similar image scan": "Suche nach ähnlichen Bildern",
+    "Similar image scan finished: no similar images found": "Suche nach ähnlichen Bildern abgeschlossen: Keine ähnlichen Bilder gefunden",
+    "Similar image scan finished: {n} group · {reclaimable} reclaimable": {
+      "one": "Suche nach ähnlichen Bildern abgeschlossen: {n} Gruppe · {reclaimable} freigebbar",
+      "other": "Suche nach ähnlichen Bildern abgeschlossen: {n} Gruppen · {reclaimable} freigebbar"
+    },
+    "Similar · structure {structure}/64 · detail {detail}/64": "Ähnlich · Struktur {structure}/64 · Detail {detail}/64",
     "Similarity": "Ähnlichkeit",
     "Simulating progress…": "Fortschritt wird simuliert …",
     "Size": "Größe",
@@ -891,7 +914,9 @@
     "Store": "Speichern",
     "Store (no compression)": "Speichern (ohne Komprimierung)",
     "Stray combining mark (U+{code})": "Verwaistes kombinierendes Zeichen (U+{code})",
+    "Stretch": "Verzerren",
     "Subtree": "Teilbaum",
+    "Supported image formats: JPEG, PNG, GIF, WebP, BMP, and TIFF.": "Unterstützte Bildformate: JPEG, PNG, GIF, WebP, BMP und TIFF.",
     "Symlink": "Symlink",
     "System": "System",
     "System ({loc})": "System ({loc})",
@@ -976,6 +1001,7 @@
     "Used": "Belegt",
     "User Applications": "Benutzerprogramme",
     "Version {version}": "Version {version}",
+    "Very similar · structure {structure}/64 · detail {detail}/64": "Sehr ähnlich · Struktur {structure}/64 · Detail {detail}/64",
     "Video": "Video",
     "Video player": "Videoplayer",
     "View": "Darstellung",
@@ -1137,6 +1163,10 @@
       "one": "{n} versteckt · {size}",
       "other": "{n} versteckt · {size}"
     },
+    "{n} image · {reclaimable} reclaimable": {
+      "one": "{n} Bild · {reclaimable} freigebbar",
+      "other": "{n} Bilder · {reclaimable} freigebbar"
+    },
     "{n} item": {
       "one": "{n} Objekt",
       "other": "{n} Objekte"
@@ -1164,6 +1194,10 @@
     "{n} item · {size}": {
       "one": "{n} Objekt · {size}",
       "other": "{n} Objekte · {size}"
+    },
+    "{n} similar-image group · {size} reclaimable": {
+      "one": "{n} Gruppe ähnlicher Bilder · {size} freigebbar",
+      "other": "{n} Gruppen ähnlicher Bilder · {size} freigebbar"
     },
     "{n} of {total} selected · {size}": {
       "one": "{n} von {total} ausgewählt · {size}",
@@ -1208,6 +1242,7 @@
       "other": "{summary}, {n} übersprungen"
     },
     "{which} (U+{code})": "{which} (U+{code})",
+    "{width} × {height} · {similarity}": "{width} × {height} · {similarity}",
     "· {n} conflict": {
       "one": "· {n} Konflikt",
       "other": "· {n} Konflikte"

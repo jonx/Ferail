@@ -54,6 +54,7 @@ fn action_for_command(id: ferail_core::commands::CommandId) -> Option<Box<dyn gp
         "view.zoom_reset" => Box::new(ZoomReset),
         "view.disk_usage" => Box::new(OpenDiskUsage),
         "view.find_duplicates" => Box::new(FindDuplicates),
+        "view.find_similar_images" => Box::new(FindSimilarImages),
         "view.open_viewer" => Box::new(OpenViewer),
         "view.sort_name" => Box::new(SortByName),
         "view.sort_size" => Box::new(SortBySize),

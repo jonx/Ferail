@@ -150,9 +150,8 @@ fn sniff_flac(buf: &[u8]) -> MagicInfo {
         return info;
     }
     let sr_bytes = &buf[18..21];
-    let sample_rate = ((sr_bytes[0] as u32) << 12)
-        | ((sr_bytes[1] as u32) << 4)
-        | ((sr_bytes[2] as u32) >> 4);
+    let sample_rate =
+        ((sr_bytes[0] as u32) << 12) | ((sr_bytes[1] as u32) << 4) | ((sr_bytes[2] as u32) >> 4);
     info.sample_rate = Some(sample_rate);
     info.channels = Some(((sr_bytes[2] >> 1) & 0x07) + 1);
 

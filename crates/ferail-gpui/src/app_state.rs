@@ -102,6 +102,10 @@ pub struct AppState {
     /// Grid selection-gutter size in logical px. `None` == never set
     /// (defaults to [`crate::grid::DEFAULT_CELL_GAP`]).
     pub cell_gap: Option<f32>,
+    /// How grid thumbnails fill their icon slot: "best", "fill",
+    /// "width", "height" or "stretch". `None` == never set (defaults to
+    /// [`crate::grid::ThumbFit::Best`], the pre-setting behaviour).
+    pub thumb_fit: Option<String>,
     /// Whether the background folder-size walker runs (Performance).
     /// `None` == never set (defaults to `true`, sizing on).
     pub folder_sizing: Option<bool>,
@@ -344,6 +348,9 @@ fn load_from_disk() -> AppState {
             "cell_gap" => {
                 out.cell_gap = val.trim().parse::<f32>().ok();
             }
+            "thumb_fit" => {
+                out.thumb_fit = Some(val.trim().to_string());
+            }
             "folder_sizing" => {
                 out.folder_sizing = parse_bool(val);
             }
@@ -534,6 +541,9 @@ fn serialize(state: &AppState) -> String {
     }
     if let Some(g) = state.cell_gap {
         s.push_str(&format!("cell_gap={g}\n"));
+    }
+    if let Some(f) = &state.thumb_fit {
+        s.push_str(&format!("thumb_fit={f}\n"));
     }
     if let Some(b) = state.folder_sizing {
         s.push_str(&format!("folder_sizing={b}\n"));

@@ -238,6 +238,14 @@ fn persist_cell_gap(value: f32) {
     });
 }
 
+fn persist_thumb_fit(value: crate::grid::ThumbFit) {
+    let existing = app_state::load();
+    app_state::save(&AppState {
+        thumb_fit: Some(value.as_str().to_string()),
+        ..existing
+    });
+}
+
 fn persist_ui_scale(value: f32) {
     let existing = app_state::load();
     app_state::save(&AppState {
@@ -1349,6 +1357,36 @@ fn appearance_page(
                     let g = value.parse::<f32>().unwrap_or(crate::grid::DEFAULT_CELL_GAP);
                     persist_cell_gap(g);
                     cx.set_global(crate::grid::CellGap(crate::grid::clamp_cell_gap(g)));
+                    cx.refresh_windows();
+                },
+            ))
+            // Photos are rarely square and the icon slot always is, so
+            // something has to give. Sits next to Icon spacing because
+            // both answer "how does icon view lay a cell out".
+            .item(dropdown_setting_with(
+                tr!("Icon fit"),
+                tr!("How a photo or preview fills its square in icon view. Best fit shows \
+                 the whole image with bars beside it; Fill frame crops the edges so the \
+                 image fills the icon completely."),
+                &[
+                    ("best", msgid!("Best fit")),
+                    ("fill", msgid!("Fill frame")),
+                    ("width", msgid!("Fit width")),
+                    ("height", msgid!("Fit height")),
+                    ("stretch", msgid!("Stretch")),
+                ],
+                &[],
+                || {
+                    crate::grid::ThumbFit::from_str(
+                        app_state::load().thumb_fit.as_deref().unwrap_or("best"),
+                    )
+                    .as_str()
+                    .to_string()
+                },
+                |value, cx| {
+                    let fit = crate::grid::ThumbFit::from_str(value);
+                    persist_thumb_fit(fit);
+                    cx.set_global(crate::grid::ThumbFitMode(fit));
                     cx.refresh_windows();
                 },
             )),

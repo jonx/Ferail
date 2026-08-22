@@ -112,6 +112,9 @@ actions!(
         /// Find duplicate files under the active tab's directory and show
         /// them grouped in the tab (docs/features/DUPLICATES.md).
         FindDuplicates,
+        /// Find visually similar local images under the active tab. Analysis
+        /// is in-memory only and results reuse the duplicate card panel.
+        FindSimilarImages,
         /// Toolbar Sort menu (docs/features — toolbar density). Each
         /// sets the file-table sort column; re-selecting the active
         /// column flips its direction. Dispatched from the sort

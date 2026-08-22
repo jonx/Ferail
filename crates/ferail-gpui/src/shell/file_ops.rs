@@ -3064,6 +3064,13 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // In the Similar Images panel, Space means inspect the focused
+        // candidate at full size. The viewer receives only that group's
+        // snapshot, so its previous/next controls cannot wander into the
+        // surrounding personal photo library.
+        if self.dupe_open_focused_similar_group_viewer(window, cx) {
+            return;
+        }
         let paths: Vec<PathBuf> = self
             .action_entries_visible_order(cx)
             .into_iter()
