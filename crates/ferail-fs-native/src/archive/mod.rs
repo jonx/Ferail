@@ -1098,7 +1098,14 @@ pub fn convert_archive(
             "converted empty archive unexpectedly contains files".into(),
         ));
     }
-    std::fs::File::open(&partial)?.sync_all()?;
+    // Opened for writing purely to flush it: Windows' FlushFileBuffers needs a
+    // handle with write access and fails the whole conversion with
+    // ERROR_ACCESS_DENIED on the read-only handle `File::open` returns, while
+    // Unix would happily fsync it.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&partial)?
+        .sync_all()?;
     check_cancel(cancel)?;
     let output = publish_conversion(
         &partial,
