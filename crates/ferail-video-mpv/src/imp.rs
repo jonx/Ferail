@@ -309,6 +309,37 @@ struct MpvBackend {
     lib: Rc<LibMpv>,
 }
 
+// libmpv's player-oriented defaults start several built-in Lua scripts
+// (stats, console, auto-profiles, …) for every handle. Ferail embeds only the
+// decoder/render API and never uses those scripts. More importantly, Homebrew's
+// libmpv runs them through LuaJIT, whose generated executable pages are killed
+// by macOS's hardened runtime unless the host app grants broad JIT
+// entitlements. Keep scripting disabled instead of weakening Ferail's runtime.
+const PREINIT_OPTIONS: &[(&str, &str)] = &[
+    // CRITICAL: route video output through the render API, not a native
+    // window. The native macOS GPU output can deadlock with main-thread
+    // stream teardown; `vo=libmpv` leaves the SW render context in charge.
+    ("vo", "libmpv"),
+    ("config", "no"),
+    // `load-scripts` covers user scripts; mpv 0.41 has separate switches for
+    // its built-in Lua programs, so all four are required to keep LuaJIT idle.
+    ("load-scripts", "no"),
+    ("load-console", "no"),
+    ("load-stats-overlay", "no"),
+    ("load-auto-profiles", "no"),
+    ("osc", "no"),
+    ("osd-level", "0"),
+    ("input-default-bindings", "no"),
+    ("input-vo-keyboard", "no"),
+    ("ytdl", "no"),
+    ("hwdec", "auto-copy"),
+    ("keep-open", "yes"),
+    // The libmpv software-render path mishandles rotated crop geometry. Keep
+    // the native frame orientation and rotate the pulled BGRA buffer ourselves.
+    ("video-rotate", "no"),
+    ("msg-level", "all=error"),
+];
+
 fn cstr(s: &str) -> CString {
     CString::new(s).unwrap_or_default()
 }
@@ -354,31 +385,7 @@ impl VideoBackend for MpvBackend {
         // Options before initialize. No user config/OSC/OSD; hardware decode
         // with copy-back so the SW render path gets frames in system memory;
         // keep-open so a seek-after-end (the viewer's loop) still works; quiet.
-        for (k, v) in [
-            // CRITICAL: route video output through the render API, not a
-            // native window. Without this mpv creates a macOS `gpu` (Cocoa)
-            // vo with a CVDisplayLink that `dispatch_sync`s to the main thread
-            // — and since we tear the stream down (and pull frames) from the
-            // main thread, that deadlocks (vo_thread waits on main, main waits
-            // joining vo_thread). `vo=libmpv` makes the SW render context the
-            // only output: no NSWindow, no display link, no main-thread hop.
-            ("vo", "libmpv"),
-            ("config", "no"),
-            ("osc", "no"),
-            ("osd-level", "0"),
-            ("input-default-bindings", "no"),
-            ("input-vo-keyboard", "no"),
-            ("ytdl", "no"),
-            ("hwdec", "auto-copy"),
-            ("keep-open", "yes"),
-            // The libmpv *software* render path asserts (mp_image_crop) on
-            // rotated video: it computes the crop in rotated space and applies
-            // it to the un-rotated source. So we tell mpv never to rotate, read
-            // the intended rotation off `video-params/rotate`, and rotate the
-            // BGRA buffer ourselves in `copy_frame`.
-            ("video-rotate", "no"),
-            ("msg-level", "all=error"),
-        ] {
+        for &(k, v) in PREINIT_OPTIONS {
             (lib.set_option_string)(h, cstr(k).as_ptr(), cstr(v).as_ptr());
         }
         if (lib.initialize)(h) != 0 {
@@ -763,6 +770,24 @@ mod tests {
         assert_eq!((w, h), (1, 3));
         // Row [10 20 30] stood up clockwise → column 10/20/30 top-to-bottom.
         assert_eq!(out.iter().step_by(4).copied().collect::<Vec<u8>>(), vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn embedded_player_disables_all_lua_script_loaders_before_initialization() {
+        for name in [
+            "load-scripts",
+            "load-console",
+            "load-stats-overlay",
+            "load-auto-profiles",
+        ] {
+            assert_eq!(
+                PREINIT_OPTIONS
+                    .iter()
+                    .find(|(option, _)| *option == name),
+                Some(&(name, "no")),
+                "hardened macOS releases must not let libmpv start LuaJIT"
+            );
+        }
     }
 
     /// End-to-end against the real crate code (load libmpv, SW render pull,
