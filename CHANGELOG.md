@@ -10,6 +10,17 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 No user-visible changes yet.
 
+## 0.5.1 — 2026-08-22
+
+Windows fixes for 0.5.0's archive work, which was only exercised on macOS and
+Linux before release. Adding files to a ZIP — by dropping them on it, or by
+saving the workbench — failed with *"the process cannot access the file because
+it is being used by another process"*: the rewritten archive was still open when
+Ferail tried to swap it in, which Windows refuses and Unix allows. Converting an
+archive failed with *"Access is denied"* for a related reason, a flush issued
+through a read-only handle. macOS and Linux were unaffected, so 0.5.0 remains
+current there.
+
 ## 0.5.0 — 2026-08-22
 
 Archives become a place you work, not just a list you look at. ZIPs have a
