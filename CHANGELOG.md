@@ -10,6 +10,14 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 No user-visible changes yet.
 
+## 0.5.2 — 2026-08-22
+
+Fixes a macOS crash while browsing folders containing videos when the mpv
+backend is selected. The signed release now disables libmpv's unused built-in
+Lua scripts before initialization, preventing Homebrew's LuaJIT from creating
+an executable page that the hardened runtime rejects. Video decoding, live
+filters, audio, seeking, and poster thumbnails remain enabled.
+
 ## 0.5.1 — 2026-08-22
 
 Windows fixes for 0.5.0's archive work, which was only exercised on macOS and
