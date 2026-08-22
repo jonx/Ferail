@@ -129,8 +129,8 @@ pub struct Args {
     /// Open the Go to Folder prompt (Cmd+G).
     pub go_to_folder: bool,
     /// Open the Software Update dialog seeded with a named state
-    /// (checking / uptodate / available / noasset / downloading / done /
-    /// failed) — pure UI, no network (docs/features/UPDATES.md).
+    /// (checking / uptodate / elsewhere / available / noasset / downloading /
+    /// done / failed) — pure UI, no network (docs/features/UPDATES.md).
     pub update_dialog: Option<String>,
     /// Push a fake toast with the given message. Lands in Stage 5.
     pub simulate_toast: Option<String>,

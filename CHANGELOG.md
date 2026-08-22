@@ -8,7 +8,14 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
-No user-visible changes yet.
+- **The update check no longer hides an update you can actually install.**
+  When a release ships for some platforms before others, Ferail now offers the
+  newest release that has a download for your operating system and processor,
+  and mentions the still-newer one as a separate note naming the platforms it
+  exists for — instead of reporting the global latest and leaving you with no
+  Download button. "What's new" stops at the version you can install, so the
+  notes describe what you are about to get. Automatic notifications stay
+  limited to updates this machine can install.
 
 ## 0.5.2 — 2026-08-22
 

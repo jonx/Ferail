@@ -23,14 +23,19 @@ the dialog re-renders from every frame.
   Open / Show in Folder once done. When something newer exists, a
   **"What's new"** box renders the release notes — the markdown body of
   the GitHub release — so the decision to update is made with the
-  changes in front of you. If the user skipped versions, *every* newer
-  release's notes appear, newest first, each under its own
-  `### <title> · <date>` heading (capped at `NOTES_MAX`; the rest
+  changes in front of you. If the user skipped versions, every release
+  through the newest compatible version appears, newest first, each under
+  its own `### <title> · <date>` heading (capped at `NOTES_MAX`; the rest
   collapse to a count); a release with no notes says so rather than
   vanishing. A link below still opens the tag's GitHub page (assets,
   checksums). The box is a bounded `overflow_y_scroll` region with a
   `TextView::markdown` keyed on the version, so a different release
   gets a fresh parse/selection state.
+- **Staggered platform releases** — the primary result is always the newest
+  release with an asset for the running OS and architecture. A newer release
+  that only ships for another platform is shown as a separate linked note;
+  it never hides an older compatible update or replaces its Download button.
+  Automatic notifications remain limited to updates this machine can install.
 - **Failures** — the check has a 20-second deadline. Connection/DNS
   failures, timeouts, missing endpoints (404), rate limits, server errors,
   malformed responses, and an empty release feed become concise localized
@@ -48,8 +53,7 @@ Ferail does not replace its own binary — no Sparkle-style in-place
 swap, no signature verification of its own beyond HTTPS. Asset per
 platform, matching what CI publishes: macOS `Ferail-<v>.dmg`, Windows
 `Ferail-<v>-win-x64.zip`, Linux `ferail_<v>-1_{amd64,arm64}.deb` for
-the running arch. A release without a matching asset falls back to
-opening the release page.
+the running arch.
 
 ## Wiring
 
@@ -61,8 +65,11 @@ opening the release page.
   `GITHUB_TOKEN` bearer — but parsed into our own `GhRelease` because
   zed's struct drops the release `body`/`name`). `summarize()` (pure,
   unit-tested) keeps published, non-prerelease releases *with assets*,
-  sorts by version, and against `CARGO_PKG_VERSION` yields either
-  UpToDate or Available{latest's asset + notes of every newer release}.
+  sorts by version, and tracks both the globally newest release and the
+  newest release compatible with the running target. Against
+  `CARGO_PKG_VERSION` it yields either UpToDate or Available{compatible
+  asset + notes through that compatible version}, plus separate metadata
+  when the global release is newer but only available elsewhere.
   Version compare is strict `major.minor.patch` — a malformed remote
   tag is skipped, *never* "newer".
 - **Prime Directive**: the API call, timeout, download, and every filesystem
@@ -77,16 +84,17 @@ opening the release page.
 
 ## Testing
 
-- Pure logic (version parse/compare, per-platform asset pick, the
-  release-list fold incl. skipped-version notes and no-asset releases,
-  notes-markdown assembly, name uniquifying) is unit-tested.
+- Pure logic (version parse/compare, target-parameterized asset picks for
+  macOS, Windows, and both Linux architectures; staggered-release folding;
+  skipped-version notes and no-asset releases; notes-markdown assembly;
+  name uniquifying) is unit-tested on every host.
 - `cargo test -p ferail-gpui update_check -- --ignored` runs the real
   download-path test (network; fetches a release asset, verifies size,
   cleans up).
 - `--screenshot x.png --update-dialog <state>` renders the dialog with
   a seeded state, no network: `checking`, `uptodate`, `available`,
-  `noasset`, `downloading`, `done`, `failed` — plus `live`, which runs
-  the real check (docs/features/SCREENSHOTS.md).
+  `elsewhere`, `noasset`, `downloading`, `done`, `failed` — plus `live`,
+  which runs the real check (docs/features/SCREENSHOTS.md).
 
 ## Known gaps
 

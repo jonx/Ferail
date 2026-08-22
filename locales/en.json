@@ -15,6 +15,7 @@
     },
     "/path/to/folder": "/path/to/folder",
     "A fast, calm file explorer.": "A fast, calm file explorer.",
+    "A newer Ferail {version} release exists for {platforms}.": "A newer Ferail {version} release exists for {platforms}.",
     "About": "About",
     "About Ferail": "About Ferail",
     "About {app_name}": "About {app_name}",
@@ -1002,7 +1003,7 @@
     "Window": "Window",
     "Year": "Year",
     "Yellow": "Yellow",
-    "You're up to date — {latest} is the latest release.": "You're up to date — {latest} is the latest release.",
+    "You're up to date for {platform} — {latest} is the latest release.": "You're up to date for {platform} — {latest} is the latest release.",
     "Your {n} unsaved change will be lost if you discard it.": {
       "one": "Your {n} unsaved change will be lost if you discard it.",
       "other": "Your {n} unsaved changes will be lost if you discard them."
@@ -1051,6 +1052,7 @@
     "no parent directory for {path}": "no parent directory for {path}",
     "no space left on the destination": "no space left on the destination",
     "no-break space": "no-break space",
+    "other platforms": "other platforms",
     "permission denied": "permission denied",
     "pop directional formatting": "pop directional formatting",
     "pop directional isolate": "pop directional isolate",

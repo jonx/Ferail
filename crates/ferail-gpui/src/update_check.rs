@@ -8,7 +8,7 @@
 //!    the setting below gates only the automatic path.
 //!  - **Automatic**: an opt-in daily background check
 //!    (Settings ▸ About ▸ Updates, **off by default**). When it finds a
-//!    newer release it posts one notification per version per session;
+//!    newer compatible release it posts one notification per version per session;
 //!    up-to-date / failed checks stay silent. Nothing downloads on its
 //!    own, ever.
 //!  - **Update**: from the dialog, Download fetches the platform's asset
@@ -21,9 +21,10 @@
 //! fetches `/repos/{repo}/releases` once — the same request zed's
 //! `http_client::github` helper makes, parsed into our own struct because
 //! that helper's drops the release `body` — and keeps every published,
-//! non-prerelease release newer than the running build: the newest one
-//! drives the download, and all of their notes become the dialog's
-//! "What's new", so the user decides with the changes in front of them.
+//! non-prerelease releases newer than the running build. The newest one
+//! with an asset for the running OS/architecture drives the download;
+//! a still-newer release for another platform is reported separately.
+//! Notes stop at the version the user can actually install.
 //! This module's only requests are that one API call and the
 //! user-initiated asset download — there is no telemetry channel here; an
 //! update check necessarily tells GitHub an app instance asked, which is
@@ -80,9 +81,10 @@ pub enum CheckStatus {
     #[default]
     Idle,
     Checking,
-    /// The latest non-prerelease is not newer than the running build.
+    /// No compatible non-prerelease is newer than the running build.
     UpToDate {
         latest: String,
+        newer_elsewhere: Option<OtherPlatformRelease>,
     },
     Available(ReleaseInfo),
     Failed(CheckFailure),
@@ -134,10 +136,41 @@ pub struct ReleaseInfo {
     pub tag: String,
     /// This platform's downloadable asset, when the release carries one.
     pub asset: Option<AssetInfo>,
-    /// Notes of every release newer than the running build, newest first
-    /// — `notes[0]` is this release's. More than one means the user
-    /// skipped versions; the dialog shows the whole span.
+    /// Notes newer than the running build through this compatible release,
+    /// newest first — `notes[0]` is this release's. More than one means the
+    /// user skipped versions; the dialog shows the whole installable span.
     pub notes: Vec<ReleaseNotes>,
+    /// A globally newer release that has no asset for this target.
+    pub newer_elsewhere: Option<OtherPlatformRelease>,
+}
+
+/// The globally newest release when it is ahead of the newest release
+/// installable on the running target.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OtherPlatformRelease {
+    pub version: String,
+    pub tag: String,
+    pub platforms: Vec<ReleasePlatform>,
+}
+
+/// Platforms inferred from the asset names produced by release CI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReleasePlatform {
+    MacOs,
+    Windows,
+    LinuxAmd64,
+    LinuxArm64,
+}
+
+impl ReleasePlatform {
+    fn name(self) -> &'static str {
+        match self {
+            Self::MacOs => "macOS",
+            Self::Windows => "Windows",
+            Self::LinuxAmd64 => "Linux (x86_64)",
+            Self::LinuxArm64 => "Linux (ARM64)",
+        }
+    }
 }
 
 /// One release's notes, as written on its GitHub release page.
@@ -227,10 +260,10 @@ fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
     Some((maj, min, pat))
 }
 
-/// Debian architecture string for the running build, matching the
-/// cargo-deb asset names CI publishes.
-fn deb_arch() -> &'static str {
-    match std::env::consts::ARCH {
+/// Debian architecture string for a Rust target architecture, matching
+/// the cargo-deb asset names CI publishes.
+fn deb_arch(arch: &str) -> &str {
+    match arch {
         "x86_64" => "amd64",
         "aarch64" => "arm64",
         other => other,
@@ -240,12 +273,12 @@ fn deb_arch() -> &'static str {
 /// Index of the asset a user on this platform should download, from the
 /// release's asset names. Mirrors what CI publishes per release:
 /// `Ferail-<v>.dmg`, `Ferail-<v>-win-x64.zip`, `ferail_<v>-1_<arch>.deb`.
-fn pick_asset_index(names: &[&str]) -> Option<usize> {
-    let wanted: Box<dyn Fn(&str) -> bool> = match std::env::consts::OS {
+fn pick_asset_index_for(names: &[&str], os: &str, arch: &str) -> Option<usize> {
+    let wanted: Box<dyn Fn(&str) -> bool> = match os {
         "macos" => Box::new(|n: &str| n.ends_with(".dmg")),
         "windows" => Box::new(|n: &str| n.ends_with(".zip") && n.contains("win")),
         "linux" => {
-            let suffix = format!("_{}.deb", deb_arch());
+            let suffix = format!("_{}.deb", deb_arch(arch));
             Box::new(move |n: &str| n.ends_with(&suffix))
         }
         _ => return None,
@@ -253,12 +286,48 @@ fn pick_asset_index(names: &[&str]) -> Option<usize> {
     names.iter().position(|n| wanted(n))
 }
 
-fn pick_asset(release: &GhRelease) -> Option<AssetInfo> {
+fn pick_asset_for(release: &GhRelease, os: &str, arch: &str) -> Option<AssetInfo> {
     let names: Vec<&str> = release.assets.iter().map(|a| a.name.as_str()).collect();
-    pick_asset_index(&names).map(|ix| AssetInfo {
+    pick_asset_index_for(&names, os, arch).map(|ix| AssetInfo {
         name: release.assets[ix].name.clone(),
         url: release.assets[ix].browser_download_url.clone(),
     })
+}
+
+fn platforms_for(release: &GhRelease) -> Vec<ReleasePlatform> {
+    let mut platforms = Vec::new();
+    for asset in &release.assets {
+        let platform = if asset.name.ends_with(".dmg") {
+            Some(ReleasePlatform::MacOs)
+        } else if asset.name.ends_with(".zip") && asset.name.contains("win") {
+            Some(ReleasePlatform::Windows)
+        } else if asset.name.ends_with("_amd64.deb") {
+            Some(ReleasePlatform::LinuxAmd64)
+        } else if asset.name.ends_with("_arm64.deb") {
+            Some(ReleasePlatform::LinuxArm64)
+        } else {
+            None
+        };
+        if let Some(platform) = platform
+            && !platforms.contains(&platform)
+        {
+            platforms.push(platform);
+        }
+    }
+    platforms
+}
+
+fn current_platform_name() -> String {
+    match std::env::consts::OS {
+        "macos" => "macOS".to_string(),
+        "windows" => "Windows".to_string(),
+        "linux" => match std::env::consts::ARCH {
+            "x86_64" => "Linux (x86_64)".to_string(),
+            "aarch64" => "Linux (ARM64)".to_string(),
+            arch => format!("Linux ({arch})"),
+        },
+        other => other.to_string(),
+    }
 }
 
 fn tag_url(tag: &str) -> String {
@@ -375,16 +444,24 @@ async fn fetch_releases(client: Arc<dyn HttpClient>) -> Result<Vec<GhRelease>, C
 /// What one fetched release list means for the running build.
 #[derive(Debug, PartialEq)]
 enum Outcome {
-    UpToDate { latest: String },
+    UpToDate {
+        latest: String,
+        newer_elsewhere: Option<OtherPlatformRelease>,
+    },
     Available(ReleaseInfo),
 }
 
 /// Fold the release list into the check's outcome against `current`
 /// ("0.3.0"). Only published, non-prerelease releases that carry
 /// downloads count — a tag with nothing attached isn't an update — and a
-/// malformed tag is skipped rather than trusted. Newer releases all
-/// contribute their notes, newest first.
-fn summarize(releases: &[GhRelease], current: &str) -> anyhow::Result<Outcome> {
+/// malformed tag is skipped rather than trusted. Notes cover newer releases
+/// only through the latest version this target can install, newest first.
+fn summarize_for(
+    releases: &[GhRelease],
+    current: &str,
+    os: &str,
+    arch: &str,
+) -> anyhow::Result<Outcome> {
     let mut eligible: Vec<(&GhRelease, (u64, u64, u64))> = releases
         .iter()
         .filter(|r| !r.prerelease && !r.draft && !r.assets.is_empty())
@@ -396,26 +473,58 @@ fn summarize(releases: &[GhRelease], current: &str) -> anyhow::Result<Outcome> {
     let Some(&(latest, latest_v)) = eligible.first() else {
         anyhow::bail!("no published release with downloads found");
     };
-    let latest_version = latest.tag_name.trim_start_matches('v').to_string();
     let Some(cur) = parse_version(current) else {
         anyhow::bail!("running version {current:?} is not a release version");
     };
-    if latest_v <= cur {
+
+    let platform_latest = eligible.iter().find_map(|&(release, version)| {
+        pick_asset_for(release, os, arch).map(|a| (release, version, a))
+    });
+    let platform_v = platform_latest.as_ref().map(|(_, version, _)| *version);
+    let newer_elsewhere = if latest_v > cur && platform_v.is_none_or(|version| latest_v > version) {
+        Some(OtherPlatformRelease {
+            version: latest.tag_name.trim_start_matches('v').to_string(),
+            tag: latest.tag_name.clone(),
+            platforms: platforms_for(latest),
+        })
+    } else {
+        None
+    };
+
+    let Some((platform_latest, platform_latest_v, asset)) = platform_latest else {
+        return Ok(Outcome::UpToDate {
+            latest: current.trim_start_matches('v').to_string(),
+            newer_elsewhere,
+        });
+    };
+    let latest_version = platform_latest.tag_name.trim_start_matches('v').to_string();
+    if platform_latest_v <= cur {
         return Ok(Outcome::UpToDate {
             latest: latest_version,
+            newer_elsewhere,
         });
     }
     let notes = eligible
         .iter()
-        .filter(|(_, v)| *v > cur)
+        .filter(|(_, v)| *v > cur && *v <= platform_latest_v)
         .map(|(r, _)| release_notes(r))
         .collect();
     Ok(Outcome::Available(ReleaseInfo {
         version: latest_version,
-        tag: latest.tag_name.clone(),
-        asset: pick_asset(latest),
+        tag: platform_latest.tag_name.clone(),
+        asset: Some(asset),
         notes,
+        newer_elsewhere,
     }))
+}
+
+fn summarize(releases: &[GhRelease], current: &str) -> anyhow::Result<Outcome> {
+    summarize_for(
+        releases,
+        current,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
 }
 
 fn release_notes(r: &GhRelease) -> ReleaseNotes {
@@ -572,7 +681,13 @@ fn start_check(manual: bool, cx: &mut App) {
         cx.update(|cx| {
             let status = match result {
                 Ok(Outcome::Available(info)) => CheckStatus::Available(info),
-                Ok(Outcome::UpToDate { latest }) => CheckStatus::UpToDate { latest },
+                Ok(Outcome::UpToDate {
+                    latest,
+                    newer_elsewhere,
+                }) => CheckStatus::UpToDate {
+                    latest,
+                    newer_elsewhere,
+                },
                 Err(e) => {
                     crate::log_warn!(90, "update check failed ({:?}): {}", e.failure, e.detail);
                     CheckStatus::Failed(e.failure)
@@ -1027,13 +1142,21 @@ fn dialog_body(st: &UpdateState, cx: &App) -> impl IntoElement {
             .text_color(muted)
             .child(tr!("Checking GitHub for the latest release\u{2026}"))
             .into_any_element(),
-        CheckStatus::UpToDate { latest } => div()
-            .text_scale_sm()
-            .text_color(fg)
-            .child(tr!(
-                "You're up to date — {latest} is the latest release.",
+        CheckStatus::UpToDate {
+            latest,
+            newer_elsewhere,
+        } => v_flex()
+            .gap_1()
+            .child(div().text_scale_sm().text_color(fg).child(tr!(
+                "You're up to date for {platform} — {latest} is the latest release.",
+                platform = current_platform_name(),
                 latest = latest
-            ))
+            )))
+            .children(
+                newer_elsewhere
+                    .as_ref()
+                    .map(|release| other_platform_release_row(release, cx)),
+            )
             .into_any_element(),
         CheckStatus::Available(info) => v_flex()
             .gap_1()
@@ -1043,6 +1166,11 @@ fn dialog_body(st: &UpdateState, cx: &App) -> impl IntoElement {
             )))
             .child(whats_new(info, cx))
             .child(release_notes_row(info.tag.clone()))
+            .children(
+                info.newer_elsewhere
+                    .as_ref()
+                    .map(|release| other_platform_release_row(release, cx)),
+            )
             .into_any_element(),
         CheckStatus::Failed(failure) => v_flex()
             .gap_1()
@@ -1110,10 +1238,9 @@ fn dialog_body(st: &UpdateState, cx: &App) -> impl IntoElement {
         .children(download_line)
 }
 
-/// "What's new" — the release notes GitHub holds for every version newer
-/// than this build, rendered as markdown in a bounded scroll box, so the
-/// user decides with the changes in front of them, before anything is
-/// downloaded.
+/// "What's new" — release notes newer than this build through the compatible
+/// version on offer, rendered as markdown in a bounded scroll box, so the user
+/// decides with the changes in front of them before anything is downloaded.
 fn whats_new(info: &ReleaseInfo, cx: &App) -> impl IntoElement {
     let muted = cx.theme().muted_foreground;
     let src = notes_markdown(&info.notes);
@@ -1181,6 +1308,41 @@ fn release_notes_row(tag: String) -> impl IntoElement {
         })
 }
 
+/// A non-actionable global version is useful context, but must not replace
+/// the compatible release or its download button. The message itself links
+/// to that other release for anyone who wants the details.
+fn other_platform_release_row(release: &OtherPlatformRelease, cx: &App) -> impl IntoElement {
+    let platforms = if release.platforms.is_empty() {
+        tr!("other platforms").to_string()
+    } else {
+        release
+            .platforms
+            .iter()
+            .map(|platform| platform.name())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let tag = release.tag.clone();
+    div()
+        .id(ElementId::Name("update-other-platform-release".into()))
+        .cursor_pointer()
+        .text_scale_xs()
+        .text_color(cx.theme().muted_foreground)
+        .underline()
+        .child(tr!(
+            "A newer Ferail {version} release exists for {platforms}.",
+            version = release.version,
+            platforms = platforms
+        ))
+        .on_click(move |_: &ClickEvent, _window, cx| {
+            let url = tag_url(&tag);
+            cx.background_spawn(async move {
+                crate::platform_shell::open_url(&url);
+            })
+            .detach();
+        })
+}
+
 // ============================================================================
 // Screenshot harness
 // ============================================================================
@@ -1223,11 +1385,24 @@ pub fn seed_dialog_for_screenshot(state: &str, cx: &mut App) {
                 date: Some("2026-12-01".to_string()),
             },
         ],
+        newer_elsewhere: None,
     };
     let (status, download) = match state {
         "uptodate" => (
             CheckStatus::UpToDate {
                 latest: env!("CARGO_PKG_VERSION").to_string(),
+                newer_elsewhere: None,
+            },
+            DownloadStatus::None,
+        ),
+        "elsewhere" => (
+            CheckStatus::UpToDate {
+                latest: env!("CARGO_PKG_VERSION").to_string(),
+                newer_elsewhere: Some(OtherPlatformRelease {
+                    version: "9.9.9".to_string(),
+                    tag: "v9.9.9".to_string(),
+                    platforms: vec![ReleasePlatform::Windows, ReleasePlatform::LinuxAmd64],
+                }),
             },
             DownloadStatus::None,
         ),
@@ -1365,7 +1540,7 @@ mod tests {
             // Malformed tag: ignored, not trusted.
             gh("nightly", &["Ferail-nightly.dmg"], Some("x"), false),
         ];
-        match summarize(&rel, "0.3.0").unwrap() {
+        match summarize_for(&rel, "0.3.0", "macos", "aarch64").unwrap() {
             Outcome::Available(info) => {
                 assert_eq!(info.version, "0.5.0");
                 assert_eq!(info.tag, "v0.5.0");
@@ -1381,16 +1556,18 @@ mod tests {
                 assert_eq!(info.notes[0].title, "Ferail 0.5.0");
                 assert_eq!(info.notes[0].date.as_deref(), Some("2026-08-08"));
                 assert_eq!(info.notes[1].body, "");
-                assert!(info.asset.is_some() || std::env::consts::OS == "freebsd");
+                assert_eq!(info.asset.as_ref().unwrap().name, "Ferail-0.5.0.dmg");
+                assert_eq!(info.newer_elsewhere, None);
             }
             other => panic!("expected Available, got {other:?}"),
         }
         // At or past the latest: up to date, naming the latest.
         for cur in ["0.5.0", "0.9.0"] {
             assert_eq!(
-                summarize(&rel, cur).unwrap(),
+                summarize_for(&rel, cur, "macos", "aarch64").unwrap(),
                 Outcome::UpToDate {
-                    latest: "0.5.0".to_string()
+                    latest: "0.5.0".to_string(),
+                    newer_elsewhere: None,
                 }
             );
         }
@@ -1403,12 +1580,20 @@ mod tests {
             gh("v0.9.0", &[], Some("assets still uploading"), false),
             gh("v0.4.0", &["Ferail-0.4.0.dmg"], None, false),
         ];
-        match summarize(&rel, "0.3.0").unwrap() {
+        match summarize_for(&rel, "0.3.0", "macos", "aarch64").unwrap() {
             Outcome::Available(info) => assert_eq!(info.version, "0.4.0"),
             other => panic!("{other:?}"),
         }
         // …and a list with none at all is an error, not "up to date".
-        assert!(summarize(&[gh("v0.9.0", &[], None, false)], "0.3.0").is_err());
+        assert!(
+            summarize_for(
+                &[gh("v0.9.0", &[], None, false)],
+                "0.3.0",
+                "macos",
+                "aarch64"
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1446,16 +1631,116 @@ mod tests {
             "ferail_0.5.0-1_amd64.deb",
             "ferail_0.5.0-1_arm64.deb",
         ];
-        let picked = pick_asset_index(&names);
-        match std::env::consts::OS {
-            "macos" => assert_eq!(picked, Some(1)),
-            "windows" => assert_eq!(picked, Some(0)),
-            "linux" => {
-                let expect = if deb_arch() == "amd64" { 2 } else { 3 };
-                assert_eq!(picked, Some(expect));
+        assert_eq!(pick_asset_index_for(&names, "macos", "aarch64"), Some(1));
+        assert_eq!(pick_asset_index_for(&names, "windows", "x86_64"), Some(0));
+        assert_eq!(pick_asset_index_for(&names, "linux", "x86_64"), Some(2));
+        assert_eq!(pick_asset_index_for(&names, "linux", "aarch64"), Some(3));
+        assert_eq!(pick_asset_index_for(&names, "freebsd", "x86_64"), None);
+    }
+
+    #[test]
+    fn staggered_releases_pick_latest_for_target_and_report_global_latest() {
+        let rel = vec![
+            gh("v0.5.2", &["Ferail-0.5.2.dmg"], Some("mac only"), false),
+            gh(
+                "v0.5.1",
+                &[
+                    "Ferail-0.5.1-win-x64.zip",
+                    "Ferail-0.5.1.dmg",
+                    "ferail_0.5.1-1_amd64.deb",
+                    "ferail_0.5.1-1_arm64.deb",
+                ],
+                Some("all platforms"),
+                false,
+            ),
+        ];
+
+        // macOS can install the globally newest release.
+        let Outcome::Available(mac) = summarize_for(&rel, "0.5.1", "macos", "aarch64").unwrap()
+        else {
+            panic!("macOS should see 0.5.2");
+        };
+        assert_eq!(mac.version, "0.5.2");
+        assert_eq!(mac.asset.unwrap().name, "Ferail-0.5.2.dmg");
+        assert_eq!(mac.newer_elsewhere, None);
+
+        // Windows 0.5.0 must still be offered 0.5.1; 0.5.2 cannot shadow it.
+        let Outcome::Available(windows) =
+            summarize_for(&rel, "0.5.0", "windows", "x86_64").unwrap()
+        else {
+            panic!("Windows should see its compatible 0.5.1");
+        };
+        assert_eq!(windows.version, "0.5.1");
+        assert_eq!(windows.asset.unwrap().name, "Ferail-0.5.1-win-x64.zip");
+        assert_eq!(
+            windows
+                .notes
+                .iter()
+                .map(|notes| notes.version.as_str())
+                .collect::<Vec<_>>(),
+            ["0.5.1"]
+        );
+        assert_eq!(
+            windows.newer_elsewhere,
+            Some(OtherPlatformRelease {
+                version: "0.5.2".into(),
+                tag: "v0.5.2".into(),
+                platforms: vec![ReleasePlatform::MacOs],
+            })
+        );
+
+        // Once Windows has 0.5.1, it is current for Windows while still
+        // learning that 0.5.2 exists on macOS.
+        assert_eq!(
+            summarize_for(&rel, "0.5.1", "windows", "x86_64").unwrap(),
+            Outcome::UpToDate {
+                latest: "0.5.1".into(),
+                newer_elsewhere: Some(OtherPlatformRelease {
+                    version: "0.5.2".into(),
+                    tag: "v0.5.2".into(),
+                    platforms: vec![ReleasePlatform::MacOs],
+                }),
             }
-            _ => assert_eq!(picked, None),
+        );
+
+        // Both Linux architectures select their own package from 0.5.1.
+        for (arch, package) in [
+            ("x86_64", "ferail_0.5.1-1_amd64.deb"),
+            ("aarch64", "ferail_0.5.1-1_arm64.deb"),
+        ] {
+            let Outcome::Available(info) = summarize_for(&rel, "0.5.0", "linux", arch).unwrap()
+            else {
+                panic!("Linux {arch} should see 0.5.1");
+            };
+            assert_eq!(info.version, "0.5.1");
+            assert_eq!(info.asset.unwrap().name, package);
         }
+    }
+
+    #[test]
+    fn platform_labels_are_inferred_from_ci_assets_once_each() {
+        let release = gh(
+            "v1.0.0",
+            &[
+                "Ferail-1.0.0.dmg",
+                "Ferail-1.0.0.dmg",
+                "Ferail-1.0.0-win-x64.zip",
+                "ferail_1.0.0-1_amd64.deb",
+                "ferail_1.0.0-1_arm64.deb",
+                "checksums.txt",
+            ],
+            None,
+            false,
+        );
+        assert_eq!(
+            platforms_for(&release),
+            [
+                ReleasePlatform::MacOs,
+                ReleasePlatform::Windows,
+                ReleasePlatform::LinuxAmd64,
+                ReleasePlatform::LinuxArm64,
+            ]
+        );
     }
 
     /// Real network + real release asset — run explicitly with
