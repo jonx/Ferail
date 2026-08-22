@@ -31,9 +31,13 @@ mod volumes;
 pub mod xattr_info;
 pub use archive::scratch;
 pub use archive::{
-    add_to_archive, create_archive, read_entry_bytes as read_archive_entry_bytes, extract_all as extract_archive, probe_format as probe_archive_format,
+    add_to_archive, archive_stamp, commit_archive_edits, convert_archive, create_archive,
+    materialize_archive_entry,
+    read_entry_bytes as read_archive_entry_bytes, extract_all as extract_archive,
+    inspect_archive_additions, probe_format as probe_archive_format,
     extract_entries as extract_archive_entries, read_summary as read_archive_summary,
-    read_toc as read_archive_toc, AddOutcome, ArchiveError, ArchiveSummary, CreateOptions,
+    read_toc as read_archive_toc, AddOutcome, ArchiveAddition, ArchiveEditPlan, ArchiveError,
+    ArchiveRename, ArchiveStamp, ArchiveSummary, ConvertOptions, ConvertOutcome, CreateOptions,
     ExtractOptions, ExtractOutcome, SkipReason, SkippedEntry,
 };
 pub use disk_usage_scanner::{recursive_size, recursive_totals, SubtreeTotals, DEFAULT_DU_BATCH};

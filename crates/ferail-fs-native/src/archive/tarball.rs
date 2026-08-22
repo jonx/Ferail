@@ -30,10 +30,65 @@ fn decoded_reader(archive: &Path, format: Format) -> Result<Box<dyn Read>, Archi
             return Err(ArchiveError::Codec(format!(
                 "not a tar-family format: {}",
                 other.label()
-            )))
+            )));
         }
     };
     Ok(reader)
+}
+
+/// Whether a lexically single-member compressor actually wraps a tar stream.
+///
+/// Only one decoded tar block is read. This is deliberately called from
+/// `probe_format`, which already has the off-UI-thread tripwire; it never runs
+/// from rendering or context-menu construction.
+pub(super) fn compressed_payload_is_tar(archive: &Path, format: Format) -> bool {
+    let Ok(file) = File::open(archive) else {
+        return false;
+    };
+    let mut reader: Box<dyn Read> = match format {
+        Format::Gzip => Box::new(flate2::read::GzDecoder::new(file)),
+        Format::Bzip2 => Box::new(bzip2::read::BzDecoder::new(file)),
+        Format::Xz => Box::new(xz2::read::XzDecoder::new(file)),
+        _ => return false,
+    };
+    let mut block = [0u8; 512];
+    reader.read_exact(&mut block).is_ok() && looks_like_tar_header(&block)
+}
+
+/// Validate the first tar header using both its name and checksum. Checking
+/// only `ustar` would miss old v7 tar files; checking only printable bytes
+/// would misclassify arbitrary compressed data.
+fn looks_like_tar_header(block: &[u8; 512]) -> bool {
+    if block[..100].iter().all(|b| *b == 0) {
+        return false;
+    }
+    let stored = parse_tar_octal(&block[148..156]);
+    let Some(stored) = stored else { return false };
+    let unsigned_sum: u64 = block
+        .iter()
+        .enumerate()
+        .map(|(ix, byte)| {
+            if (148..156).contains(&ix) {
+                b' ' as u64
+            } else {
+                *byte as u64
+            }
+        })
+        .sum();
+    stored == unsigned_sum
+}
+
+fn parse_tar_octal(bytes: &[u8]) -> Option<u64> {
+    let text = bytes
+        .iter()
+        .copied()
+        .skip_while(|b| *b == b' ' || *b == 0)
+        .take_while(|b| (b'0'..=b'7').contains(b))
+        .collect::<Vec<_>>();
+    (!text.is_empty())
+        .then(|| std::str::from_utf8(&text).ok())
+        .flatten()
+        .and_then(|s| u64::from_str_radix(s, 8).ok())
 }
 
 pub(super) fn read_toc(archive: &Path, format: Format) -> Result<Toc, ArchiveError> {
@@ -57,6 +112,10 @@ pub(super) fn read_toc(archive: &Path, format: Format) -> Result<Toc, ArchiveErr
             uncompressed_size: header.size().ok(),
             compressed_size: None, // per-member compressed size is not meaningful for a tar stream
             mtime_unix: header.mtime().ok().map(|m| m as i64),
+            compression_method: None,
+            checksum: header.cksum().ok().map(|sum| format!("TAR {:06o}", sum)),
+            unix_mode: header.mode().ok(),
+            comment: None,
             encrypted: false, // tar has no encryption
         });
     }
@@ -144,7 +203,15 @@ pub(super) fn extract(
         let Some(safe) = super::safe_or_skip(&path, &mut outcome) else {
             continue;
         };
-        super::write_file(dest, &safe, &mut entry, opts, progress, cancel, &mut outcome)?;
+        super::write_file(
+            dest,
+            &safe,
+            &mut entry,
+            opts,
+            progress,
+            cancel,
+            &mut outcome,
+        )?;
     }
     Ok(outcome)
 }
@@ -209,7 +276,7 @@ pub(super) fn create(
             return Err(ArchiveError::Codec(format!(
                 "not a tar-family format: {}",
                 other.label()
-            )))
+            )));
         }
     }
     Ok(())

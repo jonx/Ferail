@@ -507,9 +507,26 @@ fn render_favorite_row(
         );
     if is_active {
         row = row.bg(theme.sidebar_accent);
-    } else {
+    }
+    // Single `.hover()` slot (gpui asserts on a second), shared by the
+    // ordinary hover wash and the drop-target ring. The ring is the only
+    // feedback an *available* favorite gets during a native promise session,
+    // where gpui holds no typed drag and `drag_over` never fires.
+    {
         let hover_bg = theme.sidebar_accent.opacity(0.5);
-        row = row.hover(move |this| this.bg(hover_bg));
+        let drop_border = theme.accent;
+        let native_drop_target =
+            matches!(state, FavoriteState::Available) && crate::file_list::native_archive_drag_active();
+        row = row.hover(move |this| {
+            let this = if is_active { this } else { this.bg(hover_bg) };
+            if native_drop_target {
+                this.border_1()
+                    .border_color(drop_border)
+                    .bg(drop_border.opacity(0.12))
+            } else {
+                this
+            }
+        });
     }
     // §11.4 keyboard focus ring — distinct from the §5 favorited
     // indicator, hover, and the active/selected background. A 1-DIP
@@ -565,6 +582,10 @@ fn render_favorite_row(
     if let (FavoriteState::Available, Some(dest)) = (state, path_for_click.clone()) {
         let drop_accent = theme.sidebar_accent.opacity(0.6);
         let shell_for_drop = shell.clone();
+        let shell_for_archive_drop = shell.clone();
+        let archive_dest = dest.clone();
+        let shell_for_native_drop = shell.clone();
+        let native_archive_dest = dest.clone();
         row = row
             .drag_over::<ExternalPaths>(move |style, _payload, _window, _cx| style.bg(drop_accent))
             .on_drop(move |paths: &ExternalPaths, window, cx| {
@@ -579,6 +600,57 @@ fn render_favorite_row(
                 // uses (Prime Directive: no stat on the drop thread).
                 s.update(cx, |shell, cx| {
                     shell.handle_external_drop(collected, dest, window, cx);
+                });
+            })
+            .drag_over::<crate::file_list::ArchiveEntryDrag>(move |style, _payload, _window, cx| {
+                style
+                    .border_1()
+                    .border_color(cx.theme().accent)
+                    .bg(cx.theme().accent.opacity(0.12))
+            })
+            .on_drop(
+                move |drag: &crate::file_list::ArchiveEntryDrag, window, cx| {
+                    cx.stop_propagation();
+                    let Some(s) = shell_for_archive_drop.upgrade() else {
+                        return;
+                    };
+                    let dest = archive_dest.clone();
+                    let archive = drag.archive.clone();
+                    let entries = drag.entries.clone();
+                    let password = drag.password.clone();
+                    s.update(cx, |shell, cx| {
+                        shell.extract_archive_entries_into(
+                            archive, entries, dest, password, window, cx,
+                        );
+                    });
+                },
+            )
+            .on_mouse_move(|_event, window, _cx| {
+                if crate::file_list::native_archive_drag().is_some() {
+                    window.refresh();
+                }
+            })
+            .on_mouse_up(gpui::MouseButton::Left, move |_event, window, cx| {
+                if cx.has_active_drag() {
+                    return;
+                }
+                let Some(drag) = crate::file_list::take_native_archive_drag() else {
+                    return;
+                };
+                cx.stop_propagation();
+                let Some(shell) = shell_for_native_drop.upgrade() else {
+                    return;
+                };
+                let dest = native_archive_dest.clone();
+                shell.update(cx, |this, cx| {
+                    this.extract_archive_entries_into(
+                        drag.archive,
+                        drag.entries,
+                        dest,
+                        drag.password,
+                        window,
+                        cx,
+                    );
                 });
             });
     }

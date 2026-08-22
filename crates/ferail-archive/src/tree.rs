@@ -36,7 +36,12 @@ pub struct TreeRow {
     /// Uncompressed size — `None` for directories and for formats that don't
     /// record it.
     pub size: Option<u64>,
+    pub compressed_size: Option<u64>,
     pub mtime_unix: Option<i64>,
+    pub compression_method: Option<String>,
+    pub checksum: Option<String>,
+    pub unix_mode: Option<u32>,
+    pub comment: Option<String>,
     pub encrypted: bool,
 }
 
@@ -51,10 +56,15 @@ pub struct ArchiveTree {
     files: BTreeMap<String, FileFacts>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 struct FileFacts {
     size: Option<u64>,
+    compressed_size: Option<u64>,
     mtime_unix: Option<i64>,
+    compression_method: Option<String>,
+    checksum: Option<String>,
+    unix_mode: Option<u32>,
+    comment: Option<String>,
     encrypted: bool,
 }
 
@@ -96,7 +106,12 @@ impl ArchiveTree {
                     full.clone(),
                     FileFacts {
                         size: entry.uncompressed_size,
+                        compressed_size: entry.compressed_size,
                         mtime_unix: entry.mtime_unix,
+                        compression_method: entry.compression_method.clone(),
+                        checksum: entry.checksum.clone(),
+                        unix_mode: entry.unix_mode,
+                        comment: entry.comment.clone(),
                         encrypted: entry.encrypted,
                     },
                 );
@@ -140,7 +155,7 @@ impl ArchiveTree {
         for path in ordered {
             let is_dir = self.dirs.contains(path);
             let is_expanded = is_dir && expanded.contains(path);
-            let facts = self.files.get(path).copied().unwrap_or_default();
+            let facts = self.files.get(path).cloned().unwrap_or_default();
             out.push(TreeRow {
                 path: path.clone(),
                 name: leaf(path).to_string(),
@@ -149,7 +164,12 @@ impl ArchiveTree {
                 expandable: is_dir && self.children.contains_key(path),
                 expanded: is_expanded,
                 size: if is_dir { None } else { facts.size },
+                compressed_size: if is_dir { None } else { facts.compressed_size },
                 mtime_unix: facts.mtime_unix,
+                compression_method: facts.compression_method,
+                checksum: facts.checksum,
+                unix_mode: facts.unix_mode,
+                comment: facts.comment,
                 encrypted: facts.encrypted,
             });
             if is_expanded {
@@ -169,7 +189,7 @@ impl ArchiveTree {
             .filter(|p| leaf(p).to_lowercase().contains(&needle))
             .map(|path| {
                 let is_dir = self.dirs.contains(&path);
-                let facts = self.files.get(&path).copied().unwrap_or_default();
+                let facts = self.files.get(&path).cloned().unwrap_or_default();
                 TreeRow {
                     name: leaf(&path).to_string(),
                     depth: 0,
@@ -177,7 +197,12 @@ impl ArchiveTree {
                     expandable: false,
                     expanded: false,
                     size: if is_dir { None } else { facts.size },
+                    compressed_size: if is_dir { None } else { facts.compressed_size },
                     mtime_unix: facts.mtime_unix,
+                    compression_method: facts.compression_method,
+                    checksum: facts.checksum,
+                    unix_mode: facts.unix_mode,
+                    comment: facts.comment,
                     encrypted: facts.encrypted,
                     path,
                 }
@@ -225,6 +250,10 @@ mod tests {
             uncompressed_size: Some(size),
             compressed_size: None,
             mtime_unix: None,
+            compression_method: None,
+            checksum: None,
+            unix_mode: None,
+            comment: None,
             encrypted: false,
         }
     }
@@ -295,6 +324,10 @@ mod tests {
                     uncompressed_size: None,
                     compressed_size: None,
                     mtime_unix: None,
+                    compression_method: None,
+                    checksum: None,
+                    unix_mode: None,
+                    comment: None,
                     encrypted: false,
                 },
                 file("project/a.txt", 5),

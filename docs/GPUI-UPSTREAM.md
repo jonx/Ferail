@@ -334,9 +334,11 @@ seven weeks. Real drag-out requires chaining
 pointer leaves the viewport, gpui calls the resolver (UI thread — keep it
 allocation-cheap and I/O-free; we feed it cached `EntryKind` dir-ness) and
 promotes to a native `NSDraggingSession` / Wayland drag. The platform then
-draws per-type file icons and the in-window ghost hands off. Payloads are
-real on-disk paths only (`ExternalDragPayload::Files`) — nothing exists yet
-for promise-based/deferred content (our archive-entry drags stay in-window).
+draws per-type file icons and the in-window ghost hands off. Payloads are real
+on-disk paths only (`ExternalDragPayload::Files`) — nothing exists yet for
+promise-based/deferred content. Ferail now implements archive member drag-out
+directly with `NSFilePromiseProvider`; see #11 for the extra cross-window
+handoff this requires.
 
 ## 10. Drag-out operation mask is hardcoded to Copy — no move, no modifiers
 
@@ -382,5 +384,63 @@ back. The Shell's global Esc keystroke observer routes to it when
 `has_active_drag()` is false but a native session is live. Upstream could
 expose a `Window::cancel_external_drag()` (and gpui could bind Esc itself,
 matching Finder).
+
+## 11. Native file promises are rejected by GPUI drop destinations
+
+**Hit during:** archive-member drag-out from a standalone workbench.
+
+Two layers reject it. First, `gpui_macos` registers each window with
+`registerForDraggedTypes: @[NSFilenamesPboardType]` only. AppKit sends
+drag-destination callbacks to a window only when the session pasteboard
+carries a registered type, and `NSFilePromiseProvider` never writes the
+legacy filename list (only `com.apple.pasteboard.promised-file-*`,
+`com.apple.NSFilePromiseItemMetaData`, `Apple files promise pasteboard type`),
+so for a promised-file drag a GPUI window is simply not a destination: no
+`draggingEntered:`, no `draggingUpdated:`, no `performDragOperation:` — the
+drop lands nowhere while Finder, which registers for the promise types, works.
+This was the actual "drag to Ferail does nothing, drag to Finder works" bug;
+no amount of pasteboard marking or callback shimming can help a window AppKit
+never calls. Second, even when called, `gpui_macos::dragging_entered`
+recognizes a native file drag only when `NSFilenamesPboardType` yields a
+property list, which a promise cannot provide by design, so GPUI returns
+`NSDragOperationNone` before its own drop handlers can see the gesture. Its
+platform-owned internal-drag state also restores only into the source window;
+another GPUI window receives `ExternalPaths`, which cannot represent archive
+coordinates.
+
+**Workaround:** Ferail's promise items are an `NSFilePromiseProvider`
+*subclass* that additionally declares a private, data-free marker type (the
+documented way to add types to a promised item; Finder ignores it). At drag
+start, before `beginDraggingSession`, Ferail calls `registerForDraggedTypes:`
+on every `GPUIWindow`/`GPUIPanel` with that marker plus the legacy filename
+type (registration accumulates, but passing both keeps Finder→Ferail drops
+safe either way). That makes AppKit route the gesture to GPUI's window class,
+where a narrow `draggingEntered:` shim recognizes Ferail's own promise session
+(an in-process flag raised before the session starts; the marker is the
+fallback) and admits it without calling GPUI's legacy filename parser; every
+ordinary drag still chains to GPUI unchanged. GPUI's existing Updated/Submit
+callbacks then drive the retained in-process `ArchiveEntryDrag`, so another
+Ferail window consumes the archive coordinates while Finder consumes the
+promises. A foreground timer observes only the atomic native-session flag and
+clears the retained drag when AppKit ends. Escape cancels both halves.
+
+There is a second required shim: GPUI's `FileDropEvent::Exited` takes and drops
+`active_drag` unless it previously moved that value into its private
+platform-owned slot. A directly started AppKit promise session never enters
+that slot. Ferail therefore ignores `draggingExited:` only for its marked
+archive promises, preserving the payload across window edges; ordinary drags
+still chain to GPUI. MouseUp on a successful drop, session-end cleanup, or
+Escape remains the terminal owner.
+
+Do not emulate this with an empty `NSFilenamesPboardType` array: GPUI's Cocoa
+`NSFastIterator` dereferences the first item without accepting an empty list,
+which aborts the process in `dragging_entered` before any drop handler runs.
+
+**What upstream could do:** register its windows for the modern file-promise
+pasteboard types as well as `NSFilenamesPboardType`, accept
+`NSFilePromiseReceiver` / those types as file drags, and expose a deferred
+external payload API.
+For same-process cross-window drags, restore the original typed payload in any
+GPUI destination window rather than only the source window.
 
 <!-- Add new findings above this line as the bump surfaces them. -->

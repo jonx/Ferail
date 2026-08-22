@@ -29,20 +29,21 @@ use std::path::PathBuf;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
-    button::Button,
+    ActiveTheme, Disableable, ElementExt as _, Selectable as _, Sizable, WindowExt as _,
+    button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputState},
-    v_flex, ActiveTheme, Disableable, ElementExt as _, Selectable as _, Sizable, WindowExt as _,
+    v_flex,
 };
 
-use ferail_archive::{ArchiveTree, Capabilities, Format, Toc, TreeRow};
+use ferail_archive::{ArchiveEntry, ArchiveTree, Capabilities, Format, Toc, TreeRow};
 use ferail_core::{EntryKind, FileEntry, NodeId};
 use ferail_fs_native::ArchiveError;
 
 use crate::file_list::FileListDelegate;
 use crate::multi_table::{DataTable, TableEvent, TableState};
 use crate::shell::Shell;
-use crate::text::{TextScale as _, TruncateMiddle as _};
+use crate::text::{IconScale as _, TextScale as _, TruncateMiddle as _};
 use crate::tool_results::{ToolHostContext, ToolHostEvent};
 
 /// Callback a standalone archive window uses to dock itself back into a tab.
@@ -51,7 +52,8 @@ pub type ArchiveDockOwner = std::rc::Rc<dyn Fn(PathBuf, Entity<ArchiveView>, &mu
 
 /// Narrower than this and the header hides its filter box so the archive's
 /// name keeps a usable share of the row.
-const FILTER_MIN_WIDTH: f32 = 820.0;
+const FILTER_MIN_WIDTH: f32 = 1180.0;
+const COMPACT_ACTIONS_WIDTH: f32 = 900.0;
 
 /// Above this, previewing asks first. An archive entry has to be written out
 /// before Quick Look can read it (it is an OS service that takes a file URL),
@@ -74,7 +76,9 @@ enum ArchiveLoad {
     /// The archive's *listing itself* is encrypted (7z header encryption), so
     /// nothing can be shown until a password is supplied. `error` is set after
     /// a rejected attempt.
-    NeedsPassword { error: Option<String> },
+    NeedsPassword {
+        error: Option<String>,
+    },
     Failed(String),
 }
 
@@ -106,6 +110,23 @@ pub struct ArchiveView {
     shell: Option<WeakEntity<Shell>>,
     password_input: Entity<InputState>,
     password: Option<String>,
+    /// Identity of the archive at the moment `load` was read. A transactional
+    /// save refuses to overwrite the file if this no longer matches.
+    stamp: Option<ferail_fs_native::ArchiveStamp>,
+    /// Unsaved operations plus the worker-expanded virtual rows for additions.
+    edits: ferail_fs_native::ArchiveEditPlan,
+    pending_entries: Vec<ArchiveEntry>,
+    saving: bool,
+    /// Avoid stacking multiple close-confirmation dialogs when the platform
+    /// sends repeated close requests while one is already visible.
+    close_prompt_open: bool,
+    /// Hover explanation shown while an external file drag is over the pane.
+    drop_feedback: Option<SharedString>,
+    /// Whether the current hover explanation describes an accepted drop.
+    /// Archive-entry drags over their source workbench are deliberately
+    /// rejected: releasing there must never bubble into the docked folder
+    /// pane and accidentally extract into its current directory.
+    drop_feedback_allowed: bool,
     /// Own preview panel, used when this workbench lives in its own window —
     /// there is no Shell pane there to borrow. `None` while docked, where the
     /// Shell's pane shows the entry instead.
@@ -117,16 +138,16 @@ pub struct ArchiveView {
     /// preview providers (Quick Look) can read them, so nothing is extracted
     /// until the user asks for it.
     preview_enabled: bool,
-    /// Scratch directory holding entries written out for preview, removed when
-    /// this view is dropped. Created lazily on the first preview.
+    /// Scratch directory holding entries written out for preview. Created
+    /// lazily on the first preview and swept at the next startup if the view
+    /// closes while no further background callback can remove it safely.
     scratch: Option<PathBuf>,
     /// Archive path of the entry currently staged for preview, so re-selecting
     /// the same row doesn't extract it twice.
     previewed: Option<String>,
     /// The scratch file backing the current preview. At most one exists at a
-    /// time: staging a new entry, closing the preview, or dropping the view
-    /// removes it, so archive contents are never in the clear for longer than
-    /// they are on screen.
+    /// time: staging a new entry or closing the preview removes the prior file;
+    /// crash/startup cleanup covers a window closed during background work.
     staged_file: Option<PathBuf>,
     focus_handle: FocusHandle,
 }
@@ -198,11 +219,25 @@ impl ArchiveView {
                     this.preview_selection(_window, cx);
                     cx.notify();
                 }
+                TableEvent::ExternalDrop { row_ix, paths } => {
+                    let destination = table
+                        .read(cx)
+                        .delegate()
+                        .archive_row(*row_ix)
+                        .filter(|row| row.is_dir)
+                        .map(|row| row.path.clone());
+                    if let Some(destination) = destination {
+                        this.add_dropped_at(paths.clone(), destination, _window, cx);
+                    }
+                }
                 _ => {}
             },
         );
-        let password_input =
-            cx.new(|cx| InputState::new(window, cx).masked(true).placeholder(tr!("Password")));
+        let password_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder(tr!("Password"))
+        });
         let filter_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Filter contents\u{2026}")));
         // Re-project on every keystroke in the filter box.
@@ -232,6 +267,13 @@ impl ArchiveView {
             shell: None,
             password_input,
             password: None,
+            stamp: None,
+            edits: ferail_fs_native::ArchiveEditPlan::default(),
+            pending_entries: Vec::new(),
+            saving: false,
+            close_prompt_open: false,
+            drop_feedback: None,
+            drop_feedback_allowed: false,
             host_width: None,
             preview_panel: None,
             preview_enabled: false,
@@ -306,7 +348,7 @@ impl ArchiveView {
         self.preview_enabled = !self.preview_enabled;
         if !self.preview_enabled {
             self.previewed = None;
-            self.discard_staged();
+            self.discard_staged(cx);
             if let Some(shell) = self.shell.clone() {
                 let _ = shell.update(cx, |s, cx| {
                     s.preview_override = None;
@@ -329,9 +371,11 @@ impl ArchiveView {
     }
 
     /// Remove the currently staged scratch file, if any.
-    fn discard_staged(&mut self) {
+    fn discard_staged(&mut self, cx: &mut Context<Self>) {
         if let Some(path) = self.staged_file.take() {
-            ferail_fs_native::scratch::remove_staged(&path);
+            cx.background_executor()
+                .spawn(async move { ferail_fs_native::scratch::remove_staged(&path) })
+                .detach();
         }
     }
 
@@ -344,7 +388,7 @@ impl ArchiveView {
         self.preview_enabled = enabled;
         if !enabled {
             self.previewed = None;
-            self.discard_staged();
+            self.discard_staged(cx);
         }
         cx.notify();
     }
@@ -518,12 +562,9 @@ impl ArchiveView {
         let Some(shell) = self.shell.clone() else {
             return;
         };
-        let scratch = match self.scratch_dir() {
-            Some(dir) => dir,
-            None => return,
-        };
+        let scratch = self.scratch.clone();
         // Supersede the previous one immediately — never two at once.
-        self.discard_staged();
+        self.discard_staged(cx);
         self.previewed = Some(entry.clone());
         let display_name = entry
             .rsplit('/')
@@ -536,6 +577,10 @@ impl ArchiveView {
             let staged = cx
                 .background_executor()
                 .spawn(async move {
+                    let scratch = match scratch {
+                        Some(dir) => dir,
+                        None => ferail_fs_native::scratch::scratch_dir()?,
+                    };
                     // Wipe first: one staged file exists at a time, and the
                     // wipe must not run after extraction or it would delete
                     // the entry we just wrote.
@@ -574,11 +619,12 @@ impl ArchiveView {
                             let _ = std::fs::remove_dir_all(scratch.join(top));
                         }
                     }
-                    Some(staged)
+                    Some((staged, scratch))
                 })
                 .await;
-            if let Some(staged) = staged {
+            if let Some((staged, scratch)) = staged {
                 let _ = this.update(cx, |this: &mut ArchiveView, cx| {
+                    this.scratch = Some(scratch);
                     this.staged_file = Some(staged.clone());
                     cx.notify();
                 });
@@ -599,39 +645,6 @@ impl ArchiveView {
             }
         })
         .detach();
-    }
-
-    /// Per-view scratch directory, created on first use.
-    ///
-    /// # Privacy
-    ///
-    /// Previewing an archive entry means writing it out in the clear: Quick
-    /// Look is a separate OS process that reads a file URL, so an encrypted or
-    /// hashed *payload* could not be rendered at all. What we can control is
-    /// everything around it:
-    ///
-    /// - It lives under `std::env::temp_dir()`, which on macOS is the
-    ///   per-user `$TMPDIR` (`/var/folders/…/T`, mode 0700) rather than the
-    ///   world-readable `/tmp`.
-    /// - The directory is created 0700 and each staged file 0600, so on a
-    ///   shared machine no other user can read them.
-    /// - Staged files are named by a hash of the entry path, so a leftover
-    ///   file leaks nothing through its *name* — "salary-review.pdf" is
-    ///   metadata even when the bytes are unreadable.
-    /// - The directory carries our PID, and
-    ///   `ferail_fs_native::scratch::sweep_stale_scratch` deletes the dirs of
-    ///   dead processes at startup. `Drop` covers a clean exit; the sweep
-    ///   covers crashes and kills, which no in-process cleanup can.
-    ///
-    /// The mechanics live in `ferail_fs_native::scratch` — filesystem work
-    /// belongs behind that boundary, and it is where they can be tested.
-    fn scratch_dir(&mut self) -> Option<PathBuf> {
-        if let Some(dir) = &self.scratch {
-            return Some(dir.clone());
-        }
-        let dir = ferail_fs_native::scratch::scratch_dir()?;
-        self.scratch = Some(dir.clone());
-        Some(dir)
     }
 
     /// Screenshot harness: select `row_ix` and turn the preview on, so the
@@ -698,14 +711,20 @@ impl ArchiveView {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    ferail_fs_native::read_archive_toc(&path, attempt.as_deref())
+                    let toc = ferail_fs_native::read_archive_toc(&path, attempt.as_deref())?;
+                    let stamp = ferail_fs_native::archive_stamp(&path)?;
+                    Ok::<_, ArchiveError>((toc, stamp))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.format = Some(format);
                 match result {
-                    Ok(toc) => {
+                    Ok((toc, stamp)) => {
                         this.password = password;
+                        this.stamp = Some(stamp);
+                        this.edits = ferail_fs_native::ArchiveEditPlan::default();
+                        this.pending_entries.clear();
+                        this.saving = false;
                         this.tree = ArchiveTree::build(&toc);
                         // Open the single root folder straight away — an
                         // archive with one wrapper directory should not greet
@@ -745,6 +764,83 @@ impl ArchiveView {
         id
     }
 
+    /// The table of contents after applying the unsaved journal. Removed rows
+    /// disappear, renamed subtrees move as one, and worker-inspected additions
+    /// appear without touching the archive itself.
+    fn projected_toc(&self) -> Option<Toc> {
+        let ArchiveLoad::Loaded(base) = &self.load else {
+            return None;
+        };
+        let mut entries = Vec::with_capacity(base.entries.len() + self.pending_entries.len());
+        for entry in &base.entries {
+            if archive_path_matches_any(&entry.path, &self.edits.removals) {
+                continue;
+            }
+            let mut entry = entry.clone();
+            entry.path = project_archive_path(&entry.path, &self.edits.renames);
+            entries.push(entry);
+        }
+        entries.extend(self.pending_entries.iter().cloned().map(|mut entry| {
+            entry.path = project_archive_path(&entry.path, &self.edits.renames);
+            entry
+        }));
+        Some(Toc {
+            entries,
+            needs_password: base.needs_password,
+        })
+    }
+
+    fn refresh_edit_projection(&mut self, cx: &mut Context<Self>) {
+        if let Some(toc) = self.projected_toc() {
+            self.tree = ArchiveTree::build(&toc);
+            self.project_rows(cx);
+        }
+        cx.notify();
+    }
+
+    fn row_description(&self, row: &TreeRow) -> String {
+        if row.is_dir {
+            return String::new();
+        }
+        if self
+            .pending_entries
+            .iter()
+            .any(|entry| normalized_archive_path(&entry.path) == normalized_archive_path(&row.path))
+        {
+            return tr!("Pending addition").to_string();
+        }
+        let mut parts = Vec::new();
+        if let Some(packed) = row.compressed_size {
+            parts.push(
+                tr!(
+                    "Packed {size}",
+                    size = ferail_fs_native::humanize_bytes(packed)
+                )
+                .to_string(),
+            );
+            if let Some(original) = row.size.filter(|size| *size > 0) {
+                let saved = 100i128 - (packed as i128 * 100 / original as i128);
+                parts.push(tr!("{percent}% saved", percent = saved).to_string());
+            }
+        }
+        if let Some(method) = &row.compression_method {
+            parts.push(method.clone());
+        }
+        if let Some(checksum) = &row.checksum {
+            parts.push(checksum.clone());
+        }
+        if let Some(mode) = row.unix_mode {
+            parts.push(tr!("mode {mode}", mode = format!("{:04o}", mode & 0o7777)).to_string());
+        }
+        if row.encrypted {
+            parts.push(tr!("encrypted").to_string());
+        }
+        if let Some(comment) = &row.comment {
+            parts.push(comment.clone());
+        }
+        parts.join(" \u{00b7} ")
+    }
+
     /// Push the currently visible tree rows into the tab's file-list delegate.
     fn project_rows(&mut self, cx: &mut Context<Self>) {
         if !matches!(self.load, ArchiveLoad::Loaded(_)) {
@@ -764,7 +860,12 @@ impl ArchiveView {
                     id,
                     name: row.name.clone(),
                     display_name: row.name.clone(),
-                    name_has_hazards: false,
+                    // Archive names are untrusted display text too. Feed the
+                    // literal stored leaf through the same deceptive-name
+                    // detector as normal filesystem rows; rendering exposes
+                    // bidi controls, zero-width characters and mixed-script
+                    // look-alikes without changing the extraction path.
+                    name_has_hazards: ferail_core::name_hazards::has_hazards(&row.name),
                     kind: if row.is_dir {
                         EntryKind::Directory
                     } else {
@@ -778,11 +879,15 @@ impl ArchiveView {
                         ferail_fs_native::humanize_bytes(size)
                     },
                     display_kind: ferail_fs_native::describe_kind(
-                        if row.is_dir { EntryKind::Directory } else { EntryKind::File },
+                        if row.is_dir {
+                            EntryKind::Directory
+                        } else {
+                            EntryKind::File
+                        },
                         &row.name,
                     ),
                     display_magic: String::new(),
-                    display_description: String::new(),
+                    display_description: self.row_description(row),
                     is_quarantined: false,
                     quarantine: None,
                     hidden: false,
@@ -919,26 +1024,469 @@ impl ArchiveView {
             .count()
     }
 
-    /// Add files dropped from Finder or the file list into this archive.
-    fn add_dropped(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
-        if paths.is_empty() || !self.caps().is_some_and(|c| c.can_edit_in_place) {
+    /// Only an explicitly named `.zip` is editable. Content-probed OOXML,
+    /// JAR, APK and similar package files deliberately stay browse-only:
+    /// changing their zip members can invalidate signatures or structure.
+    fn is_plain_editable_zip(&self) -> bool {
+        self.format == Some(Format::Zip)
+            && Format::from_path(&self.archive_path.to_string_lossy()) == Some(Format::Zip)
+    }
+
+    fn edit_rejection(&self) -> Option<SharedString> {
+        if self.saving {
+            return Some(tr!("Wait for the current archive save to finish."));
+        }
+        if !matches!(self.load, ArchiveLoad::Loaded(_)) {
+            return Some(tr!("Wait for the archive to finish loading."));
+        }
+        if self.format == Some(Format::Zip) && !self.is_plain_editable_zip() {
+            return Some(tr!(
+                "This ZIP-based package is browse-only to avoid damaging its structure or signature."
+            ));
+        }
+        if !self.is_plain_editable_zip() {
+            let format = self
+                .format
+                .map(|format| format.label().to_string())
+                .unwrap_or_else(|| tr!("This archive").to_string());
+            return Some(tr!(
+                "{format} archives are read-only here.",
+                format = format
+            ));
+        }
+        if self.locked_contents() {
+            return Some(tr!("Unlock this archive before editing it."));
+        }
+        None
+    }
+
+    pub(crate) fn can_stage_edits(&self) -> bool {
+        self.edit_rejection().is_none()
+    }
+
+    fn show_edit_rejection(&self, window: &mut Window, cx: &mut App) {
+        if let Some(reason) = self.edit_rejection() {
+            window.push_notification(
+                gpui_component::notification::Notification::warning(reason),
+                cx,
+            );
+        }
+    }
+
+    /// Inspect dropped sources on a worker and add them to the unsaved journal.
+    /// `destination` is an internal archive folder, not a filesystem path.
+    fn add_dropped_at(
+        &mut self,
+        paths: Vec<PathBuf>,
+        destination: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if paths.is_empty() {
             return;
         }
-        let Some(shell) = self.shell.clone() else {
+        if !self.can_stage_edits() {
+            self.show_edit_rejection(window, cx);
+            return;
+        }
+        let additions: Vec<ferail_fs_native::ArchiveAddition> = paths
+            .into_iter()
+            .map(|source| ferail_fs_native::ArchiveAddition {
+                source,
+                destination: destination.clone(),
+            })
+            .collect();
+        cx.spawn_in(window, async move |this, cx| {
+            let inspect_plan = additions.clone();
+            let inspected = cx
+                .background_executor()
+                .spawn(async move {
+                    ferail_fs_native::inspect_archive_additions(&inspect_plan)
+                        .map_err(|error| error.to_string())
+                })
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| match inspected {
+                Ok(entries) => {
+                    let existing: HashSet<String> = this
+                        .projected_toc()
+                        .into_iter()
+                        .flat_map(|toc| toc.entries)
+                        .map(|entry| normalized_archive_path(&entry.path).to_string())
+                        .collect();
+                    let collision = entries.iter().find(|entry| {
+                        existing.contains(normalized_archive_path(&entry.path))
+                    });
+                    if let Some(entry) = collision {
+                        window.push_notification(
+                            gpui_component::notification::Notification::warning(tr!(
+                                "Can't add “{name}” because an entry with that name already exists.",
+                                name = entry.path
+                            )),
+                            cx,
+                        );
+                        return;
+                    }
+                    this.edits.additions.extend(additions);
+                    this.pending_entries.extend(entries);
+                    this.refresh_edit_projection(cx);
+                }
+                Err(message) => window.push_notification(
+                    gpui_component::notification::Notification::error(tr!(
+                        "Couldn't prepare these items for the archive: {message}",
+                        message = message
+                    )),
+                    cx,
+                ),
+            });
+        })
+        .detach();
+    }
+
+    fn add_dropped(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        self.add_dropped_at(paths, String::new(), window, cx);
+    }
+
+    pub fn stage_remove_selected(&mut self, cx: &mut Context<Self>) {
+        if !self.can_stage_edits() {
+            return;
+        }
+        let selected = self.selected_archive_paths(cx);
+        if selected.is_empty() {
+            return;
+        }
+
+        // A pending source is one journal entry even when it expanded to a
+        // whole directory tree. Removing any selected root inside it removes
+        // that staged addition and its virtual rows.
+        let discarded_addition_roots: Vec<String> = self
+            .edits
+            .additions
+            .iter()
+            .map(archive_addition_root)
+            .filter(|root| {
+                selected.iter().any(|path| {
+                    archive_path_at_or_below(path, root) || archive_path_at_or_below(root, path)
+                })
+            })
+            .collect();
+        self.edits.additions.retain(|addition| {
+            let root = archive_addition_root(addition);
+            !discarded_addition_roots.iter().any(|discarded| {
+                normalized_archive_path(discarded) == normalized_archive_path(&root)
+            })
+        });
+        let live_roots: Vec<String> = self
+            .edits
+            .additions
+            .iter()
+            .map(archive_addition_root)
+            .collect();
+        self.pending_entries.retain(|entry| {
+            live_roots
+                .iter()
+                .any(|root| archive_path_at_or_below(&entry.path, root))
+        });
+
+        for path in selected {
+            if discarded_addition_roots.iter().any(|root| {
+                archive_path_at_or_below(&path, root) || archive_path_at_or_below(root, &path)
+            }) {
+                continue;
+            }
+            let original = unproject_archive_path(&path, &self.edits.renames);
+            if !self
+                .edits
+                .removals
+                .iter()
+                .any(|root| archive_path_at_or_below(&original, root))
+            {
+                self.edits
+                    .removals
+                    .retain(|root| !archive_path_at_or_below(root, &original));
+                self.edits.removals.push(original);
+            }
+        }
+        self.refresh_edit_projection(cx);
+    }
+
+    fn revert_edits(&mut self, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
+        self.edits = ferail_fs_native::ArchiveEditPlan::default();
+        self.pending_entries.clear();
+        self.refresh_edit_projection(cx);
+    }
+
+    fn confirm_window_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.edits.is_empty() || self.close_prompt_open || self.saving {
+            return;
+        }
+        self.close_prompt_open = true;
+        let count = self.edits.change_count();
+        let view = cx.entity().downgrade();
+        let cancel_view = view.clone();
+        let discard_view = view.clone();
+        let save_view = view.clone();
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let cancel_view = cancel_view.clone();
+            let discard_view = discard_view.clone();
+            let save_view = save_view.clone();
+            let dismissed_view = view.clone();
+            dialog
+                .title(tr!("Save changes before closing?"))
+                .child(div().text_scale_sm().child(trn!(
+                    "Your {n} unsaved change will be lost if you discard it.",
+                    "Your {n} unsaved changes will be lost if you discard them.",
+                    count
+                )))
+                .footer(
+                    gpui_component::dialog::DialogFooter::new()
+                        .child(
+                            Button::new("archive-close-keep")
+                                .label(tr!("Keep Editing"))
+                                .small()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ = cancel_view.update(cx, |this, cx| {
+                                        this.close_prompt_open = false;
+                                        cx.notify();
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new("archive-close-discard")
+                                .label(tr!("Discard Changes"))
+                                .danger()
+                                .small()
+                                .on_click(move |_, window, cx| {
+                                    let _ = discard_view.update(cx, |this, _| {
+                                        this.close_prompt_open = false;
+                                        this.edits = ferail_fs_native::ArchiveEditPlan::default();
+                                        this.pending_entries.clear();
+                                    });
+                                    window.close_dialog(cx);
+                                    window.remove_window();
+                                }),
+                        )
+                        .child(
+                            Button::new("archive-close-save")
+                                .label(tr!("Save Changes"))
+                                .primary()
+                                .small()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let close_window = window.window_handle();
+                                    let _ = save_view.update(cx, |this, cx| {
+                                        this.close_prompt_open = false;
+                                        this.save_edits_with_close(Some(close_window), window, cx);
+                                    });
+                                }),
+                        ),
+                )
+                .on_cancel(move |_, _, cx| {
+                    let _ = dismissed_view.update(cx, |this, cx| {
+                        this.close_prompt_open = false;
+                        cx.notify();
+                    });
+                    true
+                })
+        });
+    }
+
+    pub fn rename_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_stage_edits() {
+            self.show_edit_rejection(window, cx);
+            return;
+        }
+        let selected = self.selected_archive_paths(cx);
+        if selected.len() != 1 {
+            return;
+        }
+        let current = selected[0].clone();
+        let leaf = normalized_archive_path(&current)
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(leaf.clone()));
+        let view = cx.entity().downgrade();
+        let input_for_dialog = input.clone();
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input = input_for_dialog.clone();
+            let current = current.clone();
+            let view = view.clone();
+            let original_leaf = leaf.clone();
+            dialog
+                .title(tr!("Rename Archive Entry"))
+                .child(Input::new(&input).small())
+                .on_ok(move |_, window, cx: &mut App| {
+                    let name = input.read(cx).value().trim().to_string();
+                    if name.is_empty() || name == original_leaf {
+                        return true;
+                    }
+                    if name == "."
+                        || name == ".."
+                        || name.chars().any(|ch| matches!(ch, '/' | '\\' | '\0'))
+                    {
+                        window.push_notification(
+                            gpui_component::notification::Notification::warning(tr!(
+                                "Archive entry names can't contain slashes or be “.” or “..”."
+                            )),
+                            cx,
+                        );
+                        return false;
+                    }
+                    let parent = normalized_archive_path(&current)
+                        .rsplit_once('/')
+                        .map(|(parent, _)| parent);
+                    let to = parent
+                        .map(|parent| format!("{parent}/{name}"))
+                        .unwrap_or(name);
+                    let staged = view
+                        .update(cx, |this, cx| {
+                            if this.rename_would_collide(&current, &to) {
+                                return false;
+                            }
+                            this.stage_rename(current.clone(), to, cx);
+                            true
+                        })
+                        .unwrap_or(false);
+                    if !staged {
+                        window.push_notification(
+                            gpui_component::notification::Notification::warning(tr!(
+                                "An archive entry with that name already exists."
+                            )),
+                            cx,
+                        );
+                    }
+                    staged
+                })
+        });
+        window.on_next_frame(move |window, cx| {
+            input.read(cx).focus_handle(cx).focus(window, cx);
+            window.dispatch_action(Box::new(gpui_component::input::SelectAll), cx);
+        });
+    }
+
+    fn rename_would_collide(&self, current: &str, to: &str) -> bool {
+        if archive_path_at_or_below(to, current) {
+            return true;
+        }
+        let Some(toc) = self.projected_toc() else {
+            return true;
+        };
+        let stationary: HashSet<String> = toc
+            .entries
+            .iter()
+            .filter(|entry| !archive_path_at_or_below(&entry.path, current))
+            .map(|entry| normalized_archive_path(&entry.path).to_string())
+            .collect();
+        toc.entries
+            .iter()
+            .filter(|entry| archive_path_at_or_below(&entry.path, current))
+            .map(|entry| replace_archive_root(&entry.path, current, to))
+            .any(|target| stationary.contains(normalized_archive_path(&target)))
+    }
+
+    fn stage_rename(&mut self, current: String, to: String, cx: &mut Context<Self>) {
+        let original = unproject_archive_path(&current, &self.edits.renames);
+        let base_from = normalized_archive_path(&original).to_string();
+        if let Some(existing) = self
+            .edits
+            .renames
+            .iter_mut()
+            .find(|rename| normalized_archive_path(&rename.from) == base_from)
+        {
+            existing.to = to;
+        } else {
+            self.edits.renames.push(ferail_fs_native::ArchiveRename {
+                from: base_from,
+                to,
+            });
+        }
+        self.refresh_edit_projection(cx);
+    }
+
+    fn save_edits(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_edits_with_close(None, window, cx);
+    }
+
+    fn save_edits_with_close(
+        &mut self,
+        close_window: Option<AnyWindowHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.edits.is_empty() || self.saving {
+            return;
+        }
+        if let Some(reason) = self.edit_rejection() {
+            window.push_notification(
+                gpui_component::notification::Notification::warning(reason),
+                cx,
+            );
+            return;
+        }
+        let (Some(shell), Some(stamp)) = (self.shell.clone(), self.stamp) else {
             return;
         };
+        self.saving = true;
         let archive = self.archive_path.clone();
+        let plan = self.edits.clone();
         let password = self.password.clone();
         let this = cx.entity().downgrade();
-        let refresh: crate::shell::ArchiveOpDone = Box::new(move |_shell, cx| {
-            let _ = this.update(cx, |this: &mut ArchiveView, cx| {
-                let password = this.password.clone();
-                this.start_load(password, cx);
+        let settled: crate::shell::ArchiveOpSettled = Box::new(move |success, _shell, cx| {
+            let _ = this.update(cx, |this, cx| {
+                this.saving = false;
+                if success {
+                    let password = this.password.clone();
+                    this.start_load(password, cx);
+                } else {
+                    cx.notify();
+                }
             });
+            if success {
+                if let Some(close_window) = close_window {
+                    let _ = close_window.update(cx, |_, window, _| window.remove_window());
+                }
+            }
         });
         let _ = shell.update(cx, |shell, scx| {
-            shell.add_to_archive_from(archive, paths, password, Some(refresh), window, scx);
+            shell.save_archive_edits(
+                crate::shell::ArchiveSaveRequest {
+                    archive,
+                    stamp,
+                    plan,
+                    password,
+                },
+                Some(settled),
+                window,
+                scx,
+            );
         });
+        cx.notify();
+    }
+
+    fn convert_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !matches!(self.load, ArchiveLoad::Loaded(_)) || !self.edits.is_empty() || self.saving {
+            return;
+        }
+        let Some(shell) = self.shell.as_ref().and_then(WeakEntity::upgrade) else {
+            return;
+        };
+        let source = self.archive_path.clone();
+        let source_format = self.format;
+        let known_password = self.password.clone();
+        let app: &mut App = std::borrow::BorrowMut::borrow_mut(cx);
+        crate::archive_convert::open_dialog(
+            source,
+            source_format,
+            known_password,
+            shell,
+            window,
+            app,
+        );
     }
 
     // -- rendering ----------------------------------------------------------
@@ -961,15 +1509,25 @@ impl ArchiveView {
                 tr!("{label} \u{00b7} encrypted", label = label).to_string()
             }
             ArchiveLoad::Failed(_) => tr!("Unreadable").to_string(),
-            ArchiveLoad::Loaded(toc) => {
+            ArchiveLoad::Loaded(_) => {
+                let toc = self.projected_toc().unwrap_or_default();
                 // `label · N files · size · encrypted`, each piece a whole
                 // phrase so translations stay word-order independent.
                 let mut parts = vec![
                     label.to_string(),
                     trn!("{n} file", "{n} files", toc.file_count()).to_string(),
                 ];
-                if let Some(b) = toc.total_uncompressed() {
-                    parts.push(ferail_fs_native::humanize_bytes(b));
+                if let (Some(stamp), Some(unpacked)) = (self.stamp, toc.total_uncompressed()) {
+                    parts.push(
+                        tr!(
+                            "{packed} archive → {unpacked} unpacked",
+                            packed = ferail_fs_native::humanize_bytes(stamp.byte_len()),
+                            unpacked = ferail_fs_native::humanize_bytes(unpacked)
+                        )
+                        .to_string(),
+                    );
+                } else if let Some(stamp) = self.stamp {
+                    parts.push(ferail_fs_native::humanize_bytes(stamp.byte_len()));
                 }
                 if toc.needs_password {
                     parts.push(tr!("encrypted").to_string());
@@ -982,8 +1540,72 @@ impl ArchiveView {
         let can_extract = matches!(self.load, ArchiveLoad::Loaded(_))
             && self.caps().is_some_and(|c| c.can_extract)
             && !self.locked_contents();
-        let read_only = self.caps().is_some_and(|c| c.is_read_only());
+        let read_only = self.format.is_some() && !self.is_plain_editable_zip();
         let loaded = matches!(self.load, ArchiveLoad::Loaded(_));
+        let changes = self.edits.change_count();
+        let editable = self.can_stage_edits();
+        let compact_actions = self
+            .host_width
+            .is_some_and(|width| width < COMPACT_ACTIONS_WIDTH);
+        let extract_selected_label = if selected > 0 {
+            tr!("Extract {selected} Selected", selected = selected)
+        } else {
+            tr!("Extract Selected")
+        };
+
+        let remove_button = Button::new("archive-remove-selected").small();
+        let remove_button = if compact_actions {
+            remove_button
+                .icon(gpui_component::Icon::empty().path("icons/trash.svg"))
+                .tooltip(tr!("Remove the selection when changes are saved"))
+        } else {
+            remove_button.label(tr!("Remove"))
+        };
+
+        let extract_selected_button = Button::new("archive-extract-selected").small();
+        let extract_selected_button = if compact_actions {
+            extract_selected_button
+                .icon(gpui_component::Icon::empty().path("icons/file/archive.svg"))
+                .tooltip(extract_selected_label.clone())
+        } else {
+            extract_selected_button.label(extract_selected_label)
+        };
+
+        let extract_to_button = Button::new("archive-extract-to").small();
+        let extract_to_button = if compact_actions {
+            extract_to_button
+                .icon(gpui_component::Icon::empty().path("icons/nav/folder.svg"))
+                .tooltip(tr!("Extract to a folder you choose (selection, or all)"))
+        } else {
+            extract_to_button
+                .label(tr!("Extract To\u{2026}"))
+                .tooltip(tr!("Extract to a folder you choose (selection, or all)"))
+        };
+
+        let extract_all_button = Button::new("archive-extract-all").small();
+        let extract_all_button = if compact_actions {
+            extract_all_button
+                .icon(gpui_component::Icon::empty().path("icons/nav/downloads.svg"))
+                .tooltip(tr!("Extract All"))
+        } else {
+            extract_all_button.label(tr!("Extract All"))
+        };
+
+        let convert_tooltip = if changes > 0 {
+            tr!("Save or revert archive changes before converting.")
+        } else {
+            tr!("Convert this archive to another format")
+        };
+        let convert_button = Button::new("archive-convert").small();
+        let convert_button = if compact_actions {
+            convert_button
+                .icon(gpui_component::Icon::empty().path("icons/redo.svg"))
+                .tooltip(convert_tooltip.clone())
+        } else {
+            convert_button
+                .label(tr!("Convert…"))
+                .tooltip(convert_tooltip.clone())
+        };
 
         h_flex()
             .w_full()
@@ -1003,13 +1625,7 @@ impl ArchiveView {
                     // start and the extension); the subtitle is free-form, so
                     // its tail is expendable. Without these the text wrapped a
                     // character per line once the pane got narrow.
-                    .child(
-                        div()
-                            .w_full()
-                            .truncate_middle()
-                            .text_scale_md()
-                            .child(name),
-                    )
+                    .child(div().w_full().truncate_middle().text_scale_md().child(name))
                     .child(
                         div()
                             .w_full()
@@ -1021,27 +1637,60 @@ impl ArchiveView {
             )
             .when(read_only, |this| {
                 this.child(
-                    div()
+                    h_flex()
+                        .gap_0p5()
+                        .items_center()
                         .px_1p5()
                         .py_0p5()
                         .rounded_md()
                         .bg(theme.muted)
                         .text_scale_xs()
                         .text_color(theme.muted_foreground)
+                        .child(
+                            svg()
+                                .path("icons/lock.svg")
+                                .icon_px(11.0)
+                                .text_color(theme.muted_foreground),
+                        )
                         .child(tr!("Read-only")),
+                )
+            })
+            .when(changes > 0, |this| {
+                this.child(
+                    div()
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded_md()
+                        .bg(theme.accent.opacity(0.10))
+                        .text_scale_xs()
+                        .text_color(theme.accent)
+                        .child(if self.saving {
+                            tr!("Saving changes…")
+                        } else {
+                            trn!("{n} unsaved change", "{n} unsaved changes", changes)
+                        }),
                 )
             })
             // Below this the filter box would leave the name a few pixels, so
             // drop it: the name and the extract verbs matter more, and the
             // pane can always be widened (or popped out) to filter.
-            .when(loaded && self.host_width.unwrap_or(f32::MAX) >= FILTER_MIN_WIDTH, |this| {
-                this.child(
-                    div()
-                        .w(px(180.0))
-                        .flex_shrink_0()
-                        .child(Input::new(&self.filter_input).small()),
-                )
-            })
+            .when(
+                loaded && self.host_width.unwrap_or(f32::MAX) >= FILTER_MIN_WIDTH,
+                |this| {
+                    this.child(
+                        div()
+                            .w(px(180.0))
+                            .flex_shrink_0()
+                            .child(Input::new(&self.filter_input).small()),
+                    )
+                },
+            )
+            .child(
+                convert_button
+                    .disabled(!loaded || changes > 0 || self.saving)
+                    .tooltip(convert_tooltip)
+                    .on_click(cx.listener(|this, _, window, cx| this.convert_archive(window, cx))),
+            )
             .child(
                 Button::new("archive-preview")
                     .small()
@@ -1054,14 +1703,35 @@ impl ArchiveView {
                     .selected(self.preview_enabled)
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_preview(window, cx))),
             )
+            .when(self.is_plain_editable_zip() && loaded, |this| {
+                this.child(
+                    remove_button
+                        .disabled(!editable || selected == 0)
+                        .tooltip(tr!("Remove the selection when changes are saved"))
+                        .on_click(
+                            cx.listener(|this, _, _window, cx| this.stage_remove_selected(cx)),
+                        ),
+                )
+            })
+            .when(changes > 0, |this| {
+                this.child(
+                    Button::new("archive-revert-edits")
+                        .label(tr!("Revert"))
+                        .small()
+                        .disabled(self.saving)
+                        .on_click(cx.listener(|this, _, _window, cx| this.revert_edits(cx))),
+                )
+                .child(
+                    Button::new("archive-save-edits")
+                        .label(tr!("Save Changes"))
+                        .small()
+                        .primary()
+                        .disabled(self.saving)
+                        .on_click(cx.listener(|this, _, window, cx| this.save_edits(window, cx))),
+                )
+            })
             .child(
-                Button::new("archive-extract-selected")
-                    .label(if selected > 0 {
-                        tr!("Extract {selected} Selected", selected = selected)
-                    } else {
-                        tr!("Extract Selected")
-                    })
-                    .small()
+                extract_selected_button
                     .disabled(!can_extract || selected == 0)
                     .on_click(cx.listener(|this, _, window, cx| this.extract_selected(window, cx))),
             )
@@ -1088,17 +1758,12 @@ impl ArchiveView {
                 },
             )
             .child(
-                Button::new("archive-extract-to")
-                    .label(tr!("Extract To\u{2026}"))
-                    .small()
-                    .tooltip(tr!("Extract to a folder you choose (selection, or all)"))
+                extract_to_button
                     .disabled(!can_extract)
                     .on_click(cx.listener(|this, _, window, cx| this.extract_to(window, cx))),
             )
             .child(
-                Button::new("archive-extract-all")
-                    .label(tr!("Extract All"))
-                    .small()
+                extract_all_button
                     .disabled(!can_extract)
                     .on_click(cx.listener(|this, _, window, cx| this.extract_all(window, cx))),
             )
@@ -1124,7 +1789,11 @@ impl ArchiveView {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .child(div().w(px(220.0)).child(Input::new(&self.password_input).small()))
+                    .child(
+                        div()
+                            .w(px(220.0))
+                            .child(Input::new(&self.password_input).small()),
+                    )
                     .child(
                         Button::new("archive-unlock")
                             .label(tr!("Unlock"))
@@ -1143,7 +1812,11 @@ impl ArchiveView {
             .into_any_element()
     }
 
-    fn centered_message(&self, message: impl Into<SharedString>, cx: &mut Context<Self>) -> AnyElement {
+    fn centered_message(
+        &self,
+        message: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = cx.theme();
         v_flex()
             .flex_1()
@@ -1160,22 +1833,103 @@ impl ArchiveView {
     }
 }
 
-impl Drop for ArchiveView {
-    fn drop(&mut self) {
-        // Entries written out for preview are ours alone — take them with us.
-        if let Some(dir) = &self.scratch {
-            let _ = std::fs::remove_dir_all(dir);
-        }
+pub(crate) fn normalized_archive_path(path: &str) -> &str {
+    path.trim_matches('/')
+}
+
+pub(crate) fn archive_path_at_or_below(path: &str, root: &str) -> bool {
+    let path = normalized_archive_path(path);
+    let root = normalized_archive_path(root);
+    path == root
+        || path
+            .strip_prefix(root)
+            .is_some_and(|tail| tail.starts_with('/'))
+}
+
+fn archive_path_matches_any(path: &str, roots: &[String]) -> bool {
+    roots
+        .iter()
+        .any(|root| archive_path_at_or_below(path, root))
+}
+
+fn replace_archive_root(path: &str, from: &str, to: &str) -> String {
+    let trailing = path.ends_with('/');
+    let path = normalized_archive_path(path);
+    let from = normalized_archive_path(from);
+    let suffix = path.strip_prefix(from).unwrap_or_default();
+    let mut result = format!("{}{suffix}", normalized_archive_path(to));
+    if trailing {
+        result.push('/');
+    }
+    result
+}
+
+pub(crate) fn project_archive_path(
+    original: &str,
+    renames: &[ferail_fs_native::ArchiveRename],
+) -> String {
+    let path = normalized_archive_path(original);
+    let best = renames
+        .iter()
+        .filter(|rename| archive_path_at_or_below(path, &rename.from))
+        .max_by_key(|rename| normalized_archive_path(&rename.from).len());
+    let Some(rename) = best else {
+        return original.to_string();
+    };
+    replace_archive_root(original, &rename.from, &rename.to)
+}
+
+pub(crate) fn unproject_archive_path(
+    current: &str,
+    renames: &[ferail_fs_native::ArchiveRename],
+) -> String {
+    let trailing = current.ends_with('/');
+    let path = normalized_archive_path(current);
+    let best = renames
+        .iter()
+        .filter(|rename| archive_path_at_or_below(path, &rename.to))
+        .max_by_key(|rename| normalized_archive_path(&rename.to).len());
+    let Some(rename) = best else {
+        return current.to_string();
+    };
+    let to = normalized_archive_path(&rename.to);
+    let suffix = path.strip_prefix(to).unwrap_or_default();
+    let mut result = format!("{}{suffix}", normalized_archive_path(&rename.from));
+    if trailing {
+        result.push('/');
+    }
+    result
+}
+
+pub(crate) fn archive_addition_root(addition: &ferail_fs_native::ArchiveAddition) -> String {
+    let leaf = addition
+        .source
+        .file_name()
+        .map(|name| name.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    let destination = normalized_archive_path(&addition.destination);
+    if destination.is_empty() {
+        leaf
+    } else {
+        format!("{destination}/{leaf}")
     }
 }
 
 impl Render for ArchiveView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let bg = theme.background;
-        let border = theme.border;
+        let bg = cx.theme().background;
+        let border = cx.theme().border;
+        let accent = cx.theme().accent;
+        let danger = cx.theme().danger;
         let header = self.header(cx);
-        let editable = self.caps().is_some_and(|c| c.can_edit_in_place);
+        let drop_allowed = self.can_stage_edits();
+        let native_archive_dragging = crate::file_list::native_archive_drag().is_some();
+        let feedback_allowed = self.drop_feedback_allowed;
+        let drag_message = if cx.has_active_drag() || native_archive_dragging {
+            self.drop_feedback.clone()
+        } else {
+            None
+        };
 
         let locked_strip = self.locked_contents().then(|| {
             let form = self.password_form(
@@ -1230,16 +1984,126 @@ impl Render for ArchiveView {
                     this.update_host_width(f32::from(bounds.size.width), cx);
                 });
             })
-            .when(editable, |this| {
-                this.drag_over::<ExternalPaths>(|style, _, _, cx| {
+            .drag_over::<ExternalPaths>(move |style, _, _, cx| {
+                if drop_allowed {
                     style
+                        .cursor_copy()
                         .border_2()
                         .border_color(cx.theme().accent)
                         .bg(cx.theme().accent.opacity(0.08))
-                })
-                .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
-                    this.add_dropped(paths.paths().to_vec(), window, cx);
-                }))
+                } else {
+                    style
+                        .cursor_not_allowed()
+                        .border_2()
+                        .border_color(cx.theme().danger)
+                        .bg(cx.theme().danger.opacity(0.06))
+                }
+            })
+            .on_drag_move(cx.listener(
+                |this, event: &gpui::DragMoveEvent<ExternalPaths>, window, cx| {
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    let allowed = this.can_stage_edits();
+                    let count = event.drag(cx).paths().len();
+                    let message = this.edit_rejection().unwrap_or_else(|| {
+                        trn!(
+                            "Drop to add {n} item to the archive",
+                            "Drop to add {n} items to the archive",
+                            count
+                        )
+                    });
+                    if this.drop_feedback.as_ref() != Some(&message) {
+                        this.drop_feedback = Some(message);
+                        this.drop_feedback_allowed = allowed;
+                        cx.notify();
+                    }
+                    cx.set_active_drag_cursor_style(
+                        if allowed {
+                            gpui::CursorStyle::DragCopy
+                        } else {
+                            gpui::CursorStyle::OperationNotAllowed
+                        },
+                        window,
+                    );
+                },
+            ))
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                this.add_dropped(paths.paths().to_vec(), window, cx);
+            }))
+            // An archive entry dropped back on its own workbench is a
+            // cancelled drag, not an extraction request. In the docked form
+            // the Shell's ordinary folder target is an ancestor of this
+            // element, so stopping propagation here is what keeps a release
+            // over empty table space from extracting into `current_dir`.
+            .drag_over::<crate::file_list::ArchiveEntryDrag>(|style, _, _, cx| {
+                style
+                    .cursor_not_allowed()
+                    .border_2()
+                    .border_color(cx.theme().danger)
+                    .bg(cx.theme().danger.opacity(0.06))
+            })
+            .on_drag_move(cx.listener(
+                |this,
+                 event: &gpui::DragMoveEvent<crate::file_list::ArchiveEntryDrag>,
+                 window,
+                 cx| {
+                    if !event.bounds.contains(&event.event.position) {
+                        return;
+                    }
+                    let message = tr!("Drop outside the archive to extract");
+                    if this.drop_feedback.as_ref() != Some(&message)
+                        || this.drop_feedback_allowed
+                    {
+                        this.drop_feedback = Some(message);
+                        this.drop_feedback_allowed = false;
+                        cx.notify();
+                    }
+                    cx.set_active_drag_cursor_style(
+                        gpui::CursorStyle::OperationNotAllowed,
+                        window,
+                    );
+                },
+            ))
+            .on_drop(cx.listener(
+                |_this, _drag: &crate::file_list::ArchiveEntryDrag, _window, cx| {
+                    cx.stop_propagation();
+                },
+            ))
+            // Cross-window native file promises no longer carry GPUI's
+            // custom payload. The platform still delivers MouseMove/MouseUp;
+            // explicitly reject those here so the docked pane's parent can
+            // never interpret the release as extraction into current_dir.
+            .on_mouse_move(cx.listener(|this, _event, _window, cx| {
+                if crate::file_list::native_archive_drag().is_none() {
+                    return;
+                }
+                let message = tr!("Drop outside the archive to extract");
+                if this.drop_feedback.as_ref() != Some(&message)
+                    || this.drop_feedback_allowed
+                {
+                    this.drop_feedback = Some(message);
+                    this.drop_feedback_allowed = false;
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|_this, _event, _window, cx| {
+                    if cx.has_active_drag() {
+                        return;
+                    }
+                    if crate::file_list::take_native_archive_drag().is_some() {
+                        crate::log_info!(100, "archive-drag: rejected by archive workbench");
+                        cx.stop_propagation();
+                    }
+                }),
+            )
+            .when(native_archive_dragging, move |style| {
+                style
+                    .cursor_not_allowed()
+                    .border_2()
+                    .border_color(danger)
             })
             .child(header)
             .children(locked_strip)
@@ -1266,6 +2130,24 @@ impl Render for ArchiveView {
                         },
                     ),
             )
+            // Drag feedback is a footer, not a banner: appearing above the
+            // table would push every row down mid-drag, moving the drop
+            // target out from under the pointer. Below the `flex_1` body the
+            // rows keep their position and the list gives up the height.
+            .children(drag_message.map(|message| {
+                let color = if feedback_allowed { accent } else { danger };
+                div()
+                    .w_full()
+                    .flex_none()
+                    .px_3()
+                    .py_1p5()
+                    .border_t_1()
+                    .border_color(color)
+                    .bg(color.opacity(0.08))
+                    .text_scale_sm()
+                    .text_color(color)
+                    .child(message)
+            }))
     }
 }
 
@@ -1295,8 +2177,22 @@ pub fn open_existing_window(
         }),
         ..crate::base_window_options()
     };
-    let handle =
-        cx.open_window(opts, |window, cx| cx.new(|cx| gpui_component::Root::new(view, window, cx)))?;
+    let close_view = view.downgrade();
+    let handle = cx.open_window(opts, move |window, cx| {
+        window.on_window_should_close(cx, {
+            let close_view = close_view.clone();
+            move |window, cx| {
+                let Some(view) = close_view.upgrade() else {
+                    return true;
+                };
+                if view.read(cx).edits.is_empty() {
+                    return true;
+                }
+                view.update(cx, |view, cx| view.confirm_window_close(window, cx));
+                false
+            }
+        });
+        cx.new(|cx| gpui_component::Root::new(view, window, cx))
+    })?;
     Ok(handle)
 }
-

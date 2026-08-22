@@ -185,6 +185,8 @@ actions!(
         /// Open the selected archive in the embedded workbench view (browse
         /// contents, cherry-pick extract).
         OpenAsArchive,
+        /// Convert one archive to a fresh archive in another supported format.
+        ConvertArchive,
         /// Format variants under the "Compress" submenu. The engine's
         /// `create_archive` produces each; the plain `Compress` makes a ZIP.
         /// Open the New Archive dialog over the selection (format, compression

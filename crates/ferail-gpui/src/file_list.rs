@@ -516,17 +516,147 @@ pub struct FileListDelegate {
 
 /// Drag payload for entries inside an archive.
 ///
-/// Archive entries have no path on disk, so they can't ride `ExternalPaths`
-/// (which is what reaches Finder). Within Ferail we own both ends, so we
-/// carry the *coordinates* instead — which archive, which entries — and the
-/// drop target extracts them. Dragging to Finder still needs lazy
-/// NSFilePromise materialization in gpui's mac layer and is unaffected by this.
+/// Archive entries have no path on disk, so in-app targets carry their archive
+/// coordinates. On macOS the row also promotes to a native promised-file drag:
+/// Finder chooses a destination first, then AppKit invokes extraction on a
+/// background operation queue. Nothing is eagerly unpacked merely by starting
+/// a drag.
 #[derive(Clone, Debug)]
 pub struct ArchiveEntryDrag {
     pub archive: PathBuf,
     /// Stored entry paths; a directory brings its whole subtree on extract.
     pub entries: Vec<String>,
+    /// Parallel to `entries`, taken from the already-loaded TOC so starting a
+    /// native drag never stats or opens anything on the GUI thread.
+    pub directories: Vec<bool>,
     pub password: Option<String>,
+}
+
+// A promised-file drag is represented twice while AppKit owns the pointer:
+// the native NSFilePromiseProvider payload consumed by Finder, and this
+// in-process archive-coordinate payload consumed by Ferail windows. GPUI does
+// not retain custom typed drags when AppKit crosses to a second window, so
+// Ferail drop targets use this coordinator as a fallback for the synthetic
+// MouseMove/MouseUp events emitted by gpui_macos. It is main-thread-only: all
+// reads and writes happen from GPUI/AppKit callbacks, never from promise
+// writers.
+thread_local! {
+    static NATIVE_ARCHIVE_DRAG: std::cell::RefCell<Option<ArchiveEntryDrag>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+pub(crate) fn native_archive_drag() -> Option<ArchiveEntryDrag> {
+    NATIVE_ARCHIVE_DRAG.with(|drag| drag.borrow().clone())
+}
+
+/// Cheap presence check for per-row render paths: no payload clone.
+pub(crate) fn native_archive_drag_active() -> bool {
+    NATIVE_ARCHIVE_DRAG.with(|drag| drag.borrow().is_some())
+}
+
+/// How a file row should treat something dropped **onto** it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArchiveDropTarget {
+    /// Not an archive by name — the row is not a drop target at all.
+    No,
+    /// An archive this build can add entries to in place (ZIP).
+    Accepts,
+    /// A recognized archive whose format cannot be edited in place (7z,
+    /// tar family, single-member gz/bz2/xz, LHA). Still a target, so the
+    /// drop is refused visibly instead of falling through to the folder
+    /// underneath and quietly moving the files somewhere else.
+    ReadOnly,
+}
+
+/// Classify a row as a drop target for adding files to an archive.
+///
+/// Name-based on purpose: this runs in render and per drag-move, where the
+/// Prime Directive forbids touching the file. `Format::from_path` is pure
+/// string matching, and the worker re-derives the real format before writing
+/// anything, so a mislabelled file fails there rather than corrupting.
+/// ZIP-based *packages* (`.docx`, `.jar`, `.apk`) are not recognized as
+/// archives by suffix, so they are never offered as add targets.
+pub(crate) fn archive_drop_target(name: &str, kind: EntryKind) -> ArchiveDropTarget {
+    if matches!(kind, EntryKind::Directory) {
+        return ArchiveDropTarget::No;
+    }
+    match ferail_archive::Format::from_path(name) {
+        Some(format) if format.capabilities().can_edit_in_place => ArchiveDropTarget::Accepts,
+        Some(_) => ArchiveDropTarget::ReadOnly,
+        None => ArchiveDropTarget::No,
+    }
+}
+
+pub(crate) fn take_native_archive_drag() -> Option<ArchiveEntryDrag> {
+    NATIVE_ARCHIVE_DRAG.with(|drag| drag.borrow_mut().take())
+}
+
+fn set_native_archive_drag(drag: Option<ArchiveEntryDrag>) {
+    NATIVE_ARCHIVE_DRAG.with(|slot| *slot.borrow_mut() = drag);
+}
+
+/// Finder asks every promise for a leaf name. Preserve the archive's real leaf
+/// (including unusual Unicode), but disambiguate a multi-selection containing
+/// two different paths with the same leaf so one promised item cannot replace
+/// another at the destination.
+#[cfg(target_os = "macos")]
+fn archive_promise_names(entries: &[String], directories: &[bool]) -> Vec<String> {
+    let mut seen = std::collections::HashMap::<String, usize>::new();
+    entries
+        .iter()
+        .zip(directories.iter().copied())
+        .map(|(entry, is_dir)| {
+            let leaf = entry
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .filter(|leaf| !leaf.is_empty())
+                .unwrap_or("archive-item");
+            let count = seen.entry(leaf.to_lowercase()).or_default();
+            *count += 1;
+            if *count == 1 {
+                return leaf.to_string();
+            }
+            if !is_dir
+                && let Some((stem, extension)) = leaf.rsplit_once('.')
+                && !stem.is_empty()
+                && !extension.is_empty()
+            {
+                return format!("{stem} {}.{extension}", *count);
+            }
+            format!("{leaf} {}", *count)
+        })
+        .collect()
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod archive_promise_tests {
+    use super::archive_promise_names;
+
+    #[test]
+    fn promise_names_preserve_real_leafs_and_disambiguate_collisions() {
+        let names = archive_promise_names(
+            &[
+                "first/report.pdf".into(),
+                "second/report.pdf".into(),
+                "folder/".into(),
+                "other/folder/".into(),
+                "safe\u{202e}fdp.exe".into(),
+            ],
+            &[false, false, true, true, false],
+        );
+        assert_eq!(
+            names,
+            [
+                "report.pdf",
+                "report 2.pdf",
+                "folder",
+                "folder 2",
+                "safe\u{202e}fdp.exe",
+            ]
+        );
+    }
 }
 
 /// See [`FileListDelegate::drag_snapshot`].
@@ -655,9 +785,9 @@ impl FileListDelegate {
     /// cached, else the workspace type icon), per the UI_NONBLOCKING
     /// contract.
     fn build_drag_snapshot(&self, cx: &gpui::App) -> DragSnapshot {
-        // Nothing to hand another app: archive entries have no path until
-        // they're extracted. (Dragging them *out* needs lazy NSFilePromise
-        // materialization — deliberately deferred.)
+        // Archive rows use their own coordinate payload and, on macOS, native
+        // file promises. They therefore never enter the ordinary on-disk path
+        // snapshot used by filesystem rows here.
         if self.is_archive_mode() {
             return DragSnapshot::default();
         }
@@ -908,7 +1038,7 @@ impl FileListDelegate {
             let v = v.read(cx);
             (v.archive_path().to_path_buf(), v.password_for_drag())
         })?;
-        let entries: Vec<String> = if row_is_selected {
+        let selected: Vec<(String, bool)> = if row_is_selected {
             self.archive_rows
                 .iter()
                 .enumerate()
@@ -917,14 +1047,16 @@ impl FileListDelegate {
                         .get(*i)
                         .is_some_and(|e| self.selected_set.contains(&e.id))
                 })
-                .map(|(_, r)| r.path.clone())
+                .map(|(_, r)| (r.path.clone(), r.is_dir))
                 .collect()
         } else {
-            vec![self.archive_rows.get(row_ix)?.path.clone()]
+            let row = self.archive_rows.get(row_ix)?;
+            vec![(row.path.clone(), row.is_dir)]
         };
-        (!entries.is_empty()).then_some(ArchiveEntryDrag {
+        (!selected.is_empty()).then(|| ArchiveEntryDrag {
             archive,
-            entries,
+            entries: selected.iter().map(|(path, _)| path.clone()).collect(),
+            directories: selected.iter().map(|(_, is_dir)| *is_dir).collect(),
             password,
         })
     }
@@ -1225,19 +1357,145 @@ impl TableDelegate for FileListDelegate {
         // for the shell to run the transfer into this folder. Stop
         // propagation so the pane-background target underneath
         // doesn't also fire.
+        let archive_drop_allowed = if self.is_archive_mode() {
+            self.archive_view
+                .as_ref()
+                .and_then(WeakEntity::upgrade)
+                .is_some_and(|view| view.read(cx).can_stage_edits())
+        } else {
+            true
+        };
+        let archive_entry_drop_allowed = !self.is_archive_mode();
+        // Archive **file** rows accept dropped files/folders: a ZIP adds them,
+        // a format that can't be edited in place refuses visibly. Only in the
+        // real filesystem list — inside an open archive, rows are members, and
+        // nesting an add into a member is not a gesture we support.
+        let archive_add_target = if self.is_archive_mode() {
+            ArchiveDropTarget::No
+        } else {
+            self.entries
+                .get(row_ix)
+                .map(|entry| archive_drop_target(entry.name.as_ref(), entry.kind))
+                .unwrap_or(ArchiveDropTarget::No)
+        };
+        if archive_add_target != ArchiveDropTarget::No {
+            let accepts = archive_add_target == ArchiveDropTarget::Accepts;
+            row = row
+                .drag_over::<ExternalPaths>(move |style, _, _, cx| {
+                    if accepts {
+                        style
+                            .cursor_copy()
+                            .border_1()
+                            .border_color(cx.theme().accent)
+                            .bg(cx.theme().accent.opacity(0.10))
+                    } else {
+                        style
+                            .cursor_not_allowed()
+                            .border_1()
+                            .border_color(cx.theme().danger)
+                            .bg(cx.theme().danger.opacity(0.08))
+                    }
+                })
+                .on_drop(cx.listener(move |_state, paths: &ExternalPaths, _window, cx| {
+                    // Consume either way: a refused archive must not fall
+                    // through to the pane background and land the files in
+                    // the current folder instead.
+                    cx.stop_propagation();
+                    if accepts {
+                        cx.emit(TableEvent::ArchiveAddDrop {
+                            row_ix,
+                            paths: paths.paths().to_vec(),
+                        });
+                    }
+                }))
+                // Members dragged out of an archive workbench land here too:
+                // an editable ZIP takes them, anything else refuses. Without
+                // this the release would bubble to the pane target and
+                // extract into the current folder instead.
+                .drag_over::<ArchiveEntryDrag>(move |style, _, _, cx| {
+                    if accepts {
+                        style
+                            .cursor_copy()
+                            .border_1()
+                            .border_color(cx.theme().accent)
+                            .bg(cx.theme().accent.opacity(0.10))
+                    } else {
+                        style
+                            .cursor_not_allowed()
+                            .border_1()
+                            .border_color(cx.theme().danger)
+                            .bg(cx.theme().danger.opacity(0.08))
+                    }
+                })
+                .on_drop(cx.listener(move |_state, drag: &ArchiveEntryDrag, _window, cx| {
+                    cx.stop_propagation();
+                    if accepts {
+                        cx.emit(TableEvent::ArchiveAddFromArchive {
+                            row_ix,
+                            archive: drag.archive.clone(),
+                            entries: drag.entries.clone(),
+                            password: drag.password.clone(),
+                        });
+                    }
+                }))
+                // Cross-window promise sessions carry no GPUI payload, so the
+                // release arrives as a plain mouse-up (GPUI-UPSTREAM #11).
+                .on_mouse_move(cx.listener(move |_state, _event, _window, cx| {
+                    if native_archive_drag_active() {
+                        cx.notify();
+                    }
+                }))
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(move |_state, _event, _window, cx| {
+                        if cx.has_active_drag() {
+                            return;
+                        }
+                        let Some(drag) = take_native_archive_drag() else {
+                            return;
+                        };
+                        cx.stop_propagation();
+                        if accepts {
+                            cx.emit(TableEvent::ArchiveAddFromArchive {
+                                row_ix,
+                                archive: drag.archive,
+                                entries: drag.entries,
+                                password: drag.password,
+                            });
+                        }
+                    }),
+                );
+        }
         if kind_is_dir {
             row = row
-                .drag_over::<ExternalPaths>(|style, _, _, cx| {
-                    style
-                        .border_1()
-                        .border_color(cx.theme().accent)
-                        .bg(cx.theme().accent.opacity(0.10))
+                .drag_over::<ExternalPaths>(move |style, _, _, cx| {
+                    if archive_drop_allowed {
+                        style
+                            .cursor_copy()
+                            .border_1()
+                            .border_color(cx.theme().accent)
+                            .bg(cx.theme().accent.opacity(0.10))
+                    } else {
+                        style
+                            .cursor_not_allowed()
+                            .border_1()
+                            .border_color(cx.theme().danger)
+                            .bg(cx.theme().danger.opacity(0.08))
+                    }
                 })
                 // Spring-load: while a drag hovers this folder row, tell
                 // the shell (which times the dwell and drills in).
                 .on_drag_move(cx.listener(
                     move |_state, e: &gpui::DragMoveEvent<ExternalPaths>, _window, cx| {
                         if e.bounds.contains(&e.event.position) {
+                            cx.set_active_drag_cursor_style(
+                                if archive_drop_allowed {
+                                    gpui::CursorStyle::DragCopy
+                                } else {
+                                    gpui::CursorStyle::OperationNotAllowed
+                                },
+                                _window,
+                            );
                             cx.emit(TableEvent::DragHover { row_ix });
                         }
                     },
@@ -1252,23 +1510,82 @@ impl TableDelegate for FileListDelegate {
                     }),
                 )
                 // Twin target for entries dragged out of an archive window.
-                .drag_over::<ArchiveEntryDrag>(|style, _, _, cx| {
-                    style
-                        .border_1()
-                        .border_color(cx.theme().accent)
-                        .bg(cx.theme().accent.opacity(0.10))
+                .drag_over::<ArchiveEntryDrag>(move |style, _, _, cx| {
+                    if archive_entry_drop_allowed {
+                        style
+                            .cursor_copy()
+                            .border_1()
+                            .border_color(cx.theme().accent)
+                            .bg(cx.theme().accent.opacity(0.10))
+                    } else {
+                        style
+                            .cursor_not_allowed()
+                            .border_1()
+                            .border_color(cx.theme().danger)
+                            .bg(cx.theme().danger.opacity(0.08))
+                    }
                 })
+                .on_drag_move(cx.listener(
+                    move |_state, event: &gpui::DragMoveEvent<ArchiveEntryDrag>, window, cx| {
+                        if event.bounds.contains(&event.event.position) {
+                            cx.set_active_drag_cursor_style(
+                                if archive_entry_drop_allowed {
+                                    gpui::CursorStyle::DragCopy
+                                } else {
+                                    gpui::CursorStyle::OperationNotAllowed
+                                },
+                                window,
+                            );
+                        }
+                    },
+                ))
                 .on_drop(
                     cx.listener(move |_state, drag: &ArchiveEntryDrag, _window, cx| {
                         cx.stop_propagation();
-                        cx.emit(TableEvent::ArchiveDrop {
-                            row_ix,
-                            archive: drag.archive.clone(),
-                            entries: drag.entries.clone(),
-                            password: drag.password.clone(),
-                        });
+                        if archive_entry_drop_allowed {
+                            cx.emit(TableEvent::ArchiveDrop {
+                                row_ix,
+                                archive: drag.archive.clone(),
+                                entries: drag.entries.clone(),
+                                password: drag.password.clone(),
+                            });
+                        }
+                    }),
+                )
+                // Once AppKit has moved a promised-file gesture into a
+                // second Ferail window, GPUI may no longer own the custom
+                // typed payload. Its platform layer still delivers ordinary
+                // MouseMove/MouseUp events, so use the coordinator fallback
+                // for hover and drop. If GPUI retained the typed drag, the
+                // normal on_drop above wins and this path stays dormant.
+                .on_mouse_move(cx.listener(move |_state, _event, _window, cx| {
+                    if native_archive_drag().is_some() {
+                        cx.notify();
+                    }
+                }))
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(move |_state, _event, _window, cx| {
+                        if cx.has_active_drag() {
+                            return;
+                        }
+                        let Some(drag) = take_native_archive_drag() else {
+                            return;
+                        };
+                        cx.stop_propagation();
+                        if archive_entry_drop_allowed {
+                            cx.emit(TableEvent::ArchiveDrop {
+                                row_ix,
+                                archive: drag.archive,
+                                entries: drag.entries,
+                                password: drag.password,
+                            });
+                        }
                     }),
                 );
+            // The matching hover ring for the native promise session lives in
+            // `render_tr_hover` below — the table owns the row's single
+            // `.hover()` slot, so it cannot be set here.
         }
         if kind_is_dir && heat > 0.0 && crate::ant_trail::enabled(cx) {
             // Customizable base tint, scaled by heat. Stable hue across
@@ -1315,14 +1632,108 @@ impl TableDelegate for FileListDelegate {
                             )
                         })
                         .collect();
-                    return row.on_drag(drag, move |_d, offset, _window, cx| {
-                        cx.new(|_| DragBadge {
-                            names: names.clone(),
-                            icons: smallvec![],
-                            count,
-                            offset,
+                    return row
+                        .on_drag(drag, move |_d, offset, _window, cx| {
+                            cx.new(|_| DragBadge {
+                                names: names.clone(),
+                                icons: smallvec![],
+                                count,
+                                offset,
+                            })
                         })
-                    });
+                        .external_drag_payload::<ArchiveEntryDrag>(|drag, window, cx| {
+                            #[cfg(target_os = "macos")]
+                            {
+                                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+                                let source_window = gpui::Window::window_handle(window);
+                                let Ok(handle) = HasWindowHandle::window_handle(window) else {
+                                    return None;
+                                };
+                                let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+                                    return None;
+                                };
+                                let archive = drag.archive.clone();
+                                let password = drag.password.clone();
+                                let promises =
+                                    archive_promise_names(&drag.entries, &drag.directories)
+                                    .into_iter()
+                                    .zip(drag.entries.iter().cloned())
+                                    .zip(drag.directories.iter().copied())
+                                    .map(|((name, entry), is_dir)| {
+                                        let archive = archive.clone();
+                                        let password = password.clone();
+                                        crate::platform_shell::FilePromise::new(
+                                            name,
+                                            is_dir,
+                                            move |target| {
+                                                ferail_fs_native::materialize_archive_entry(
+                                                    &archive,
+                                                    &entry,
+                                                    target,
+                                                    password.as_deref(),
+                                                )
+                                                .map_err(|error| error.to_string())
+                                            },
+                                        )
+                                    })
+                                    .collect();
+                                set_native_archive_drag(Some(drag.clone()));
+                                crate::log_info!(
+                                    100,
+                                    "archive-drag: promoting {} entr{} to native promises",
+                                    drag.entries.len(),
+                                    if drag.entries.len() == 1 { "y" } else { "ies" }
+                                );
+                                if crate::platform_shell::start_file_promise_drag(
+                                    handle.ns_view.as_ptr(),
+                                    promises,
+                                ) {
+                                    crate::log_info!(100, "archive-drag: native session started");
+                                    // From this point AppKit owns the physical
+                                    // gesture. Deliberately retire GPUI's
+                                    // typed drag instead of trying to smuggle
+                                    // it across windows; Ferail destinations
+                                    // use NATIVE_ARCHIVE_DRAG with the native
+                                    // MouseMove/MouseUp callbacks below.
+                                    cx.stop_active_drag(window);
+                                    // Keep the coordinator payload alive while
+                                    // AppKit owns the physical gesture. Other
+                                    // Ferail windows consume its archive
+                                    // coordinates; Finder consumes the native
+                                    // promises. Retire it as soon as AppKit
+                                    // reports that the session ended.
+                                    cx.spawn(async move |cx| {
+                                        // `willBeginAtPoint` is delivered
+                                        // as the session starts. Yield once
+                                        // before observing the shared flag
+                                        // so a callback ordering change
+                                        // cannot retire the drag early.
+                                        cx.background_executor()
+                                            .timer(std::time::Duration::from_millis(16))
+                                            .await;
+                                        while crate::platform_shell::native_drag_session_active() {
+                                            cx.background_executor()
+                                                .timer(std::time::Duration::from_millis(16))
+                                                .await;
+                                        }
+                                        let _ = cx.update_window(source_window, |_, window, cx| {
+                                            cx.stop_active_drag(window);
+                                            set_native_archive_drag(None);
+                                        });
+                                        // Repaint every window at the terminal
+                                        // edge to clear a hover border left in
+                                        // a window the pointer departed.
+                                        cx.refresh();
+                                    })
+                                    .detach();
+                                } else {
+                                    crate::log_warn!(100, "archive-drag: native session failed to start");
+                                    set_native_archive_drag(None);
+                                }
+                            }
+                            None
+                        });
                 }
                 return row;
             }
@@ -1385,6 +1796,41 @@ impl TableDelegate for FileListDelegate {
             }
         }
         row
+    }
+
+    /// Accent/danger ring on folder rows while a native promise session is in
+    /// flight — the twin of the `drag_over::<ArchiveEntryDrag>` style in
+    /// `render_tr`. GPUI has no typed drag during that session, so
+    /// `drag_over` never fires; the row's `on_mouse_move` repaints and the
+    /// table merges this into its single hover slot so the ring follows the
+    /// row AppKit is actually over.
+    fn render_tr_hover(
+        &mut self,
+        row_ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> Option<gpui::StyleRefinement> {
+        if !native_archive_drag_active() {
+            return None;
+        }
+        let is_dir = matches!(self.entries.get(row_ix)?.kind, EntryKind::Directory);
+        if !is_dir {
+            return None;
+        }
+        let style = gpui::StyleRefinement::default();
+        Some(if self.is_archive_mode() {
+            style
+                .cursor_not_allowed()
+                .border_1()
+                .border_color(cx.theme().danger)
+                .bg(cx.theme().danger.opacity(0.08))
+        } else {
+            style
+                .cursor_copy()
+                .border_1()
+                .border_color(cx.theme().accent)
+                .bg(cx.theme().accent.opacity(0.10))
+        })
     }
 
     fn render_td(
@@ -1783,17 +2229,42 @@ impl TableDelegate for FileListDelegate {
         window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
-        // Archive rows are virtual — Trash / Rename / Get Info / Open With
-        // would all act on a path that doesn't exist. Offer nothing until the
-        // in-archive command set (extract selected, preview) is built out;
-        // the workbench's own toolbar carries the real verbs.
+        // Archive rows are virtual, so ordinary filesystem verbs would target
+        // paths that do not exist. Editable zip workbenches expose their own
+        // staged Rename / Remove commands through the owning ArchiveView.
         if self.is_archive_mode() {
-            return menu;
+            let Some(view) = self.archive_view.clone() else {
+                return menu;
+            };
+            let editable = view
+                .upgrade()
+                .is_some_and(|view| view.read(cx).can_stage_edits());
+            if !editable {
+                return menu;
+            }
+            let rename_view = view.clone();
+            let remove_view = view;
+            return menu
+                .item(
+                    PopupMenuItem::new(tr!("Rename…")).on_click(move |_event, window, cx| {
+                        if let Some(view) = rename_view.upgrade() {
+                            view.update(cx, |view, cx| view.rename_selected(window, cx));
+                        }
+                    }),
+                )
+                .item(PopupMenuItem::new(tr!("Remove from Archive")).on_click(
+                    move |_event, _window, cx| {
+                        if let Some(view) = remove_view.upgrade() {
+                            view.update(cx, |view, cx| view.stage_remove_selected(cx));
+                        }
+                    },
+                ));
         }
         use crate::shell::{
             BulkRenameSelected, ClearQuarantine, Compress, CompressSevenZ, CompressTar,
-            CompressTarBz2, CompressTarGz, CompressTarXz, CopyPath, DeleteImmediately, Duplicate,
-            Extract, ExtractTo, GetInfo, MakeAlias, MoveToTrash, NewArchive, OpenAsArchive,
+            CompressTarBz2, CompressTarGz, CompressTarXz, ConvertArchive, CopyPath,
+            DeleteImmediately, Duplicate, Extract, ExtractTo, GetInfo, MakeAlias, MoveToTrash,
+            NewArchive, OpenAsArchive,
             OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
             OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
             OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook,
@@ -1967,6 +2438,9 @@ impl TableDelegate for FileListDelegate {
             menu = menu
                 .item(PopupMenuItem::submenu(tr!("Extract"), extract_submenu))
                 .menu(tr!("Open as Archive"), Box::new(OpenAsArchive));
+            if show_single_only {
+                menu = menu.menu(tr!("Convert Archive…"), Box::new(ConvertArchive));
+            }
         }
         if show_clear_quarantine {
             // Capability command (docs/features/CONTEXT_MENU.md): show when

@@ -65,6 +65,24 @@ pub enum TableEvent {
         row_ix: usize,
         paths: Vec<std::path::PathBuf>,
     },
+    /// OS file paths were dropped onto an **archive file** row, which means
+    /// "add these to that archive" rather than the folder-row transfer
+    /// [`TableEvent::ExternalDrop`] carries. Kept a separate event so the
+    /// delegate — which knows each row's kind — decides, instead of the host
+    /// re-deriving it from a path.
+    ArchiveAddDrop {
+        row_ix: usize,
+        paths: Vec<std::path::PathBuf>,
+    },
+    /// Archive members were dropped on an **archive file** row: add them to
+    /// that archive. Twin of [`TableEvent::ArchiveAddDrop`] for the payload
+    /// that carries archive coordinates instead of paths.
+    ArchiveAddFromArchive {
+        row_ix: usize,
+        archive: std::path::PathBuf,
+        entries: Vec<String>,
+        password: Option<String>,
+    },
     /// Entries dragged out of an archive workbench were dropped on a folder
     /// row. Fork addition, twin of [`TableEvent::ExternalDrop`]: the payload
     /// carries archive coordinates rather than paths, because the entries have
@@ -2044,6 +2062,7 @@ where
             let need_render_border = is_selected || !is_last_row || !is_filled;
 
             let mut tr = self.delegate.render_tr(row_ix, window, cx);
+            let extra_hover = self.delegate.render_tr_hover(row_ix, window, cx);
             let style = tr.style().clone();
 
             tr.h_flex()
@@ -2065,10 +2084,14 @@ where
                 .when(is_stripe_row, |this| this.bg(cx.theme().table_even))
                 .refine_style(&style)
                 .hover(|this| {
-                    if is_selected || self.right_clicked_row == Some(row_ix) {
+                    let this = if is_selected || self.right_clicked_row == Some(row_ix) {
                         this
                     } else {
                         this.bg(cx.theme().table_hover)
+                    };
+                    match extra_hover {
+                        Some(extra) => gpui::Refineable::refined(this, extra),
+                        None => this,
                     }
                 })
                 .when(self.cell_selectable && self.row_selector, |this| {

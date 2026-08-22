@@ -75,6 +75,7 @@ pub fn run_gui(args: screenshot::Args) {
     let height = args.height.unwrap_or(760) as f32;
     let theme_mode = args.theme;
     let settings_page = args.settings;
+    let initial_archive = args.archive;
 
     app.run(move |cx| {
         // Arm the Prime Directive's debug-build tripwire: from here on,
@@ -213,6 +214,7 @@ pub fn run_gui(args: screenshot::Args) {
         // Manual by definition — works whether or not the automatic daily
         // check is enabled in Settings.
         cx.on_action(|_: &CheckForUpdates, cx| {
+            crate::log_info!(90, "manual update check requested from app menu");
             crate::update_check::manual_check(cx);
         });
 
@@ -342,7 +344,7 @@ pub fn run_gui(args: screenshot::Args) {
             let initial_size = (width, height);
             cx.spawn(async move |cx| {
                 cx.update(|cx| {
-                    open_shell_window_sized(cx, Some(initial_size));
+                    open_shell_window_sized(cx, Some(initial_size), initial_archive);
                 });
             })
             .detach();
@@ -371,10 +373,14 @@ fn settings_window_opts(width: f32, height: f32) -> WindowOptions {
 /// route through this so there's one place that owns window options
 /// and process-state hookup.
 pub fn open_shell_window(cx: &mut App) {
-    open_shell_window_sized(cx, None);
+    open_shell_window_sized(cx, None, None);
 }
 
-fn open_shell_window_sized(cx: &mut App, size_hint: Option<(f32, f32)>) {
+fn open_shell_window_sized(
+    cx: &mut App,
+    size_hint: Option<(f32, f32)>,
+    initial_archive: Option<std::path::PathBuf>,
+) {
     let (w, h) = size_hint.unwrap_or((1180.0, 760.0));
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::centered(size(px(w), px(h)), cx)),
@@ -391,6 +397,11 @@ fn open_shell_window_sized(cx: &mut App, size_hint: Option<(f32, f32)>) {
         if let Err(e) = cx.open_window(opts, |window, cx| {
             let process = crate::process_state::process_state(cx);
             let view = cx.new(|cx| Shell::new(process, window, cx));
+            if let Some(archive) = initial_archive.clone() {
+                view.update(cx, |shell, cx| {
+                    shell.open_archive_path(archive, window, cx);
+                });
+            }
             cx.new(|cx| gpui_component::Root::new(view, window, cx))
         }) {
             crate::log_error!(90, "could not open main window: {e}");

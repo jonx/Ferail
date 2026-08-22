@@ -8,6 +8,78 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+- **Crash and freeze reports are harder to lose or deadlock.** Rust panics now
+  persist an essential crash report before collecting the full backtrace, and
+  the independent freeze watchdog never waits on a diagnostic mutex that the
+  stalled UI thread might own. Its heartbeat state machine is covered through
+  suspect, one-shot report, recovery/re-arm, and system-sleep cases; as before,
+  hard process death still belongs to the operating system's crash reporter.
+
+- **Dropping files or folders onto a ZIP adds them to it.** Drag anything onto
+  an archive in the list or grid and it is added in place — no need to open the
+  archive first; a dropped folder brings its contents, and a name already in
+  the archive is reported instead of quietly shadowing the original. Archives
+  that cannot be modified in place (7-Zip, TAR and its compressed variants,
+  single-file GZ/BZ2/XZ, LHA) show the forbidden cursor and refuse the drop
+  rather than letting the files land in the surrounding folder by accident.
+  Members dragged out of another archive can be dropped on a ZIP too. Adding is
+  transactional: the archive is staged and swapped in atomically, so a
+  cancelled or failed add leaves the original untouched instead of possibly
+  leaving a half-written entry inside it. If some dropped items were already in
+  the archive, Ferail now names them instead of reporting a clean success.
+
+- **ZIP archives now have a transactional editing workbench.** Drag files or
+  folders into the archive (including onto an inner folder), rename entries,
+  and stage removals, then review the projected result and choose **Save
+  Changes** or **Revert**. Saving writes and validates a sibling archive before
+  atomically replacing the original; cancellation, write failure, or an
+  archive changed by another app leaves the original untouched. Other archive
+  formats and ZIP-based packages such as DOCX/JAR/APK stay browse-only and show
+  a lock badge, forbidden cursor, and explanation when a drop cannot be
+  accepted.
+  Archive rows now also expose packed size, compression method, checksum,
+  permissions, encryption, and comments when their format records them. They
+  use the same deceptive-filename highlighting as normal files. **Convert
+  Archive…** creates a separately named ZIP, 7-Zip, TAR, TAR.GZ, TAR.BZ2, or
+  TAR.XZ, validates it, and preserves the source. Extraction now also refuses
+  pre-existing destination symlinks/reparse points and codec-specific link or
+  special-file entries, in addition to the existing absolute/`..` zip-slip
+  checks.
+  Archive members can now be dragged from a popped-out workbench to Finder on
+  macOS using native file promises: decoding starts only after the external
+  drop and runs off the GUI thread. The same gesture now crosses into another
+  Ferail window, where dropping on the list extracts into its current folder
+  and dropping on a folder row extracts there — previously the drop silently
+  did nothing in Ferail (while working in Finder) because the window never
+  registered itself as a destination for promised files. No placeholder file
+  is created, and a workbench overlapping its parent can drop straight into
+  the underlying main window. Dropped members land in the destination under
+  their own name, the same way the identical drag onto Finder behaves — a
+  file arrives as `alpha.txt`, a dragged folder brings its subtree, and
+  neither is wrapped in an extra folder named after the archive; a name
+  already in use is kept as `alpha (2).txt` rather than overwritten.
+  List and grid folder targets plus Browse-tree, volume, available favorite
+  rows, sidebar Locations, and breadcrumb segments highlight and extract into
+  the selected folder — sidebar Locations such as Downloads and Desktop, and
+  breadcrumb segments, previously ignored dropped archive members entirely,
+  and every target keeps its highlight during the cross-window part of the
+  drag, where nothing used to light up. Dragging members out now also works
+  from a docked archive view, not only a popped-out one. Crossing a Ferail
+  window edge no longer
+  makes GPUI discard the archive payload, so leaving and re-entering restores
+  the red forbidden feedback and the eventual drop still commits. Dropping a
+  member back on its own archive is a cancelled drag and no longer bubbles into
+  the current folder. Renamed compressed TAR downloads such as
+  `backup.tar (1).gz` are detected from the decoded TAR header and show their
+  real inner tree.
+
+- **Check for Updates now always gives a visible, recoverable result.** The
+  native menu command raises an already-open Software Update dialog instead
+  of appearing to do nothing, and recovers if its original window vanished.
+  Offline, timeout, missing-page, rate-limit, server, and malformed-response
+  failures now explain what happened and offer Retry; checks stop after 20
+  seconds, and interrupted downloads no longer leave `.part` files behind.
+
 - **Ferail can now speak your language.** Settings › Appearance has a new
   Language group: follow the system language, or pick a language pack —
   French and German ship built in, and anyone can add another without a

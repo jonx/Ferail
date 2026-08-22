@@ -124,7 +124,7 @@ mod tests {
             "icons/folder-open.svg", "icons/copy.svg", "icons/network.svg",
             // Status / adornments
             "icons/circle-x.svg", "icons/circle-help.svg", "icons/circle-check.svg",
-            "icons/triangle-alert.svg", "icons/inbox.svg",
+            "icons/triangle-alert.svg", "icons/inbox.svg", "icons/lock.svg",
             // Settings pages
             "icons/activity.svg", "icons/search.svg", "icons/palette.svg", "icons/cpu.svg",
             "icons/settings.svg", "icons/settings-2.svg", "icons/keyboard.svg", "icons/info.svg",

@@ -54,7 +54,7 @@ pub(crate) const SIDEBAR_ICON_PX: f32 = 24.0;
 /// Horizontal gutter (px) between the tree rows and the sidebar edges,
 /// so a selected row's rounded highlight reads as an inset pill rather
 /// than a full-bleed bar.
-const TREE_ROW_INSET: f32 = 6.0;
+pub(crate) const TREE_ROW_INSET: f32 = 6.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreeRowIcon {
@@ -268,6 +268,7 @@ impl SidebarItem for LabeledMenu {
 #[derive(Clone)]
 pub enum ShellSidebarItem {
     Group(LabeledMenu),
+    Locations(crate::locations_section::LocationsSection),
     Favorites(crate::favorites_section::FavoritesSection),
     Recents(crate::recents_section::RecentsSection),
     Tree(TreeSection),
@@ -276,6 +277,9 @@ pub enum ShellSidebarItem {
 impl ShellSidebarItem {
     pub fn group(g: LabeledMenu) -> Self {
         ShellSidebarItem::Group(g)
+    }
+    pub fn locations(l: crate::locations_section::LocationsSection) -> Self {
+        ShellSidebarItem::Locations(l)
     }
     pub fn favorites(f: crate::favorites_section::FavoritesSection) -> Self {
         ShellSidebarItem::Favorites(f)
@@ -292,6 +296,7 @@ impl Collapsible for ShellSidebarItem {
     fn is_collapsed(&self) -> bool {
         match self {
             ShellSidebarItem::Group(g) => g.is_collapsed(),
+            ShellSidebarItem::Locations(l) => l.is_collapsed(),
             ShellSidebarItem::Favorites(f) => f.is_collapsed(),
             ShellSidebarItem::Recents(r) => r.is_collapsed(),
             ShellSidebarItem::Tree(t) => t.is_collapsed(),
@@ -300,6 +305,7 @@ impl Collapsible for ShellSidebarItem {
     fn collapsed(self, c: bool) -> Self {
         match self {
             ShellSidebarItem::Group(g) => ShellSidebarItem::Group(g.collapsed(c)),
+            ShellSidebarItem::Locations(l) => ShellSidebarItem::Locations(l.collapsed(c)),
             ShellSidebarItem::Favorites(f) => ShellSidebarItem::Favorites(f.collapsed(c)),
             ShellSidebarItem::Recents(r) => ShellSidebarItem::Recents(r.collapsed(c)),
             ShellSidebarItem::Tree(t) => ShellSidebarItem::Tree(t.collapsed(c)),
@@ -316,6 +322,7 @@ impl SidebarItem for ShellSidebarItem {
     ) -> impl IntoElement {
         match self {
             ShellSidebarItem::Group(g) => g.render(id, window, cx).into_any_element(),
+            ShellSidebarItem::Locations(l) => l.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Favorites(f) => f.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Recents(r) => r.render(id, window, cx).into_any_element(),
             ShellSidebarItem::Tree(t) => t.render(id, window, cx).into_any_element(),
@@ -436,9 +443,27 @@ fn render_tree_row(
         });
     if is_active {
         row = row.bg(theme.sidebar_accent);
-    } else {
+    }
+    // One `.hover()` per element is all gpui allows (a second is a debug
+    // assertion), so the ordinary hover wash and the drop-target ring share
+    // it. The ring is what makes a sidebar folder readable as a drop target
+    // during a *native* promise session: gpui owns no typed drag then, so
+    // `drag_over` below never fires and the row's `on_mouse_move` repaint is
+    // what keeps this tracking the row under the pointer.
+    {
         let hover_bg = theme.sidebar_accent.opacity(0.5);
-        row = row.hover(move |this| this.bg(hover_bg));
+        let drop_border = theme.accent;
+        let native_dragging = crate::file_list::native_archive_drag_active();
+        row = row.hover(move |this| {
+            let this = if is_active { this } else { this.bg(hover_bg) };
+            if native_dragging {
+                this.border_1()
+                    .border_color(drop_border)
+                    .bg(drop_border.opacity(0.12))
+            } else {
+                this
+            }
+        });
     }
 
     // Tree folders are drop targets (dnd-spec §3.5): Browse/Volumes
@@ -447,6 +472,10 @@ fn render_tree_row(
     // nothing filesystem-y happens here.
     let drop_shell = shell.clone();
     let drop_dest = path.clone();
+    let archive_drop_shell = shell.clone();
+    let archive_drop_dest = path.clone();
+    let native_drop_shell = shell.clone();
+    let native_drop_dest = path.clone();
     row = row
         .drag_over::<ExternalPaths>(|style, _, _, cx| style.bg(cx.theme().accent.opacity(0.12)))
         .on_drop(move |paths: &ExternalPaths, window, cx| {
@@ -458,22 +487,86 @@ fn render_tree_row(
             shell.update(cx, |this, cx| {
                 this.handle_external_drop(dropped, dest, window, cx);
             });
+        })
+        .drag_over::<crate::file_list::ArchiveEntryDrag>(|style, _, _, cx| {
+            style
+                .border_1()
+                .border_color(cx.theme().accent)
+                .bg(cx.theme().accent.opacity(0.12))
+        })
+        .on_drop(
+            move |drag: &crate::file_list::ArchiveEntryDrag, window, cx| {
+                cx.stop_propagation();
+                let Some(shell) = archive_drop_shell.upgrade() else {
+                    return;
+                };
+                let dest = archive_drop_dest.clone();
+                let archive = drag.archive.clone();
+                let entries = drag.entries.clone();
+                let password = drag.password.clone();
+                shell.update(cx, |this, cx| {
+                    this.extract_archive_entries_into(archive, entries, dest, password, window, cx);
+                });
+            },
+        )
+        .on_mouse_move(|_event, window, _cx| {
+            if crate::file_list::native_archive_drag().is_some() {
+                window.refresh();
+            }
+        })
+        .on_mouse_up(gpui::MouseButton::Left, move |_event, window, cx| {
+            if cx.has_active_drag() {
+                return;
+            }
+            let Some(drag) = crate::file_list::take_native_archive_drag() else {
+                return;
+            };
+            cx.stop_propagation();
+            let Some(shell) = native_drop_shell.upgrade() else {
+                return;
+            };
+            let dest = native_drop_dest.clone();
+            shell.update(cx, |this, cx| {
+                this.extract_archive_entries_into(
+                    drag.archive,
+                    drag.entries,
+                    dest,
+                    drag.password,
+                    window,
+                    cx,
+                );
+            });
         });
     // Spring-load: dwelling a drag over a collapsed expandable folder
     // opens it so the user can drill the tree without releasing.
     if is_expandable && !is_expanded {
         let hover_shell = shell.clone();
         let hover_path = path.clone();
-        row = row.on_drag_move(move |e: &gpui::DragMoveEvent<ExternalPaths>, _window, cx| {
-            if !e.bounds.contains(&e.event.position) {
-                return;
-            }
-            let Some(shell) = hover_shell.upgrade() else {
-                return;
-            };
-            let path = hover_path.clone();
-            shell.update(cx, |this, cx| this.tree_drag_hover(&path, cx));
-        });
+        let archive_hover_shell = shell.clone();
+        let archive_hover_path = path.clone();
+        row = row
+            .on_drag_move(move |e: &gpui::DragMoveEvent<ExternalPaths>, _window, cx| {
+                if !e.bounds.contains(&e.event.position) {
+                    return;
+                }
+                let Some(shell) = hover_shell.upgrade() else {
+                    return;
+                };
+                let path = hover_path.clone();
+                shell.update(cx, |this, cx| this.tree_drag_hover(&path, cx));
+            })
+            .on_drag_move(
+                move |e: &gpui::DragMoveEvent<crate::file_list::ArchiveEntryDrag>, _window, cx| {
+                    if !e.bounds.contains(&e.event.position) {
+                        return;
+                    }
+                    let Some(shell) = archive_hover_shell.upgrade() else {
+                        return;
+                    };
+                    let path = archive_hover_path.clone();
+                    shell.update(cx, |this, cx| this.tree_drag_hover(&path, cx));
+                },
+            );
     }
 
     // Ancestry connector lines, absolutely positioned inside the

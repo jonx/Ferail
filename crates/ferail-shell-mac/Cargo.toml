@@ -15,6 +15,7 @@ description = "macOS shell integration for Ferail (chrome, drag-drop, NSMenu)"
 winit.workspace = true
 ferail-core.workspace = true
 png = "0.17"
+log = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.5", features = ["exception"] }
@@ -37,6 +38,7 @@ objc2-app-kit = { version = "0.2", features = [
     "NSView",
     "NSPasteboard",
     "NSPasteboardItem",
+    "NSFilePromiseProvider",
     "NSDragging",
     "NSDraggingItem",
     "NSDraggingSession",

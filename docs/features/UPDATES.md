@@ -31,11 +31,18 @@ the dialog re-renders from every frame.
   checksums). The box is a bounded `overflow_y_scroll` region with a
   `TextView::markdown` keyed on the version, so a different release
   gets a fresh parse/selection state.
+- **Failures** — the check has a 20-second deadline. Connection/DNS
+  failures, timeouts, missing endpoints (404), rate limits, server errors,
+  malformed responses, and an empty release feed become concise localized
+  messages with a Retry button; transport details stay in the log. A repeated
+  menu command raises the window that owns the existing dialog, and a stale
+  host-window guard recovers onto another window instead of silently no-oping.
 
 ## What "update" means (v1)
 
 Download the platform's asset into `~/Downloads` (`.part` file, then
-rename; names never overwrite — "x (2).dmg"), and hand off to the user:
+rename; names never overwrite — "x (2).dmg"), and hand off to the user.
+Any failed/truncated write removes its `.part` file. Then:
 Open mounts the DMG / opens the installer; installing is their step.
 Ferail does not replace its own binary — no Sparkle-style in-place
 swap, no signature verification of its own beyond HTTPS. Asset per
@@ -58,9 +65,11 @@ opening the release page.
   UpToDate or Available{latest's asset + notes of every newer release}.
   Version compare is strict `major.minor.patch` — a malformed remote
   tag is skipped, *never* "newer".
-- **Prime Directive**: the API call, the download, and every filesystem
-  touch run on the background executor; results cross back over an
-  `async_channel` into the global on the foreground executor.
+- **Prime Directive**: the API call, timeout, download, and every filesystem
+  touch (including failed `.part` cleanup) run on the background executor;
+  results cross back over an `async_channel` into the global on the foreground
+  executor. The foreground side only mutates state, raises/opens the dialog,
+  sends notifications, and requests repaints.
 - **Privacy**: no telemetry; the only requests are the release-list
   call and a user-initiated asset download. The automatic path is
   opt-in precisely because even a version check tells GitHub an app

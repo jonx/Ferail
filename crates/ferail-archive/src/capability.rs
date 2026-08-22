@@ -31,8 +31,9 @@ pub struct Capabilities {
     /// directory), so this is zip-only today. Tar-family archives are
     /// append-only streams; 7z we do not write yet.
     pub can_edit_in_place: bool,
-    /// Carry a password (encrypt on create, decrypt on open).
-    pub supports_password: bool,
+    /// Encrypt newly created archives with a password. Read-time password
+    /// support belongs to the decoder and is independent of this UI choice.
+    pub supports_create_password: bool,
     /// Honor a [`crate::CompressionLevel`] on create.
     pub supports_levels: bool,
 }
@@ -59,7 +60,7 @@ impl Format {
                 can_extract: true,
                 can_create: true,
                 can_edit_in_place: true,
-                supports_password: true,
+                supports_create_password: true,
                 supports_levels: true,
             },
 
@@ -71,7 +72,7 @@ impl Format {
                 can_extract: true,
                 can_create: true,
                 can_edit_in_place: false,
-                supports_password: true,
+                supports_create_password: false,
                 supports_levels: false,
             },
 
@@ -84,7 +85,7 @@ impl Format {
                 can_extract: true,
                 can_create: true,
                 can_edit_in_place: false,
-                supports_password: false,
+                supports_create_password: false,
                 supports_levels: true,
             },
             Format::Tar => Capabilities {
@@ -92,7 +93,7 @@ impl Format {
                 can_extract: true,
                 can_create: true,
                 can_edit_in_place: false,
-                supports_password: false,
+                supports_create_password: false,
                 supports_levels: false,
             },
 
@@ -103,7 +104,7 @@ impl Format {
                 can_extract: true,
                 can_create: true,
                 can_edit_in_place: false,
-                supports_password: false,
+                supports_create_password: false,
                 supports_levels: true,
             },
 
@@ -117,7 +118,7 @@ impl Format {
                 can_extract: true,
                 can_create: false,
                 can_edit_in_place: false,
-                supports_password: false,
+                supports_create_password: false,
                 supports_levels: false,
             },
         }

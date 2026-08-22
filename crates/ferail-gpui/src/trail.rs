@@ -115,10 +115,27 @@ pub fn render_lines_sanitized() -> Vec<String> {
     render(crate::redact::enabled())
 }
 
+/// Non-blocking sanitized snapshot for the freeze watchdog. Returning `None`
+/// is preferable to waiting forever when the UI thread froze while recording
+/// an action and still owns this mutex.
+pub fn try_render_lines_sanitized() -> Option<Vec<String>> {
+    use std::sync::TryLockError;
+    let guard = match trail().try_lock() {
+        Ok(guard) => guard,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => return None,
+    };
+    Some(render_entries(&guard, crate::redact::enabled()))
+}
+
 fn render(redact_paths: bool) -> Vec<String> {
     let Ok(guard) = trail().lock() else {
         return Vec::new();
     };
+    render_entries(&guard, redact_paths)
+}
+
+fn render_entries(guard: &VecDeque<Entry>, redact_paths: bool) -> Vec<String> {
     guard
         .iter()
         .map(|e| {

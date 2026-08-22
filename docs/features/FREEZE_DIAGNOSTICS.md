@@ -12,6 +12,18 @@ Linux, and the AROS port all get the watchdog, the heartbeat, and the
 in-process report. Whole-process stack capture is a per-platform bonus
 tier on top.
 
+Crash coverage is a separate sibling path: `obs::init()` installs the panic
+hook before the GUI and its workers start, so Rust panics persist their location,
+breadcrumbs, and backtrace as `reports/ferail-crash-<pid>.txt` as well as
+printing it (and GPUI can recover from an unwind where it has a panic boundary).
+The essential panic facts are written before backtrace capture, and diagnostic
+mutexes use non-blocking snapshots so a panic or freeze while holding one cannot
+deadlock its own reporter. The watchdog is deliberately an independent OS
+thread, but it is still inside the Ferail process: it detects a live process
+with a frozen UI; it cannot survive `SIGKILL`, a hard abort, or process death to
+report that death. Those remain the OS crash reporter's job; detecting them in
+Ferail would require a separate helper *process*, not another in-process thread.
+
 ## The hang report
 
 A plain-text file written to the same folder as the issue bundle:
@@ -42,7 +54,9 @@ counter and writes a hang report after ~10 s of silence — no user action
 needed, which covers Finder/desktop launches where nobody can press a key
 in a terminal. It re-arms if the UI recovers, logs the recovery, and
 debounces system sleep (a check gap far past the interval re-baselines
-instead of alarming).
+instead of alarming). Report assembly never waits for a mutex the frozen UI
+thread may own; an unavailable section says so and the rest of the report is
+still written.
 
 ## Trigger 2: kill interception (terminal launches)
 
@@ -97,6 +111,10 @@ Directive violation, kept so the whole pipeline can be verified
 end-to-end: `FERAIL_DEBUG_FREEZE=20 ferail-gpui` produces the automatic
 watchdog report at ~10 s, logs the recovery at 20 s, and the report's
 main-thread stack shows the synthetic sleep.
+
+Unit tests also drive the watchdog state machine through suspect, one-shot
+report, recovery/re-arm, and system-sleep sequences. Report rendering is tested
+separately so the independent thread's decision logic does not depend on GPUI.
 
 ## What to ask a user reporting a freeze
 

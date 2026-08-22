@@ -431,16 +431,19 @@ impl Shell {
         .detach();
     }
 
-    /// Build the **Locations** section: a flat `SidebarMenu` of icon-
-    /// prefixed shortcuts to the macOS-standard folders. Each item
-    /// navigates straight to its path; none expand, so the IA stays
-    /// unambiguous next to the user-curated Favorites section below
-    /// and the expandable Browse tree underneath.
-    fn build_locations_menu(&mut self, weak: WeakEntity<Self>, cx: &App) -> SidebarMenu {
-        use gpui_component::Icon;
+    /// Build the **Locations** section: a flat list of icon-prefixed
+    /// shortcuts to the OS-standard folders. Each row navigates straight to
+    /// its path; none expand, so the IA stays unambiguous next to the
+    /// user-curated Favorites section below and the Browse tree underneath.
+    ///
+    /// These render through [`crate::locations_section`] rather than
+    /// gpui-component's `SidebarMenu`, because that widget exposes no drop
+    /// hooks — Locations silently rejected every drag until this moved to
+    /// rows we own. Building stays here, where `&Shell` state lives.
+    fn build_locations_rows(&mut self, cx: &App) -> Vec<crate::locations_section::LocationRow> {
         let current = self.active_tab().current_dir.clone();
-        let mut menu = SidebarMenu::new();
         let favs = self.process.favorites().read(cx);
+        let mut rows = Vec::new();
         for loc in crate::special_folders::locations(cx).iter() {
             let path = loc.path.clone();
             let node_id = self.process.fs.id_for_path(&path);
@@ -448,105 +451,21 @@ impl Shell {
                 .node_store
                 .borrow_mut()
                 .get_or_create_path_with_id(path.clone(), node_id);
-            let active = path == current;
-            let favorited = favs.contains_path(&path);
-            // In-memory lookup only — the iCloud probe ran off-thread at
-            // startup / volume refresh (ProcessState::cloud_locations).
-            // `None` = not an iCloud Location; `Some(Downloaded/Placeholder)`
-            // drives the solid-vs-outline trailing cloud badge.
-            let cloud_state = self.process.cloud_locations.borrow().get(&path).copied();
-            let weak_for_click = weak.clone();
-            let weak_for_menu = weak.clone();
-            let path_for_menu = path.clone();
-            let path_for_modclick = path.clone();
-            let item = SidebarMenuItem::new(crate::i18n::tr_static(loc.label))
-                .icon(
-                    Icon::empty()
-                        .path(loc.icon)
-                        // gpui-component `Size` is px-only, so pre-multiply
-                        // by `ui_scale` to match the rem-scaled icons. (At
-                        // scale s: rems(24/16) * (16*s) == 24*s, identical.)
-                        .with_size(px(crate::tree::SIDEBAR_ICON_PX * self.ui_scale)),
-                )
-                .active(active)
-                .on_click(move |event, window, cx| {
-                    if let Some(s) = weak_for_click.upgrade() {
-                        let modifiers = event.modifiers();
-                        let path = path_for_modclick.clone();
-                        s.update(cx, |shell, cx| {
-                            if modifiers.platform {
-                                shell.open_path_in_new_tab(path, window, cx);
-                            } else {
-                                shell.navigate_node(node_id, cx);
-                            }
-                        });
-                    }
-                })
-                .context_menu(move |menu, _window, cx| {
-                    // Stash the right-clicked path on Shell so
-                    // the path-aware action handlers know which
-                    // path the user meant.
-                    if let Some(s) = weak_for_menu.upgrade() {
-                        s.update(cx, |shell, _| {
-                            shell.context_target = Some(path_for_menu.clone());
-                        });
-                    }
-                    menu.menu(tr!("Open in New Tab"), Box::new(OpenContextInNewTab))
-                        .separator()
-                        .menu(
-                            crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
-                            Box::new(RevealContextPath),
-                        )
-                        .menu(tr!("Copy Path"), Box::new(CopyContextPath))
-                });
-            // Trailing badges: a cloud for iCloud Locations (Desktop /
-            // Documents under "Desktop & Documents Folders") — solid when the
-            // folder is downloaded locally, outline when it's a not-downloaded
-            // placeholder (Finder's downloaded-vs-evicted distinction) — plus
-            // the §5 accent star when the entry is also a user Favorite. Cloud
-            // sits left of the star so the star stays the rightmost
-            // "favorited" marker, consistent with the file list, tree, and
-            // breadcrumb.
-            let item = if cloud_state.is_some() || favorited {
-                item.suffix(move |_, cx| {
-                    use ferail_fs_native::CloudState;
-                    use gpui::svg;
-                    let mut badges = h_flex().items_center().gap_1();
-                    if let Some(state) = cloud_state {
-                        // Solid `cloud-fill` = downloaded/"enabled"; outline
-                        // `cloud` = set up for cloud but not downloaded.
-                        let icon = match state {
-                            CloudState::Downloaded => "icons/nav/cloud-fill.svg",
-                            CloudState::Placeholder => "icons/nav/cloud.svg",
-                        };
-                        badges = badges.child(
-                            svg()
-                                .path(icon)
-                                .icon_px(14.0)
-                                // Match the black Locations row icons rather
-                                // than washed-out muted grey.
-                                .text_color(cx.theme().sidebar_foreground)
-                                .flex_shrink_0(),
-                        );
-                    }
-                    if favorited {
-                        badges = badges.child(
-                            svg()
-                                .path("icons/nav/star.svg")
-                                .icon_px(11.0)
-                                .text_color(cx.theme().primary)
-                                .flex_shrink_0(),
-                        );
-                    }
-                    badges.into_any_element()
-                })
-            } else {
-                item
-            };
-            menu = menu.child(item);
+            rows.push(crate::locations_section::LocationRow {
+                node_id,
+                is_active: path == current,
+                favorited: favs.contains_path(&path),
+                // In-memory lookup only — the iCloud probe ran off-thread at
+                // startup / volume refresh (ProcessState::cloud_locations).
+                // `None` = not an iCloud Location; `Some(..)` drives the
+                // solid-vs-outline trailing cloud badge.
+                cloud: self.process.cloud_locations.borrow().get(&path).copied(),
+                label: crate::i18n::tr_static(loc.label),
+                icon: loc.icon,
+                path,
+            });
         }
-        let _ = favs;
-        menu
+        rows
     }
 
     /// Build the Volumes section as a flat row list. Same recursion
@@ -1079,6 +998,10 @@ impl Shell {
                     // come only from already-warm caches, so building
                     // them never touches the filesystem.
                     let is_dir = matches!(entry.kind, EntryKind::Directory);
+                    // Archive cells take dropped files the same way archive
+                    // rows in the list do (name-based, no probing here).
+                    let archive_add_target =
+                        crate::file_list::archive_drop_target(entry.name.as_ref(), entry.kind);
                     let (drag_paths, drag_dirs, ghost_icons, ghost_names): GridCellDrag =
                         if selected {
                             match &sel_drag {
@@ -1136,6 +1059,9 @@ impl Shell {
                     let weak_menu = weak.clone();
                     let weak_drop = weak.clone();
                     let weak_hover = weak.clone();
+                    let weak_archive_drop = weak.clone();
+                    let weak_archive_hover = weak.clone();
+                    let weak_native_archive_drop = weak.clone();
                     let inner = v_flex()
                         .id(("grid-cell-inner", i))
                         .size_full()
@@ -1282,6 +1208,118 @@ impl Shell {
                                 )))
                             })
                         })
+                        .when(
+                            archive_add_target != crate::file_list::ArchiveDropTarget::No,
+                            |d| {
+                                let accepts = archive_add_target
+                                    == crate::file_list::ArchiveDropTarget::Accepts;
+                                let weak_archive_drop = weak.clone();
+                                d.drag_over::<ExternalPaths>(move |style, _payload, _window, cx| {
+                                    if accepts {
+                                        style
+                                            .cursor_copy()
+                                            .border_1()
+                                            .border_color(cx.theme().accent)
+                                            .bg(cx.theme().accent.opacity(0.12))
+                                    } else {
+                                        style
+                                            .cursor_not_allowed()
+                                            .border_1()
+                                            .border_color(cx.theme().danger)
+                                            .bg(cx.theme().danger.opacity(0.08))
+                                    }
+                                })
+                                .on_drop(move |paths: &ExternalPaths, window, app| {
+                                    // Consume either way, so a refused archive
+                                    // never falls through to the pane
+                                    // background and lands in the folder.
+                                    app.stop_propagation();
+                                    if !accepts {
+                                        return;
+                                    }
+                                    let dropped = paths.paths().to_vec();
+                                    let _ = weak_archive_drop.update(app, |this, cx| {
+                                        this.drop_onto_archive_row(i, dropped, window, cx);
+                                    });
+                                })
+                                // Archive members dropped on an archive cell
+                                // are added to it, same as on a list row.
+                                .drag_over::<crate::file_list::ArchiveEntryDrag>(
+                                    move |style, _payload, _window, cx| {
+                                        if accepts {
+                                            style
+                                                .cursor_copy()
+                                                .border_1()
+                                                .border_color(cx.theme().accent)
+                                                .bg(cx.theme().accent.opacity(0.12))
+                                        } else {
+                                            style
+                                                .cursor_not_allowed()
+                                                .border_1()
+                                                .border_color(cx.theme().danger)
+                                                .bg(cx.theme().danger.opacity(0.08))
+                                        }
+                                    },
+                                )
+                                .on_drop({
+                                    let weak_member_drop = weak.clone();
+                                    move |drag: &crate::file_list::ArchiveEntryDrag, window, app| {
+                                        app.stop_propagation();
+                                        if !accepts {
+                                            return;
+                                        }
+                                        let archive = drag.archive.clone();
+                                        let entries = drag.entries.clone();
+                                        let password = drag.password.clone();
+                                        let _ = weak_member_drop.update(app, |this, cx| {
+                                            let Some(target) = this.path_for_row(i, cx) else {
+                                                return;
+                                            };
+                                            this.add_archive_entries_to_archive(
+                                                archive, entries, password, target, window, cx,
+                                            );
+                                        });
+                                    }
+                                })
+                                // Cross-window promise sessions arrive as
+                                // plain mouse events (GPUI-UPSTREAM #11).
+                                .on_mouse_move(|_event, window, _app| {
+                                    if crate::file_list::native_archive_drag_active() {
+                                        window.refresh();
+                                    }
+                                })
+                                .on_mouse_up(gpui::MouseButton::Left, {
+                                    let weak_native_drop = weak.clone();
+                                    move |_event, window, app| {
+                                        if app.has_active_drag() {
+                                            return;
+                                        }
+                                        let Some(drag) =
+                                            crate::file_list::take_native_archive_drag()
+                                        else {
+                                            return;
+                                        };
+                                        app.stop_propagation();
+                                        if !accepts {
+                                            return;
+                                        }
+                                        let _ = weak_native_drop.update(app, |this, cx| {
+                                            let Some(target) = this.path_for_row(i, cx) else {
+                                                return;
+                                            };
+                                            this.add_archive_entries_to_archive(
+                                                drag.archive,
+                                                drag.entries,
+                                                drag.password,
+                                                target,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                })
+                            },
+                        )
                         .when(is_dir, |d| {
                             // Folder cells are OS-drag drop targets (accent
                             // ring on hover) and spring-load: dwelling a drag
@@ -1306,6 +1344,70 @@ impl Shell {
                                             this.spring_load_hover(i, cx);
                                         });
                                     }
+                                },
+                            )
+                            .drag_over::<crate::file_list::ArchiveEntryDrag>(
+                                move |style, _payload, _window, _cx| {
+                                    style.border_1().border_color(blue).bg(blue.opacity(0.12))
+                                },
+                            )
+                            .on_drop(
+                                move |drag: &crate::file_list::ArchiveEntryDrag, window, app| {
+                                    app.stop_propagation();
+                                    let archive = drag.archive.clone();
+                                    let entries = drag.entries.clone();
+                                    let password = drag.password.clone();
+                                    let _ = weak_archive_drop.update(app, |this, cx| {
+                                        if let Some(dest) = this.path_for_row(i, cx) {
+                                            this.extract_archive_entries_into(
+                                                archive, entries, dest, password, window, cx,
+                                            );
+                                        }
+                                    });
+                                },
+                            )
+                            .on_drag_move(
+                                move |e: &gpui::DragMoveEvent<
+                                    crate::file_list::ArchiveEntryDrag,
+                                >,
+                                      _window,
+                                      app| {
+                                    if e.bounds.contains(&e.event.position) {
+                                        let _ = weak_archive_hover.update(app, |this, cx| {
+                                            this.spring_load_hover(i, cx);
+                                        });
+                                    }
+                                },
+                            )
+                            .on_mouse_move(|_event, window, _app| {
+                                if crate::file_list::native_archive_drag().is_some() {
+                                    window.refresh();
+                                }
+                            })
+                            .on_mouse_up(
+                                gpui::MouseButton::Left,
+                                move |_event, window, app| {
+                                    if app.has_active_drag() {
+                                        return;
+                                    }
+                                    let Some(drag) =
+                                        crate::file_list::take_native_archive_drag()
+                                    else {
+                                        return;
+                                    };
+                                    app.stop_propagation();
+                                    let _ = weak_native_archive_drop.update(app, |this, cx| {
+                                        if let Some(dest) = this.path_for_row(i, cx) {
+                                            this.extract_archive_entries_into(
+                                                drag.archive,
+                                                drag.entries,
+                                                dest,
+                                                drag.password,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    });
                                 },
                             )
                         })
@@ -2477,6 +2579,8 @@ impl Shell {
             let path_for_menu = path.clone();
             let path_for_click = path.clone();
             let path_for_drop = path.clone();
+            let path_for_archive_drop = path.clone();
+            let path_for_native_drop = path.clone();
             let crumb_accent = cx.theme().primary;
             // §5 favorited indicator: trailing star on any breadcrumb
             // segment whose path is in the Favorites index. The last
@@ -2499,7 +2603,23 @@ impl Shell {
                 })
                 .when(is_last, |this| this.font_weight(FontWeight::SEMIBOLD))
                 .cursor_pointer()
-                .hover(|this| this.bg(cx.theme().secondary))
+                // gpui allows one `.hover()` per element, so the ordinary
+                // hover wash and the drop-target ring share it. The ring is
+                // the only feedback a crumb can give during a native archive
+                // promise session — gpui holds no typed drag then, so
+                // `drag_over` never fires.
+                .hover({
+                    let secondary = cx.theme().secondary;
+                    let accent = cx.theme().accent;
+                    let native_dragging = crate::file_list::native_archive_drag_active();
+                    move |this| {
+                        if native_dragging {
+                            this.border_1().border_color(accent).bg(accent.opacity(0.18))
+                        } else {
+                            this.bg(secondary)
+                        }
+                    }
+                })
                 .child(label)
                 .when(favorited, |this| {
                     this.child(
@@ -2526,8 +2646,13 @@ impl Shell {
                 }))
                 // Files dropped on a breadcrumb segment transfer into
                 // that ancestor folder (the last segment = current dir).
+                // The ring matches every other drop target so an acceptable
+                // destination reads the same wherever the pointer is.
                 .drag_over::<ExternalPaths>(move |style, _payload, _window, _cx| {
-                    style.bg(crumb_accent.opacity(0.18))
+                    style
+                        .border_1()
+                        .border_color(crumb_accent)
+                        .bg(crumb_accent.opacity(0.18))
                 })
                 .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
                     this.handle_external_drop(
@@ -2537,6 +2662,67 @@ impl Shell {
                         cx,
                     );
                 }))
+                // Archive members dropped on a crumb extract into that
+                // ancestor folder — the same destination a file drop uses.
+                .drag_over::<crate::file_list::ArchiveEntryDrag>(
+                    move |style, _payload, _window, cx| {
+                        style
+                            .border_1()
+                            .border_color(cx.theme().accent)
+                            .bg(cx.theme().accent.opacity(0.18))
+                    },
+                )
+                .on_drop(cx.listener({
+                    let dest = path_for_archive_drop.clone();
+                    move |this, drag: &crate::file_list::ArchiveEntryDrag, window, cx| {
+                        cx.stop_propagation();
+                        this.extract_archive_entries_into(
+                            drag.archive.clone(),
+                            drag.entries.clone(),
+                            dest.clone(),
+                            drag.password.clone(),
+                            window,
+                            cx,
+                        );
+                    }
+                }))
+                // Cross-window promise sessions arrive as plain mouse events
+                // (see docs/GPUI-UPSTREAM.md #11): repaint so the ring above
+                // tracks the crumb under the pointer, and treat the release
+                // as the drop.
+                .on_mouse_move(cx.listener(|_this, _event, _window, cx| {
+                    if crate::file_list::native_archive_drag_active() {
+                        cx.notify();
+                    }
+                }))
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener({
+                        let dest = path_for_native_drop.clone();
+                        move |this, _event, window, cx| {
+                            if cx.has_active_drag() {
+                                return;
+                            }
+                            let Some(drag) = crate::file_list::take_native_archive_drag() else {
+                                return;
+                            };
+                            cx.stop_propagation();
+                            crate::log_info!(
+                                100,
+                                "archive-drag: accepted by breadcrumb -> {}",
+                                dest.display()
+                            );
+                            this.extract_archive_entries_into(
+                                drag.archive,
+                                drag.entries,
+                                dest.clone(),
+                                drag.password,
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
+                )
                 .context_menu(move |menu, window, cx| {
                     let favorited_now = if let Some(s) = weak_for_crumb.upgrade() {
                         let already = s
@@ -2720,7 +2906,7 @@ impl Render for Shell {
             });
         }
         let weak = cx.weak_entity();
-        let locations_menu = self.build_locations_menu(weak.clone(), cx);
+        let locations_rows = self.build_locations_rows(cx);
         let favorites_section = self.build_user_favorites_section(weak.clone(), cx);
         let recents_section = self.build_recents_section(weak.clone(), cx);
         let browse_rows = self.build_browse_rows(cx);
@@ -2784,10 +2970,14 @@ impl Render for Shell {
             .collapsible(gpui_component::sidebar::SidebarCollapsible::Icon)
             .collapsed(self.sidebar_collapsed)
             .w_full()
-            .child(ShellSidebarItem::group(LabeledMenu::new(
-                tr!("Locations"),
-                locations_menu,
-            )))
+            .child(ShellSidebarItem::locations(
+                crate::locations_section::LocationsSection::new(
+                    tr!("Locations"),
+                    locations_rows,
+                    weak.clone(),
+                    crate::tree::SIDEBAR_ICON_PX * self.ui_scale,
+                ),
+            ))
             .child(favorites_section);
         // Recents sits below Favorites, above Browse — hidden until the
         // user has navigated somewhere (build_recents_section → None).
@@ -3055,6 +3245,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_shortcuts_help))
             .on_action(cx.listener(Self::on_open_disk_usage))
             .on_action(cx.listener(Self::on_open_archive))
+            .on_action(cx.listener(Self::on_convert_archive))
             .on_action(cx.listener(Self::on_pop_out_archive))
             .on_action(cx.listener(Self::on_close_tool_result))
             .on_action(cx.listener(Self::on_pop_out_disk_usage))
@@ -3188,6 +3379,13 @@ impl Render for Shell {
                 // task summary + progress strip is always visible.
                 use crate::splitter::{h_resizable, resizable_panel};
                 let file_body = self.file_pane_body(cx);
+                let open_archive = self
+                    .active_archive_view()
+                    .map(|view| view.read(cx).archive_path().to_path_buf());
+                let native_archive_dragging = crate::file_list::native_archive_drag().is_some();
+                let native_drop_color = cx.theme().accent;
+                let native_reject_color = cx.theme().danger;
+                let open_archive_for_native = open_archive.clone();
                 // Phase 6 review fix: an outer .context_menu on the
                 // file body wrapper consumed the click events bound
                 // for the inner DataTable row menu, causing every
@@ -3219,11 +3417,28 @@ impl Render for Shell {
                     }))
                     // Entries dragged out of an archive workbench land in this
                     // tab's folder.
-                    .drag_over::<crate::file_list::ArchiveEntryDrag>(|style, _, _, cx| {
-                        style.bg(cx.theme().accent.opacity(0.06))
+                    .drag_over::<crate::file_list::ArchiveEntryDrag>(move |style, drag, _, cx| {
+                        if open_archive.as_ref() == Some(&drag.archive) {
+                            style.cursor_not_allowed()
+                        } else {
+                            style
+                                .cursor_copy()
+                                .border_1()
+                                .border_color(cx.theme().accent)
+                                .bg(cx.theme().accent.opacity(0.06))
+                        }
                     })
                     .on_drop(cx.listener(
                         |this, drag: &crate::file_list::ArchiveEntryDrag, window, cx| {
+                            if this.active_archive_view().is_some_and(|view| {
+                                view.read(cx).archive_path() == drag.archive.as_path()
+                            }) {
+                                // Releasing over the archive itself cancels
+                                // the drag. Never let it fall through to this
+                                // folder pane's current-directory semantics.
+                                cx.stop_propagation();
+                                return;
+                            }
                             let dest = this.active_tab().current_dir.clone();
                             this.extract_archive_entries_into(
                                 drag.archive.clone(),
@@ -3235,6 +3450,63 @@ impl Render for Shell {
                             );
                         },
                     ))
+                    .on_mouse_move(cx.listener(|_this, _event, _window, cx| {
+                        if crate::file_list::native_archive_drag().is_some() {
+                            // The first native update entered with no GPUI
+                            // typed drag; repaint so the hover cursor/ring
+                            // below reflects the coordinator payload.
+                            cx.notify();
+                        }
+                    }))
+                    .on_mouse_up(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _event, window, cx| {
+                            // A retained GPUI drag is handled by on_drop.
+                            // This is solely the cross-window promised-file
+                            // fallback, where GPUI has already discarded it.
+                            if cx.has_active_drag() {
+                                return;
+                            }
+                            let Some(drag) = crate::file_list::take_native_archive_drag() else {
+                                return;
+                            };
+                            cx.stop_propagation();
+                            if this.active_archive_view().is_some() {
+                                crate::log_info!(100, "archive-drag: rejected by archive pane");
+                                return;
+                            }
+                            let dest = this.active_tab().current_dir.clone();
+                            crate::log_info!(
+                                100,
+                                "archive-drag: accepted by file pane -> {}",
+                                dest.display()
+                            );
+                            this.extract_archive_entries_into(
+                                drag.archive,
+                                drag.entries,
+                                dest,
+                                drag.password,
+                                window,
+                                cx,
+                            );
+                        }),
+                    )
+                    .when(native_archive_dragging, move |style| {
+                        let reject = open_archive_for_native.is_some();
+                        style.hover(move |style| {
+                            if reject {
+                                style
+                                    .cursor_not_allowed()
+                                    .border_2()
+                                    .border_color(native_reject_color)
+                            } else {
+                                style
+                                    .cursor_copy()
+                                    .border_2()
+                                    .border_color(native_drop_color)
+                            }
+                        })
+                    })
                     .child(file_body);
                 // The preview pane is hidden by default; whenever it's visible
                 // the user explicitly turned it on (Cmd+P / View menu), so

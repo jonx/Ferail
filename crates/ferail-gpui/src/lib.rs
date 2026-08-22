@@ -19,7 +19,10 @@ pub mod ant_trail;
 pub mod app_icon;
 pub mod app_state;
 pub mod archive;
+#[cfg(test)]
+mod archive_tests;
 pub mod archive_create;
+pub mod archive_convert;
 pub mod assets;
 pub mod boot;
 pub mod bulk_rename;
@@ -48,6 +51,7 @@ pub mod prefetch;
 pub mod preview;
 pub mod preview_panel;
 pub mod process_state;
+pub mod locations_section;
 pub mod recents_section;
 pub mod redact;
 pub mod report;

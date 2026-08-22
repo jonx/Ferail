@@ -43,10 +43,10 @@ use std::time::Duration;
 
 use gpui::http_client::{AsyncBody, HttpClient, HttpRequestExt as _, RedirectPolicy, http};
 use gpui::{
-    App, AppContext as _, ClickEvent, ElementId, Global, InteractiveElement as _, IntoElement,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
+    AnyWindowHandle, App, AppContext as _, ClickEvent, ElementId, FutureExt as _, Global,
+    InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
+    StatefulInteractiveElement as _, Styled as _, div, px,
 };
-use serde::Deserialize;
 use gpui_component::{
     ActiveTheme as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
@@ -55,6 +55,7 @@ use gpui_component::{
     notification::Notification,
     v_flex,
 };
+use serde::Deserialize;
 
 use crate::text::TextScale as _;
 
@@ -65,6 +66,9 @@ const REPO: &str = "jonx/Ferail";
 const AUTO_FIRST_DELAY: Duration = Duration::from_secs(20);
 /// Cadence between automatic checks while the app stays running.
 const AUTO_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// A missing network route must turn into an actionable result instead of
+/// leaving the dialog on "Checking…" indefinitely.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(20);
 
 // ============================================================================
 // State
@@ -81,8 +85,46 @@ pub enum CheckStatus {
         latest: String,
     },
     Available(ReleaseInfo),
-    Failed(String),
+    Failed(CheckFailure),
 }
+
+/// Stable, user-facing classes for update-check failures. Detailed transport
+/// errors are logged, while the dialog renders a concise localized recovery
+/// message for the class.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckFailure {
+    TimedOut,
+    Unreachable,
+    NotFound,
+    RateLimited,
+    ServiceUnavailable,
+    InvalidResponse,
+    NoRelease,
+    UnexpectedResponse,
+}
+
+#[derive(Debug)]
+struct CheckError {
+    failure: CheckFailure,
+    detail: String,
+}
+
+impl CheckError {
+    fn new(failure: CheckFailure, detail: impl std::fmt::Display) -> Self {
+        Self {
+            failure,
+            detail: detail.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for CheckError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for CheckError {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReleaseInfo {
@@ -139,6 +181,13 @@ struct UpdateState {
     notified: Option<String>,
     /// Dialog singleton guard (same rationale as About's).
     dialog_open: bool,
+    /// The deferred native-menu callback has not attached the dialog yet.
+    /// A second click during that one-tick window must not queue a duplicate.
+    dialog_pending: bool,
+    /// Window currently hosting the dialog. Retaining this lets a repeated
+    /// native-menu command raise the existing dialog instead of silently
+    /// returning or opening behind another window.
+    dialog_host: Option<AnyWindowHandle>,
 }
 impl Global for UpdateState {}
 
@@ -255,13 +304,40 @@ struct GhAsset {
     browser_download_url: String,
 }
 
+fn parse_releases_response(
+    status: http::StatusCode,
+    body: &[u8],
+) -> Result<Vec<GhRelease>, CheckError> {
+    if !status.is_success() {
+        let failure = match status.as_u16() {
+            404 => CheckFailure::NotFound,
+            403 | 429 => CheckFailure::RateLimited,
+            500..=599 => CheckFailure::ServiceUnavailable,
+            _ => CheckFailure::UnexpectedResponse,
+        };
+        let first_line = String::from_utf8_lossy(body)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        return Err(CheckError::new(
+            failure,
+            format!("HTTP {}: {first_line}", status.as_u16()),
+        ));
+    }
+    serde_json::from_slice::<Vec<GhRelease>>(body).map_err(|e| {
+        CheckError::new(
+            CheckFailure::InvalidResponse,
+            format!("parsing GitHub releases response: {e}"),
+        )
+    })
+}
+
 /// One `/releases` GET, parsed. Background executor only.
-async fn fetch_releases(client: Arc<dyn HttpClient>) -> anyhow::Result<Vec<GhRelease>> {
-    use anyhow::Context as _;
+async fn fetch_releases(client: Arc<dyn HttpClient>) -> Result<Vec<GhRelease>, CheckError> {
     use futures_lite::io::AsyncReadExt as _;
 
-    let url =
-        format!("https://api.github.com/repos/{REPO}/releases?per_page={RELEASES_PER_PAGE}");
+    let url = format!("https://api.github.com/repos/{REPO}/releases?per_page={RELEASES_PER_PAGE}");
     let mut request = http::Request::get(&url)
         .header("Accept", "application/vnd.github+json")
         .follow_redirects(RedirectPolicy::FollowAll);
@@ -270,24 +346,30 @@ async fn fetch_releases(client: Arc<dyn HttpClient>) -> anyhow::Result<Vec<GhRel
     if let Ok(token) = std::env::var("GITHUB_TOKEN") {
         request = request.header("Authorization", format!("Bearer {token}"));
     }
-    let request = request.body(AsyncBody::default())?;
-    let mut response = client.send(request).await.context("fetching releases")?;
+    let request = request.body(AsyncBody::default()).map_err(|e| {
+        CheckError::new(
+            CheckFailure::InvalidResponse,
+            format!("building GitHub releases request: {e}"),
+        )
+    })?;
+    let mut response = client.send(request).await.map_err(|e| {
+        CheckError::new(
+            CheckFailure::Unreachable,
+            format!("fetching GitHub releases: {e:#}"),
+        )
+    })?;
     let mut body = Vec::new();
     response
         .body_mut()
         .read_to_end(&mut body)
         .await
-        .context("reading releases")?;
-    anyhow::ensure!(
-        response.status().is_success(),
-        "status error {}, response: {:?}",
-        response.status().as_u16(),
-        String::from_utf8_lossy(&body)
-            .lines()
-            .next()
-            .unwrap_or_default()
-    );
-    serde_json::from_slice::<Vec<GhRelease>>(&body).context("parsing releases")
+        .map_err(|e| {
+            CheckError::new(
+                CheckFailure::Unreachable,
+                format!("reading GitHub releases response: {e}"),
+            )
+        })?;
+    parse_releases_response(response.status(), &body)
 }
 
 /// What one fetched release list means for the running build.
@@ -382,17 +464,24 @@ fn notes_markdown(notes: &[ReleaseNotes]) -> String {
                     .map(|d| format!(" \u{b7} {d}"))
                     .unwrap_or_default();
                 out.push_str(&format!("### {}{}\n\n", n.title, date));
-                out.push_str(if n.body.is_empty() {
-                    "_No notes were written for this release._"
+                if n.body.is_empty() {
+                    out.push('_');
+                    out.push_str(&tr!("No notes were written for this release."));
+                    out.push('_');
                 } else {
-                    &n.body
-                });
+                    out.push_str(&n.body);
+                }
                 out.push_str("\n\n");
             }
             if many.len() > NOTES_MAX {
+                let count = many.len() - NOTES_MAX;
                 out.push_str(&format!(
-                    "_\u{2026}and {} earlier release(s) \u{2014} see GitHub._\n",
-                    many.len() - NOTES_MAX
+                    "_{}_\n",
+                    trn!(
+                        "\u{2026}and {n} earlier release — see GitHub.",
+                        "\u{2026}and {n} earlier releases — see GitHub.",
+                        count
+                    )
                 ));
             }
             out
@@ -466,24 +555,27 @@ fn start_check(manual: bool, cx: &mut App) {
     });
     let client = cx.http_client();
     cx.spawn(async move |cx| {
-        let result = cx
-            .background_executor()
+        let executor = cx.background_executor().clone();
+        let result = executor
             .spawn(async move {
                 let releases = fetch_releases(client).await?;
-                summarize(&releases, env!("CARGO_PKG_VERSION"))
+                summarize(&releases, env!("CARGO_PKG_VERSION")).map_err(|e| {
+                    CheckError::new(
+                        CheckFailure::NoRelease,
+                        format!("summarizing releases: {e:#}"),
+                    )
+                })
             })
-            .await;
+            .with_timeout(CHECK_TIMEOUT, &executor)
+            .await
+            .unwrap_or_else(|e| Err(CheckError::new(CheckFailure::TimedOut, e)));
         cx.update(|cx| {
             let status = match result {
                 Ok(Outcome::Available(info)) => CheckStatus::Available(info),
                 Ok(Outcome::UpToDate { latest }) => CheckStatus::UpToDate { latest },
                 Err(e) => {
-                    crate::log_warn!(90, "update check failed: {e:#}");
-                    // First line only: the anyhow chain can quote a whole
-                    // HTML error page and the dialog is 430px wide.
-                    let brief = format!("{e:#}");
-                    let brief = brief.lines().next().unwrap_or("request failed").to_string();
-                    CheckStatus::Failed(brief)
+                    crate::log_warn!(90, "update check failed ({:?}): {}", e.failure, e.detail);
+                    CheckStatus::Failed(e.failure)
                 }
             };
             let announce = match (&status, manual) {
@@ -515,16 +607,20 @@ fn notify_available(version: String, cx: &mut App) {
         return;
     };
     let msg = format!(
-        "Ferail {version} is available (you have {}).",
-        env!("CARGO_PKG_VERSION")
+        "{}",
+        tr!(
+            "Ferail {version} is available (you have {current}).",
+            version = version,
+            current = env!("CARGO_PKG_VERSION")
+        )
     );
     let _ = host.update(cx, |_, window, cx| {
         window.push_notification(
             Notification::info(msg)
-                .title("Update available")
+                .title(tr!("Update available"))
                 .action(|_this, _window, cx| {
                     Button::new("update-view")
-                        .label("View…")
+                        .label(tr!("View…"))
                         .small()
                         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                             this.dismiss(window, cx);
@@ -616,7 +712,11 @@ fn surface_download_done(path: &Path, cx: &mut App) {
     };
     let _ = host.update(cx, |_, window, cx| {
         window.push_notification(
-            Notification::success(format!("Downloaded {name} to {folder}.")),
+            Notification::success(tr!(
+                "Downloaded {name} to {folder}.",
+                name = name,
+                folder = folder
+            )),
             cx,
         );
     });
@@ -662,7 +762,7 @@ async fn download_worker(
         dest.file_name().unwrap_or_default().to_string_lossy()
     ));
 
-    {
+    let write_result: anyhow::Result<()> = async {
         use std::io::Write as _;
         let mut file = std::fs::File::create(&part)?;
         let mut body = response.into_body();
@@ -687,8 +787,20 @@ async fn download_worker(
         if let Some(t) = total {
             anyhow::ensure!(got == t, "download truncated: got {got} of {t} bytes");
         }
+        Ok(())
     }
-    std::fs::rename(&part, &dest)?;
+    .await;
+    if let Err(error) = write_result {
+        // Never strand a corrupt installer after a dropped connection or a
+        // disk write failure. The final destination is only created by the
+        // successful atomic rename below.
+        let _ = std::fs::remove_file(&part);
+        return Err(error);
+    }
+    if let Err(error) = std::fs::rename(&part, &dest) {
+        let _ = std::fs::remove_file(&part);
+        return Err(error.into());
+    }
     Ok(dest)
 }
 
@@ -723,39 +835,74 @@ fn uniquify(dir: &Path, name: &str) -> PathBuf {
 /// rebuilt from the [`UpdateState`] global every frame, so it tracks the
 /// state machine live.
 pub fn open_update_dialog(cx: &mut App) {
-    if snapshot(cx).dialog_open {
-        return;
-    }
-    mutate(cx, |st| st.dialog_open = true);
-    cx.defer(|cx| {
-        let Some(host) = cx
-            .active_window()
-            .or_else(|| cx.windows().into_iter().next())
-        else {
-            mutate(cx, |st| st.dialog_open = false);
+    let st = snapshot(cx);
+    if st.dialog_open {
+        cx.activate(true);
+        if let Some(host) = st.dialog_host
+            && host
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
             return;
-        };
-        let opened = host
-            .update(cx, |_, window, cx| {
-                window.open_dialog(cx, move |dialog, _window, cx| build_dialog(dialog, cx));
-            })
-            .is_ok();
-        if !opened {
-            mutate(cx, |st| st.dialog_open = false);
         }
+        if st.dialog_pending {
+            return;
+        }
+        // The host was closed without delivering the dialog callback. Clear
+        // the stale singleton and recover on another window below.
+        mutate(cx, |st| {
+            st.dialog_open = false;
+            st.dialog_pending = false;
+            st.dialog_host = None;
+        });
+    }
+    mutate(cx, |st| {
+        st.dialog_open = true;
+        st.dialog_pending = true;
+        st.dialog_host = None;
+    });
+    cx.activate(true);
+    let preferred = cx.active_window();
+    cx.defer(move |cx| {
+        let mut candidates = preferred.into_iter().collect::<Vec<_>>();
+        candidates.extend(cx.windows());
+        for host in candidates {
+            let opened = host
+                .update(cx, |_, window, cx| {
+                    window.open_dialog(cx, move |dialog, _window, cx| build_dialog(dialog, cx));
+                })
+                .is_ok();
+            if opened {
+                mutate(cx, |st| {
+                    st.dialog_pending = false;
+                    st.dialog_host = Some(host);
+                });
+                return;
+            }
+        }
+        crate::log_warn!(90, "could not open Software Update: no usable host window");
+        mutate(cx, |st| {
+            st.dialog_open = false;
+            st.dialog_pending = false;
+            st.dialog_host = None;
+        });
     });
 }
 
 fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
     let st = snapshot(cx);
     let dialog = dialog
-        .title("Software Update")
+        .title(tr!("Software Update"))
         .w(px(480.0))
         .overlay_closable(true)
         .keyboard(true)
         .close_button(true)
         .on_close(|_, _window, cx: &mut App| {
-            mutate(cx, |st| st.dialog_open = false);
+            mutate(cx, |st| {
+                st.dialog_open = false;
+                st.dialog_pending = false;
+                st.dialog_host = None;
+            });
         })
         .child(dialog_body(&st, cx));
 
@@ -771,7 +918,7 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
                 DialogFooter::new()
                     .child(
                         Button::new("update-reveal")
-                            .label("Show in Folder")
+                            .label(tr!("Show in Folder"))
                             .small()
                             .on_click(move |_, window, cx| {
                                 let p = reveal_path.clone();
@@ -784,7 +931,7 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
                     )
                     .child(
                         Button::new("update-open")
-                            .label("Open")
+                            .label(tr!("Open"))
                             .primary()
                             .small()
                             .on_click(move |_, window, cx| {
@@ -806,15 +953,15 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
         // Newer version, not yet (successfully) downloaded.
         (CheckStatus::Available(info), _) => {
             let label = match &info.asset {
-                Some(asset) => format!("Download {}", asset.name),
-                None => "Open Release Page".to_string(),
+                Some(asset) => tr!("Download {name}", name = asset.name),
+                None => tr!("Open Release Page"),
             };
             let info = info.clone();
             dialog.footer(
                 DialogFooter::new()
                     .child(
                         Button::new("update-later")
-                            .label("Later")
+                            .label(tr!("Later"))
                             .small()
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
@@ -831,8 +978,40 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
                     ),
             )
         }
-        // Idle / checking / up-to-date / failed: nothing to act on.
+        (CheckStatus::Failed(_), _) => dialog.footer(
+            DialogFooter::new().child(
+                Button::new("update-retry")
+                    .label(tr!("Retry"))
+                    .primary()
+                    .small()
+                    .on_click(|_, _window, cx| start_check(true, cx)),
+            ),
+        ),
+        // Idle / checking / up-to-date: nothing to act on.
         _ => dialog,
+    }
+}
+
+fn check_failure_message(failure: CheckFailure) -> SharedString {
+    match failure {
+        CheckFailure::TimedOut => tr!("The update server took too long to respond. Try again."),
+        CheckFailure::Unreachable => {
+            tr!("Couldn't reach GitHub. Check your internet connection and try again.")
+        }
+        CheckFailure::NotFound => tr!("The update page could not be found."),
+        CheckFailure::RateLimited => {
+            tr!("GitHub's update-check limit was reached. Try again later.")
+        }
+        CheckFailure::ServiceUnavailable => {
+            tr!("GitHub's update service is temporarily unavailable. Try again later.")
+        }
+        CheckFailure::InvalidResponse => {
+            tr!("GitHub returned update information that Ferail couldn't understand.")
+        }
+        CheckFailure::NoRelease => {
+            tr!("No downloadable Ferail release was found on GitHub.")
+        }
+        CheckFailure::UnexpectedResponse => tr!("The update check failed. Try again."),
     }
 }
 
@@ -846,35 +1025,39 @@ fn dialog_body(st: &UpdateState, cx: &App) -> impl IntoElement {
         CheckStatus::Idle | CheckStatus::Checking => div()
             .text_scale_sm()
             .text_color(muted)
-            .child("Checking GitHub for the latest release\u{2026}")
+            .child(tr!("Checking GitHub for the latest release\u{2026}"))
             .into_any_element(),
         CheckStatus::UpToDate { latest } => div()
             .text_scale_sm()
             .text_color(fg)
-            .child(format!(
-                "You're up to date — {latest} is the latest release."
+            .child(tr!(
+                "You're up to date — {latest} is the latest release.",
+                latest = latest
             ))
             .into_any_element(),
         CheckStatus::Available(info) => v_flex()
             .gap_1()
-            .child(
-                div()
-                    .text_scale_sm()
-                    .text_color(fg)
-                    .child(format!("Ferail {} is available.", info.version)),
-            )
+            .child(div().text_scale_sm().text_color(fg).child(tr!(
+                "Ferail {version} is available.",
+                version = info.version
+            )))
             .child(whats_new(info, cx))
             .child(release_notes_row(info.tag.clone()))
             .into_any_element(),
-        CheckStatus::Failed(e) => v_flex()
+        CheckStatus::Failed(failure) => v_flex()
             .gap_1()
             .child(
                 div()
                     .text_scale_sm()
                     .text_color(fg)
-                    .child("Couldn't check for updates."),
+                    .child(tr!("Couldn't check for updates.")),
             )
-            .child(div().text_scale_xs().text_color(muted).child(e.clone()))
+            .child(
+                div()
+                    .text_scale_xs()
+                    .text_color(muted)
+                    .child(check_failure_message(*failure)),
+            )
             .into_any_element(),
     };
 
@@ -885,8 +1068,11 @@ fn dialog_body(st: &UpdateState, cx: &App) -> impl IntoElement {
                 .text_scale_xs()
                 .text_color(muted)
                 .child(match frac {
-                    Some(f) => format!("Downloading\u{2026} {:.0}%", f * 100.0),
-                    None => "Downloading\u{2026}".to_string(),
+                    Some(f) => tr!(
+                        "Downloading\u{2026} {percent}%",
+                        percent = (f * 100.0).round()
+                    ),
+                    None => tr!("Downloading\u{2026}"),
                 })
                 .into_any_element(),
         ),
@@ -894,14 +1080,14 @@ fn dialog_body(st: &UpdateState, cx: &App) -> impl IntoElement {
             div()
                 .text_scale_xs()
                 .text_color(muted)
-                .child(format!("Downloaded to {}", path.display()))
+                .child(tr!("Downloaded to {path}", path = path.display()))
                 .into_any_element(),
         ),
         DownloadStatus::Failed(e) => Some(
             div()
                 .text_scale_xs()
                 .text_color(muted)
-                .child(format!("Download failed: {e}"))
+                .child(tr!("Download failed: {detail}", detail = e))
                 .into_any_element(),
         ),
     };
@@ -912,7 +1098,12 @@ fn dialog_body(st: &UpdateState, cx: &App) -> impl IntoElement {
         .child(
             h_flex()
                 .gap_2()
-                .child(div().text_scale_xs().text_color(muted).child("Installed"))
+                .child(
+                    div()
+                        .text_scale_xs()
+                        .text_color(muted)
+                        .child(tr!("Installed")),
+                )
                 .child(div().text_scale_xs().text_color(fg).child(current)),
         )
         .child(status_line)
@@ -927,19 +1118,20 @@ fn whats_new(info: &ReleaseInfo, cx: &App) -> impl IntoElement {
     let muted = cx.theme().muted_foreground;
     let src = notes_markdown(&info.notes);
     let label = if info.notes.len() > 1 {
-        format!(
-            "What's new since {} ({} releases)",
-            env!("CARGO_PKG_VERSION"),
-            info.notes.len()
+        trn!(
+            "What's new since {version} ({n} release)",
+            "What's new since {version} ({n} releases)",
+            info.notes.len(),
+            version = env!("CARGO_PKG_VERSION")
         )
     } else {
-        "What's new".to_string()
+        tr!("What's new")
     };
     let body: gpui::AnyElement = if src.is_empty() {
         div()
             .text_scale_xs()
             .text_color(muted)
-            .child("No release notes were written for this version.")
+            .child(tr!("No release notes were written for this version."))
             .into_any_element()
     } else {
         // Keyed on the version: a TextView caches its parse and selection
@@ -978,7 +1170,7 @@ fn release_notes_row(tag: String) -> impl IntoElement {
         .cursor_pointer()
         .text_scale_xs()
         .underline()
-        .child("Open the release page on GitHub")
+        .child(tr!("Open the release page on GitHub"))
         .on_click(move |_: &ClickEvent, _window, cx| {
             let url = tag_url(&tag);
             // LaunchServices/xdg-open can stall — worker, not UI thread.
@@ -1027,8 +1219,7 @@ pub fn seed_dialog_for_screenshot(state: &str, cx: &mut App) {
             ReleaseNotes {
                 version: "9.9.8".to_string(),
                 title: "Ferail 9.9.8".to_string(),
-                body: "- An earlier release you skipped; its notes show too."
-                    .to_string(),
+                body: "- An earlier release you skipped; its notes show too.".to_string(),
                 date: Some("2026-12-01".to_string()),
             },
         ],
@@ -1061,7 +1252,7 @@ pub fn seed_dialog_for_screenshot(state: &str, cx: &mut App) {
             ),
         ),
         "failed" => (
-            CheckStatus::Failed("status error 403, response: rate limited".to_string()),
+            CheckStatus::Failed(CheckFailure::RateLimited),
             DownloadStatus::None,
         ),
         // "checking" and anything else
@@ -1092,6 +1283,45 @@ mod tests {
     fn newer_comparison_uses_numeric_order() {
         // 0.10.0 > 0.9.0 must hold numerically, not lexically.
         assert!(parse_version("v0.10.0") > parse_version("v0.9.0"));
+    }
+
+    #[test]
+    fn release_response_classifies_web_failures() {
+        let cases = [
+            (http::StatusCode::NOT_FOUND, CheckFailure::NotFound),
+            (http::StatusCode::FORBIDDEN, CheckFailure::RateLimited),
+            (
+                http::StatusCode::TOO_MANY_REQUESTS,
+                CheckFailure::RateLimited,
+            ),
+            (
+                http::StatusCode::BAD_GATEWAY,
+                CheckFailure::ServiceUnavailable,
+            ),
+            (
+                http::StatusCode::BAD_REQUEST,
+                CheckFailure::UnexpectedResponse,
+            ),
+        ];
+        for (status, expected) in cases {
+            assert_eq!(
+                parse_releases_response(status, b"service response")
+                    .unwrap_err()
+                    .failure,
+                expected
+            );
+        }
+        assert_eq!(
+            parse_releases_response(http::StatusCode::OK, b"not json")
+                .unwrap_err()
+                .failure,
+            CheckFailure::InvalidResponse
+        );
+        assert!(
+            parse_releases_response(http::StatusCode::OK, b"[]")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     fn gh(tag: &str, assets: &[&str], body: Option<&str>, prerelease: bool) -> GhRelease {
@@ -1140,7 +1370,10 @@ mod tests {
                 assert_eq!(info.version, "0.5.0");
                 assert_eq!(info.tag, "v0.5.0");
                 assert_eq!(
-                    info.notes.iter().map(|n| n.version.as_str()).collect::<Vec<_>>(),
+                    info.notes
+                        .iter()
+                        .map(|n| n.version.as_str())
+                        .collect::<Vec<_>>(),
                     ["0.5.0", "0.4.0"]
                 );
                 // CRLF normalized, trimmed; missing body → empty, not a failure.
@@ -1201,7 +1434,7 @@ mod tests {
         assert!(md.contains("### Ferail 0.3.1 \u{b7} 2026-08-01\n\n_No notes"));
         // Past the cap, the rest collapse into a count.
         let many: Vec<_> = (0..NOTES_MAX + 2).map(|_| one[0].clone()).collect();
-        assert!(notes_markdown(&many).contains("and 2 earlier release(s)"));
+        assert!(notes_markdown(&many).contains("and 2 earlier releases"));
         assert!(notes_markdown(&[]).is_empty());
     }
 

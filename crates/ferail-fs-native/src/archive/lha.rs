@@ -32,8 +32,8 @@ use std::io;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
-use delharc::stub_io::Read as DelharcRead;
 use delharc::LhaDecodeReader;
+use delharc::stub_io::Read as DelharcRead;
 
 use ferail_archive::{ArchiveEntry, Toc};
 
@@ -95,6 +95,19 @@ fn entry_path(header: &delharc::header::LhaHeader) -> String {
     header.parse_pathname_to_str().replace('\\', "/")
 }
 
+fn unix_mode(header: &delharc::header::LhaHeader) -> Option<u32> {
+    header.iter_extra().find_map(|extra| match extra {
+        [delharc::header::ext::EXT_HEADER_UNIX_PERM, lo, hi, ..] => {
+            Some(u16::from_le_bytes([*lo, *hi]) as u32)
+        }
+        _ => None,
+    })
+}
+
+fn is_symlink(header: &delharc::header::LhaHeader) -> bool {
+    unix_mode(header).is_some_and(|mode| mode & 0o170000 == 0o120000)
+}
+
 pub(super) fn read_toc(archive: &Path) -> Result<Toc, ArchiveError> {
     let mut reader = open(archive)?;
     let mut entries = Vec::new();
@@ -104,13 +117,20 @@ pub(super) fn read_toc(archive: &Path) -> Result<Toc, ArchiveError> {
         if !path.is_empty() {
             entries.push(ArchiveEntry {
                 path,
-                is_dir: header.is_directory(),
+                is_dir: header.is_directory() && !is_symlink(header),
                 uncompressed_size: Some(header.original_size),
                 compressed_size: Some(header.compressed_size),
                 // `last_modified` is already a Unix timestamp for level-2/3
                 // headers; delharc converts the MS-DOS stamp of level-0/1
                 // headers into the same scale when it parses them.
                 mtime_unix: Some(header.last_modified as i64),
+                compression_method: header
+                    .compression_method()
+                    .ok()
+                    .map(|method| method.to_string()),
+                checksum: Some(format!("CRC16 {:04X}", header.file_crc)),
+                unix_mode: unix_mode(header),
+                comment: None,
                 // LHA has no encryption in any method we decode.
                 encrypted: false,
             });
@@ -145,13 +165,16 @@ pub(super) fn extract(
         super::check_cancel(cancel)?;
         let header = reader.header();
         let path = entry_path(header);
-        let is_dir = header.is_directory();
+        let is_link = is_symlink(header);
+        let is_dir = header.is_directory() && !is_link;
         // A method we cannot decode must not silently produce a truncated
         // file: skip the member and tell the user which one.
         let supported = reader.is_decoder_supported();
 
         if !path.is_empty() && sel.includes(&path) {
-            if is_dir {
+            if is_link {
+                outcome.skip(path, SkipReason::Symlink);
+            } else if is_dir {
                 if let Some(safe) = super::safe_or_skip(&path, &mut outcome) {
                     super::make_dir(dest, &safe, &mut outcome)?;
                 }

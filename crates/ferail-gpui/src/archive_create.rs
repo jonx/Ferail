@@ -4,8 +4,9 @@
 //!
 //! Deliberately a small, fixed option set rather than every knob each codec
 //! exposes. Which options are even *offered* comes from the format's row in
-//! `ferail_archive::Capabilities`, so a format that cannot carry a password
-//! (tar-family) shows the field disabled instead of silently ignoring it.
+//! `ferail_archive::Capabilities`, so a writer without create-time encryption
+//! (tar-family and the current 7-Zip writer) disables the field instead of
+//! silently ignoring it.
 //!
 //! The dialog only collects intent; the work runs through
 //! `Shell::spawn_archive_op` like every other archive operation (worker
@@ -104,7 +105,7 @@ impl NewArchiveView {
     }
 
     fn password(&self, cx: &App) -> Option<String> {
-        if !self.format.capabilities().supports_password {
+        if !self.format.capabilities().supports_create_password {
             return None;
         }
         let pw = self.password_input.read(cx).value().to_string();
@@ -194,7 +195,7 @@ impl Render for NewArchiveView {
             // than a dead-but-typable field.
             .child(Self::row(
                 tr!("Password"),
-                if caps.supports_password {
+                if caps.supports_create_password {
                     div()
                         .child(Input::new(&self.password_input).small())
                         .into_any_element()

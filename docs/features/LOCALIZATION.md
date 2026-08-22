@@ -98,6 +98,10 @@ const CATALOGUE: &[CommandSpec] = &[CommandSpec { title: msgid!("New Window"), â
 
 Rules:
 
+- **New or changed user-visible text ships translated.** In the same change,
+  regenerate `locales/en.json` and add or update the corresponding entries in
+  both bundled packs (`locales/de.json` and `locales/fr.json`). Do not leave
+  new strings to fall back to English.
 - **Arguments must be string literals.** The extractor (see below) only sees
   literals; a dynamic `tr!(x)` does not compile. For a `&'static str` that
   came from a `msgid!` table, call `tr_raw` / `tr_static`.

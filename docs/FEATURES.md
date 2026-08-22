@@ -66,11 +66,28 @@ Open a `.zip`, `.7z` or `.tar.*` in place and browse it as a real
 sortable list — expandable folders, the usual columns, a filter box — so
 a 5000-entry archive opens as one folder to drill into instead of 5000
 rows. Extract everything or just the selection (a selected folder brings
-its subtree), drag files in to add them, drag entries out to extract
-them. It works on anything that *is* an archive underneath, even without
-the extension — `.docx`, `.jar`, `.apk` — and formats that can't be
-edited in place are marked read-only. The workbench pops out into its
-own window, like Disk Usage.
+its subtree). Plain ZIP files can be edited as a transaction: dropping files
+or folders, renaming entries, and removing subtrees updates a projected view;
+**Save Changes** validates a replacement before atomically committing it, and
+**Revert** abandons the whole journal. A stale file, cancellation, or failed
+write never replaces the original. The Description column also shows packed
+size, compression method, checksum, stored permissions, encryption, and entry
+comments when available. It works on anything that *is* an archive underneath,
+even without the extension — `.docx`, `.jar`, `.apk` — but those ZIP-based
+packages and formats without a safe writer stay read-only. Their drag targets
+show a lock badge, a forbidden cursor, and the reason. The workbench pops out
+into its own window, like Disk Usage, and warns before closing with unsaved
+changes. **Convert Archive…** makes a new ZIP, 7-Zip, TAR, TAR.GZ, TAR.BZ2, or
+TAR.XZ beside the source, validates it, and never overwrites the original.
+Renamed compressed TAR downloads such as `backup.tar (1).gz` are recognized by
+their decoded header and show the TAR tree instead of one opaque member. On
+macOS, members drag from a popped-out workbench straight to Finder through a
+native file promise; extraction begins only after the external drop, never on
+the GUI thread. Dropping back on the archive cancels rather than extracting
+into the folder behind it.
+Stored member names also use the deceptive-filename highlighter before they
+are extracted. The complete behavior and safety rules live in the
+[detailed archive feature document](features/ARCHIVES.md).
 
 ## Ant Trail — the app learns where you go
 

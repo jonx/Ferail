@@ -237,6 +237,16 @@ fn breadcrumbs() -> &'static Mutex<VecDeque<String>> {
 fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
     use std::fmt::Write as _;
 
+    // Persist the small, allocation-light core before capturing a backtrace.
+    // A panic hook has no second chance: if symbolization itself fails, this
+    // file still proves where and why the process panicked.
+    let essential = format!(
+        "Ferail {} crash\npid: {}\nthread: {thread_name}\nlocation: {location}\nmessage: {payload}\n",
+        env!("CARGO_PKG_VERSION"),
+        std::process::id(),
+    );
+    let crash_path = persist_crash_report(&essential);
+
     // Persist the essential facts FIRST, before anything that can fail. A
     // panic inside this hook aborts immediately (panic-in-hook cannot
     // unwind), and on this port Backtrace::force_capture() is the prime
@@ -295,6 +305,9 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
     );
 
     stderr_line(&r);
+    if let Some(path) = crash_path {
+        let _ = std::fs::write(path, &r);
+    }
 
     // On AROS, stderr is lost (console-bound) and with panic=abort the whole
     // OS may reboot before anything drains — persist the report to the
@@ -313,6 +326,32 @@ fn print_crash_report(thread_name: &str, location: &str, payload: &str) {
             let _ = f.flush();
         }
     }
+}
+
+#[cfg(not(target_os = "aros"))]
+fn persist_crash_report(essential: &str) -> Option<std::path::PathBuf> {
+    let dir = crate::app_state::config_dir()?.join("reports");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(format!("ferail-crash-{}.txt", std::process::id()));
+    // Append, never truncate: a panic that unwinds into an `extern "C"`
+    // frame raises a second, generic "panic in a function that cannot
+    // unwind" panic that would otherwise overwrite the informative first one.
+    {
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .ok()?;
+        file.write_all(essential.as_bytes()).ok()?;
+        file.write_all(b"\n").ok()?;
+    }
+    Some(path)
+}
+
+#[cfg(target_os = "aros")]
+fn persist_crash_report(_essential: &str) -> Option<std::path::PathBuf> {
+    None
 }
 
 fn write_compact_backtrace(out: &mut String, backtrace: &str) {
@@ -365,9 +404,26 @@ pub fn breadcrumb_lines() -> Vec<String> {
         .collect()
 }
 
+/// Non-blocking snapshot for the freeze watchdog. If the stalled thread held
+/// the breadcrumb mutex at the instant it wedged, waiting for that same mutex
+/// would freeze the watchdog too and defeat the report.
+pub fn try_breadcrumb_lines() -> Option<Vec<String>> {
+    use std::sync::TryLockError;
+    let guard = match breadcrumbs().try_lock() {
+        Ok(guard) => guard,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => return None,
+    };
+    Some(guard.iter().cloned().collect())
+}
+
 fn dump_breadcrumbs_for_panic(out: &mut String) {
     use std::fmt::Write as _;
-    let guard = breadcrumbs().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(guard) = try_breadcrumb_lines() else {
+        let _ = writeln!(out, "breadcrumbs:");
+        let _ = writeln!(out, "    <unavailable: held by panicking thread>");
+        return;
+    };
     if guard.is_empty() {
         let _ = writeln!(out, "breadcrumbs:");
         let _ = writeln!(out, "    <none>");

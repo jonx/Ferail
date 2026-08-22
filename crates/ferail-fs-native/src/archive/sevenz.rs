@@ -15,6 +15,21 @@ use super::{
 };
 use crate::file_ops::TransferProgress;
 
+fn unix_mode(entry: &sevenz_rust::SevenZArchiveEntry) -> Option<u32> {
+    if !entry.has_windows_attributes {
+        return None;
+    }
+    let mode = entry.windows_attributes() >> 16;
+    (mode != 0).then_some(mode)
+}
+
+fn is_link(entry: &sevenz_rust::SevenZArchiveEntry) -> bool {
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    unix_mode(entry).is_some_and(|mode| mode & 0o170000 == 0o120000)
+        || (entry.has_windows_attributes
+            && entry.windows_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+}
+
 fn password_of(password: Option<&str>) -> sevenz_rust::Password {
     match password {
         Some(p) => sevenz_rust::Password::from(p),
@@ -31,8 +46,12 @@ pub(super) fn read_toc(archive: &Path, password: Option<&str>) -> Result<Toc, Ar
             path: f.name().replace('\\', "/"),
             is_dir: f.is_directory(),
             uncompressed_size: Some(f.size()),
-            compressed_size: None,
+            compressed_size: f.has_stream().then_some(f.compressed_size),
             mtime_unix: None,
+            compression_method: None,
+            checksum: f.has_crc.then(|| format!("CRC32 {:08X}", f.crc)),
+            unix_mode: unix_mode(f),
+            comment: None,
             // Per-entry encryption in 7z is a property of the coder chain,
             // which this metadata pass does not resolve; content-password
             // failures surface at extraction time instead.
@@ -91,6 +110,32 @@ pub(super) fn extract(
         if !sel.includes(&name) {
             return Ok(true);
         }
+        if entry.is_anti_item() {
+            outcome.skip(name, super::SkipReason::SpecialFile);
+            return Ok(true);
+        }
+        if is_link(entry) {
+            // A 7z solid block still has to advance past this member before
+            // the next one can be decoded. Discard its payload, checking
+            // cancellation between bounded reads, but never materialize it.
+            let mut buffer = [0u8; 16 * 1024];
+            loop {
+                if cancel.load(Ordering::Relaxed) {
+                    captured = Some(ArchiveError::Cancelled);
+                    return Ok(false);
+                }
+                match rd.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(error) => {
+                        captured = Some(ArchiveError::Io(error));
+                        return Ok(false);
+                    }
+                }
+            }
+            outcome.skip(name, super::SkipReason::Symlink);
+            return Ok(true);
+        }
         if entry.is_directory() {
             if let Some(safe) = super::safe_or_skip(&name, &mut outcome) {
                 if let Err(e) = super::make_dir(dest, &safe, &mut outcome) {
@@ -103,7 +148,8 @@ pub(super) fn extract(
         let Some(safe) = super::safe_or_skip(&name, &mut outcome) else {
             return Ok(true);
         };
-        if let Err(e) = super::write_file(dest, &safe, &mut *rd, opts, progress, cancel, &mut outcome)
+        if let Err(e) =
+            super::write_file(dest, &safe, &mut *rd, opts, progress, cancel, &mut outcome)
         {
             captured = Some(e);
             return Ok(false);
@@ -138,7 +184,9 @@ pub(super) fn create(
         } else {
             progress.note_current(&item.abs);
             let file = std::fs::File::open(&item.abs)?;
-            writer.push_archive_entry(entry, Some(file)).map_err(map_sz_err)?;
+            writer
+                .push_archive_entry(entry, Some(file))
+                .map_err(map_sz_err)?;
             progress.add_bytes(item.size);
             progress.add_items(1);
         }

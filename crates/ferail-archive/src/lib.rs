@@ -25,7 +25,7 @@ pub mod tree;
 pub use capability::Capabilities;
 pub use entry::{ArchiveEntry, Toc};
 pub use format::{CompressionLevel, Format};
-pub use safety::{safe_relative_path, UnsafePath};
+pub use safety::{UnsafePath, safe_relative_path};
 pub use tree::{ArchiveTree, TreeRow};
 
 #[cfg(test)]
@@ -62,10 +62,11 @@ mod tests {
         assert!(Format::SevenZ.capabilities().can_create);
         assert!(!Format::Tar.capabilities().can_edit_in_place);
         assert!(!Format::TarGz.capabilities().can_edit_in_place);
-        // Only zip supports both a password and in-place editing.
-        assert!(Format::Zip.capabilities().supports_password);
-        assert!(Format::SevenZ.capabilities().supports_password);
-        assert!(!Format::TarGz.capabilities().supports_password);
+        // Only zip currently supports password encryption while creating.
+        // SevenZ decoding accepts passwords, but its writer does not yet.
+        assert!(Format::Zip.capabilities().supports_create_password);
+        assert!(!Format::SevenZ.capabilities().supports_create_password);
+        assert!(!Format::TarGz.capabilities().supports_create_password);
     }
 
     #[test]
@@ -91,17 +92,33 @@ mod tests {
 
     #[test]
     fn zip_slip_rejected_absolute_and_traversal() {
-        assert_eq!(safe_relative_path("../../etc/passwd"), Err(UnsafePath::Traversal));
+        assert_eq!(
+            safe_relative_path("../../etc/passwd"),
+            Err(UnsafePath::Traversal)
+        );
         assert_eq!(safe_relative_path("/etc/passwd"), Err(UnsafePath::Absolute));
-        assert_eq!(safe_relative_path("C:\\Windows\\x"), Err(UnsafePath::DrivePrefix));
-        assert_eq!(safe_relative_path("\\\\host\\share\\x"), Err(UnsafePath::DrivePrefix));
+        assert_eq!(
+            safe_relative_path("C:\\Windows\\x"),
+            Err(UnsafePath::DrivePrefix)
+        );
+        assert_eq!(
+            safe_relative_path("\\\\host\\share\\x"),
+            Err(UnsafePath::DrivePrefix)
+        );
         assert_eq!(safe_relative_path("a/../b"), Err(UnsafePath::Traversal));
+        assert_eq!(
+            safe_relative_path("a/evil\0name"),
+            Err(UnsafePath::InvalidCharacter)
+        );
         assert_eq!(safe_relative_path(""), Err(UnsafePath::Empty));
     }
 
     #[test]
     fn zip_slip_accepts_and_normalizes_safe_paths() {
-        assert_eq!(safe_relative_path("project/src/main.rs").unwrap(), "project/src/main.rs");
+        assert_eq!(
+            safe_relative_path("project/src/main.rs").unwrap(),
+            "project/src/main.rs"
+        );
         assert_eq!(safe_relative_path("./a/./b").unwrap(), "a/b");
         assert_eq!(safe_relative_path("dir\\file.txt").unwrap(), "dir/file.txt");
     }
@@ -113,6 +130,10 @@ mod tests {
             uncompressed_size: Some(size),
             compressed_size: None,
             mtime_unix: None,
+            compression_method: None,
+            checksum: None,
+            unix_mode: None,
+            comment: None,
             encrypted: false,
         }
     }
@@ -124,6 +145,10 @@ mod tests {
             uncompressed_size: None,
             compressed_size: None,
             mtime_unix: None,
+            compression_method: None,
+            checksum: None,
+            unix_mode: None,
+            comment: None,
             encrypted: false,
         }
     }

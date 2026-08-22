@@ -54,6 +54,63 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 static TASK_SNAPSHOT: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 static HANG_SEQ: AtomicU32 = AtomicU32::new(0);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WatchdogAction {
+    None,
+    Suspect,
+    Report,
+    Recovered,
+    Rebaseline,
+}
+
+struct StallTracker {
+    baseline: u64,
+    stale_checks: u32,
+    reported: bool,
+}
+
+impl StallTracker {
+    fn new(baseline: u64) -> Self {
+        Self {
+            baseline,
+            stale_checks: 0,
+            reported: false,
+        }
+    }
+
+    fn observe(&mut self, beat: u64, check_gap: Duration) -> WatchdogAction {
+        if check_gap > BEAT_INTERVAL * 5 {
+            self.baseline = beat;
+            self.stale_checks = 0;
+            return WatchdogAction::Rebaseline;
+        }
+        if beat != self.baseline {
+            self.baseline = beat;
+            self.stale_checks = 0;
+            let recovered = self.reported;
+            self.reported = false;
+            return if recovered {
+                WatchdogAction::Recovered
+            } else {
+                WatchdogAction::None
+            };
+        }
+        self.stale_checks = self.stale_checks.saturating_add(1);
+        if self.stale_checks >= STALL_REPORT_CHECKS && !self.reported {
+            self.reported = true;
+            WatchdogAction::Report
+        } else if self.stale_checks == STALL_SUSPECT_CHECKS {
+            WatchdogAction::Suspect
+        } else {
+            WatchdogAction::None
+        }
+    }
+
+    fn stalled(&self) -> bool {
+        self.stale_checks >= STALL_SUSPECT_CHECKS
+    }
+}
+
 /// Install every piece. Called once from `boot::run_gui`, after the
 /// `ProcessState` global exists (the snapshot reads it) and before any
 /// window opens. Deliberately NOT called on the screenshot path — a
@@ -63,7 +120,7 @@ pub fn start(cx: &mut App) {
     // watchdog so it can't misfire in a slow shutdown. Leaks the
     // subscription intentionally (lives the whole app run).
     cx.on_app_quit(|_| {
-        SHUTDOWN.store(true, Ordering::Relaxed);
+        SHUTDOWN.store(true, Ordering::Release);
         async {}
     })
     .detach();
@@ -106,7 +163,7 @@ fn install_debug_freeze(cx: &mut App) {
 /// Whether the UI thread has been unresponsive for a few seconds — the
 /// "should a kill also dump?" question.
 pub fn ui_thread_stalled() -> bool {
-    STALLED.load(Ordering::Relaxed)
+    STALLED.load(Ordering::Acquire)
 }
 
 fn snapshot_cell() -> &'static Mutex<Vec<String>> {
@@ -122,7 +179,7 @@ fn start_heartbeat(cx: &mut App) {
             // the loop simply never resumes — `on_app_quit` above flags
             // the watchdog before that can look like a stall.
             cx.update(|cx| {
-                BEAT.fetch_add(1, Ordering::Relaxed);
+                BEAT.fetch_add(1, Ordering::Release);
                 publish_task_snapshot(cx);
             });
         }
@@ -151,52 +208,43 @@ fn publish_task_snapshot(cx: &mut App) {
             crate::redact::scrub_text(&t.label),
         ));
     }
-    *snapshot_cell().lock().unwrap_or_else(|e| e.into_inner()) = lines;
+    // Never make the UI heartbeat wait for the reporting thread. A missed
+    // snapshot is harmless; blocking here would manufacture the very stall
+    // this mechanism is meant to diagnose.
+    match snapshot_cell().try_lock() {
+        Ok(mut snapshot) => *snapshot = lines,
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+            *poisoned.into_inner() = lines;
+        }
+        Err(std::sync::TryLockError::WouldBlock) => {}
+    }
 }
 
 fn start_watchdog_thread() {
     crate::obs::spawn_logged("freeze-watchdog", || {
         let mut last_check = Instant::now();
-        let mut baseline = BEAT.load(Ordering::Relaxed);
-        let mut stale_checks: u32 = 0;
-        let mut reported = false;
+        let mut tracker = StallTracker::new(BEAT.load(Ordering::Acquire));
         loop {
             std::thread::sleep(BEAT_INTERVAL);
-            if SHUTDOWN.load(Ordering::Relaxed) {
+            if SHUTDOWN.load(Ordering::Acquire) {
                 return;
             }
             let gap = last_check.elapsed();
             last_check = Instant::now();
-            let beat = BEAT.load(Ordering::Relaxed);
-            // A check gap far past the interval means the machine slept or
-            // the whole process was stopped — both threads froze together,
-            // so re-baseline rather than counting it as a UI stall.
-            if gap > BEAT_INTERVAL * 5 {
-                baseline = beat;
-                stale_checks = 0;
-                STALLED.store(false, Ordering::Relaxed);
-                continue;
-            }
-            if beat != baseline {
-                baseline = beat;
-                stale_checks = 0;
-                STALLED.store(false, Ordering::Relaxed);
-                if reported {
-                    reported = false;
+            let beat = BEAT.load(Ordering::Acquire);
+            match tracker.observe(beat, gap) {
+                WatchdogAction::Recovered => {
                     crate::log_warn!(90, "freeze-watchdog: UI thread recovered; re-armed");
                 }
-                continue;
+                WatchdogAction::Report => write_hang_report(&format!(
+                    "UI thread unresponsive for ~{}s (heartbeat stalled)",
+                    tracker.stale_checks
+                )),
+                WatchdogAction::None
+                | WatchdogAction::Suspect
+                | WatchdogAction::Rebaseline => {}
             }
-            stale_checks += 1;
-            if stale_checks >= STALL_SUSPECT_CHECKS {
-                STALLED.store(true, Ordering::Relaxed);
-            }
-            if stale_checks >= STALL_REPORT_CHECKS && !reported {
-                reported = true;
-                write_hang_report(&format!(
-                    "UI thread unresponsive for ~{stale_checks}s (heartbeat stalled)"
-                ));
-            }
+            STALLED.store(tracker.stalled(), Ordering::Release);
         }
     });
 }
@@ -225,26 +273,39 @@ fn render_report_body(reason: &str) -> String {
     let _ = writeln!(r);
 
     let _ = writeln!(r, "background tasks (last snapshot before the stall):");
-    let snapshot = snapshot_cell()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone();
-    if snapshot.is_empty() {
-        let _ = writeln!(r, "    <none>");
-    } else {
-        for line in &snapshot {
-            let _ = writeln!(r, "    {line}");
+    match snapshot_cell().try_lock() {
+        Ok(snapshot) => {
+            if snapshot.is_empty() {
+                let _ = writeln!(r, "    <none>");
+            } else {
+                for line in snapshot.iter() {
+                    let _ = writeln!(r, "    {line}");
+                }
+            }
+        }
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+            for line in poisoned.into_inner().iter() {
+                let _ = writeln!(r, "    {line}");
+            }
+        }
+        Err(std::sync::TryLockError::WouldBlock) => {
+            let _ = writeln!(r, "    <unavailable: lock held by stalled thread>");
         }
     }
     let _ = writeln!(r);
 
     let _ = writeln!(r, "breadcrumbs:");
-    let crumbs = crate::obs::breadcrumb_lines();
-    if crumbs.is_empty() {
-        let _ = writeln!(r, "    <none>");
-    } else {
-        for line in &crumbs {
-            let _ = writeln!(r, "    {line}");
+    match crate::obs::try_breadcrumb_lines() {
+        Some(crumbs) if crumbs.is_empty() => {
+            let _ = writeln!(r, "    <none>");
+        }
+        Some(crumbs) => {
+            for line in &crumbs {
+                let _ = writeln!(r, "    {line}");
+            }
+        }
+        None => {
+            let _ = writeln!(r, "    <unavailable: lock held by stalled thread>");
         }
     }
     let _ = writeln!(r);
@@ -252,7 +313,15 @@ fn render_report_body(reason: &str) -> String {
     // Redaction-honoring render — a hang report must be as shareable as
     // the issue bundle. Tail only: the freeze context is the recent past.
     const TRAIL_TAIL: usize = 40;
-    let trail = crate::trail::render_lines_sanitized();
+    let Some(trail) = crate::trail::try_render_lines_sanitized() else {
+        let _ = writeln!(r, "activity trail:");
+        let _ = writeln!(r, "    <unavailable: lock held by stalled thread>");
+        let _ = writeln!(
+            r,
+            "===================================================================="
+        );
+        return r;
+    };
     let skipped = trail.len().saturating_sub(TRAIL_TAIL);
     let _ = writeln!(
         r,
@@ -560,5 +629,39 @@ mod tests {
     #[test]
     fn stack_hint_is_never_empty_on_shipping_targets() {
         assert!(!stack_hint().is_empty());
+    }
+
+    #[test]
+    fn stall_tracker_reports_once_recovers_and_rearms() {
+        let mut tracker = StallTracker::new(7);
+        for _ in 0..STALL_SUSPECT_CHECKS - 1 {
+            assert_eq!(tracker.observe(7, BEAT_INTERVAL), WatchdogAction::None);
+            assert!(!tracker.stalled());
+        }
+        assert_eq!(tracker.observe(7, BEAT_INTERVAL), WatchdogAction::Suspect);
+        assert!(tracker.stalled());
+        for _ in STALL_SUSPECT_CHECKS..STALL_REPORT_CHECKS - 1 {
+            assert_eq!(tracker.observe(7, BEAT_INTERVAL), WatchdogAction::None);
+        }
+        assert_eq!(tracker.observe(7, BEAT_INTERVAL), WatchdogAction::Report);
+        assert_eq!(tracker.observe(7, BEAT_INTERVAL), WatchdogAction::None);
+
+        assert_eq!(tracker.observe(8, BEAT_INTERVAL), WatchdogAction::Recovered);
+        assert!(!tracker.stalled());
+        for _ in 0..STALL_REPORT_CHECKS - 1 {
+            let _ = tracker.observe(8, BEAT_INTERVAL);
+        }
+        assert_eq!(tracker.observe(8, BEAT_INTERVAL), WatchdogAction::Report);
+    }
+
+    #[test]
+    fn stall_tracker_does_not_report_system_sleep() {
+        let mut tracker = StallTracker::new(1);
+        assert_eq!(
+            tracker.observe(1, BEAT_INTERVAL * 6),
+            WatchdogAction::Rebaseline
+        );
+        assert!(!tracker.stalled());
+        assert_eq!(tracker.observe(2, BEAT_INTERVAL), WatchdogAction::None);
     }
 }

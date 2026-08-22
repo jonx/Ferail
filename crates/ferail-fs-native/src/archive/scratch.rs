@@ -102,7 +102,9 @@ pub fn sweep_stale_scratch() {
         let Some(pid) = name.strip_prefix(SCRATCH_PREFIX) else {
             continue;
         };
-        let Ok(pid) = pid.parse::<u32>() else { continue };
+        let Ok(pid) = pid.parse::<u32>() else {
+            continue;
+        };
         if pid == me || process_is_alive(pid) {
             continue;
         }
@@ -157,10 +159,8 @@ mod tests {
     /// A private directory per test. `scratch_dir()` is keyed by PID, so every
     /// test in this process would otherwise share — and delete — the same one.
     fn test_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "ferail-scratch-test-{}-{tag}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("ferail-scratch-test-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -237,7 +237,10 @@ mod tests {
 
         sweep_stale_scratch();
 
-        assert!(!dead.exists(), "scratch of a dead process should be removed");
+        assert!(
+            !dead.exists(),
+            "scratch of a dead process should be removed"
+        );
         assert!(mine.exists(), "our own live scratch must be spared");
         let _ = std::fs::remove_dir_all(&mine);
     }

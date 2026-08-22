@@ -48,13 +48,20 @@ pub(super) fn read_toc(archive: &Path, format: Format) -> Result<Toc, ArchiveErr
             uncompressed_size: None,
             compressed_size: std::fs::metadata(archive).ok().map(|m| m.len()),
             mtime_unix: None,
+            compression_method: Some(format.label().to_string()),
+            checksum: None,
+            unix_mode: None,
+            comment: None,
             encrypted: false,
         }],
         needs_password: false,
     })
 }
 
-pub(super) fn read_summary(archive: &Path, _format: Format) -> Result<ArchiveSummary, ArchiveError> {
+pub(super) fn read_summary(
+    archive: &Path,
+    _format: Format,
+) -> Result<ArchiveSummary, ArchiveError> {
     let _ = std::fs::metadata(archive)?;
     Ok(ArchiveSummary {
         file_count: Some(1),
@@ -92,7 +99,7 @@ pub(super) fn extract(
             return Err(ArchiveError::Codec(format!(
                 "not a single-member format: {}",
                 other.label()
-            )))
+            )));
         }
     };
     super::write_file(dest, &safe, reader, opts, progress, cancel, &mut outcome)?;
@@ -141,7 +148,7 @@ pub(super) fn create(
             return Err(ArchiveError::Codec(format!(
                 "not a single-member format: {}",
                 other.label()
-            )))
+            )));
         }
     }
     progress.add_items(1);

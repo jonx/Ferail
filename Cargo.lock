@@ -1781,6 +1781,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dnd-lab"
+version = "0.4.0"
+dependencies = [
+ "ferail-shell-mac",
+ "gpui",
+ "gpui_platform",
+ "log",
+ "objc2 0.5.2",
+ "raw-window-handle",
+]
+
+[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2220,6 +2232,7 @@ version = "0.4.0"
 dependencies = [
  "block2 0.5.1",
  "ferail-core",
+ "log",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",

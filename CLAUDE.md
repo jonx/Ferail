@@ -190,6 +190,25 @@ user-visible macOS changes." is a real 0.2.2 line).
 - Be honest about what is still broken or unsigned; 0.2.2's SmartScreen and
   "nothing builds Windows yet" notes are the standard to match.
 
+## Localization
+
+English is the source language, but it is not the only shipping language.
+Whenever a change adds or rewrites user-visible text, localize that text in
+the same change:
+
+1. Wrap the source text with the appropriate `tr!`, `trn!`, `trc!`, or
+   `msgid!` form described in
+   [Localization](docs/features/LOCALIZATION.md#for-developers-writing-strings).
+2. Regenerate `locales/en.json` with the extraction test.
+3. Add or update the matching entries in both bundled packs,
+   `locales/de.json` and `locales/fr.json`. Preserve every placeholder and
+   plural shape; do not ship newly added text as an English fallback.
+4. Run the i18n extraction and bundled-pack tests before finishing.
+
+This applies to labels, menus, dialogs, tooltips, notifications, empty states,
+settings descriptions, and every other string the user reads. The deliberate
+English-only exceptions are listed in the localization feature note.
+
 ## Verification
 
 Before finishing code changes:
@@ -209,5 +228,8 @@ Before finishing code changes:
   work.
 - If the change touches icons, update
   [docs/features/ICONS.md](docs/features/ICONS.md) (see [Icons](#icons)).
+- If the change adds or rewrites user-visible text, regenerate the English
+  catalog, translate the new entries in both bundled language packs, and run
+  the i18n tests (see [Localization](#localization)).
 - If a user could notice the change, add a [CHANGELOG.md](CHANGELOG.md) entry
   under `## Unreleased` in the same commit (see [Changelog](#changelog)).

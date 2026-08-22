@@ -405,6 +405,35 @@ mod tests {
     }
 
     #[test]
+    fn bundled_packs_fully_cover_source_catalog() {
+        let src = source();
+        for (code, json) in BUNDLED {
+            let pack = LanguagePack::parse(json).unwrap_or_else(|e| panic!("locales/{code}.json: {e}"));
+            let report = pack.validate();
+            assert_eq!(report.translated, report.total, "locales/{code}.json is missing translations");
+            assert!(report.unknown_keys.is_empty(), "locales/{code}.json has stale keys: {:?}", report.unknown_keys);
+            assert!(
+                report.placeholder_mismatches.is_empty(),
+                "locales/{code}.json changed placeholders: {:?}",
+                report.placeholder_mismatches
+            );
+            assert!(
+                report.bad_plural_categories.is_empty(),
+                "locales/{code}.json has invalid plural categories: {:?}",
+                report.bad_plural_categories
+            );
+            for (key, source_value) in &src.strings {
+                let translated = pack.strings.get(key).unwrap_or_else(|| panic!("locales/{code}.json is missing {key:?}"));
+                assert_eq!(
+                    std::mem::discriminant(source_value),
+                    std::mem::discriminant(translated),
+                    "locales/{code}.json changes the text/plural shape of {key:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn source_catalog_parses() {
         let src = source();
         assert_eq!(src.code, "en");

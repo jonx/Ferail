@@ -41,10 +41,13 @@ It targets the gap the default managers leave: **responsiveness under load** and
   `.lha`/`.lzh` (the Amiga/Aminet format, read-only)
   without extracting first — a real sortable list with expandable folders and a
   filter box, so a 5000-file archive opens as one folder to drill into. Extract
-  just what you selected, drag files in to add them, drag entries out to extract
-  them, and compress to ZIP / 7-Zip / TAR through a built-in engine that behaves
-  the same on every platform. It works on anything that *is* an archive
-  underneath, even without the extension — `.docx`, `.jar`, `.apk`.
+  just what you selected, or edit a plain ZIP as a transaction: drag files and
+  folders in, rename or remove entries, review every pending change, then Save
+  or Revert. Unsupported formats show a forbidden drop instead of pretending
+  the edit will work. Compress to ZIP / 7-Zip / TAR through a built-in engine
+  that behaves the same on every platform. Ferail can browse anything that
+  *is* an archive underneath, even without the extension — `.docx`, `.jar`,
+  `.apk` — while those package formats stay safely read-only.
 - **It learns your habits.** The Ant Trail heat-tints the folders you actually
   use and keeps them one click away.
 - **Everything is undoable.** Rename, bulk rename, move, copy, trash — Cmd+Z,

@@ -164,6 +164,8 @@ pub struct Args {
     pub archive: Option<PathBuf>,
     /// With `--archive`, select this row and turn the entry preview on.
     pub archive_preview_row: Option<usize>,
+    /// With `--archive`, open the real Convert Archive dialog after loading.
+    pub archive_convert: bool,
     /// Treemap recursion depth for `--disk-usage`. Default 4.
     pub disk_usage_depth: u32,
     /// Coloring mode for `--disk-usage`. `category` (default) or
@@ -329,6 +331,7 @@ pub fn parse_args() -> Args {
             "--archive-preview-row" => {
                 args.archive_preview_row = iter.next().and_then(|s| s.parse().ok())
             }
+            "--archive-convert" => args.archive_convert = true,
             "--du-depth" => {
                 if let Some(n) = iter.next().and_then(|s| s.parse().ok()) {
                     args.disk_usage_depth = n;
@@ -412,6 +415,7 @@ OPTIONS
   --disk-usage <path>      Render disk-usage treemap. Lands in Stage 7.
   --archive <path>         Render the archive workbench for <path>.
   --archive-preview-row N  With --archive: select row N and show its preview.
+  --archive-convert        With --archive: open the Convert Archive dialog.
   --du-depth <N>           Treemap recursion depth (default 4).
   --du-coloring <mode>     'category' (default) or 'depth'.
   --settings <page>        Open Settings instead of Shell.
@@ -674,7 +678,6 @@ pub fn run(args: Args) -> Result<()> {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(2500))
                 .await;
-
             // Slow-device skeleton: force the state the slow-load
             // timer sets when a first batch is overdue (real path:
             // Shell::load_path_for_tab). Exercises the genuine
@@ -823,6 +826,7 @@ struct ShellArgs {
     update_dialog: Option<String>,
     archive: Option<PathBuf>,
     archive_preview_row: Option<usize>,
+    archive_convert: bool,
     expand: Vec<PathBuf>,
     // Stage-deferred flags. Recorded so the apply step can emit a
     // single "stage X not yet wired" log warning per use, rather
@@ -873,6 +877,7 @@ impl From<&Args> for ShellArgs {
             update_dialog: a.update_dialog.clone(),
             archive: a.archive.clone(),
             archive_preview_row: a.archive_preview_row,
+            archive_convert: a.archive_convert,
             expand: a.expand.clone(),
             properties: a.properties,
             edit_mode: a.edit_mode,
@@ -1199,9 +1204,7 @@ impl ShellArgs {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(700))
                 .await;
-            let point = shell.read_with(cx, |s, cx| {
-                s.active_tab().table.read(cx).row_center(row)
-            });
+            let point = shell.read_with(cx, |s, cx| s.active_tab().table.read(cx).row_center(row));
             match point {
                 Some(position) => {
                     let _ = cx.update_window((*handle).into(), |_, window, cx| {
@@ -1249,9 +1252,7 @@ impl ShellArgs {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(700))
                 .await;
-            let point = shell.read_with(cx, |s, cx| {
-                s.active_tab().table.read(cx).body_center()
-            });
+            let point = shell.read_with(cx, |s, cx| s.active_tab().table.read(cx).body_center());
             match point {
                 Some(position) => {
                     let _ = cx.update_window((*handle).into(), |_, window, cx| {
@@ -1321,6 +1322,7 @@ impl ShellArgs {
             // dispatch the same action the context menu does, so the capture
             // exercises the shipping code rather than a bespoke harness view.
             let canonical = std::fs::canonicalize(&arc).unwrap_or(arc.clone());
+            let conversion_source = canonical.clone();
             let view = cx
                 .update_window((*handle).into(), |_, window, cx| {
                     shell.update(cx, |s, cx| {
@@ -1330,22 +1332,48 @@ impl ShellArgs {
                 })
                 .ok()
                 .flatten();
-            if let (Some(view), Some(row)) = (view, self.archive_preview_row) {
+            if view.is_some() && (self.archive_preview_row.is_some() || self.archive_convert) {
                 // The table of contents is read off-thread, so the rows don't
                 // exist yet — selecting now would find nothing. Let the read
                 // land, then drive the selection and preview.
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(700))
                     .await;
-                let _ = cx.update_window((*handle).into(), |_, window, cx| {
-                    // Outside the Shell update: enabling preview reveals the
-                    // shell's pane, and gpui forbids a reentrant update.
-                    view.update(cx, |v, cx| v.preview_row_for_capture(row, window, cx));
-                });
-                // And let the staged extraction + preview decode land.
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(900))
-                    .await;
+                if let (Some(view), Some(row)) = (view.clone(), self.archive_preview_row) {
+                    let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                        // Outside the Shell update: enabling preview reveals the
+                        // shell's pane, and gpui forbids a reentrant update.
+                        view.update(cx, |v, cx| v.preview_row_for_capture(row, window, cx));
+                    });
+                    // And let the staged extraction + preview decode land.
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(900))
+                        .await;
+                }
+                if self.archive_convert {
+                    let _ = cx.update_window((*handle).into(), |_, window, cx| {
+                        crate::archive_convert::open_dialog(
+                            conversion_source.clone(),
+                            ferail_archive::Format::from_path(&conversion_source.to_string_lossy()),
+                            None,
+                            shell.clone(),
+                            window,
+                            cx,
+                        );
+                    });
+                    // Dialog attachment is finalized on the next frame. Give
+                    // it one short settle window so the capture contains the
+                    // actual conversion surface, not the frame immediately
+                    // before it appeared.
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(250))
+                        .await;
+                    // Hidden windows do not continuously animate. Repaint
+                    // once after gpui-component's 250 ms dialog fade so the
+                    // screenshot samples the settled modal instead of its
+                    // initial zero-opacity animation frame.
+                    shell.update(cx, |_, cx| cx.notify());
+                }
             }
         }
         if self.new_archive {

@@ -101,6 +101,23 @@ pub trait TableDelegate: Sized + 'static {
         div().id(("row", row_ix))
     }
 
+    /// Extra hover refinement for the row at `row_ix`, merged into the
+    /// table's single row `.hover()`.
+    ///
+    /// gpui allows exactly one hover style per element (a second `.hover()`
+    /// is a debug assertion), and the table owns the row's. A delegate that
+    /// wants a hover ring — e.g. a drop-target highlight while a native drag
+    /// is in flight — returns it here instead of calling `.hover()` on the
+    /// `render_tr` row.
+    fn render_tr_hover(
+        &mut self,
+        _row_ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) -> Option<gpui::StyleRefinement> {
+        None
+    }
+
     /// Render the context menu for the row at the given row index.
     fn context_menu(
         &mut self,

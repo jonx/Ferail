@@ -27,6 +27,18 @@ pub struct ArchiveEntry {
     pub compressed_size: Option<u64>,
     /// Last-modified time as a Unix timestamp, when present.
     pub mtime_unix: Option<i64>,
+    /// Compression method recorded for this member (for example `Deflate` or
+    /// `-lh5-`). Kept as a display-neutral identifier because every codec has
+    /// a different method enum and some formats have private coder chains.
+    pub compression_method: Option<String>,
+    /// Integrity value recorded by the container, already labelled with its
+    /// algorithm (for example `CRC32 4A17B156`). This is metadata from the
+    /// archive directory; displaying it never hashes or inflates the entry.
+    pub checksum: Option<String>,
+    /// Stored Unix permission bits when the format records them.
+    pub unix_mode: Option<u32>,
+    /// Optional per-entry comment.
+    pub comment: Option<String>,
     /// Whether this specific entry's data is encrypted (per-entry encryption
     /// exists in zip). The view uses this to badge entries and to know a
     /// password is required before extraction.
@@ -106,5 +118,25 @@ impl Toc {
     /// Number of non-directory entries.
     pub fn file_count(&self) -> usize {
         self.entries.iter().filter(|e| !e.is_dir).count()
+    }
+
+    /// Number of directory records explicitly stored by the archive. The tree
+    /// may display more because it also synthesizes implied parent folders.
+    pub fn directory_count(&self) -> usize {
+        self.entries.iter().filter(|e| e.is_dir).count()
+    }
+
+    /// Sum of per-member packed sizes when the format provides one for every
+    /// file. Compressed tar streams deliberately return `None`: their packed
+    /// size belongs to the stream as a whole, not to individual members.
+    pub fn total_compressed(&self) -> Option<u64> {
+        let mut total = 0u64;
+        for entry in &self.entries {
+            if entry.is_dir {
+                continue;
+            }
+            total = total.checked_add(entry.compressed_size?)?;
+        }
+        Some(total)
     }
 }

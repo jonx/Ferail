@@ -20,6 +20,8 @@ pub enum UnsafePath {
     DrivePrefix,
     /// The path is empty or resolves to nothing.
     Empty,
+    /// A component contains a byte the host filesystem cannot represent.
+    InvalidCharacter,
 }
 
 /// Validate and normalize an archive entry path into a safe, destination-
@@ -62,6 +64,7 @@ pub fn safe_relative_path(entry_path: &str) -> Result<String, UnsafePath> {
         match comp {
             "" | "." => continue,
             ".." => return Err(UnsafePath::Traversal),
+            other if other.contains('\0') => return Err(UnsafePath::InvalidCharacter),
             other => parts.push(other),
         }
     }

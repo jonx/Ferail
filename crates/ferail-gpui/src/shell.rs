@@ -25,7 +25,7 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Input, InputEvent, InputState},
-    sidebar::{Sidebar, SidebarMenu, SidebarMenuItem},
+    sidebar::Sidebar,
     v_flex,
 };
 
@@ -36,7 +36,7 @@ use crate::multi_table::{DataTable, TableEvent, TableState};
 use crate::tasks::TaskKind;
 use crate::tool_results::{ToolHostContext, ToolHostEvent};
 use crate::tree::{
-    LabeledMenu, ShellSidebarItem, TreeChild, TreeGuide, TreeRowIcon, TreeRowSpec, TreeSection,
+    ShellSidebarItem, TreeChild, TreeGuide, TreeRowIcon, TreeRowSpec, TreeSection,
 };
 use gpui::prelude::FluentBuilder as _;
 
@@ -45,8 +45,8 @@ mod dock;
 mod dupe_panel;
 mod dupes;
 mod file_ops;
-pub use file_ops::ArchiveOpDone;
-pub(crate) use file_ops::TransferMode;
+pub use file_ops::ArchiveOpSettled;
+pub(crate) use file_ops::{ArchiveSaveRequest, TransferMode};
 pub(crate) use file_ops::pick_destination_folder;
 mod loading;
 mod path;
@@ -1994,24 +1994,30 @@ impl Shell {
         // — this fires regardless of focus. Two phases: while the drag is
         // in-window it is gpui state (`active_drag`); once the pointer
         // leaves the window gpui hands it to a native NSDraggingSession
-        // (`has_active_drag` goes false) and cancellation goes through
-        // the platform shell instead (docs/GPUI-UPSTREAM.md #10).
+        // (`has_active_drag` normally goes false) and cancellation goes
+        // through the platform shell instead. Archive promises retain both
+        // halves for cross-window drops, so Escape cancels both below
+        // (docs/GPUI-UPSTREAM.md #10 and #11).
         let drag_esc_subscription = cx.observe_keystrokes(move |this, e, window, cx| {
             if e.keystroke.key != "escape" {
                 return;
             }
+            #[cfg(target_os = "macos")]
+            let native_drag_active = crate::platform_shell::native_drag_session_active();
             if cx.has_active_drag() {
                 cx.stop_active_drag(window);
                 this.spring_load = None;
                 this.tree_spring = None;
                 cx.notify();
-            } else {
-                #[cfg(target_os = "macos")]
-                if crate::platform_shell::native_drag_session_active() {
-                    crate::platform_shell::cancel_native_drag();
-                    this.spring_load = None;
-                    this.tree_spring = None;
-                }
+            }
+            // Archive file promises deliberately keep their in-process
+            // ArchiveEntryDrag alive for Ferail-to-Ferail drops. Esc must
+            // therefore cancel both halves of the gesture, not choose one.
+            #[cfg(target_os = "macos")]
+            if native_drag_active {
+                crate::platform_shell::cancel_native_drag();
+                this.spring_load = None;
+                this.tree_spring = None;
             }
         });
         shell._subscriptions.push(drag_esc_subscription);
@@ -2202,6 +2208,30 @@ impl Shell {
                         // covers them with current-dir semantics. Shared
                         // with the icon grid's folder-cell drop.
                         this.drop_onto_folder_row(*row_ix, paths.clone(), window, cx);
+                    }
+                    TableEvent::ArchiveAddFromArchive {
+                        row_ix,
+                        archive,
+                        entries,
+                        password,
+                    } => {
+                        // Members dropped on an archive row — add them there
+                        // rather than extracting into the current folder.
+                        if let Some(target) = this.path_for_row(*row_ix, cx) {
+                            this.add_archive_entries_to_archive(
+                                archive.clone(),
+                                entries.clone(),
+                                password.clone(),
+                                target,
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                    TableEvent::ArchiveAddDrop { row_ix, paths } => {
+                        // Dropped onto an archive file row — add to it
+                        // instead of transferring into a folder.
+                        this.drop_onto_archive_row(*row_ix, paths.clone(), window, cx);
                     }
                     TableEvent::ArchiveDrop {
                         row_ix,

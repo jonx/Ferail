@@ -19,6 +19,20 @@ mod archive;
 mod file_ops;
 
 #[cfg(target_os = "macos")]
+mod file_promise;
+
+#[cfg(target_os = "macos")]
+pub use file_promise::FilePromise;
+
+#[cfg(target_os = "macos")]
+pub fn start_file_promise_drag(
+    ns_view: *mut std::ffi::c_void,
+    promises: Vec<FilePromise>,
+) -> bool {
+    file_promise::start(ns_view, promises)
+}
+
+#[cfg(target_os = "macos")]
 mod open_with;
 
 #[cfg(target_os = "macos")]
@@ -1285,6 +1299,84 @@ pub fn install_native_drag_operations() -> bool {
     let mask_sel = objc2::sel!(draggingSession:sourceOperationMaskForDraggingContext:);
     let begin_sel = objc2::sel!(draggingSession:willBeginAtPoint:);
     let ended_sel = objc2::sel!(draggingSession:endedAtPoint:operation:);
+    let entered_sel = objc2::sel!(draggingEntered:);
+    let exited_sel = objc2::sel!(draggingExited:);
+
+    fn is_archive_promise_drag(dragging_info: *mut AnyObject) -> bool {
+        // Ferail knows synchronously that it is starting an archive promise,
+        // so the session flag is the primary signal for in-process handoff.
+        // The pasteboard marker — declared by Ferail's promise-provider
+        // subclass, and the type its windows register for so AppKit routes
+        // the gesture here at all — is the defensive fallback for
+        // callback-order variations.
+        if native_drag::ARCHIVE_PROMISE_ACTIVE
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return true;
+        }
+        if dragging_info.is_null() {
+            return false;
+        }
+        let pasteboard: *mut AnyObject = unsafe {
+            objc2::msg_send![dragging_info, draggingPasteboard]
+        };
+        if pasteboard.is_null() {
+            return false;
+        }
+        let marker = objc2_foundation::NSString::from_str(
+            file_promise::ARCHIVE_PROMISE_PASTEBOARD_TYPE,
+        );
+        let value: *mut AnyObject = unsafe {
+            objc2::msg_send![pasteboard, stringForType: &*marker]
+        };
+        !value.is_null()
+    }
+
+    extern "C" fn dragging_entered(
+        this: *mut AnyObject,
+        sel: Sel,
+        dragging_info: *mut AnyObject,
+    ) -> usize {
+        use std::sync::atomic::Ordering::SeqCst;
+
+        // GPUI recognizes a file drag only through NSFilenamesPboardType and
+        // answers None otherwise. A file promise has no filename path yet —
+        // and AppKit only delivers this callback at all because `file_promise`
+        // registered the window for Ferail's private marker type. Admit our
+        // own promise sessions directly; GPUI's existing draggingUpdated /
+        // performDragOperation callbacks then turn the gesture into
+        // MouseMove/MouseUp for the retained ArchiveEntryDrag.
+        if is_archive_promise_drag(dragging_info) {
+            log::info!("archive promise drag: draggingEntered admitted on window {this:p}");
+            return native_drag::OP_COPY;
+        }
+
+        let orig = native_drag::ORIG_ENTERED_IMP.load(SeqCst);
+        if orig.is_null() {
+            return native_drag::OP_NONE;
+        }
+        let orig: extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) -> usize =
+            unsafe { std::mem::transmute(orig) };
+        orig(this, sel, dragging_info)
+    }
+
+    extern "C" fn dragging_exited(
+        this: *mut AnyObject,
+        sel: Sel,
+        dragging_info: *mut AnyObject,
+    ) {
+        // Ferail explicitly retires GPUI's typed drag when a file-promise
+        // session starts and keeps archive coordinates in its own coordinator.
+        // Always let GPUI process Exited so its ordinary hover/input state is
+        // balanced for archive promises and every other drag alike.
+        let orig = native_drag::ORIG_EXITED_IMP.load(std::sync::atomic::Ordering::SeqCst);
+        if orig.is_null() {
+            return;
+        }
+        let orig: extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) =
+            unsafe { std::mem::transmute(orig) };
+        orig(this, sel, dragging_info);
+    }
 
     extern "C" fn source_operation_mask(
         _this: *mut AnyObject,
@@ -1325,6 +1417,7 @@ pub fn install_native_drag_operations() -> bool {
     ) {
         use std::sync::atomic::Ordering::SeqCst;
         native_drag::SESSION_ACTIVE.store(false, SeqCst);
+        native_drag::ARCHIVE_PROMISE_ACTIVE.store(false, SeqCst);
         native_drag::CANCEL_REQUESTED.store(false, SeqCst);
         // Chain to gpui's implementation — it resets its own drag state
         // (synthetic-drag counter, FileDropEvent::Ended). Skipping it
@@ -1349,6 +1442,51 @@ pub fn install_native_drag_operations() -> bool {
         };
         let class = class as *const AnyClass as *mut objc2::ffi::objc_class;
         unsafe {
+            // NSUInteger (id self, SEL, id draggingInfo). Promise drags need
+            // a pathless admission route before GPUI's legacy path parser.
+            let imp: objc2::ffi::IMP = std::mem::transmute(
+                dragging_entered
+                    as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) -> usize,
+            );
+            let prev = objc2::ffi::class_replaceMethod(
+                class,
+                entered_sel.as_ptr(),
+                imp,
+                c"Q@:@".as_ptr(),
+            );
+            let ours = dragging_entered
+                as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) -> usize
+                as *mut std::ffi::c_void;
+            if let Some(prev) = prev {
+                let prev = prev as *mut std::ffi::c_void;
+                if prev != ours {
+                    native_drag::ORIG_ENTERED_IMP
+                        .store(prev, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+
+            // void (id self, SEL, id draggingInfo). Promise exits must not
+            // make GPUI discard the retained in-process archive payload.
+            let imp: objc2::ffi::IMP = std::mem::transmute(
+                dragging_exited as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
+            let prev = objc2::ffi::class_replaceMethod(
+                class,
+                exited_sel.as_ptr(),
+                imp,
+                c"v@:@".as_ptr(),
+            );
+            let ours = dragging_exited
+                as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject)
+                as *mut std::ffi::c_void;
+            if let Some(prev) = prev {
+                let prev = prev as *mut std::ffi::c_void;
+                if prev != ours {
+                    native_drag::ORIG_EXITED_IMP
+                        .store(prev, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+
             // NSUInteger (id self, SEL, id session, NSInteger ctx).
             let imp: objc2::ffi::IMP = std::mem::transmute(
                 source_operation_mask
@@ -1408,6 +1546,15 @@ pub fn install_native_drag_operations() -> bool {
         installed = true;
     }
     installed
+        && !native_drag::ORIG_ENTERED_IMP
+            .load(std::sync::atomic::Ordering::SeqCst)
+            .is_null()
+        && !native_drag::ORIG_ENDED_IMP
+            .load(std::sync::atomic::Ordering::SeqCst)
+            .is_null()
+        && !native_drag::ORIG_EXITED_IMP
+            .load(std::sync::atomic::Ordering::SeqCst)
+            .is_null()
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1431,12 +1578,25 @@ mod native_drag {
 
     /// A native dragging session started from one of our windows is live.
     pub static SESSION_ACTIVE: AtomicBool = AtomicBool::new(false);
+    /// The current native session carries promised archive members. Raised by
+    /// `file_promise::start` before `beginDraggingSession` so a destination's
+    /// `draggingEntered:` — possibly delivered before that call returns — can
+    /// admit the pathless gesture; lowered when the session ends.
+    pub static ARCHIVE_PROMISE_ACTIVE: AtomicBool = AtomicBool::new(false);
     /// Esc was pressed mid-session: the mask collapses to None so no
     /// destination can accept the drop.
     pub static CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
     /// gpui's original `draggingSession:endedAtPoint:operation:` IMP,
     /// chained from our wrapper.
     pub static ORIG_ENDED_IMP: AtomicPtr<std::ffi::c_void> =
+        AtomicPtr::new(std::ptr::null_mut());
+    /// gpui's original `draggingEntered:` implementation, chained for every
+    /// drag except Ferail's pathless archive promises.
+    pub static ORIG_ENTERED_IMP: AtomicPtr<std::ffi::c_void> =
+        AtomicPtr::new(std::ptr::null_mut());
+    /// gpui's original `draggingExited:` implementation, skipped only while
+    /// an archive promise must retain its in-process payload across windows.
+    pub static ORIG_EXITED_IMP: AtomicPtr<std::ffi::c_void> =
         AtomicPtr::new(std::ptr::null_mut());
 
     /// `CGPoint` / `NSPoint` by value across the ObjC boundary.

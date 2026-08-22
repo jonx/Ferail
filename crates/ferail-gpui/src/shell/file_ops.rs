@@ -14,7 +14,16 @@ pub(crate) enum TransferMode {
 
 /// Callback run on the UI thread after a successful archive operation, for
 /// surfaces whose state the directory reload doesn't refresh.
-pub type ArchiveOpDone = Box<dyn FnOnce(&mut Shell, &mut Context<Shell>) + 'static>;
+/// Completion hook for an archive operation, invoked for success, failure, or
+/// cancellation so a workbench can always leave its busy state.
+pub type ArchiveOpSettled = Box<dyn FnOnce(bool, &mut Shell, &mut Context<Shell>) + 'static>;
+
+pub(crate) struct ArchiveSaveRequest {
+    pub archive: PathBuf,
+    pub stamp: ferail_fs_native::ArchiveStamp,
+    pub plan: ferail_fs_native::ArchiveEditPlan,
+    pub password: Option<String>,
+}
 
 impl Shell {
     /// Cmd+C — write the selection's file URLs to the pasteboard.
@@ -241,6 +250,22 @@ impl Shell {
         self.spring_load = None;
         if let Some(dest) = self.path_for_row(row_ix, cx) {
             self.handle_external_drop(paths, dest, window, cx);
+        }
+    }
+
+    /// Files dropped onto an archive **file** row: add them to that archive.
+    /// The row emitted this only after classifying itself as an editable
+    /// archive, so no probing happened on the UI thread.
+    pub(crate) fn drop_onto_archive_row(
+        &mut self,
+        row_ix: usize,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.spring_load = None;
+        if let Some(archive) = self.path_for_row(row_ix, cx) {
+            self.add_paths_to_archive(archive, paths, window, cx);
         }
     }
 
@@ -1869,8 +1894,7 @@ impl Shell {
                 crate::log_warn!(90, "tag toggle: {} item(s) failed", failures.len());
                 // Quiet on success; failures surface through the same
                 // structured "N of M · why" report as the other mutations.
-                let summary =
-                    crate::shell::file_op_failure_report(&tr!("Tag"), done, 0, &failures);
+                let summary = crate::shell::file_op_failure_report(&tr!("Tag"), done, 0, &failures);
                 let _ = win.update(cx, |_, window, cx| {
                     window.push_notification(super::error_notification(summary), cx);
                 });
@@ -2156,7 +2180,11 @@ impl Shell {
             if count == 1 {
                 tr!("Moving {name} to Trash", name = name)
             } else {
-                trn!("Moving {n} item to Trash", "Moving {n} items to Trash", count)
+                trn!(
+                    "Moving {n} item to Trash",
+                    "Moving {n} items to Trash",
+                    count
+                )
             },
             false,
         );
@@ -2220,12 +2248,8 @@ impl Shell {
                 // The structured "N of M · why" report shared with the
                 // copy/move path; the raw OS detail rides along for the
                 // Copy action.
-                let summary = crate::shell::file_op_failure_report(
-                    &tr!("Move to Trash"),
-                    done,
-                    0,
-                    &failures,
-                );
+                let summary =
+                    crate::shell::file_op_failure_report(&tr!("Move to Trash"), done, 0, &failures);
                 let detail = failures
                     .iter()
                     .map(|f| f.to_string())
@@ -3206,74 +3230,64 @@ impl Shell {
         self.compress_selection_as(ferail_archive::Format::Tar, window, cx);
     }
 
-    /// Add dropped files to an existing archive, in place. Only reachable for
-    /// formats the capability matrix marks editable (zip); `on_done` lets the
-    /// archive workbench re-read its table of contents once the entries land.
-    pub(crate) fn add_to_archive_from(
+    /// Commit one archive workbench's staged journal. The codec writes and
+    /// validates a sibling temporary zip before atomically replacing the
+    /// original, so cancellation and failures leave the source untouched.
+    pub(crate) fn save_archive_edits(
         &mut self,
-        archive: PathBuf,
-        sources: Vec<PathBuf>,
-        password: Option<String>,
-        on_done: Option<ArchiveOpDone>,
+        request: ArchiveSaveRequest,
+        on_settled: Option<ArchiveOpSettled>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if sources.is_empty() {
+        let ArchiveSaveRequest {
+            archive,
+            stamp,
+            plan,
+            password,
+        } = request;
+        if plan.is_empty() {
             return;
         }
-        let count = sources.len();
+        let count = plan.change_count();
         let name = archive
             .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
+            .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| tr!("archive").to_string());
         let reload = archive
             .parent()
-            .map(|p| p.to_path_buf())
+            .map(|parent| parent.to_path_buf())
             .unwrap_or_else(|| self.active_tab().current_dir.clone());
         self.spawn_archive_op(
             reload,
             move |progress, cancel| {
-                let targets: Vec<&std::path::Path> = sources.iter().map(|p| p.as_path()).collect();
-                let opts = ferail_fs_native::CreateOptions {
-                    level: Default::default(),
-                    password: password.as_deref(),
-                };
-                let outcome =
-                    ferail_fs_native::add_to_archive(&archive, &targets, opts, progress, cancel)
-                        .map_err(|e| e.to_string())?;
-                // Names already in the archive are skipped rather than
-                // shadowed — say so instead of reporting a clean success.
-                if !outcome.skipped_existing.is_empty() && outcome.added == 0 {
-                    return Err(tr!(
-                        "Already in the archive: {names}",
-                        names = outcome.skipped_existing.join(", ")
-                    )
-                    .to_string());
-                }
+                ferail_fs_native::commit_archive_edits(
+                    &archive,
+                    stamp,
+                    &plan,
+                    ferail_fs_native::CreateOptions {
+                        level: Default::default(),
+                        password: password.as_deref(),
+                    },
+                    progress,
+                    cancel,
+                )
+                .map_err(|error| error.to_string())?;
                 Ok(Vec::new())
             },
-            tr!("Add to archive"),
-            trn!(
-                "Adding {n} item to {archive}",
-                "Adding {n} items to {archive}",
-                count,
-                archive = name
-            )
-            .to_string(),
+            tr!("Save archive"),
+            tr!("Saving {archive}", archive = name).to_string(),
             FileOpSuccessToast::IfSurfaced(
                 trn!(
-                    "Added {n} item to {archive}",
-                    "Added {n} items to {archive}",
+                    "Saved {n} change to {archive}",
+                    "Saved {n} changes to {archive}",
                     count,
                     archive = name
                 )
                 .to_string(),
             ),
-            // The archive is modified in place, so there is nothing created to
-            // remove; undoing an add would mean rewriting the archive without
-            // those entries, which the engine can't do yet.
             FileOpUndo::None,
-            on_done,
+            on_settled,
             window,
             cx,
         );
@@ -3292,6 +3306,125 @@ impl Shell {
             .map(|(_, _, path)| path)
             .collect();
         crate::archive_create::open_dialog(sources, window, cx);
+    }
+
+    /// Open the Convert Archive dialog for the first selected file.
+    pub(super) fn on_convert_archive(
+        &mut self,
+        _: &ConvertArchive,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let source = self
+            .action_entries_visible_order(cx)
+            .into_iter()
+            .find(|(_, entry, _)| !matches!(entry.kind, ferail_core::EntryKind::Directory))
+            .map(|(_, _, path)| path);
+        let Some(source) = source else {
+            return;
+        };
+        crate::trail::command("Convert Archive");
+        let source_format = ferail_archive::Format::from_path(&source.to_string_lossy());
+        let shell = cx.entity();
+        let app: &mut App = std::borrow::BorrowMut::borrow_mut(cx);
+        crate::archive_convert::open_dialog(source, source_format, None, shell, window, app);
+    }
+
+    /// Run a dialog-confirmed archive conversion on the background executor.
+    pub(crate) fn convert_archive_from(
+        &mut self,
+        request: crate::archive_convert::ArchiveConversionRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let crate::archive_convert::ArchiveConversionRequest {
+            source,
+            output_stem,
+            target,
+            level,
+            input_password,
+            output_password,
+        } = request;
+        let source_name = source
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| tr!("archive").to_string());
+        let target_label = target.label();
+        let reload = source
+            .parent()
+            .map(|parent| parent.to_path_buf())
+            .unwrap_or_else(|| self.active_tab().current_dir.clone());
+        let task_source = source_name.clone();
+        self.spawn_archive_op(
+            reload,
+            move |progress, cancel| {
+                let outcome = ferail_fs_native::convert_archive(
+                    &source,
+                    &output_stem,
+                    ferail_fs_native::ConvertOptions {
+                        target,
+                        level,
+                        input_password: input_password.as_deref(),
+                        output_password: output_password.as_deref(),
+                    },
+                    progress,
+                    cancel,
+                )
+                .map_err(|error| match error {
+                    ferail_fs_native::ArchiveError::ConversionTargetUnsupported(format) => tr!(
+                        "{format} is not a supported conversion target.",
+                        format = format.label()
+                    )
+                    .to_string(),
+                    ferail_fs_native::ArchiveError::ConversionEncryptionUnsupported(format) => tr!(
+                        "{format} archives cannot be password-encrypted when they are created.",
+                        format = format.label()
+                    )
+                    .to_string(),
+                    ferail_fs_native::ArchiveError::ConversionUnsafeEntries(count) => trn!(
+                        "Conversion stopped because {n} archive entry could not be represented safely.",
+                        "Conversion stopped because {n} archive entries could not be represented safely.",
+                        count
+                    )
+                    .to_string(),
+                    ferail_fs_native::ArchiveError::ConversionSourceChanged => tr!(
+                        "The source archive changed while it was being converted. Try again."
+                    )
+                    .to_string(),
+                    ferail_fs_native::ArchiveError::ConversionInvalidName => tr!(
+                        "The converted archive name must be a single non-empty filename."
+                    )
+                    .to_string(),
+                    ferail_fs_native::ArchiveError::PasswordRequired => {
+                        tr!("The source archive requires a password.").to_string()
+                    }
+                    ferail_fs_native::ArchiveError::WrongPassword => {
+                        tr!("The source archive password is incorrect.").to_string()
+                    }
+                    error => error.to_string(),
+                })?;
+                Ok(vec![outcome.output])
+            },
+            tr!("Convert archive"),
+            tr!(
+                "Converting {archive} to {format}",
+                archive = task_source,
+                format = target_label
+            )
+            .to_string(),
+            FileOpSuccessToast::Always(
+                tr!(
+                    "Converted {archive} to {format}",
+                    archive = source_name,
+                    format = target_label
+                )
+                .to_string(),
+            ),
+            FileOpUndo::RemoveCreatedResult,
+            None,
+            window,
+            cx,
+        );
     }
 
     /// Create `output` from `sources` with the dialog's chosen options.
@@ -3534,11 +3667,9 @@ impl Shell {
         task_label: String,
         success_toast: FileOpSuccessToast,
         undo: FileOpUndo,
-        // Runs on the UI thread after a successful, non-cancelled op — used
-        // by surfaces that must refresh state the directory reload doesn't
-        // cover (e.g. the archive workbench re-reading its table of contents
-        // after entries were added).
-        on_success: Option<ArchiveOpDone>,
+        // Runs exactly once after success, failure, or cancellation. `true`
+        // means the operation committed successfully.
+        on_settled: Option<ArchiveOpSettled>,
         window: &Window,
         cx: &mut Context<Self>,
     ) {
@@ -3659,9 +3790,9 @@ impl Shell {
                     };
                     if error.is_none() && !cancelled {
                         undo.push(this, created_for_undo);
-                        if let Some(done) = on_success {
-                            done(this, cx);
-                        }
+                    }
+                    if let Some(settled) = on_settled {
+                        settled(error.is_none() && !cancelled, this, cx);
                     }
                     cx.notify();
                     surfaced
@@ -3725,7 +3856,8 @@ impl Shell {
                     }
                     crate::log_warn!(90, "{failure_label} failed: {e}");
                     let _ = win.update(cx, |_, window, cx| {
-                        window.push_notification(file_op_error_notification(&failure_label, &e), cx);
+                        window
+                            .push_notification(file_op_error_notification(&failure_label, &e), cx);
                     });
                 }
             }
@@ -3762,7 +3894,10 @@ impl Shell {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| dest_parent.to_string_lossy().into_owned());
         let success = if count == 1 {
-            tr!("Extracted to {dest} \u{2014} click to show", dest = dest_name)
+            tr!(
+                "Extracted to {dest} \u{2014} click to show",
+                dest = dest_name
+            )
         } else {
             trn!(
                 "Extracted {n} archive to {dest} \u{2014} click to show",
@@ -3855,11 +3990,261 @@ impl Shell {
         );
     }
 
-    /// Cherry-pick extraction (used by the archive workbench): extract the
-    /// given `entries` of `archive` into a fresh `" 2"`-deduped folder named
-    /// after the archive, under `dest_parent`. Off-thread through
-    /// `spawn_file_op`, so it gets a task row / toast / undo like every other
-    /// file op.
+    /// Add dropped files/folders to an existing archive **file** — the
+    /// drag-and-drop twin of opening the archive and dropping into its
+    /// workbench. Only formats whose capability row allows in-place editing
+    /// (ZIP today) reach here; callers gate on
+    /// [`crate::file_list::archive_accepts_drops`] and refuse the rest with
+    /// visible feedback rather than silently doing nothing.
+    ///
+    /// Nothing is inspected on the UI thread: the worker walks the dropped
+    /// sources, appends them, and reports duplicates it left alone (a repeated
+    /// name would shadow the original rather than replace it).
+    pub(crate) fn add_paths_to_archive(
+        &mut self,
+        archive: PathBuf,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if paths.is_empty() {
+            return;
+        }
+        let count = paths.len();
+        let archive_name = archive
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| tr!("archive").to_string());
+        let task_label = trn!("Adding {n} item", "Adding {n} items", count);
+        let success = trn!(
+            "Added {n} item to {archive}",
+            "Added {n} items to {archive}",
+            count,
+            archive = archive_name.clone()
+        );
+        // Reload the folder holding the archive: its size/date change.
+        let reload = archive
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.active_tab().current_dir.clone());
+        let archive_for_op = archive.clone();
+        // Names the worker left alone because the archive already had them.
+        // Read back on the UI thread once the op settles, so a partly-skipped
+        // drop says so instead of a success toast implying everything landed.
+        let skipped_for_op = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let skipped_for_settled = skipped_for_op.clone();
+        let settle_window = window.window_handle();
+        self.spawn_archive_op(
+            reload,
+            move |progress, cancel| {
+                let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
+                let opts = ferail_fs_native::CreateOptions {
+                    level: ferail_archive::CompressionLevel::Normal,
+                    password: None,
+                };
+                let outcome = ferail_fs_native::add_to_archive(
+                    &archive_for_op,
+                    &refs,
+                    opts,
+                    progress,
+                    cancel,
+                )
+                .map_err(|e| e.to_string())?;
+                if outcome.added == 0 && !outcome.skipped_existing.is_empty() {
+                    return Err(tr!("Every dropped item is already in the archive").to_string());
+                }
+                if let Ok(mut slot) = skipped_for_op.lock() {
+                    *slot = outcome.skipped_existing;
+                }
+                // The archive file itself is the "created result": undoing a
+                // botched drop would need the pre-add bytes, which we do not
+                // keep, so this op is deliberately not undoable.
+                Ok(Vec::new())
+            },
+            tr!("Add to Archive"),
+            task_label.to_string(),
+            FileOpSuccessToast::Always(success.to_string()),
+            FileOpUndo::None,
+            Some(Box::new(move |committed, _shell, cx| {
+                if !committed {
+                    return;
+                }
+                let names = skipped_for_settled
+                    .lock()
+                    .map(|slot| slot.clone())
+                    .unwrap_or_default();
+                if names.is_empty() {
+                    return;
+                }
+                // Some items landed and some did not: name the ones that were
+                // already in the archive rather than letting the success toast
+                // speak for the whole drop.
+                let detail = names.join(", ");
+                let message = trn!(
+                    "{n} item was already in the archive and was left alone: {names}",
+                    "{n} items were already in the archive and were left alone: {names}",
+                    names.len(),
+                    names = detail
+                );
+                // Deferred so it lands after the op's own success toast
+                // rather than racing it.
+                cx.defer(move |cx| {
+                    let _ = settle_window.update(cx, |_, window, cx| {
+                        window.push_notification(
+                            gpui_component::notification::Notification::warning(
+                                message.to_string(),
+                            ),
+                            cx,
+                        );
+                    });
+                });
+            })),
+            window,
+            cx,
+        );
+    }
+
+    /// Members dragged out of one archive and dropped on **another archive**:
+    /// add them to it. The two halves already exist — cherry-pick extraction
+    /// and append — so this stages the members into a private directory beside
+    /// the target, appends them by leaf name (the shape a Finder drop of the
+    /// same members produces), and removes the staging directory on every
+    /// path. Nothing is decoded or written on the UI thread.
+    pub(crate) fn add_archive_entries_to_archive(
+        &mut self,
+        source_archive: PathBuf,
+        entries: Vec<String>,
+        password: Option<String>,
+        target_archive: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+        // Dropping an archive's members back onto that same archive would mean
+        // reading and appending the same file at once; treat it as a cancelled
+        // drag, exactly as the workbench does for its own rows.
+        if source_archive == target_archive {
+            return;
+        }
+        let count = entries.len();
+        let archive_name = target_archive
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| tr!("archive").to_string());
+        let task_label = trn!("Adding {n} item", "Adding {n} items", count);
+        let success = trn!(
+            "Added {n} item to {archive}",
+            "Added {n} items to {archive}",
+            count,
+            archive = archive_name
+        );
+        let reload = target_archive
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.active_tab().current_dir.clone());
+        let target_for_op = target_archive.clone();
+        self.spawn_archive_op(
+            reload,
+            move |progress, cancel| {
+                let parent = target_for_op.parent().ok_or_else(|| {
+                    tr!("The archive has no parent folder").to_string()
+                })?;
+                let staging = {
+                    let mut n = 0u32;
+                    loop {
+                        let candidate =
+                            parent.join(format!(".ferail-add-{}-{n}", std::process::id()));
+                        if !candidate.exists() {
+                            break candidate;
+                        }
+                        n += 1;
+                    }
+                };
+                std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+                let cleanup = |result: Result<Vec<PathBuf>, String>| {
+                    let _ = std::fs::remove_dir_all(&staging);
+                    result
+                };
+
+                let entry_refs: Vec<&str> = entries.iter().map(|s| s.as_str()).collect();
+                let extract_opts = ferail_fs_native::ExtractOptions {
+                    password: password.as_deref(),
+                    overwrite: false,
+                };
+                if let Err(e) = ferail_fs_native::extract_archive_entries(
+                    &source_archive,
+                    &staging,
+                    &entry_refs,
+                    extract_opts,
+                    progress,
+                    cancel,
+                ) {
+                    return cleanup(Err(e.to_string()));
+                }
+
+                // Extraction keeps each member's path *inside* its source
+                // archive, so collect the dragged entries themselves — a
+                // member picked out of an inner folder is added by its leaf.
+                let mut staged: Vec<PathBuf> = Vec::with_capacity(entries.len());
+                for entry in &entries {
+                    let relative = entry.trim_end_matches('/');
+                    let path = relative
+                        .split('/')
+                        .fold(staging.clone(), |acc, part| acc.join(part));
+                    if path.exists() {
+                        staged.push(path);
+                    }
+                }
+                if staged.is_empty() {
+                    return cleanup(Err(tr!("Nothing could be read from the archive").to_string()));
+                }
+
+                let refs: Vec<&std::path::Path> = staged.iter().map(|p| p.as_path()).collect();
+                let add_opts = ferail_fs_native::CreateOptions {
+                    level: ferail_archive::CompressionLevel::Normal,
+                    password: None,
+                };
+                let outcome = match ferail_fs_native::add_to_archive(
+                    &target_for_op,
+                    &refs,
+                    add_opts,
+                    progress,
+                    cancel,
+                ) {
+                    Ok(outcome) => outcome,
+                    Err(e) => return cleanup(Err(e.to_string())),
+                };
+                if outcome.added == 0 && !outcome.skipped_existing.is_empty() {
+                    return cleanup(Err(tr!(
+                        "Every dropped item is already in the archive"
+                    )
+                    .to_string()));
+                }
+                cleanup(Ok(Vec::new()))
+            },
+            tr!("Add to Archive"),
+            task_label.to_string(),
+            FileOpSuccessToast::Always(success.to_string()),
+            FileOpUndo::None,
+            None,
+            window,
+            cx,
+        );
+    }
+
+    /// Cherry-pick extraction (used by the archive workbench and by dropping
+    /// archive members onto a folder): write each dragged entry into
+    /// `dest_parent` **by its leaf name**, exactly as a Finder drop of the
+    /// same members does — `alpha.txt` lands as `dest/alpha.txt`, a dragged
+    /// folder brings its subtree, and nothing is wrapped in an extra folder
+    /// named after the archive. Extraction stages inside `dest_parent` first
+    /// (same volume, so publishing is a rename) and an existing name is
+    /// deduped `name (2)` rather than overwritten.
+    ///
+    /// Off-thread through `spawn_file_op`, so it gets a task row / toast /
+    /// undo like every other file op.
     pub(crate) fn extract_archive_entries_into(
         &mut self,
         archive: PathBuf,
@@ -3890,32 +4275,92 @@ impl Shell {
         self.spawn_archive_op(
             dest_parent.clone(),
             move |progress, cancel| {
-                let stem = archive
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Extracted".to_string());
-                let mut dest = dest_parent.join(&stem);
-                let mut n = 2;
-                while dest.exists() {
-                    dest = dest_parent.join(format!("{stem} {n}"));
-                    n += 1;
+                /// First free `name`, `name (2)`, … in `dir`.
+                fn unique_in(dir: &std::path::Path, name: &str) -> PathBuf {
+                    let candidate = dir.join(name);
+                    if !candidate.exists() {
+                        return candidate;
+                    }
+                    let (stem, ext) = match name.rsplit_once('.') {
+                        Some((s, e)) if !s.is_empty() => (s, Some(e)),
+                        _ => (name, None),
+                    };
+                    for n in 2u32.. {
+                        let alt = match ext {
+                            Some(e) => dir.join(format!("{stem} ({n}).{e}")),
+                            None => dir.join(format!("{stem} ({n})")),
+                        };
+                        if !alt.exists() {
+                            return alt;
+                        }
+                    }
+                    unreachable!()
                 }
-                std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+
+                // Extraction preserves each member's path *inside the
+                // archive*, so it runs into a private staging directory and
+                // only the dragged entries themselves are published — a
+                // member picked out of `sub/` must land beside its siblings
+                // in the destination, not recreate `sub/`.
+                let staging = {
+                    let mut n = 0u32;
+                    loop {
+                        let candidate = dest_parent.join(format!(
+                            ".ferail-extract-{}-{n}",
+                            std::process::id()
+                        ));
+                        if !candidate.exists() {
+                            break candidate;
+                        }
+                        n += 1;
+                    }
+                };
+                std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+                // Any early return past this point must not leave the
+                // staging directory behind.
+                let cleanup = |result: Result<Vec<PathBuf>, String>| {
+                    let _ = std::fs::remove_dir_all(&staging);
+                    result
+                };
+
                 let entry_refs: Vec<&str> = entries.iter().map(|s| s.as_str()).collect();
                 let opts = ferail_fs_native::ExtractOptions {
                     password: password.as_deref(),
                     overwrite: false,
                 };
-                ferail_fs_native::extract_archive_entries(
+                if let Err(e) = ferail_fs_native::extract_archive_entries(
                     &archive,
-                    &dest,
+                    &staging,
                     &entry_refs,
                     opts,
                     progress,
                     cancel,
-                )
-                .map_err(|e| e.to_string())?;
-                Ok(vec![dest])
+                ) {
+                    return cleanup(Err(e.to_string()));
+                }
+
+                let mut created = Vec::with_capacity(entries.len());
+                for entry in &entries {
+                    // Archive paths are '/'-separated regardless of host.
+                    let relative = entry.trim_end_matches('/');
+                    let Some(leaf) = relative.rsplit('/').next().filter(|l| !l.is_empty()) else {
+                        continue;
+                    };
+                    let staged = relative
+                        .split('/')
+                        .fold(staging.clone(), |path, part| path.join(part));
+                    // A member the extractor skipped (zip-slip guard, link
+                    // entry, cancelled midway) simply has nothing to publish.
+                    if !staged.exists() {
+                        continue;
+                    }
+                    let target = unique_in(&dest_parent, leaf);
+                    if let Err(e) = std::fs::rename(&staged, &target) {
+                        return cleanup(Err(e.to_string()));
+                    }
+                    created.push(target);
+                }
+                cleanup(Ok(created))
             },
             tr!("Extract"),
             task_label.to_string(),
