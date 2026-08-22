@@ -1218,6 +1218,11 @@ fn language_group() -> SettingGroup {
                                     .outline()
                                     .small()
                                     .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, _window, _cx| {
+                                        // ~35 languages: taller than the settings window.
+                                        // Scrollable with a capped height so the tail
+                                        // (Polish … Vietnamese) is reachable instead of
+                                        // clipped at the window edge.
+                                        let menu = menu.scrollable(true).max_h(px(360.));
                                         i18n::PRESET_LANGUAGES.iter().fold(menu, |menu, (code, name, english)| {
                                             let (code, name, english) = (*code, *name, *english);
                                             menu.item(
