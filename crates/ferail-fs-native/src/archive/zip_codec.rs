@@ -334,6 +334,11 @@ pub(super) fn append(
 
     let output = writer.finish().map_err(map_zip_err)?;
     output.sync_all()?;
+    // Windows refuses to replace a file that anyone still has open, so the
+    // staged archive's handle must be closed *before* the swap — otherwise
+    // `ReplaceFileW` fails with ERROR_SHARING_VIOLATION. Unix does not care,
+    // but the close belongs here on every platform.
+    drop(output);
     std::fs::set_permissions(&temp, std::fs::metadata(archive)?.permissions())?;
     copy_extended_attributes(archive, &temp)?;
 
@@ -454,6 +459,11 @@ pub(super) fn rewrite(
 
     let output = writer.finish().map_err(map_zip_err)?;
     output.sync_all()?;
+    // Windows refuses to replace a file that anyone still has open, so the
+    // staged archive's handle must be closed *before* the swap — otherwise
+    // `ReplaceFileW` fails with ERROR_SHARING_VIOLATION. Unix does not care,
+    // but the close belongs here on every platform.
+    drop(output);
     std::fs::set_permissions(&temp, std::fs::metadata(archive)?.permissions())?;
     copy_extended_attributes(archive, &temp)?;
 

@@ -592,6 +592,10 @@ pub(crate) fn take_native_archive_drag() -> Option<ArchiveEntryDrag> {
     NATIVE_ARCHIVE_DRAG.with(|drag| drag.borrow_mut().take())
 }
 
+/// Only the macOS promise-promotion path parks a payload here; on other
+/// platforms nothing starts a native archive session, so the setter is unused
+/// while its readers stay live.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn set_native_archive_drag(drag: Option<ArchiveEntryDrag>) {
     NATIVE_ARCHIVE_DRAG.with(|slot| *slot.borrow_mut() = drag);
 }
@@ -1642,6 +1646,12 @@ impl TableDelegate for FileListDelegate {
                             })
                         })
                         .external_drag_payload::<ArchiveEntryDrag>(|drag, window, cx| {
+                            // Promoting to a native promise session is macOS-only
+                            // (docs/GPUI-UPSTREAM.md #11). Elsewhere the payload
+                            // resolver has nothing to offer the platform, so the
+                            // arguments go unread.
+                            #[cfg(not(target_os = "macos"))]
+                            let _ = (drag, window, cx);
                             #[cfg(target_os = "macos")]
                             {
                                 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
