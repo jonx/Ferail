@@ -8,6 +8,20 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+No user-visible changes yet.
+
+## 0.5.0 — 2026-08-22
+
+Archives become a place you work, not just a list you look at. ZIPs have a
+transactional editing workbench, members drag out to Finder and to Ferail's own
+windows as native file promises, and files dragged the other way are added to a
+ZIP in place — every write staged and swapped in atomically, so a cancelled or
+failed operation leaves the original untouched. Ferail also speaks French and
+German now, with importable language packs for anything else, and it can check
+GitHub for a newer version when you ask it to (daily checks are opt-in; with
+them off it makes no network requests on its own). Crash and freeze reports
+survive the failures they describe.
+
 - **Crash and freeze reports are harder to lose or deadlock.** Rust panics now
   persist an essential crash report before collecting the full backtrace, and
   the independent freeze watchdog never waits on a diagnostic mutex that the
