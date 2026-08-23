@@ -1450,7 +1450,7 @@ impl DiskUsageView {
         }
         cx.background_spawn(async move {
             for (path, _, _) in &paths {
-                if let Err(e) = ferail_fs_native::open_with_default(path) {
+                if let Err(e) = crate::platform_shell::open_with_default(path) {
                     crate::log_warn!(90, "du open {}: {e}", path.display());
                 }
             }

@@ -142,6 +142,18 @@ pub fn open_url(url: &str) {
 #[cfg(not(target_os = "linux"))]
 pub fn open_url(_url: &str) {}
 
+/// Hand a filesystem item to the desktop's default application, detached from
+/// Ferail's stdio and reaped when the launcher exits.
+#[cfg(target_os = "linux")]
+pub fn open_with_default(path: &Path) -> std::io::Result<()> {
+    spawn_detached(std::process::Command::new("xdg-open").arg(path))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn open_with_default(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 /// Reveal a path in the user's file manager. Tries the cross-desktop D-Bus
 /// `org.freedesktop.FileManager1.ShowItems` (Nautilus/Dolphin/Nemo/Files all
 /// implement it, and it highlights the item in its parent), falling back to

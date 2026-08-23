@@ -1052,7 +1052,7 @@ fn build_dialog(dialog: Dialog, cx: &App) -> Dialog {
                             .on_click(move |_, window, cx| {
                                 let p = open_path.clone();
                                 cx.background_spawn(async move {
-                                    if let Err(e) = ferail_fs_native::open_with_default(&p) {
+                                    if let Err(e) = crate::platform_shell::open_with_default(&p) {
                                         crate::log_warn!(90, "open downloaded update failed: {e}");
                                     }
                                 })

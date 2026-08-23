@@ -410,46 +410,6 @@ impl FsBackend for NativeFs {
     }
 }
 
-/// Hand `path` to the OS for default-app open. macOS: `open(1)`. Windows:
-/// `cmd /C start`. Linux: `xdg-open`. Returns `Err` only if the launcher
-/// itself failed to start; we can't tell whether the OS chose to do
-/// anything useful with it.
-#[cfg(target_os = "macos")]
-pub fn open_with_default(path: &Path) -> std::io::Result<()> {
-    std::process::Command::new("open")
-        .arg(path)
-        .spawn()
-        .map(|_| ())
-}
-
-#[cfg(target_os = "windows")]
-pub fn open_with_default(path: &Path) -> std::io::Result<()> {
-    std::process::Command::new("cmd")
-        .args(["/C", "start", "", path.to_string_lossy().as_ref()])
-        .spawn()
-        .map(|_| ())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub fn open_with_default(path: &Path) -> std::io::Result<()> {
-    use std::process::Stdio;
-    // Null stdio so the child can't block on inherited pipes, and reap it
-    // from a short-lived thread so it doesn't linger as a zombie
-    // (`xdg-open` hands off and exits quickly).
-    let mut child = std::process::Command::new("xdg-open")
-        .arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let _ = std::thread::Builder::new()
-        .name("child-reaper".into())
-        .spawn(move || {
-            let _ = child.wait();
-        });
-    Ok(())
-}
-
 /// Move `path` into the user's Trash, with the OS's full Trash
 /// semantics: undo (`Cmd+Z` in Finder), audible feedback, the Trash
 /// icon's bounce-into animation, and the proper per-volume `.Trashes`

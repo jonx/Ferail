@@ -390,9 +390,9 @@ interpreter operation.
 
 **Work.**
 
-- [ ] Move Windows default open to `ShellExecuteExW`/Shell Item invocation with
+- [~] Move Windows default open to `ShellExecuteExW`/Shell Item invocation with
   the explicit `open`/default verb and a shell-safe path.
-- [ ] Centralize the lossless conversion of drive and UNC verbatim paths at
+- [~] Centralize the lossless conversion of drive and UNC verbatim paths at
   every outward Shell boundary; keep verbatim paths internally for filesystem
   correctness.
 - [ ] Treat directories, files, shortcuts, URLs, and namespace items as
@@ -415,11 +415,11 @@ API and is fragile around quoting, namespace items, and some path forms.
 
 **Work.**
 
-- [ ] Replace the command line with `SHOpenFolderAndSelectItems` using Shell
+- [~] Replace the command line with `SHOpenFolderAndSelectItems` using Shell
   Items/PIDLs, following the working Filociraptor pattern.
-- [ ] Reveal directories by opening/selecting according to Explorer semantics;
+- [~] Reveal directories by opening/selecting according to Explorer semantics;
   reveal files through parent + child identity.
-- [ ] Support drive, UNC, special-character, long, and namespace targets.
+- [~] Support drive, UNC, special-character, long, and namespace targets.
 - [ ] Fall back to opening the closest valid parent and explain when an item no
   longer exists.
 

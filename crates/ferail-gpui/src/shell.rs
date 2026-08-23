@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use ferail_core::favorites::FavoriteState;
 use ferail_core::{EntryKind, EnumerationError, FileEntry, NodeId};
-use ferail_fs_native::{NativeFs, home_dir, open_with_default};
+use ferail_fs_native::{NativeFs, home_dir};
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, Root, Selectable, Sizable, TitleBar, WindowExt,
@@ -2617,12 +2617,21 @@ impl Shell {
             window,
             cx,
             move |this, window, cx| {
+                let mut files = Vec::new();
                 for (_, entry, path) in entries {
                     if matches!(entry.kind, EntryKind::Directory) {
                         this.open_path_in_new_tab(path, window, cx);
                     } else {
-                        let _ = open_with_default(&path);
+                        files.push(path);
                     }
+                }
+                if !files.is_empty() {
+                    cx.background_spawn(async move {
+                        for path in files {
+                            let _ = crate::platform_shell::open_with_default(&path);
+                        }
+                    })
+                    .detach();
                 }
             },
         );
@@ -6382,10 +6391,14 @@ impl Shell {
         match kind {
             EntryKind::Directory => self.navigate(path, cx),
             EntryKind::File | EntryKind::Symlink => {
-                // open_with_default routes through `open(1)` on macOS;
-                // failures are logged-and-ignored — the user already
-                // gets system-level feedback if the app can't open.
-                let _ = open_with_default(&path);
+                // Platform Shell owns default invocation: `open(1)` on macOS,
+                // ShellExecuteExW on Windows, and xdg-open on Linux. All can
+                // cross slow association/provider boundaries, so even this
+                // single-file action stays off the UI thread.
+                cx.background_spawn(async move {
+                    let _ = crate::platform_shell::open_with_default(&path);
+                })
+                .detach();
             }
         }
     }

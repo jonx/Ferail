@@ -358,19 +358,66 @@ pub fn pick_folder() -> Option<std::path::PathBuf> {
     None
 }
 
-/// Open `url` in the default handler. macOS uses NSWorkspace; Linux
-/// `xdg-open`. Windows: `ShellExecuteW`. Today: shell out to
-/// `cmd /C start` which works on every Windows host without an
-/// external crate dep.
+/// Open a URL in its registered Windows handler. This deliberately uses the
+/// Shell API rather than `cmd /C start`: `cmd` adds a second quoting/parser
+/// layer and can reinterpret metacharacters in an otherwise valid URL.
 #[cfg(windows)]
 pub fn open_url(url: &str) {
-    let _ = std::process::Command::new("cmd")
-        .args(["/C", "start", "", url])
-        .spawn();
+    let _ = shell_execute_open(std::ffi::OsStr::new(url), None);
 }
 
 #[cfg(not(windows))]
 pub fn open_url(_url: &str) {}
+
+/// Open a filesystem item with its registered `open` verb. Shell-facing paths
+/// are converted out of Rust's `\\?\` canonical form first; the filesystem
+/// keeps the verbatim form internally for long-path correctness.
+#[cfg(windows)]
+pub fn open_with_default(path: &std::path::Path) -> std::io::Result<()> {
+    let cleaned = strip_verbatim(path);
+    let working_dir = cleaned.parent().map(std::path::Path::as_os_str);
+    shell_execute_open(cleaned.as_os_str(), working_dir)
+}
+
+#[cfg(not(windows))]
+pub fn open_with_default(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn shell_execute_open(
+    target: &std::ffi::OsStr,
+    working_dir: Option<&std::ffi::OsStr>,
+) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW};
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let target_w: Vec<u16> = target.encode_wide().chain(std::iter::once(0)).collect();
+    let verb_w: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+    let dir_w = working_dir.map(|dir| {
+        dir.encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>()
+    });
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        // We run on a background worker. NOASYNC makes the Shell finish any
+        // DDE/association hand-off before these UTF-16 buffers go out of scope;
+        // it does not wait for the launched application to exit.
+        fMask: SEE_MASK_NOASYNC,
+        lpVerb: PCWSTR::from_raw(verb_w.as_ptr()),
+        lpFile: PCWSTR::from_raw(target_w.as_ptr()),
+        lpDirectory: dir_w
+            .as_ref()
+            .map_or(PCWSTR::null(), |dir| PCWSTR::from_raw(dir.as_ptr())),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    unsafe { ShellExecuteExW(&mut info) }
+        .map_err(|e| std::io::Error::other(format!("Windows open failed: {e}")))
+}
 
 // =============================================================
 // Clipboard / reveal
@@ -447,20 +494,85 @@ pub fn app_bundle_path() -> Option<String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
-/// Open the OS file browser with `path` selected. macOS: `open -R`.
-/// Windows: `explorer.exe /select,<path>`.
+/// Open Explorer with `path` selected. Uses an absolute PIDL for the parent and
+/// a relative child PIDL—the identity-preserving API Explorer itself exposes.
+/// This avoids `explorer /select,<path>` command-line parsing, which silently
+/// opened Documents for some valid names containing spaces / `#` / `!`.
 #[cfg(windows)]
 pub fn reveal_in_finder(path: &std::path::Path) {
-    // `explorer /select,` rejects the `\\?\` verbatim form and falls back
-    // to opening a default folder instead of selecting the item.
-    let cleaned = strip_verbatim(path);
-    let _ = std::process::Command::new("explorer")
-        .arg(format!("/select,{}", cleaned.display()))
-        .spawn();
+    let _ = reveal_in_explorer(path);
 }
 
 #[cfg(not(windows))]
 pub fn reveal_in_finder(_path: &std::path::Path) {}
+
+#[cfg(windows)]
+fn reveal_in_explorer(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::Common::ITEMIDLIST;
+    use windows::Win32::UI::Shell::{
+        ILClone, ILFindLastID, ILFree, ILRemoveLastID, SHOpenFolderAndSelectItems,
+        SHParseDisplayName,
+    };
+
+    struct Pidl(*mut ITEMIDLIST);
+    impl Drop for Pidl {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { ILFree(Some(self.0.cast_const())) };
+            }
+        }
+    }
+
+    let cleaned = strip_verbatim(path);
+    let path_w: Vec<u16> = cleaned
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        // Background executors may already be MTA. RPC_E_CHANGED_MODE means COM
+        // is initialized in that apartment and the Shell call can proceed; only
+        // balance CoUninitialize when this call actually initialized/incremented
+        // COM for the thread.
+        let co = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let we_initialized = co.is_ok();
+        let result = (|| -> std::io::Result<()> {
+            let mut absolute = std::ptr::null_mut();
+            SHParseDisplayName(
+                PCWSTR::from_raw(path_w.as_ptr()),
+                None,
+                &mut absolute,
+                0,
+                None,
+            )
+            .map_err(|e| std::io::Error::other(format!("parse Shell item: {e}")))?;
+            if absolute.is_null() {
+                return Err(std::io::Error::other("Shell returned an empty item id"));
+            }
+            let parent = Pidl(absolute);
+
+            let child = Pidl(ILClone(ILFindLastID(parent.0)));
+            if child.0.is_null() {
+                return Err(std::io::Error::other("could not clone child item id"));
+            }
+            if !ILRemoveLastID(Some(parent.0)).as_bool() {
+                return Err(std::io::Error::other("Shell item has no revealable parent"));
+            }
+
+            let children = [child.0.cast_const()];
+            SHOpenFolderAndSelectItems(parent.0.cast_const(), Some(&children), 0)
+                .map_err(|e| std::io::Error::other(format!("reveal in Explorer: {e}")))
+        })();
+        if we_initialized {
+            CoUninitialize();
+        }
+        result
+    }
+}
 
 /// Open a terminal at `path` (a directory) with the default spec:
 /// Windows Terminal, `wt.exe -d <dir>`. See [`open_terminal_with`].

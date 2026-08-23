@@ -14,6 +14,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   smaller whole-machine share. Windows now uses Task Manager's normalization,
   and the ambiguous `rps` label is now an explicit, localized `redraws/s`.
 
+- **Windows opens and reveals difficult paths through the Shell instead of a
+  command line.** Double-click no longer routes files through `cmd /C start`,
+  which could select the wrong verb, and Reveal in Explorer now uses PIDL
+  identity instead of an `/select,` string that failed on valid names with
+  spaces or characters such as `#`, `é`, and `!`.
+
 ## 0.6.5 — 2026-08-23
 
 - **Include Subfolders — every file under this folder, in one list.** A third

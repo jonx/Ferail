@@ -40,6 +40,7 @@ windows = { version = "0.58", features = [
     # IShellItemImageFactory + GDI GetDIBits; SHGetFileInfoW (read_shell_info);
     # eject_volume → CreateFileW + FILE_SHARE_* + OPEN_EXISTING
     "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
     "Win32_Storage_FileSystem",
     # CreateFileW's SECURITY_ATTRIBUTES param
     "Win32_Security",

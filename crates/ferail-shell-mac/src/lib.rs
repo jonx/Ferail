@@ -285,6 +285,22 @@ pub(crate) fn spawn_and_reap(cmd: &mut std::process::Command) -> std::io::Result
     Ok(())
 }
 
+/// Hand a filesystem item to its default application without blocking on the
+/// launched child. Kept in the platform-shell surface so Windows can use
+/// ShellExecute rather than inheriting a command-line implementation from the
+/// filesystem crate.
+#[cfg(target_os = "macos")]
+pub fn open_with_default(path: &std::path::Path) -> std::io::Result<()> {
+    let mut cmd = std::process::Command::new("open");
+    cmd.arg(path);
+    spawn_and_reap(&mut cmd)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn open_with_default(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 /// Open Finder with `path` selected. macOS: shells out to `open -R`.
 /// Non-macOS: no-op.
 #[cfg(target_os = "macos")]
