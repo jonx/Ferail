@@ -67,12 +67,12 @@ mod imp {
         STILL_ACTIVE,
     };
     use windows::Win32::System::RestartManager::{
-        RmEndSession, RmForceShutdown, RmGetList, RmRegisterResources, RmShutdown,
-        RmStartSession, CCH_RM_SESSION_KEY, RM_PROCESS_INFO, RM_UNIQUE_PROCESS,
+        RmEndSession, RmForceShutdown, RmGetList, RmRegisterResources, RmShutdown, RmStartSession,
+        CCH_RM_SESSION_KEY, RM_PROCESS_INFO, RM_UNIQUE_PROCESS,
     };
     use windows::Win32::System::Threading::{
-        GetExitCodeProcess, GetProcessTimes, OpenProcess, TerminateProcess,
-        WaitForSingleObject, INFINITE, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+        GetExitCodeProcess, GetProcessTimes, OpenProcess, TerminateProcess, WaitForSingleObject,
+        INFINITE, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
     };
     use windows::Win32::UI::Shell::{
         ShellExecuteExW, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SEE_MASK_NO_CONSOLE,
@@ -260,8 +260,7 @@ mod imp {
         let mut exit = FILETIME::default();
         let mut kernel = FILETIME::default();
         let mut user = FILETIME::default();
-        let got =
-            unsafe { GetProcessTimes(h, &mut creation, &mut exit, &mut kernel, &mut user) };
+        let got = unsafe { GetProcessTimes(h, &mut creation, &mut exit, &mut kernel, &mut user) };
         unsafe {
             let _ = CloseHandle(h);
         }

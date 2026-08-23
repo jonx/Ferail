@@ -187,6 +187,7 @@ fn install_binding(cx: &mut App, id: CommandId, kb_str: &str) {
         "view.sort_size" => {}
         "view.sort_kind" => {}
         "view.sort_modified" => {}
+        "view.sort_ant_trail" => {}
         "view.zoom_in" => cx.bind_keys([KeyBinding::new(kb_str, ZoomIn, ctx)]),
         "view.zoom_out" => cx.bind_keys([KeyBinding::new(kb_str, ZoomOut, ctx)]),
         "view.zoom_reset" => cx.bind_keys([KeyBinding::new(kb_str, ZoomReset, ctx)]),

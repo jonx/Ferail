@@ -63,6 +63,22 @@ relative to the daily value. Ordered by bang-for-buck.
 
 ## File List, Sidebar & Navigation
 
+- ✅ **Flat view — one recursive list with a Path column**
+  ([docs/features/FLAT_VIEW.md](docs/features/FLAT_VIEW.md)) — shipped as an
+  uncapped, cancellable files-only snapshot on the existing virtualized list.
+  It uses an explicit match-all walker, scan-local identities and a compact
+  per-directory path arena, so toggling it off releases every recursive path;
+  no Flat path enters `NodeStore` or `NativeFs`'s lifetime maps. Streaming
+  application is O(batch), filtering is snapshot-local, Refresh rescans, and
+  whole-list magic/folder-size workers stay off. The shared `FileEntry` payload
+  is down from 264 to 160 bytes, empty Flat decorations are no longer allocated,
+  names/directories/repeated display values share storage, and visible rows
+  retain viewport-scoped Format/Description/quarantine enrichment. Select All
+  is symbolic (`all except exceptions`), status/painting remain bounded, and
+  Copy File List yields between path batches. Remaining million-plus polish:
+  build sort/filter indexes off-thread, add segmented scroll geometry, and a
+  page-backed spill path for result sets larger than RAM. A dedicated sub-100
+  byte Flat row is deferred unless later measurements justify its complexity.
 - Finish the hover/focus/selected-state consistency audit. First pass shipped:
   the icon grid gained its missing hover wash (`table_hover`) and an
   out-of-range sort-icon `opacity(7.)` was fixed. Remaining is the larger
@@ -95,6 +111,46 @@ relative to the daily value. Ordered by bang-for-buck.
   `Done` message carries (counted before the text filter, so typing a filter
   doesn't perturb it). Optional follow-up: mirror the summary into folder Get
   Info via the Calculate walk.
+- **Open With — custom tools, “Other…”, and multi-selection**
+  ([docs/features/OPEN_WITH.md](docs/features/OPEN_WITH.md)). System handler
+  enumeration already ships on all three platforms behind the warm off-thread
+  cache. The gaps: the submenu is `SingleOnly` even though `open_with_slot`
+  already resolves the whole selection and calls `open_with_app_many`; an empty
+  candidate set hides the submenu entirely (an unknown extension gets *zero*
+  LaunchServices handlers — exactly when a specific tool is most wanted);
+  there is no “Other…” chooser (`gpui::PathPromptOptions` has no
+  type filter and a macOS `.app` is a directory, so this needs a platform
+  `NSOpenPanel` entry point); and no user-defined tools. The tool model should
+  be a sibling of `ferail_core::terminal::TerminalSpec` — program +
+  pre-split argv tokens + per-token placeholder substitution, argv never a
+  shell string — persisted as a shareable `tools.json` rather than in the
+  recreate-on-version-mismatch metadata DB, matched only against cached
+  `FileEntry` fields, and dispatched through closure-backed menu items (the
+  twelve `OpenWithSlot` actions don't extend). Phase 1 is the three cheap gaps;
+  custom tools follow.
+- **User-customizable context menus — hide the entries you never use**
+  ([docs/features/CONTEXT_MENU.md](docs/features/CONTEXT_MENU.md#customizing-which-entries-appear-planned)).
+  The table header already does exactly this for columns (✓/blank closure
+  items, persisted, with Reset), and `split_persisted_columns` supplies the
+  storage rules to copy: unknown keys ignored, unmentioned entries default to
+  visible, never let the set go empty. **Blocked on one prerequisite**: the
+  menus are imperative chains (`menu.menu(tr!("Rename…"), Box::new(…))`, ~40
+  row entries + 8 background), so an entry's identity is its Rust action type
+  — there is no action↔`CommandId` bridge and the labels are duplicated
+  against the catalogue. Build each menu from a
+  `(CommandId, Availability, label, action)` table instead; that also
+  de-duplicates the labels, makes the menus introspectable for the Cmd+K
+  palette / Shortcuts page, and is the same refactor user-defined tools need
+  ([OPEN_WITH.md](docs/features/OPEN_WITH.md) §5.6) — do it once for both.
+  Then: the editor picks a **surface** first (row, background, header,
+  breadcrumb, favorites, locations, recents, tree, treemap — visibility is per
+  `(surface, command)`); **separators collapse** in one post-pass over the
+  built item list (drop leading, collapse runs, drop trailing) rather than
+  per-`if` bookkeeping; and **menu-open cost must not rise** — parse the spec
+  once into memory (never a `load()` per entry, never I/O at menu-open time)
+  and resolve each entry by array index, which is cheaper than the `tr_raw`
+  every entry already pays for its label. Preference ANDs with `Availability`,
+  never overrides it.
 - Context-menu follow-ups: compact Finder-style tag swatch row, async Open With
   prewarm if cold-cache stutter appears, and per-target enable/disable rules for
   read-only volumes, missing files, and permission-denied targets.

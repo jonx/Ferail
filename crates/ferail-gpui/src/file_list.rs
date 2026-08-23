@@ -12,7 +12,7 @@ use crate::text::{IconScale as _, TextScale as _, TruncateMiddle as _};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -72,6 +72,46 @@ pub const GHOST_STACK_CAP: usize = 4;
 /// Max file names listed beside a multi-item drag stack before the rest
 /// collapse into a "+N more" line.
 pub const GHOST_NAME_CAP: usize = 3;
+
+/// A native drag pasteboard ultimately needs one URL per item. Keep row
+/// painting bounded when a Flat-view selection contains millions of files.
+pub const MAX_EAGER_DRAG_ITEMS: usize = 10_000;
+
+/// Elide a label to an approximate character budget while preserving the
+/// parts people use to distinguish long paths. Moderately overlong labels
+/// keep their beginning and end; very long ones also retain a sample from
+/// the centre: `beginning…middle…end`.
+fn elide_label(text: &str, max_chars: usize) -> SharedString {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max_chars || max_chars < 12 {
+        return SharedString::from(text.to_owned());
+    }
+
+    if chars.len() <= max_chars.saturating_mul(2) {
+        let content = max_chars.saturating_sub(1);
+        let start = content / 2;
+        let end = content - start;
+        return SharedString::from(format!(
+            "{}…{}",
+            chars[..start].iter().collect::<String>(),
+            chars[chars.len() - end..].iter().collect::<String>()
+        ));
+    }
+
+    let content = max_chars.saturating_sub(2);
+    let start = content / 3;
+    let middle = content / 3;
+    let end = content - start - middle;
+    let middle_start = chars.len() / 2 - middle / 2;
+    SharedString::from(format!(
+        "{}…{}…{}",
+        chars[..start].iter().collect::<String>(),
+        chars[middle_start..middle_start + middle]
+            .iter()
+            .collect::<String>(),
+        chars[chars.len() - end..].iter().collect::<String>()
+    ))
+}
 
 impl Render for DragBadge {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -291,14 +331,30 @@ pub fn resolve_menu_targets(
     selected: &HashSet<NodeId>,
     row_ix: usize,
 ) -> MenuTargets {
+    resolve_menu_targets_with_mode(entries, selected, false, row_ix)
+}
+
+fn resolve_menu_targets_with_mode(
+    entries: &[FileEntry],
+    selected: &HashSet<NodeId>,
+    selection_all: bool,
+    row_ix: usize,
+) -> MenuTargets {
     let Some(clicked) = entries.get(row_ix) else {
         return MenuTargets::default();
     };
     let anchor = TargetCap::from(clicked);
-    let caps = if selected.contains(&clicked.id) {
+    let is_selected = |id: NodeId| {
+        if selection_all {
+            !selected.contains(&id)
+        } else {
+            selected.contains(&id)
+        }
+    };
+    let caps = if is_selected(clicked.id) {
         entries
             .iter()
-            .filter(|e| selected.contains(&e.id))
+            .filter(|e| is_selected(e.id))
             .map(TargetCap::from)
             .collect()
     } else {
@@ -390,6 +446,21 @@ pub struct FileListDelegate {
     /// Rendering may read this cache, but must not call back into the
     /// filesystem resolver.
     pub paths: HashMap<NodeId, PathBuf>,
+    /// Compact path ownership for a recursive Flat surface. Each distinct
+    /// parent directory is stored once; rows keep only a u32 directory index,
+    /// and their scan-local NodeId encodes the insertion index. Dropping the
+    /// surface drops every path without touching process-global identity maps.
+    flat_paths: Option<FlatPathStore>,
+    /// Rows excluded by the current Flat filter. Visible and filtered rows
+    /// partition the snapshot, so filtering never duplicates the million-row
+    /// model and clearing the field never rescans the filesystem.
+    flat_filtered_entries: Vec<FileEntry>,
+    flat_filter_text: String,
+    /// At most one viewport detail worker runs per surface. Rapid scrolling
+    /// replaces this pending range instead of spawning an unbounded train of
+    /// magic/xattr workers for viewports the user has already left.
+    flat_detail_in_flight: bool,
+    flat_detail_pending: Option<Range<usize>>,
     /// Shared icon cache. Lookup-or-fetch via NSWorkspace; subsequent
     /// renders for the same kind are a HashMap hit. Wrapped in
     /// Rc<RefCell> so render_td's `&mut self` can borrow without
@@ -434,6 +505,9 @@ pub struct FileListDelegate {
     /// (not row-indexed) so sort/filter/streaming changes can
     /// reorder rows without desyncing the visual.
     pub selected_set: HashSet<NodeId>,
+    /// Compact complement representation used by a Flat-view Cmd+A.
+    /// When true, `selected_set` contains the deselected exceptions.
+    pub selection_all: bool,
     /// The keyboard-cursor / range-lead, mirrored from the active
     /// tab. At most one. Cosmetic only — the Table primitive's
     /// `selected_row` overlay is the visible focus ring.
@@ -679,6 +753,281 @@ struct DragSnapshot {
     icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]>,
 }
 
+/// Surface-local path arena for Flat View. Keeping complete relative parent
+/// paths per *directory* is deliberately simpler than a parent-chain arena and
+/// has the same useful asymptotic shape: real trees contain far fewer
+/// directories than entries, while action-time full-path reconstruction stays
+/// O(1) and never touches the filesystem.
+struct FlatPathStore {
+    root: PathBuf,
+    id_base: u64,
+    /// One UTF-8 relative path per distinct directory. The same `Arc` backs
+    /// both this stable arena and the append-time lookup table, so the scan
+    /// does not transiently duplicate every directory string. Recursive
+    /// enumeration already skips non-UTF-8 leaf names.
+    directories: Vec<Arc<str>>,
+    directory_index: Option<HashMap<Arc<str>, u32>>,
+    /// Surface-local canonical display sizes/types. These values repeat
+    /// heavily ("12.3 MB", "JPG", …); sharing them removes millions of tiny
+    /// allocations. The cap prevents hostile unique extensions from turning
+    /// the interner itself into an unbounded second row index.
+    display_texts: Option<HashSet<Arc<str>>>,
+    row_directories: Vec<u32>,
+    /// Shares the exact allocation held by `FileEntry::name`; this index is
+    /// needed after visible rows are sorted, but must not duplicate millions
+    /// of leaf-name allocations merely to reconstruct action paths.
+    row_names: Vec<Arc<str>>,
+    /// 0 = unseen, 1 = viewport worker in flight, 2 = derived. One byte per
+    /// row prevents repeated I/O without a path-keyed cache or HashSet.
+    detail_states: Vec<u8>,
+}
+
+impl FlatPathStore {
+    fn new(root: PathBuf, id_base: u64) -> Self {
+        Self {
+            root,
+            id_base,
+            directories: Vec::new(),
+            directory_index: Some(HashMap::new()),
+            display_texts: Some(HashSet::new()),
+            row_directories: Vec::new(),
+            row_names: Vec::new(),
+            detail_states: Vec::new(),
+        }
+    }
+
+    fn append(&mut self, entries: &[FileEntry], paths: &HashMap<NodeId, PathBuf>) {
+        let index = self
+            .directory_index
+            .as_mut()
+            .expect("flat path arena is appendable until scan completion");
+        self.row_directories.reserve(entries.len());
+        for entry in entries {
+            let relative = paths
+                .get(&entry.id)
+                .and_then(|path| path.parent())
+                .and_then(|parent| parent.strip_prefix(&self.root).ok())
+                .unwrap_or_else(|| Path::new(""));
+            let relative_text = relative.to_string_lossy();
+            let dir = if let Some(existing) = index.get(relative_text.as_ref()) {
+                *existing
+            } else {
+                let next = u32::try_from(self.directories.len())
+                    .expect("flat directory arena exceeds u32::MAX directories");
+                let relative: Arc<str> = relative_text.into_owned().into();
+                self.directories.push(relative.clone());
+                index.insert(relative, next);
+                next
+            };
+            self.row_directories.push(dir);
+            self.row_names.push(entry.name.clone());
+            self.detail_states.push(0);
+        }
+    }
+
+    fn intern_display_texts(&mut self, entries: &mut [FileEntry]) {
+        const MAX_INTERNED_TEXTS: usize = 65_536;
+        let texts = self
+            .display_texts
+            .as_mut()
+            .expect("flat text arena is appendable until scan completion");
+        for entry in entries {
+            for text in [&mut entry.display_size, &mut entry.display_kind] {
+                if let Some(canonical) = texts.get(text.as_ref()) {
+                    *text = canonical.clone();
+                } else if texts.len() < MAX_INTERNED_TEXTS {
+                    texts.insert(text.clone());
+                }
+            }
+        }
+    }
+
+    fn row_index(&self, id: NodeId) -> Option<usize> {
+        let offset = id.as_raw().checked_sub(self.id_base)?.checked_sub(1)?;
+        let row = usize::try_from(offset).ok()?;
+        (row < self.row_directories.len()).then_some(row)
+    }
+
+    fn path_for(&self, id: NodeId) -> Option<PathBuf> {
+        let row = self.row_index(id)?;
+        let dir = *self.row_directories.get(row)? as usize;
+        Some(
+            self.root
+                .join(self.directories.get(dir)?.as_ref())
+                .join(self.row_names.get(row)?.as_ref()),
+        )
+    }
+
+    fn display_directory(&self, id: NodeId) -> Option<SharedString> {
+        let row = self.row_index(id)?;
+        let dir = *self.row_directories.get(row)? as usize;
+        let relative = self.directories.get(dir)?;
+        Some(if relative.is_empty() {
+            "·".into()
+        } else {
+            SharedString::from(relative.clone())
+        })
+    }
+
+    /// Lexical directory rank for every arena slot. Path sorting compares
+    /// small integers per row instead of rebuilding or case-folding a full
+    /// path inside the comparator.
+    fn directory_ranks(&self) -> Vec<u32> {
+        let mut order: Vec<usize> = (0..self.directories.len()).collect();
+        order.sort_unstable_by(|&a, &b| {
+            self.directories[a]
+                .to_lowercase()
+                .cmp(&self.directories[b].to_lowercase())
+        });
+        let mut ranks = vec![0; order.len()];
+        for (rank, directory) in order.into_iter().enumerate() {
+            ranks[directory] = u32::try_from(rank).unwrap_or(u32::MAX);
+        }
+        ranks
+    }
+
+    fn directory_rank(&self, id: NodeId, ranks: &[u32]) -> u32 {
+        self.row_index(id)
+            .and_then(|row| self.row_directories.get(row))
+            .and_then(|directory| ranks.get(*directory as usize))
+            .copied()
+            .unwrap_or(u32::MAX)
+    }
+
+    fn claim_detail(&mut self, id: NodeId) -> bool {
+        let Some(row) = self.row_index(id) else {
+            return false;
+        };
+        let Some(state) = self.detail_states.get_mut(row) else {
+            return false;
+        };
+        if *state != 0 {
+            return false;
+        }
+        *state = 1;
+        true
+    }
+
+    fn finish_detail(&mut self, id: NodeId) {
+        if let Some(row) = self.row_index(id)
+            && let Some(state) = self.detail_states.get_mut(row)
+        {
+            *state = 2;
+        }
+    }
+
+    fn finish(&mut self) {
+        self.directory_index = None;
+        self.display_texts = None;
+        self.directories.shrink_to_fit();
+        self.row_directories.shrink_to_fit();
+        self.row_names.shrink_to_fit();
+        self.detail_states.shrink_to_fit();
+    }
+}
+
+#[cfg(test)]
+mod flat_path_store_tests {
+    use super::*;
+
+    fn row(id: u64, name: &str) -> FileEntry {
+        FileEntry {
+            id: NodeId::from(id),
+            name: name.into(),
+            display_name: name.into(),
+            name_has_hazards: false,
+            kind: EntryKind::File,
+            size: 42,
+            mtime_unix: 1,
+            display_size: "42 B".into(),
+            display_kind: "TXT".into(),
+            display_magic: ferail_core::empty_entry_text(),
+            display_description: ferail_core::empty_entry_text(),
+            is_quarantined: false,
+            quarantine: None,
+            hidden: false,
+            created_unix: None,
+            locked: false,
+        }
+    }
+
+    #[test]
+    fn flat_arena_shares_names_and_reconstructs_paths_after_finish() {
+        let root = PathBuf::from("/flat-root");
+        let base = 1_u64 << 60;
+        let mut entries = vec![row(base + 1, "one.txt"), row(base + 2, "two.txt")];
+        let mut paths = HashMap::new();
+        paths.insert(entries[0].id, root.join("nested/one.txt"));
+        paths.insert(entries[1].id, root.join("nested/two.txt"));
+
+        let mut store = FlatPathStore::new(root.clone(), base);
+        store.intern_display_texts(&mut entries);
+        assert!(Arc::ptr_eq(
+            &entries[0].display_size,
+            &entries[1].display_size
+        ));
+        assert!(Arc::ptr_eq(
+            &entries[0].display_kind,
+            &entries[1].display_kind
+        ));
+        store.append(&entries, &paths);
+        assert!(Arc::ptr_eq(&store.row_names[0], &entries[0].name));
+        assert_eq!(store.directories.len(), 1);
+        let indexed = store
+            .directory_index
+            .as_ref()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap();
+        assert!(Arc::ptr_eq(indexed, &store.directories[0]));
+        assert!(store.claim_detail(entries[0].id));
+        assert!(!store.claim_detail(entries[0].id));
+
+        store.finish_detail(entries[0].id);
+        store.finish();
+        assert!(store.directory_index.is_none());
+        assert!(store.display_texts.is_none());
+        assert_eq!(
+            store.path_for(entries[1].id),
+            Some(root.join("nested/two.txt"))
+        );
+        assert_eq!(
+            store.display_directory(entries[0].id).as_deref(),
+            Some("nested")
+        );
+    }
+
+    #[test]
+    fn flat_per_row_indexes_stay_small() {
+        let bytes = std::mem::size_of::<u32>()
+            + std::mem::size_of::<Arc<str>>()
+            + std::mem::size_of::<u8>();
+        assert_eq!(bytes, 21);
+    }
+}
+
+fn flat_filter_expr(text: &str) -> ferail_core::filter_expr::FilterExpr {
+    ferail_core::filter_expr::FilterExpr::parse(
+        text.trim(),
+        ferail_core::filter_expr::DateCtx {
+            now_unix: ferail_core::now_unix(),
+            tz_offset_secs: ferail_fs_native::stat_info::local_tz_offset_secs(),
+        },
+    )
+}
+
+fn flat_entry_matches(
+    paths: &FlatPathStore,
+    entry: &FileEntry,
+    expr: &ferail_core::filter_expr::FilterExpr,
+) -> bool {
+    let directory = paths.display_directory(entry.id).unwrap_or_default();
+    let (format, _) = entry.format_label();
+    let haystack = format!("{}/{} {}", directory, entry.display_name, format).to_lowercase();
+    expr.text_matches(&haystack) && expr.metadata_matches(entry)
+}
+
 impl FileListDelegate {
     pub fn new(
         fs: Arc<NativeFs>,
@@ -715,6 +1064,11 @@ impl FileListDelegate {
             hidden_columns,
             fs,
             paths: HashMap::new(),
+            flat_paths: None,
+            flat_filtered_entries: Vec::new(),
+            flat_filter_text: String::new(),
+            flat_detail_in_flight: false,
+            flat_detail_pending: None,
             icons,
             thumbnails,
             tasks,
@@ -723,6 +1077,7 @@ impl FileListDelegate {
             tags: Vec::new(),
             is_favorited: Vec::new(),
             selected_set: HashSet::new(),
+            selection_all: false,
             lead: None,
             open_with_warm: None,
             menu_revision: 0,
@@ -773,6 +1128,9 @@ impl FileListDelegate {
     pub fn reset_columns(&mut self) {
         self.columns = default_columns();
         self.hidden_columns.clear();
+        if self.flat_paths.is_some() {
+            self.columns.push(flat_path_column());
+        }
     }
 
     /// Drop the cached selection drag payload. Call on every
@@ -781,6 +1139,33 @@ impl FileListDelegate {
         self.drag_snapshot = None;
         self.cached_total_size.set(None);
         self.cached_selected_size.set(None);
+    }
+
+    /// Selection-only invalidation. The visible model did not change, so its
+    /// (potentially multi-million-row) total remains valid.
+    pub fn invalidate_selection_snapshot(&mut self) {
+        self.drag_snapshot = None;
+        self.cached_selected_size.set(None);
+    }
+
+    pub fn is_selected(&self, id: NodeId) -> bool {
+        if self.selection_all {
+            !self.selected_set.contains(&id)
+        } else {
+            self.selected_set.contains(&id)
+        }
+    }
+
+    pub fn selected_count(&self) -> usize {
+        if self.selection_all {
+            self.entries.len().saturating_sub(self.selected_set.len())
+        } else {
+            self.selected_set.len()
+        }
+    }
+
+    pub fn selection_is_empty(&self) -> bool {
+        self.selected_count() == 0
     }
 
     /// Build the shared drag payload for the current selection —
@@ -795,12 +1180,16 @@ impl FileListDelegate {
         if self.is_archive_mode() {
             return DragSnapshot::default();
         }
+        let selected_count = self.selected_count();
+        if selected_count > MAX_EAGER_DRAG_ITEMS {
+            return DragSnapshot::default();
+        }
         let want_thumb = show_thumbnails(cx);
-        let mut paths: Vec<PathBuf> = Vec::with_capacity(self.selected_set.len());
-        let mut dirs: Vec<bool> = Vec::with_capacity(self.selected_set.len());
+        let mut paths: Vec<PathBuf> = Vec::with_capacity(selected_count);
+        let mut dirs: Vec<bool> = Vec::with_capacity(selected_count);
         let mut icons: SmallVec<[Arc<RenderImage>; GHOST_STACK_CAP]> = smallvec![];
         for entry in &self.entries {
-            if !self.selected_set.contains(&entry.id) {
+            if !self.is_selected(entry.id) {
                 continue;
             }
             let Some(path) = self.path_for_entry(entry.id) else {
@@ -883,10 +1272,47 @@ impl FileListDelegate {
         if self.entries.len() <= 1 {
             return;
         }
+        let (col, asc) = resolve_ant_sort(col, asc, !self.heats.is_empty());
         // Row order changes: the drag snapshot's visible-order paths
         // are stale (totals unchanged by a re-order, but cheap to
         // recompute and one invalidation path is simpler).
         self.invalidate_drag_snapshot();
+
+        // Flat rows have no per-row tags, heat, or favorite state. Avoid the
+        // ordinary HashMap shuffle (hundreds of MB at million-row scale), and
+        // use the compact directory arena directly for the surface-only Path
+        // column.
+        // Ant Trail is deliberately not routed through the flat fast path:
+        // reaching here at all means the rows carry heat (see the fallback
+        // above), and ranking by it needs the row-parallel lookup below.
+        if col != SortColumn::AntTrail
+            && let Some(flat) = &self.flat_paths
+        {
+            if col == SortColumn::Path {
+                use std::cmp::Reverse;
+                let ranks = flat.directory_ranks();
+                if asc {
+                    self.entries.sort_by_cached_key(|entry| {
+                        (
+                            flat.directory_rank(entry.id, &ranks),
+                            entry.display_name.to_lowercase(),
+                            entry.id.as_raw(),
+                        )
+                    });
+                } else {
+                    self.entries.sort_by_cached_key(|entry| {
+                        (
+                            Reverse(flat.directory_rank(entry.id, &ranks)),
+                            entry.display_name.to_lowercase(),
+                            entry.id.as_raw(),
+                        )
+                    });
+                }
+            } else {
+                sort_in_place(&mut self.entries, col, asc);
+            }
+            return;
+        }
 
         let mut row_state: HashMap<NodeId, (f32, Vec<ferail_core::commands::TagColor>, bool)> =
             self.entries
@@ -904,8 +1330,24 @@ impl FileListDelegate {
                 })
                 .collect();
 
-        sort_in_place(&mut self.entries, col, asc);
+        if col == SortColumn::AntTrail {
+            let heats = &row_state;
+            sort_by_heat(
+                &mut self.entries,
+                |id| heats.get(&id).map_or(0.0, |state| state.0),
+                asc,
+            );
+        } else {
+            sort_in_place(&mut self.entries, col, asc);
+        }
 
+        // Rebuild only the decoration vectors that were populated: an
+        // empty one means the surface never ran that worker (Flat), and
+        // filling it with defaults here would hand every row back the
+        // inert per-row state that surface exists to avoid.
+        let had_heats = !self.heats.is_empty();
+        let had_tags = !self.tags.is_empty();
+        let had_favorites = !self.is_favorited.is_empty();
         self.heats.clear();
         self.tags.clear();
         self.is_favorited.clear();
@@ -917,9 +1359,15 @@ impl FileListDelegate {
                 row_state
                     .remove(&entry.id)
                     .unwrap_or((0.0, Vec::new(), false));
-            self.heats.push(heat);
-            self.tags.push(tags);
-            self.is_favorited.push(favorited);
+            if had_heats {
+                self.heats.push(heat);
+            }
+            if had_tags {
+                self.tags.push(tags);
+            }
+            if had_favorites {
+                self.is_favorited.push(favorited);
+            }
         }
     }
 
@@ -934,6 +1382,14 @@ impl FileListDelegate {
         self.filtered_out = 0;
         self.entries.clear();
         self.paths.clear();
+        self.flat_paths = None;
+        self.flat_filtered_entries.clear();
+        self.flat_filter_text.clear();
+        self.flat_detail_in_flight = false;
+        self.flat_detail_pending = None;
+        self.columns.retain(|column| column.key.as_ref() != "path");
+        self.hidden_columns
+            .retain(|column| column.key.as_ref() != "path");
         self.heats.clear();
         self.tags.clear();
         self.is_favorited.clear();
@@ -953,6 +1409,19 @@ impl FileListDelegate {
         // A normal directory load leaves archive mode behind.
         self.archive_rows.clear();
         self.archive_view = None;
+        // ...and Flat, whose Path column and path arena belong to that
+        // surface alone. Without this, a prefetched load arriving after
+        // Include Subfolders closed kept an empty Path column and a
+        // delegate that still believed it was a flat surface — which
+        // then took the flat sort path for ordinary directory rows.
+        self.flat_paths = None;
+        self.flat_filtered_entries.clear();
+        self.flat_filter_text.clear();
+        self.flat_detail_in_flight = false;
+        self.flat_detail_pending = None;
+        self.columns.retain(|column| column.key.as_ref() != "path");
+        self.hidden_columns
+            .retain(|column| column.key.as_ref() != "path");
         self.entries = entries;
         self.paths = paths;
         self.heats = heats;
@@ -969,13 +1438,29 @@ impl FileListDelegate {
         paths: HashMap<NodeId, PathBuf>,
         heats: Vec<f32>,
     ) {
+        let favorites = vec![false; entries.len()];
+        self.append_entries_decorated(entries, paths, heats, favorites);
+    }
+
+    /// Append one streamed batch with every cheap row decoration already
+    /// computed for that batch. This keeps streaming application O(batch):
+    /// callers must not follow it with a whole-model favorites pass.
+    pub fn append_entries_decorated(
+        &mut self,
+        entries: Vec<FileEntry>,
+        paths: HashMap<NodeId, PathBuf>,
+        heats: Vec<f32>,
+        favorites: Vec<bool>,
+    ) {
+        debug_assert_eq!(entries.len(), heats.len());
+        debug_assert_eq!(entries.len(), favorites.len());
         self.invalidate_drag_snapshot();
         self.paths.extend(paths);
         let n = entries.len();
         self.entries.extend(entries);
         self.heats.extend(heats);
         self.tags.extend((0..n).map(|_| Vec::new()));
-        self.is_favorited.extend((0..n).map(|_| false));
+        self.is_favorited.extend(favorites);
         // selected_set / lead untouched — NodeId-keyed, not row-keyed.
     }
 
@@ -990,7 +1475,172 @@ impl FileListDelegate {
     }
 
     pub fn path_for_entry(&self, id: NodeId) -> Option<PathBuf> {
+        if let Some(flat) = &self.flat_paths {
+            return flat.path_for(id);
+        }
         self.paths.get(&id).cloned()
+    }
+
+    /// Start an empty Flat surface. The Path column is surface-specific: it is
+    /// inserted while Flat is active and removed by [`Self::clear`], so normal
+    /// directory layouts and their persisted column spec remain unchanged.
+    pub fn begin_flat(&mut self, root: PathBuf, id_base: u64) {
+        self.clear();
+        self.flat_paths = Some(FlatPathStore::new(root, id_base));
+        if !self.is_column_visible("path") {
+            self.columns.push(flat_path_column());
+        }
+    }
+
+    pub fn append_flat_entries(
+        &mut self,
+        mut entries: Vec<FileEntry>,
+        paths: HashMap<NodeId, PathBuf>,
+    ) {
+        self.invalidate_drag_snapshot();
+        let flat = self
+            .flat_paths
+            .as_mut()
+            .expect("begin_flat must precede flat batches");
+        flat.intern_display_texts(&mut entries);
+        flat.append(&entries, &paths);
+        if self.flat_filter_text.trim().is_empty() {
+            self.entries.extend(entries);
+        } else {
+            let expr = flat_filter_expr(&self.flat_filter_text);
+            let flat = self.flat_paths.as_ref().expect("flat path arena exists");
+            let (visible, filtered): (Vec<_>, Vec<_>) = entries
+                .into_iter()
+                .partition(|entry| flat_entry_matches(flat, entry, &expr));
+            self.entries.extend(visible);
+            self.flat_filtered_entries.extend(filtered);
+            self.filtered_out = self.flat_filtered_entries.len();
+        }
+        // Flat is files-only and intentionally does not run Ant Trail,
+        // Finder-tag, or favorite-folder workers. Keep their optional
+        // parallel vectors empty: every read already falls back to the same
+        // zero/empty/false values, avoiding 29 bytes of inert state per row.
+    }
+
+    /// Replace the display root with the canonical root resolved by the
+    /// worker. This lands before the first batch, preserving correct relative
+    /// paths when Flat View was opened through a symlink.
+    pub fn set_flat_root(&mut self, root: PathBuf) {
+        if let Some(paths) = &mut self.flat_paths
+            && paths.row_directories.is_empty()
+        {
+            paths.root = root;
+        }
+    }
+
+    pub fn finish_flat(&mut self) {
+        if let Some(paths) = &mut self.flat_paths {
+            paths.finish();
+        }
+    }
+
+    /// Hydrate only the visible part of a Flat snapshot. The ordinary
+    /// prefetch pass intentionally stays disabled for Flat because it would
+    /// open every file in a multi-million-row tree; this viewport pass keeps
+    /// Format, Description, and quarantine badges fully functional with
+    /// bounded I/O and no persistent path cache.
+    fn warm_flat_details(
+        &mut self,
+        visible_range: Range<usize>,
+        cx: &mut Context<TableState<Self>>,
+    ) {
+        if self.flat_paths.is_none() || !crate::prefetch::file_detail_scan_enabled(cx) {
+            return;
+        }
+        if self.flat_detail_in_flight {
+            self.flat_detail_pending = Some(visible_range);
+            return;
+        }
+        const OVERSCAN: usize = 16;
+        let start = visible_range.start.saturating_sub(OVERSCAN);
+        let end = visible_range
+            .end
+            .saturating_add(OVERSCAN)
+            .min(self.entries.len());
+        let (entries, flat_paths) = (&self.entries, &mut self.flat_paths);
+        let flat = flat_paths.as_mut().expect("checked above");
+        let mut seeds = Vec::with_capacity(end.saturating_sub(start));
+        for entry in &entries[start..end] {
+            if !flat.claim_detail(entry.id) {
+                continue;
+            }
+            let Some(path) = flat.path_for(entry.id) else {
+                flat.finish_detail(entry.id);
+                continue;
+            };
+            seeds.push(crate::prefetch::PrefetchSeed {
+                node: entry.id,
+                path,
+                mtime_unix: entry.mtime_unix,
+                size: entry.size,
+                is_dir: matches!(entry.kind, EntryKind::Directory),
+                has_magic: !entry.display_magic.is_empty(),
+                has_description: !entry.display_description.is_empty(),
+                has_quarantine: entry.is_quarantined,
+            });
+        }
+        if seeds.is_empty() {
+            return;
+        }
+        self.flat_detail_in_flight = true;
+        let attempted: Vec<NodeId> = seeds.iter().map(|seed| seed.node).collect();
+        let tasks = self.tasks.clone();
+        let task_id = tasks.borrow_mut().begin(
+            TaskKind::MagicPrefetch,
+            trn!("Indexing {n} entry…", "Indexing {n} entries…", seeds.len()),
+            false,
+        );
+        cx.spawn(async move |table, cx| {
+            let batch = cx
+                .background_executor()
+                .spawn(async move { crate::prefetch::run_viewport(seeds) })
+                .await;
+            let _ = table.update(cx, |state, cx| {
+                let delegate = state.delegate_mut();
+                delegate.flat_detail_in_flight = false;
+                if let Some(flat) = &mut delegate.flat_paths {
+                    for node in attempted {
+                        flat.finish_detail(node);
+                    }
+                }
+                crate::prefetch::apply_batch(delegate, batch);
+                let pending = delegate.flat_detail_pending.take();
+                state.refresh(cx);
+                if let Some(range) = pending {
+                    state.delegate_mut().warm_flat_details(range, cx);
+                }
+            });
+            tasks.borrow_mut().end(task_id);
+        })
+        .detach();
+    }
+
+    /// Refilter the already-materialized Flat snapshot without filesystem I/O.
+    /// Rows move between two vectors and therefore remain single-owned.
+    pub fn apply_flat_filter(&mut self, text: &str) {
+        if self.flat_paths.is_none() || self.flat_filter_text == text {
+            return;
+        }
+        self.invalidate_drag_snapshot();
+        self.flat_filter_text.clear();
+        self.flat_filter_text.push_str(text);
+        let mut all = std::mem::take(&mut self.entries);
+        all.append(&mut self.flat_filtered_entries);
+        if text.trim().is_empty() {
+            self.entries = all;
+        } else {
+            let expr = flat_filter_expr(text);
+            let flat = self.flat_paths.as_ref().expect("flat path arena exists");
+            (self.entries, self.flat_filtered_entries) = all
+                .into_iter()
+                .partition(|entry| flat_entry_matches(flat, entry, &expr));
+        }
+        self.filtered_out = self.flat_filtered_entries.len();
     }
 
     /// Show the contents of an archive instead of a directory listing.
@@ -1046,11 +1696,7 @@ impl FileListDelegate {
             self.archive_rows
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| {
-                    self.entries
-                        .get(*i)
-                        .is_some_and(|e| self.selected_set.contains(&e.id))
-                })
+                .filter(|(i, _)| self.entries.get(*i).is_some_and(|e| self.is_selected(e.id)))
                 .map(|(_, r)| (r.path.clone(), r.is_dir))
                 .collect()
         } else {
@@ -1076,6 +1722,7 @@ impl FileListDelegate {
         let Some(id) = self.entries.get(row_ix).map(|e| e.id) else {
             return;
         };
+        self.selection_all = false;
         let cmd = modifiers.secondary();
         if modifiers.shift {
             // Range from the current lead to the clicked row (inclusive).
@@ -1334,17 +1981,16 @@ impl TableDelegate for FileListDelegate {
             .map(|e| matches!(e.kind, EntryKind::Directory))
             .unwrap_or(false);
         let entry_id = self.entries.get(row_ix).map(|e| e.id);
-        let in_set = entry_id
-            .map(|id| self.selected_set.contains(&id))
-            .unwrap_or(false);
+        let in_set = entry_id.map(|id| self.is_selected(id)).unwrap_or(false);
         let is_lead = entry_id == self.lead && entry_id.is_some();
         let mut row = div().id(("file-row", row_ix));
         // Cut (Cmd+X) rows render dimmed until the move pastes (or the
         // mark is cleared by a fresh Copy/Cut), mirroring Explorer.
-        let is_cut = entry_id
-            .and_then(|id| self.paths.get(&id))
-            .map(|p| self.cut_marker.borrow().iter().any(|c| c == p))
-            .unwrap_or(false);
+        let has_cut_marks = !self.cut_marker.borrow().is_empty();
+        let is_cut = has_cut_marks
+            && entry_id
+                .and_then(|id| self.path_for_entry(id))
+                .is_some_and(|path| self.cut_marker.borrow().iter().any(|cut| cut == &path));
         // Hidden entries (visible because show-hidden is on) dim more
         // gently — text and icon in one stroke — so they read as
         // distinct from normal files, Finder-style. `else if`: a cut
@@ -1400,18 +2046,20 @@ impl TableDelegate for FileListDelegate {
                             .bg(cx.theme().danger.opacity(0.08))
                     }
                 })
-                .on_drop(cx.listener(move |_state, paths: &ExternalPaths, _window, cx| {
-                    // Consume either way: a refused archive must not fall
-                    // through to the pane background and land the files in
-                    // the current folder instead.
-                    cx.stop_propagation();
-                    if accepts {
-                        cx.emit(TableEvent::ArchiveAddDrop {
-                            row_ix,
-                            paths: paths.paths().to_vec(),
-                        });
-                    }
-                }))
+                .on_drop(
+                    cx.listener(move |_state, paths: &ExternalPaths, _window, cx| {
+                        // Consume either way: a refused archive must not fall
+                        // through to the pane background and land the files in
+                        // the current folder instead.
+                        cx.stop_propagation();
+                        if accepts {
+                            cx.emit(TableEvent::ArchiveAddDrop {
+                                row_ix,
+                                paths: paths.paths().to_vec(),
+                            });
+                        }
+                    }),
+                )
                 // Members dragged out of an archive workbench land here too:
                 // an editable ZIP takes them, anything else refuses. Without
                 // this the release would bubble to the pane target and
@@ -1431,17 +2079,19 @@ impl TableDelegate for FileListDelegate {
                             .bg(cx.theme().danger.opacity(0.08))
                     }
                 })
-                .on_drop(cx.listener(move |_state, drag: &ArchiveEntryDrag, _window, cx| {
-                    cx.stop_propagation();
-                    if accepts {
-                        cx.emit(TableEvent::ArchiveAddFromArchive {
-                            row_ix,
-                            archive: drag.archive.clone(),
-                            entries: drag.entries.clone(),
-                            password: drag.password.clone(),
-                        });
-                    }
-                }))
+                .on_drop(
+                    cx.listener(move |_state, drag: &ArchiveEntryDrag, _window, cx| {
+                        cx.stop_propagation();
+                        if accepts {
+                            cx.emit(TableEvent::ArchiveAddFromArchive {
+                                row_ix,
+                                archive: drag.archive.clone(),
+                                entries: drag.entries.clone(),
+                                password: drag.password.clone(),
+                            });
+                        }
+                    }),
+                )
                 // Cross-window promise sessions carry no GPUI payload, so the
                 // release arrives as a plain mouse-up (GPUI-UPSTREAM #11).
                 .on_mouse_move(cx.listener(move |_state, _event, _window, cx| {
@@ -1621,7 +2271,7 @@ impl TableDelegate for FileListDelegate {
         // pressing a selected row drags the full visible-order
         // selection; pressing an unselected row drags just that row.
         if let Some(entry) = self.entries.get(row_ix) {
-            let row_is_selected = self.selected_set.contains(&entry.id);
+            let row_is_selected = self.is_selected(entry.id);
             // Archive rows carry archive coordinates rather than paths.
             if self.is_archive_mode() {
                 if let Some(drag) = self.archive_drag_for_row(row_ix, row_is_selected, cx) {
@@ -1667,27 +2317,27 @@ impl TableDelegate for FileListDelegate {
                                 let password = drag.password.clone();
                                 let promises =
                                     archive_promise_names(&drag.entries, &drag.directories)
-                                    .into_iter()
-                                    .zip(drag.entries.iter().cloned())
-                                    .zip(drag.directories.iter().copied())
-                                    .map(|((name, entry), is_dir)| {
-                                        let archive = archive.clone();
-                                        let password = password.clone();
-                                        crate::platform_shell::FilePromise::new(
-                                            name,
-                                            is_dir,
-                                            move |target| {
-                                                ferail_fs_native::materialize_archive_entry(
-                                                    &archive,
-                                                    &entry,
-                                                    target,
-                                                    password.as_deref(),
-                                                )
-                                                .map_err(|error| error.to_string())
-                                            },
-                                        )
-                                    })
-                                    .collect();
+                                        .into_iter()
+                                        .zip(drag.entries.iter().cloned())
+                                        .zip(drag.directories.iter().copied())
+                                        .map(|((name, entry), is_dir)| {
+                                            let archive = archive.clone();
+                                            let password = password.clone();
+                                            crate::platform_shell::FilePromise::new(
+                                                name,
+                                                is_dir,
+                                                move |target| {
+                                                    ferail_fs_native::materialize_archive_entry(
+                                                        &archive,
+                                                        &entry,
+                                                        target,
+                                                        password.as_deref(),
+                                                    )
+                                                    .map_err(|error| error.to_string())
+                                                },
+                                            )
+                                        })
+                                        .collect();
                                 set_native_archive_drag(Some(drag.clone()));
                                 crate::log_info!(
                                     100,
@@ -1738,7 +2388,10 @@ impl TableDelegate for FileListDelegate {
                                     })
                                     .detach();
                                 } else {
-                                    crate::log_warn!(100, "archive-drag: native session failed to start");
+                                    crate::log_warn!(
+                                        100,
+                                        "archive-drag: native session failed to start"
+                                    );
                                     set_native_archive_drag(None);
                                 }
                             }
@@ -1949,6 +2602,15 @@ impl TableDelegate for FileListDelegate {
                 // time, so the row paint just reads a bool.
                 let display_name = entry.display_name.clone();
                 let tooltip_name = display_name.clone();
+                let column_width = self
+                    .columns
+                    .get(col_ix)
+                    .map(|column| f32::from(column.width))
+                    .unwrap_or(240.0);
+                // Approximate the small-label glyph advance. The table still
+                // applies pixel-exact middle truncation as a final fallback.
+                let name_budget = ((column_width - 52.0) / 7.0).floor().max(12.0) as usize;
+                let elided_name = elide_label(display_name.as_ref(), name_budget);
                 let name_child = if entry.name_has_hazards {
                     div()
                         .flex_1()
@@ -1964,7 +2626,7 @@ impl TableDelegate for FileListDelegate {
                         // Finder-style middle ellipsis: keep the name's start
                         // AND its extension when the column is too narrow.
                         .truncate_middle()
-                        .child(SharedString::from(display_name.clone()))
+                        .child(elided_name)
                 };
                 // Inline tag chips — 6-DIP coloured dots after the
                 // filename, one per applied Finder tag (max 7). Read
@@ -2013,7 +2675,9 @@ impl TableDelegate for FileListDelegate {
                     .child(name_child)
                     .child(chips)
                     .child(star)
-                    .tooltip(move |window, cx| Tooltip::new(tooltip_name.clone()).build(window, cx))
+                    .tooltip(move |window, cx| {
+                        Tooltip::new(SharedString::from(tooltip_name.clone())).build(window, cx)
+                    })
                     .into_any_element()
             }
             "size" => div()
@@ -2116,6 +2780,29 @@ impl TableDelegate for FileListDelegate {
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(entry.display_description.clone()))
                 .into_any_element(),
+            "path" => {
+                let full_path = self
+                    .flat_paths
+                    .as_ref()
+                    .and_then(|paths| paths.display_directory(entry.id))
+                    .unwrap_or_default();
+                let column_width = self
+                    .columns
+                    .get(col_ix)
+                    .map(|column| f32::from(column.width))
+                    .unwrap_or(280.0);
+                let path_budget = ((column_width - 16.0) / 6.5).floor().max(12.0) as usize;
+                let visible_path = elide_label(full_path.as_ref(), path_budget);
+                div()
+                    .id(("flat-path", row_ix))
+                    .min_w_0()
+                    .truncate_middle()
+                    .text_scale_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(visible_path)
+                    .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
+                    .into_any_element()
+            }
             _ => div().into_any_element(),
         }
     }
@@ -2135,11 +2822,17 @@ impl TableDelegate for FileListDelegate {
             .unwrap_or("");
         match col_key {
             // Mirror render_td: the Name cell shows the display leaf.
-            "name" => entry.display_name.clone(),
-            "size" => entry.display_size.clone(),
+            "name" => entry.display_name.to_string(),
+            "size" => entry.display_size.to_string(),
             "format" => entry.format_label().0.to_string(),
             "modified" => ferail_core::humanize_mtime(entry.mtime_unix, ferail_core::now_unix()),
-            "description" => entry.display_description.clone(),
+            "description" => entry.display_description.to_string(),
+            "path" => self
+                .flat_paths
+                .as_ref()
+                .and_then(|paths| paths.display_directory(entry.id))
+                .map(|path| path.to_string())
+                .unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -2156,6 +2849,7 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) {
+        self.warm_flat_details(visible_range.clone(), cx);
         self.warm_thumbnails(visible_range, cx);
     }
 
@@ -2273,14 +2967,13 @@ impl TableDelegate for FileListDelegate {
         use crate::shell::{
             BulkRenameSelected, ClearQuarantine, Compress, CompressSevenZ, CompressTar,
             CompressTarBz2, CompressTarGz, CompressTarXz, ConvertArchive, CopyPath,
-            DeleteImmediately, Duplicate, Extract, ExtractTo, GetInfo, MakeAlias, MoveToTrash,
-            NewArchive, OpenAsArchive,
-            OpenInNewTab, OpenSelected, OpenTerminalHere, OpenWithSlot0, OpenWithSlot1,
-            OpenWithSlot2, OpenWithSlot3, OpenWithSlot4, OpenWithSlot5, OpenWithSlot6,
-            OpenWithSlot7, OpenWithSlot8, OpenWithSlot9, OpenWithSlot10, OpenWithSlot11, QuickLook,
-            RenameSelected, RevealInFinder, SlideshowFromHere, ToggleFavoriteForTarget,
-            ToggleTagBlue, ToggleTagGray, ToggleTagGreen, ToggleTagOrange, ToggleTagPurple,
-            ToggleTagRed, ToggleTagYellow,
+            DeleteImmediately, Duplicate, Extract, ExtractTo, GenerateSha256, GetInfo, MakeAlias,
+            MoveToTrash, NewArchive, OpenAsArchive, OpenInNewTab, OpenSelected, OpenTerminalHere,
+            OpenWithSlot0, OpenWithSlot1, OpenWithSlot2, OpenWithSlot3, OpenWithSlot4,
+            OpenWithSlot5, OpenWithSlot6, OpenWithSlot7, OpenWithSlot8, OpenWithSlot9,
+            OpenWithSlot10, OpenWithSlot11, QuickLook, RenameSelected, RevealInFinder,
+            SlideshowFromHere, ToggleFavoriteForTarget, ToggleTagBlue, ToggleTagGray,
+            ToggleTagGreen, ToggleTagOrange, ToggleTagPurple, ToggleTagRed, ToggleTagYellow,
         };
 
         // Anchor keyboard-shortcut resolution to the shell's stable
@@ -2343,9 +3036,16 @@ impl TableDelegate for FileListDelegate {
         // Resolved HERE, at build time, from the delegate's own mirrored
         // selection — not from a snapshot the Shell stages on right-click,
         // which lands a frame too late (see `resolve_menu_targets`).
-        let targets = resolve_menu_targets(&self.entries, &self.selected_set, row_ix);
+        let targets = resolve_menu_targets_with_mode(
+            &self.entries,
+            &self.selected_set,
+            self.selection_all,
+            row_ix,
+        );
         let t = &targets;
         let show_slideshow = Availability::When(avail_anchor_file).allows(t);
+        let show_checksum =
+            Availability::SingleOnly.allows(t) && Availability::When(avail_anchor_file).allows(t);
         let show_terminal = Availability::When(avail_anchor_dir).allows(t);
         let show_favorites = Availability::When(avail_anchor_dir).allows(t);
         // A tab is a folder view: only a folder anchor can seed one, so the
@@ -2388,6 +3088,9 @@ impl TableDelegate for FileListDelegate {
             // joined paths is a deliberate, separate gesture, so this hides
             // past a single target rather than silently concatenating.
             menu = menu.menu(tr!("Copy Path"), Box::new(CopyPath));
+        }
+        if show_checksum {
+            menu = menu.menu(tr!("Generate SHA-256…"), Box::new(GenerateSha256));
         }
         if show_terminal {
             // Anchor command: open a terminal at the clicked directory,
@@ -2683,9 +3386,10 @@ impl TableDelegate for FileListDelegate {
         // missing files. Name the filter as the cause instead.
         // Same words as the status bar's chip — "hidden" is already
         // taken by the show-hidden toggle and would read as that.
-        let message = match self.filtered_out {
-            0 => tr!("This folder is empty."),
-            n => trn!("{n} item filtered out.", "All {n} items filtered out.", n),
+        let message = match (self.flat_paths.is_some(), self.filtered_out) {
+            (true, 0) => tr!("No files found in this location or its subfolders."),
+            (_, 0) => tr!("This folder is empty."),
+            (_, n) => trn!("{n} item filtered out.", "All {n} items filtered out.", n),
         };
         gpui_component::v_flex()
             .size_full()
@@ -2867,6 +3571,15 @@ pub enum SortColumn {
     /// derived kind. Replaces the old `Kind` + `Magic` sort options.
     Format,
     Modified,
+    /// Relative parent directory, available only on a Flat surface.
+    Path,
+    /// Ant Trail heat — how often the user has visited a folder
+    /// (docs/features/ANT_TRAIL.md). Directory-only by nature: files
+    /// have no heat, so they sort among themselves by name below the
+    /// folders. The key is not on `FileEntry`; it lives in the
+    /// delegate's row-parallel `heats`, so the ordering is applied by
+    /// [`FileListDelegate::sort_model`] rather than [`sort_in_place`].
+    AntTrail,
 }
 
 impl std::str::FromStr for SortColumn {
@@ -2877,6 +3590,8 @@ impl std::str::FromStr for SortColumn {
             "size" => Ok(Self::Size),
             "format" | "kind" | "magic" => Ok(Self::Format),
             "modified" | "mtime" => Ok(Self::Modified),
+            "path" => Ok(Self::Path),
+            "ant" | "ant-trail" | "heat" => Ok(Self::AntTrail),
             _ => Err(()),
         }
     }
@@ -2897,6 +3612,7 @@ fn column_title(key: &str) -> &'static str {
         "format" => ferail_core::msgid!("Format"),
         "modified" => ferail_core::msgid!("Modified"),
         "description" => ferail_core::msgid!("Description"),
+        "path" => ferail_core::msgid!("Path"),
         _ => "",
     }
 }
@@ -2928,6 +3644,12 @@ fn default_columns() -> Vec<Column> {
         // confusing. Revisit if users ask.
         Column::new("description", column_title("description")).width(320.0),
     ]
+}
+
+fn flat_path_column() -> Column {
+    Column::new("path", column_title("path"))
+        .width(360.0)
+        .sortable()
 }
 
 /// Column width clamp for persisted values — a corrupt entry can't
@@ -3087,6 +3809,76 @@ pub fn sort_in_place(entries: &mut [ferail_core::FileEntry], col: SortColumn, as
                 )
             });
         }
+        // Path ordering needs the Flat surface's directory arena, and Ant
+        // Trail ordering needs the delegate's row-parallel `heats` — both
+        // are handled by `FileListDelegate::sort_model` above.
+        (SortColumn::Path, _) | (SortColumn::AntTrail, _) => {}
+    }
+}
+
+/// Resolve an Ant Trail pick against the rows actually in hand.
+///
+/// Ant Trail ranks by per-row heat, which a surface may simply not have —
+/// Flat keeps `heats` empty on purpose. The decision is made from the
+/// data, never from which surface we think we are: a surface flag that
+/// disagrees with the rows (a stale `flat_paths` left behind when Include
+/// Subfolders closed, say) would otherwise turn the pick into a silent
+/// no-op, and the user would see a list that looks name-sorted with the
+/// hot folder still sitting in the middle of it.
+///
+/// With no heat to rank by, Name ascending is the honest answer; every
+/// other column passes through untouched.
+fn resolve_ant_sort(col: SortColumn, asc: bool, has_heat: bool) -> (SortColumn, bool) {
+    if col == SortColumn::AntTrail && !has_heat {
+        (SortColumn::Name, true)
+    } else {
+        (col, asc)
+    }
+}
+
+/// Order rows by Ant Trail heat (docs/features/ANT_TRAIL.md).
+///
+/// Heat is not a `FileEntry` field — it is looked up per row through
+/// `heat_of`, which the delegate backs with its row-parallel `heats`
+/// vector (an in-memory read, no I/O). Only directories ever carry
+/// heat, so the folders-first grouping every other column uses doubles
+/// as "the rows this ordering is about, first".
+///
+/// `asc == false` (the default first pick) puts the hottest folders on
+/// top, which is the useful direction: "where do I actually go?".
+/// Never-visited folders and all files fall to the bottom in name
+/// order, so a cold directory still reads like a normal listing.
+fn sort_by_heat(
+    entries: &mut [ferail_core::FileEntry],
+    heat_of: impl Fn(NodeId) -> f32,
+    asc: bool,
+) {
+    use std::cmp::Reverse;
+    fn non_dir(e: &ferail_core::FileEntry) -> bool {
+        !matches!(e.kind, ferail_core::EntryKind::Directory)
+    }
+    // f32 is not `Ord`, and heat is a normalized 0.0..=1.0 ratio — quantize
+    // to a u32 so the rows can ride the same `sort_by_cached_key` fast path
+    // as every other column instead of a per-comparison float comparator.
+    let key = |e: &ferail_core::FileEntry| (heat_of(e.id).clamp(0.0, 1.0) * 1_000_000.0) as u32;
+    if asc {
+        entries.sort_by_cached_key(|e| {
+            (
+                non_dir(e),
+                key(e),
+                e.display_name.to_lowercase(),
+                e.id.as_raw(),
+            )
+        });
+    } else {
+        entries.sort_by_cached_key(|e| {
+            (
+                non_dir(e),
+                Reverse(key(e)),
+                e.display_name.to_lowercase(),
+                e.id.as_raw(),
+            )
+        });
     }
 }
 
@@ -3200,8 +3992,31 @@ mod column_persist_tests {
 }
 
 #[cfg(test)]
+mod label_elision_tests {
+    use super::elide_label;
+
+    #[test]
+    fn moderately_long_labels_keep_their_ends() {
+        assert_eq!(
+            elide_label("abcdefghijklmnopqrstuvwxyz", 14).as_ref(),
+            "abcdef…tuvwxyz"
+        );
+    }
+
+    #[test]
+    fn very_long_labels_keep_beginning_middle_and_end() {
+        let label = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let elided = elide_label(label, 18);
+        assert_eq!(elided.chars().filter(|ch| *ch == '…').count(), 2);
+        assert!(elided.starts_with("abcde"));
+        assert!(elided.ends_with("456789"));
+        assert!(elided.contains("DEFGH"));
+    }
+}
+
+#[cfg(test)]
 mod sort_tests {
-    use super::{SortColumn, sort_in_place};
+    use super::{SortColumn, resolve_ant_sort, sort_by_heat, sort_in_place};
     use ferail_core::{EntryKind, FileEntry, NodeId};
 
     fn entry(id: u64, name: &str, kind: EntryKind, size: u64, mtime: i64) -> FileEntry {
@@ -3213,10 +4028,10 @@ mod sort_tests {
             kind,
             size,
             mtime_unix: mtime,
-            display_size: String::new(),
-            display_kind: String::new(),
-            display_magic: String::new(),
-            display_description: String::new(),
+            display_size: ferail_core::empty_entry_text(),
+            display_kind: ferail_core::empty_entry_text(),
+            display_magic: ferail_core::empty_entry_text(),
+            display_description: ferail_core::empty_entry_text(),
             is_quarantined: false,
             quarantine: None,
             hidden: false,
@@ -3286,6 +4101,80 @@ mod sort_tests {
             "directories must lead even on a descending sort"
         );
     }
+
+    /// Ant Trail sorting ranks folders by visit heat, hottest first on
+    /// the default (descending) pick. Files carry no heat, so they stay
+    /// below the folders in name order — a cold listing still reads
+    /// like a normal one.
+    #[test]
+    fn ant_trail_sort_ranks_hot_folders_first() {
+        let mut rows = vec![
+            entry(1, "cold", EntryKind::Directory, 0, 0),
+            entry(2, "zeta.txt", EntryKind::File, 0, 0),
+            entry(3, "hot", EntryKind::Directory, 0, 0),
+            entry(4, "alpha.txt", EntryKind::File, 0, 0),
+            entry(5, "warm", EntryKind::Directory, 0, 0),
+        ];
+        let heat = |id: NodeId| match id.as_raw() {
+            3 => 1.0,
+            5 => 0.4,
+            _ => 0.0,
+        };
+        sort_by_heat(&mut rows, heat, false);
+        assert_eq!(ids(&rows), vec![3, 5, 1, 4, 2]);
+
+        sort_by_heat(&mut rows, heat, true);
+        assert_eq!(ids(&rows), vec![1, 5, 3, 4, 2]);
+    }
+
+    /// The bug this guards: picking Ant Trail did nothing — the list
+    /// stayed in name order with the warm folder still in the middle —
+    /// while the *same* pick worked after changing directory. The
+    /// delegate was still carrying a Flat surface flag from a closed
+    /// Include Subfolders view, and the flat sort path swallowed the
+    /// pick. The rows had heat all along, so the rows are what decides.
+    #[test]
+    fn a_stale_surface_flag_cannot_swallow_an_ant_trail_pick() {
+        // Rows with heat: the pick stands, direction included.
+        assert_eq!(
+            resolve_ant_sort(SortColumn::AntTrail, false, true),
+            (SortColumn::AntTrail, false)
+        );
+        assert_eq!(
+            resolve_ant_sort(SortColumn::AntTrail, true, true),
+            (SortColumn::AntTrail, true)
+        );
+        // No heat anywhere (Flat): Name ascending, not the raw order.
+        assert_eq!(
+            resolve_ant_sort(SortColumn::AntTrail, false, false),
+            (SortColumn::Name, true)
+        );
+        // Every other column is none of this function's business.
+        for col in [
+            SortColumn::Name,
+            SortColumn::Size,
+            SortColumn::Format,
+            SortColumn::Modified,
+            SortColumn::Path,
+        ] {
+            assert_eq!(resolve_ant_sort(col, false, false), (col, false));
+            assert_eq!(resolve_ant_sort(col, true, true), (col, true));
+        }
+    }
+
+    /// Every never-visited row has the same heat, so the name tiebreak
+    /// is what the user actually sees: an Ant Trail sort of a folder
+    /// nobody has browsed must not look shuffled.
+    #[test]
+    fn ant_trail_sort_falls_back_to_name_when_cold() {
+        let mut rows = vec![
+            entry(1, "delta", EntryKind::Directory, 0, 0),
+            entry(2, "bravo", EntryKind::Directory, 0, 0),
+            entry(3, "charlie", EntryKind::Directory, 0, 0),
+        ];
+        sort_by_heat(&mut rows, |_| 0.0, false);
+        assert_eq!(ids(&rows), vec![2, 3, 1]);
+    }
 }
 
 #[cfg(test)]
@@ -3322,10 +4211,10 @@ mod menu_targets_tests {
             kind,
             size: 0,
             mtime_unix: 0,
-            display_size: String::new(),
-            display_kind: String::new(),
-            display_magic: String::new(),
-            display_description: String::new(),
+            display_size: ferail_core::empty_entry_text(),
+            display_kind: ferail_core::empty_entry_text(),
+            display_magic: ferail_core::empty_entry_text(),
+            display_description: ferail_core::empty_entry_text(),
             is_quarantined: false,
             quarantine: None,
             hidden: false,

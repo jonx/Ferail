@@ -371,7 +371,12 @@ fn build_category_submenu(
         }
         if !theme_cmds.is_empty() {
             submenu.addItem(&NSMenuItem::separatorItem(mtm));
-            submenu.addItem(&build_subgroup_submenu(mtm, target, &tr!("Theme"), &theme_cmds));
+            submenu.addItem(&build_subgroup_submenu(
+                mtm,
+                target,
+                &tr!("Theme"),
+                &theme_cmds,
+            ));
         }
         item.setSubmenu(Some(&submenu));
         Some(item)
@@ -406,7 +411,13 @@ fn build_edit_submenu(mtm: MainThreadMarker) -> Retained<NSMenuItem> {
         let submenu = NSMenu::new(mtm);
         submenu.setTitle(&NSString::from_str(&tr!("Edit")));
 
-        submenu.addItem(&make_responder_item(mtm, &tr!("Undo"), sel!(undo:), "z", None));
+        submenu.addItem(&make_responder_item(
+            mtm,
+            &tr!("Undo"),
+            sel!(undo:),
+            "z",
+            None,
+        ));
         submenu.addItem(&make_responder_item(
             mtm,
             &tr!("Redo"),
@@ -420,9 +431,27 @@ fn build_edit_submenu(mtm: MainThreadMarker) -> Retained<NSMenuItem> {
 
         submenu.addItem(&NSMenuItem::separatorItem(mtm));
 
-        submenu.addItem(&make_responder_item(mtm, &tr!("Cut"), sel!(cut:), "x", None));
-        submenu.addItem(&make_responder_item(mtm, &tr!("Copy"), sel!(copy:), "c", None));
-        submenu.addItem(&make_responder_item(mtm, &tr!("Paste"), sel!(paste:), "v", None));
+        submenu.addItem(&make_responder_item(
+            mtm,
+            &tr!("Cut"),
+            sel!(cut:),
+            "x",
+            None,
+        ));
+        submenu.addItem(&make_responder_item(
+            mtm,
+            &tr!("Copy"),
+            sel!(copy:),
+            "c",
+            None,
+        ));
+        submenu.addItem(&make_responder_item(
+            mtm,
+            &tr!("Paste"),
+            sel!(paste:),
+            "v",
+            None,
+        ));
 
         submenu.addItem(&NSMenuItem::separatorItem(mtm));
 

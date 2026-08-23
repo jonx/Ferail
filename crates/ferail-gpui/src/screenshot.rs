@@ -400,7 +400,7 @@ OPTIONS
   --filter-help            Open the filter-syntax cheat sheet dialog.
   --similar-images         Seed the Similar Images panel with synthetic fixtures.
   --preview                Show preview pane (always on today).
-  --sort <column[-desc]>   Sort by name | size | kind | magic | mtime ± desc.
+  --sort <column[-desc]>   Sort by name | size | kind | magic | mtime | ant ± desc.
   --properties             Open Get Info pane. Lands in Stage 8.
   --rename                 Open the rename dialog for the selected row.
   --inline-rename          Start inline rename. Falls back to modal in the GPUI shell.
@@ -1190,7 +1190,7 @@ impl ShellArgs {
                     .delegate()
                     .entries
                     .iter()
-                    .position(|e| e.name == name);
+                    .position(|e| e.name.as_ref() == name);
                 if let Some(i) = idx {
                     s.select_row_index(i, cx);
                     if let Some(p) = s.path_for_row(i, cx) {

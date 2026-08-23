@@ -179,9 +179,9 @@ impl Shell {
                                 .ghost()
                                 .label(tr!("Reset to recommended"))
                                 .disabled(scanning || values == recommended)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.reset_similar_criteria(cx)
-                                })),
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.reset_similar_criteria(cx)),
+                                ),
                         ),
                 )
                 .child(
@@ -193,14 +193,12 @@ impl Shell {
                             h_flex()
                                 .flex_1()
                                 .gap_2()
-                                .child(
-                                    self.similar_criteria_track(
-                                        SimilarCriterion::Structure,
-                                        values.structure,
-                                        disabled,
-                                        cx,
-                                    ),
-                                )
+                                .child(self.similar_criteria_track(
+                                    SimilarCriterion::Structure,
+                                    values.structure,
+                                    disabled,
+                                    cx,
+                                ))
                                 .child(
                                     div()
                                         .flex_shrink_0()
@@ -1328,7 +1326,7 @@ impl Shell {
         for (i, g) in tab.dupe_groups.iter_mut().enumerate() {
             g.group_no = i + 1;
         }
-        tab.selection.clear();
+        tab.clear_selection();
         if let Some(dm) = tab
             .tool_result
             .as_mut()

@@ -53,8 +53,8 @@ pub fn file_detail_scan_enabled(cx: &gpui::App) -> bool {
 /// Keyed by `NodeId` — stable across re-sorts and re-enumerations —
 /// so a batch can never land on the wrong row (raw indices shift
 /// whenever the model changes under an in-flight pass).
-struct PrefetchRow {
-    node: NodeId,
+pub(crate) struct PrefetchRow {
+    pub(crate) node: NodeId,
     /// Same-or-newer snapshot of `display_magic`. Empty string when
     /// we couldn't determine.
     magic_label: String,
@@ -75,21 +75,29 @@ struct PrefetchRow {
 /// Snapshot used to seed the worker. We can't capture `&FileEntry`
 /// (not Send + lifetime); copy the bits the worker needs.
 #[derive(Clone)]
-struct PrefetchSeed {
-    node: NodeId,
-    path: PathBuf,
-    mtime_unix: i64,
-    size: u64,
+pub(crate) struct PrefetchSeed {
+    pub(crate) node: NodeId,
+    pub(crate) path: PathBuf,
+    pub(crate) mtime_unix: i64,
+    pub(crate) size: u64,
     /// Directories skip the magic/description derive entirely. Not
     /// just an optimisation: on cd9660 (and other legacy filesystems)
     /// `open()`+`read()` on a directory *succeeds* and returns raw
     /// directory records, so the sniffer would confidently label every
     /// folder "Binary". The folder-size worker owns folder
     /// descriptions; the Format column falls back to the kind label.
-    is_dir: bool,
-    has_magic: bool,
-    has_description: bool,
-    has_quarantine: bool,
+    pub(crate) is_dir: bool,
+    pub(crate) has_magic: bool,
+    pub(crate) has_description: bool,
+    pub(crate) has_quarantine: bool,
+}
+
+/// Derive details for a small viewport-owned seed set without persisting its
+/// paths. Flat View uses this instead of the whole-list pass: scrolling keeps
+/// Format, Description, and quarantine badges functional while never opening
+/// millions of off-screen files or retaining their paths in the metadata DB.
+pub(crate) fn run_viewport(seeds: Vec<PrefetchSeed>) -> Vec<PrefetchRow> {
+    run_worker(seeds, None, false, Arc::new(AtomicBool::new(false)))
 }
 
 /// Spawn a prefetch pass over the current entries. Called from
@@ -156,7 +164,11 @@ pub fn start(
     // panel is honest about what's happening.
     let task_id = tasks.borrow_mut().begin(
         TaskKind::MagicPrefetch,
-        trn!("Indexing {n} entry\u{2026}", "Indexing {n} entries\u{2026}", seed_count),
+        trn!(
+            "Indexing {n} entry\u{2026}",
+            "Indexing {n} entries\u{2026}",
+            seed_count
+        ),
         false,
     );
 
@@ -382,7 +394,7 @@ fn run_worker(
 /// Keyed by `NodeId`: a row whose id no longer exists in the model
 /// (deleted, filtered, re-enumerated away) skips silently, and a
 /// re-sort between snapshot and apply can't misdeliver a result.
-fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<PrefetchRow>) {
+pub(crate) fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<PrefetchRow>) {
     let mut by_node: std::collections::HashMap<NodeId, PrefetchRow> =
         batch.into_iter().map(|row| (row.node, row)).collect();
     let entries: &mut [FileEntry] = &mut delegate.entries;
@@ -397,23 +409,23 @@ fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<PrefetchRow>) {
         // worker owns Description for directories.
         let is_dir = matches!(e.kind, ferail_core::EntryKind::Directory);
         if !is_dir && !row.magic_label.is_empty() {
-            e.display_magic = row.magic_label;
+            e.display_magic = row.magic_label.into();
         }
         if !is_dir && !row.description.is_empty() {
-            e.display_description = row.description;
+            e.display_description = row.description.into();
         }
         e.is_quarantined = row.is_quarantined;
         // Provenance rides along so the preview pane can show
         // where a marked file came from without touching xattrs.
         e.quarantine = if row.is_quarantined {
-            Some(ferail_core::QuarantineDetails {
+            Some(Box::new(ferail_core::QuarantineDetails {
                 agent: row.quarantine_agent,
                 downloaded_iso: row.quarantine_iso,
                 where_from: row
                     .quarantine_where_from
                     .map(|s| s.lines().map(str::to_owned).collect())
                     .unwrap_or_default(),
-            })
+            }))
         } else {
             None
         };
@@ -492,6 +504,7 @@ fn is_leap(y: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicU64;
 
     /// AROS `exec.library` ELF prefix (64-bit LSB relocatable, aarch64,
     /// ELFOSABI_AROS) — enough bytes for the sniffer's header parse.
@@ -501,8 +514,13 @@ mod tests {
     ];
 
     fn write_temp(bytes: &[u8]) -> PathBuf {
+        static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
         let mut p = std::env::temp_dir();
-        p.push(format!("ferail-prefetch-test-{}.bin", std::process::id()));
+        p.push(format!(
+            "ferail-prefetch-test-{}-{}.bin",
+            std::process::id(),
+            NEXT_TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::write(&p, bytes).unwrap();
         p
     }
@@ -589,6 +607,16 @@ mod tests {
         assert_eq!(healed[0].magic_label, "ELF executable");
         assert!(healed[0].description.ends_with("AROS"));
 
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn viewport_pass_derives_description_without_a_database() {
+        let path = write_temp(AROS_ELF);
+        let rows = run_viewport(vec![seed_for(&path)]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].magic_label, "ELF executable");
+        assert!(rows[0].description.ends_with("AROS"));
         let _ = std::fs::remove_file(&path);
     }
 

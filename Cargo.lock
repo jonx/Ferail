@@ -1782,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "dnd-lab"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "ferail-shell-mac",
  "gpui",
@@ -2091,14 +2091,14 @@ dependencies = [
 
 [[package]]
 name = "ferail-archive"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "ferail-core",
 ]
 
 [[package]]
 name = "ferail-aros-app"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "ferail-gpui",
  "getrandom 0.3.4",
@@ -2106,7 +2106,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-core"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "arc-swap",
  "serde",
@@ -2117,18 +2117,18 @@ dependencies = [
 
 [[package]]
 name = "ferail-design"
-version = "0.6.0"
+version = "0.6.5"
 
 [[package]]
 name = "ferail-disk-usage"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "ferail-core",
 ]
 
 [[package]]
 name = "ferail-fs-native"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "blake3",
  "bzip2 0.6.1",
@@ -2159,7 +2159,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-gpui"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2192,6 +2192,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "sha2",
  "smallvec",
  "sysinfo",
  "windows-sys 0.59.0",
@@ -2201,7 +2202,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-meta"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "ferail-core",
  "rusqlite",
@@ -2210,14 +2211,14 @@ dependencies = [
 
 [[package]]
 name = "ferail-shell-aros"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "ferail-shell-linux",
 ]
 
 [[package]]
 name = "ferail-shell-linux"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "arboard",
  "ferail-core",
@@ -2228,7 +2229,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-shell-mac"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "block2 0.5.1",
  "ferail-core",
@@ -2243,7 +2244,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-shell-win32"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "ferail-core",
  "image",
@@ -2254,7 +2255,7 @@ dependencies = [
 
 [[package]]
 name = "ferail-video-mpv"
-version = "0.6.0"
+version = "0.6.5"
 dependencies = [
  "ferail-core",
 ]

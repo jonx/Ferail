@@ -104,6 +104,7 @@ raw-window-handle = "0.6"
 lsp-types = "0.97.0"
 # Bulk-rename find/replace rules (docs/features/BULK_RENAME.md).
 regex.workspace = true
+sha2.workspace = true
 
 # Domain wiring. ferail-gpui consumes the domain layer through the
 # domain crates' trait surface; they link directly.

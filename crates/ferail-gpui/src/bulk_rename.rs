@@ -568,9 +568,8 @@ impl BulkRenameView {
         );
         let find_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Text or pattern")));
-        let replace_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder(tr!("Replacement ($1\u{2026}$9)"))
-        });
+        let replace_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr!("Replacement ($1\u{2026}$9)")));
         // `{name}` / `{n}` / `{ext}` here are the user's template tokens, not
         // `tr!` placeholders — there are no arguments, so nothing is filled
         // and the braces render as typed.
@@ -782,44 +781,48 @@ impl Render for BulkRenameView {
                 el.child(div().text_scale_xs().text_color(danger).child(err))
             })
             .child(
-                h_flex().gap_2().items_center().child(label(tr!("Case"))).child(
-                    ButtonGroup::new("bulk-rename-case")
-                        .small()
-                        .outline()
-                        .compact()
-                        .child(
-                            Button::new("bulk-rename-case-none")
-                                .label(tr!("None"))
-                                .selected(self.case == CaseTransform::None),
-                        )
-                        .child(
-                            Button::new("bulk-rename-case-lower")
-                                .label(tr!("lower"))
-                                .selected(self.case == CaseTransform::Lower),
-                        )
-                        .child(
-                            Button::new("bulk-rename-case-upper")
-                                .label(tr!("UPPER"))
-                                .selected(self.case == CaseTransform::Upper),
-                        )
-                        .child(
-                            Button::new("bulk-rename-case-title")
-                                .label(tr!("Title"))
-                                .selected(self.case == CaseTransform::Title),
-                        )
-                        .on_click(cx.listener(|this, clicks: &Vec<usize>, _window, cx| {
-                            let case = match clicks.first().copied() {
-                                Some(1) => CaseTransform::Lower,
-                                Some(2) => CaseTransform::Upper,
-                                Some(3) => CaseTransform::Title,
-                                _ => CaseTransform::None,
-                            };
-                            if this.case != case {
-                                this.case = case;
-                                this.recompute(cx);
-                            }
-                        })),
-                ),
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(label(tr!("Case")))
+                    .child(
+                        ButtonGroup::new("bulk-rename-case")
+                            .small()
+                            .outline()
+                            .compact()
+                            .child(
+                                Button::new("bulk-rename-case-none")
+                                    .label(tr!("None"))
+                                    .selected(self.case == CaseTransform::None),
+                            )
+                            .child(
+                                Button::new("bulk-rename-case-lower")
+                                    .label(tr!("lower"))
+                                    .selected(self.case == CaseTransform::Lower),
+                            )
+                            .child(
+                                Button::new("bulk-rename-case-upper")
+                                    .label(tr!("UPPER"))
+                                    .selected(self.case == CaseTransform::Upper),
+                            )
+                            .child(
+                                Button::new("bulk-rename-case-title")
+                                    .label(tr!("Title"))
+                                    .selected(self.case == CaseTransform::Title),
+                            )
+                            .on_click(cx.listener(|this, clicks: &Vec<usize>, _window, cx| {
+                                let case = match clicks.first().copied() {
+                                    Some(1) => CaseTransform::Lower,
+                                    Some(2) => CaseTransform::Upper,
+                                    Some(3) => CaseTransform::Title,
+                                    _ => CaseTransform::None,
+                                };
+                                if this.case != case {
+                                    this.case = case;
+                                    this.recompute(cx);
+                                }
+                            })),
+                    ),
             )
             .child(
                 h_flex()
@@ -845,16 +848,11 @@ impl Render for BulkRenameView {
                     .gap_1()
                     .items_center()
                     .mt_1()
-                    .child(
-                        div()
-                            .text_scale_xs()
-                            .text_color(muted)
-                            .child(tr!(
-                                "{renamed} of {total} will be renamed",
-                                renamed = renamed,
-                                total = total
-                            )),
-                    )
+                    .child(div().text_scale_xs().text_color(muted).child(tr!(
+                        "{renamed} of {total} will be renamed",
+                        renamed = renamed,
+                        total = total
+                    )))
                     .when(conflicts > 0, |el| {
                         el.child(div().text_scale_xs().text_color(danger).child(trn!(
                             "\u{b7} {n} conflict",
@@ -906,8 +904,11 @@ pub fn open(
                     // not a half/half split.
                     .child(
                         div().w(px(96.)).child(
-                            DialogClose::new()
-                                .child(Button::new("bulk-rename-cancel").label(tr!("Cancel")).small()),
+                            DialogClose::new().child(
+                                Button::new("bulk-rename-cancel")
+                                    .label(tr!("Cancel"))
+                                    .small(),
+                            ),
                         ),
                     )
                     .child(
@@ -964,7 +965,12 @@ fn apply(
     let win = window.window_handle();
     let task_id = process.tasks.borrow_mut().begin(
         crate::tasks::TaskKind::FileOp,
-        trn!("Renaming {n} item\u{2026}", "Renaming {n} items\u{2026}", count).to_string(),
+        trn!(
+            "Renaming {n} item\u{2026}",
+            "Renaming {n} items\u{2026}",
+            count
+        )
+        .to_string(),
         false,
     );
     cx.spawn(async move |weak, cx| {
@@ -1013,13 +1019,15 @@ fn apply(
                 );
             } else {
                 window.push_notification(
-                    crate::shell::error_notification(tr!(
-                        "Renamed {renamed} items, {failed} failed \u{2014} {detail}",
-                        renamed = renamed_count,
-                        failed = failed,
-                        detail = first_error.unwrap_or_default()
-                    )
-                    .to_string()),
+                    crate::shell::error_notification(
+                        tr!(
+                            "Renamed {renamed} items, {failed} failed \u{2014} {detail}",
+                            renamed = renamed_count,
+                            failed = failed,
+                            detail = first_error.unwrap_or_default()
+                        )
+                        .to_string(),
+                    ),
                     cx,
                 );
             }

@@ -28,7 +28,10 @@ pub struct Extracted {
 
 /// The repository root (two levels above this crate's manifest).
 pub fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap_or_else(|_| PathBuf::from("../.."))
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from("../.."))
 }
 
 /// Scan every `crates/**/*.rs` under `root` (skipping `target/`).
@@ -38,15 +41,23 @@ pub fn scan_workspace(root: &Path) -> Extracted {
     collect_rs(&root.join("crates"), &mut files);
     files.sort();
     for file in files {
-        let Ok(src) = std::fs::read_to_string(&file) else { continue };
-        let label = file.strip_prefix(root).unwrap_or(&file).to_string_lossy().replace('\\', "/");
+        let Ok(src) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let label = file
+            .strip_prefix(root)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
         scan_source(&src, &label, &mut out);
     }
     out
 }
 
 fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in rd.flatten() {
         let path = entry.path();
         let name = entry.file_name();
@@ -162,7 +173,12 @@ fn parse_invocation(name: &str, rest: &str, where_: &str, out: &mut Extracted) -
             pos = expect_comma(rest, pos)?;
             let (msgid, len) = parse_string_literal(&rest[pos..])?;
             pos += len;
-            record(out, format!("{first}{}{msgid}", super::CONTEXT_SEPARATOR), PackValue::Text(String::new()), where_);
+            record(
+                out,
+                format!("{first}{}{msgid}", super::CONTEXT_SEPARATOR),
+                PackValue::Text(String::new()),
+                where_,
+            );
             Some(pos)
         }
         "trn" => {
@@ -186,7 +202,10 @@ fn record(out: &mut Extracted, key: String, value: PackValue, where_: &str) {
         v => v,
     };
     out.strings.entry(key.clone()).or_insert(value);
-    out.locations.entry(key).or_default().push(where_.to_owned());
+    out.locations
+        .entry(key)
+        .or_default()
+        .push(where_.to_owned());
 }
 
 fn skip_ws(s: &str, mut pos: usize) -> usize {
@@ -301,10 +320,24 @@ mod tests {
 
     #[test]
     fn parses_literals() {
-        assert_eq!(parse_string_literal(r#""plain" rest"#), Some(("plain".into(), 7)));
-        assert_eq!(parse_string_literal(r#""a \"q\" \u{2026}""#).unwrap().0, "a \"q\" …");
-        assert_eq!(parse_string_literal("\"line \\\n     continued\"").unwrap().0, "line continued");
-        assert_eq!(parse_string_literal(r##"r#"raw "x""# tail"##), Some(("raw \"x\"".into(), 12)));
+        assert_eq!(
+            parse_string_literal(r#""plain" rest"#),
+            Some(("plain".into(), 7))
+        );
+        assert_eq!(
+            parse_string_literal(r#""a \"q\" \u{2026}""#).unwrap().0,
+            "a \"q\" …"
+        );
+        assert_eq!(
+            parse_string_literal("\"line \\\n     continued\"")
+                .unwrap()
+                .0,
+            "line continued"
+        );
+        assert_eq!(
+            parse_string_literal(r##"r#"raw "x""# tail"##),
+            Some(("raw \"x\"".into(), 12))
+        );
         assert_eq!(parse_string_literal("not"), None);
     }
 
@@ -329,7 +362,15 @@ mod tests {
         let keys: Vec<&String> = out.strings.keys().collect();
         assert_eq!(
             keys,
-            vec!["Copied {n} files", "Hello", "New Window", "Path form", "Spaced", "menu::Open", "{n} file"]
+            vec![
+                "Copied {n} files",
+                "Hello",
+                "New Window",
+                "Path form",
+                "Spaced",
+                "menu::Open",
+                "{n} file"
+            ]
         );
         assert_eq!(out.strings["Hello"], PackValue::Text("Hello".into()));
         match &out.strings["{n} file"] {
@@ -360,9 +401,18 @@ mod tests {
             eprintln!("updated {}", path.display());
             return;
         }
-        let old = LanguagePack::parse(&on_disk).map(|p| p.strings).unwrap_or_default();
-        let added: Vec<_> = extracted.strings.keys().filter(|k| !old.contains_key(*k)).collect();
-        let removed: Vec<_> = old.keys().filter(|k| !extracted.strings.contains_key(*k)).collect();
+        let old = LanguagePack::parse(&on_disk)
+            .map(|p| p.strings)
+            .unwrap_or_default();
+        let added: Vec<_> = extracted
+            .strings
+            .keys()
+            .filter(|k| !old.contains_key(*k))
+            .collect();
+        let removed: Vec<_> = old
+            .keys()
+            .filter(|k| !extracted.strings.contains_key(*k))
+            .collect();
         panic!(
             "locales/en.json is out of date ({} added, {} removed).\n  added: {:?}\n  removed: {:?}\nRun: FERAIL_I18N_UPDATE=1 cargo test -p ferail-core i18n::extract",
             added.len(),

@@ -76,7 +76,11 @@ pub fn read_media_tags(path: &Path) -> Option<MediaTags> {
         tags.year = tag.date().map(|d| d.year);
     }
 
-    if tags.is_empty() { None } else { Some(tags) }
+    if tags.is_empty() {
+        None
+    } else {
+        Some(tags)
+    }
 }
 
 /// Read the embedded cover art for `path`, if any: the front cover when the

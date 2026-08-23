@@ -165,6 +165,23 @@ impl Shell {
                 search.needle,
                 crate::i18n::tr_static(search.engine_label)
             )),
+            super::tab::ToolResultMode::Flat(flat) => Some(
+                if flat.complete {
+                    trn!(
+                        "{n} file · all subfolders",
+                        "{n} files · all subfolders",
+                        flat.progress.matches as usize
+                    )
+                } else {
+                    trn!(
+                        "Scanning: {n} file in {dirs} folders",
+                        "Scanning: {n} files in {dirs} folders",
+                        flat.progress.matches as usize,
+                        dirs = flat.progress.dirs_scanned
+                    )
+                }
+                .to_string(),
+            ),
             super::tab::ToolResultMode::Duplicates(dupe) => Some(
                 if dupe.mode == ferail_fs_native::DupeMode::Similar {
                     trn!(
@@ -773,7 +790,7 @@ impl Shell {
     /// `entries` + selection mirror the table does and routing every
     /// gesture through the same `Shell` methods. See `crate::grid`.
     fn grid_body(&self, cx: &mut Context<Self>) -> AnyElement {
-        use crate::file_list::{DragBadge, GHOST_STACK_CAP};
+        use crate::file_list::{DragBadge, GHOST_STACK_CAP, MAX_EAGER_DRAG_ITEMS};
         use crate::multi_table::LiveContextMenuExt as _;
         use crate::thumbnails::THUMB_PX;
         use ferail_core::EntryKind;
@@ -858,15 +875,18 @@ impl Shell {
             // DragSnapshot; this closure only holds a read borrow, so
             // it hoists instead.)
             let show_thumbs_for_drag = show_thumbs;
-            let sel_drag: Option<GridSelDrag> = if del.selected_set.is_empty() {
+            let selected_count = del.selected_count();
+            let sel_drag: Option<GridSelDrag> = if selected_count == 0
+                || selected_count > MAX_EAGER_DRAG_ITEMS
+            {
                 None
             } else {
-                let mut paths: Vec<PathBuf> = Vec::with_capacity(del.selected_set.len());
-                let mut dirs: Vec<bool> = Vec::with_capacity(del.selected_set.len());
+                let mut paths: Vec<PathBuf> = Vec::with_capacity(selected_count);
+                let mut dirs: Vec<bool> = Vec::with_capacity(selected_count);
                 let mut gicons: SmallVec<[Arc<gpui::RenderImage>; GHOST_STACK_CAP]> =
                     SmallVec::new();
                 for e in entries.iter() {
-                    if !del.selected_set.contains(&e.id) {
+                    if !del.is_selected(e.id) {
                         continue;
                     }
                     let Some(p) = del.path_for_entry(e.id) else {
@@ -915,7 +935,7 @@ impl Shell {
                     let entry = &entries[i];
                     let id = entry.id;
                     let path = del.path_for_entry(id).unwrap_or_default();
-                    let selected = del.selected_set.contains(&id);
+                    let selected = del.is_selected(id);
                     let is_lead = del.lead == Some(id);
                     let quarantined = entry.is_quarantined;
                     // Display leaf (macOS `:` → `/`) for the grid label/tooltip;
@@ -1483,7 +1503,7 @@ impl Shell {
                                 shell_ent.update(cx, |this, cx| {
                                     let was_selected = this
                                         .node_id_at_row(i, cx)
-                                        .map(|id| this.active_tab().selection.contains(&id))
+                                        .map(|id| this.active_tab().is_selected(id))
                                         .unwrap_or(false);
                                     this.apply_row_right_click(i, cx);
                                     this.context_row = if was_selected { None } else { Some(i) };
@@ -1756,30 +1776,28 @@ impl Shell {
             false,
             cx,
         )
-            .w(px(TRACK_W))
-            // Capture the painted bounds so a cursor x maps back to a size.
-            .child(
-                canvas(
-                    move |bounds, _, cx| {
-                        entity.update(cx, |this, _| this.icon_size_track = bounds)
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
+        .w(px(TRACK_W))
+        // Capture the painted bounds so a cursor x maps back to a size.
+        .child(
+            canvas(
+                move |bounds, _, cx| entity.update(cx, |this, _| this.icon_size_track = bounds),
+                |_, _, _, _| {},
             )
-            // Press anywhere on the bar jumps there and starts scrubbing.
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, e: &gpui::MouseDownEvent, _window, cx| {
-                    cx.stop_propagation();
-                    this.icon_size_dragging = true;
-                    if let Some(size) = this.icon_size_at(e.position.x) {
-                        this.set_icon_size_live(size, cx);
-                    }
-                    cx.notify();
-                }),
-            )
+            .absolute()
+            .size_full(),
+        )
+        // Press anywhere on the bar jumps there and starts scrubbing.
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(|this, e: &gpui::MouseDownEvent, _window, cx| {
+                cx.stop_propagation();
+                this.icon_size_dragging = true;
+                if let Some(size) = this.icon_size_at(e.position.x) {
+                    this.set_icon_size_live(size, cx);
+                }
+                cx.notify();
+            }),
+        )
     }
 
     /// Tabstrip above the toolbar. Each tab is a clickable pill
@@ -2147,6 +2165,11 @@ impl Shell {
         // View switcher + grid size control state.
         let view_mode = self.active_tab().view_mode;
         let is_grid = matches!(view_mode, crate::grid::ViewMode::Grid);
+        let is_flat = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .is_some_and(|surface| surface.flat_mode().is_some());
         // Live grid icon size — drives the slider's readout and greys the
         // reset button out when there is nothing to reset. Render-time
         // global read, no I/O.
@@ -2168,7 +2191,7 @@ impl Shell {
         // needs ~1005. This term appears in every tier, so correcting it here
         // shifts all the fold points together.
         const W_BASE: f32 = 528.0; // sidebar + brand + back/fwd + filter + (?) + "…" + padding
-        const W_VIEW: f32 = 68.0; // list / grid switcher — never folds
+        const W_VIEW: f32 = 102.0; // list / grid / flat switcher — never folds
         const W_SORT: f32 = 34.0;
         const W_DESKTOP: f32 = 34.0;
         const W_NEW_REFRESH: f32 = 68.0;
@@ -2190,7 +2213,11 @@ impl Shell {
         let tiers = [
             if is_grid { W_SIZE_BAR } else { 0.0 },
             if has_dock { W_DOCK } else { 0.0 },
-            if show_desktop_available { W_DESKTOP } else { 0.0 },
+            if show_desktop_available {
+                W_DESKTOP
+            } else {
+                0.0
+            },
             if is_grid { W_SIZE_STEPS } else { 0.0 },
             W_SORT,
             W_NEW_REFRESH,
@@ -2206,8 +2233,14 @@ impl Shell {
             hide[i] = true;
             need -= w;
         }
-        let [hide_size_bar, hide_dock, hide_desktop, hide_size_steps, hide_sort, hide_new_refresh] =
-            hide;
+        let [
+            hide_size_bar,
+            hide_dock,
+            hide_desktop,
+            hide_size_steps,
+            hide_sort,
+            hide_new_refresh,
+        ] = hide;
 
         // Below the last tier the remainder is still ~600 px, and a bar whose
         // children are all `flex_shrink_0` just pushes its own tail — the view
@@ -2314,7 +2347,17 @@ impl Shell {
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
                         })
-                        .child(Input::new(&self.active_tab().filter_input).small()),
+                        // `cleanable` draws the ✕ inside the field once
+                        // there is text to clear. Clicking it runs the
+                        // input's own `clean`, which emits `Change` like
+                        // any edit — so the filter subscription drops the
+                        // filter and reloads the directory through the
+                        // normal path, no second clearing seam.
+                        .child(
+                            Input::new(&self.active_tab().filter_input)
+                                .small()
+                                .cleanable(true),
+                        ),
                 )
                 // (?) — filter-syntax cheat sheet (filter_help.rs). A
                 // stopgap until the filter grows chips; same mouse-down
@@ -2368,7 +2411,8 @@ impl Shell {
                                 .icon(gpui_component::Icon::empty().path(sort_icon))
                                 .tooltip(tr!("Sort"))
                                 .dropdown_menu(move |menu, _window, _cx| {
-                                    menu.action_context(sort_menu_focus.clone())
+                                    let menu = menu
+                                        .action_context(sort_menu_focus.clone())
                                         .menu_with_check(
                                             tr!("Name"),
                                             sort_col == SortColumn::Name,
@@ -2388,7 +2432,21 @@ impl Shell {
                                             tr!("Date Modified"),
                                             sort_col == SortColumn::Modified,
                                             Box::new(SortByModified),
+                                        );
+                                    // The one ordering the column headers
+                                    // can't give you: rank folders by how
+                                    // often you open them. Flat View rows
+                                    // carry no heat, so it isn't offered
+                                    // there.
+                                    if is_flat {
+                                        menu
+                                    } else {
+                                        menu.menu_with_check(
+                                            tr!("Ant Trail"),
+                                            sort_col == SortColumn::AntTrail,
+                                            Box::new(SortByAntTrail),
                                         )
+                                    }
                                 }),
                         )
                 }))
@@ -2485,7 +2543,7 @@ impl Shell {
                     Button::new("toolbar-view-list")
                         .small()
                         .ghost()
-                        .selected(!is_grid)
+                        .selected(!is_grid && !is_flat)
                         .icon(gpui_component::Icon::empty().path("icons/view-list.svg"))
                         .tooltip(tr!("List view"))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
@@ -2500,6 +2558,7 @@ impl Shell {
                         .small()
                         .ghost()
                         .selected(is_grid)
+                        .disabled(is_flat)
                         .icon(gpui_component::Icon::empty().path("icons/view-grid.svg"))
                         .tooltip(tr!("Icon view"))
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
@@ -2507,6 +2566,20 @@ impl Shell {
                         })
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.set_view_mode(crate::grid::ViewMode::Grid, window, cx);
+                        })),
+                )
+                .child(
+                    Button::new("toolbar-view-flat")
+                        .small()
+                        .ghost()
+                        .selected(is_flat)
+                        .icon(gpui_component::Icon::empty().path("icons/folder-tree.svg"))
+                        .tooltip(tr!("Include Subfolders"))
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_toggle_flat_view(&ToggleFlatView, window, cx);
                         })),
                 )
                 // Icon size stepper — only in grid mode.
@@ -2611,29 +2684,44 @@ impl Shell {
                                         // icon size three items below, and
                                         // flat neighbours would be a coin flip.
                                         let focus = sort_submenu_focus.clone();
-                                        menu = menu.submenu(tr!("Sort"), window, cx, move |sub, _w, _c| {
-                                            sub.action_context(focus.clone())
-                                                .menu_with_check(
-                                                    tr!("Name"),
-                                                    sort_col == SortColumn::Name,
-                                                    Box::new(SortByName),
-                                                )
-                                                .menu_with_check(
-                                                    tr!("Size"),
-                                                    sort_col == SortColumn::Size,
-                                                    Box::new(SortBySize),
-                                                )
-                                                .menu_with_check(
-                                                    tr!("Kind"),
-                                                    sort_col == SortColumn::Format,
-                                                    Box::new(SortByKind),
-                                                )
-                                                .menu_with_check(
-                                                    tr!("Date Modified"),
-                                                    sort_col == SortColumn::Modified,
-                                                    Box::new(SortByModified),
-                                                )
-                                        });
+                                        menu = menu.submenu(
+                                            tr!("Sort"),
+                                            window,
+                                            cx,
+                                            move |sub, _w, _c| {
+                                                let sub = sub
+                                                    .action_context(focus.clone())
+                                                    .menu_with_check(
+                                                        tr!("Name"),
+                                                        sort_col == SortColumn::Name,
+                                                        Box::new(SortByName),
+                                                    )
+                                                    .menu_with_check(
+                                                        tr!("Size"),
+                                                        sort_col == SortColumn::Size,
+                                                        Box::new(SortBySize),
+                                                    )
+                                                    .menu_with_check(
+                                                        tr!("Kind"),
+                                                        sort_col == SortColumn::Format,
+                                                        Box::new(SortByKind),
+                                                    )
+                                                    .menu_with_check(
+                                                        tr!("Date Modified"),
+                                                        sort_col == SortColumn::Modified,
+                                                        Box::new(SortByModified),
+                                                    );
+                                                if is_flat {
+                                                    sub
+                                                } else {
+                                                    sub.menu_with_check(
+                                                        tr!("Ant Trail"),
+                                                        sort_col == SortColumn::AntTrail,
+                                                        Box::new(SortByAntTrail),
+                                                    )
+                                                }
+                                            },
+                                        );
                                         folded = true;
                                     }
                                     if hide_new_refresh {
@@ -2643,20 +2731,22 @@ impl Shell {
                                         folded = true;
                                     }
                                     if hide_desktop && show_desktop_available {
-                                        menu = menu
-                                            .menu(tr!("Show Desktop"), Box::new(ShowDesktop));
+                                        menu =
+                                            menu.menu(tr!("Show Desktop"), Box::new(ShowDesktop));
                                         folded = true;
                                     }
                                     if hide_dock && has_dock {
                                         menu = menu
                                             .menu_with_check(
                                                 tr!("Dock Left"),
-                                                dock_edge == Some(crate::shell::dock::DockEdge::Left),
+                                                dock_edge
+                                                    == Some(crate::shell::dock::DockEdge::Left),
                                                 Box::new(DockLeft),
                                             )
                                             .menu_with_check(
                                                 tr!("Dock Right"),
-                                                dock_edge == Some(crate::shell::dock::DockEdge::Right),
+                                                dock_edge
+                                                    == Some(crate::shell::dock::DockEdge::Right),
                                                 Box::new(DockRight),
                                             )
                                             .menu(tr!("Undock"), Box::new(Undock));
@@ -2674,13 +2764,15 @@ impl Shell {
                                         let larger = overflow_entity.clone();
                                         let reset = overflow_entity.clone();
                                         menu = menu
-                                            .item(PopupMenuItem::new(tr!("Smaller icons")).on_click(
-                                                move |_, _, cx| {
-                                                    smaller.update(cx, |this, cx| {
-                                                        this.step_icon_size(-1, cx)
-                                                    });
-                                                },
-                                            ))
+                                            .item(
+                                                PopupMenuItem::new(tr!("Smaller icons")).on_click(
+                                                    move |_, _, cx| {
+                                                        smaller.update(cx, |this, cx| {
+                                                            this.step_icon_size(-1, cx)
+                                                        });
+                                                    },
+                                                ),
+                                            )
                                             .item(PopupMenuItem::new(tr!("Larger icons")).on_click(
                                                 move |_, _, cx| {
                                                     larger.update(cx, |this, cx| {
@@ -2689,13 +2781,12 @@ impl Shell {
                                                 },
                                             ))
                                             .item(
-                                                PopupMenuItem::new(tr!("Reset icon size")).on_click(
-                                                    move |_, _, cx| {
+                                                PopupMenuItem::new(tr!("Reset icon size"))
+                                                    .on_click(move |_, _, cx| {
                                                         reset.update(cx, |this, cx| {
                                                             this.reset_icon_size(cx)
                                                         });
-                                                    },
-                                                ),
+                                                    }),
                                             );
                                         folded = true;
                                     }
@@ -2703,26 +2794,23 @@ impl Shell {
                                         menu = menu.separator();
                                     }
                                     menu.menu_with_check(
-                                            tr!("Show Hidden Files"),
-                                            show_hidden,
-                                            Box::new(ToggleHidden),
-                                        )
-                                        .separator()
-                                        .menu(tr!("Get Info"), Box::new(GetInfo))
-                                        .menu(tr!("Open Viewer"), Box::new(OpenViewer))
-                                        .menu(tr!("Disk Usage\u{2026}"), Box::new(OpenDiskUsage))
-                                        .menu(
-                                            tr!("Find Duplicates\u{2026}"),
-                                            Box::new(FindDuplicates),
-                                        )
-                                        .menu(
-                                            tr!("Find Similar Images\u{2026}"),
-                                            Box::new(FindSimilarImages),
-                                        )
-                                        .separator()
-                                        .menu(tr!("Copy File List"), Box::new(CopyFileList))
-                                        .separator()
-                                        .menu(tr!("Empty Trash\u{2026}"), Box::new(EmptyTrash))
+                                        tr!("Show Hidden Files"),
+                                        show_hidden,
+                                        Box::new(ToggleHidden),
+                                    )
+                                    .separator()
+                                    .menu(tr!("Get Info"), Box::new(GetInfo))
+                                    .menu(tr!("Open Viewer"), Box::new(OpenViewer))
+                                    .menu(tr!("Disk Usage\u{2026}"), Box::new(OpenDiskUsage))
+                                    .menu(tr!("Find Duplicates\u{2026}"), Box::new(FindDuplicates))
+                                    .menu(
+                                        tr!("Find Similar Images\u{2026}"),
+                                        Box::new(FindSimilarImages),
+                                    )
+                                    .separator()
+                                    .menu(tr!("Copy File List"), Box::new(CopyFileList))
+                                    .separator()
+                                    .menu(tr!("Empty Trash\u{2026}"), Box::new(EmptyTrash))
                                 }),
                         ),
                 ),
@@ -2774,7 +2862,7 @@ impl Shell {
                     .path_for_entry(entry.id)
                     .unwrap_or_else(|| {
                         let mut p = self.active_tab().current_dir.clone();
-                        p.push(&entry.name);
+                        p.push(entry.name.as_ref());
                         p
                     });
                 PreviewTarget::File {
@@ -3403,15 +3491,16 @@ impl Render for Shell {
             delegate.cached_total_size.set(Some(t));
             t
         });
-        let selection = &self.active_tab().selection;
-        let selected_count = selection.len();
+        let selected_count = self.active_tab().selection_count(entry_count);
         let selected_size: u64 = if selected_count == 0 {
             0
+        } else if selected_count == entry_count {
+            total_size
         } else {
             delegate.cached_selected_size.get().unwrap_or_else(|| {
                 let s = entries
                     .iter()
-                    .filter(|e| delegate.selected_set.contains(&e.id))
+                    .filter(|e| delegate.is_selected(e.id))
                     .map(|e| e.size)
                     .sum();
                 delegate.cached_selected_size.set(Some(s));
@@ -3454,7 +3543,7 @@ impl Render for Shell {
                 let sel: Vec<&ferail_core::FileEntry> = del
                     .entries
                     .iter()
-                    .filter(|e| del.selected_set.contains(&e.id))
+                    .filter(|e| del.is_selected(e.id))
                     .collect();
                 (
                     del.entries.len(),
@@ -3545,6 +3634,7 @@ impl Render for Shell {
             Some(toggle_task_panel),
             self.show_hidden,
             Some(toggle_hidden_cb),
+            window,
             cx,
         );
         // Auto-dismiss the background-task popover when the pointer
@@ -3601,8 +3691,10 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_dock_right))
             .on_action(cx.listener(Self::on_undock))
             .on_action(cx.listener(Self::on_toggle_hidden))
+            .on_action(cx.listener(Self::on_toggle_flat_view))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_copy_path))
+            .on_action(cx.listener(Self::on_generate_sha256))
             .on_action(cx.listener(Self::on_copy_file_list))
             .on_action(cx.listener(Self::on_copy_files))
             .on_action(cx.listener(Self::on_cut_files))
@@ -3643,6 +3735,7 @@ impl Render for Shell {
             .on_action(cx.listener(Self::on_sort_by_size))
             .on_action(cx.listener(Self::on_sort_by_kind))
             .on_action(cx.listener(Self::on_sort_by_modified))
+            .on_action(cx.listener(Self::on_sort_by_ant_trail))
             .on_action(cx.listener(Self::on_toggle_recents_section))
             .on_action(cx.listener(Self::on_remove_from_recents))
             .on_action(cx.listener(Self::on_clear_recents))

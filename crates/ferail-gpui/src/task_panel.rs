@@ -46,7 +46,11 @@ pub fn render_if_open(open: bool, tasks: &Rc<RefCell<TaskRegistry>>, cx: &mut Ap
     let header_text = if surfaced.is_empty() {
         tr!("Background tasks")
     } else {
-        trn!("{n} background task", "{n} background tasks", surfaced.len())
+        trn!(
+            "{n} background task",
+            "{n} background tasks",
+            surfaced.len()
+        )
     };
     let header = h_flex()
         .w_full()

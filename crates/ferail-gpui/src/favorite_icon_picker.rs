@@ -155,7 +155,12 @@ impl Render for IconPickerView {
                     .items_center()
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(div().flex_1().min_w_0().child(Input::new(&self.filter).small()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(Input::new(&self.filter).small()),
+                    )
                     .child(
                         div()
                             .flex_shrink_0()

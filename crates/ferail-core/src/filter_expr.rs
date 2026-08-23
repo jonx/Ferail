@@ -54,11 +54,20 @@ enum Term {
     Ext(String),
     Locked(bool),
     /// Inclusive byte bounds; `None` = unbounded on that side.
-    Size { min: Option<u64>, max: Option<u64> },
+    Size {
+        min: Option<u64>,
+        max: Option<u64>,
+    },
     /// Inclusive unix-seconds bounds on mtime.
-    Modified { min: Option<i64>, max: Option<i64> },
+    Modified {
+        min: Option<i64>,
+        max: Option<i64>,
+    },
     /// Inclusive unix-seconds bounds on birth time.
-    Created { min: Option<i64>, max: Option<i64> },
+    Created {
+        min: Option<i64>,
+        max: Option<i64>,
+    },
 }
 
 /// A parsed filter query. Cheap to evaluate per row; parse once per
@@ -136,9 +145,9 @@ impl FilterExpr {
                     && min.is_none_or(|lo| entry.mtime_unix >= lo)
                     && max.is_none_or(|hi| entry.mtime_unix <= hi)
             }
-            Term::Created { min, max } => entry.created_unix.is_some_and(|c| {
-                min.is_none_or(|lo| c >= lo) && max.is_none_or(|hi| c <= hi)
-            }),
+            Term::Created { min, max } => entry
+                .created_unix
+                .is_some_and(|c| min.is_none_or(|lo| c >= lo) && max.is_none_or(|hi| c <= hi)),
         })
     }
 
@@ -152,11 +161,7 @@ impl FilterExpr {
         }
         let text_ok = if self.terms.iter().any(|t| matches!(t, Term::Text(_))) {
             let (format, _) = entry.format_label();
-            let haystack = format!(
-                "{} {}",
-                entry.name.to_lowercase(),
-                format.to_lowercase()
-            );
+            let haystack = format!("{} {}", entry.name.to_lowercase(), format.to_lowercase());
             self.text_matches(&haystack)
         } else {
             true
@@ -265,9 +270,7 @@ fn parse_size(value: &str) -> Option<u64> {
     if v.is_empty() {
         return None;
     }
-    let split = v
-        .find(|c: char| c.is_ascii_alphabetic())
-        .unwrap_or(v.len());
+    let split = v.find(|c: char| c.is_ascii_alphabetic()).unwrap_or(v.len());
     let (num, unit) = v.split_at(split);
     let num: f64 = num.trim().parse().ok()?;
     if num < 0.0 {
@@ -315,7 +318,10 @@ fn parse_date_range(value: &str, ctx: DateCtx) -> Option<(Option<i64>, Option<i6
         return Some((Some(civil_to_unix(rest, ctx.tz_offset_secs)?), None));
     }
     if let Some(rest) = v.strip_prefix("<=") {
-        return Some((None, Some(civil_to_unix(rest, ctx.tz_offset_secs)? + DAY - 1)));
+        return Some((
+            None,
+            Some(civil_to_unix(rest, ctx.tz_offset_secs)? + DAY - 1),
+        ));
     }
     if let Some(rest) = v.strip_prefix('>') {
         return Some((Some(civil_to_unix(rest, ctx.tz_offset_secs)? + DAY), None));
@@ -416,16 +422,16 @@ mod tests {
     fn entry(name: &str, kind: EntryKind, size: u64, mtime: i64) -> FileEntry {
         FileEntry {
             id: NodeId::from_raw(1).unwrap(),
-            name: name.to_string(),
-            display_name: name.to_string(),
+            name: name.into(),
+            display_name: name.into(),
             name_has_hazards: false,
             kind,
             size,
             mtime_unix: mtime,
-            display_size: String::new(),
-            display_kind: String::new(),
-            display_magic: String::new(),
-            display_description: String::new(),
+            display_size: crate::empty_entry_text(),
+            display_kind: crate::empty_entry_text(),
+            display_magic: crate::empty_entry_text(),
+            display_description: crate::empty_entry_text(),
             is_quarantined: false,
             quarantine: None,
             hidden: false,

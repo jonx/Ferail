@@ -269,7 +269,11 @@ impl LibMpv {
                 "mpv_render_context_render",
                 extern "C" fn(*mut c_void, *mut RenderParam) -> c_int
             ),
-            rc_update: sym!(lib, "mpv_render_context_update", extern "C" fn(*mut c_void) -> u64),
+            rc_update: sym!(
+                lib,
+                "mpv_render_context_update",
+                extern "C" fn(*mut c_void) -> u64
+            ),
             rc_free: sym!(lib, "mpv_render_context_free", extern "C" fn(*mut c_void)),
         })
     }
@@ -409,8 +413,14 @@ impl VideoBackend for MpvBackend {
         // Software render context.
         let api = cstr("sw");
         let mut cparams = [
-            RenderParam { typ: PARAM_API_TYPE, data: api.as_ptr() as *mut c_void },
-            RenderParam { typ: 0, data: std::ptr::null_mut() },
+            RenderParam {
+                typ: PARAM_API_TYPE,
+                data: api.as_ptr() as *mut c_void,
+            },
+            RenderParam {
+                typ: 0,
+                data: std::ptr::null_mut(),
+            },
         ];
         let mut rctx: *mut c_void = std::ptr::null_mut();
         if (lib.rc_create)(&mut rctx, h, cparams.as_mut_ptr()) != 0 {
@@ -644,11 +654,26 @@ impl VideoStream for MpvStream {
         let fmt = cstr("bgra");
         let mut stride: usize = w as usize * 4;
         let mut params = [
-            RenderParam { typ: PARAM_SW_SIZE, data: size.as_mut_ptr() as *mut c_void },
-            RenderParam { typ: PARAM_SW_FORMAT, data: fmt.as_ptr() as *mut c_void },
-            RenderParam { typ: PARAM_SW_STRIDE, data: &mut stride as *mut usize as *mut c_void },
-            RenderParam { typ: PARAM_SW_POINTER, data: self.buf.as_mut_ptr() as *mut c_void },
-            RenderParam { typ: 0, data: std::ptr::null_mut() },
+            RenderParam {
+                typ: PARAM_SW_SIZE,
+                data: size.as_mut_ptr() as *mut c_void,
+            },
+            RenderParam {
+                typ: PARAM_SW_FORMAT,
+                data: fmt.as_ptr() as *mut c_void,
+            },
+            RenderParam {
+                typ: PARAM_SW_STRIDE,
+                data: &mut stride as *mut usize as *mut c_void,
+            },
+            RenderParam {
+                typ: PARAM_SW_POINTER,
+                data: self.buf.as_mut_ptr() as *mut c_void,
+            },
+            RenderParam {
+                typ: 0,
+                data: std::ptr::null_mut(),
+            },
         ];
         if (self.lib.rc_render)(self.rctx, params.as_mut_ptr()) != 0 {
             return None;
@@ -701,7 +726,10 @@ impl VideoStream for MpvStream {
         if self.dims.0 > 0 && self.dims.1 > 0 {
             (self.dims.0 as f64, self.dims.1 as f64)
         } else {
-            (self.prop_i64("dwidth") as f64, self.prop_i64("dheight") as f64)
+            (
+                self.prop_i64("dwidth") as f64,
+                self.prop_i64("dheight") as f64,
+            )
         }
     }
 
@@ -774,7 +802,10 @@ mod tests {
         let (w, h, out) = rotate_bgra(&src, 3, 1, 90);
         assert_eq!((w, h), (1, 3));
         // Row [10 20 30] stood up clockwise → column 10/20/30 top-to-bottom.
-        assert_eq!(out.iter().step_by(4).copied().collect::<Vec<u8>>(), vec![10, 20, 30]);
+        assert_eq!(
+            out.iter().step_by(4).copied().collect::<Vec<u8>>(),
+            vec![10, 20, 30]
+        );
     }
 
     #[test]
@@ -790,9 +821,7 @@ mod tests {
             "load-context-menu",
         ] {
             assert_eq!(
-                PREINIT_OPTIONS
-                    .iter()
-                    .find(|(option, _)| *option == name),
+                PREINIT_OPTIONS.iter().find(|(option, _)| *option == name),
                 Some(&(name, "no")),
                 "hardened macOS releases must not let libmpv start LuaJIT"
             );
@@ -820,7 +849,11 @@ mod tests {
             .open(
                 clip,
                 Box::new(|| {}),
-                VideoEnhance { denoise: 0.4, sharpen: 0.4, ..Default::default() },
+                VideoEnhance {
+                    denoise: 0.4,
+                    sharpen: 0.4,
+                    ..Default::default()
+                },
             )
             .expect("open clip");
 
@@ -835,9 +868,16 @@ mod tests {
         }
         let (w, h, bytes) = frame.expect("a decoded frame within 5s");
         assert!(w > 0 && h > 0, "native size resolved");
-        assert_eq!(bytes.len(), (w * h * 4) as usize, "BGRA buffer matches dims");
+        assert_eq!(
+            bytes.len(),
+            (w * h * 4) as usize,
+            "BGRA buffer matches dims"
+        );
 
-        assert!(stream.set_adjust(VideoAdjust { brightness: 0.4, ..Default::default() }));
+        assert!(stream.set_adjust(VideoAdjust {
+            brightness: 0.4,
+            ..Default::default()
+        }));
         assert!(stream.set_chroma_key(Some(ChromaKey {
             color: [0, 255, 0],
             similarity: 0.3,

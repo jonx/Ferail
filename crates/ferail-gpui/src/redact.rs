@@ -159,7 +159,8 @@ fn looks_like_path(tok: &str) -> bool {
     }
     // Windows drive: C:\ or C:/
     let b = tok.as_bytes();
-    if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/') {
+    if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/')
+    {
         return true;
     }
     false

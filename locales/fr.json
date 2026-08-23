@@ -14,6 +14,7 @@
       "other": "+{n} autres"
     },
     "/path/to/folder": "/chemin/vers/dossier",
+    "A checksum found in the clipboard is filled in automatically. Clear only removes it from this dialog.": "Une somme de contrôle trouvée dans le presse-papiers est renseignée automatiquement. Effacer ne la retire que de cette boîte de dialogue.",
     "A fast, calm file explorer.": "Un explorateur de fichiers rapide et calme.",
     "A newer Ferail {version} release exists for {platforms}.": "Une version plus récente de Ferail, {version}, existe pour {platforms}.",
     "About": "À propos",
@@ -47,9 +48,9 @@
     "All but one": "Tous sauf un",
     "All categories": "Toutes les catégories",
     "Allocated": "Allouée",
-    "Analyzing images… {done} of {total}": "Analyse des images… {done} sur {total}",
     "An archive entry with that name already exists.": "Une entrée d’archive portant ce nom existe déjà.",
     "An item already exists": "Un élément existe déjà",
+    "Analyzing images… {done} of {total}": "Analyse des images… {done} sur {total}",
     "Ant Trail": "Ant Trail",
     "Ant Trail color": "Couleur de l’Ant Trail",
     "Anything unrecognised is matched as plain text. Press ⏎ to run the same query as a search of subfolders.": "Tout ce qui n'est pas reconnu est représenté sous forme de texte brut. Appuyez sur ⏎ pour exécuter la même requête qu'une recherche de sous-dossiers.",
@@ -96,7 +97,9 @@
     "CPU {pct}": "CPU {pct}",
     "Calculate": "Calculer",
     "Calculate folder sizes": "Calculer la taille des dossiers",
+    "Calculating SHA-256…": "Calcul du SHA-256…",
     "Calculating…": "Calcul en cours…",
+    "Calculation cancelled.": "Calcul annulé.",
     "Can't add “{name}” because an entry with that name already exists.": "Impossible d’ajouter « {name} », car une entrée portant ce nom existe déjà.",
     "Can't decode this video": "Impossible de décoder cette vidéo",
     "Cancel": "Annuler",
@@ -130,6 +133,7 @@
       "one": "Clonage de {n} doublon",
       "other": "Clonage de {n} doublons"
     },
+    "Close": "Fermer",
     "Close & retry": "Fermer et réessayer",
     "Close Results": "Fermer les résultats",
     "Close Tab": "Fermer l'onglet",
@@ -160,10 +164,10 @@
     "Confirm each match byte-for-byte after hashing. Removes any hash-collision doubt at the cost of re-reading confirmed groups.": "Confirmez chaque correspondance octet par octet après le hachage. Supprime tout doute de collision de hachage au prix de la relecture des groupes confirmés.",
     "Context": "Contexte",
     "Contrast": "Contraste",
-    "Controls image layout and edges (dHash).": "Contrôle la disposition et les contours de l’image (dHash).",
-    "Controls overall visual detail (pHash).": "Contrôle les détails visuels globaux (pHash).",
     "Control character": "Caractère de contrôle",
     "Control character (U+{code})": "Caractère de contrôle (U+{code})",
+    "Controls image layout and edges (dHash).": "Contrôle la disposition et les contours de l’image (dHash).",
+    "Controls overall visual detail (pHash).": "Contrôle les détails visuels globaux (pHash).",
     "Conversion stopped because {n} archive entry could not be represented safely.": {
       "one": "La conversion a été interrompue, car {n} entrée d’archive ne pouvait pas être représentée en toute sécurité.",
       "other": "La conversion a été interrompue, car {n} entrées d’archive ne pouvaient pas être représentées en toute sécurité."
@@ -204,6 +208,7 @@
       "one": "Copie — préparation (élément {n})…",
       "other": "Copie — préparation (éléments {n})…"
     },
+    "Could not calculate SHA-256: {detail}": "Impossible de calculer le SHA-256 : {detail}",
     "Could not pop out Disk Usage: {detail}": "Impossible de détacher Utilisation du disque : {detail}",
     "Couldn't check for updates.": "Impossible de rechercher les mises à jour.",
     "Couldn't close the apps: {detail}": "Impossible de fermer les applications : {detail}",
@@ -240,6 +245,7 @@
     "Cut “{name}”": "Couper « {name} »",
     "Cycle Focus": "Changer de zone active",
     "Cyrillic": "Cyrillique",
+    "DOES NOT MATCH — the checksums are different.": "NE CORRESPOND PAS — les sommes de contrôle sont différentes.",
     "Dark": "Sombre",
     "Date Modified": "Date de modification",
     "Dates: YYYY-MM-DD, with >, >=, <, <= or a range a..b — or today, yesterday, week, month, year.": "Dates : AAAA-MM-JJ, avec >, >=, <, <= ou une plage a..b — ou aujourd'hui, hier, semaine, mois, année.",
@@ -360,12 +366,14 @@
     "Enclosing Folder": "Dossier englobant",
     "English": "Anglais",
     "Enhance": "Améliorer",
-    "Environment": "Environnement",
+    "Enter exactly one 64-character hexadecimal SHA-256 checksum.": "Saisissez exactement une somme SHA-256 hexadécimale de 64 caractères.",
     "Enumerating folders… {folders} folders scanned · {images} candidate images found": "Parcours des dossiers… {folders} dossiers parcourus · {images} images candidates trouvées",
+    "Environment": "Environnement",
     "Every dropped item is already in the archive": "Tous les éléments déposés sont déjà dans l'archive",
     "Executable": "Exécutable",
     "Exit full screen before docking the window.": "Quittez le plein écran avant d’ancrer la fenêtre.",
     "Expand / First Child": "Développer / Premier enfant",
+    "Expected SHA-256": "SHA-256 attendu",
     "Export as HTML": "Exporter au format HTML",
     "Export…": "Exporter…",
     "Extension says “{kind}” but the content is “{magic}” — possible disguised file.": "L'extension indique « {kind} » mais le contenu est « {magic} » – possible fichier déguisé.",
@@ -448,6 +456,8 @@
     "Gap between the selection highlights in icon view. Wider spacing lets the boxes breathe; None packs them edge-to-edge.": "Écart entre les surbrillances de sélection dans la vue par icônes. Un espacement plus large aère l’affichage ; « Aucun » les place bord à bord.",
     "Gathering details…": "Récupération des détails…",
     "General": "Général",
+    "Generate SHA-256…": "Générer le SHA-256…",
+    "Generated SHA-256": "SHA-256 généré",
     "Genre": "Genre",
     "Get Info": "Obtenir des informations",
     "Get Info — {name}": "Obtenir des informations — {name}",
@@ -468,6 +478,7 @@
     "Grouping similar images…": "Regroupement des images similaires…",
     "Health check of the app's storage and environment. Run `ferail --doctor` for the same report from a terminal.": "Bilan de santé du stockage et de l'environnement de l'application. Exécutez `ferail --doctor` pour le même rapport depuis un terminal.",
     "Help": "Aide",
+    "Hidden": "Masqués",
     "Hide Others": "Masquer les autres",
     "Hide details": "Masquer les détails",
     "Hide extension": "Masquer l'extension",
@@ -488,6 +499,7 @@
     "Imported {language}: {translated} of {total} strings translated": "{language} importé : {translated} chaînes traduites sur {total}",
     "Import…": "Importer…",
     "In use by {names}": "Utilisé par {names}",
+    "Include Subfolders": "Inclure les sous-dossiers",
     "Include hidden files": "Inclure les fichiers cachés",
     "Incorrect password — try again.": "Mot de passe incorrect : réessayez.",
     "Indexing {n} entry…": {
@@ -536,6 +548,7 @@
     "Look-alike character": "Caractère ressemblant",
     "Loop": "Boucle",
     "Lower values require a closer visual match.": "Des valeurs plus faibles exigent une correspondance visuelle plus étroite.",
+    "MATCH — the file checksum is identical.": "CORRESPOND — la somme de contrôle du fichier est identique.",
     "MEM {bytes}": "MEM {bytes}",
     "Make Alias": "Créer un alias",
     "Make alias": "Créer un alias",
@@ -615,6 +628,7 @@
     "No activity recorded yet.": "Aucune activité enregistrée pour l'instant.",
     "No downloadable Ferail release was found on GitHub.": "Aucune version téléchargeable de Ferail n’a été trouvée sur GitHub.",
     "No duplicates found.": "Aucun doublon trouvé.",
+    "No files found in this location or its subfolders.": "Aucun fichier trouvé dans cet emplacement ou ses sous-dossiers.",
     "No files on the clipboard": "Aucun fichier dans le presse-papiers",
     "No files to view in this folder": "Aucun fichier à afficher dans ce dossier",
     "No folder available to add to Favorites.": "Aucun dossier disponible à ajouter aux Favoris.",
@@ -640,8 +654,8 @@
     "OneDrive": "OneDrive",
     "Only folders can be added to Favorites.": "Seuls les dossiers peuvent être ajoutés aux Favoris.",
     "Only needed for an encrypted source": "Requis uniquement pour une source chiffrée",
-    "Open": "Ouvrir",
     "Opacity": "Opacité",
+    "Open": "Ouvrir",
     "Open Disk Usage in Window": "Ouvrir l'utilisation du disque dans la fenêtre",
     "Open Full Disk Access settings": "Ouvrir les paramètres d'accès complet au disque",
     "Open Items?": "Ouvrir les éléments ?",
@@ -681,6 +695,9 @@
     "Page Up": "Page précédente",
     "Password": "Mot de passe",
     "Paste": "Coller",
+    "Paste an expected SHA-256 (optional)": "Collez un SHA-256 attendu (facultatif)",
+    "Paste an expected SHA-256 to compare.": "Collez un SHA-256 attendu pour comparer.",
+    "Path": "Chemin",
     "Path copied to clipboard": "Chemin copié dans le presse-papiers",
     "Pause Slideshow": "Suspendre le diaporama",
     "Pending addition": "Ajout en attente",
@@ -705,6 +722,7 @@
     "Play Slideshow": "Lire le diaporama",
     "Player": "Lecteur",
     "Plugins": "Plugins",
+    "Preparing file list…": "Préparation de la liste des fichiers…",
     "Preview": "Aperçu",
     "Preview selected file": "Aperçu du fichier sélectionné",
     "Preview this file?": "Prévisualiser ce fichier ?",
@@ -720,6 +738,7 @@
     "Read-only": "Lecture seule",
     "Read-only volume": "Volume en lecture seule",
     "Reading archive…": "Lecture de l’archive…",
+    "Reading file…": "Lecture du fichier…",
     "Reading {path}": "Lecture de {path}",
     "Reading “{label}”…": "Lecture de « {label} »…",
     "Reading…": "Lecture…",
@@ -786,8 +805,8 @@
     "Reset Columns": "Réinitialiser les colonnes",
     "Reset Icon": "Réinitialiser l’icône",
     "Reset icon size": "Réinitialiser la taille des icônes",
-    "Reset to recommended": "Réinitialiser aux valeurs recommandées",
     "Reset to Original Name": "Réinitialiser au nom d'origine",
+    "Reset to recommended": "Réinitialiser aux valeurs recommandées",
     "Restored Favorite": "Favoris restauré",
     "Restored from Trash": "Restauré à partir de la corbeille",
     "Results view": "Vue des résultats",
@@ -812,6 +831,8 @@
     "Rotate Clockwise": "Tourner dans le sens des aiguilles d'une montre",
     "Running health checks…": "Exécution de contrôles de santé…",
     "Running…": "En cours d'exécution…",
+    "SHA-256 checksum": "Somme de contrôle SHA-256",
+    "SHA-256 copied": "SHA-256 copié",
     "Sample rate": "Taux d'échantillonnage",
     "Save Changes": "Enregistrer les modifications",
     "Save This Folder…": "Enregistrer ce dossier…",
@@ -834,6 +855,10 @@
     "Scanning for duplicates…": "Recherche de doublons…",
     "Scanning for similar images…": "Recherche d’images similaires…",
     "Scanning {path}": "Analyse de {path}",
+    "Scanning: {n} file in {dirs} folders": {
+      "one": "Analyse : {n} fichier dans {dirs} dossiers",
+      "other": "Analyse : {n} fichiers dans {dirs} dossiers"
+    },
     "Scanning… {files} files, {scanned}": "Analyse… {files} fichiers, {scanned}",
     "Scroll tabs left": "Faire défiler les onglets vers la gauche",
     "Scroll tabs right": "Faire défiler les onglets vers la droite",
@@ -844,6 +869,7 @@
     "Search...": "Rechercher...",
     "Search…": "Rechercher…",
     "Select All": "Sélectionner tout",
+    "Select one file to generate its SHA-256.": "Sélectionnez un fichier pour générer son SHA-256.",
     "Selection": "Sélection",
     "Selection color": "Couleur de sélection",
     "Set Tag": "Ajouter un tag",
@@ -901,6 +927,7 @@
     "Software Update": "Mise à jour logicielle",
     "Some archive-specific metadata may not survive conversion.": "Certaines métadonnées propres à l’archive peuvent ne pas être conservées lors de la conversion.",
     "Sort": "Trier",
+    "Sort by Ant Trail": "Trier par Ant Trail",
     "Sort by Date Added (newest)": "Trier par date d'ajout (le plus récent)",
     "Sort by Date Added (oldest)": "Trier par date d'ajout (le plus ancien)",
     "Sort by Date Modified": "Trier par date de modification",
@@ -940,10 +967,13 @@
     "The archive has no parent folder": "L'archive n'a pas de dossier parent",
     "The built-in player uses the platform's native media frameworks (AVFoundation on macOS, Media Foundation on Windows). mpv plays virtually any container/codec and applies colour adjustments and a transparent-colour key to the video itself. libmpv must be installed; a change takes effect on the next viewer window.": "Le lecteur intégré utilise les frameworks multimédias natifs de la plateforme (AVFoundation sur macOS, Media Foundation sur Windows). mpv lit pratiquement n'importe quel conteneur/codec et applique des ajustements de couleur et une clé de couleur transparente à la vidéo elle-même. libmpv doit être installé ; une modification prend effet dans la fenêtre suivante du visualiseur.",
     "The built-in player uses the platform's native media frameworks. mpv plays virtually any container/codec, but this build was compiled without the `mpv` feature, so mpv is unavailable — rebuild with `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) to enable it.": "Le lecteur intégré utilise les frameworks multimédias natifs de la plateforme. mpv lit pratiquement n'importe quel conteneur/codec, mais cette version a été compilée sans la fonctionnalité `mpv`, donc mpv n'est pas disponible — reconstruisez avec `cargo run --bin ferail-gpui --features mpv` (avec libmpv installé) pour l'activer.",
+    "The comparison is unavailable because calculation did not finish.": "La comparaison est indisponible, car le calcul ne s’est pas terminé.",
+    "The comparison will appear when calculation finishes.": "La comparaison apparaîtra une fois le calcul terminé.",
     "The converted archive name must be a single non-empty filename.": "Le nom de l’archive convertie doit être un nom de fichier unique et non vide.",
     "The destination is read-only. Choose a writable folder or change the volume's permissions.": "La destination est en lecture seule. Choisissez un dossier accessible en écriture ou modifiez les autorisations du volume.",
     "The highlight behind selected files in the list and grid. Clear it to follow the theme's blue.": "La couleur derrière les fichiers sélectionnés dans la liste et la grille. Effacez-la pour utiliser le bleu du thème.",
     "The item may have moved or been deleted. Refresh the folder and try again.": "L'élément a peut-être été déplacé ou supprimé. Actualisez le dossier et réessayez.",
+    "The system file clipboard can't safely hold this many items. Use Copy File List for their paths.": "Le presse-papiers de fichiers du système ne peut pas contenir autant d’éléments de manière fiable. Utilisez Copier la liste des fichiers pour leurs chemins.",
     "The macOS port of Ferail — a Finder-class file explorer.": "Le port macOS de Ferail – un explorateur de fichiers de classe Finder.",
     "The name must be a single non-empty filename.": "Le nom doit être un nom de fichier unique et non vide.",
     "The source archive changed while it was being converted. Try again.": "L’archive source a été modifiée pendant la conversion. Réessayez.",
@@ -1160,6 +1190,14 @@
       "one": "{n} fichier",
       "other": "{n} fichiers"
     },
+    "{n} file · all subfolders": {
+      "one": "{n} fichier · tous les sous-dossiers",
+      "other": "{n} fichiers · tous les sous-dossiers"
+    },
+    "{n} filtered": {
+      "one": "{n} filtré",
+      "other": "{n} filtrés"
+    },
     "{n} filtered out · {size}": {
       "one": "{n} filtré · {size}",
       "other": "{n} filtré · {size}"
@@ -1171,6 +1209,10 @@
     "{n} group · {reclaimable} reclaimable": {
       "one": "{n} groupe · {reclaimable} récupérables",
       "other": "{n} groupes · {reclaimable} récupérables"
+    },
+    "{n} hidden": {
+      "one": "{n} caché",
+      "other": "{n} cachés"
     },
     "{n} hidden · {size}": {
       "one": "{n} caché · {size}",
@@ -1208,10 +1250,6 @@
       "one": "{n} élément · {size}",
       "other": "{n} éléments · {size}"
     },
-    "{n} similar-image group · {size} reclaimable": {
-      "one": "{n} groupe d’images similaires · {size} récupérable",
-      "other": "{n} groupes d’images similaires · {size} récupérables"
-    },
     "{n} of {total} selected · {size}": {
       "one": "{n} sur {total} sélectionné · {size}",
       "other": "{n} sur {total} sélectionné · {size}"
@@ -1223,6 +1261,10 @@
     },
     "{n} rps": "{n} rps",
     "{n} selected  {size}": "{n} sélectionné {size}",
+    "{n} similar-image group · {size} reclaimable": {
+      "one": "{n} groupe d’images similaires · {size} récupérable",
+      "other": "{n} groupes d’images similaires · {size} récupérables"
+    },
     "{n} task running": {
       "one": "{n} tâche en cours",
       "other": "{n} tâches en cours"

@@ -16,13 +16,13 @@ pub mod layout;
 pub mod model;
 
 pub use aggregate::build_layout_node;
+pub use aggregate::build_layout_node_with_mode;
 pub use facts::DiskUsageFact;
+pub use file_category::{classify_extension, classify_path, FileCategory};
 pub use html_export::{
     category_color_rgba, category_label, treemap_html_document, treemap_html_fragment,
 };
-pub use file_category::{classify_extension, classify_path, FileCategory};
 pub use layout::{compute_treemap, hit_test, TreemapRect};
-pub use aggregate::build_layout_node_with_mode;
 pub use model::{
     DiskUsageLayoutNode, DiskUsageNode, DiskUsageStats, DiskUsageTree, NodeKind, ScanState,
     SizeMode,

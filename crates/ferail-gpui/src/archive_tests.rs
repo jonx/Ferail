@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 
 use crate::archive::{
-    archive_addition_root, archive_path_at_or_below, project_archive_path,
-    unproject_archive_path,
+    archive_addition_root, archive_path_at_or_below, project_archive_path, unproject_archive_path,
 };
 
 #[test]

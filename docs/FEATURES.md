@@ -58,6 +58,17 @@ what gets drawn — invisible characters become explicit `⟨U+200B⟩`-style
 chips, homoglyphs and disguised whitespace are highlighted in place.
 The name you read is the name you have.
 
+## SHA-256 — verify a download in place
+
+Select one file and choose **Generate SHA-256…** from its context menu, the
+File menu, or Cmd+K. Ferail streams the file off the UI thread with visible,
+cancellable progress and a one-click **Copy** action. If the clipboard already
+contains a SHA-256 — including the common `hash  filename` or
+`SHA256(filename) = hash` forms — the dialog trims surrounding whitespace and
+compares it automatically. The expected value remains editable; **Clear**
+removes it from this dialog without touching the system clipboard.
+([checksum notes](features/CHECKSUMS.md))
+
 ## Archives — open them like folders
 
 ![Archive workbench](images/tour-archive.png)
@@ -187,6 +198,17 @@ Recursive search of the current folder or the whole volume, streaming
 results into a live tab as they're found. Rides Spotlight when
 available, with a walker fallback that works anywhere (and is the
 Windows/Linux path today). ([search](features/SEARCH.md))
+
+## Flat View — every subfolder, one list
+
+The third view button turns the current location into a files-only recursive
+snapshot without changing the familiar list UI. Results stream as Ferail walks
+the tree, the breadcrumb reports files and folders scanned, and the task can be
+cancelled or refreshed. A sortable **Path** column shows each parent relative
+to the root; the filter works over the completed snapshot without rereading the
+disk. There is no fixed row cap, and the scan-local path arena is discarded
+when the view closes instead of retaining personal paths process-wide.
+([Flat View notes](features/FLAT_VIEW.md))
 
 ## Command palette & shortcuts
 

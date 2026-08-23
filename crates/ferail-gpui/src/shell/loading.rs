@@ -105,9 +105,8 @@ fn filter_directory_batch(
     // `hidden` carries platform semantics (BSD UF_HIDDEN on macOS,
     // FILE_ATTRIBUTE_HIDDEN on Windows) resolved at enumerate time —
     // never re-derive from the name here.
-    let (visible, skipped): (Vec<FileEntry>, Vec<FileEntry>) = entries
-        .into_iter()
-        .partition(|e| show_hidden || !e.hidden);
+    let (visible, skipped): (Vec<FileEntry>, Vec<FileEntry>) =
+        entries.into_iter().partition(|e| show_hidden || !e.hidden);
     let hidden = HiddenSummary {
         count: skipped.len(),
         bytes: skipped.iter().map(|e| e.size).sum(),
@@ -140,16 +139,16 @@ mod filter_tests {
     fn entry(name: &str, size: u64, hidden: bool) -> FileEntry {
         FileEntry {
             id: NodeId::from(size + u64::from(hidden)),
-            name: name.to_string(),
-            display_name: name.to_string(),
+            name: name.into(),
+            display_name: name.into(),
             name_has_hazards: false,
             kind: EntryKind::File,
             size,
             mtime_unix: 0,
-            display_size: String::new(),
+            display_size: ferail_core::empty_entry_text(),
             display_kind: "Document".into(),
-            display_magic: String::new(),
-            display_description: String::new(),
+            display_magic: ferail_core::empty_entry_text(),
+            display_description: ferail_core::empty_entry_text(),
             is_quarantined: false,
             quarantine: None,
             hidden,
@@ -176,7 +175,11 @@ mod filter_tests {
         let expr = FilterExpr::parse(needle, filter_date_ctx());
         let (batch, hidden, filtered) = filter_directory_batch(&fs, entries, show_hidden, &expr);
         (
-            batch.entries.into_iter().map(|e| e.name).collect(),
+            batch
+                .entries
+                .into_iter()
+                .map(|e| e.name.to_string())
+                .collect(),
             hidden,
             filtered,
         )
@@ -276,7 +279,10 @@ mod filter_tests {
         assert_eq!(filtered.bytes, 10);
         // Tokens AND with plain text.
         let (names, _, _) = batch_full(
-            vec![entry("big.bin", 5000, false), entry("huge.txt", 9000, false)],
+            vec![
+                entry("big.bin", 5000, false),
+                entry("huge.txt", 9000, false),
+            ],
             false,
             "size:>1kb huge",
         );
@@ -458,8 +464,7 @@ mod middle_truncate_tests {
 
     #[test]
     fn long_path_keeps_basename() {
-        let out =
-            middle_truncate_path("/Users/x/Library/Application Support/Ferail/file.txt", 30);
+        let out = middle_truncate_path("/Users/x/Library/Application Support/Ferail/file.txt", 30);
         assert!(out.ends_with("/file.txt"), "basename preserved: {out}");
         assert!(out.contains('\u{2026}'), "ellipsis inserted: {out}");
     }

@@ -239,7 +239,11 @@ impl Catalog {
         self.by_context.get(ctx)?.get(msgid)
     }
 
-    fn plural_form<'a>(&self, forms: &'a [(plural::Category, Arc<str>)], n: u64) -> Option<&'a Arc<str>> {
+    fn plural_form<'a>(
+        &self,
+        forms: &'a [(plural::Category, Arc<str>)],
+        n: u64,
+    ) -> Option<&'a Arc<str>> {
         let want = plural::category(&self.lang, n);
         forms
             .iter()
@@ -483,12 +487,20 @@ mod tests {
     }
 
     fn plural(forms: &[(&str, &str)]) -> PackValue {
-        PackValue::Plural(forms.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect())
+        PackValue::Plural(
+            forms
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+        )
     }
 
     #[test]
     fn fill_substitutes_and_keeps_unknowns() {
-        assert_eq!(fill("Copied {n} to {dest}", &[("n", &3), ("dest", &"x")]), "Copied 3 to x");
+        assert_eq!(
+            fill("Copied {n} to {dest}", &[("n", &3), ("dest", &"x")]),
+            "Copied 3 to x"
+        );
         assert_eq!(fill("{missing} stays", &[]), "{missing} stays");
         assert_eq!(fill("{{literal}} {n}", &[("n", &1)]), "{literal} 1");
         assert_eq!(fill("dangling { brace", &[]), "dangling { brace");
@@ -508,13 +520,18 @@ mod tests {
             &[
                 ("Open", PackValue::Text("Ouvrir".into())),
                 ("menu::Open", PackValue::Text("Ouvrir (menu)".into())),
-                ("{n} file", plural(&[("one", "{n} fichier"), ("other", "{n} fichiers")])),
+                (
+                    "{n} file",
+                    plural(&[("one", "{n} fichier"), ("other", "{n} fichiers")]),
+                ),
             ],
         );
         let cat = Catalog::from_pack(&p);
         assert!(!cat.is_english());
         assert!(matches!(cat.lookup("Open"), Some(Entry::One(s)) if &**s == "Ouvrir"));
-        assert!(matches!(cat.lookup_ctx("menu", "Open"), Some(Entry::One(s)) if &**s == "Ouvrir (menu)"));
+        assert!(
+            matches!(cat.lookup_ctx("menu", "Open"), Some(Entry::One(s)) if &**s == "Ouvrir (menu)")
+        );
         match cat.lookup("{n} file") {
             Some(Entry::Plural(forms)) => {
                 assert_eq!(&**cat.plural_form(forms, 0).unwrap(), "{n} fichier"); // fr: 0 is `one`

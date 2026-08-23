@@ -53,7 +53,11 @@ const HEADER_BYTES: usize = 4096;
 pub fn detect_magic(path: &Path) -> Option<&'static str> {
     let info = detect_magic_info(path)?;
     let label = info.magic_type.display_name();
-    if label.is_empty() { None } else { Some(label) }
+    if label.is_empty() {
+        None
+    } else {
+        Some(label)
+    }
 }
 
 /// Return full structured info derived from the file's first ~4 KB,
@@ -151,7 +155,11 @@ fn read_at(path: &Path, offset: u64, len: usize) -> Option<Vec<u8>> {
         }
     }
     buf.truncate(total);
-    if buf.is_empty() { None } else { Some(buf) }
+    if buf.is_empty() {
+        None
+    } else {
+        Some(buf)
+    }
 }
 
 /// Read the last [`HEADER_BYTES`] of `path` into `buf`. Returns
@@ -175,7 +183,11 @@ fn read_tail_into(path: &Path, buf: &mut [u8; HEADER_BYTES]) -> Option<(usize, u
             Err(_) => return None,
         }
     }
-    if total == 0 { None } else { Some((total, len)) }
+    if total == 0 {
+        None
+    } else {
+        Some((total, len))
+    }
 }
 
 /// Pure dispatch over an already-read buffer. Useful for tests and
@@ -408,7 +420,11 @@ fn read_header(path: &Path, buf: &mut [u8; HEADER_BYTES]) -> Option<usize> {
             Err(_) => return None,
         }
     }
-    if total == 0 { None } else { Some(total) }
+    if total == 0 {
+        None
+    } else {
+        Some(total)
+    }
 }
 
 #[cfg(test)]

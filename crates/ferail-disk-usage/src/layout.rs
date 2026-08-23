@@ -65,7 +65,14 @@ pub fn compute_treemap(
     });
 
     if !root.children.is_empty() && max_depth > 0 {
-        layout_children(&root.children, root.size_bytes, (x, y, w, h), 1, max_depth, &mut out);
+        layout_children(
+            &root.children,
+            root.size_bytes,
+            (x, y, w, h),
+            1,
+            max_depth,
+            &mut out,
+        );
     }
     out
 }
@@ -73,10 +80,7 @@ pub fn compute_treemap(
 /// Hit-test: prefer the deepest rect that contains the point. Pinned by
 /// unit test — clicking on a leaf inside a parent picks the leaf.
 pub fn hit_test(rects: &[TreemapRect], px: f32, py: f32) -> Option<&TreemapRect> {
-    rects
-        .iter()
-        .rev()
-        .find(|r| r.contains(px, py))
+    rects.iter().rev().find(|r| r.contains(px, py))
 }
 
 fn layout_children(
@@ -161,7 +165,14 @@ fn squarify(
         } else {
             (x, y + row_thickness, w, h - row_thickness)
         };
-        squarify(&remaining, children, remaining_bounds, depth, max_depth, out);
+        squarify(
+            &remaining,
+            children,
+            remaining_bounds,
+            depth,
+            max_depth,
+            out,
+        );
     }
 }
 

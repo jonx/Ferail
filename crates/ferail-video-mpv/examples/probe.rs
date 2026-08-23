@@ -37,8 +37,16 @@ fn main() {
     // check (`probe <video> --raw out.bgra`). Convert with:
     //   ffmpeg -f rawvideo -pix_fmt bgra -s WxH -i out.bgra out.png
     let rest: Vec<String> = args.collect();
-    let raw_out = rest.iter().position(|a| a == "--raw").and_then(|i| rest.get(i + 1)).cloned();
-    let want: usize = rest.first().filter(|s| !s.starts_with("--")).and_then(|s| s.parse().ok()).unwrap_or(10);
+    let raw_out = rest
+        .iter()
+        .position(|a| a == "--raw")
+        .and_then(|i| rest.get(i + 1))
+        .cloned();
+    let want: usize = rest
+        .first()
+        .filter(|s| !s.starts_with("--"))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
     // libmpv resolution: an explicit MPV_HOME wins; otherwise the loader falls
     // back to the platform's usual install paths (see resolve_lib in imp.rs).
     let hint = std::env::var("MPV_HOME").unwrap_or_default();
@@ -61,8 +69,15 @@ fn main() {
             if got == 0 {
                 let (nw, nh) = stream.natural_size();
                 let (_, dur) = stream.time();
-                println!("  first frame: {w}x{h} ({} bytes), natural_size={nw}x{nh}, duration={dur:.2}s", bytes.len());
-                assert_eq!(bytes.len(), (w * h * 4) as usize, "BGRA buffer matches dims");
+                println!(
+                    "  first frame: {w}x{h} ({} bytes), natural_size={nw}x{nh}, duration={dur:.2}s",
+                    bytes.len()
+                );
+                assert_eq!(
+                    bytes.len(),
+                    (w * h * 4) as usize,
+                    "BGRA buffer matches dims"
+                );
                 if let Some(out) = &raw_out {
                     std::fs::write(out, &bytes).expect("write raw frame");
                     println!("  wrote raw BGRA {w}x{h} -> {out}");

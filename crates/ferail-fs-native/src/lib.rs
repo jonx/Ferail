@@ -11,12 +11,12 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 
 use ferail_core::{
-    EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId, tr, trn,
+    tr, trn, EntryKind, EnumerationError, EnumerationHandle, FileEntry, FsBackend, NodeId,
 };
 
 pub mod archive;
@@ -34,33 +34,33 @@ mod volumes;
 pub mod xattr_info;
 pub use archive::scratch;
 pub use archive::{
-    AddOutcome, ArchiveAddition, ArchiveEditPlan, ArchiveError, ArchiveRename, ArchiveStamp,
-    ArchiveSummary, ConvertOptions, ConvertOutcome, CreateOptions, ExtractOptions, ExtractOutcome,
-    SkipReason, SkippedEntry, add_to_archive, archive_stamp, commit_archive_edits, convert_archive,
-    create_archive, extract_all as extract_archive, extract_entries as extract_archive_entries,
+    add_to_archive, archive_stamp, commit_archive_edits, convert_archive, create_archive,
+    extract_all as extract_archive, extract_entries as extract_archive_entries,
     inspect_archive_additions, materialize_archive_entry, probe_format as probe_archive_format,
     read_entry_bytes as read_archive_entry_bytes, read_summary as read_archive_summary,
-    read_toc as read_archive_toc,
+    read_toc as read_archive_toc, AddOutcome, ArchiveAddition, ArchiveEditPlan, ArchiveError,
+    ArchiveRename, ArchiveStamp, ArchiveSummary, ConvertOptions, ConvertOutcome, CreateOptions,
+    ExtractOptions, ExtractOutcome, SkipReason, SkippedEntry,
 };
-pub use disk_usage_scanner::{DEFAULT_DU_BATCH, SubtreeTotals, recursive_size, recursive_totals};
+pub use disk_usage_scanner::{recursive_size, recursive_totals, SubtreeTotals, DEFAULT_DU_BATCH};
 pub use dupes::{
-    DEFAULT_DUPE_BATCH, DupeFact, DupeHashCache, DupeMember, DupeMode, DupeOpts, DupePhase,
-    DupeStats, PARTIAL_HASH_BYTES, SimilarImageIndexEntry, SimilarImageInfo, clone_dedup,
+    clone_dedup, DupeFact, DupeHashCache, DupeMember, DupeMode, DupeOpts, DupePhase, DupeStats,
+    SimilarImageIndexEntry, SimilarImageInfo, DEFAULT_DUPE_BATCH, PARTIAL_HASH_BYTES,
 };
-pub use perceptual::PerceptualThumbnail;
 pub use icons::fetch_icon_rgba;
 pub use magic::{
-    CpuArch, ElfOs, MAGIC_REVISION, MagicInfo, MagicType, PeSubsystem, detect_magic,
-    detect_magic_info, sniff_bytes_info,
+    detect_magic, detect_magic_info, sniff_bytes_info, CpuArch, ElfOs, MagicInfo, MagicType,
+    PeSubsystem, MAGIC_REVISION,
 };
 pub use paths::home_dir;
-pub use search::{DEFAULT_SEARCH_BATCH, SearchHit, SearchQuery, SearchStats};
+pub use perceptual::PerceptualThumbnail;
+pub use search::{SearchHit, SearchQuery, SearchStats, DEFAULT_SEARCH_BATCH};
 pub use volumes::list_volumes;
 #[cfg(not(target_os = "macos"))]
 pub use volumes::volume_info_for_path;
 pub use xattr_info::{
-    QuarantineInfo, clear_quarantine, details_from as quarantine_details_from,
-    fetch_quarantine_info,
+    clear_quarantine, details_from as quarantine_details_from, fetch_quarantine_info,
+    QuarantineInfo,
 };
 
 const ROOT_NODE_RAW: u64 = 1;
@@ -218,6 +218,19 @@ impl NativeFs {
         name: String,
         metadata: &std::fs::Metadata,
     ) -> FileEntry {
+        let id = self.id_for_path(path);
+        self.file_entry_from_metadata_with_id(name, metadata, id)
+    }
+
+    /// Build a row with an identity owned by the caller rather than inserting
+    /// the path into NativeFs's process-lifetime maps. Recursive result
+    /// surfaces use this to keep millions of ephemeral rows surface-local.
+    fn file_entry_from_metadata_with_id(
+        &self,
+        name: String,
+        metadata: &std::fs::Metadata,
+        id: NodeId,
+    ) -> FileEntry {
         let ft = metadata.file_type();
         let kind = if ft.is_dir() {
             EntryKind::Directory
@@ -246,12 +259,18 @@ impl NativeFs {
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64);
         let locked = entry_is_locked(metadata);
-        let id = self.id_for_path(path);
         // User-facing leaf (macOS shows an on-disk `:` as `/`, Finder-style),
         // and a precomputed hazard flag so the dense row paint never runs the
         // deceptive-character analysis itself.
         let display_name = crate::paths::display_leaf(&name).into_owned();
         let name_has_hazards = ferail_core::name_hazards::has_hazards(&display_name);
+        let name: Arc<str> = name.into();
+        let display_name: Arc<str> = if display_name.as_str() == name.as_ref() {
+            name.clone()
+        } else {
+            display_name.into()
+        };
+        let empty = ferail_core::empty_entry_text();
         FileEntry {
             id,
             name,
@@ -260,10 +279,10 @@ impl NativeFs {
             kind,
             size,
             mtime_unix,
-            display_size,
-            display_kind,
-            display_magic: String::new(),
-            display_description: String::new(),
+            display_size: display_size.into(),
+            display_kind: display_kind.into(),
+            display_magic: empty.clone(),
+            display_description: empty,
             is_quarantined: false,
             quarantine: None,
             hidden,
@@ -533,16 +552,16 @@ pub fn trash_dirs() -> Vec<PathBuf> {
 #[cfg(windows)]
 pub fn move_to_trash(path: &Path) -> std::io::Result<Option<PathBuf>> {
     use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
     use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
     use windows::Win32::System::Com::{
-        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-        CoUninitialize,
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED,
     };
     use windows::Win32::UI::Shell::{
-        FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, FOFX_RECYCLEONDELETE,
         FileOperation, IFileOperation, IShellItem, SHCreateItemFromParsingName,
+        FOFX_RECYCLEONDELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT,
     };
-    use windows::core::PCWSTR;
 
     struct ComGuard(bool);
     impl Drop for ComGuard {
@@ -779,15 +798,15 @@ pub struct VolumeInfo {
 #[cfg(target_os = "macos")]
 pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
     ferail_core::path_guard::assert_off_ui_thread("volume_info_for_path");
-    use objc2::ClassType;
     use objc2::msg_send;
     use objc2::msg_send_id;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
+    use objc2::ClassType;
     use objc2_foundation::{
-        NSArray, NSString, NSURL, NSURLResourceKey, NSURLVolumeAvailableCapacityKey,
+        NSArray, NSString, NSURLResourceKey, NSURLVolumeAvailableCapacityKey,
         NSURLVolumeIsEjectableKey, NSURLVolumeIsInternalKey, NSURLVolumeIsLocalKey,
-        NSURLVolumeIsRemovableKey, NSURLVolumeLocalizedNameKey, NSURLVolumeTotalCapacityKey,
+        NSURLVolumeIsRemovableKey, NSURLVolumeLocalizedNameKey, NSURLVolumeTotalCapacityKey, NSURL,
     };
 
     let path_str = path.to_str()?;
@@ -832,7 +851,11 @@ pub fn volume_info_for_path(path: &Path) -> Option<VolumeInfo> {
         let lookup_u64 = |key: &NSURLResourceKey| -> Option<u64> {
             let obj: &AnyObject = dict.get(key)?;
             let v: std::os::raw::c_longlong = msg_send![obj, longLongValue];
-            if v < 0 { None } else { Some(v as u64) }
+            if v < 0 {
+                None
+            } else {
+                Some(v as u64)
+            }
         };
         let lookup_bool = |key: &NSURLResourceKey| -> Option<bool> {
             let obj: &AnyObject = dict.get(key)?;
@@ -929,12 +952,12 @@ pub fn path_is_cloud_synced(_path: &Path) -> bool {
 /// item). Mirrors the cached-key discipline of `volume_info_for_path`.
 #[cfg(target_os = "macos")]
 fn url_is_ubiquitous(path: &Path) -> Option<bool> {
-    use objc2::ClassType;
     use objc2::msg_send;
     use objc2::msg_send_id;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
-    use objc2_foundation::{NSArray, NSString, NSURL, NSURLIsUbiquitousItemKey, NSURLResourceKey};
+    use objc2::ClassType;
+    use objc2_foundation::{NSArray, NSString, NSURLIsUbiquitousItemKey, NSURLResourceKey, NSURL};
 
     let path_str = path.to_str()?;
     unsafe {
@@ -1226,9 +1249,13 @@ mod tests {
         let entry = handle
             .initial
             .iter()
-            .find(|e| e.name == "a:b")
+            .find(|e| e.name.as_ref() == "a:b")
             .expect("colon file enumerated by raw name");
-        assert_eq!(entry.display_name, "a/b", "on-disk ':' shows as '/'");
+        assert_eq!(
+            entry.display_name.as_ref(),
+            "a/b",
+            "on-disk ':' shows as '/'"
+        );
         assert!(
             !entry.name_has_hazards,
             "a Finder-style slash name is not a deceptive-character hazard"

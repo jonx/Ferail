@@ -11,9 +11,7 @@
 
 use std::path::Path;
 
-use ferail_core::favorites::{
-    Favorite, FavoriteIcon, FavoriteId, FavoriteKind, FavoriteTarget,
-};
+use ferail_core::favorites::{Favorite, FavoriteIcon, FavoriteId, FavoriteKind, FavoriteTarget};
 use rusqlite::{params, Connection};
 
 /// Schema version. Bump on any structural change.
@@ -604,9 +602,7 @@ impl MetadataDb {
                 partial_hash: row.get(5)?,
                 full_hash: row.get(6)?,
                 mime: row.get(7)?,
-                quarantined: row
-                    .get::<_, Option<i64>>(8)?
-                    .map(|v| v != 0),
+                quarantined: row.get::<_, Option<i64>>(8)?.map(|v| v != 0),
                 quarantine_agent: row.get(9)?,
                 quarantine_iso: row.get(10)?,
                 quarantine_where_from: row.get(11)?,
@@ -1484,7 +1480,10 @@ mod tests {
         assert!(db.load_pinned_items().unwrap().is_empty());
         assert!(db.get_preference("custom").unwrap().is_none());
         // db_version row preserved so subsequent opens don't recreate.
-        assert_eq!(db.get_preference("db_version").unwrap().as_deref(), Some("1"));
+        assert_eq!(
+            db.get_preference("db_version").unwrap().as_deref(),
+            Some("1")
+        );
     }
 
     #[test]
@@ -1551,12 +1550,27 @@ mod tests {
         assert_eq!(ResetScope::from_cli("ALL"), Some(ResetScope::All));
         assert_eq!(ResetScope::from_cli("ui"), Some(ResetScope::Ui));
         assert_eq!(ResetScope::from_cli("cache"), Some(ResetScope::Caches));
-        assert_eq!(ResetScope::from_cli("ant-trail"), Some(ResetScope::AntTrail));
-        assert_eq!(ResetScope::from_cli("ant_trail"), Some(ResetScope::AntTrail));
+        assert_eq!(
+            ResetScope::from_cli("ant-trail"),
+            Some(ResetScope::AntTrail)
+        );
+        assert_eq!(
+            ResetScope::from_cli("ant_trail"),
+            Some(ResetScope::AntTrail)
+        );
         assert_eq!(ResetScope::from_cli("magic"), Some(ResetScope::Magic));
-        assert_eq!(ResetScope::from_cli("quarantine"), Some(ResetScope::Quarantine));
-        assert_eq!(ResetScope::from_cli("favorites"), Some(ResetScope::Favorites));
-        assert_eq!(ResetScope::from_cli("favourites"), Some(ResetScope::Favorites));
+        assert_eq!(
+            ResetScope::from_cli("quarantine"),
+            Some(ResetScope::Quarantine)
+        );
+        assert_eq!(
+            ResetScope::from_cli("favorites"),
+            Some(ResetScope::Favorites)
+        );
+        assert_eq!(
+            ResetScope::from_cli("favourites"),
+            Some(ResetScope::Favorites)
+        );
         assert!(ResetScope::from_cli("bogus").is_none());
     }
 
@@ -1719,7 +1733,11 @@ mod tests {
         seed_state(&db);
         db.save_favorite(&fav("F", "/f", 1.0)).unwrap();
         db.reset(ResetScope::Ui).unwrap();
-        assert_eq!(db.load_favorites().unwrap().len(), 1, "Ui must not wipe Favorites");
+        assert_eq!(
+            db.load_favorites().unwrap().len(),
+            1,
+            "Ui must not wipe Favorites"
+        );
     }
 
     #[test]

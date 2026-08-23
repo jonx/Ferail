@@ -47,7 +47,10 @@ fn dump(label: &str, path: &std::path::Path, out: &std::path::Path) {
             let opaque = rgba.chunks_exact(4).filter(|px| px[3] != 0).count();
             let png = out.join(format!("{label}.png"));
             image::save_buffer(&png, &rgba, w, h, image::ColorType::Rgba8).unwrap();
-            println!("{label:6} -> {} ({w}x{h}, {opaque} opaque px)", png.display());
+            println!(
+                "{label:6} -> {} ({w}x{h}, {opaque} opaque px)",
+                png.display()
+            );
         }
         None => println!("{label:6} -> None (no icon resolved)"),
     }

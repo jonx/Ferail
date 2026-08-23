@@ -416,7 +416,11 @@ fn candidates_for_mime(mime: &str, default_id: &str) -> Vec<OpenWithCandidate> {
             };
             let is_default = id == default_id;
             seen.insert(id);
-            out.push(OpenWithCandidate { name, path: p, is_default });
+            out.push(OpenWithCandidate {
+                name,
+                path: p,
+                is_default,
+            });
         }
     }
 
@@ -582,8 +586,9 @@ pub fn eject_device(volume_paths: &[&Path]) -> Result<(), String> {
     let mut disk: Option<String> = None;
     for path in volume_paths {
         let Some(source) = mount_source_for(path) else {
-            first_err
-                .get_or_insert_with(|| format!("no mounted filesystem found at {}", path.display()));
+            first_err.get_or_insert_with(|| {
+                format!("no mounted filesystem found at {}", path.display())
+            });
             continue;
         };
         if disk.is_none() {
@@ -623,10 +628,12 @@ pub fn eject_device(_volume_paths: &[&Path]) -> Result<(), String> {
 /// ("target is busy", polkit denial, …).
 #[cfg(target_os = "linux")]
 fn unmount_filesystem(source: &str, mount_point: &Path) -> Result<(), String> {
-    if let Err(udisks_err) = run_checked(
-        std::process::Command::new("udisksctl")
-            .args(["unmount", "--no-user-interaction", "-b", source]),
-    ) {
+    if let Err(udisks_err) = run_checked(std::process::Command::new("udisksctl").args([
+        "unmount",
+        "--no-user-interaction",
+        "-b",
+        source,
+    ])) {
         run_checked(std::process::Command::new("umount").arg(mount_point))
             .map_err(|_| udisks_err)?;
     }
@@ -671,7 +678,11 @@ pub fn volume_busy_processes(path: &Path) -> Vec<ferail_core::BusyApp> {
                 .unwrap_or_default();
             apps.push(ferail_core::BusyApp {
                 pid: pid.parse().unwrap_or(0),
-                name: if name.is_empty() { format!("pid {pid}") } else { name },
+                name: if name.is_empty() {
+                    format!("pid {pid}")
+                } else {
+                    name
+                },
             });
         }
     }

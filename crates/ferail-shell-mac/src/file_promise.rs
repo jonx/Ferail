@@ -258,10 +258,7 @@ fn register_archive_promise_destinations(app: &NSApplication) -> usize {
     let types = NSArray::from_vec(vec![legacy_filenames, marker]);
     let mut registered = 0;
     for window in app.windows().iter() {
-        if gpui_classes
-            .iter()
-            .any(|class| window.isKindOfClass(class))
-        {
+        if gpui_classes.iter().any(|class| window.isKindOfClass(class)) {
             window.registerForDraggedTypes(&types);
             registered += 1;
         }

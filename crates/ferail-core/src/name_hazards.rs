@@ -85,7 +85,10 @@ pub fn has_hazards(name: &str) -> bool {
 pub fn analyze(name: &str) -> Vec<NameSegment> {
     let chars: Vec<char> = name.chars().collect();
     // Boundaries of leading / trailing whitespace runs.
-    let lead_end = chars.iter().position(|c| !c.is_whitespace()).unwrap_or(chars.len());
+    let lead_end = chars
+        .iter()
+        .position(|c| !c.is_whitespace())
+        .unwrap_or(chars.len());
     let trail_start = chars
         .iter()
         .rposition(|c| !c.is_whitespace())
@@ -185,31 +188,60 @@ fn classify(
 
     // Bidirectional controls — the headline trick (reverses gpj.exe ⇒ exe.jpg).
     if matches!(cp, 0x202A..=0x202E | 0x2066..=0x2069 | 0x200E | 0x200F) {
-        return Some(hazard(c, HazardKind::Bidi, bidi_name(cp), Some(visible_codepoint(cp))));
+        return Some(hazard(
+            c,
+            HazardKind::Bidi,
+            bidi_name(cp),
+            Some(visible_codepoint(cp)),
+        ));
     }
     // Zero-width / word joiners / BOM.
     if matches!(cp, 0x200B | 0x200C | 0x200D | 0x2060 | 0xFEFF) {
-        return Some(hazard(c, HazardKind::ZeroWidth, zero_width_name(cp), Some(visible_codepoint(cp))));
+        return Some(hazard(
+            c,
+            HazardKind::ZeroWidth,
+            zero_width_name(cp),
+            Some(visible_codepoint(cp)),
+        ));
     }
     // Control characters (C0 except the whitespace handled below, C1, DEL).
     if (cp < 0x20 && !c.is_whitespace()) || cp == 0x7F || (0x80..=0x9F).contains(&cp) {
         return Some(hazard(
             c,
             HazardKind::Control,
-            tr!("Control character (U+{code})", code = format_args!("{cp:04X}")).into_string(),
+            tr!(
+                "Control character (U+{code})",
+                code = format_args!("{cp:04X}")
+            )
+            .into_string(),
             Some(format!("⟨{cp:04X}⟩")),
         ));
     }
     // Whitespace: leading/trailing of any kind, or interior non-ASCII space.
     if c.is_whitespace() {
         if in_lead {
-            return Some(hazard(c, HazardKind::LeadingSpace, whitespace_name(cp), Some(ws_glyph(c))));
+            return Some(hazard(
+                c,
+                HazardKind::LeadingSpace,
+                whitespace_name(cp),
+                Some(ws_glyph(c)),
+            ));
         }
         if in_trail {
-            return Some(hazard(c, HazardKind::TrailingSpace, whitespace_name(cp), Some(ws_glyph(c))));
+            return Some(hazard(
+                c,
+                HazardKind::TrailingSpace,
+                whitespace_name(cp),
+                Some(ws_glyph(c)),
+            ));
         }
         if c != ' ' {
-            return Some(hazard(c, HazardKind::UnusualWhitespace, whitespace_name(cp), Some(ws_glyph(c))));
+            return Some(hazard(
+                c,
+                HazardKind::UnusualWhitespace,
+                whitespace_name(cp),
+                Some(ws_glyph(c)),
+            ));
         }
         return None; // a plain interior space is fine
     }
@@ -223,7 +255,11 @@ fn classify(
         return Some(hazard(
             c,
             HazardKind::CombiningMark,
-            tr!("Stray combining mark (U+{code})", code = format_args!("{cp:04X}")).into_string(),
+            tr!(
+                "Stray combining mark (U+{code})",
+                code = format_args!("{cp:04X}")
+            )
+            .into_string(),
             Some(visible_codepoint(cp)),
         ));
     }
@@ -285,7 +321,12 @@ fn whitespace_name(cp: u32) -> String {
         0x2000..=0x200A => msgid!("Unicode space"),
         _ => msgid!("whitespace"),
     };
-    tr!("{which} (U+{code})", which = crate::i18n::tr_raw(which), code = format_args!("{cp:04X}")).into_string()
+    tr!(
+        "{which} (U+{code})",
+        which = crate::i18n::tr_raw(which),
+        code = format_args!("{cp:04X}")
+    )
+    .into_string()
 }
 
 fn zero_width_name(cp: u32) -> String {
@@ -297,7 +338,12 @@ fn zero_width_name(cp: u32) -> String {
         0xFEFF => msgid!("byte-order mark"),
         _ => msgid!("zero-width character"),
     };
-    tr!("{which} (U+{code})", which = crate::i18n::tr_raw(which), code = format_args!("{cp:04X}")).into_string()
+    tr!(
+        "{which} (U+{code})",
+        which = crate::i18n::tr_raw(which),
+        code = format_args!("{cp:04X}")
+    )
+    .into_string()
 }
 
 fn bidi_name(cp: u32) -> String {
@@ -315,7 +361,12 @@ fn bidi_name(cp: u32) -> String {
         0x200F => msgid!("right-to-left mark"),
         _ => msgid!("bidirectional control"),
     };
-    tr!("{which} (U+{code})", which = crate::i18n::tr_raw(which), code = format_args!("{cp:04X}")).into_string()
+    tr!(
+        "{which} (U+{code})",
+        which = crate::i18n::tr_raw(which),
+        code = format_args!("{cp:04X}")
+    )
+    .into_string()
 }
 
 /// Map a known confusable codepoint to (ascii lookalike, script name).
@@ -324,10 +375,16 @@ fn bidi_name(cp: u32) -> String {
 fn confusable(c: char) -> Option<(char, &'static str)> {
     // Fullwidth Latin (U+FF21..FF3A, U+FF41..FF5A).
     if ('\u{FF21}'..='\u{FF3A}').contains(&c) {
-        return Some(((c as u32 - 0xFF21 + b'A' as u32).try_into().ok()?, msgid!("Fullwidth")));
+        return Some((
+            (c as u32 - 0xFF21 + b'A' as u32).try_into().ok()?,
+            msgid!("Fullwidth"),
+        ));
     }
     if ('\u{FF41}'..='\u{FF5A}').contains(&c) {
-        return Some(((c as u32 - 0xFF41 + b'a' as u32).try_into().ok()?, msgid!("Fullwidth")));
+        return Some((
+            (c as u32 - 0xFF41 + b'a' as u32).try_into().ok()?,
+            msgid!("Fullwidth"),
+        ));
     }
     let mapped = match c {
         // Cyrillic lowercase lookalikes.
@@ -396,16 +453,25 @@ mod tests {
 
     #[test]
     fn leading_space_flagged() {
-        assert_eq!(analyze("  hi.txt")[0].hazard, Some(HazardKind::LeadingSpace));
+        assert_eq!(
+            analyze("  hi.txt")[0].hazard,
+            Some(HazardKind::LeadingSpace)
+        );
     }
 
     #[test]
     fn bidi_override_flagged() {
         // "photo_\u{202E}gpj.exe" renders as "photo_exe.jpg".
         let name = "photo_\u{202E}gpj.exe";
-        let hit = analyze(name).into_iter().find(|s| s.hazard == Some(HazardKind::Bidi));
+        let hit = analyze(name)
+            .into_iter()
+            .find(|s| s.hazard == Some(HazardKind::Bidi));
         assert!(hit.is_some());
-        assert!(hit.unwrap().label.unwrap().contains("right-to-left override"));
+        assert!(hit
+            .unwrap()
+            .label
+            .unwrap()
+            .contains("right-to-left override"));
     }
 
     #[test]

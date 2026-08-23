@@ -42,9 +42,14 @@ impl NavKind {
 /// One recorded action.
 #[derive(Clone, Debug)]
 pub enum TrailEvent {
-    Navigate { kind: NavKind, path: PathBuf },
+    Navigate {
+        kind: NavKind,
+        path: PathBuf,
+    },
     /// A command identified by its human label (e.g. "Move to Trash").
-    Command { label: &'static str },
+    Command {
+        label: &'static str,
+    },
     /// A free-form note — e.g. an error surfaced to the user.
     Note(String),
 }

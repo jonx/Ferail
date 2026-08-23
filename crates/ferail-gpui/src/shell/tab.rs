@@ -60,6 +60,16 @@ impl ToolResultSurface {
         }
     }
 
+    pub fn flat(root: PathBuf) -> Self {
+        Self {
+            mode: ToolResultMode::Flat(FlatMode {
+                root,
+                progress: ferail_fs_native::SearchStats::default(),
+                complete: false,
+            }),
+        }
+    }
+
     pub fn duplicates(
         root: PathBuf,
         presentation: crate::feature_settings::DupePresentation,
@@ -113,7 +123,8 @@ impl ToolResultSurface {
             }
             // Search and duplicates render through the tab and have no
             // windowed form, so host changes mean nothing to them.
-            ToolResultMode::Search(_) | ToolResultMode::Duplicates(_) => {}
+            ToolResultMode::Search(_) | ToolResultMode::Flat(_) | ToolResultMode::Duplicates(_) => {
+            }
         }
     }
 
@@ -127,6 +138,20 @@ impl ToolResultSurface {
     pub fn search_mode_mut(&mut self) -> Option<&mut SearchMode> {
         match &mut self.mode {
             ToolResultMode::Search(search) => Some(search),
+            _ => None,
+        }
+    }
+
+    pub fn flat_mode(&self) -> Option<&FlatMode> {
+        match &self.mode {
+            ToolResultMode::Flat(flat) => Some(flat),
+            _ => None,
+        }
+    }
+
+    pub fn flat_mode_mut(&mut self) -> Option<&mut FlatMode> {
+        match &mut self.mode {
+            ToolResultMode::Flat(flat) => Some(flat),
             _ => None,
         }
     }
@@ -149,9 +174,19 @@ impl ToolResultSurface {
 #[derive(Clone)]
 pub enum ToolResultMode {
     Search(SearchMode),
+    Flat(FlatMode),
     Duplicates(DupeViewMode),
     DiskUsage(DiskUsageMode),
     Archive(ArchiveMode),
+}
+
+/// A recursive, files-only snapshot of a directory tree. The rows and their
+/// path arena are owned by the tab surface and are discarded together.
+#[derive(Clone, Debug)]
+pub struct FlatMode {
+    pub root: PathBuf,
+    pub progress: ferail_fs_native::SearchStats,
+    pub complete: bool,
 }
 
 #[derive(Clone)]
@@ -415,6 +450,12 @@ pub struct Tab {
     /// against the model on streaming `Done` and on every model
     /// change. Empty is a valid common state.
     pub selection: HashSet<NodeId>,
+    /// Flat listings can contain millions of rows. In that surface a
+    /// Cmd+A selection is represented as "all rows except these ids" so
+    /// selecting everything stays O(1) memory instead of building a
+    /// multi-million-entry `HashSet`. Ordinary listings keep the sparse
+    /// representation above.
+    pub selection_all: bool,
     /// Anchor — fixed end of a Shift-range; set on plain click or
     /// the first Cmd-click into an empty selection. (Spec §2.3.)
     pub anchor: Option<NodeId>,
@@ -610,6 +651,37 @@ pub struct Tab {
 }
 
 impl Tab {
+    /// Whether `id` belongs to the logical selection.  When
+    /// `selection_all` is set, `selection` stores the exceptions.
+    pub fn is_selected(&self, id: NodeId) -> bool {
+        if self.selection_all {
+            !self.selection.contains(&id)
+        } else {
+            self.selection.contains(&id)
+        }
+    }
+
+    pub fn selection_is_empty(&self, visible_count: usize) -> bool {
+        if self.selection_all {
+            visible_count <= self.selection.len()
+        } else {
+            self.selection.is_empty()
+        }
+    }
+
+    pub fn selection_count(&self, visible_count: usize) -> usize {
+        if self.selection_all {
+            visible_count.saturating_sub(self.selection.len())
+        } else {
+            self.selection.len()
+        }
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection_all = false;
+        self.selection.clear();
+    }
+
     /// Internal constructor. Use `Shell::make_tab` from view code so
     /// the new tab is correctly wired to a per-tab `TableState`
     /// subscription and filter `Input`.
@@ -632,6 +704,7 @@ impl Tab {
             history: vec![HistoryEntry::new(at)],
             history_index: 0,
             selection: HashSet::new(),
+            selection_all: false,
             anchor: None,
             lead: None,
             filtered_out: HashSet::new(),
@@ -711,7 +784,11 @@ impl Tab {
             history: self.history.clone(),
             history_index: self.history_index,
             filter_text: self.filter_text.clone(),
-            selection: self.selection.clone(),
+            selection: if self.selection_all {
+                HashSet::new()
+            } else {
+                self.selection.clone()
+            },
             anchor: self.anchor,
             lead: self.lead,
         }

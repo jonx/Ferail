@@ -15,8 +15,14 @@ actions!(
         /// never reachable and its handler silently no-ops.
         ShowDesktop,
         ToggleHidden,
+        /// Toggle the active tab between the current directory and a
+        /// recursive, files-only Flat snapshot.
+        ToggleFlatView,
         OpenSettings,
         CopyPath,
+        /// Compute a selected file's SHA-256 off-thread and optionally
+        /// compare it with a checksum read from the text clipboard.
+        GenerateSha256,
         /// Copy the *entire* list of items currently shown in the active
         /// tab — folder contents, duplicate-finder groups, or search
         /// results — as newline-joined full paths, regardless of
@@ -123,6 +129,10 @@ actions!(
         SortBySize,
         SortByKind,
         SortByModified,
+        /// Sort by Ant Trail heat — the folders you open most, first
+        /// (docs/features/ANT_TRAIL.md). Unlike the other four, this
+        /// column has no header to click, so the menu is its only home.
+        SortByAntTrail,
         CursorUp,
         CursorDown,
         CursorFirst,

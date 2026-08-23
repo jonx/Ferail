@@ -25,10 +25,7 @@ mod file_promise;
 pub use file_promise::FilePromise;
 
 #[cfg(target_os = "macos")]
-pub fn start_file_promise_drag(
-    ns_view: *mut std::ffi::c_void,
-    promises: Vec<FilePromise>,
-) -> bool {
+pub fn start_file_promise_drag(ns_view: *mut std::ffi::c_void, promises: Vec<FilePromise>) -> bool {
     file_promise::start(ns_view, promises)
 }
 
@@ -338,7 +335,8 @@ pub fn open_terminal_with(path: &std::path::Path, spec: &ferail_core::terminal::
         // A bare command name ("kitty") or path to a CLI binary can carry
         // the root shell itself; app bundles (and the Terminal.app
         // default) go through AppleScript.
-        if let Some(p) = program.filter(|p| p.contains('/') && !p.to_ascii_lowercase().ends_with(".app"))
+        if let Some(p) =
+            program.filter(|p| p.contains('/') && !p.to_ascii_lowercase().ends_with(".app"))
         {
             let mut cmd = std::process::Command::new(p);
             cmd.args(&args);
@@ -348,10 +346,7 @@ pub fn open_terminal_with(path: &std::path::Path, spec: &ferail_core::terminal::
             let _ = spawn_and_reap(&mut cmd);
             return;
         }
-        let shell_cmd = format!(
-            "cd {} && sudo -s",
-            elevation::shell_quote(&dir)
-        );
+        let shell_cmd = format!("cd {} && sudo -s", elevation::shell_quote(&dir));
         let script = format!(
             "tell application \"Terminal\"\nactivate\ndo script {}\nend tell",
             elevation::applescript_quote(&shell_cmd)
@@ -1334,26 +1329,21 @@ pub fn install_native_drag_operations() -> bool {
         // subclass, and the type its windows register for so AppKit routes
         // the gesture here at all — is the defensive fallback for
         // callback-order variations.
-        if native_drag::ARCHIVE_PROMISE_ACTIVE
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        if native_drag::ARCHIVE_PROMISE_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
             return true;
         }
         if dragging_info.is_null() {
             return false;
         }
-        let pasteboard: *mut AnyObject = unsafe {
-            objc2::msg_send![dragging_info, draggingPasteboard]
-        };
+        let pasteboard: *mut AnyObject =
+            unsafe { objc2::msg_send![dragging_info, draggingPasteboard] };
         if pasteboard.is_null() {
             return false;
         }
-        let marker = objc2_foundation::NSString::from_str(
-            file_promise::ARCHIVE_PROMISE_PASTEBOARD_TYPE,
-        );
-        let value: *mut AnyObject = unsafe {
-            objc2::msg_send![pasteboard, stringForType: &*marker]
-        };
+        let marker =
+            objc2_foundation::NSString::from_str(file_promise::ARCHIVE_PROMISE_PASTEBOARD_TYPE);
+        let value: *mut AnyObject =
+            unsafe { objc2::msg_send![pasteboard, stringForType: &*marker] };
         !value.is_null()
     }
 
@@ -1385,11 +1375,7 @@ pub fn install_native_drag_operations() -> bool {
         orig(this, sel, dragging_info)
     }
 
-    extern "C" fn dragging_exited(
-        this: *mut AnyObject,
-        sel: Sel,
-        dragging_info: *mut AnyObject,
-    ) {
+    extern "C" fn dragging_exited(this: *mut AnyObject, sel: Sel, dragging_info: *mut AnyObject) {
         // Ferail explicitly retires GPUI's typed drag when a file-promise
         // session starts and keeps archive coordinates in its own coordinator.
         // Always let GPUI process Exited so its ordinary hover/input state is
@@ -1470,23 +1456,17 @@ pub fn install_native_drag_operations() -> bool {
             // NSUInteger (id self, SEL, id draggingInfo). Promise drags need
             // a pathless admission route before GPUI's legacy path parser.
             let imp: objc2::ffi::IMP = std::mem::transmute(
-                dragging_entered
-                    as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) -> usize,
+                dragging_entered as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) -> usize,
             );
-            let prev = objc2::ffi::class_replaceMethod(
-                class,
-                entered_sel.as_ptr(),
-                imp,
-                c"Q@:@".as_ptr(),
-            );
+            let prev =
+                objc2::ffi::class_replaceMethod(class, entered_sel.as_ptr(), imp, c"Q@:@".as_ptr());
             let ours = dragging_entered
                 as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject) -> usize
                 as *mut std::ffi::c_void;
             if let Some(prev) = prev {
                 let prev = prev as *mut std::ffi::c_void;
                 if prev != ours {
-                    native_drag::ORIG_ENTERED_IMP
-                        .store(prev, std::sync::atomic::Ordering::SeqCst);
+                    native_drag::ORIG_ENTERED_IMP.store(prev, std::sync::atomic::Ordering::SeqCst);
                 }
             }
 
@@ -1495,20 +1475,14 @@ pub fn install_native_drag_operations() -> bool {
             let imp: objc2::ffi::IMP = std::mem::transmute(
                 dragging_exited as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
             );
-            let prev = objc2::ffi::class_replaceMethod(
-                class,
-                exited_sel.as_ptr(),
-                imp,
-                c"v@:@".as_ptr(),
-            );
-            let ours = dragging_exited
-                as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject)
+            let prev =
+                objc2::ffi::class_replaceMethod(class, exited_sel.as_ptr(), imp, c"v@:@".as_ptr());
+            let ours = dragging_exited as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject)
                 as *mut std::ffi::c_void;
             if let Some(prev) = prev {
                 let prev = prev as *mut std::ffi::c_void;
                 if prev != ours {
-                    native_drag::ORIG_EXITED_IMP
-                        .store(prev, std::sync::atomic::Ordering::SeqCst);
+                    native_drag::ORIG_EXITED_IMP.store(prev, std::sync::atomic::Ordering::SeqCst);
                 }
             }
 
@@ -1563,8 +1537,7 @@ pub fn install_native_drag_operations() -> bool {
             if let Some(prev) = prev {
                 let prev = prev as *mut std::ffi::c_void;
                 if prev != ours {
-                    native_drag::ORIG_ENDED_IMP
-                        .store(prev, std::sync::atomic::Ordering::SeqCst);
+                    native_drag::ORIG_ENDED_IMP.store(prev, std::sync::atomic::Ordering::SeqCst);
                 }
             }
         }
@@ -1613,16 +1586,13 @@ mod native_drag {
     pub static CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
     /// gpui's original `draggingSession:endedAtPoint:operation:` IMP,
     /// chained from our wrapper.
-    pub static ORIG_ENDED_IMP: AtomicPtr<std::ffi::c_void> =
-        AtomicPtr::new(std::ptr::null_mut());
+    pub static ORIG_ENDED_IMP: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
     /// gpui's original `draggingEntered:` implementation, chained for every
     /// drag except Ferail's pathless archive promises.
-    pub static ORIG_ENTERED_IMP: AtomicPtr<std::ffi::c_void> =
-        AtomicPtr::new(std::ptr::null_mut());
+    pub static ORIG_ENTERED_IMP: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
     /// gpui's original `draggingExited:` implementation, skipped only while
     /// an archive promise must retain its in-process payload across windows.
-    pub static ORIG_EXITED_IMP: AtomicPtr<std::ffi::c_void> =
-        AtomicPtr::new(std::ptr::null_mut());
+    pub static ORIG_EXITED_IMP: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 
     /// `CGPoint` / `NSPoint` by value across the ObjC boundary.
     #[repr(C)]
@@ -1707,7 +1677,10 @@ pub fn cancel_native_drag() {
         let jiggle = CGEventCreateMouseEvent(
             std::ptr::null(),
             KCG_EVENT_LEFT_MOUSE_DRAGGED,
-            CGPointRaw { x: at.x + 1.0, y: at.y },
+            CGPointRaw {
+                x: at.x + 1.0,
+                y: at.y,
+            },
             KCG_MOUSE_BUTTON_LEFT,
         );
         if !jiggle.is_null() {
@@ -2088,7 +2061,10 @@ mod terminal_tests {
         let script = dir.join("fake-term.sh");
         std::fs::write(
             &script,
-            format!("#!/bin/sh\n{{ pwd; printf '%s\\n' \"$@\"; }} > '{}'\n", out.display()),
+            format!(
+                "#!/bin/sh\n{{ pwd; printf '%s\\n' \"$@\"; }} > '{}'\n",
+                out.display()
+            ),
         )
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();

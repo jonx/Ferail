@@ -11,10 +11,10 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use ferail_archive::Format;
 
 use super::{
+    archive_stamp, commit_archive_edits, convert_archive, create_archive, extract_all,
+    extract_entries, format_of, materialize_archive_entry, probe_format, read_summary, read_toc,
     ArchiveAddition, ArchiveEditPlan, ArchiveError, ArchiveRename, ConvertOptions, CreateOptions,
-    ExtractOptions, SkipReason, archive_stamp, commit_archive_edits, convert_archive,
-    create_archive, extract_all, extract_entries, format_of, materialize_archive_entry,
-    probe_format, read_summary, read_toc,
+    ExtractOptions, SkipReason,
 };
 use crate::file_ops::TransferProgress;
 
@@ -115,12 +115,10 @@ fn zip_round_trip_toc_and_summary() {
     assert!(!toc.needs_password);
     for entry in toc.entries.iter().filter(|entry| !entry.is_dir) {
         assert_eq!(entry.compression_method.as_deref(), Some("Deflated"));
-        assert!(
-            entry
-                .checksum
-                .as_deref()
-                .is_some_and(|checksum| checksum.starts_with("CRC32 "))
-        );
+        assert!(entry
+            .checksum
+            .as_deref()
+            .is_some_and(|checksum| checksum.starts_with("CRC32 ")));
     }
 
     let summary = read_summary(tf.path()).unwrap();
@@ -419,17 +417,15 @@ fn file_promise_materializes_exact_leaf_and_cleans_private_stage() {
         materialize_archive_entry(archive.path(), "nested/report.txt", &target, None).unwrap_err();
     assert!(matches!(error, ArchiveError::Io(_)));
     assert_eq!(fs::read(&target).unwrap(), b"promised");
-    assert!(
-        fs::read_dir(destination.path())
-            .unwrap()
-            .flatten()
-            .all(|entry| {
-                !entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".ferail-archive-drag-")
-            })
-    );
+    assert!(fs::read_dir(destination.path())
+        .unwrap()
+        .flatten()
+        .all(|entry| {
+            !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".ferail-archive-drag-")
+        }));
 }
 
 #[test]
@@ -491,12 +487,10 @@ fn zip_slip_entry_is_skipped_not_written_outside_dest() {
     // to the parent of the destination.
     assert!(out.path().join("safe.txt").exists());
     assert_eq!(outcome.files_written, 1);
-    assert!(
-        outcome
-            .skipped
-            .iter()
-            .any(|s| s.reason == SkipReason::UnsafePath)
-    );
+    assert!(outcome
+        .skipped
+        .iter()
+        .any(|s| s.reason == SkipReason::UnsafePath));
     let escaped = out.path().parent().unwrap().join("escape.txt");
     assert!(!escaped.exists(), "traversal entry escaped to {escaped:?}");
 }
@@ -527,12 +521,10 @@ fn extraction_never_follows_existing_directory_symlink() {
 
     assert!(!outside.path().join("escape.txt").exists());
     assert_eq!(outcome.files_written, 0);
-    assert!(
-        outcome
-            .skipped
-            .iter()
-            .any(|entry| entry.reason == SkipReason::UnsafeDestinationLink)
-    );
+    assert!(outcome
+        .skipped
+        .iter()
+        .any(|entry| entry.reason == SkipReason::UnsafeDestinationLink));
 }
 
 #[cfg(unix)]
@@ -562,12 +554,10 @@ fn extraction_never_follows_existing_file_symlink_even_when_overwriting() {
 
     assert_eq!(fs::read(outside.path()).unwrap(), b"original");
     assert_eq!(outcome.files_written, 0);
-    assert!(
-        outcome
-            .skipped
-            .iter()
-            .any(|entry| entry.reason == SkipReason::UnsafeDestinationLink)
-    );
+    assert!(outcome
+        .skipped
+        .iter()
+        .any(|entry| entry.reason == SkipReason::UnsafeDestinationLink));
 }
 
 #[test]
@@ -902,12 +892,10 @@ fn sevenz_symlink_metadata_is_never_materialized() {
 
     assert!(!out.path().join("redirect").exists());
     assert_eq!(fs::read(out.path().join("safe.txt")).unwrap(), b"ok");
-    assert!(
-        outcome
-            .skipped
-            .iter()
-            .any(|entry| entry.reason == SkipReason::Symlink)
-    );
+    assert!(outcome
+        .skipped
+        .iter()
+        .any(|entry| entry.reason == SkipReason::Symlink));
 }
 
 #[test]
@@ -1337,7 +1325,7 @@ fn build_lha(path: &Path, entries: &[(&str, &[u8])]) {
         body.extend_from_slice(b"-lh0-");
         body.extend_from_slice(&(data.len() as u32).to_le_bytes()); // compressed
         body.extend_from_slice(&(data.len() as u32).to_le_bytes()); // original
-        // 1980-01-01 00:00:00 in MS-DOS packed form (date << 16 | time).
+                                                                    // 1980-01-01 00:00:00 in MS-DOS packed form (date << 16 | time).
         body.extend_from_slice(&0x0021_0000u32.to_le_bytes());
         body.push(0x20); // attribute: archived
         body.push(0x00); // header level 0

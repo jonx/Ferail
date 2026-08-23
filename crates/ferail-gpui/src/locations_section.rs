@@ -17,10 +17,10 @@
 use std::path::PathBuf;
 
 use gpui::prelude::*;
-use gpui::{div, px, AnyElement, App, ElementId, SharedString, WeakEntity};
+use gpui::{AnyElement, App, ElementId, SharedString, WeakEntity, div, px};
 use gpui_component::menu::ContextMenuExt as _;
 use gpui_component::sidebar::SidebarItem;
-use gpui_component::{h_flex, v_flex, ActiveTheme, Collapsible};
+use gpui_component::{ActiveTheme, Collapsible, h_flex, v_flex};
 
 use crate::shell::Shell;
 use crate::text::{IconScale, TextScale};
@@ -279,7 +279,8 @@ fn render_location_row(
                 let entries = drag.entries.clone();
                 let password = drag.password.clone();
                 s.update(cx, |shell, cx| {
-                    shell.extract_archive_entries_into(archive, entries, dest, password, window, cx);
+                    shell
+                        .extract_archive_entries_into(archive, entries, dest, password, window, cx);
                 });
             }
         })
@@ -305,7 +306,11 @@ fn render_location_row(
                     return;
                 };
                 let dest = dest.clone();
-                crate::log_info!(100, "archive-drag: accepted by location -> {}", dest.display());
+                crate::log_info!(
+                    100,
+                    "archive-drag: accepted by location -> {}",
+                    dest.display()
+                );
                 s.update(cx, |shell, cx| {
                     shell.extract_archive_entries_into(
                         drag.archive,
@@ -331,16 +336,13 @@ fn render_location_row(
                     shell.context_target = Some(path_for_menu.clone());
                 });
             }
-            menu.menu(
-                tr!("Open in New Tab"),
-                Box::new(OpenContextInNewTab),
-            )
-            .separator()
-            .menu(
-                crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
-                Box::new(RevealContextPath),
-            )
-            .menu(tr!("Copy Path"), Box::new(CopyContextPath))
+            menu.menu(tr!("Open in New Tab"), Box::new(OpenContextInNewTab))
+                .separator()
+                .menu(
+                    crate::i18n::tr_static(ferail_core::commands::REVEAL_LABEL),
+                    Box::new(RevealContextPath),
+                )
+                .menu(tr!("Copy Path"), Box::new(CopyContextPath))
         })
         .into_any_element()
 }

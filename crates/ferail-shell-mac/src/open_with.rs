@@ -69,10 +69,7 @@ pub fn candidates_for(path: &Path) -> Vec<OpenWithCandidate> {
                     continue;
                 };
                 let name = bundle_display_name(&p);
-                let is_default = default_path
-                    .as_ref()
-                    .map(|d| d == &p)
-                    .unwrap_or(false);
+                let is_default = default_path.as_ref().map(|d| d == &p).unwrap_or(false);
                 out.push(OpenWithCandidate {
                     name,
                     path: p,
@@ -134,9 +131,7 @@ fn bundle_display_name(path: &Path) -> String {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    raw.strip_suffix(".app")
-        .map(str::to_owned)
-        .unwrap_or(raw)
+    raw.strip_suffix(".app").map(str::to_owned).unwrap_or(raw)
 }
 
 #[cfg(target_os = "macos")]

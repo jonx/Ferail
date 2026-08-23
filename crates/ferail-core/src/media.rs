@@ -123,7 +123,9 @@ impl MediaTags {
     /// don't, so this slot naturally drops out for MP3/AAC and appears for
     /// FLAC/ALAC/WAV.
     pub fn bit_depth_label(&self) -> String {
-        self.bit_depth.map(|b| format!("{b}-bit")).unwrap_or_default()
+        self.bit_depth
+            .map(|b| format!("{b}-bit"))
+            .unwrap_or_default()
     }
 
     /// The one-line ` · `-joined fact string for the file-list Description
@@ -216,11 +218,13 @@ mod tests {
 
     #[test]
     fn channel_labels() {
-        let ch = |n: Option<u8>| MediaTags {
-            channels: n,
-            ..Default::default()
-        }
-        .channels_label();
+        let ch = |n: Option<u8>| {
+            MediaTags {
+                channels: n,
+                ..Default::default()
+            }
+            .channels_label()
+        };
         assert_eq!(ch(Some(1)), "mono");
         assert_eq!(ch(Some(2)), "stereo");
         assert_eq!(ch(Some(6)), "6 channels");
@@ -237,7 +241,10 @@ mod tests {
             duration_secs: 204,
             ..Default::default()
         };
-        assert_eq!(t.description(), "MP3 · stereo · 44.1 kHz · 192 kbps · 03:24");
+        assert_eq!(
+            t.description(),
+            "MP3 · stereo · 44.1 kHz · 192 kbps · 03:24"
+        );
     }
 
     #[test]

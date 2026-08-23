@@ -18,8 +18,8 @@ pub mod window;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use gpui::{
-    App, AppContext as _, Bounds, Styled, TitlebarOptions, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowOptions, px, size,
+    App, AppContext as _, Bounds, Styled, TitlebarOptions, Window, WindowBackgroundAppearance,
+    WindowBounds, WindowOptions, px, size,
 };
 use gpui_component::Root;
 

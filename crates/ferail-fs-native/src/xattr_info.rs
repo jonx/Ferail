@@ -272,7 +272,11 @@ pub fn parse_url_host(url: &str) -> Option<&str> {
         .unwrap_or(url);
     let end = rest.find(['/', '?', '#', ':']).unwrap_or(rest.len());
     let host = &rest[..end];
-    if host.is_empty() { None } else { Some(host) }
+    if host.is_empty() {
+        None
+    } else {
+        Some(host)
+    }
 }
 
 /// Linux: freedesktop download provenance. Browsers (Firefox, Chromium, …)
@@ -383,10 +387,9 @@ mod tests {
         let info = fetch_quarantine_info(&f);
         assert!(info.quarantined, "origin url marks it downloaded");
         assert_eq!(info.where_from[0], "https://example.com/file.bin");
-        assert!(
-            info.where_from
-                .contains(&"https://example.com/".to_string())
-        );
+        assert!(info
+            .where_from
+            .contains(&"https://example.com/".to_string()));
 
         clear_quarantine(&f).unwrap();
         assert!(

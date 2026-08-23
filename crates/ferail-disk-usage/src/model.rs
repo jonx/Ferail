@@ -98,7 +98,9 @@ impl DiskUsageTree {
     }
 
     pub fn ensure_node(&mut self, id: NodeId) -> &mut DiskUsageNode {
-        self.nodes.entry(id).or_insert_with(|| DiskUsageNode::new(id))
+        self.nodes
+            .entry(id)
+            .or_insert_with(|| DiskUsageNode::new(id))
     }
 
     pub fn ensure_node_with_meta(
@@ -110,7 +112,10 @@ impl DiskUsageTree {
         name: &str,
         is_cloud: bool,
     ) {
-        let entry = self.nodes.entry(id).or_insert_with(|| DiskUsageNode::new(id));
+        let entry = self
+            .nodes
+            .entry(id)
+            .or_insert_with(|| DiskUsageNode::new(id));
         if is_cloud {
             entry.is_cloud = true;
         }
@@ -142,17 +147,26 @@ impl DiskUsageTree {
     }
 
     pub fn add_size(&mut self, id: NodeId, size_bytes: u64) {
-        let entry = self.nodes.entry(id).or_insert_with(|| DiskUsageNode::new(id));
+        let entry = self
+            .nodes
+            .entry(id)
+            .or_insert_with(|| DiskUsageNode::new(id));
         entry.size_bytes = entry.size_bytes.saturating_add(size_bytes);
     }
 
     pub fn add_allocated(&mut self, id: NodeId, bytes: u64) {
-        let entry = self.nodes.entry(id).or_insert_with(|| DiskUsageNode::new(id));
+        let entry = self
+            .nodes
+            .entry(id)
+            .or_insert_with(|| DiskUsageNode::new(id));
         entry.allocated_bytes = entry.allocated_bytes.saturating_add(bytes);
     }
 
     pub fn set_scan_state(&mut self, id: NodeId, state: ScanState) {
-        let entry = self.nodes.entry(id).or_insert_with(|| DiskUsageNode::new(id));
+        let entry = self
+            .nodes
+            .entry(id)
+            .or_insert_with(|| DiskUsageNode::new(id));
         entry.scan_state = state;
     }
 
@@ -194,7 +208,15 @@ impl DiskUsageLayoutNode {
         file_category: FileCategory,
         children: Vec<DiskUsageLayoutNode>,
     ) -> Self {
-        Self::with_mtime(node_id, size_bytes, scan_state, kind, file_category, None, children)
+        Self::with_mtime(
+            node_id,
+            size_bytes,
+            scan_state,
+            kind,
+            file_category,
+            None,
+            children,
+        )
     }
 
     pub fn with_mtime(
@@ -297,14 +319,7 @@ mod tests {
             false,
         );
         // Second call should not overwrite the cached display name.
-        t.ensure_node_with_meta(
-            nid(2),
-            NodeKind::File,
-            FileCategory::Image,
-            None,
-            "",
-            false,
-        );
+        t.ensure_node_with_meta(nid(2), NodeKind::File, FileCategory::Image, None, "", false);
         let n = t.nodes.get(&nid(2)).unwrap();
         assert_eq!(n.display_name, "a.png");
         assert_eq!(n.mtime, Some(when));
@@ -321,9 +336,30 @@ mod tests {
             NodeKind::Container,
             FileCategory::Other,
             vec![
-                DiskUsageLayoutNode::new(nid(2), 10, ScanState::Complete, NodeKind::File, FileCategory::Other, vec![]),
-                DiskUsageLayoutNode::new(nid(3), 30, ScanState::Complete, NodeKind::File, FileCategory::Other, vec![]),
-                DiskUsageLayoutNode::new(nid(4), 20, ScanState::Complete, NodeKind::File, FileCategory::Other, vec![]),
+                DiskUsageLayoutNode::new(
+                    nid(2),
+                    10,
+                    ScanState::Complete,
+                    NodeKind::File,
+                    FileCategory::Other,
+                    vec![],
+                ),
+                DiskUsageLayoutNode::new(
+                    nid(3),
+                    30,
+                    ScanState::Complete,
+                    NodeKind::File,
+                    FileCategory::Other,
+                    vec![],
+                ),
+                DiskUsageLayoutNode::new(
+                    nid(4),
+                    20,
+                    ScanState::Complete,
+                    NodeKind::File,
+                    FileCategory::Other,
+                    vec![],
+                ),
             ],
         );
         node.sort_children_by_size();

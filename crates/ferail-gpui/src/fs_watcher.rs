@@ -101,10 +101,7 @@ impl FsWatcher {
                             // This worker thread is the one sanctioned
                             // home of the raw notify calls the lint bans.
                             #[allow(clippy::disallowed_methods)]
-                            if watcher
-                                .watch(&path, RecursiveMode::NonRecursive)
-                                .is_ok()
-                            {
+                            if watcher.watch(&path, RecursiveMode::NonRecursive).is_ok() {
                                 watched.insert(path);
                             }
                         }

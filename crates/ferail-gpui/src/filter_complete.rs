@@ -37,7 +37,12 @@ fn current_word(upto: &str) -> (&str, u32) {
     (&upto[start..], col)
 }
 
-fn item(label: String, detail: Option<String>, replace: LspRange, insert: String) -> CompletionItem {
+fn item(
+    label: String,
+    detail: Option<String>,
+    replace: LspRange,
+    insert: String,
+) -> CompletionItem {
     CompletionItem {
         label,
         detail,
@@ -167,12 +172,10 @@ mod tests {
     fn key_chains_into_values() {
         assert_eq!(labels("locked:"), vec!["locked:yes", "locked:no"]);
         assert_eq!(labels("locked:y"), vec!["locked:yes"]);
-        assert_eq!(labels("size:".trim()), vec![
-            "size:>1mb",
-            "size:>100mb",
-            "size:<1mb",
-            "size:1mb..100mb"
-        ]);
+        assert_eq!(
+            labels("size:".trim()),
+            vec!["size:>1mb", "size:>100mb", "size:<1mb", "size:1mb..100mb"]
+        );
         // Freeform value key: nothing to offer, menu closes.
         assert!(labels("ext:").is_empty());
     }

@@ -1155,14 +1155,13 @@ impl DiskUsageView {
             }
         }
         .or_else(|| {
-            self.category_filter
-                .map(|cat| {
-                    tr!(
-                        "Filtering {category}",
-                        category = crate::i18n::tr_static(category_label(cat))
-                    )
-                    .to_string()
-                })
+            self.category_filter.map(|cat| {
+                tr!(
+                    "Filtering {category}",
+                    category = crate::i18n::tr_static(category_label(cat))
+                )
+                .to_string()
+            })
         })
         .unwrap_or_else(|| tr!("All categories").to_string());
         h_flex()
@@ -1260,7 +1259,11 @@ impl DiskUsageView {
                             .separator()
                             .menu(tr!("Copy"), Box::new(DuCopyFiles))
                             .menu(
-                                if single { tr!("Copy Path") } else { tr!("Copy Paths") },
+                                if single {
+                                    tr!("Copy Path")
+                                } else {
+                                    tr!("Copy Paths")
+                                },
                                 Box::new(DuCopyPaths),
                             )
                             .separator()
@@ -1602,13 +1605,15 @@ impl DiskUsageView {
                     window.push_notification(Notification::success(msg), cx);
                 } else {
                     window.push_notification(
-                        crate::shell::error_notification(tr!(
-                            "Trashed {ok}, {failed} failed \u{2014} {detail}",
-                            ok = ok,
-                            failed = failed.len(),
-                            detail = failed.first().cloned().unwrap_or_default()
-                        )
-                        .to_string()),
+                        crate::shell::error_notification(
+                            tr!(
+                                "Trashed {ok}, {failed} failed \u{2014} {detail}",
+                                ok = ok,
+                                failed = failed.len(),
+                                detail = failed.first().cloned().unwrap_or_default()
+                            )
+                            .to_string(),
+                        ),
                         cx,
                     );
                 }

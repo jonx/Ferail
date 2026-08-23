@@ -43,8 +43,12 @@ pub enum TaskKind {
     FileOp,
     /// Recursive / global file search (docs/features/SEARCH.md).
     Search,
+    /// Recursive all-files snapshot for Flat View.
+    FlatScan,
     /// Duplicate-finder funnel scan (docs/features/DUPLICATES.md).
     DuplicateScan,
+    /// Streaming SHA-256 calculation for one user-selected file.
+    Checksum,
 }
 
 impl TaskKind {
@@ -57,7 +61,12 @@ impl TaskKind {
     pub fn is_foreground(&self) -> bool {
         matches!(
             self,
-            TaskKind::FileOp | TaskKind::Search | TaskKind::DiskUsage | TaskKind::DuplicateScan
+            TaskKind::FileOp
+                | TaskKind::Search
+                | TaskKind::FlatScan
+                | TaskKind::DiskUsage
+                | TaskKind::DuplicateScan
+                | TaskKind::Checksum
         )
     }
 }
@@ -440,6 +449,7 @@ mod tests {
     fn foreground_classification() {
         assert!(TaskKind::FileOp.is_foreground());
         assert!(TaskKind::Search.is_foreground());
+        assert!(TaskKind::Checksum.is_foreground());
         assert!(!TaskKind::IconPrefetch.is_foreground());
         assert!(!TaskKind::Enumeration.is_foreground());
     }

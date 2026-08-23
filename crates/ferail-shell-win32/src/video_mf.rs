@@ -26,6 +26,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Once};
 
 use windows::core::{implement, Interface, BSTR};
+use windows::Win32::Foundation::{BOOL, RECT, RPC_E_CHANGED_MODE};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Multithread, ID3D11Texture2D,
@@ -34,17 +35,14 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_MAP_READ, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
     D3D11_USAGE_STAGING,
 };
-use windows::Win32::Graphics::Dxgi::Common::{
-    DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
-};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Media::MediaFoundation::{
     IMFAttributes, IMFDXGIDeviceManager, IMFMediaEngine, IMFMediaEngineClassFactory,
-    IMFMediaEngineNotify, IMFMediaEngineNotify_Impl, MFCreateAttributes,
-    MFCreateDXGIDeviceManager, MFStartup, MFVideoNormalizedRect, MFSTARTUP_LITE, MF_MEDIA_ENGINE_CALLBACK,
+    IMFMediaEngineNotify, IMFMediaEngineNotify_Impl, MFCreateAttributes, MFCreateDXGIDeviceManager,
+    MFStartup, MFVideoNormalizedRect, MFSTARTUP_LITE, MF_MEDIA_ENGINE_CALLBACK,
     MF_MEDIA_ENGINE_DXGI_MANAGER, MF_MEDIA_ENGINE_EVENT_CANPLAY, MF_MEDIA_ENGINE_EVENT_ENDED,
     MF_MEDIA_ENGINE_EVENT_ERROR, MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT,
 };
-use windows::Win32::Foundation::{BOOL, RECT, RPC_E_CHANGED_MODE};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED,
@@ -235,7 +233,10 @@ fn try_show(path: &Path, on_ended: Box<dyn Fn() + 'static + Send>) -> Option<u64
         "MFCreateDXGIDeviceManager"
     );
     let manager = manager?;
-    mf_step!(unsafe { manager.ResetDevice(&device, token) }, "ResetDevice");
+    mf_step!(
+        unsafe { manager.ResetDevice(&device, token) },
+        "ResetDevice"
+    );
 
     // Shared flags + the notify COM object.
     let ready = Arc::new(AtomicBool::new(false));
@@ -271,13 +272,21 @@ fn try_show(path: &Path, on_ended: Box<dyn Fn() + 'static + Send>) -> Option<u64
     );
 
     let factory: IMFMediaEngineClassFactory = mf_step!(
-        unsafe { CoCreateInstance(&CLSID_MF_MEDIA_ENGINE_CLASS_FACTORY, None, CLSCTX_INPROC_SERVER) },
+        unsafe {
+            CoCreateInstance(
+                &CLSID_MF_MEDIA_ENGINE_CLASS_FACTORY,
+                None,
+                CLSCTX_INPROC_SERVER,
+            )
+        },
         "CoCreateInstance(MFMediaEngineClassFactory)"
     );
     // dwFlags = 0; frame-server mode is implied by the DXGI manager + output
     // format with no playback HWND.
-    let engine: IMFMediaEngine =
-        mf_step!(unsafe { factory.CreateInstance(0, &attributes) }, "CreateInstance(engine)");
+    let engine: IMFMediaEngine = mf_step!(
+        unsafe { factory.CreateInstance(0, &attributes) },
+        "CreateInstance(engine)"
+    );
 
     // Point it at the file. The media engine rejects the `\\?\` extended-length
     // prefix the file list uses (ERROR_INVALID_NAME), so strip it; a plain
@@ -499,7 +508,11 @@ pub fn video_overlay_time(id: u64) -> (f64, f64) {
                 let cur = player.engine.GetCurrentTime();
                 let dur = player.engine.GetDuration();
                 // GetDuration is NaN/Inf for unknown/live; clamp to 0.
-                let dur = if dur.is_finite() && dur >= 0.0 { dur } else { 0.0 };
+                let dur = if dur.is_finite() && dur >= 0.0 {
+                    dur
+                } else {
+                    0.0
+                };
                 (cur.max(0.0), dur)
             }
         } else {

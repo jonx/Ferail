@@ -858,8 +858,8 @@ impl ArchiveView {
                 let size = row.size.unwrap_or(0);
                 FileEntry {
                     id,
-                    name: row.name.clone(),
-                    display_name: row.name.clone(),
+                    name: row.name.clone().into(),
+                    display_name: row.name.clone().into(),
                     // Archive names are untrusted display text too. Feed the
                     // literal stored leaf through the same deceptive-name
                     // detector as normal filesystem rows; rendering exposes
@@ -874,9 +874,9 @@ impl ArchiveView {
                     size,
                     mtime_unix: row.mtime_unix.unwrap_or(0),
                     display_size: if row.is_dir {
-                        String::new()
+                        ferail_core::empty_entry_text()
                     } else {
-                        ferail_fs_native::humanize_bytes(size)
+                        ferail_fs_native::humanize_bytes(size).into()
                     },
                     display_kind: ferail_fs_native::describe_kind(
                         if row.is_dir {
@@ -885,9 +885,10 @@ impl ArchiveView {
                             EntryKind::File
                         },
                         &row.name,
-                    ),
-                    display_magic: String::new(),
-                    display_description: self.row_description(row),
+                    )
+                    .into(),
+                    display_magic: ferail_core::empty_entry_text(),
+                    display_description: self.row_description(row).into(),
                     is_quarantined: false,
                     quarantine: None,
                     hidden: false,
@@ -2052,17 +2053,12 @@ impl Render for ArchiveView {
                         return;
                     }
                     let message = tr!("Drop outside the archive to extract");
-                    if this.drop_feedback.as_ref() != Some(&message)
-                        || this.drop_feedback_allowed
-                    {
+                    if this.drop_feedback.as_ref() != Some(&message) || this.drop_feedback_allowed {
                         this.drop_feedback = Some(message);
                         this.drop_feedback_allowed = false;
                         cx.notify();
                     }
-                    cx.set_active_drag_cursor_style(
-                        gpui::CursorStyle::OperationNotAllowed,
-                        window,
-                    );
+                    cx.set_active_drag_cursor_style(gpui::CursorStyle::OperationNotAllowed, window);
                 },
             ))
             .on_drop(cx.listener(
@@ -2079,9 +2075,7 @@ impl Render for ArchiveView {
                     return;
                 }
                 let message = tr!("Drop outside the archive to extract");
-                if this.drop_feedback.as_ref() != Some(&message)
-                    || this.drop_feedback_allowed
-                {
+                if this.drop_feedback.as_ref() != Some(&message) || this.drop_feedback_allowed {
                     this.drop_feedback = Some(message);
                     this.drop_feedback_allowed = false;
                     cx.notify();
@@ -2100,10 +2094,7 @@ impl Render for ArchiveView {
                 }),
             )
             .when(native_archive_dragging, move |style| {
-                style
-                    .cursor_not_allowed()
-                    .border_2()
-                    .border_color(danger)
+                style.cursor_not_allowed().border_2().border_color(danger)
             })
             .child(header)
             .children(locked_strip)

@@ -98,9 +98,51 @@ The status bar shows:
   size, like the item total). Suppressed in archive mode. Its sibling
   affordance: with *show hidden* on, hidden rows render dimmed
   (`opacity(0.6)`, list + grid; a cut row's `0.45` wins),
-- Show Hidden toggle.
+- Show Hidden toggle — always present at every window width (see
+  [Fitting It All In A Narrow Window](#fitting-it-all-in-a-narrow-window)).
 
 Clicking the task label or progress strip toggles the task popover.
+
+### Fitting It All In A Narrow Window
+
+That is a lot of readouts for one row, and translation swells them unevenly —
+English "up 3m" is French "en service depuis 3m". The bar is a single row of
+`flex_shrink_0` children, so an overflow does not compress: it pushes its own
+tail — the Show Hidden switch — off the window edge. `status_bar::plan` decides
+what fits *before* anything is built, from the window's logical width, the
+strings that will actually be painted, and a character-count estimate (no text
+measurement, no I/O). It is pure, so the ladder is unit-tested without a window.
+
+Each wordy segment has three wordings (`status_bar::Density`):
+
+| Segment | Full | Short | Minimal |
+| --- | --- | --- | --- |
+| Count | `12 items · 3.0 MB` | same | `12 · 3.0 MB` |
+| Selection | `3 of 12 selected · 1.0 KB` | same | `3/12 · 1.0 KB` |
+| Filtered chip | `48 filtered out · 12.0 MB` | `48 filtered` | same |
+| Hidden chip | `2 hidden · 52.0 KB` | `2 hidden` | same |
+| Free space | `126.3 GB free on Macintosh HD` | `126.3 GB free` | `126.3 GB` |
+| Read-only | `Macintosh HD is read-only` | `Read-only volume` | `Read-only` |
+| Uptime | `up 3m` | same | `UP 3m` |
+| Show Hidden | `Show hidden` | `Hidden` | *(tooltip only)* |
+
+The minimal uptime token is deliberately **not** translated: the bar already
+ships `CPU` / `MEM` / `rps` unlocalized, and a universal two-letter code beats a
+truncated word. The number-and-separator forms (`12 · 3.0 MB`, `3/12`) are built
+with `format!` rather than `tr!` for the same reason — there is nothing in them
+to translate.
+
+The ladder, widest first: **Full → Short → Minimal → one type tier smaller
+(Xs → Xxs) → hide segments**, least essential first: the app-footprint stats
+(the one segment that says nothing about the folder in front of the user), then
+the hidden chip, the filtered chip, free space, and last of all the task label.
+Gaps and the progress strip tighten with the density; nobody reads whitespace.
+
+**Two things are not on the ladder**: the item count, and the Show Hidden
+switch — at minimal density the switch loses its word and keeps a tooltip, but
+it is always there to click. A `density_ladder_tests` case walks the width down
+20 px at a time and asserts the ladder never runs backwards, so a slow resize
+can't flap between two rungs.
 
 The task popover shows:
 
@@ -138,6 +180,9 @@ foreground state needs to repaint.
   steps.
 - Cancellation is cooperative: the UI flips a shared flag and the worker exits
   at its next checkpoint.
+- New status-bar text needs a Short and a Minimal wording, not just an English
+  sentence: a segment that only knows how to say itself in full is a segment
+  that pushes the Show Hidden switch off a narrow window.
 
 ## Remaining Work
 

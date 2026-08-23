@@ -15,10 +15,7 @@ fn main() {
         std::process::exit(2);
     };
     let out = args.next().unwrap_or_else(|| "thumb.png".to_string());
-    let size: u32 = args
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(512);
+    let size: u32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(512);
 
     let path = std::path::PathBuf::from(&path);
     println!("input : {}", path.display());

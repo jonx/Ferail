@@ -217,6 +217,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | → Undock (menu item) | `icons/undock.svg` | **In-house** (house style) — a plain window (rect + titlebar line), i.e. "back to a free-floating window". | dock dropdown |
 | List view | `icons/view-list.svg` | Lucide `list` | render.rs:1604 |
 | Icon view | `icons/view-grid.svg` | Lucide `layout-grid` | render.rs:1618 |
+| Flat view / include subfolders | `icons/folder-tree.svg` | In-house (folder feeding a two-branch tree, stroke 1.75) | render.rs `title_bar` |
 | Smaller / larger icons | `icons/minus.svg` / `plus.svg` ↑ | Lucide | render.rs `title_bar` |
 | Reset icon size | `icons/undo-2.svg` | Lucide `undo-2` (from the spare upstream pool, stroke 2 — it sits in the all-upstream ±/ellipsis cluster, so the heavier weight is the consistent one here). A revert arrow, not a refresh circle: `nav/refresh.svg` is the Refresh *command* two buttons away and the two must not read alike. Grid view only, beside the −/＋ stepper it undoes. | render.rs `title_bar` |
 | Overflow menu | `icons/ellipsis.svg` ↑ | Lucide | render.rs:1668 |
@@ -229,6 +230,7 @@ marks paths that resolve from `gpui-component-assets`; everything else is local.
 | Tool-result close | `icons/close.svg` ↑ | Lucide | render.rs:2468 |
 | Task-panel dismiss | `icons/close.svg` ↑ | Lucide | task_panel.rs:101 |
 | Tab close | `icons/close.svg` ↑ | Lucide — shared "close" chrome glyph (replaced a literal `"x"` text char) | render.rs `tabstrip` |
+| Filter clear (✕ inside the filter field) | `IconName::Close` ↑ | Lucide — drawn by gpui-component's own `clear_button`, which `Input::cleanable(true)` turns on; we don't pass a glyph. Same "close" chrome family as the row above. | render.rs `title_bar` |
 
 ### Preview-pane actions ([render.rs](../../crates/ferail-gpui/src/shell/render.rs))
 

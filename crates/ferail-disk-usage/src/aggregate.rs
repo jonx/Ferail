@@ -70,7 +70,13 @@ fn build_inner(
         // Already visited via another container — record as a leaf so the
         // user sees it but don't recurse again.
         return DiskUsageLayoutNode::with_mtime(
-            id, intrinsic, scan_state, kind, file_category, mtime, vec![],
+            id,
+            intrinsic,
+            scan_state,
+            kind,
+            file_category,
+            mtime,
+            vec![],
         );
     }
 

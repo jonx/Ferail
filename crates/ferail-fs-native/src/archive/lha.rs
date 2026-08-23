@@ -32,8 +32,8 @@ use std::io;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
-use delharc::LhaDecodeReader;
 use delharc::stub_io::Read as DelharcRead;
+use delharc::LhaDecodeReader;
 
 use ferail_archive::{ArchiveEntry, Toc};
 

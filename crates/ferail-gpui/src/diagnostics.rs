@@ -117,7 +117,12 @@ pub fn run_checks() -> Report {
         app_version: env!("CARGO_PKG_VERSION"),
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
-        groups: vec![app_group(), storage_group(), dependencies_group(), environment_group()],
+        groups: vec![
+            app_group(),
+            storage_group(),
+            dependencies_group(),
+            environment_group(),
+        ],
     }
 }
 
@@ -167,7 +172,11 @@ fn app_group() -> Group {
 fn storage_group() -> Group {
     Group {
         title: msgid!("Storage"),
-        checks: vec![check_config_dir(), check_settings_file(), check_metadata_db()],
+        checks: vec![
+            check_config_dir(),
+            check_settings_file(),
+            check_metadata_db(),
+        ],
     }
 }
 
@@ -252,7 +261,10 @@ fn check_config_dir() -> Check {
             Err(e) => Check::new(
                 "Config directory",
                 Status::Fail,
-                format!("{} — NOT writable: {e}; settings will not persist", dir.display()),
+                format!(
+                    "{} — NOT writable: {e}; settings will not persist",
+                    dir.display()
+                ),
             )
             .with_path(dir),
         },
@@ -280,7 +292,10 @@ fn check_settings_file() -> Check {
         Err(_) => Check::new(
             "Settings file",
             Status::Warn,
-            format!("{} (not created yet — written on first change)", path.display()),
+            format!(
+                "{} (not created yet — written on first change)",
+                path.display()
+            ),
         )
         .with_path(path),
     }
@@ -305,7 +320,10 @@ fn check_metadata_db() -> Check {
         (false, Ok(_)) => Check::new(
             "Metadata database",
             Status::Warn,
-            format!("{} (not created yet — written on first use)", path.display()),
+            format!(
+                "{} (not created yet — written on first use)",
+                path.display()
+            ),
         )
         .with_path(path),
         (false, Err(e)) => Check::new(

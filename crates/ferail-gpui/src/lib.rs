@@ -19,10 +19,10 @@ pub mod ant_trail;
 pub mod app_icon;
 pub mod app_state;
 pub mod archive;
+pub mod archive_convert;
+pub mod archive_create;
 #[cfg(test)]
 mod archive_tests;
-pub mod archive_create;
-pub mod archive_convert;
 pub mod assets;
 pub mod boot;
 pub mod bulk_rename;
@@ -44,6 +44,7 @@ pub mod grid;
 pub mod icons;
 pub mod keyboard_help;
 pub mod keymap;
+pub mod locations_section;
 pub mod multi_table;
 pub mod obs;
 pub mod path_complete;
@@ -51,7 +52,6 @@ pub mod prefetch;
 pub mod preview;
 pub mod preview_panel;
 pub mod process_state;
-pub mod locations_section;
 pub mod recents_section;
 pub mod redact;
 pub mod report;
@@ -134,6 +134,11 @@ pub fn shell_window_options() -> gpui::WindowOptions {
     }
 }
 
+/// AROS rides the shell-linux stub scaffold re-exported under its own crate
+/// name (see `ferail-shell-aros`); real workbench.library / icon.library
+/// integrations replace re-exports there incrementally.
+#[cfg(target_os = "aros")]
+pub use ferail_shell_aros as platform_shell;
 #[cfg(target_os = "linux")]
 pub use ferail_shell_linux as platform_shell;
 /// Platform shell abstraction. Resolves to `ferail_shell_mac` on
@@ -157,8 +162,3 @@ pub use ferail_shell_linux as platform_shell;
 pub use ferail_shell_mac as platform_shell;
 #[cfg(windows)]
 pub use ferail_shell_win32 as platform_shell;
-/// AROS rides the shell-linux stub scaffold re-exported under its own crate
-/// name (see `ferail-shell-aros`); real workbench.library / icon.library
-/// integrations replace re-exports there incrementally.
-#[cfg(target_os = "aros")]
-pub use ferail_shell_aros as platform_shell;

@@ -283,6 +283,9 @@ mod tests {
         let n = normalize_path_key(Path::new("/Users/x/./docs//"));
         assert_eq!(n, PathBuf::from("/Users/x/docs"));
         assert_eq!(n.parent(), Some(Path::new("/Users/x")));
-        assert_eq!(normalize_path_key(n.parent().unwrap()), PathBuf::from("/Users/x"));
+        assert_eq!(
+            normalize_path_key(n.parent().unwrap()),
+            PathBuf::from("/Users/x")
+        );
     }
 }

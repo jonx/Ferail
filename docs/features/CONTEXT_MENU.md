@@ -236,10 +236,119 @@ a worker):
 ## Prewarm Rule
 
 The plan is built from cached app state at right-click time; no I/O on
-hover. Open With's Launch Services query is the one synchronous Cocoa
-call still on the right-click path — it's typically <50 ms but a future
-iteration can move it to selection-change pre-warm with generation
-tokens (mirrors Ferail-Win32's `menu_preload.rs`) if real users hit a stutter.
+hover. Open With's Launch Services query — once the last synchronous
+Cocoa call on this path — now pre-warms off the UI thread on
+selection-lead change (`spawn_open_with_warm`), and a cache miss shows a
+disabled "Open With (loading…)" item that the arriving fetch replaces in
+place via `menu_revision`. Measured, the query costs a one-time ~5–10 ms
+Launch Services bootstrap per process and then ~0.03 ms per call, so the
+warm cache is insurance against cold bundles on slow volumes rather than
+a hot-path saving (see [OPEN_WITH.md](OPEN_WITH.md) §3).
+
+## Customizing Which Entries Appear (planned)
+
+Goal: let the user hide the context-menu entries they never use, per
+menu, the way the table header already lets them hide columns. Not built
+— this section is the design the work should follow.
+
+### The precedent is already in the codebase
+
+`FileListDelegate::header_context_menu`
+([file_list.rs:2414](../../crates/ferail-gpui/src/file_list.rs#L2414))
+is this feature, for columns: a ✓/blank toggle per column built from
+closure-backed `PopupMenuItem`s, persisted through the existing
+subscription, with a **Reset Columns** escape hatch and a primary column
+that can never be hidden. `split_persisted_columns`
+([file_list.rs:2947](../../crates/ferail-gpui/src/file_list.rs#L2947))
+supplies the storage rules to copy verbatim:
+
+- unknown keys are ignored, so a spec written by a newer build does not
+  break an older one;
+- entries the spec never mentions (new in this build) **default to
+  visible**, so a new command is never invisible to an upgrading user;
+- the visible set is never allowed to go empty.
+
+### Prerequisite: a stable id per entry
+
+Today the row menu is an imperative chain —
+`menu.menu(tr!("Rename…"), Box::new(RenameSelected))`, ~40 entries in
+`context_menu` plus 8 in `background_context_menu`. An entry's identity
+is its **Rust action type**, there is no action↔`CommandId` bridge, and
+labels are duplicated between the catalogue's `msgid!` and the menu
+site's `tr!`. `ferail_core::commands` carries only 17
+`Category::Context` specs against those ~40 entries.
+
+So the enabling change is to build each menu from a table of
+`(CommandId, Availability, label, action)` rather than an inline chain.
+That is worth doing on its own merits — it removes the label
+duplication and makes the menus introspectable for the Cmd+K palette and
+the Keyboard Shortcuts page. Once it exists, hiding entries is one
+predicate.
+
+The same refactor is a prerequisite for user-defined tools
+([OPEN_WITH.md](OPEN_WITH.md) §5.6), which cannot hard-code an action
+type per user-created entry. Do it once; both features land on it.
+
+### The editor picks a surface
+
+There is more than one menu, so the editor is a two-pane thing: choose
+the surface, then toggle its entries. The surfaces are:
+
+| Surface | Built in |
+|---|---|
+| File list / icon grid **row** (one definition serves both) | [file_list.rs:2465](../../crates/ferail-gpui/src/file_list.rs#L2465) |
+| File list **background** (targets the browsed folder) | [file_list.rs:2812](../../crates/ferail-gpui/src/file_list.rs#L2812) |
+| Table **header** (already customizable — columns) | [file_list.rs:2414](../../crates/ferail-gpui/src/file_list.rs#L2414) |
+| **Breadcrumb** segment | [shell/render.rs:3111](../../crates/ferail-gpui/src/shell/render.rs#L3111) |
+| Sidebar **Favorites** section header / favorite row | [favorites_section.rs:258](../../crates/ferail-gpui/src/favorites_section.rs#L258), [:741](../../crates/ferail-gpui/src/favorites_section.rs#L741) |
+| Sidebar **Locations / Volumes** row | [locations_section.rs:325](../../crates/ferail-gpui/src/locations_section.rs#L325) |
+| Sidebar **Recents** header / row | [recents_section.rs:145](../../crates/ferail-gpui/src/recents_section.rs#L145), [:258](../../crates/ferail-gpui/src/recents_section.rs#L258) |
+| **Browse tree** row | [tree.rs:802](../../crates/ferail-gpui/src/tree.rs#L802) |
+| **Disk-usage treemap** | [disk_usage.rs:1223](../../crates/ferail-gpui/src/disk_usage.rs#L1223) |
+
+Each gets a stable `MenuSurface` id, and visibility is stored per
+`(surface, command)` — the same command can be wanted in one menu and
+not another.
+
+### Opening a menu must not get slower
+
+Dynamic entries must not add per-open cost. The rules:
+
+- Parse the persisted spec **once** — at startup and on settings change —
+  into an in-memory structure keyed by surface, exactly like
+  `app_state`'s memoized `load()`. **Never** read the file, and never
+  call a parsing `load()`, at menu-open time (Prime Directive: menu
+  building is read-only and I/O-free).
+- Resolve per entry with an **array index or a small set probe** against
+  a dense id, not a string parse. For scale: every entry already pays a
+  `tr_raw` (an `arc_swap` load plus, in a non-English catalog, a HashMap
+  lookup and an `Arc` clone) just to get its label — a visibility check
+  is strictly cheaper than what the loop already does, so a correct
+  implementation is unmeasurable next to today's build.
+- The common case is "nothing hidden". Keep a fast path: an empty
+  override set short-circuits to exactly the current behaviour.
+
+### Separators
+
+Hiding entries leaves doubled and leading separators. Once the menu is
+built from a list, this is one pass over the items before they are handed
+to `PopupMenu`: drop separators at the head, collapse any run of adjacent
+separators to one, drop separators at the tail. Deliberately a
+post-processing step on the item list rather than per-`if` bookkeeping at
+each call site — the group structure stays readable, and the rule is
+testable in isolation.
+
+### Safety rules
+
+- **Preference AND availability, never OR.** A user marking an entry
+  "shown" must not override `Availability` — otherwise the
+  shown-for-a-file-it-will-not-touch class of bug that the availability
+  machinery exists to prevent comes straight back.
+- **Never hide everything.** Same rule as columns: the visible set can
+  not go empty, and each surface has a **Reset** action.
+- Consider a small always-on floor (Open / Get Info) so a user cannot
+  configure themselves out of the app's primary verb, mirroring how the
+  `name` column can never be hidden.
 
 ## Windows Notes That Did Not Port
 
@@ -255,9 +364,14 @@ tokens (mirrors Ferail-Win32's `menu_preload.rs`) if real users hit a stutter.
 - Tags row as a single horizontal `setView:` NSMenuItem matching
   Finder's compact swatch strip, instead of seven stacked emoji
   rows. Custom `NSView` with tracking areas and click hit-testing.
-- Async Open With pre-warm with debounced selection-change +
-  generation tokens. Only worth it if cold-cache stutter is
-  observed in practice (synchronous query is typically <50 ms).
+- Open With follow-ups — an "Other…" app chooser, user-defined custom
+  tools, "Always Open With", and allowing the submenu on a
+  multi-selection (the dispatch already handles many files).
+  [OPEN_WITH.md](OPEN_WITH.md).
+- User-customizable menu entries — see
+  [Customizing Which Entries Appear](#customizing-which-entries-appear-planned)
+  above. Blocked on giving every entry a stable `CommandId` and building
+  the menus from a table.
 - Per-target enable/disable rules (read-only volumes, missing
   files, permission-denied). `MenuPlanItem` already supports
   `enabled: bool` — call sites just don't compute it yet.

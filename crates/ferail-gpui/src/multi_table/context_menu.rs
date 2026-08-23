@@ -329,17 +329,13 @@ impl<E: ParentElement + Styled + IntoElement + 'static> Element for LiveContextM
             let shared_state = request_layout.shared_state.clone();
             let stale = {
                 let s = shared_state.borrow();
-                s.open && s.built_revision.is_some_and(|built| built != current_revision)
+                s.open
+                    && s.built_revision
+                        .is_some_and(|built| built != current_revision)
             };
             if stale {
                 shared_state.borrow_mut().built_revision = None;
-                schedule_build(
-                    shared_state,
-                    builder.clone(),
-                    current_revision,
-                    window,
-                    cx,
-                );
+                schedule_build(shared_state, builder.clone(), current_revision, window, cx);
             }
         }
 
@@ -370,13 +366,7 @@ impl<E: ParentElement + Styled + IntoElement + 'static> Element for LiveContextM
                         }
 
                         let revision = (revision_fn)(cx);
-                        schedule_build(
-                            shared_state.clone(),
-                            builder.clone(),
-                            revision,
-                            window,
-                            cx,
-                        );
+                        schedule_build(shared_state.clone(), builder.clone(), revision, window, cx);
                     }
                 });
             },

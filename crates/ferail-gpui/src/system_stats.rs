@@ -63,6 +63,10 @@ impl StatsSnapshot {
 pub struct SegmentParts {
     /// `up 3d 4h`
     pub up: SharedString,
+    /// The bare uptime figure, `3d 4h` — what the status bar's minimal
+    /// density prefixes with the universal `UP` token when the
+    /// translated "up" wording ("en service depuis"…) no longer fits.
+    pub uptime: SharedString,
     /// `CPU 6.8%`
     pub cpu: SharedString,
     /// `MEM 184.0 MB`
@@ -75,8 +79,12 @@ impl SegmentParts {
     pub fn from_values(run_secs: u64, cpu_pct: f32, mem_bytes: u64, rps: f32) -> Self {
         Self {
             up: tr!("up {uptime}", uptime = format_uptime(run_secs)),
+            uptime: format_uptime(run_secs).into(),
             cpu: tr!("CPU {pct}", pct = format_cpu(cpu_pct)),
-            mem: tr!("MEM {bytes}", bytes = crate::status_bar::humanize_bytes(mem_bytes)),
+            mem: tr!(
+                "MEM {bytes}",
+                bytes = crate::status_bar::humanize_bytes(mem_bytes)
+            ),
             // Floor, don't round: an idle window whose only redraws
             // are this sampler's own 0.5 Hz notify ticks averages
             // ~0.5 and must read an honest 0, not flicker to 1.

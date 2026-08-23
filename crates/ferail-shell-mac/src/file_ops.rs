@@ -141,8 +141,7 @@ pub fn make_alias_in(target: &Path, dest_dir: &Path) -> Result<PathBuf, String> 
         let bookmark = bookmark.ok_or_else(|| ns_error_message(err, "bookmarkData failed"))?;
 
         let dst_path_ns = NSString::from_str(&dst.to_string_lossy());
-        let dst_url: Retained<NSURL> =
-            NSURL::fileURLWithPath_isDirectory(&dst_path_ns, false);
+        let dst_url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&dst_path_ns, false);
 
         // +[NSURL writeBookmarkData:toURL:options:error:]
         let mut werr: *mut NSError = std::ptr::null_mut();
@@ -245,8 +244,7 @@ pub fn eject_device(volume_paths: &[&Path]) -> Result<(), String> {
         let path_ns = NSString::from_str(&first.to_string_lossy());
         let url: Retained<NSURL> = NSURL::fileURLWithPath_isDirectory(&path_ns, true);
 
-        let cls: &AnyClass =
-            AnyClass::get("NSFileManager").ok_or("NSFileManager class missing")?;
+        let cls: &AnyClass = AnyClass::get("NSFileManager").ok_or("NSFileManager class missing")?;
         let fm: Retained<AnyObject> = msg_send_id![cls, defaultManager];
 
         let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
@@ -363,7 +361,10 @@ pub fn volume_busy_processes(path: &Path) -> Vec<ferail_core::BusyApp> {
 /// back to the static fallback when the error is missing or its
 /// `localizedDescription` selector isn't reachable.
 #[cfg(target_os = "macos")]
-pub(crate) unsafe fn ns_error_message(err: *mut objc2_foundation::NSError, fallback: &str) -> String {
+pub(crate) unsafe fn ns_error_message(
+    err: *mut objc2_foundation::NSError,
+    fallback: &str,
+) -> String {
     use objc2::msg_send;
     use objc2_foundation::NSString;
     if err.is_null() {

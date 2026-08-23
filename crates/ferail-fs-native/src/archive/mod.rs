@@ -34,7 +34,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use ferail_archive::{CompressionLevel, Format, Toc, safe_relative_path};
+use ferail_archive::{safe_relative_path, CompressionLevel, Format, Toc};
 
 use crate::file_ops::TransferProgress;
 

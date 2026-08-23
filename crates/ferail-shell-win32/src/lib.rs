@@ -531,7 +531,10 @@ fn shell_execute_runas(program: &str, args: &[String], dir: &std::path::Path) {
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
     fn wide(s: &str) -> Vec<u16> {
-        std::ffi::OsStr::new(s).encode_wide().chain(Some(0)).collect()
+        std::ffi::OsStr::new(s)
+            .encode_wide()
+            .chain(Some(0))
+            .collect()
     }
     let mut params = String::new();
     for (i, a) in args.iter().enumerate() {
@@ -2329,7 +2332,11 @@ pub fn set_window_floating(hwnd_raw: *mut std::ffi::c_void, floating: bool) {
         return;
     }
     let hwnd = HWND(hwnd_raw);
-    let band = if floating { HWND_TOPMOST } else { HWND_NOTOPMOST };
+    let band = if floating {
+        HWND_TOPMOST
+    } else {
+        HWND_NOTOPMOST
+    };
     unsafe {
         let _ = SetWindowPos(
             hwnd,
@@ -2352,8 +2359,8 @@ pub fn set_window_floating(_ns_view: *mut std::ffi::c_void, _floating: bool) {}
 pub fn set_window_opacity(hwnd_raw: *mut std::ffi::c_void, opacity: f32) {
     use windows::Win32::Foundation::{COLORREF, HWND};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, GWL_EXSTYLE, LWA_ALPHA, SetLayeredWindowAttributes,
-        SetWindowLongPtrW, WS_EX_LAYERED,
+        GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE, LWA_ALPHA,
+        WS_EX_LAYERED,
     };
     if hwnd_raw.is_null() {
         return;

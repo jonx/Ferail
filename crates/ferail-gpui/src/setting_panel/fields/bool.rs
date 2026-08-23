@@ -2,12 +2,10 @@ use std::rc::Rc;
 
 use crate::setting_panel::{
     AnySettingField, RenderOptions,
-    fields::{get_value, set_value, SettingFieldRender},
+    fields::{SettingFieldRender, get_value, set_value},
 };
-use gpui::{div, AnyElement, App, IntoElement, ParentElement as _, StyleRefinement, Window};
-use gpui_component::{
-    checkbox::Checkbox, switch::Switch, Disableable, Sizable, StyledExt,
-};
+use gpui::{AnyElement, App, IntoElement, ParentElement as _, StyleRefinement, Window, div};
+use gpui_component::{Disableable, Sizable, StyledExt, checkbox::Checkbox, switch::Switch};
 
 pub(crate) struct BoolField {
     use_switch: bool,

@@ -222,7 +222,8 @@ pub(super) fn member_row(
         group = group_no,
         location = location
     )
-    .to_string();
+    .to_string()
+    .into();
     Some((entry, path.to_path_buf()))
 }
 
@@ -287,7 +288,7 @@ impl Shell {
         // marked-for-trash set, so rows selected in the folder would
         // arrive pre-checked — one click on "Trash N marked" could
         // trash a file the user never marked in the panel.
-        self.tabs[idx].selection.clear();
+        self.tabs[idx].clear_selection();
         self.tabs[idx].anchor = None;
         self.tabs[idx].lead = None;
         self.tabs[idx].range_live = false;
@@ -583,7 +584,7 @@ impl Shell {
         };
         let groups = similar_group_views(&tab.similar_image_index, &clusters);
         let old_focus_node = tab.dupe_panel_focus.map(|(_, node)| node);
-        tab.selection.clear();
+        tab.clear_selection();
         tab.dupe_groups = groups;
         tab.dupe_panel_focus = old_focus_node.and_then(|node| {
             tab.dupe_groups.iter().find_map(|group| {
@@ -717,9 +718,7 @@ impl Shell {
             SimilarCriterion::Structure => {
                 self.update_similar_criteria(tab_id, Some(value), None, cx)
             }
-            SimilarCriterion::Detail => {
-                self.update_similar_criteria(tab_id, None, Some(value), cx)
-            }
+            SimilarCriterion::Detail => self.update_similar_criteria(tab_id, None, Some(value), cx),
         }
     }
 
@@ -818,17 +817,33 @@ impl Shell {
         }
 
         let heats: Vec<f32> = batch.entries.iter().map(|e| self.ant_heat(e.id)).collect();
+        let favorites: Vec<bool> = {
+            let favs = self.process.favorites();
+            let favs = favs.read(cx);
+            batch
+                .entries
+                .iter()
+                .map(|entry| {
+                    batch
+                        .paths
+                        .get(&entry.id)
+                        .is_some_and(|path| favs.contains_path(path))
+                })
+                .collect()
+        };
         let Some(tab) = self.tabs.get(idx) else {
             return;
         };
         let table = tab.table.clone();
         table.update(cx, |state, cx| {
-            state
-                .delegate_mut()
-                .append_entries(batch.entries, batch.paths, heats);
+            state.delegate_mut().append_entries_decorated(
+                batch.entries,
+                batch.paths,
+                heats,
+                favorites,
+            );
             state.refresh(cx);
         });
-        self.refresh_file_list_favorited_in_tab(idx, cx);
         self.refresh_file_list_selection_in_tab(idx, cx);
         // Land any deferred selection (keyboard / screenshot seed) once
         // its row has streamed in — same as the directory load path.
@@ -912,7 +927,7 @@ impl Shell {
         let reclaimable = group.reclaimable_bytes();
         let tab = self.active_tab_mut();
         tab.current_dir = root.clone();
-        tab.selection.clear();
+        tab.clear_selection();
         tab.dupe_groups = vec![group];
         tab.similar_image_index = Arc::new(
             tab.dupe_groups[0]

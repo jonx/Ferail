@@ -1,0 +1,38 @@
+# SHA-256 file verification
+
+Ferail can calculate a SHA-256 checksum for one file without loading the whole
+file into memory. Select a file, then choose **Generate SHA-256…** from its
+context menu, the File menu, or the command palette.
+
+The dialog opens before disk work starts and shows byte-based progress. The
+worker reads the file in bounded chunks, supports cancellation from both the
+dialog and task panel, and retains neither file contents nor paths after the
+operation. Only the final hexadecimal checksum remains in the dialog.
+
+## Clipboard comparison
+
+When the dialog opens, Ferail looks for exactly one SHA-256 checksum in the
+text clipboard. It recognizes a bare checksum as well as common checksum-file
+forms such as:
+
+```text
+<hash>  filename.dmg
+SHA256(filename.dmg) = <hash>
+sha256:<hash>
+```
+
+Leading and trailing spaces, tabs, and line breaks are ignored, and uppercase
+hexadecimal digits are normalized. A malformed value or text containing two
+possible checksums is not imported automatically.
+
+The expected checksum stays editable. **Clear** removes it only from this
+dialog; it never clears or rewrites the system clipboard. **Copy** is the only
+action that deliberately replaces clipboard text, using the generated
+checksum. A match and a mismatch use distinct labels and colors so the result
+does not depend on color alone.
+
+## Safety boundary
+
+SHA-256 verifies that the selected bytes match an expected checksum. It does
+not establish who published that checksum: users should obtain the expected
+value from a trusted source independent of the downloaded file.

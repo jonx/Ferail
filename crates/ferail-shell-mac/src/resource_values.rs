@@ -37,8 +37,8 @@ pub fn read_shell_info(path: &Path) -> ShellInfo {
     use objc2::ClassType;
     use objc2_foundation::{
         NSArray, NSString, NSURLAddedToDirectoryDateKey, NSURLHasHiddenExtensionKey,
-        NSURLIsAliasFileKey, NSURLIsPackageKey, NSURLLocalizedTypeDescriptionKey,
-        NSURLResourceKey, NSURLTypeIdentifierKey, NSURL,
+        NSURLIsAliasFileKey, NSURLIsPackageKey, NSURLLocalizedTypeDescriptionKey, NSURLResourceKey,
+        NSURLTypeIdentifierKey, NSURL,
     };
 
     let Some(path_str) = path.to_str() else {
@@ -112,9 +112,7 @@ pub fn read_shell_info(_path: &Path) -> ShellInfo {
 pub fn set_hidden_extension(path: &Path, hidden: bool) -> Result<(), String> {
     use objc2::msg_send;
     use objc2::rc::{autoreleasepool, Retained};
-    use objc2_foundation::{
-        NSError, NSNumber, NSString, NSURLHasHiddenExtensionKey, NSURL,
-    };
+    use objc2_foundation::{NSError, NSNumber, NSString, NSURLHasHiddenExtensionKey, NSURL};
 
     let Some(path_str) = path.to_str() else {
         return Err("path is not valid UTF-8".into());

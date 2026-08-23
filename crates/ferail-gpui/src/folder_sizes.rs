@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex};
 
 use ferail_core::{EntryKind, NodeId};
 use ferail_fs_native::{
-    folder_contents_summary, humanize_bytes, recursive_totals, NativeFs, SubtreeTotals,
+    NativeFs, SubtreeTotals, folder_contents_summary, humanize_bytes, recursive_totals,
 };
 use ferail_meta::{FolderSizeRecord, MetadataDb};
 use gpui::Entity;
@@ -175,7 +175,11 @@ pub fn start(
 
     let task_id = tasks.borrow_mut().begin(
         TaskKind::FolderSize,
-        trn!("Sizing {n} folder\u{2026}", "Sizing {n} folders\u{2026}", seed_count),
+        trn!(
+            "Sizing {n} folder\u{2026}",
+            "Sizing {n} folders\u{2026}",
+            seed_count
+        ),
         false,
     );
 
@@ -351,11 +355,11 @@ fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<SizeRow>) {
             // "0 B" on an empty folder reads like a measurement
             // error; Finder-style "--" reads as "nothing in here".
             e.display_size = if row.size == 0 {
-                "--".to_string()
+                "--".into()
             } else {
-                humanize_bytes(row.size)
+                humanize_bytes(row.size).into()
             };
-            e.display_description = folder_contents_summary(row.file_count, row.dir_count);
+            e.display_description = folder_contents_summary(row.file_count, row.dir_count).into();
         }
     }
 }

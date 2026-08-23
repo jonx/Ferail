@@ -317,9 +317,7 @@ impl SidebarItem for FavoritesSection {
                 .text_scale_xs()
                 .text_color(theme.muted_foreground.opacity(0.85))
                 .child(tr!("Drag folders here for quick access."))
-                .drag_over::<ExternalPaths>(move |style, _payload, _window, _cx| {
-                    style.bg(accent)
-                })
+                .drag_over::<ExternalPaths>(move |style, _payload, _window, _cx| style.bg(accent))
                 .on_drop(move |paths: &ExternalPaths, _window, cx| {
                     add_dropped_folders(paths, f64::NEG_INFINITY, f64::INFINITY, &shell, cx);
                 })
@@ -515,8 +513,8 @@ fn render_favorite_row(
     {
         let hover_bg = theme.sidebar_accent.opacity(0.5);
         let drop_border = theme.accent;
-        let native_drop_target =
-            matches!(state, FavoriteState::Available) && crate::file_list::native_archive_drag_active();
+        let native_drop_target = matches!(state, FavoriteState::Available)
+            && crate::file_list::native_archive_drag_active();
         row = row.hover(move |this| {
             let this = if is_active { this } else { this.bg(hover_bg) };
             if native_drop_target {

@@ -8,6 +8,84 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.6.5 — 2026-08-23
+
+- **Include Subfolders — every file under this folder, in one list.** A third
+  view button (⌘⇧L, or the View menu) turns the current location into a
+  files-only listing of everything below it, subfolder contents included, in
+  the same table you already know. Rows appear as Ferail walks the tree rather
+  than after it finishes, the breadcrumb counts the files and folders it has
+  been through, and you can cancel or refresh the scan at any point. A new
+  sortable **Path** column shows where each file actually lives, and typing in
+  the filter narrows the finished list without touching the disk again. There
+  is no cap on how many files it will show, and everything it learned about
+  your folder structure is dropped when you close the view. Multi-million-row
+  Select All no longer expands into millions of in-memory selection records,
+  Copy File List stays responsive while preparing very large lists, long names
+  preserve their beginning, middle, and end, and large counts use grouped
+  digits such as `4.138.016`.
+
+- **Generate and verify a file's SHA-256 without leaving Ferail.** The File
+  menu, row context menu, and command palette open a cancellable streaming
+  calculation with progress and a Copy button. If the clipboard contains one
+  SHA-256, Ferail trims surrounding whitespace, accepts common checksum-file
+  formats, and shows an explicit match or mismatch. The expected value is
+  editable, and Clear affects only the dialog — never the system clipboard.
+
+- **The status bar now shrinks to fit instead of running off the window.** In a
+  narrow window — or a language with longer words, where French turned "up 3m"
+  into "en service depuis 3m" — the bar's right-hand end used to be pushed past
+  the edge, taking the Show Hidden switch with it. It now steps down as room
+  runs out: fuller phrases first give way to short ones ("126.3 GB free on
+  Macintosh HD" → "126.3 GB free" → "126.3 GB", "up 3m" → "UP 3m"), then the
+  text drops a size, and only then do readouts start dropping — the app's own
+  CPU/memory figures first, the folder's own numbers last. The item count and
+  the Show Hidden switch are always there, whatever the width; at the narrowest
+  the switch keeps its label as a tooltip.
+
+- **Sort a folder by how often you go there.** The toolbar's sort menu used to
+  offer only Name, Size, Kind and Date Modified — the same four you get by
+  clicking a column header. It now has a fifth, Ant Trail, which ranks
+  subfolders by their visit heat so the places you actually browse rise to the
+  top; picking it again flips to coldest-first. Files and folders you've never
+  opened stay below, in name order. Include Subfolders doesn't offer it — those
+  rows carry no heat.
+
+- **The filter field has a ✕ to clear it.** Typing a filter left you with no
+  way back but selecting the text and deleting it; the button appears as soon
+  as there's something to clear and restores the unfiltered folder.
+
+- **Fixed: sorting by Ant Trail could do nothing until you changed folder.**
+  After closing Include Subfolders, the list kept an empty Path column and
+  still counted itself a subfolder listing, so an Ant Trail pick fell back to
+  sorting by name — the warm folders stayed where they were. Leaving Include
+  Subfolders now clears that state properly, and the Ant Trail order is decided
+  from the rows themselves, so it can't be silently ignored again.
+
+- **Favorites are marked in search and duplicate results too.** A file you had
+  starred showed its star in an ordinary folder listing but not in the results
+  of a search or a duplicate scan — exactly where knowing "this one I care
+  about" matters most before you delete something.
+
+- **Large folders take noticeably less memory to hold open.** Every row carries
+  its name plus its size, type and description text, and each row used to own
+  a private copy of all of it. Rows that say the same thing — and in a big
+  folder most of them do — now share one copy, taking a row from 264 bytes to
+  160. On a folder with a million entries that is roughly 100 MB Ferail no
+  longer keeps. Viewport-scoped work and bounded refreshes also avoid spending
+  time on rows that are not visible. These improvements apply to every listing,
+  not only Include Subfolders, so ordinary large folders are faster too; at
+  multi-million scale, the remaining cost now follows the actual data volume.
+
+- **A freeze in a terminal launch now prints a short summary instead of
+  thousands of lines.** The hang report used to be echoed to stderr in full —
+  every loaded system library included — which pushed the one useful line, the
+  path to the saved report, far out of view. The console now gets a digest:
+  where the UI thread is stuck (innermost frames), the longest-running
+  background task, your last action, and the report path; the complete report,
+  with all thread stacks, still goes to the file you attach to an issue. Set
+  `FERAIL_FULL_HANG_REPORT=1` to get everything on stderr again.
+
 ## 0.6.0 — 2026-08-23
 
 - **The viewer is better suited to visual comparison and overlays.** Its

@@ -37,8 +37,8 @@ It targets the gap the default managers leave: **responsiveness under load** and
   clone/hard-link aware), private on-device similar-image search, disk-usage
   treemap (multi-select, act on squares,
   **export the picture as embeddable HTML**), regex bulk rename with live
-  preview, sticky-zoom media viewer, Cmd+K command palette — zero extra
-  downloads.
+  preview, streaming SHA-256 verification, sticky-zoom media viewer, Cmd+K
+  command palette — zero extra downloads.
 - **Archives open like folders.** Browse inside a `.zip`, `.7z`, `.tar.*` or
   `.lha`/`.lzh` (the Amiga/Aminet format, read-only)
   without extracting first — a real sortable list with expandable folders and a
@@ -52,6 +52,10 @@ It targets the gap the default managers leave: **responsiveness under load** and
   `.apk` — while those package formats stay safely read-only.
 - **It learns your habits.** The Ant Trail heat-tints the folders you actually
   use and keeps them one click away.
+- **A folder can become one list, however deep it is.** Flat View streams every
+  file below the current location into the same virtualized list, adds a
+  relative Path column, and stays cancellable and filterable without a fixed
+  row cap or retaining personal paths after the view closes.
 - **Everything is undoable.** Rename, bulk rename, move, copy, trash — Cmd+Z,
   with guards so an undo never overwrites newer work.
 
@@ -123,6 +127,7 @@ The ❌ rows are real gaps, not modesty.
 | **Built-in disk usage** (treemap, HTML export) | ✅ | ❌ (3rd-party) | ❌ (3rd-party) | ⚠️ separate app |
 | **Built-in duplicate finder** | ✅ hash funnel, clone/hard-link aware | ❌ (3rd-party) | ❌ (3rd-party) | ❌ (3rd-party) |
 | **Similar-image search** | ✅ adjustable dual perceptual hashes, local-only | ❌ (3rd-party) | ❌ (3rd-party) | ❌ (3rd-party) |
+| **Flat recursive view** | ✅ uncapped, streamed, relative Path | ❌ | ⚠️ search workaround | ⚠️ search workaround |
 | **Browse inside archives** (no extract-first) | ✅ zip, 7z, tar.*, lha — browse, add, extract selected | ❌ extract only | ⚠️ zip only | ✅ Ark / File Roller |
 | **Bulk rename** (regex + live preview) | ✅ | ❌ | ⚠️ PowerRename (PowerToys) | ✅ KRename etc. |
 | **Predictive navigation** (visit heat) | ✅ Ant Trail | ❌ | ❌ | ❌ |

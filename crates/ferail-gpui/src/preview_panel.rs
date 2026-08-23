@@ -24,10 +24,10 @@ use crate::shell::render::{
     PREVIEW_CODE_CHAR_W, PREVIEW_CODE_MAX_W, PREVIEW_CODE_PAD, PREVIEW_CODE_TAB_COLS,
     PREVIEW_MD_MIN_W, ResizePreviewThumb, truncated_url_value,
 };
-use crate::shell::{PREVIEW_THUMB_MAX_H, PREVIEW_THUMB_MIN_H};
 use crate::shell::{
     ClearQuarantine, CopyPath, OpenSelected, OpenViewer, RevealInFinder, SHELL_CONTEXT, Shell,
 };
+use crate::shell::{PREVIEW_THUMB_MAX_H, PREVIEW_THUMB_MIN_H};
 use crate::text::TextScale as _;
 
 /// What the host wants previewed.
@@ -37,7 +37,10 @@ pub enum PreviewTarget {
     #[default]
     None,
     /// A file or folder, with the row it came from (for name, size, kind).
-    File { path: PathBuf, entry: Box<FileEntry> },
+    File {
+        path: PathBuf,
+        entry: Box<FileEntry>,
+    },
     /// A mounted volume, previewed as itself (a sidebar volume click lands
     /// here, since navigating clears the selection).
     Volume { path: PathBuf, name: String },
@@ -75,16 +78,16 @@ pub fn synthetic_entry(path: &std::path::Path, name: &str) -> FileEntry {
     let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     FileEntry {
         id: ferail_core::NodeId::from_raw(1).expect("nonzero"),
-        name: name.to_string(),
-        display_name: name.to_string(),
+        name: name.into(),
+        display_name: name.into(),
         name_has_hazards: false,
         kind: EntryKind::File,
         size,
         mtime_unix: 0,
-        display_size: ferail_fs_native::humanize_bytes(size),
-        display_kind: String::new(),
-        display_magic: String::new(),
-        display_description: String::new(),
+        display_size: ferail_fs_native::humanize_bytes(size).into(),
+        display_kind: ferail_core::empty_entry_text(),
+        display_magic: ferail_core::empty_entry_text(),
+        display_description: ferail_core::empty_entry_text(),
         is_quarantined: false,
         quarantine: None,
         hidden: false,
@@ -366,7 +369,12 @@ impl PreviewPanel {
         // made the pane unusable from any other window.
         // Content held in memory renders directly: no cache lookup (the caches
         // are path-keyed) and no Get Info block (there is no file to stat).
-        if let PreviewTarget::InMemory { name, size, content } = &self.target {
+        if let PreviewTarget::InMemory {
+            name,
+            size,
+            content,
+        } = &self.target
+        {
             let (name, size, content) = (name.clone(), *size, content.clone());
             return self.in_memory_body(name, size, content, cx);
         }
@@ -429,9 +437,7 @@ impl PreviewPanel {
                 .into_any_element(),
             (Some(entry), _) => {
                 // Same render-safe resolution as `selected_path` above.
-                let full_path = selected_path
-                    .clone()
-                    .unwrap_or_default();
+                let full_path = selected_path.clone().unwrap_or_default();
 
                 // Keep the embedded Get Info panel pointed at the lead
                 // selection (reuses the popup's view in `embedded` mode).
@@ -448,7 +454,7 @@ impl PreviewPanel {
                 };
                 let info_view = self.sync_info(
                     full_path.clone(),
-                    entry.name.clone(),
+                    entry.name.to_string(),
                     info_target,
                     known_size,
                     cx,
@@ -557,7 +563,7 @@ impl PreviewPanel {
                         //    widest line (estimated from its column count) so
                         //    the box can scroll the full line into view.
                         let is_markdown = matches!(
-                            std::path::Path::new(&entry.name)
+                            std::path::Path::new(entry.name.as_ref())
                                 .extension()
                                 .and_then(|e| e.to_str())
                                 .map(|e| e.to_ascii_lowercase())
@@ -710,10 +716,8 @@ impl PreviewPanel {
                                     .xsmall()
                                     .outline()
                                     .flex_shrink_0()
-                                    .tooltip(tr!(
-                                        "Remove the mark and its \
-                                         downloaded-from record",
-                                    ))
+                                    .tooltip(tr!("Remove the mark and its \
+                                         downloaded-from record",))
                                     .on_click(cx.listener(|_, _, window, cx| {
                                         window.dispatch_action(Box::new(ClearQuarantine), cx);
                                     })),

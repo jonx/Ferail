@@ -91,7 +91,7 @@ impl Shell {
         let Some(id) = self.node_id_at_row(row_ix, cx) else {
             return;
         };
-        if !self.active_tab().selection.contains(&id) {
+        if !self.active_tab().is_selected(id) {
             self.replace_select_one(id, cx);
             cx.notify();
         }
@@ -194,7 +194,7 @@ impl Shell {
             let mut found = Vec::new();
             let mut missing = Vec::new();
             for name in queued {
-                match entries.iter().position(|e| e.name == name) {
+                match entries.iter().position(|e| e.name.as_ref() == name) {
                     Some(i) => found.push(i),
                     None => missing.push(name),
                 }
@@ -241,6 +241,7 @@ impl Shell {
         let anchor = ids.first().copied();
         let lead = ids.last().copied();
         let tab = self.active_tab_mut();
+        tab.selection_all = false;
         tab.selection = ids.into_iter().collect();
         tab.anchor = anchor;
         tab.lead = lead;
@@ -252,7 +253,7 @@ impl Shell {
     /// Non-range gesture → clears `range_live`.
     pub(super) fn replace_select_one(&mut self, id: NodeId, cx: &mut Context<Self>) {
         let tab = self.active_tab_mut();
-        tab.selection.clear();
+        tab.clear_selection();
         tab.selection.insert(id);
         tab.anchor = Some(id);
         tab.lead = Some(id);
@@ -264,12 +265,19 @@ impl Shell {
     /// Empty after toggle → anchor cleared; otherwise anchor = id.
     /// Non-range gesture → clears `range_live`.
     pub(super) fn toggle_select(&mut self, id: NodeId, cx: &mut Context<Self>) {
+        let visible_count = self.active_tab().table.read(cx).delegate().entries.len();
         let tab = self.active_tab_mut();
-        if !tab.selection.remove(&id) {
+        if tab.selection_all {
+            // In complement mode the sparse set contains the rows excluded
+            // from the selection.
+            if !tab.selection.remove(&id) {
+                tab.selection.insert(id);
+            }
+        } else if !tab.selection.remove(&id) {
             tab.selection.insert(id);
         }
         tab.lead = Some(id);
-        tab.anchor = if tab.selection.is_empty() {
+        tab.anchor = if tab.selection_is_empty(visible_count) {
             None
         } else {
             Some(id)
@@ -313,14 +321,17 @@ impl Shell {
                 let span: HashSet<NodeId> = entries[lo..=hi].iter().copied().collect();
                 let tab = self.active_tab_mut();
                 if additive {
-                    tab.selection.extend(span);
+                    if !tab.selection_all {
+                        tab.selection.extend(span);
+                    }
                 } else {
+                    tab.selection_all = false;
                     tab.selection = span;
                 }
                 tab.lead = Some(id);
                 // Range gesture → mark live so the span keeps
                 // recomputing as rows stream in (spec §2.6).
-                tab.range_live = true;
+                tab.range_live = !(additive && tab.selection_all);
                 // Anchor unchanged.
                 self.refresh_file_list_selection(cx);
             }
@@ -331,15 +342,27 @@ impl Shell {
     /// (filtered) model. anchor = first visible, lead = last.
     /// Non-range gesture → clears `range_live`.
     pub(super) fn select_all_visible(&mut self, cx: &mut Context<Self>) {
-        let (all, first, last): (HashSet<NodeId>, Option<NodeId>, Option<NodeId>) = {
+        let is_flat = self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .and_then(|surface| surface.flat_mode())
+            .is_some();
+        let (all, first, last): (Option<HashSet<NodeId>>, Option<NodeId>, Option<NodeId>) = {
             let delegate = self.active_tab().table.read(cx).delegate();
-            let ids: Vec<NodeId> = delegate.entries.iter().map(|e| e.id).collect();
-            let first = ids.first().copied();
-            let last = ids.last().copied();
-            (ids.into_iter().collect(), first, last)
+            let first = delegate.entries.first().map(|entry| entry.id);
+            let last = delegate.entries.last().map(|entry| entry.id);
+            let all = (!is_flat).then(|| delegate.entries.iter().map(|entry| entry.id).collect());
+            (all, first, last)
         };
         let tab = self.active_tab_mut();
-        tab.selection = all;
+        if is_flat {
+            tab.selection.clear();
+            tab.selection_all = first.is_some();
+        } else {
+            tab.selection_all = false;
+            tab.selection = all.unwrap_or_default();
+        }
         tab.anchor = first;
         tab.lead = last;
         tab.range_live = false;
@@ -352,7 +375,7 @@ impl Shell {
     /// doesn't restore ghosts.
     pub fn clear_active_selection(&mut self, cx: &mut Context<Self>) {
         let tab = self.active_tab_mut();
-        tab.selection.clear();
+        tab.clear_selection();
         tab.anchor = None;
         tab.lead = None;
         tab.filtered_out.clear();
@@ -392,12 +415,14 @@ impl Shell {
             return;
         };
         let selection = tab.selection.clone();
+        let selection_all = tab.selection_all;
         let lead = tab.lead;
         let table = tab.table.clone();
         let lead_row = table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
             delegate.selected_set = selection;
-            delegate.invalidate_drag_snapshot();
+            delegate.selection_all = selection_all;
+            delegate.invalidate_selection_snapshot();
             delegate.lead = lead;
             let lead_row = lead.and_then(|id| delegate.entries.iter().position(|e| e.id == id));
             state.refresh(cx);
@@ -474,6 +499,12 @@ impl Shell {
         let Some(tab) = self.tabs.get(idx) else {
             return;
         };
+        if tab.selection_all {
+            return;
+        }
+        if tab.filtered_out.is_empty() {
+            return;
+        }
         let visible: HashSet<NodeId> = tab
             .table
             .read(cx)
@@ -483,9 +514,6 @@ impl Shell {
             .map(|e| e.id)
             .collect();
         let tab = &mut self.tabs[idx];
-        if tab.filtered_out.is_empty() {
-            return;
-        }
         let mut restored = false;
         tab.filtered_out.retain(|id| {
             if visible.contains(id) {
@@ -534,6 +562,7 @@ impl Shell {
         };
         let (lo, hi) = if a <= l { (a, l) } else { (l, a) };
         let span: HashSet<NodeId> = entries[lo..=hi].iter().copied().collect();
+        self.tabs[idx].selection_all = false;
         self.tabs[idx].selection = span;
         self.refresh_file_list_selection_in_tab(idx, cx);
     }
@@ -559,7 +588,15 @@ impl Shell {
         let filter_active = !tab.filter_text.trim().is_empty();
         let tab = &mut self.tabs[idx];
         let mut moved = false;
-        if filter_active {
+        if tab.selection_all {
+            // The sparse set contains exclusions, not selected rows. Keep
+            // those exclusions across filter changes so a row the user
+            // explicitly toggled off stays off when it reappears.
+            if !tab.filtered_out.is_empty() {
+                tab.filtered_out.clear();
+                moved = true;
+            }
+        } else if filter_active {
             // Move members not in the visible set into the filter
             // holding set, preserving them across a future filter
             // loosening (spec §2.6 filter rule).
@@ -673,6 +710,7 @@ impl Shell {
             } else {
                 (clamped, anchor_idx)
             };
+            tab.selection_all = false;
             tab.selection = entries[lo..=hi].iter().copied().collect();
             tab.lead = Some(new_lead);
             // Spec §2.6: a Shift-extend keyboard nav keeps the
@@ -733,6 +771,7 @@ impl Shell {
             } else {
                 (clamped, anchor_idx)
             };
+            tab.selection_all = false;
             tab.selection = entries[lo..=hi].iter().copied().collect();
             tab.lead = Some(new_lead);
             tab.range_live = true;
@@ -924,6 +963,15 @@ impl Shell {
     /// Recompute the selection swept by the current marquee rectangle,
     /// unioning with the pre-drag snapshot when the gesture is additive.
     fn apply_marquee_selection(&mut self, cx: &mut Context<Self>) {
+        if self.active_tab().selection_all
+            && self
+                .active_tab()
+                .marquee
+                .as_ref()
+                .is_some_and(|marquee| marquee.additive)
+        {
+            return;
+        }
         let (start, current, base) = {
             let Some(m) = self.active_tab().marquee.as_ref() else {
                 return;
@@ -970,6 +1018,7 @@ impl Shell {
             }
         }
         let tab = self.active_tab_mut();
+        tab.selection_all = false;
         tab.selection = hits;
         tab.range_live = false;
         if let Some(l) = last_hit {

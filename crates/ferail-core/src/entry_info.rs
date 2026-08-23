@@ -132,7 +132,10 @@ pub enum InfoValue {
     /// The editable display name (rename).
     Name(String),
     /// Color labels (the 7 canonical Finder colors) plus any free-form tags.
-    Tags { colors: Vec<TagColor>, custom: Vec<String> },
+    Tags {
+        colors: Vec<TagColor>,
+        custom: Vec<String>,
+    },
     /// POSIX owner/group/permission matrix.
     Permissions(PermMatrix),
     /// A size that may need an on-demand recursive scan (folder/volume).
@@ -225,9 +228,8 @@ impl PermMatrix {
 
     /// Octal string of the rwx bits, e.g. "700".
     pub fn octal(&self) -> String {
-        let rwx = self.owner.to_triple() << 6
-            | self.group.to_triple() << 3
-            | self.other.to_triple();
+        let rwx =
+            self.owner.to_triple() << 6 | self.group.to_triple() << 3 | self.other.to_triple();
         format!("{:03o}", rwx)
     }
 
@@ -266,9 +268,15 @@ pub enum SizeValue {
 /// target path/identity is held by the view, not the edit.
 #[derive(Clone, Debug)]
 pub enum EntryInfoEdit {
-    SetToggle { attr: Attr, on: bool },
+    SetToggle {
+        attr: Attr,
+        on: bool,
+    },
     Rename(String),
-    SetTags { colors: Vec<TagColor>, custom: Vec<String> },
+    SetTags {
+        colors: Vec<TagColor>,
+        custom: Vec<String>,
+    },
     SetPermissions(PermMatrix),
 }
 

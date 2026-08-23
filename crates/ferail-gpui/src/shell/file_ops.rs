@@ -34,6 +34,16 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
+        const MAX_SYSTEM_CLIPBOARD_FILES: usize = 20_000;
+        if self.action_target_count(cx) > MAX_SYSTEM_CLIPBOARD_FILES {
+            window.push_notification(
+                Notification::info(tr!(
+                    "The system file clipboard can't safely hold this many items. Use Copy File List for their paths."
+                )),
+                cx,
+            );
+            return;
+        }
         // `is_dir` comes from the cached FileEntry so the pasteboard
         // write never stats — a per-path stat on the main thread hangs
         // Cmd+C on a dead network mount (Prime Directive).
@@ -82,6 +92,16 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         use gpui_component::notification::Notification;
+        const MAX_SYSTEM_CLIPBOARD_FILES: usize = 20_000;
+        if self.action_target_count(cx) > MAX_SYSTEM_CLIPBOARD_FILES {
+            window.push_notification(
+                Notification::info(tr!(
+                    "The system file clipboard can't safely hold this many items. Use Copy File List for their paths."
+                )),
+                cx,
+            );
+            return;
+        }
         // Same no-stat contract as Copy (see on_copy_files).
         let items: Vec<(PathBuf, bool)> = self
             .action_entries_visible_order(cx)
@@ -1178,6 +1198,63 @@ impl Shell {
     ) {
         use gpui_component::notification::Notification;
         let row_count = self.active_tab().table.read(cx).delegate().entries.len();
+        if row_count > 20_000 {
+            const ROWS_PER_TICK: usize = 8_192;
+            let tab_id = self.active_tab().id;
+            let win = window.window_handle();
+            window.push_notification(Notification::info(tr!("Preparing file list…")), cx);
+            cx.spawn(async move |this, cx| {
+                let mut text = String::new();
+                let mut start = 0usize;
+                while start < row_count {
+                    let end = (start + ROWS_PER_TICK).min(row_count);
+                    let chunk = this
+                        .update(cx, |shell, _cx| {
+                            let tab = shell.tabs.iter().find(|tab| tab.id == tab_id)?;
+                            let table = tab.table.read(_cx);
+                            let delegate = table.delegate();
+                            let chunk_end = end.min(delegate.entries.len());
+                            if start >= chunk_end {
+                                return Some(Vec::new());
+                            }
+                            Some(
+                                delegate.entries[start..chunk_end]
+                                    .iter()
+                                    .filter_map(|entry| delegate.path_for_entry(entry.id))
+                                    .collect::<Vec<_>>(),
+                            )
+                        })
+                        .ok()
+                        .flatten();
+                    let Some(paths) = chunk else {
+                        return;
+                    };
+                    for path in paths {
+                        if !text.is_empty() {
+                            text.push('\n');
+                        }
+                        text.push_str(path.to_string_lossy().as_ref());
+                    }
+                    start = end;
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(1))
+                        .await;
+                }
+                let _ = win.update(cx, |_, window, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    window.push_notification(
+                        Notification::success(trn!(
+                            "Copied list of {n} item to clipboard",
+                            "Copied list of {n} items to clipboard",
+                            row_count
+                        )),
+                        cx,
+                    );
+                });
+            })
+            .detach();
+            return;
+        }
         let paths: Vec<PathBuf> = (0..row_count)
             .filter_map(|row| self.path_for_row(row, cx))
             .collect();
@@ -1557,6 +1634,7 @@ impl Shell {
         for tab in &mut self.tabs {
             let surface_hit = tab.tool_result.as_ref().is_some_and(|s| match &s.mode {
                 ToolResultMode::Search(m) => under(&m.root),
+                ToolResultMode::Flat(m) => under(&m.root),
                 ToolResultMode::Duplicates(m) => under(&m.root),
                 ToolResultMode::DiskUsage(m) => under(&m.root),
                 ToolResultMode::Archive(m) => under(&m.archive),
@@ -1570,7 +1648,7 @@ impl Shell {
                 released = true;
             }
             if under(&tab.current_dir) {
-                tab.selection.clear();
+                tab.clear_selection();
                 tab.anchor = None;
                 tab.lead = None;
                 tab.filtered_out.clear();
@@ -2993,7 +3071,7 @@ impl Shell {
             // Pre-fill the name the user sees (display leaf, macOS `:` → `/`);
             // `on_disk_leaf` below maps any edit back to on-disk bytes, so an
             // unchanged value round-trips to a no-op.
-            entry.display_name.clone(),
+            entry.display_name.to_string(),
             move |this, new_name, window, cx| {
                 // Finder parity: a typed `/` stores a `:` on disk (macOS), and
                 // the rename target stays a single leaf — no accidental move
@@ -3053,7 +3131,7 @@ impl Shell {
         let items: Vec<(PathBuf, String, i64)> = self
             .action_entries_visible_order(cx)
             .into_iter()
-            .map(|(_, entry, path)| (path, entry.display_name, entry.mtime_unix))
+            .map(|(_, entry, path)| (path, entry.display_name.to_string(), entry.mtime_unix))
             .collect();
         crate::bulk_rename::open(self, items, window, cx);
     }
@@ -4155,9 +4233,9 @@ impl Shell {
         self.spawn_archive_op(
             reload,
             move |progress, cancel| {
-                let parent = target_for_op.parent().ok_or_else(|| {
-                    tr!("The archive has no parent folder").to_string()
-                })?;
+                let parent = target_for_op
+                    .parent()
+                    .ok_or_else(|| tr!("The archive has no parent folder").to_string())?;
                 let staging = {
                     let mut n = 0u32;
                     loop {
@@ -4205,7 +4283,9 @@ impl Shell {
                     }
                 }
                 if staged.is_empty() {
-                    return cleanup(Err(tr!("Nothing could be read from the archive").to_string()));
+                    return cleanup(Err(
+                        tr!("Nothing could be read from the archive").to_string()
+                    ));
                 }
 
                 let refs: Vec<&std::path::Path> = staged.iter().map(|p| p.as_path()).collect();
@@ -4224,10 +4304,9 @@ impl Shell {
                     Err(e) => return cleanup(Err(e.to_string())),
                 };
                 if outcome.added == 0 && !outcome.skipped_existing.is_empty() {
-                    return cleanup(Err(tr!(
-                        "Every dropped item is already in the archive"
-                    )
-                    .to_string()));
+                    return cleanup(Err(
+                        tr!("Every dropped item is already in the archive").to_string()
+                    ));
                 }
                 cleanup(Ok(Vec::new()))
             },
@@ -4312,10 +4391,8 @@ impl Shell {
                 let staging = {
                     let mut n = 0u32;
                     loop {
-                        let candidate = dest_parent.join(format!(
-                            ".ferail-extract-{}-{n}",
-                            std::process::id()
-                        ));
+                        let candidate =
+                            dest_parent.join(format!(".ferail-extract-{}-{n}", std::process::id()));
                         if !candidate.exists() {
                             break candidate;
                         }

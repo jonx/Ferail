@@ -120,7 +120,11 @@ impl LanguageInfo {
         let (translated, total) = pack.coverage();
         Self {
             code: pack.code.clone(),
-            name: if pack.name.trim().is_empty() { pack.code.clone() } else { pack.name.clone() },
+            name: if pack.name.trim().is_empty() {
+                pack.code.clone()
+            } else {
+                pack.name.clone()
+            },
             english_name: pack.english_name.clone(),
             translated,
             total,
@@ -176,7 +180,11 @@ pub fn languages(cx: &App) -> &Languages {
 /// Mutable access; installs an empty registry if [`init`] never ran.
 fn languages_mut(cx: &mut App) -> &mut Languages {
     if !cx.has_global::<Languages>() {
-        cx.set_global(Languages { selection: SYSTEM.to_owned(), active: ENGLISH.to_owned(), ..Default::default() });
+        cx.set_global(Languages {
+            selection: SYSTEM.to_owned(),
+            active: ENGLISH.to_owned(),
+            ..Default::default()
+        });
     }
     cx.global_mut::<Languages>()
 }
@@ -256,7 +264,11 @@ pub fn init(cx: &mut App) {
         system_locale,
         generation: 0,
     };
-    if let Some(info) = resolve(&langs.selection, &langs.packs, langs.system_locale.as_deref()) {
+    if let Some(info) = resolve(
+        &langs.selection,
+        &langs.packs,
+        langs.system_locale.as_deref(),
+    ) {
         match load_catalog(&info) {
             Ok(catalog) => {
                 langs.active = info.code.clone();
@@ -295,7 +307,10 @@ pub fn reload(cx: &mut App) {
         langs.generation
     };
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let packs = cx.background_executor().spawn(async move { scan_packs() }).await;
+        let packs = cx
+            .background_executor()
+            .spawn(async move { scan_packs() })
+            .await;
         cx.update(|cx| {
             let langs = languages_mut(cx);
             if langs.generation != generation {
@@ -314,14 +329,22 @@ fn apply(cx: &mut App) {
     let (selection, packs, system_locale, generation) = {
         let langs = languages_mut(cx);
         langs.generation += 1;
-        (langs.selection.clone(), langs.packs.clone(), langs.system_locale.clone(), langs.generation)
+        (
+            langs.selection.clone(),
+            langs.packs.clone(),
+            langs.system_locale.clone(),
+            langs.generation,
+        )
     };
     let Some(info) = resolve(&selection, &packs, system_locale.as_deref()) else {
         install(Catalog::english(), cx);
         return;
     };
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let loaded = cx.background_executor().spawn(async move { load_catalog(&info) }).await;
+        let loaded = cx
+            .background_executor()
+            .spawn(async move { load_catalog(&info) })
+            .await;
         cx.update(|cx| {
             if languages(cx).generation != generation {
                 return; // superseded by a newer choice
@@ -348,7 +371,11 @@ fn install(catalog: Catalog, cx: &mut App) {
 }
 
 /// Which pack a selection means. `None` = English.
-fn resolve(selection: &str, packs: &[LanguageInfo], system_locale: Option<&str>) -> Option<LanguageInfo> {
+fn resolve(
+    selection: &str,
+    packs: &[LanguageInfo],
+    system_locale: Option<&str>,
+) -> Option<LanguageInfo> {
     match selection {
         ENGLISH => None,
         SYSTEM => {
@@ -358,13 +385,19 @@ fn resolve(selection: &str, packs: &[LanguageInfo], system_locale: Option<&str>)
             let parts: Vec<&str> = tag.split('-').collect();
             for len in (1..=parts.len()).rev() {
                 let candidate = parts[..len].join("-");
-                if let Some(p) = packs.iter().find(|p| p.code.eq_ignore_ascii_case(&candidate)) {
+                if let Some(p) = packs
+                    .iter()
+                    .find(|p| p.code.eq_ignore_ascii_case(&candidate))
+                {
                     return Some(p.clone());
                 }
             }
             // Last resort: any pack whose language subtag matches.
             let lang = core::language_subtag(&tag).to_ascii_lowercase();
-            packs.iter().find(|p| core::language_subtag(&p.code).eq_ignore_ascii_case(&lang)).cloned()
+            packs
+                .iter()
+                .find(|p| core::language_subtag(&p.code).eq_ignore_ascii_case(&lang))
+                .cloned()
         }
         code => packs.iter().find(|p| p.code == code).cloned(),
     }
@@ -374,10 +407,12 @@ fn resolve(selection: &str, packs: &[LanguageInfo], system_locale: Option<&str>)
 fn load_catalog(info: &LanguageInfo) -> Result<Catalog, String> {
     let pack = match (&info.origin, &info.path) {
         (Origin::User, Some(path)) => {
-            let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let text =
+                std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
             LanguagePack::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?
         }
-        _ => core::pack::bundled(&info.code).ok_or_else(|| format!("no bundled pack {}", info.code))?,
+        _ => core::pack::bundled(&info.code)
+            .ok_or_else(|| format!("no bundled pack {}", info.code))?,
     };
     Ok(Catalog::from_pack(&pack))
 }
@@ -397,11 +432,16 @@ fn scan_packs() -> Vec<LanguageInfo> {
             let mut files: Vec<PathBuf> = rd
                 .flatten()
                 .map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")))
+                .filter(|p| {
+                    p.extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+                })
                 .collect();
             files.sort();
             for path in files {
-                let Ok(text) = std::fs::read_to_string(&path) else { continue };
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
                 match LanguagePack::parse(&text) {
                     Ok(pack) => {
                         let info = LanguageInfo::from_pack(&pack, Origin::User, Some(path));
@@ -413,7 +453,12 @@ fn scan_packs() -> Vec<LanguageInfo> {
             }
         }
     }
-    out.sort_by(|a, b| a.english_name.to_lowercase().cmp(&b.english_name.to_lowercase()).then(a.code.cmp(&b.code)));
+    out.sort_by(|a, b| {
+        a.english_name
+            .to_lowercase()
+            .cmp(&b.english_name.to_lowercase())
+            .then(a.code.cmp(&b.code))
+    });
     out
 }
 
@@ -423,8 +468,14 @@ fn scan_packs() -> Vec<LanguageInfo> {
 
 /// Outcome of an import / export / template operation, for the toast.
 pub enum Outcome {
-    Ok { headline: SharedString, details: Option<String> },
-    Err { headline: SharedString, details: Option<String> },
+    Ok {
+        headline: SharedString,
+        details: Option<String>,
+    },
+    Err {
+        headline: SharedString,
+        details: Option<String>,
+    },
 }
 
 /// Show an [`Outcome`] as a toast in `window`. Details, when present, are
@@ -434,15 +485,30 @@ pub fn notify(outcome: Outcome, window: &mut Window, cx: &mut App) {
     use gpui_component::WindowExt as _;
     use gpui_component::notification::Notification;
     let note = match outcome {
-        Outcome::Ok { headline, details: None } => Notification::success(headline),
-        Outcome::Ok { headline, details: Some(d) } => with_details(Notification::warning(headline), d),
-        Outcome::Err { headline, details: None } => Notification::error(headline),
-        Outcome::Err { headline, details: Some(d) } => with_details(Notification::error(headline), d),
+        Outcome::Ok {
+            headline,
+            details: None,
+        } => Notification::success(headline),
+        Outcome::Ok {
+            headline,
+            details: Some(d),
+        } => with_details(Notification::warning(headline), d),
+        Outcome::Err {
+            headline,
+            details: None,
+        } => Notification::error(headline),
+        Outcome::Err {
+            headline,
+            details: Some(d),
+        } => with_details(Notification::error(headline), d),
     };
     window.push_notification(note, cx);
 }
 
-fn with_details(note: gpui_component::notification::Notification, details: String) -> gpui_component::notification::Notification {
+fn with_details(
+    note: gpui_component::notification::Notification,
+    details: String,
+) -> gpui_component::notification::Notification {
     use crate::text::TextScale as _;
     use gpui::prelude::*;
     use gpui::{div, px};
@@ -485,30 +551,40 @@ pub fn import_file(window: &mut Window, cx: &mut App) {
     });
     window
         .spawn(cx, async move |cx| {
-            let Some(path) = rx.await.ok().and_then(Result::ok).flatten().and_then(|v| v.into_iter().next()) else {
+            let Some(path) = rx
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .flatten()
+                .and_then(|v| v.into_iter().next())
+            else {
                 return;
             };
-            let result = cx.background_executor().spawn(async move { import_path(&path) }).await;
-            let _ = cx.update(|window, cx| {
-                match result {
-                    Ok((info, report)) => {
-                        let headline = tr!(
-                            "Imported {language}: {translated} of {total} strings translated",
-                            language = info.name,
-                            translated = report.translated,
-                            total = report.total
-                        );
-                        let details = report.has_warnings().then(|| report.details());
-                        notify(Outcome::Ok { headline, details }, window, cx);
-                        set_selection(&info.code, cx);
-                        reload(cx);
-                    }
-                    Err(e) => notify(
-                        Outcome::Err { headline: tr!("Couldn't import that language pack"), details: Some(e) },
-                        window,
-                        cx,
-                    ),
+            let result = cx
+                .background_executor()
+                .spawn(async move { import_path(&path) })
+                .await;
+            let _ = cx.update(|window, cx| match result {
+                Ok((info, report)) => {
+                    let headline = tr!(
+                        "Imported {language}: {translated} of {total} strings translated",
+                        language = info.name,
+                        translated = report.translated,
+                        total = report.total
+                    );
+                    let details = report.has_warnings().then(|| report.details());
+                    notify(Outcome::Ok { headline, details }, window, cx);
+                    set_selection(&info.code, cx);
+                    reload(cx);
                 }
+                Err(e) => notify(
+                    Outcome::Err {
+                        headline: tr!("Couldn't import that language pack"),
+                        details: Some(e),
+                    },
+                    window,
+                    cx,
+                ),
             });
         })
         .detach();
@@ -528,7 +604,10 @@ fn import_path(path: &std::path::Path) -> Result<(LanguageInfo, ValidationReport
     let dir = ensure_user_dir()?;
     let dest = dir.join(format!("{}.json", pack.code));
     write_atomic(&dest, &pack.to_json())?;
-    Ok((LanguageInfo::from_pack(&pack, Origin::User, Some(dest)), report))
+    Ok((
+        LanguageInfo::from_pack(&pack, Origin::User, Some(dest)),
+        report,
+    ))
 }
 
 /// "Export…": save the selected language as a translation template (its
@@ -536,7 +615,11 @@ fn import_path(path: &std::path::Path) -> Result<(LanguageInfo, ValidationReport
 /// for handing to a translator/LLM or contributing back.
 pub fn export_current(window: &mut Window, cx: &mut App) {
     let langs = languages(cx);
-    let info = resolve(&langs.selection, &langs.packs, langs.system_locale.as_deref());
+    let info = resolve(
+        &langs.selection,
+        &langs.packs,
+        langs.system_locale.as_deref(),
+    );
     let (code, suggested) = match &info {
         Some(i) => (i.code.clone(), format!("ferail-{}.json", i.code)),
         None => (ENGLISH.to_owned(), "ferail-en.json".to_owned()),
@@ -545,16 +628,27 @@ pub fn export_current(window: &mut Window, cx: &mut App) {
     let rx = cx.prompt_for_new_path(&start_dir, Some(&suggested));
     window
         .spawn(cx, async move |cx| {
-            let Some(dest) = rx.await.ok().and_then(Result::ok).flatten() else { return };
-            let result = cx.background_executor().spawn(async move { export_to(&info, &code, &dest) }).await;
+            let Some(dest) = rx.await.ok().and_then(Result::ok).flatten() else {
+                return;
+            };
+            let result = cx
+                .background_executor()
+                .spawn(async move { export_to(&info, &code, &dest) })
+                .await;
             let _ = cx.update(|window, cx| match result {
                 Ok(dest) => notify(
-                    Outcome::Ok { headline: tr!("Saved {file}", file = dest.display()), details: None },
+                    Outcome::Ok {
+                        headline: tr!("Saved {file}", file = dest.display()),
+                        details: None,
+                    },
                     window,
                     cx,
                 ),
                 Err(e) => notify(
-                    Outcome::Err { headline: tr!("Couldn't export the language pack"), details: Some(e) },
+                    Outcome::Err {
+                        headline: tr!("Couldn't export the language pack"),
+                        details: Some(e),
+                    },
                     window,
                     cx,
                 ),
@@ -563,12 +657,20 @@ pub fn export_current(window: &mut Window, cx: &mut App) {
         .detach();
 }
 
-fn export_to(info: &Option<LanguageInfo>, code: &str, dest: &std::path::Path) -> Result<PathBuf, String> {
+fn export_to(
+    info: &Option<LanguageInfo>,
+    code: &str,
+    dest: &std::path::Path,
+) -> Result<PathBuf, String> {
     let pack = match info {
         Some(i) => load_pack(i)?,
         None => core::pack::source().clone(),
     };
-    let text = if code == ENGLISH { pack.to_json() } else { pack.template().to_json() };
+    let text = if code == ENGLISH {
+        pack.to_json()
+    } else {
+        pack.template().to_json()
+    };
     write_atomic(dest, &text)?;
     Ok(dest.to_path_buf())
 }
@@ -576,16 +678,25 @@ fn export_to(info: &Option<LanguageInfo>, code: &str, dest: &std::path::Path) ->
 fn load_pack(info: &LanguageInfo) -> Result<LanguagePack, String> {
     match (&info.origin, &info.path) {
         (Origin::User, Some(path)) => {
-            let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let text =
+                std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
             LanguagePack::parse(&text)
         }
-        _ => core::pack::bundled(&info.code).ok_or_else(|| format!("no bundled pack {}", info.code)),
+        _ => {
+            core::pack::bundled(&info.code).ok_or_else(|| format!("no bundled pack {}", info.code))
+        }
     }
 }
 
 /// "New language…": write an empty template for `code` into the languages
 /// folder and reveal it, ready to be handed to a translator or an AI chat.
-pub fn create_template(code: &str, name: &str, english_name: &str, window: &mut Window, cx: &mut App) {
+pub fn create_template(
+    code: &str,
+    name: &str,
+    english_name: &str,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let (code, name, english_name) = (code.to_owned(), name.to_owned(), english_name.to_owned());
     window
         .spawn(cx, async move |cx| {
@@ -632,7 +743,10 @@ pub fn create_template(code: &str, name: &str, english_name: &str, window: &mut 
 /// manager.
 pub fn reveal_folder(cx: &mut App) {
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let dir = cx.background_executor().spawn(async move { ensure_user_dir() }).await;
+        let dir = cx
+            .background_executor()
+            .spawn(async move { ensure_user_dir() })
+            .await;
         cx.update(|_cx| match dir {
             Ok(dir) => crate::platform_shell::reveal_in_finder(&dir),
             Err(e) => crate::log_warn!(90, "languages folder: {e}"),
@@ -644,10 +758,20 @@ pub fn reveal_folder(cx: &mut App) {
 /// "Copy instructions": the translator brief for the selected language.
 pub fn copy_instructions(cx: &App) {
     let langs = languages(cx);
-    let info = resolve(&langs.selection, &langs.packs, langs.system_locale.as_deref());
+    let info = resolve(
+        &langs.selection,
+        &langs.packs,
+        langs.system_locale.as_deref(),
+    );
     let language = info
         .as_ref()
-        .map(|i| if i.english_name.is_empty() { i.code.clone() } else { i.english_name.clone() })
+        .map(|i| {
+            if i.english_name.is_empty() {
+                i.code.clone()
+            } else {
+                i.english_name.clone()
+            }
+        })
         .unwrap_or_else(|| "the target language".to_owned());
     crate::platform_shell::copy_to_clipboard(&core::pack::instructions_for(&language));
 }
@@ -684,14 +808,24 @@ mod tests {
 
     #[test]
     fn resolve_selection() {
-        let packs = vec![info("fr", Origin::Bundled), info("pt-BR", Origin::User), info("zh-Hans", Origin::User)];
+        let packs = vec![
+            info("fr", Origin::Bundled),
+            info("pt-BR", Origin::User),
+            info("zh-Hans", Origin::User),
+        ];
         assert!(resolve(ENGLISH, &packs, Some("fr-FR")).is_none());
         assert_eq!(resolve("fr", &packs, None).unwrap().code, "fr");
         assert!(resolve("xx", &packs, None).is_none());
         // System: exact, then shorter prefixes, then language subtag.
         assert_eq!(resolve(SYSTEM, &packs, Some("fr-CH")).unwrap().code, "fr");
-        assert_eq!(resolve(SYSTEM, &packs, Some("zh-Hans-CN")).unwrap().code, "zh-Hans");
-        assert_eq!(resolve(SYSTEM, &packs, Some("pt_PT")).unwrap().code, "pt-BR");
+        assert_eq!(
+            resolve(SYSTEM, &packs, Some("zh-Hans-CN")).unwrap().code,
+            "zh-Hans"
+        );
+        assert_eq!(
+            resolve(SYSTEM, &packs, Some("pt_PT")).unwrap().code,
+            "pt-BR"
+        );
         assert!(resolve(SYSTEM, &packs, Some("en-US")).is_none());
         assert!(resolve(SYSTEM, &packs, None).is_none());
     }

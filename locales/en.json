@@ -14,6 +14,7 @@
       "other": "+{n} more"
     },
     "/path/to/folder": "/path/to/folder",
+    "A checksum found in the clipboard is filled in automatically. Clear only removes it from this dialog.": "A checksum found in the clipboard is filled in automatically. Clear only removes it from this dialog.",
     "A fast, calm file explorer.": "A fast, calm file explorer.",
     "A newer Ferail {version} release exists for {platforms}.": "A newer Ferail {version} release exists for {platforms}.",
     "About": "About",
@@ -96,7 +97,9 @@
     "CPU {pct}": "CPU {pct}",
     "Calculate": "Calculate",
     "Calculate folder sizes": "Calculate folder sizes",
+    "Calculating SHA-256…": "Calculating SHA-256…",
     "Calculating…": "Calculating…",
+    "Calculation cancelled.": "Calculation cancelled.",
     "Can't add “{name}” because an entry with that name already exists.": "Can't add “{name}” because an entry with that name already exists.",
     "Can't decode this video": "Can't decode this video",
     "Cancel": "Cancel",
@@ -130,6 +133,7 @@
       "one": "Cloning {n} duplicate",
       "other": "Cloning {n} duplicates"
     },
+    "Close": "Close",
     "Close & retry": "Close & retry",
     "Close Results": "Close Results",
     "Close Tab": "Close Tab",
@@ -204,6 +208,7 @@
       "one": "Copying — preparing ({n} item)…",
       "other": "Copying — preparing ({n} items)…"
     },
+    "Could not calculate SHA-256: {detail}": "Could not calculate SHA-256: {detail}",
     "Could not pop out Disk Usage: {detail}": "Could not pop out Disk Usage: {detail}",
     "Couldn't check for updates.": "Couldn't check for updates.",
     "Couldn't close the apps: {detail}": "Couldn't close the apps: {detail}",
@@ -240,6 +245,7 @@
     "Cut “{name}”": "Cut “{name}”",
     "Cycle Focus": "Cycle Focus",
     "Cyrillic": "Cyrillic",
+    "DOES NOT MATCH — the checksums are different.": "DOES NOT MATCH — the checksums are different.",
     "Dark": "Dark",
     "Date Modified": "Date Modified",
     "Dates: YYYY-MM-DD, with >, >=, <, <= or a range a..b — or today, yesterday, week, month, year.": "Dates: YYYY-MM-DD, with >, >=, <, <= or a range a..b — or today, yesterday, week, month, year.",
@@ -360,12 +366,14 @@
     "Enclosing Folder": "Enclosing Folder",
     "English": "English",
     "Enhance": "Enhance",
+    "Enter exactly one 64-character hexadecimal SHA-256 checksum.": "Enter exactly one 64-character hexadecimal SHA-256 checksum.",
     "Enumerating folders… {folders} folders scanned · {images} candidate images found": "Enumerating folders… {folders} folders scanned · {images} candidate images found",
     "Environment": "Environment",
     "Every dropped item is already in the archive": "Every dropped item is already in the archive",
     "Executable": "Executable",
     "Exit full screen before docking the window.": "Exit full screen before docking the window.",
     "Expand / First Child": "Expand / First Child",
+    "Expected SHA-256": "Expected SHA-256",
     "Export as HTML": "Export as HTML",
     "Export…": "Export…",
     "Extension says “{kind}” but the content is “{magic}” — possible disguised file.": "Extension says “{kind}” but the content is “{magic}” — possible disguised file.",
@@ -448,6 +456,8 @@
     "Gap between the selection highlights in icon view. Wider spacing lets the boxes breathe; None packs them edge-to-edge.": "Gap between the selection highlights in icon view. Wider spacing lets the boxes breathe; None packs them edge-to-edge.",
     "Gathering details…": "Gathering details…",
     "General": "General",
+    "Generate SHA-256…": "Generate SHA-256…",
+    "Generated SHA-256": "Generated SHA-256",
     "Genre": "Genre",
     "Get Info": "Get Info",
     "Get Info — {name}": "Get Info — {name}",
@@ -468,6 +478,7 @@
     "Grouping similar images…": "Grouping similar images…",
     "Health check of the app's storage and environment. Run `ferail --doctor` for the same report from a terminal.": "Health check of the app's storage and environment. Run `ferail --doctor` for the same report from a terminal.",
     "Help": "Help",
+    "Hidden": "Hidden",
     "Hide Others": "Hide Others",
     "Hide details": "Hide details",
     "Hide extension": "Hide extension",
@@ -488,6 +499,7 @@
     "Imported {language}: {translated} of {total} strings translated": "Imported {language}: {translated} of {total} strings translated",
     "Import…": "Import…",
     "In use by {names}": "In use by {names}",
+    "Include Subfolders": "Include Subfolders",
     "Include hidden files": "Include hidden files",
     "Incorrect password — try again.": "Incorrect password — try again.",
     "Indexing {n} entry…": {
@@ -536,6 +548,7 @@
     "Look-alike character": "Look-alike character",
     "Loop": "Loop",
     "Lower values require a closer visual match.": "Lower values require a closer visual match.",
+    "MATCH — the file checksum is identical.": "MATCH — the file checksum is identical.",
     "MEM {bytes}": "MEM {bytes}",
     "Make Alias": "Make Alias",
     "Make alias": "Make alias",
@@ -615,6 +628,7 @@
     "No activity recorded yet.": "No activity recorded yet.",
     "No downloadable Ferail release was found on GitHub.": "No downloadable Ferail release was found on GitHub.",
     "No duplicates found.": "No duplicates found.",
+    "No files found in this location or its subfolders.": "No files found in this location or its subfolders.",
     "No files on the clipboard": "No files on the clipboard",
     "No files to view in this folder": "No files to view in this folder",
     "No folder available to add to Favorites.": "No folder available to add to Favorites.",
@@ -681,6 +695,9 @@
     "Page Up": "Page Up",
     "Password": "Password",
     "Paste": "Paste",
+    "Paste an expected SHA-256 (optional)": "Paste an expected SHA-256 (optional)",
+    "Paste an expected SHA-256 to compare.": "Paste an expected SHA-256 to compare.",
+    "Path": "Path",
     "Path copied to clipboard": "Path copied to clipboard",
     "Pause Slideshow": "Pause Slideshow",
     "Pending addition": "Pending addition",
@@ -705,6 +722,7 @@
     "Play Slideshow": "Play Slideshow",
     "Player": "Player",
     "Plugins": "Plugins",
+    "Preparing file list…": "Preparing file list…",
     "Preview": "Preview",
     "Preview selected file": "Preview selected file",
     "Preview this file?": "Preview this file?",
@@ -720,6 +738,7 @@
     "Read-only": "Read-only",
     "Read-only volume": "Read-only volume",
     "Reading archive…": "Reading archive…",
+    "Reading file…": "Reading file…",
     "Reading {path}": "Reading {path}",
     "Reading “{label}”…": "Reading “{label}”…",
     "Reading…": "Reading…",
@@ -812,6 +831,8 @@
     "Rotate Clockwise": "Rotate Clockwise",
     "Running health checks…": "Running health checks…",
     "Running…": "Running…",
+    "SHA-256 checksum": "SHA-256 checksum",
+    "SHA-256 copied": "SHA-256 copied",
     "Sample rate": "Sample rate",
     "Save Changes": "Save Changes",
     "Save This Folder…": "Save This Folder…",
@@ -834,6 +855,10 @@
     "Scanning for duplicates…": "Scanning for duplicates…",
     "Scanning for similar images…": "Scanning for similar images…",
     "Scanning {path}": "Scanning {path}",
+    "Scanning: {n} file in {dirs} folders": {
+      "one": "Scanning: {n} file in {dirs} folders",
+      "other": "Scanning: {n} files in {dirs} folders"
+    },
     "Scanning… {files} files, {scanned}": "Scanning… {files} files, {scanned}",
     "Scroll tabs left": "Scroll tabs left",
     "Scroll tabs right": "Scroll tabs right",
@@ -844,6 +869,7 @@
     "Search...": "Search...",
     "Search…": "Search…",
     "Select All": "Select All",
+    "Select one file to generate its SHA-256.": "Select one file to generate its SHA-256.",
     "Selection": "Selection",
     "Selection color": "Selection color",
     "Set Tag": "Set Tag",
@@ -901,6 +927,7 @@
     "Software Update": "Software Update",
     "Some archive-specific metadata may not survive conversion.": "Some archive-specific metadata may not survive conversion.",
     "Sort": "Sort",
+    "Sort by Ant Trail": "Sort by Ant Trail",
     "Sort by Date Added (newest)": "Sort by Date Added (newest)",
     "Sort by Date Added (oldest)": "Sort by Date Added (oldest)",
     "Sort by Date Modified": "Sort by Date Modified",
@@ -940,6 +967,8 @@
     "The archive has no parent folder": "The archive has no parent folder",
     "The built-in player uses the platform's native media frameworks (AVFoundation on macOS, Media Foundation on Windows). mpv plays virtually any container/codec and applies colour adjustments and a transparent-colour key to the video itself. libmpv must be installed; a change takes effect on the next viewer window.": "The built-in player uses the platform's native media frameworks (AVFoundation on macOS, Media Foundation on Windows). mpv plays virtually any container/codec and applies colour adjustments and a transparent-colour key to the video itself. libmpv must be installed; a change takes effect on the next viewer window.",
     "The built-in player uses the platform's native media frameworks. mpv plays virtually any container/codec, but this build was compiled without the `mpv` feature, so mpv is unavailable — rebuild with `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) to enable it.": "The built-in player uses the platform's native media frameworks. mpv plays virtually any container/codec, but this build was compiled without the `mpv` feature, so mpv is unavailable — rebuild with `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) to enable it.",
+    "The comparison is unavailable because calculation did not finish.": "The comparison is unavailable because calculation did not finish.",
+    "The comparison will appear when calculation finishes.": "The comparison will appear when calculation finishes.",
     "The converted archive name must be a single non-empty filename.": "The converted archive name must be a single non-empty filename.",
     "The destination is read-only. Choose a writable folder or change the volume's permissions.": "The destination is read-only. Choose a writable folder or change the volume's permissions.",
     "The highlight behind selected files in the list and grid. Clear it to follow the theme's blue.": "The highlight behind selected files in the list and grid. Clear it to follow the theme's blue.",
@@ -950,6 +979,7 @@
     "The source archive password is incorrect.": "The source archive password is incorrect.",
     "The source archive requires a password.": "The source archive requires a password.",
     "The source stays unchanged. The result uses a new unused filename.": "The source stays unchanged. The result uses a new unused filename.",
+    "The system file clipboard can't safely hold this many items. Use Copy File List for their paths.": "The system file clipboard can't safely hold this many items. Use Copy File List for their paths.",
     "The tint behind your most-visited folders in the list and grid. Brightness still tracks visit frequency. Clear it for the stock orange.": "The tint behind your most-visited folders in the list and grid. Brightness still tracks visit frequency. Clear it for the stock orange.",
     "The update check failed. Try again.": "The update check failed. Try again.",
     "The update page could not be found.": "The update page could not be found.",
@@ -1160,6 +1190,14 @@
       "one": "{n} file",
       "other": "{n} files"
     },
+    "{n} file · all subfolders": {
+      "one": "{n} file · all subfolders",
+      "other": "{n} files · all subfolders"
+    },
+    "{n} filtered": {
+      "one": "{n} filtered",
+      "other": "{n} filtered"
+    },
     "{n} filtered out · {size}": {
       "one": "{n} filtered out · {size}",
       "other": "{n} filtered out · {size}"
@@ -1171,6 +1209,10 @@
     "{n} group · {reclaimable} reclaimable": {
       "one": "{n} group · {reclaimable} reclaimable",
       "other": "{n} groups · {reclaimable} reclaimable"
+    },
+    "{n} hidden": {
+      "one": "{n} hidden",
+      "other": "{n} hidden"
     },
     "{n} hidden · {size}": {
       "one": "{n} hidden · {size}",

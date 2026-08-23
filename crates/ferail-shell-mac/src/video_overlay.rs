@@ -40,7 +40,7 @@ use std::path::Path;
 
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyClass, AnyObject};
-use objc2::{ClassType, DeclaredClass, declare_class, msg_send, msg_send_id, mutability, sel};
+use objc2::{declare_class, msg_send, msg_send_id, mutability, sel, ClassType, DeclaredClass};
 use objc2_foundation::{
     MainThreadMarker, NSDictionary, NSNotification, NSNotificationCenter, NSNumber, NSObject,
     NSObjectProtocol, NSSize, NSString, NSURL,
@@ -108,19 +108,15 @@ struct CMTime {
 unsafe impl objc2::Encode for CMTime {
     const ENCODING: objc2::Encoding = objc2::Encoding::Struct(
         "?",
-        &[
-            i64::ENCODING,
-            i32::ENCODING,
-            u32::ENCODING,
-            i64::ENCODING,
-        ],
+        &[i64::ENCODING, i32::ENCODING, u32::ENCODING, i64::ENCODING],
     );
 }
 
 // SAFETY: a pointer to CMTime (the `itemTimeForDisplay:` out-param) encodes
 // as a pointer to the same anonymous struct the Encode impl names.
 unsafe impl objc2::RefEncode for CMTime {
-    const ENCODING_REF: objc2::Encoding = objc2::Encoding::Pointer(&<CMTime as objc2::Encode>::ENCODING);
+    const ENCODING_REF: objc2::Encoding =
+        objc2::Encoding::Pointer(&<CMTime as objc2::Encode>::ENCODING);
 }
 
 /// `kCMTimeFlags_Valid`.
@@ -280,8 +276,7 @@ pub fn copy_frame(id: u64) -> Option<(u32, u32, Vec<u8>)> {
         unsafe {
             // Pull at the player's current presentation time.
             let item_time: CMTime = msg_send![&*entry.player, currentTime];
-            let has_new: bool =
-                msg_send![&*entry.output, hasNewPixelBufferForItemTime: item_time];
+            let has_new: bool = msg_send![&*entry.output, hasNewPixelBufferForItemTime: item_time];
             if !has_new {
                 return None;
             }

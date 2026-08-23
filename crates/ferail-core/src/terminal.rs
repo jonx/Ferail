@@ -128,7 +128,9 @@ pub fn program_basename(program: &str) -> String {
         .next()
         .unwrap_or(program)
         .to_ascii_lowercase();
-    base.strip_suffix(".exe").map(str::to_string).unwrap_or(base)
+    base.strip_suffix(".exe")
+        .map(str::to_string)
+        .unwrap_or(base)
 }
 
 /// The argv tokens a terminal emulator uses to introduce a command line

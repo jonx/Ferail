@@ -1,11 +1,11 @@
 use std::{ops::Range, rc::Rc, time::Duration};
 
 use gpui::{
-    App, AppContext, Axis, Bounds, ClickEvent, Context, Div, DragMoveEvent, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, ListSizingBehavior, Modifiers, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled, Task, TextRun, UniformListScrollHandle, Window, div,
-    prelude::FluentBuilder, px, uniform_list,
+    App, AppContext, Axis, Bounds, ClickEvent, Context, Div, DragMoveEvent, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement, IntoElement, ListSizingBehavior, Modifiers,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Task, TextRun,
+    UniformListScrollHandle, Window, div, prelude::FluentBuilder, px, uniform_list,
 };
 use gpui_component::{
     ActiveTheme, ElementExt, Icon, IconName, StyleSized as _, StyledExt, h_flex,
@@ -2593,7 +2593,9 @@ where
                             // the menu's target before an item is picked.
                             view.update(cx, |table, cx| {
                                 cx.emit(TableEvent::RightClickedBackground);
-                                table.delegate_mut().background_context_menu(this, window, cx)
+                                table
+                                    .delegate_mut()
+                                    .background_context_menu(this, window, cx)
                             })
                         } else {
                             this

@@ -104,7 +104,9 @@ impl<T: Styled + Sized> IconScale for T {}
 /// still fits paths and free-form text where the tail is expendable.
 pub trait TruncateMiddle: Styled + Sized {
     fn truncate_middle(self) -> Self {
-        self.overflow_hidden().whitespace_nowrap().text_ellipsis_middle()
+        self.overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis_middle()
     }
 }
 

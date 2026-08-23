@@ -139,10 +139,7 @@ impl ElevatedOp {
         };
         let dest = parts.next().ok_or("descriptor: missing dest")?;
         let dest_dir = bytes_to_path(dest);
-        let sources: Vec<PathBuf> = parts
-            .filter(|p| !p.is_empty())
-            .map(bytes_to_path)
-            .collect();
+        let sources: Vec<PathBuf> = parts.filter(|p| !p.is_empty()).map(bytes_to_path).collect();
         if sources.is_empty() {
             return Err("descriptor: no sources".into());
         }
@@ -538,8 +535,7 @@ const O_NOFOLLOW: i32 = 0; // unknown unix: the metadata checks still apply
 #[cfg(unix)]
 fn verify_private_dir(dir: &Path, expected_uid: u32) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt as _;
-    let md =
-        std::fs::symlink_metadata(dir).map_err(|e| format!("stat {}: {e}", dir.display()))?;
+    let md = std::fs::symlink_metadata(dir).map_err(|e| format!("stat {}: {e}", dir.display()))?;
     if !md.file_type().is_dir() {
         return Err(format!("{}: not a directory", dir.display()));
     }
@@ -897,7 +893,10 @@ mod tests {
             ok: 2,
             failures: vec![
                 (FileOpErrorKind::Locked, PathBuf::from("/x/locked.db")),
-                (FileOpErrorKind::PermissionDenied, PathBuf::from("/y/root.cfg")),
+                (
+                    FileOpErrorKind::PermissionDenied,
+                    PathBuf::from("/y/root.cfg"),
+                ),
             ],
         };
         let decoded = ElevatedResult::decode(&r.encode()).unwrap();
@@ -941,8 +940,14 @@ mod tests {
         };
         let decoded = ElevatedTrashResult::decode(&r.encode()).unwrap();
         assert_eq!(decoded.trashed.len(), 1);
-        assert_eq!(decoded.trashed[0].1, PathBuf::from("/Users/jk/.Trash/iMovie.app"));
-        assert_eq!(decoded.failed, vec![PathBuf::from("/Applications/Locked.app")]);
+        assert_eq!(
+            decoded.trashed[0].1,
+            PathBuf::from("/Users/jk/.Trash/iMovie.app")
+        );
+        assert_eq!(
+            decoded.failed,
+            vec![PathBuf::from("/Applications/Locked.app")]
+        );
 
         // An all-success delete result (no trashed pairs, no failures) must
         // round-trip to an empty result, not a decode error.
@@ -982,7 +987,10 @@ mod tests {
         };
         let decoded = ElevatedResult::decode(&r.encode()).unwrap();
         assert_eq!(decoded.ok, 1, "embedded newline spoofed the ok record");
-        assert_eq!(decoded.failures, vec![(FileOpErrorKind::Locked, evil.clone())]);
+        assert_eq!(
+            decoded.failures,
+            vec![(FileOpErrorKind::Locked, evil.clone())]
+        );
 
         let t = ElevatedTrashResult {
             trashed: vec![(evil.clone(), PathBuf::from("/t/landed\nfail\u{0}/forged"))],
@@ -1040,9 +1048,7 @@ mod tests {
         // Result write is exclusive: a pre-created file (or planted symlink)
         // at the result path makes the worker fail instead of following it.
         write_result_verified(&files.result.to_string_lossy(), b"ok\x000", &args).unwrap();
-        assert!(
-            write_result_verified(&files.result.to_string_lossy(), b"ok\x000", &args).is_err()
-        );
+        assert!(write_result_verified(&files.result.to_string_lossy(), b"ok\x000", &args).is_err());
         assert_eq!(std::fs::read(&files.result).unwrap(), b"ok\x000");
 
         files.cleanup();

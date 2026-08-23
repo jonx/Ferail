@@ -156,7 +156,12 @@ pub struct DockState {
 }
 
 impl DockState {
-    pub fn new(edge: DockEdge, screen: ScreenFrame, win: ScreenFrame, restore: ScreenFrame) -> Self {
+    pub fn new(
+        edge: DockEdge,
+        screen: ScreenFrame,
+        win: ScreenFrame,
+        restore: ScreenFrame,
+    ) -> Self {
         Self {
             edge,
             screen,
@@ -356,5 +361,4 @@ mod tests {
         st.progress = 1.0;
         assert_eq!(st.current_frame(), revealed_frame(DockEdge::Right, s, win));
     }
-
 }

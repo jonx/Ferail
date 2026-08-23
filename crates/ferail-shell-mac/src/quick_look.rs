@@ -110,8 +110,7 @@ pub fn fetch_thumbnail(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
             representationTypes: types,
         ];
 
-        let generator: Id<AnyObject> =
-            msg_send_id![class!(QLThumbnailGenerator), sharedGenerator];
+        let generator: Id<AnyObject> = msg_send_id![class!(QLThumbnailGenerator), sharedGenerator];
 
         // Completion block runs on a Quick Look background queue.
         // Rasterize there and hand back straight RGBA.
@@ -238,6 +237,10 @@ extern "C" {
         space: *mut std::ffi::c_void,
         bitmap_info: u32,
     ) -> *mut std::ffi::c_void;
-    fn CGContextDrawImage(c: *mut std::ffi::c_void, rect: objc2_foundation::CGRect, image: *mut std::ffi::c_void);
+    fn CGContextDrawImage(
+        c: *mut std::ffi::c_void,
+        rect: objc2_foundation::CGRect,
+        image: *mut std::ffi::c_void,
+    );
     fn CGContextRelease(c: *mut std::ffi::c_void);
 }

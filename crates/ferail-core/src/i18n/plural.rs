@@ -190,7 +190,7 @@ pub fn category(lang: &str, n: u64) -> Category {
 
 #[cfg(test)]
 mod tests {
-    use super::{Category::*, category};
+    use super::{category, Category::*};
 
     #[test]
     fn english_rule() {

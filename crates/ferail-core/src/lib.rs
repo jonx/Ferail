@@ -18,7 +18,18 @@ pub mod power;
 pub mod terminal;
 pub mod video;
 
-use std::num::NonZeroU64;
+use std::{
+    num::NonZeroU64,
+    sync::{Arc, OnceLock},
+};
+
+/// Shared empty row text. Large result surfaces contain millions of rows whose
+/// lazily-populated fields are empty; sharing this allocation keeps `Arc<str>`
+/// from turning those empty values into millions of tiny heap objects.
+pub fn empty_entry_text() -> Arc<str> {
+    static EMPTY: OnceLock<Arc<str>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::from("")).clone()
+}
 
 /// Stable identifier for a tree/list node. Opaque to the UI; the FS layer
 /// owns the mapping `NodeId <-> path/PIDL`.
@@ -60,13 +71,13 @@ pub struct FileEntry {
     /// *truth* used to reconstruct the file's path (joins, renames, opens);
     /// never the user-facing string. On macOS a colon here is the HFS/Unix
     /// separator that Finder shows as a slash — see [`display_name`](Self::display_name).
-    pub name: String,
+    pub name: Arc<str>,
     /// The user-facing leaf name, pre-computed at enumerate time. On macOS a
     /// `:` in [`name`](Self::name) is shown as `/` to match Finder (see
     /// `ferail_fs_native::paths::display_leaf`); elsewhere this equals
     /// `name`. Every visible surface (list row, preview, Get Info, tooltips)
     /// renders this, while path operations keep using `name`.
-    pub display_name: String,
+    pub display_name: Arc<str>,
     /// Pre-computed `name_hazards::has_hazards(&display_name)`. Lets the dense
     /// list row decide — with a cheap bool, no per-paint `analyze()` alloc —
     /// whether to draw the deceptive-character highlight treatment.
@@ -74,15 +85,15 @@ pub struct FileEntry {
     pub kind: EntryKind,
     pub size: u64,
     pub mtime_unix: i64,
-    pub display_size: String,
+    pub display_size: Arc<str>,
     /// Friendly type label — "Folder", "Symlink", uppercased extension
     /// (e.g. "RS", "MD"), or "File" when there's no extension. macOS shell
     /// crate (iter-4) replaces this with `NSWorkspace.localizedDescription`.
-    pub display_kind: String,
+    pub display_kind: Arc<str>,
     /// Magic-byte detected type, e.g. "PNG image", "Mach-O 64-bit", "Plain text".
     /// Empty string when not yet detected or no match. Populated lazily by
     /// the host (App) — `ferail-core` never blocks on file I/O.
-    pub display_magic: String,
+    pub display_magic: Arc<str>,
     /// Rich ` · `-joined fact string for the Description column,
     /// e.g. `"Windows PE · 64-bit · x86-64 · GUI · .NET"`,
     /// `"PNG image · 1920×1080 · alpha"`,
@@ -90,7 +101,7 @@ pub struct FileEntry {
     /// Empty when not yet detected or no extra facts to report.
     /// Populated lazily by the host (prefetch worker), same contract as
     /// `display_magic`.
-    pub display_description: String,
+    pub display_description: Arc<str>,
     /// Hot-path flag for the icon-overlay dot. True when the file carries
     /// `com.apple.quarantine` (macOS Mark-of-the-Web equivalent). Populated
     /// lazily by the host alongside `quarantine`; defaults to false.
@@ -98,7 +109,7 @@ pub struct FileEntry {
     /// Detail-panel rows for downloaded files. `None` until the prefetch
     /// worker reports back; `Some` with empty fields means "we looked,
     /// nothing to show beyond the flag."
-    pub quarantine: Option<QuarantineDetails>,
+    pub quarantine: Option<Box<QuarantineDetails>>,
     /// Platform "hidden" semantics, resolved at enumerate time by the
     /// filesystem backend — NOT a name heuristic. macOS: dot-prefix OR
     /// the `UF_HIDDEN` BSD flag (what Finder hides). Windows: dot-prefix
@@ -116,6 +127,20 @@ pub struct FileEntry {
     /// `UF_IMMUTABLE`/`SF_IMMUTABLE` (Finder's Locked checkbox),
     /// Windows `FILE_ATTRIBUTE_READONLY`. Always false elsewhere.
     pub locked: bool,
+}
+
+#[cfg(test)]
+mod file_entry_layout_tests {
+    use super::FileEntry;
+
+    #[test]
+    fn cold_row_payload_stays_compact() {
+        let bytes = std::mem::size_of::<FileEntry>();
+        assert!(
+            bytes <= 160,
+            "FileEntry grew to {bytes} bytes; million-row surfaces pay this per row"
+        );
+    }
 }
 
 /// How strongly the Format column should flag the relationship between a
@@ -199,11 +224,10 @@ fn formats_compatible(kind: &str, magic: &str) -> bool {
     }
     // Textual extensions all live happily under "plain text" / "ascii text" / "utf-8".
     let textual = [
-        "txt", "md", "markdown", "rst", "log", "json", "yaml",
-        "toml", "ini", "csv", "tsv", "xml", "html", "css", "scss",
-        "rs", "py", "js", "ts", "go", "rb", "c", "cpp", "h", "hpp",
-        "java", "kt", "swift", "sh", "bash", "zsh", "vim", "lua",
-        "sql", "graphql", "proto", "tex", "el", "svg",
+        "txt", "md", "markdown", "rst", "log", "json", "yaml", "toml", "ini", "csv", "tsv", "xml",
+        "html", "css", "scss", "rs", "py", "js", "ts", "go", "rb", "c", "cpp", "h", "hpp", "java",
+        "kt", "swift", "sh", "bash", "zsh", "vim", "lua", "sql", "graphql", "proto", "tex", "el",
+        "svg",
     ];
     if (m.contains("text") || m.contains("script") || m.contains("source"))
         && textual.iter().any(|t| k.contains(t))
@@ -212,8 +236,7 @@ fn formats_compatible(kind: &str, magic: &str) -> bool {
     }
     // Office / EPUB / JAR / APK formats are ZIP archives at the byte level.
     let zip_kindly = [
-        "docx", "xlsx", "pptx", "epub", "jar", "apk", "ipa", "odt",
-        "ods", "odp", "zip", "war",
+        "docx", "xlsx", "pptx", "epub", "jar", "apk", "ipa", "odt", "ods", "odp", "zip", "war",
     ];
     if m.contains("zip") && zip_kindly.iter().any(|t| k.contains(t)) {
         return true;
@@ -329,34 +352,55 @@ fn ext_class(kind: &str) -> ExtClass {
         return ExtClass::Placeholder;
     }
     const CODE: &[&str] = &[
-        "exe", "dll", "so", "dylib", "scr", "com", "bat", "cmd", "ps1", "psm1",
-        "vbs", "vbe", "wsf", "wsh", "hta", "msi", "msix", "msp", "appx", "app",
-        "pkg", "run", "jar", "apk", "class", "jnlp", "gadget", "sh", "bash",
-        "zsh", "fish", "ksh", "csh", "command", "py", "pyw", "rb", "pl", "pm",
-        "lua", "tcl", "ahk", "js", "mjs", "cjs", "ts", "lnk", "url", "desktop",
+        "exe", "dll", "so", "dylib", "scr", "com", "bat", "cmd", "ps1", "psm1", "vbs", "vbe",
+        "wsf", "wsh", "hta", "msi", "msix", "msp", "appx", "app", "pkg", "run", "jar", "apk",
+        "class", "jnlp", "gadget", "sh", "bash", "zsh", "fish", "ksh", "csh", "command", "py",
+        "pyw", "rb", "pl", "pm", "lua", "tcl", "ahk", "js", "mjs", "cjs", "ts", "lnk", "url",
+        "desktop",
     ];
     const OFFICE_MACRO: &[&str] = &[
         "docm", "dotm", "xlsm", "xltm", "xlam", "pptm", "potm", "ppam", "ppsm",
     ];
     const MEDIA: &[&str] = &[
-        "jpg", "jpeg", "png", "gif", "bmp", "webp", "ico", "tif", "tiff",
-        "heic", "heif", "svg", "mp4", "mov", "avi", "mkv", "webm", "m4v",
-        "wmv", "flv", "mpg", "mpeg", "3gp", "mp3", "wav", "flac", "ogg",
-        "oga", "m4a", "aac", "wma", "aiff", "opus",
+        "jpg", "jpeg", "png", "gif", "bmp", "webp", "ico", "tif", "tiff", "heic", "heif", "svg",
+        "mp4", "mov", "avi", "mkv", "webm", "m4v", "wmv", "flv", "mpg", "mpeg", "3gp", "mp3",
+        "wav", "flac", "ogg", "oga", "m4a", "aac", "wma", "aiff", "opus",
     ];
     const DOCUMENT: &[&str] = &[
-        "pdf", "doc", "docx", "dot", "dotx", "xls", "xlsx", "xlt", "xltx",
-        "ppt", "pptx", "pps", "ppsx", "odt", "ods", "odp", "rtf", "epub",
-        "pages", "key", "numbers",
+        "pdf", "doc", "docx", "dot", "dotx", "xls", "xlsx", "xlt", "xltx", "ppt", "pptx", "pps",
+        "ppsx", "odt", "ods", "odp", "rtf", "epub", "pages", "key", "numbers",
     ];
     const TEXT: &[&str] = &[
-        "txt", "md", "markdown", "rst", "log", "json", "xml", "yaml", "yml",
-        "toml", "ini", "config", "cfg", "conf", "csv", "tsv", "html", "htm",
-        "css", "scss", "tex", "srt", "vtt", "plist", "properties", "env",
+        "txt",
+        "md",
+        "markdown",
+        "rst",
+        "log",
+        "json",
+        "xml",
+        "yaml",
+        "yml",
+        "toml",
+        "ini",
+        "config",
+        "cfg",
+        "conf",
+        "csv",
+        "tsv",
+        "html",
+        "htm",
+        "css",
+        "scss",
+        "tex",
+        "srt",
+        "vtt",
+        "plist",
+        "properties",
+        "env",
     ];
     const ARCHIVE: &[&str] = &[
-        "zip", "rar", "7z", "gz", "tgz", "bz2", "tbz2", "xz", "zst", "tar",
-        "war", "ear", "cab", "iso", "dmg", "lz", "lzma",
+        "zip", "rar", "7z", "gz", "tgz", "bz2", "tbz2", "xz", "zst", "tar", "war", "ear", "cab",
+        "iso", "dmg", "lz", "lzma",
     ];
     let has = |set: &[&str]| set.contains(&k.as_str());
     if has(OFFICE_MACRO) {
@@ -594,10 +638,16 @@ mod time_tests {
         assert_eq!(humanize_mtime(NOW - 4, NOW), "4 seconds ago");
         assert_eq!(humanize_mtime(NOW - 59, NOW), "59 seconds ago");
         // 3 min 30 sec — the user's example.
-        assert_eq!(humanize_mtime(NOW - (3 * MIN + 30), NOW), "3 min 30 sec ago");
+        assert_eq!(
+            humanize_mtime(NOW - (3 * MIN + 30), NOW),
+            "3 min 30 sec ago"
+        );
         // Whole minute drops the seconds component.
         assert_eq!(humanize_mtime(NOW - 5 * MIN, NOW), "5 min ago");
-        assert_eq!(humanize_mtime(NOW - (2 * HOUR + 5 * MIN), NOW), "2 hr 5 min ago");
+        assert_eq!(
+            humanize_mtime(NOW - (2 * HOUR + 5 * MIN), NOW),
+            "2 hr 5 min ago"
+        );
         assert_eq!(humanize_mtime(NOW - 3 * HOUR, NOW), "3 hr ago");
     }
 
@@ -606,16 +656,25 @@ mod time_tests {
         assert_eq!(humanize_mtime(NOW - DAY, NOW), "1 day ago");
         assert_eq!(humanize_mtime(NOW - 3 * DAY, NOW), "3 days ago");
         // A week or more old falls back to the month/day label.
-        assert_eq!(humanize_mtime(NOW - 8 * DAY, NOW), format_month_day(NOW - 8 * DAY));
+        assert_eq!(
+            humanize_mtime(NOW - 8 * DAY, NOW),
+            format_month_day(NOW - 8 * DAY)
+        );
         // Over a year old uses the full ISO date.
-        assert_eq!(humanize_mtime(NOW - 400 * DAY, NOW), format_date(NOW - 400 * DAY));
+        assert_eq!(
+            humanize_mtime(NOW - 400 * DAY, NOW),
+            format_date(NOW - 400 * DAY)
+        );
     }
 
     #[test]
     fn future_stamps_are_handled() {
         // Small clock skew reads as "just now"; a real future date shows it.
         assert_eq!(humanize_mtime(NOW + 10, NOW), "just now");
-        assert_eq!(humanize_mtime(NOW + 5 * DAY, NOW), format_date(NOW + 5 * DAY));
+        assert_eq!(
+            humanize_mtime(NOW + 5 * DAY, NOW),
+            format_date(NOW + 5 * DAY)
+        );
     }
 
     #[test]
@@ -632,16 +691,16 @@ mod format_label_tests {
     fn entry(kind: &str, magic: &str) -> FileEntry {
         FileEntry {
             id: NodeId(std::num::NonZeroU64::new(1).unwrap()),
-            name: String::new(),
-            display_name: String::new(),
+            name: empty_entry_text(),
+            display_name: empty_entry_text(),
             name_has_hazards: false,
             kind: EntryKind::File,
             size: 0,
             mtime_unix: 0,
-            display_size: String::new(),
+            display_size: empty_entry_text(),
             display_kind: kind.into(),
             display_magic: magic.into(),
-            display_description: String::new(),
+            display_description: empty_entry_text(),
             is_quarantined: false,
             quarantine: None,
             hidden: false,
@@ -748,9 +807,13 @@ mod format_label_tests {
             FormatFlag::None
         );
         assert_eq!(
-            entry_desc("XLSM", "Excel spreadsheet", "Excel spreadsheet · macro-enabled")
-                .format_label()
-                .1,
+            entry_desc(
+                "XLSM",
+                "Excel spreadsheet",
+                "Excel spreadsheet · macro-enabled"
+            )
+            .format_label()
+            .1,
             FormatFlag::None
         );
     }

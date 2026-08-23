@@ -28,6 +28,9 @@ Ferail currently has:
   be undone.
 - A default-on "Don't track favorites" option that skips visit recording when a
   folder is reached via its favorite (see [Customization](#customization)).
+- **Sort by Ant Trail** in the toolbar's sort menu (and the ⌘K palette, as
+  *Sort by Ant Trail*), ranking the current folder's subfolders by heat — see
+  [Sorting](#sorting).
 
 The remaining work is prediction: using the heat signal to prewarm likely next
 folders and adding time decay/recency weighting once the data proves useful.
@@ -70,6 +73,38 @@ On render:
 - File rows read precomputed heat from the table delegate.
 - Tree/sidebar surfaces read in-memory recents/heat state.
 - No SQLite or filesystem work happens from paint.
+
+## Sorting
+
+`SortColumn::AntTrail` orders the listing by heat, hottest first on the first
+pick (re-picking flips it, like every other sort column). It is the sort menu's
+only entry with no column header behind it — the other four duplicate a header
+click, this one is the reason to open the menu.
+
+Heat is not a `FileEntry` field, so the ordering can't ride `sort_in_place` like
+the other columns: `FileListDelegate::sort_model` runs `sort_by_heat` against
+the delegate's row-parallel `heats` vector — the same cached values the tint
+paints from, so the sort costs no extra lookups and no I/O. Folders lead, as in
+every other column, which here doubles as "the rows this ordering is about,
+first"; files and never-visited folders fall below in name order, so a cold
+directory still reads like a normal listing.
+
+Two consequences worth knowing:
+
+- When hydration finishes (or a visit lands) and `refresh_active_tab_heats`
+  replaces the heats, an active Ant Trail sort re-ranks — the heat *is* the sort
+  key, so new heat means a new order, not just a new tint.
+- Include Subfolders keeps `heats` empty on purpose, so the menu entry is
+  hidden there and a carried-over Ant Trail sort falls back to Name ascending.
+  That fallback is decided by `resolve_ant_sort` from **the rows in hand**, not
+  from which surface the delegate thinks it is. The distinction is not
+  academic: `replace_entries` used to leave `flat_paths` set after Include
+  Subfolders closed, so an ordinary listing — heat and all — took the flat sort
+  path and the pick did nothing until the user changed folder. Both halves were
+  fixed; key ordering off the data and a surface flag can never disagree with
+  the rows again.
+
+The `--sort ant[-desc]` screenshot flag drives the same path.
 
 ## Heat Model
 

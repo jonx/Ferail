@@ -355,12 +355,7 @@ impl SidebarItem for TreeSection {
             // sidebar edges (Finder-style) instead of running edge to
             // edge. The rows stay `w_full` inside the padded box, so no
             // row overflows and the connector guides shift with them.
-            .child(
-                v_flex()
-                    .w_full()
-                    .px(px(TREE_ROW_INSET))
-                    .children(rows),
-            )
+            .child(v_flex().w_full().px(px(TREE_ROW_INSET)).children(rows))
     }
 }
 
@@ -674,9 +669,7 @@ fn render_tree_row(
     let icon_el = match icon {
         TreeRowIcon::Folder => {
             let icon = icons.borrow_mut().folder_icon_for(&path);
-            img(icon)
-                .icon_px(SIDEBAR_ICON_PX)
-                .into_any_element()
+            img(icon).icon_px(SIDEBAR_ICON_PX).into_any_element()
         }
         TreeRowIcon::Volume => svg()
             .path("icons/nav/drive.svg")
@@ -801,9 +794,8 @@ fn render_tree_row(
     let attach_menu = move |el: gpui::Stateful<gpui::Div>| {
         el.context_menu(move |menu, _window, cx| {
             use crate::shell::{
-                CopyContextPath, EjectVolume, GetInfoAtContext, NewFolderHere,
-                OpenContextInNewTab, OpenTerminalAtContext, RevealContextPath,
-                ToggleFavoriteForTarget,
+                CopyContextPath, EjectVolume, GetInfoAtContext, NewFolderHere, OpenContextInNewTab,
+                OpenTerminalAtContext, RevealContextPath, ToggleFavoriteForTarget,
             };
             if let Some(shell) = shell_for_menu.upgrade() {
                 shell.update(cx, |s, _| {

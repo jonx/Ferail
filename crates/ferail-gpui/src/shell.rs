@@ -35,19 +35,18 @@ use crate::fs_watcher::{FsWatcher, POLL_INTERVAL, RELOAD_DEBOUNCE};
 use crate::multi_table::{DataTable, TableEvent, TableState};
 use crate::tasks::TaskKind;
 use crate::tool_results::{ToolHostContext, ToolHostEvent};
-use crate::tree::{
-    ShellSidebarItem, TreeChild, TreeGuide, TreeRowIcon, TreeRowSpec, TreeSection,
-};
+use crate::tree::{ShellSidebarItem, TreeChild, TreeGuide, TreeRowIcon, TreeRowSpec, TreeSection};
 use gpui::prelude::FluentBuilder as _;
 
 mod actions;
+mod checksum;
 mod dock;
 mod dupe_panel;
 mod dupes;
 mod file_ops;
 pub use file_ops::ArchiveOpSettled;
-pub(crate) use file_ops::{ArchiveSaveRequest, TransferMode};
 pub(crate) use file_ops::pick_destination_folder;
+pub(crate) use file_ops::{ArchiveSaveRequest, TransferMode};
 mod loading;
 mod path;
 pub(crate) mod render;
@@ -530,7 +529,9 @@ pub(crate) fn file_op_failure_report(
         ));
     }
     msg.push('\n');
-    msg.push_str(&crate::i18n::tr_static(dominant_failure_kind(failed).advice()));
+    msg.push_str(&crate::i18n::tr_static(
+        dominant_failure_kind(failed).advice(),
+    ));
     msg
 }
 
@@ -2295,7 +2296,7 @@ impl Shell {
                         if let Some(r) = *row_ix {
                             let row_was_selected = this
                                 .node_id_at_row(r, cx)
-                                .map(|id| this.active_tab().selection.contains(&id))
+                                .map(|id| this.active_tab().is_selected(id))
                                 .unwrap_or(false);
                             this.apply_row_right_click(r, cx);
                             // Spec §2.4: if the user right-clicks
@@ -2349,6 +2350,24 @@ impl Shell {
                         let value = filter_input.read(cx).value().to_string();
                         if let Some(idx) = this.tabs.iter().position(|t| t.id == tab_id) {
                             this.tabs[idx].filter_text = value.clone();
+                            // Flat is an explicit recursive snapshot. Typing
+                            // must not destroy it or launch another million-row
+                            // walk per keystroke; Enter remains the deliberate
+                            // escalation to subtree search.
+                            if this.tabs[idx]
+                                .tool_result
+                                .as_ref()
+                                .is_some_and(|surface| surface.flat_mode().is_some())
+                            {
+                                let table = this.tabs[idx].table.clone();
+                                table.update(cx, |state, cx| {
+                                    state.delegate_mut().apply_flat_filter(&value);
+                                    state.refresh(cx);
+                                });
+                                this.refresh_file_list_selection_in_tab(idx, cx);
+                                cx.notify();
+                                return;
+                            }
                             // Editing the filter while showing a results
                             // view returns to the live directory, then
                             // applies the in-directory filter.
@@ -2470,7 +2489,7 @@ impl Shell {
             })
             .or_else(|| {
                 let mut p = self.active_tab().current_dir.clone();
-                p.push(&entry.name);
+                p.push(entry.name.as_ref());
                 Some(p)
             })
     }
@@ -2493,8 +2512,9 @@ impl Shell {
     /// active tab's NodeId set plus the delegate's current rows and
     /// path cache, never the filesystem.
     fn selected_entries_visible_order(&self, cx: &App) -> Vec<(usize, FileEntry, PathBuf)> {
-        let selection = &self.active_tab().selection;
-        if selection.is_empty() {
+        let tab = self.active_tab();
+        let visible_count = tab.table.read(cx).delegate().entries.len();
+        if tab.selection_is_empty(visible_count) {
             return Vec::new();
         }
         self.active_tab()
@@ -2505,8 +2525,7 @@ impl Shell {
             .iter()
             .enumerate()
             .filter_map(|(row_ix, entry)| {
-                selection
-                    .contains(&entry.id)
+                tab.is_selected(entry.id)
                     .then(|| self.entry_path_for_row(row_ix, cx))
                     .flatten()
             })
@@ -2552,6 +2571,23 @@ impl Shell {
         self.resolve_targets(context_row, cx)
     }
 
+    /// Number of rows the next action will resolve, without materializing
+    /// their entries or paths. Used to keep system APIs with inherently
+    /// eager payloads away from multi-million-row allocations.
+    fn action_target_count(&self, cx: &App) -> usize {
+        if self.context_row.is_some() {
+            return 1;
+        }
+        let tab = self.active_tab();
+        let visible = tab.table.read(cx).delegate().entries.len();
+        let selected = tab.selection_count(visible);
+        if selected > 0 {
+            selected
+        } else {
+            usize::from(tab.lead.is_some())
+        }
+    }
+
     fn on_navigate_back(&mut self, _: &NavigateBack, _: &mut Window, cx: &mut Context<Self>) {
         self.navigate_back(cx);
     }
@@ -2592,7 +2628,17 @@ impl Shell {
         );
     }
 
-    fn on_refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_refresh(&mut self, _: &Refresh, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .is_some_and(|surface| surface.flat_mode().is_some())
+        {
+            let tab_id = self.active_tab().id;
+            self.restart_flat_view(tab_id, Some(window.window_handle()), cx);
+            return;
+        }
         let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
         // Re-read the directory *and* re-derive everything cached about
@@ -2830,6 +2876,17 @@ impl Shell {
         self.toggle_hidden(cx);
     }
 
+    fn on_toggle_flat_view(
+        &mut self,
+        _: &ToggleFlatView,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        crate::trail::command("Toggle Flat View");
+        let tab_id = self.active_tab().id;
+        self.toggle_flat_view(tab_id, Some(window.window_handle()), cx);
+    }
+
     fn on_focus_filter(&mut self, _: &FocusFilter, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_filter_input(window, cx);
         // Re-assert the focus after the current update cycle. When this fires
@@ -2878,7 +2935,8 @@ impl Shell {
             self.focus_filter_input(window, cx);
             return;
         }
-        if !self.active_tab().selection.is_empty() {
+        let visible_count = self.active_tab().table.read(cx).delegate().entries.len();
+        if !self.active_tab().selection_is_empty(visible_count) {
             self.clear_active_selection(cx);
             self.focus_handle.focus(window, cx);
         }
@@ -3418,8 +3476,11 @@ impl Shell {
                 crate::log_warn!(90, "disk-usage: pop-out failed: {e:?}");
                 window.push_notification(
                     error_notification(
-                        tr!("Could not pop out Disk Usage: {detail}", detail = format!("{e:?}"))
-                            .to_string(),
+                        tr!(
+                            "Could not pop out Disk Usage: {detail}",
+                            detail = format!("{e:?}")
+                        )
+                        .to_string(),
                     ),
                     cx,
                 );
@@ -3487,6 +3548,8 @@ impl Shell {
             .unwrap_or((SortColumn::Name, true));
         let ascending = match current {
             (c, a) if c == col => !a,
+            // Ant Trail joins Size/Modified in defaulting to descending:
+            // the interesting end of a heat ranking is the hot end.
             _ => matches!(col, SortColumn::Name | SortColumn::Format),
         };
         crate::file_list::apply_sort_column(&table, col, ascending, cx);
@@ -3514,6 +3577,19 @@ impl Shell {
         self.set_sort_column(crate::file_list::SortColumn::Modified, cx);
     }
 
+    /// Sort by Ant Trail heat — the folders this user opens most, on
+    /// top (docs/features/ANT_TRAIL.md). Reads the heat the delegate
+    /// already cached per row, so it is the same in-memory re-sort as
+    /// every other sort pick.
+    pub fn on_sort_by_ant_trail(
+        &mut self,
+        _: &SortByAntTrail,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_sort_column(crate::file_list::SortColumn::AntTrail, cx);
+    }
+
     /// Cmd+Y — open the viewer window (docs/features/VIEWER.md) on a
     /// snapshot of the current tab's visible files (sorted + filtered
     /// order, directories skipped), starting at the lead row. The
@@ -3537,7 +3613,7 @@ impl Shell {
                 if let Some(path) = self.path_for_row(ix, cx) {
                     playlist.push(crate::viewer::PlaylistEntry {
                         path,
-                        name: e.name.clone(),
+                        name: e.name.to_string(),
                     });
                 }
             }
@@ -3579,7 +3655,7 @@ impl Shell {
                 if let Some(path) = self.path_for_row(ix, cx) {
                     playlist.push(crate::viewer::PlaylistEntry {
                         path,
-                        name: e.name.clone(),
+                        name: e.name.to_string(),
                     });
                 }
             }
@@ -3802,7 +3878,11 @@ impl Shell {
             // Save the current entry's selection before stepping
             // back, so a subsequent Forward restores it.
             if let Some(cur) = tab.history.get_mut(tab.history_index) {
-                cur.selection = tab.selection.clone();
+                cur.selection = if tab.selection_all {
+                    HashSet::new()
+                } else {
+                    tab.selection.clone()
+                };
                 cur.anchor = tab.anchor;
                 cur.lead = tab.lead;
             }
@@ -3828,7 +3908,11 @@ impl Shell {
                 return;
             }
             if let Some(cur) = tab.history.get_mut(tab.history_index) {
-                cur.selection = tab.selection.clone();
+                cur.selection = if tab.selection_all {
+                    HashSet::new()
+                } else {
+                    tab.selection.clone()
+                };
                 cur.anchor = tab.anchor;
                 cur.lead = tab.lead;
             }
@@ -3854,6 +3938,7 @@ impl Shell {
     ) {
         {
             let tab = self.active_tab_mut();
+            tab.selection_all = false;
             tab.selection = snapshot.selection;
             tab.anchor = snapshot.anchor;
             tab.lead = snapshot.lead;
@@ -4124,6 +4209,20 @@ impl Shell {
             .iter()
             .map(|entry| self.ant_heat(entry.id))
             .collect();
+        let favorites: Vec<bool> = {
+            let favs = self.process.favorites();
+            let favs = favs.read(cx);
+            batch
+                .entries
+                .iter()
+                .map(|entry| {
+                    batch
+                        .paths
+                        .get(&entry.id)
+                        .is_some_and(|path| favs.contains_path(path))
+                })
+                .collect()
+        };
         let Some(tab) = self.tabs.get_mut(idx) else {
             return;
         };
@@ -4134,15 +4233,14 @@ impl Shell {
             if first_batch {
                 state.delegate_mut().clear();
             }
-            state
-                .delegate_mut()
-                .append_entries_sorted(batch.entries, batch.paths, heats);
+            state.delegate_mut().append_entries_decorated(
+                batch.entries,
+                batch.paths,
+                heats,
+                favorites,
+            );
             state.refresh(cx);
         });
-        // Repaint the §5 star badge on each row whose path is now in
-        // the favorites index. Cheap (HashMap lookups across the new
-        // batch); runs once per batch on the load path.
-        self.refresh_file_list_favorited_in_tab(idx, cx);
         // Spec §2.6 streaming arrival passes:
         //   1. Mirror current selection state into the delegate so
         //      the parallel render view paints the rows that just
@@ -4181,20 +4279,19 @@ impl Shell {
         let favs_ref = favs.read(cx);
         // Pre-collect each row's path so the table-update closure
         // doesn't need to borrow Shell again.
-        let bits: Vec<bool> = table
-            .read(cx)
-            .delegate()
-            .entries
-            .iter()
-            .map(|entry| {
-                table
-                    .read(cx)
-                    .delegate()
-                    .path_for_entry(entry.id)
-                    .map(|p| favs_ref.contains_path(&p))
-                    .unwrap_or(false)
-            })
-            .collect();
+        let bits: Vec<bool> = {
+            let state = table.read(cx);
+            let delegate = state.delegate();
+            delegate
+                .entries
+                .iter()
+                .map(|entry| {
+                    delegate
+                        .path_for_entry(entry.id)
+                        .is_some_and(|path| favs_ref.contains_path(&path))
+                })
+                .collect()
+        };
         let _ = favs_ref;
         table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
@@ -4348,6 +4445,16 @@ impl Shell {
             let table = self.tabs[idx].table.clone();
             table.update(cx, |state, cx| {
                 state.delegate_mut().clear();
+                state.refresh(cx);
+            });
+        } else {
+            // Streaming appends stay in raw enumeration order so every batch
+            // is O(batch). Apply the effective sort once, after the final
+            // batch, instead of re-sorting the accumulated model hundreds or
+            // thousands of times.
+            let table = self.tabs[idx].table.clone();
+            table.update(cx, |state, cx| {
+                state.delegate_mut().apply_effective_sort();
                 state.refresh(cx);
             });
         }
@@ -4879,6 +4986,14 @@ impl Shell {
                 .map(|entry| self.ant_heat(entry.id))
                 .collect();
             delegate.heats = heats;
+            // Under an Ant Trail sort the heat *is* the sort key, so new
+            // heat means a new row order — hydration finishing (or a
+            // fresh visit) has to re-rank, not just re-tint.
+            if delegate.current_sort.map(|(col, _)| col)
+                == Some(crate::file_list::SortColumn::AntTrail)
+            {
+                delegate.apply_effective_sort();
+            }
             state.refresh(cx);
         });
     }
@@ -5327,10 +5442,7 @@ impl Shell {
                         Ok(()) => {
                             Shell::broadcast_reload_for_process(&process, reload, cx);
                             let _ = win.update(cx, |_, window, cx| {
-                                window.push_notification(
-                                    Notification::success(label.clone()),
-                                    cx,
-                                );
+                                window.push_notification(Notification::success(label.clone()), cx);
                             });
                         }
                         Err(e) => {
@@ -5350,6 +5462,16 @@ impl Shell {
 
     pub fn toggle_hidden(&mut self, cx: &mut Context<Self>) {
         self.show_hidden = !self.show_hidden;
+        if self
+            .active_tab()
+            .tool_result
+            .as_ref()
+            .is_some_and(|surface| surface.flat_mode().is_some())
+        {
+            let tab_id = self.active_tab().id;
+            self.restart_flat_view(tab_id, None, cx);
+            return;
+        }
         let path = self.active_tab().current_dir.clone();
         self.load_path(path, cx);
     }
@@ -6130,6 +6252,7 @@ impl Shell {
         tab.history_index = closed.history_index;
         tab.filter_text = closed.filter_text.clone();
         tab.selection = closed.selection;
+        tab.selection_all = false;
         tab.anchor = closed.anchor;
         tab.lead = closed.lead;
         let filter_input = tab.filter_input.clone();
@@ -6247,7 +6370,7 @@ impl Shell {
                 (
                     self.path_for_row(row_ix, cx).unwrap_or_else(|| {
                         let mut p = self.active_tab().current_dir.clone();
-                        p.push(&e.name);
+                        p.push(e.name.as_ref());
                         p
                     }),
                     e.kind,
@@ -6445,7 +6568,11 @@ impl Shell {
         // Snapshot the selection we're leaving into the current
         // history entry so a Back returns to where the user was.
         if let Some(entry) = tab.history.get_mut(tab.history_index) {
-            entry.selection = tab.selection.clone();
+            entry.selection = if tab.selection_all {
+                HashSet::new()
+            } else {
+                tab.selection.clone()
+            };
             entry.anchor = tab.anchor;
             entry.lead = tab.lead;
         }
@@ -6462,7 +6589,7 @@ impl Shell {
         // Fresh navigation: clear selection + filter holding +
         // live-range. Back/forward override this with the restored
         // snapshot just before calling us (see `restore_from_history`).
-        tab.selection.clear();
+        tab.clear_selection();
         tab.anchor = None;
         tab.lead = None;
         tab.filtered_out.clear();

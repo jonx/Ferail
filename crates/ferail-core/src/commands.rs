@@ -287,6 +287,12 @@ const CATALOGUE: &[CommandSpec] = &[
         category: Category::File,
         shortcuts: &[Shortcut::primary_shift("C")],
     },
+    CommandSpec {
+        id: CommandId("file.generate_sha256"),
+        title: msgid!("Generate SHA-256…"),
+        category: Category::File,
+        shortcuts: &[],
+    },
     // Copy the whole displayed list (folder contents, duplicate-finder
     // groups, or search results) as newline-joined paths. No default
     // shortcut — reached via the toolbar menu and command palette.
@@ -411,6 +417,12 @@ const CATALOGUE: &[CommandSpec] = &[
         shortcuts: &[],
     },
     CommandSpec {
+        id: CommandId("view.sort_ant_trail"),
+        title: msgid!("Sort by Ant Trail"),
+        category: Category::View,
+        shortcuts: &[],
+    },
+    CommandSpec {
         id: CommandId("view.cycle_focus"),
         title: msgid!("Cycle Focus"),
         category: Category::View,
@@ -467,6 +479,12 @@ const CATALOGUE: &[CommandSpec] = &[
         title: msgid!("Find Similar Images"),
         category: Category::View,
         shortcuts: &[Shortcut::primary_shift("S")],
+    },
+    CommandSpec {
+        id: CommandId("view.toggle_flat"),
+        title: msgid!("Include Subfolders"),
+        category: Category::View,
+        shortcuts: &[Shortcut::primary_shift("L")],
     },
     CommandSpec {
         id: CommandId("disk_usage.refresh"),

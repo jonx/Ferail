@@ -15,9 +15,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Instant, SystemTime};
 
 use ferail_core::EnumerationError;
-use ferail_disk_usage::{DiskUsageFact, DiskUsageStats, FileCategory, NodeKind, classify_path};
+use ferail_disk_usage::{classify_path, DiskUsageFact, DiskUsageStats, FileCategory, NodeKind};
 
-use crate::{NativeFs, map_io_error};
+use crate::{map_io_error, NativeFs};
 
 /// Default fact-batch size, mirroring `DEFAULT_ENUMERATION_BATCH`.
 pub const DEFAULT_DU_BATCH: usize = 256;

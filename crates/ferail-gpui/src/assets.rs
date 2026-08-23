@@ -68,7 +68,11 @@ mod tests {
         let ty = (size as f32 - ts.height() * scale) / 2.0;
         let transform = tiny_skia::Transform::from_scale(scale, scale).post_translate(tx, ty);
         resvg::render(&tree, transform, &mut pixmap.as_mut());
-        pixmap.data().chunks_exact(4).filter(|px| px[3] != 0).count()
+        pixmap
+            .data()
+            .chunks_exact(4)
+            .filter(|px| px[3] != 0)
+            .count()
     }
 
     /// Every SVG we ship must parse and rasterize to a non-empty mask. This is
@@ -84,10 +88,16 @@ mod tests {
                 .unwrap_or_else(|| panic!("{path}: listed but not loadable"))
                 .data;
             let cov = coverage(&bytes, &path);
-            assert!(cov > 0, "{path}: rasterized to an empty (all-transparent) mask");
+            assert!(
+                cov > 0,
+                "{path}: rasterized to an empty (all-transparent) mask"
+            );
             n += 1;
         }
-        assert!(n >= 40, "expected the local icon bundle, found only {n} SVGs");
+        assert!(
+            n >= 40,
+            "expected the local icon bundle, found only {n} SVGs"
+        );
     }
 
     /// Every icon path the app actually draws must resolve through the
@@ -100,50 +110,108 @@ mod tests {
         // Grouped by surface for readability; deduplicated across the app.
         const REFERENCED: &[&str] = &[
             // Sidebar nav / locations
-            "icons/nav/home.svg", "icons/nav/apps.svg", "icons/nav/desktop.svg",
-            "icons/nav/documents.svg", "icons/nav/downloads.svg", "icons/nav/trash.svg",
-            "icons/nav/movies.svg", "icons/nav/music.svg", "icons/nav/pictures.svg",
-            "icons/nav/cloud.svg", "icons/nav/cloud-fill.svg", "icons/nav/drive.svg",
-            "icons/nav/eject.svg", "icons/nav/star.svg", "icons/nav/tag.svg",
-            "icons/nav/search.svg", "icons/nav/plus.svg", "icons/nav/package.svg",
-            "icons/nav/folder.svg", "icons/nav/refresh.svg", "icons/nav/show-desktop.svg",
-            "icons/nav/chevron-left.svg", "icons/nav/chevron-right.svg",
-            "icons/nav/chevrons-left.svg", "icons/nav/chevrons-right.svg",
+            "icons/nav/home.svg",
+            "icons/nav/apps.svg",
+            "icons/nav/desktop.svg",
+            "icons/nav/documents.svg",
+            "icons/nav/downloads.svg",
+            "icons/nav/trash.svg",
+            "icons/nav/movies.svg",
+            "icons/nav/music.svg",
+            "icons/nav/pictures.svg",
+            "icons/nav/cloud.svg",
+            "icons/nav/cloud-fill.svg",
+            "icons/nav/drive.svg",
+            "icons/nav/eject.svg",
+            "icons/nav/star.svg",
+            "icons/nav/tag.svg",
+            "icons/nav/search.svg",
+            "icons/nav/plus.svg",
+            "icons/nav/package.svg",
+            "icons/nav/folder.svg",
+            "icons/nav/refresh.svg",
+            "icons/nav/show-desktop.svg",
+            "icons/nav/chevron-left.svg",
+            "icons/nav/chevron-right.svg",
+            "icons/nav/chevrons-left.svg",
+            "icons/nav/chevrons-right.svg",
             // File-type glyphs (fallback when no OS icon)
-            "icons/folder.svg", "icons/file/generic.svg", "icons/file/symlink.svg",
-            "icons/file/pdf.svg", "icons/file/html.svg", "icons/file/spreadsheet.svg",
-            "icons/file/image.svg", "icons/file/video.svg", "icons/file/audio.svg",
-            "icons/file/text.svg", "icons/file/code.svg", "icons/file/archive.svg",
-            "icons/file/disk.svg", "icons/file/app.svg",
+            "icons/folder.svg",
+            "icons/file/generic.svg",
+            "icons/file/symlink.svg",
+            "icons/file/pdf.svg",
+            "icons/file/html.svg",
+            "icons/file/spreadsheet.svg",
+            "icons/file/image.svg",
+            "icons/file/video.svg",
+            "icons/file/audio.svg",
+            "icons/file/text.svg",
+            "icons/file/code.svg",
+            "icons/file/archive.svg",
+            "icons/file/disk.svg",
+            "icons/file/app.svg",
             // Toolbar / shell chrome (upstream bundle)
-            "icons/close.svg", "icons/minimize.svg", "icons/maximize.svg",
-            "icons/arrow-up.svg", "icons/panel-right-close.svg", "icons/panel-right-open.svg",
-            "icons/sort-ascending.svg", "icons/sort-descending.svg", "icons/view-list.svg",
-            "icons/view-grid.svg", "icons/undo-2.svg", "icons/ellipsis.svg",
-            "icons/dock.svg", "icons/dock-left.svg",
-            "icons/dock-right.svg", "icons/undock.svg", "icons/external-link.svg",
-            "icons/folder-open.svg", "icons/copy.svg", "icons/network.svg",
+            "icons/close.svg",
+            "icons/minimize.svg",
+            "icons/maximize.svg",
+            "icons/arrow-up.svg",
+            "icons/panel-right-close.svg",
+            "icons/panel-right-open.svg",
+            "icons/sort-ascending.svg",
+            "icons/sort-descending.svg",
+            "icons/view-list.svg",
+            "icons/view-grid.svg",
+            "icons/folder-tree.svg",
+            "icons/undo-2.svg",
+            "icons/ellipsis.svg",
+            "icons/dock.svg",
+            "icons/dock-left.svg",
+            "icons/dock-right.svg",
+            "icons/undock.svg",
+            "icons/external-link.svg",
+            "icons/folder-open.svg",
+            "icons/copy.svg",
+            "icons/network.svg",
             // Status / adornments
-            "icons/circle-x.svg", "icons/circle-help.svg", "icons/circle-check.svg",
-            "icons/triangle-alert.svg", "icons/inbox.svg", "icons/lock.svg",
+            "icons/circle-x.svg",
+            "icons/circle-help.svg",
+            "icons/circle-check.svg",
+            "icons/triangle-alert.svg",
+            "icons/inbox.svg",
+            "icons/lock.svg",
             // Settings pages
-            "icons/activity.svg", "icons/search.svg", "icons/palette.svg", "icons/cpu.svg",
-            "icons/settings.svg", "icons/settings-2.svg", "icons/keyboard.svg", "icons/info.svg",
+            "icons/activity.svg",
+            "icons/search.svg",
+            "icons/palette.svg",
+            "icons/cpu.svg",
+            "icons/settings.svg",
+            "icons/settings-2.svg",
+            "icons/keyboard.svg",
+            "icons/info.svg",
             // Viewer controls
-            "icons/chevron-left.svg", "icons/chevron-right.svg", "icons/pause.svg",
-            "icons/play.svg", "icons/minus.svg", "icons/plus.svg", "icons/redo.svg",
-            "icons/trash.svg", "icons/volume-x.svg", "icons/volume-2.svg",
+            "icons/chevron-left.svg",
+            "icons/chevron-right.svg",
+            "icons/pause.svg",
+            "icons/play.svg",
+            "icons/minus.svg",
+            "icons/plus.svg",
+            "icons/redo.svg",
+            "icons/trash.svg",
+            "icons/volume-x.svg",
+            "icons/volume-2.svg",
             "icons/wand-sparkles.svg",
         ];
         let assets = FeraAssets;
         for path in REFERENCED {
-            let bytes = assets
-                .load(path)
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| panic!("{path}: not found in local bundle or upstream assets"));
+            let bytes =
+                assets.load(path).ok().flatten().unwrap_or_else(|| {
+                    panic!("{path}: not found in local bundle or upstream assets")
+                });
             let cov = coverage(&bytes, path);
-            assert!(cov > 0, "{path}: rasterized to an empty (all-transparent) mask");
+            assert!(
+                cov > 0,
+                "{path}: rasterized to an empty (all-transparent) mask"
+            );
         }
     }
 }

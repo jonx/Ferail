@@ -18,12 +18,14 @@ the primary user-facing feature exists and the remaining work is tracked in
 | --- | --- | --- |
 | [ANT_TRAIL.md](ANT_TRAIL.md) | Shipped with follow-ups | Folder visit counts, sidebar heat, recents hydration, and DB persistence ship; prediction and decay remain open. |
 | [BULK_RENAME.md](BULK_RENAME.md) | Shipped with follow-ups | Pattern-rule bulk rename modal: literal/regex find-replace, case transforms, {name}/{ext}/{n}/{date} template, live preview, chain-aware apply, and batch undo ship; dimensions token, presets, and a keybinding remain open. |
+| [CHECKSUMS.md](CHECKSUMS.md) | Shipped | Streaming, cancellable SHA-256 generation with robust clipboard import, editable expected checksum, and an explicit match/mismatch result. |
 | [CONTEXT_MENU.md](CONTEXT_MENU.md) | Shipped with follow-ups | Mac-native context menus, Open With, Services, Share, tags, Quick Look, Duplicate, Compress, and Trash ship; compact tag row and async Open With prewarm remain open. |
 | [DISK_USAGE.md](DISK_USAGE.md) | Shipped with follow-ups | Disk Usage window, scanner, treemap/top list, package handling, category filters, and CLI basics ship; APFS clone-aware sizing and richer views remain open. |
 | [DOCK.md](DOCK.md) | Shipped with follow-ups (macOS) | Dock the whole window to the left or right screen edge as an auto-hiding, always-on-top drawer revealed by an edge-slam, with a thin grab handle; core slide/float/all-Spaces ship. Persistence/auto-restore, borderless drawer chrome, and multi-display polish remain open. |
 | [DUPLICATES.md](DUPLICATES.md) | Shipped with follow-ups | Size/partial/full-hash duplicate finder, clone/hard-link awareness, card panel, virtualization, and cleanup actions ship; faster enumeration and more benchmarks remain open. |
 | [FAVORITES.md](FAVORITES.md) | Shipped with follow-ups | Favorites persistence, sidebar, drag/drop, locate, rename, remove, keyboard actions, and cross-platform modal flow ship; tag favorites and file-watch missing transitions remain open. |
 | [FILE_OPS.md](FILE_OPS.md) | Shipped with follow-ups | Copy, cut, paste, move, trash, collision policy, progress, cancellation, undo, and platform integration ship; mutation toast/undo gaps remain open. |
+| [FLAT_VIEW.md](FLAT_VIEW.md) | Shipped with follow-ups | Uncapped, cancellable recursive file snapshot on the existing virtualized table, with scan-local identity, compact path arena, relative Path column, progress, Refresh, and in-memory filtering; compact rows, async indexes and page-backed scale remain. |
 | [FRESHNESS.md](FRESHNESS.md) | Shipped with follow-ups | Keeps subtree-derived caches (folder sizes, Get Info "Calculate") honest via mtime + TTL validity, exact ancestor invalidation on in-app mutations, and a forced refresh when the window returns to the foreground; multi-parent moves and a live-watch upgrade path remain open. |
 | [ICONS.md](ICONS.md) | Reference | Complete icon inventory: source (NSWorkspace / local Lucide bundle / upstream), attribution, command→icon map, and the rules for adding new icons. Flags missing/weak/reused glyphs. |
 | [LAZY_METADATA.md](LAZY_METADATA.md) | Shipped with follow-ups | Shared NodeStore, path guard, cached row metadata, background prefetch, metadata DB, and process-owned caches ship; rename/move identity completion remains open. |
@@ -34,6 +36,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [METADATA_DB.md](METADATA_DB.md) | Shipped | SQLite metadata DB, schema versioning, favorites, file metadata, folder usage, and cache reset scopes ship. |
 | [MOUSE_PREDICTOR.md](MOUSE_PREDICTOR.md) | Future | Design note only; no pointer prediction/prewarm scheduler is implemented yet. |
 | [NON_NEGOTIABLE.md](NON_NEGOTIABLE.md) | Reference | Reusable method for making a project rule unbreakable for coding agents: canonical doctrine + named hazards + sanctioned path + lint wall + runtime tripwires + verification ritual + violation ledger. Uses the Prime Directive hardening as the worked example. |
+| [OPEN_WITH.md](OPEN_WITH.md) | Partial + study | System handler enumeration (LaunchServices / `SHAssocEnumHandlers` / freedesktop MIME) ships behind a warm off-thread cache; user-defined custom tools, an "Other…" app chooser, "Always Open With", and multi-selection support are designed but unbuilt. |
 | [POWER.md](POWER.md) | Shipped with follow-ups | macOS sleep/wake handling, transfer idle-sleep prevention, and Windows/Linux shell surfaces exist; Windows display events and Power Request API are still deferred. |
 | [PREVIEW.md](PREVIEW.md) | Shipped with follow-ups | Info pane, Quick Look thumbnails, inline text/Markdown/code preview, caches, scroll chaining, and viewer handoff ship; audio/archive providers and true cancellation remain open. |
 | [SCREENSHOTS.md](SCREENSHOTS.md) | Shipped with follow-ups | Headless screenshot CLI and simulated UI states ship; deterministic fixture coverage and a few deferred flags remain open. |
@@ -76,8 +79,12 @@ keep the UI off the I/O path.
   schema versioning.
 - [DUPLICATES.md](DUPLICATES.md) — duplicate finder (size → partial-hash →
   full-hash stages).
+- [CHECKSUMS.md](CHECKSUMS.md) — streaming SHA-256 generation and optional
+  comparison with a checksum copied from a trusted source.
 - [SEARCH.md](SEARCH.md) — file search in tiers: in-directory filter, recursive
   subtree walk, and OS-index-backed global search (Spotlight / MFT / Tracker).
+- [FLAT_VIEW.md](FLAT_VIEW.md) — an uncapped recursive list with a relative
+  Path column, surface-local storage, progress and cancellation.
 
 ## Navigation & interaction
 
@@ -90,6 +97,8 @@ keep the UI off the I/O path.
 - [ANT_TRAIL.md](ANT_TRAIL.md) — navigation history ("ant trail").
 - [CONTEXT_MENU.md](CONTEXT_MENU.md) — context menus and native action
   delegation.
+- [OPEN_WITH.md](OPEN_WITH.md) — the Open With submenu: how each OS registers
+  file-type handlers, what ships, and a *study* for user-defined custom tools.
 
 ## Panels & tools
 

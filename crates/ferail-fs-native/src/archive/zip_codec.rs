@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use ferail_archive::{ArchiveEntry, Toc};
-use zip::ZipArchive;
 use zip::result::ZipError;
+use zip::ZipArchive;
 
 use super::{
     ArchiveEditPlan, ArchiveError, ArchiveSummary, CreateOptions, ExtractOptions, ExtractOutcome,
@@ -211,8 +211,8 @@ pub(super) fn extract(
 /// method + level, plus AES-256 when a password is set. The password is
 /// borrowed, so the options carry its lifetime (not `'static`).
 fn entry_options(opts: CreateOptions<'_>) -> zip::write::FileOptions<'_, ()> {
-    use zip::CompressionMethod;
     use zip::write::SimpleFileOptions;
+    use zip::CompressionMethod;
     let mut o = SimpleFileOptions::default();
     o = match opts.level {
         ferail_archive::CompressionLevel::Store => o.compression_method(CompressionMethod::Stored),
@@ -620,8 +620,8 @@ fn atomic_replace(temp: &Path, archive: &Path) -> Result<(), ArchiveError> {
 #[cfg(windows)]
 fn atomic_replace(temp: &Path, archive: &Path) -> Result<(), ArchiveError> {
     use std::os::windows::ffi::OsStrExt as _;
-    use windows::Win32::Storage::FileSystem::{REPLACEFILE_WRITE_THROUGH, ReplaceFileW};
     use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{ReplaceFileW, REPLACEFILE_WRITE_THROUGH};
 
     let archive_w: Vec<u16> = archive.as_os_str().encode_wide().chain(Some(0)).collect();
     let temp_w: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();

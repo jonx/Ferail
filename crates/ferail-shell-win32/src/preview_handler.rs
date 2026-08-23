@@ -34,17 +34,15 @@ use std::time::{Duration, Instant};
 use windows::core::{Interface, GUID, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateSolidBrush, DeleteDC, DeleteObject,
-    FillRect, GetDC, GetObjectW, ReleaseDC, SelectObject, DIBSECTION, HBRUSH,
-};
-use windows::Win32::System::Com::{
-    CoCreateInstance, CLSCTX_INPROC_SERVER, CLSCTX_LOCAL_SERVER,
+    CreateCompatibleDC, CreateSolidBrush, DeleteDC, DeleteObject, FillRect, GetDC, GetObjectW,
+    ReleaseDC, SelectObject, DIBSECTION, HBRUSH,
 };
 use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER, CLSCTX_LOCAL_SERVER};
+use windows::Win32::UI::Shell::PropertiesSystem::IInitializeWithFile;
 use windows::Win32::UI::Shell::{
     AssocQueryStringW, IPreviewHandler, ASSOCF_INIT_DEFAULTTOSTAR, ASSOCSTR_SHELLEXTENSION,
 };
-use windows::Win32::UI::Shell::PropertiesSystem::IInitializeWithFile;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, PeekMessageW,
     RegisterClassExW, TranslateMessage, CS_HREDRAW, CS_VREDRAW, HMENU, MSG, PM_REMOVE,
@@ -87,7 +85,10 @@ pub(crate) fn try_capture(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u3
 
     // Allow up to 6s overall — the 3.5s message-pump budget plus headroom
     // for handler startup (prevhost.exe cold-launch can take a moment).
-    let result = rx.recv_timeout(std::time::Duration::from_secs(6)).ok().flatten();
+    let result = rx
+        .recv_timeout(std::time::Duration::from_secs(6))
+        .ok()
+        .flatten();
     // Let the worker finish its cleanup; if it's hung past our
     // timeout it'll exit when the process does.
     drop(join);
@@ -95,9 +96,7 @@ pub(crate) fn try_capture(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u3
 }
 
 fn try_capture_sta(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
-    use windows::Win32::System::Com::{
-        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
-    };
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     let clsid = lookup_handler_clsid(&ext)?;
 
@@ -130,57 +129,57 @@ unsafe fn try_capture_inner(
         None,
         CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER,
     ) {
-            Ok(h) => h,
-            Err(e) => {
-                if debug() {
-                    eprintln!("CoCreateInstance failed: {e:?}");
-                }
-                return None;
-            }
-        };
-
-        if let Err(e) = init_with_file(&handler, path) {
+        Ok(h) => h,
+        Err(e) => {
             if debug() {
-                eprintln!("preview_handler: init failed: {e:?}");
+                eprintln!("CoCreateInstance failed: {e:?}");
             }
             return None;
         }
+    };
 
-        let hwnd = create_host_window(size_px)?;
-        let rect = RECT {
-            left: 0,
-            top: 0,
-            right: size_px as i32,
-            bottom: size_px as i32,
-        };
-
-        // Fill the host's client area with white so preview handlers
-        // that don't paint a background don't leave transparent /
-        // garbage pixels.
-        let white_brush = CreateSolidBrush(windows::Win32::Foundation::COLORREF(0x00FFFFFF));
-        let dc = GetDC(hwnd);
-        let _ = FillRect(dc, &rect, white_brush);
-        ReleaseDC(hwnd, dc);
-        let _ = DeleteObject(white_brush);
-
-        if let Err(e) = handler.SetWindow(hwnd, &rect) {
-            if debug() {
-                eprintln!("SetWindow failed: {e:?}");
-            }
-            let _ = handler.Unload();
-            let _ = DestroyWindow(hwnd);
-            return None;
+    if let Err(e) = init_with_file(&handler, path) {
+        if debug() {
+            eprintln!("preview_handler: init failed: {e:?}");
         }
-        let _ = handler.SetRect(&rect);
+        return None;
+    }
 
-        if let Err(e) = handler.DoPreview() {
-            if debug() {
-                eprintln!("DoPreview failed: {e:?}");
-            }
-            let _ = handler.Unload();
-            let _ = DestroyWindow(hwnd);
-            return None;
+    let hwnd = create_host_window(size_px)?;
+    let rect = RECT {
+        left: 0,
+        top: 0,
+        right: size_px as i32,
+        bottom: size_px as i32,
+    };
+
+    // Fill the host's client area with white so preview handlers
+    // that don't paint a background don't leave transparent /
+    // garbage pixels.
+    let white_brush = CreateSolidBrush(windows::Win32::Foundation::COLORREF(0x00FFFFFF));
+    let dc = GetDC(hwnd);
+    let _ = FillRect(dc, &rect, white_brush);
+    ReleaseDC(hwnd, dc);
+    let _ = DeleteObject(white_brush);
+
+    if let Err(e) = handler.SetWindow(hwnd, &rect) {
+        if debug() {
+            eprintln!("SetWindow failed: {e:?}");
         }
+        let _ = handler.Unload();
+        let _ = DestroyWindow(hwnd);
+        return None;
+    }
+    let _ = handler.SetRect(&rect);
+
+    if let Err(e) = handler.DoPreview() {
+        if debug() {
+            eprintln!("DoPreview failed: {e:?}");
+        }
+        let _ = handler.Unload();
+        let _ = DestroyWindow(hwnd);
+        return None;
+    }
 
     // Pump messages so async-rendering handlers can complete. Some
     // handlers (PDF, Excel) post async work and need extra time —
@@ -302,7 +301,11 @@ fn lookup_handler_clsid(ext_lower: &str) -> Option<GUID> {
 
 unsafe fn init_with_file(handler: &IPreviewHandler, path: &Path) -> windows::core::Result<()> {
     let init: IInitializeWithFile = handler.cast()?;
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     init.Initialize(PCWSTR::from_raw(wide.as_ptr()), 0)
 }
 

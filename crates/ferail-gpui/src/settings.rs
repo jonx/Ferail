@@ -415,12 +415,7 @@ impl SettingsView {
         cx.spawn(async move |this, cx| {
             let (report, hidden_count) = cx
                 .background_executor()
-                .spawn(async move {
-                    (
-                        crate::diagnostics::run_checks(),
-                        count_home_hidden_items(),
-                    )
-                })
+                .spawn(async move { (crate::diagnostics::run_checks(), count_home_hidden_items()) })
                 .await;
             let _ = this.update(cx, |this: &mut Self, cx| {
                 this.diagnostics = Some(std::rc::Rc::new(report));
@@ -853,7 +848,8 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
             );
     };
 
-    let mut page = SettingPage::new(tr!("Diagnostics")).icon(Icon::empty().path("icons/activity.svg"));
+    let mut page =
+        SettingPage::new(tr!("Diagnostics")).icon(Icon::empty().path("icons/activity.svg"));
 
     // Summary header.
     {
@@ -875,10 +871,14 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                         warn = warn,
                         fail = fail
                     )))
-                    .child(div().w_full().text_scale_xs().text_color(muted).child(tr!(
-                        "Health check of the app's storage and environment. \
-                     Run `ferail --doctor` for the same report from a terminal."
-                    )))
+                    .child(
+                        div()
+                            .w_full()
+                            .text_scale_xs()
+                            .text_color(muted)
+                            .child(tr!("Health check of the app's storage and environment. \
+                     Run `ferail --doctor` for the same report from a terminal.")),
+                    )
             })),
         );
     }
@@ -887,20 +887,24 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
     // Placed up front (right under the summary) so it's the first thing a user
     // sees before reading or sharing the report.
     page = page.group(
-        SettingGroup::new().title(tr!("Privacy")).item(switch_setting(
-            tr!("Redact file names & paths"),
-            tr!("When on (the default), the report below, the bundle you can save, and the \
+        SettingGroup::new()
+            .title(tr!("Privacy"))
+            .item(switch_setting(
+                tr!("Redact file names & paths"),
+                tr!(
+                    "When on (the default), the report below, the bundle you can save, and the \
              activity trail all replace every file and folder name with \u{201c}\u{2026}\u{201d}. \
              We see only the shape of what you did \u{2014} how deep a folder was, what file \
              type \u{2014} never the names. So you can share a report with us and we learn \
              nothing about your files. Turn it off only if a maintainer asks for real paths \
-             to reproduce a bug."),
-            |_cx: &App| app_state::load().redact_diagnostics.unwrap_or(true),
-            |val: bool, _cx: &mut App| {
-                persist_redact_diagnostics(val);
-                crate::redact::set_enabled(val);
-            },
-        )),
+             to reproduce a bug."
+                ),
+                |_cx: &App| app_state::load().redact_diagnostics.unwrap_or(true),
+                |val: bool, _cx: &mut App| {
+                    persist_redact_diagnostics(val);
+                    crate::redact::set_enabled(val);
+                },
+            )),
     );
 
     // One group per check group, one row per check.
@@ -947,15 +951,13 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                             // target never enters a shared report, so it
                             // coexists with the redaction toggle.
                             .children(check.path.clone().map(|path| {
-                                Button::new(SharedString::from(format!(
-                                    "diag-reveal-{gi}-{ci}"
-                                )))
-                                .label(tr!("Reveal"))
-                                .outline()
-                                .xsmall()
-                                .on_click(move |_, _w, cx| {
-                                    crate::shell::reveal_path_in_app(cx, path.clone());
-                                })
+                                Button::new(SharedString::from(format!("diag-reveal-{gi}-{ci}")))
+                                    .label(tr!("Reveal"))
+                                    .outline()
+                                    .xsmall()
+                                    .on_click(move |_, _w, cx| {
+                                        crate::shell::reveal_path_in_app(cx, path.clone());
+                                    })
                             })),
                     )
                     .child(
@@ -985,21 +987,23 @@ fn diagnostics_page(report: Option<std::rc::Rc<crate::diagnostics::Report>>) -> 
                     SharedString::from(lines[start..].join("\n"))
                 };
                 let caption = if crate::redact::enabled() {
-                    tr!("Names are redacted \u{2014} this is exactly what a shared report contains.")
+                    tr!(
+                        "Names are redacted \u{2014} this is exactly what a shared report contains."
+                    )
                 } else {
                     tr!("Redaction is off \u{2014} a shared report would include these real paths.")
                 };
                 gpui_component::v_flex()
                     .w_full()
                     .gap_1()
+                    .child(div().w_full().text_scale_xs().text_color(muted).child(body))
                     .child(
                         div()
                             .w_full()
                             .text_scale_xs()
                             .text_color(muted)
-                            .child(body),
+                            .child(caption),
                     )
-                    .child(div().w_full().text_scale_xs().text_color(muted).child(caption))
             })),
     );
 
@@ -1054,10 +1058,12 @@ fn search_dupes_page() -> SettingPage {
                 .title(tr!("Search"))
                 .item(dropdown_setting(
                     tr!("Search engine"),
-                    tr!("Automatic uses Spotlight's live index when available \u{2014} instant, \
+                    tr!(
+                        "Automatic uses Spotlight's live index when available \u{2014} instant, \
                      content-aware, near-zero CPU \u{2014} and falls back to the built-in \
                      recursive walker where Spotlight is disabled or blind (some external / \
-                     network volumes). Force one if you prefer."),
+                     network volumes). Force one if you prefer."
+                    ),
                     &[
                         ("auto", msgid!("Automatic (recommended)")),
                         ("spotlight", msgid!("Spotlight")),
@@ -1093,9 +1099,11 @@ fn search_dupes_page() -> SettingPage {
                 .title(tr!("Duplicate finder"))
                 .item(dropdown_setting(
                     tr!("Results view"),
-                    tr!("How duplicate groups are shown. Grouped rows reuse the file list \
+                    tr!(
+                        "How duplicate groups are shown. Grouped rows reuse the file list \
                      (selection, sort, preview, context menu); the dedicated panel offers \
-                     group-level actions like keep-newest."),
+                     group-level actions like keep-newest."
+                    ),
                     &[
                         ("grouped", msgid!("Grouped rows in a tab")),
                         ("panel", msgid!("Dedicated panel")),
@@ -1129,15 +1137,19 @@ fn search_dupes_page() -> SettingPage {
                 ))
                 .item(switch_setting(
                     tr!("Compare inside app bundles"),
-                    tr!("Descend into .app / .bundle packages and compare their inner files. \
-                     Off keeps packages opaque."),
+                    tr!(
+                        "Descend into .app / .bundle packages and compare their inner files. \
+                     Off keeps packages opaque."
+                    ),
                     |_cx: &App| app_state::load().dupe_include_packages.unwrap_or(false),
                     |val: bool, _cx: &mut App| persist_dupe_include_packages(val),
                 ))
                 .item(switch_setting(
                     tr!("Byte-for-byte verify"),
-                    tr!("Confirm each match byte-for-byte after hashing. Removes any \
-                     hash-collision doubt at the cost of re-reading confirmed groups."),
+                    tr!(
+                        "Confirm each match byte-for-byte after hashing. Removes any \
+                     hash-collision doubt at the cost of re-reading confirmed groups."
+                    ),
                     |_cx: &App| app_state::load().dupe_paranoid.unwrap_or(false),
                     |val: bool, _cx: &mut App| persist_dupe_paranoid(val),
                 )),
@@ -1319,77 +1331,92 @@ fn appearance_page(
             ),
         )
         .group(
-            SettingGroup::new().title(tr!("Selection")).item(
-                // The picker is a stateful entity owned by `SettingsView`;
-                // here we render a fresh stateless `ColorPicker` over it
-                // each frame. Changes flow through the entity's
-                // `ColorPickerEvent::Change` subscription (set up in
-                // `SettingsView::new`), which updates the live global and
-                // persists — so the file list and grid recolor at once.
-                SettingItem::new(
-                    tr!("Selection color"),
-                    SettingField::render(move |_options, _window, _cx| {
-                        ColorPicker::new(&selection_picker).into_any_element()
-                    }),
-                )
-                .layout(Axis::Vertical)
-                .description(tr!(
-                    "The highlight behind selected files in the list and grid. \
-                     Clear it to follow the theme's blue."
-                )),
-            )
-            .item(dropdown_setting_with(
-                tr!("Icon spacing"),
-                tr!("Gap between the selection highlights in icon view. Wider spacing \
-                 lets the boxes breathe; None packs them edge-to-edge."),
-                &[
-                    ("0", msgid!("None")),
-                    ("2", msgid!("Tight")),
-                    ("4", msgid!("Default")),
-                    ("8", msgid!("Comfortable")),
-                    ("12", msgid!("Spacious")),
-                ],
-                &[],
-                || format!("{:.0}", crate::grid::clamp_cell_gap(
-                    app_state::load().cell_gap.unwrap_or(crate::grid::DEFAULT_CELL_GAP),
-                )),
-                |value, cx| {
-                    let g = value.parse::<f32>().unwrap_or(crate::grid::DEFAULT_CELL_GAP);
-                    persist_cell_gap(g);
-                    cx.set_global(crate::grid::CellGap(crate::grid::clamp_cell_gap(g)));
-                    cx.refresh_windows();
-                },
-            ))
-            // Photos are rarely square and the icon slot always is, so
-            // something has to give. Sits next to Icon spacing because
-            // both answer "how does icon view lay a cell out".
-            .item(dropdown_setting_with(
-                tr!("Icon fit"),
-                tr!("How a photo or preview fills its square in icon view. Best fit shows \
-                 the whole image with bars beside it; Fill frame crops the edges so the \
-                 image fills the icon completely."),
-                &[
-                    ("best", msgid!("Best fit")),
-                    ("fill", msgid!("Fill frame")),
-                    ("width", msgid!("Fit width")),
-                    ("height", msgid!("Fit height")),
-                    ("stretch", msgid!("Stretch")),
-                ],
-                &[],
-                || {
-                    crate::grid::ThumbFit::from_str(
-                        app_state::load().thumb_fit.as_deref().unwrap_or("best"),
+            SettingGroup::new()
+                .title(tr!("Selection"))
+                .item(
+                    // The picker is a stateful entity owned by `SettingsView`;
+                    // here we render a fresh stateless `ColorPicker` over it
+                    // each frame. Changes flow through the entity's
+                    // `ColorPickerEvent::Change` subscription (set up in
+                    // `SettingsView::new`), which updates the live global and
+                    // persists — so the file list and grid recolor at once.
+                    SettingItem::new(
+                        tr!("Selection color"),
+                        SettingField::render(move |_options, _window, _cx| {
+                            ColorPicker::new(&selection_picker).into_any_element()
+                        }),
                     )
-                    .as_str()
-                    .to_string()
-                },
-                |value, cx| {
-                    let fit = crate::grid::ThumbFit::from_str(value);
-                    persist_thumb_fit(fit);
-                    cx.set_global(crate::grid::ThumbFitMode(fit));
-                    cx.refresh_windows();
-                },
-            )),
+                    .layout(Axis::Vertical)
+                    .description(tr!(
+                        "The highlight behind selected files in the list and grid. \
+                     Clear it to follow the theme's blue."
+                    )),
+                )
+                .item(dropdown_setting_with(
+                    tr!("Icon spacing"),
+                    tr!(
+                        "Gap between the selection highlights in icon view. Wider spacing \
+                 lets the boxes breathe; None packs them edge-to-edge."
+                    ),
+                    &[
+                        ("0", msgid!("None")),
+                        ("2", msgid!("Tight")),
+                        ("4", msgid!("Default")),
+                        ("8", msgid!("Comfortable")),
+                        ("12", msgid!("Spacious")),
+                    ],
+                    &[],
+                    || {
+                        format!(
+                            "{:.0}",
+                            crate::grid::clamp_cell_gap(
+                                app_state::load()
+                                    .cell_gap
+                                    .unwrap_or(crate::grid::DEFAULT_CELL_GAP),
+                            )
+                        )
+                    },
+                    |value, cx| {
+                        let g = value
+                            .parse::<f32>()
+                            .unwrap_or(crate::grid::DEFAULT_CELL_GAP);
+                        persist_cell_gap(g);
+                        cx.set_global(crate::grid::CellGap(crate::grid::clamp_cell_gap(g)));
+                        cx.refresh_windows();
+                    },
+                ))
+                // Photos are rarely square and the icon slot always is, so
+                // something has to give. Sits next to Icon spacing because
+                // both answer "how does icon view lay a cell out".
+                .item(dropdown_setting_with(
+                    tr!("Icon fit"),
+                    tr!(
+                        "How a photo or preview fills its square in icon view. Best fit shows \
+                 the whole image with bars beside it; Fill frame crops the edges so the \
+                 image fills the icon completely."
+                    ),
+                    &[
+                        ("best", msgid!("Best fit")),
+                        ("fill", msgid!("Fill frame")),
+                        ("width", msgid!("Fit width")),
+                        ("height", msgid!("Fit height")),
+                        ("stretch", msgid!("Stretch")),
+                    ],
+                    &[],
+                    || {
+                        crate::grid::ThumbFit::from_str(
+                            app_state::load().thumb_fit.as_deref().unwrap_or("best"),
+                        )
+                        .as_str()
+                        .to_string()
+                    },
+                    |value, cx| {
+                        let fit = crate::grid::ThumbFit::from_str(value);
+                        persist_thumb_fit(fit);
+                        cx.set_global(crate::grid::ThumbFitMode(fit));
+                        cx.refresh_windows();
+                    },
+                )),
         )
         .group(
             SettingGroup::new()
@@ -1398,9 +1425,11 @@ fn appearance_page(
                 // tint appears/vanishes in open windows without a relaunch.
                 .item(switch_setting(
                     tr!("Show Ant Trail"),
-                    tr!("Tint your most-visited folders so the ones you open most stand out. \
+                    tr!(
+                        "Tint your most-visited folders so the ones you open most stand out. \
                      Off hides the tint entirely \u{2014} your visit history still feeds \
-                     Recents."),
+                     Recents."
+                    ),
                     |cx: &App| crate::ant_trail::enabled(cx),
                     |val: bool, cx: &mut App| {
                         persist_ant_trail_enabled(val);
@@ -1428,10 +1457,12 @@ fn appearance_page(
                 // takes effect on the next favorite click without a relaunch.
                 .item(switch_setting(
                     tr!("Don't track favorites"),
-                    tr!("When on, opening a folder from your Favorites doesn't count toward \
+                    tr!(
+                        "When on, opening a folder from your Favorites doesn't count toward \
                      its Ant Trail heat or add it to Recents \u{2014} so deliberate \
                      shortcuts don't crowd out folders you actually browse to. Reaching \
-                     the same folder any other way still counts."),
+                     the same folder any other way still counts."
+                    ),
                     |_cx: &App| {
                         app_state::load()
                             .exclude_favorites_from_tracking
@@ -1451,9 +1482,11 @@ fn appearance_page(
                 // "Clear Recents\u{2026}" (Go menu / \u{2318}K) to wipe the list.
                 .item(switch_setting(
                     tr!("Show Recents"),
-                    tr!("List the folders you've opened recently in the sidebar, most \
+                    tr!(
+                        "List the folders you've opened recently in the sidebar, most \
                      recent first. Off hides the section and stops adding to it \
-                     \u{2014} your Ant Trail heat is unaffected."),
+                     \u{2014} your Ant Trail heat is unaffected."
+                    ),
                     |cx: &App| crate::recents_section::recents_enabled(cx),
                     |val: bool, cx: &mut App| {
                         persist_recents_enabled(val);
@@ -1478,9 +1511,11 @@ fn performance_page() -> SettingPage {
                 // per-folder background costs (see `warm_*_viewport`).
                 .item(switch_setting(
                     tr!("Show file previews"),
-                    tr!("Draw photos, videos, and PDFs as their actual content in the file \
+                    tr!(
+                        "Draw photos, videos, and PDFs as their actual content in the file \
                      list and grid. Off uses generic type icons \u{2014} lighter, since \
-                     Quick Look never runs."),
+                     Quick Look never runs."
+                    ),
                     |cx: &App| crate::thumbnails::show_thumbnails(cx),
                     |val: bool, cx: &mut App| {
                         persist_show_thumbnails(val);
@@ -1493,9 +1528,11 @@ fn performance_page() -> SettingPage {
                 // the Size column.
                 .item(switch_setting(
                     tr!("Calculate folder sizes"),
-                    tr!("Recursively total each folder so the Size column shows how big it is. \
+                    tr!(
+                        "Recursively total each folder so the Size column shows how big it is. \
                      This walks the whole subtree in the background \u{2014} the biggest \
-                     disk cost on large folders. Off shows a dash for folder sizes."),
+                     disk cost on large folders. Off shows a dash for folder sizes."
+                    ),
                     |cx: &App| crate::folder_sizes::folder_sizing_enabled(cx),
                     |val: bool, cx: &mut App| {
                         persist_folder_sizing(val);
@@ -1507,10 +1544,12 @@ fn performance_page() -> SettingPage {
                 // every folder load. Bundled into one switch.
                 .item(switch_setting(
                     tr!("Detect file types and tags"),
-                    tr!("Read each file's contents to name its type in the Format column and \
+                    tr!(
+                        "Read each file's contents to name its type in the Format column and \
                      read its Finder tags for the colour dots. Both are per-file disk \
                      reads on every folder. Off falls back to types from the file \
-                     extension and hides tag dots."),
+                     extension and hides tag dots."
+                    ),
                     |cx: &App| crate::prefetch::file_detail_scan_enabled(cx),
                     |val: bool, cx: &mut App| {
                         persist_file_detail_scan(val);
@@ -1533,7 +1572,9 @@ fn files_page(home_hidden_count: Option<usize>) -> SettingPage {
             "Reveal items that start with a dot \u{2014} {n} in your home folder. Takes effect on next launch.",
             n
         ),
-        _ => tr!("Reveal items that start with a dot, like .config and .ssh. Takes effect on next launch."),
+        _ => tr!(
+            "Reveal items that start with a dot, like .config and .ssh. Takes effect on next launch."
+        ),
     };
     let page = SettingPage::new(tr!("Files"))
         .icon(Icon::empty().path("icons/folder.svg"))
@@ -1606,10 +1647,15 @@ fn terminal_group() -> SettingGroup {
         )
         .item(dropdown_setting(
             tr!("Launch mode"),
-            tr!("Standard opens the terminal normally. Administrator opens it with elevated \
+            tr!(
+                "Standard opens the terminal normally. Administrator opens it with elevated \
              rights \u{2014} a UAC prompt on Windows; on macOS and Linux the window opens \
-             into a root shell, with sudo asking for your password inside the terminal."),
-            &[("standard", msgid!("Standard")), ("admin", msgid!("Administrator"))],
+             into a root shell, with sudo asking for your password inside the terminal."
+            ),
+            &[
+                ("standard", msgid!("Standard")),
+                ("admin", msgid!("Administrator")),
+            ],
             &[],
             || {
                 app_state::load()
@@ -1654,11 +1700,13 @@ fn persist_terminal_mode(value: &str) {
 fn locations_mode_setting() -> SettingItem {
     dropdown_setting_with(
         tr!("Special folders"),
-        tr!("When OneDrive moves your Desktop, Documents, or Pictures into the cloud it often \
+        tr!(
+            "When OneDrive moves your Desktop, Documents, or Pictures into the cloud it often \
          leaves a local copy behind, so \u{201C}where is my Documents?\u{201D} has two answers. \
          Automatic follows Windows (cloud where it moved them, local otherwise). Local prefers \
          your %USERPROFILE% copy; OneDrive prefers the OneDrive copy \u{2014} each falls back to \
-         the other when its copy doesn\u{2019}t exist, so a shortcut never opens to nothing."),
+         the other when its copy doesn\u{2019}t exist, so a shortcut never opens to nothing."
+        ),
         &[
             ("auto", msgid!("Automatic (recommended)")),
             ("local", msgid!("Local profile")),
@@ -1749,20 +1797,24 @@ fn plugins_page() -> SettingPage {
     let (player_desc, player_disabled): (SharedString, &'static [&'static str]) =
         if cfg!(feature = "mpv") {
             (
-                tr!("The built-in player uses the platform's native media frameworks \
+                tr!(
+                    "The built-in player uses the platform's native media frameworks \
                  (AVFoundation on macOS, Media Foundation on Windows). mpv plays virtually \
                  any container/codec and applies colour adjustments and a transparent-colour \
                  key to the video itself. libmpv must be installed; a change takes effect on \
-                 the next viewer window."),
+                 the next viewer window."
+                ),
                 &[],
             )
         } else {
             (
-                tr!("The built-in player uses the platform's native media frameworks. \
+                tr!(
+                    "The built-in player uses the platform's native media frameworks. \
                  mpv plays virtually any container/codec, but this build was compiled \
                  without the `mpv` feature, so mpv is unavailable \u{2014} rebuild with \
                  `cargo run --bin ferail-gpui --features mpv` (with libmpv installed) \
-                 to enable it."),
+                 to enable it."
+                ),
                 &["mpv"],
             )
         };
@@ -1915,23 +1967,27 @@ fn about_page() -> SettingPage {
         .group(
             // Updates — the automatic check is opt-in; the menu's manual
             // Check for Updates… works regardless (docs/features/UPDATES.md).
-            SettingGroup::new().title(tr!("Updates")).item(switch_setting(
-                tr!("Check for updates automatically"),
-                tr!("Once a day, ask GitHub whether a newer Ferail release exists, and show a \
+            SettingGroup::new()
+                .title(tr!("Updates"))
+                .item(switch_setting(
+                    tr!("Check for updates automatically"),
+                    tr!(
+                        "Once a day, ask GitHub whether a newer Ferail release exists, and show a \
                  notification when one does. Off by default \u{2014} when off, Ferail makes no \
                  network requests on its own. Nothing is ever downloaded or installed without \
                  you choosing to; use Ferail \u{2192} Check for Updates\u{2026} to check by hand \
-                 at any time."),
-                |_cx: &App| app_state::load().update_check.unwrap_or(false),
-                |val: bool, cx: &mut App| {
-                    persist_update_check(val);
-                    if val {
-                        // Opting in mid-session: answer immediately rather
-                        // than at tomorrow's daily wake.
-                        crate::update_check::start_check_background(cx);
-                    }
-                },
-            )),
+                 at any time."
+                    ),
+                    |_cx: &App| app_state::load().update_check.unwrap_or(false),
+                    |val: bool, cx: &mut App| {
+                        persist_update_check(val);
+                        if val {
+                            // Opting in mid-session: answer immediately rather
+                            // than at tomorrow's daily wake.
+                            crate::update_check::start_check_background(cx);
+                        }
+                    },
+                )),
         )
         .group(
             SettingGroup::new().item(SettingItem::render(|_options, _window, cx| {
@@ -1951,14 +2007,19 @@ fn about_page() -> SettingPage {
                         div()
                             .text_scale_xs()
                             .text_color(theme.muted_foreground)
-                            .child(tr!("Version {version}", version = env!("CARGO_PKG_VERSION"))),
+                            .child(tr!(
+                                "Version {version}",
+                                version = env!("CARGO_PKG_VERSION")
+                            )),
                     )
                     .child(
                         div()
                             .mt_2()
                             .text_scale_sm()
                             .text_color(theme.foreground)
-                            .child(tr!("The macOS port of Ferail — a Finder-class file explorer.")),
+                            .child(tr!(
+                                "The macOS port of Ferail — a Finder-class file explorer."
+                            )),
                     )
                     .child(
                         div()

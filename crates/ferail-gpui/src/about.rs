@@ -135,14 +135,20 @@ fn about_body() -> impl IntoElement {
                 .items_center()
                 .gap_1()
                 .child(WithTheme::wordmark())
-                .child(WithTheme::muted(tr!("Version {version}", version = version)))
+                .child(WithTheme::muted(tr!(
+                    "Version {version}",
+                    version = version
+                )))
                 .child(WithTheme::tagline(tr!("A fast, calm file explorer."))),
         )
         .child(
             v_flex()
                 .gap_1()
                 .items_center()
-                .child(meta_row(tr!("Platform"), format!("{os_label} \u{00B7} {arch}")))
+                .child(meta_row(
+                    tr!("Platform"),
+                    format!("{os_label} \u{00B7} {arch}"),
+                ))
                 .child(meta_row(tr!("Author"), "John Knipper".to_string()))
                 .child(website_row("github.com/jonx/Ferail")),
         )

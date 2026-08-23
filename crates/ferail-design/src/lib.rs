@@ -26,10 +26,7 @@ impl Color {
 
     /// Pack to 0xAARRGGBB, the renderer's internal format.
     pub fn pack_argb(self) -> u32 {
-        ((self.a as u32) << 24)
-            | ((self.r as u32) << 16)
-            | ((self.g as u32) << 8)
-            | (self.b as u32)
+        ((self.a as u32) << 24) | ((self.r as u32) << 16) | ((self.g as u32) << 8) | (self.b as u32)
     }
 }
 
@@ -368,8 +365,13 @@ impl Tokens {
                 danger: Color::rgb(0xC4, 0x2B, 0x1C),
             },
             space: SpacingTokens {
-                xxs: 2.0, xs: 4.0, sm: 8.0, md: 12.0,
-                lg: 16.0, xl: 24.0, xxl: 32.0,
+                xxs: 2.0,
+                xs: 4.0,
+                sm: 8.0,
+                md: 12.0,
+                lg: 16.0,
+                xl: 24.0,
+                xxl: 32.0,
             },
             radius: RadiusTokens {
                 none: 0.0,
@@ -380,8 +382,18 @@ impl Tokens {
                 full: 9999.0,
             },
             text: TextTokens::BASE,
-            hit: HitTokens { min: 24.0, row: 28.0, button: 32.0, input: 32.0 },
-            icon: IconTokens { sm: 14.0, md: 16.0, lg: 20.0, xl: 32.0 },
+            hit: HitTokens {
+                min: 24.0,
+                row: 28.0,
+                button: 32.0,
+                input: 32.0,
+            },
+            icon: IconTokens {
+                sm: 14.0,
+                md: 16.0,
+                lg: 20.0,
+                xl: 32.0,
+            },
             layout: LayoutTokens {
                 tree_row: 24.0,
                 tree_section_header: 26.0,

@@ -129,41 +129,41 @@ fn read_text_preview(path: &Path) -> Result<Option<String>, ()> {
 pub(crate) fn decode_text_preview(mut buf: Vec<u8>) -> Option<String> {
     buf.truncate(MAX_BYTES);
     let r: Result<Option<String>, ()> = (|| {
-    if buf.is_empty() {
-        // An empty file is "text" (empty) — nicer than a blank
-        // thumbnail box.
-        return Ok(Some(String::new()));
-    }
-    // A NUL byte in the prefix is the classic binary tell.
-    if buf.contains(&0) {
-        return Ok(None);
-    }
-    // Decode as UTF-8, tolerating only a multibyte char split at the
-    // read boundary (error_len == None). A real invalid sequence
-    // mid-buffer means the file isn't UTF-8 — but it may still be
-    // single-byte text (ISO-8859-1: Amiga/DOS-era readmes, scene
-    // .nfo files, old exports), which deserves a preview just as much
-    // as UTF-8 does. Fall back to a Latin-1 decode when the bytes
-    // look overwhelmingly printable; the NUL check above has already
-    // rejected the classic binary shape.
-    let text: std::borrow::Cow<'_, str> = match std::str::from_utf8(&buf) {
-        Ok(t) => std::borrow::Cow::Borrowed(t),
-        Err(e) if e.error_len().is_none() => std::borrow::Cow::Borrowed(
-            std::str::from_utf8(&buf[..e.valid_up_to()]).map_err(|_| ())?,
-        ),
-        Err(_) if looks_like_single_byte_text(&buf) => {
-            // In Latin-1 every byte IS its code point, so this cast
-            // is the whole decode.
-            std::borrow::Cow::Owned(buf.iter().map(|&b| b as char).collect())
+        if buf.is_empty() {
+            // An empty file is "text" (empty) — nicer than a blank
+            // thumbnail box.
+            return Ok(Some(String::new()));
         }
-        Err(_) => return Ok(None),
-    };
-    let text = text.as_ref();
-    let mut out: String = text.lines().take(MAX_LINES).collect::<Vec<_>>().join("\n");
-    if text.lines().count() > MAX_LINES {
-        out.push_str("\n\u{2026}");
-    }
-    Ok(Some(out))
+        // A NUL byte in the prefix is the classic binary tell.
+        if buf.contains(&0) {
+            return Ok(None);
+        }
+        // Decode as UTF-8, tolerating only a multibyte char split at the
+        // read boundary (error_len == None). A real invalid sequence
+        // mid-buffer means the file isn't UTF-8 — but it may still be
+        // single-byte text (ISO-8859-1: Amiga/DOS-era readmes, scene
+        // .nfo files, old exports), which deserves a preview just as much
+        // as UTF-8 does. Fall back to a Latin-1 decode when the bytes
+        // look overwhelmingly printable; the NUL check above has already
+        // rejected the classic binary shape.
+        let text: std::borrow::Cow<'_, str> = match std::str::from_utf8(&buf) {
+            Ok(t) => std::borrow::Cow::Borrowed(t),
+            Err(e) if e.error_len().is_none() => std::borrow::Cow::Borrowed(
+                std::str::from_utf8(&buf[..e.valid_up_to()]).map_err(|_| ())?,
+            ),
+            Err(_) if looks_like_single_byte_text(&buf) => {
+                // In Latin-1 every byte IS its code point, so this cast
+                // is the whole decode.
+                std::borrow::Cow::Owned(buf.iter().map(|&b| b as char).collect())
+            }
+            Err(_) => return Ok(None),
+        };
+        let text = text.as_ref();
+        let mut out: String = text.lines().take(MAX_LINES).collect::<Vec<_>>().join("\n");
+        if text.lines().count() > MAX_LINES {
+            out.push_str("\n\u{2026}");
+        }
+        Ok(Some(out))
     })();
     r.ok().flatten()
 }
@@ -315,7 +315,13 @@ mod tests {
         // ISO-8859-1 "Café © Digita" — 0xE9 (é) and 0xA9 (©) are
         // invalid UTF-8 lead bytes, but this is text and previews as
         // such via the Latin-1 fallback (Amiga/DOS-era readmes).
-        std::fs::write(&p, [b'C', b'a', b'f', 0xE9, b' ', 0xA9, b' ', b'D', b'i', b'g', b'i', b't', b'a']).unwrap();
+        std::fs::write(
+            &p,
+            [
+                b'C', b'a', b'f', 0xE9, b' ', 0xA9, b' ', b'D', b'i', b'g', b'i', b't', b'a',
+            ],
+        )
+        .unwrap();
         let out = read_text_preview(&p).unwrap().unwrap();
         assert_eq!(out, "Café © Digita");
         let _ = std::fs::remove_file(&p);

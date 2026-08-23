@@ -58,9 +58,9 @@ fn handle_cli_subcommand() -> Result<Option<i32>> {
         // Privileged trash/delete worker: same re-launch-as-root contract as
         // `--elevated-op`, but moves protected items into the user's Trash (or
         // removes them outright for permanent-delete / Empty Trash).
-        "--elevated-trash" => Ok(Some(
-            ferail_gpui::elevation::run_elevated_trash_op_worker(&args),
-        )),
+        "--elevated-trash" => Ok(Some(ferail_gpui::elevation::run_elevated_trash_op_worker(
+            &args,
+        ))),
         "help" | "-h" | "--help" => {
             print_cli_help();
             Ok(Some(0))

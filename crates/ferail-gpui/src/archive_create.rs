@@ -165,14 +165,14 @@ impl Render for NewArchiveView {
                     .selected(*l == self.level),
             );
         }
-        let levels = levels
-            .disabled(!caps.supports_levels)
-            .on_click(cx.listener(|this, clicks: &Vec<usize>, _window, cx| {
+        let levels = levels.disabled(!caps.supports_levels).on_click(cx.listener(
+            |this, clicks: &Vec<usize>, _window, cx| {
                 if let Some(l) = clicks.first().and_then(|i| LEVELS.get(*i)) {
                     this.level = *l;
                     cx.notify();
                 }
-            }));
+            },
+        ));
 
         let count = self.sources.len();
 
@@ -185,7 +185,12 @@ impl Render for NewArchiveView {
                 h_flex()
                     .gap_1()
                     .items_center()
-                    .child(div().flex_1().min_w_0().child(Input::new(&self.name_input).small()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(Input::new(&self.name_input).small()),
+                    )
                     .child(div().text_scale_sm().text_color(muted).child(ext)),
                 cx,
             ))
@@ -211,25 +216,16 @@ impl Render for NewArchiveView {
                 },
                 cx,
             ))
-            .child(
-                div()
-                    .text_scale_xs()
-                    .text_color(muted)
-                    .child(trn!(
-                        "{n} item will be added.",
-                        "{n} items will be added.",
-                        count
-                    )),
-            )
+            .child(div().text_scale_xs().text_color(muted).child(trn!(
+                "{n} item will be added.",
+                "{n} items will be added.",
+                count
+            )))
     }
 }
 
 /// Open the New Archive dialog over `sources`.
-pub fn open_dialog(
-    sources: Vec<PathBuf>,
-    window: &mut Window,
-    cx: &mut Context<Shell>,
-) {
+pub fn open_dialog(sources: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Shell>) {
     if sources.is_empty() {
         return;
     }
@@ -247,8 +243,11 @@ pub fn open_dialog(
                 DialogFooter::new()
                     .child(
                         div().w(px(96.)).child(
-                            DialogClose::new()
-                                .child(Button::new("new-archive-cancel").label(tr!("Cancel")).small()),
+                            DialogClose::new().child(
+                                Button::new("new-archive-cancel")
+                                    .label(tr!("Cancel"))
+                                    .small(),
+                            ),
                         ),
                     )
                     .child(

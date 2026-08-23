@@ -114,7 +114,8 @@ impl LanguagePack {
     /// Parse a pack file. Errors are human-readable (shown in the import
     /// report), never panics.
     pub fn parse(json: &str) -> Result<Self, String> {
-        let pack: LanguagePack = serde_json::from_str(json).map_err(|e| format!("not a valid language pack: {e}"))?;
+        let pack: LanguagePack =
+            serde_json::from_str(json).map_err(|e| format!("not a valid language pack: {e}"))?;
         if pack.format > FORMAT {
             return Err(format!(
                 "language pack format {} is newer than this Ferail understands ({})",
@@ -168,7 +169,11 @@ impl LanguagePack {
             if value.is_translated() {
                 report.translated += 1;
             }
-            let want: BTreeSet<String> = src_value.texts().iter().flat_map(|t| placeholders(t)).collect();
+            let want: BTreeSet<String> = src_value
+                .texts()
+                .iter()
+                .flat_map(|t| placeholders(t))
+                .collect();
             for text in value.texts() {
                 let have: BTreeSet<String> = placeholders(text).into_iter().collect();
                 if have != want {
@@ -177,7 +182,10 @@ impl LanguagePack {
                 }
             }
             if let PackValue::Plural(forms) = value {
-                if forms.keys().any(|c| super::plural::Category::from_name(c).is_none()) {
+                if forms
+                    .keys()
+                    .any(|c| super::plural::Category::from_name(c).is_none())
+                {
                     report.bad_plural_categories.push(key.clone());
                 }
             }
@@ -202,7 +210,11 @@ impl LanguagePack {
                 }
             }
         }
-        let language = if self.english_name.is_empty() { self.code.as_str() } else { self.english_name.as_str() };
+        let language = if self.english_name.is_empty() {
+            self.code.as_str()
+        } else {
+            self.english_name.as_str()
+        };
         out.instructions = instructions_for(language);
         out
     }
@@ -224,13 +236,18 @@ pub struct ValidationReport {
 
 impl ValidationReport {
     pub fn has_warnings(&self) -> bool {
-        !self.unknown_keys.is_empty() || !self.placeholder_mismatches.is_empty() || !self.bad_plural_categories.is_empty()
+        !self.unknown_keys.is_empty()
+            || !self.placeholder_mismatches.is_empty()
+            || !self.bad_plural_categories.is_empty()
     }
 
     /// Multi-line, English (it is a developer/translator-facing report;
     /// the headline shown in the UI is translated separately).
     pub fn details(&self) -> String {
-        let mut s = format!("{} of {} strings translated.\n", self.translated, self.total);
+        let mut s = format!(
+            "{} of {} strings translated.\n",
+            self.translated, self.total
+        );
         if !self.placeholder_mismatches.is_empty() {
             s.push_str(&format!(
                 "\n{} translation(s) changed a {{placeholder}} — these will show wrong or missing values:\n",
@@ -298,7 +315,9 @@ pub fn bundled_codes() -> impl Iterator<Item = &'static str> {
 /// followed by optional 2–8 character alphanumeric subtags.
 pub fn is_valid_code(code: &str) -> bool {
     let mut parts = code.split('-');
-    let Some(lang) = parts.next() else { return false };
+    let Some(lang) = parts.next() else {
+        return false;
+    };
     if !(2..=3).contains(&lang.len()) || !lang.chars().all(|c| c.is_ascii_lowercase()) {
         return false;
     }
@@ -399,8 +418,12 @@ mod tests {
     #[test]
     fn bundled_packs_parse() {
         for (code, json) in BUNDLED {
-            let pack = LanguagePack::parse(json).unwrap_or_else(|e| panic!("locales/{code}.json: {e}"));
-            assert_eq!(pack.code, *code, "locales/{code}.json declares a different code");
+            let pack =
+                LanguagePack::parse(json).unwrap_or_else(|e| panic!("locales/{code}.json: {e}"));
+            assert_eq!(
+                pack.code, *code,
+                "locales/{code}.json declares a different code"
+            );
         }
     }
 
@@ -408,10 +431,18 @@ mod tests {
     fn bundled_packs_fully_cover_source_catalog() {
         let src = source();
         for (code, json) in BUNDLED {
-            let pack = LanguagePack::parse(json).unwrap_or_else(|e| panic!("locales/{code}.json: {e}"));
+            let pack =
+                LanguagePack::parse(json).unwrap_or_else(|e| panic!("locales/{code}.json: {e}"));
             let report = pack.validate();
-            assert_eq!(report.translated, report.total, "locales/{code}.json is missing translations");
-            assert!(report.unknown_keys.is_empty(), "locales/{code}.json has stale keys: {:?}", report.unknown_keys);
+            assert_eq!(
+                report.translated, report.total,
+                "locales/{code}.json is missing translations"
+            );
+            assert!(
+                report.unknown_keys.is_empty(),
+                "locales/{code}.json has stale keys: {:?}",
+                report.unknown_keys
+            );
             assert!(
                 report.placeholder_mismatches.is_empty(),
                 "locales/{code}.json changed placeholders: {:?}",
@@ -423,7 +454,10 @@ mod tests {
                 report.bad_plural_categories
             );
             for (key, source_value) in &src.strings {
-                let translated = pack.strings.get(key).unwrap_or_else(|| panic!("locales/{code}.json is missing {key:?}"));
+                let translated = pack
+                    .strings
+                    .get(key)
+                    .unwrap_or_else(|| panic!("locales/{code}.json is missing {key:?}"));
                 assert_eq!(
                     std::mem::discriminant(source_value),
                     std::mem::discriminant(translated),
@@ -443,16 +477,31 @@ mod tests {
     fn validate_reports_placeholder_drift_and_unknown_keys() {
         // Build a pack against whatever the real source catalog holds.
         let src = source();
-        let Some((key, value)) = src.strings.iter().find(|(_, v)| matches!(v, PackValue::Text(t) if !placeholders(t).is_empty())) else {
+        let Some((key, value)) = src
+            .strings
+            .iter()
+            .find(|(_, v)| matches!(v, PackValue::Text(t) if !placeholders(t).is_empty()))
+        else {
             return; // no placeholder msgids yet — nothing to test
         };
-        let PackValue::Text(english) = value else { unreachable!() };
+        let PackValue::Text(english) = value else {
+            unreachable!()
+        };
         let mut pack = LanguagePack::empty("xx", "X", "X");
-        pack.strings.insert(key.clone(), PackValue::Text(english.replace('{', "[").replace('}', "]")));
-        pack.strings.insert("this key does not exist".into(), PackValue::Text("nope".into()));
+        pack.strings.insert(
+            key.clone(),
+            PackValue::Text(english.replace('{', "[").replace('}', "]")),
+        );
+        pack.strings.insert(
+            "this key does not exist".into(),
+            PackValue::Text("nope".into()),
+        );
         let report = pack.validate();
         assert_eq!(report.placeholder_mismatches, vec![key.clone()]);
-        assert_eq!(report.unknown_keys, vec!["this key does not exist".to_owned()]);
+        assert_eq!(
+            report.unknown_keys,
+            vec!["this key does not exist".to_owned()]
+        );
         assert!(report.has_warnings());
         assert!(report.details().contains("placeholder"));
     }

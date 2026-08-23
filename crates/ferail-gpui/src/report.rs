@@ -84,8 +84,9 @@ pub fn build_bundle(screenshot: Option<&RgbaImage>, note: &str) -> Result<Vec<u8
     // is enough. The trail carries the user's *own* folders, so it is path-
     // redacted at the source via `render_lines_sanitized`. The note is free
     // text, so it gets the best-effort path scrub on top.
-    let report =
-        redact_username(&crate::diagnostics::render_text(&crate::diagnostics::run_checks()));
+    let report = redact_username(&crate::diagnostics::render_text(
+        &crate::diagnostics::run_checks(),
+    ));
     let trail = redact_username(&crate::trail::render_lines_sanitized().join("\n"));
     let note = crate::redact::scrub_text(&redact_username(note));
 
@@ -202,7 +203,15 @@ mod tests {
     fn redactions_blacken_pixels_within_bounds() {
         let mut img = RgbaImage::from_pixel(10, 10, image::Rgba([200, 100, 50, 255]));
         // A box that overruns the edge must clamp, not panic.
-        apply_redactions(&mut img, &[Redaction { x: 8, y: 8, w: 100, h: 100 }]);
+        apply_redactions(
+            &mut img,
+            &[Redaction {
+                x: 8,
+                y: 8,
+                w: 100,
+                h: 100,
+            }],
+        );
         assert_eq!(*img.get_pixel(9, 9), image::Rgba([0, 0, 0, 255]));
         assert_eq!(*img.get_pixel(0, 0), image::Rgba([200, 100, 50, 255]));
     }
@@ -222,7 +231,10 @@ mod tests {
             "note.txt",
             "screenshot.png",
         ] {
-            assert!(names.contains(&expected.to_string()), "missing {expected} in {names:?}");
+            assert!(
+                names.contains(&expected.to_string()),
+                "missing {expected} in {names:?}"
+            );
         }
     }
 

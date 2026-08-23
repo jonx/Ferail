@@ -5,7 +5,9 @@
 //! ```
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: lockers <path> [--close]");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: lockers <path> [--close]");
     let close = std::env::args().any(|a| a == "--close");
     let list = ferail_shell_win32::processes_using(std::path::Path::new(&path));
     if list.is_empty() {

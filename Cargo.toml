@@ -18,7 +18,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.6.5"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
@@ -55,6 +55,9 @@ uuid        = { version = "1", features = ["v4"] }
 # intent from Ferail's hash pipeline.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 blake3      = "1"
+# User-facing file verification (docs/features/CHECKSUMS.md). The worker
+# feeds this incrementally, so even multi-gigabyte files stay bounded-memory.
+sha2        = "0.10"
 
 # Bulk-rename pattern rules (docs/features/BULK_RENAME.md): user-supplied
 # find/replace patterns with $1..$9 capture refs. MIT/Apache-2.0 — clean

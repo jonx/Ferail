@@ -248,7 +248,10 @@ pub fn gather(path: &Path, known_size: Option<u64>) -> EntryInfo {
                 .text_if(tr!("Artist").to_string(), t.artist.clone())
                 .text_if(tr!("Album").to_string(), t.album.clone())
                 .text_if(tr!("Genre").to_string(), t.genre.clone())
-                .text_if(tr!("Year").to_string(), t.year.map(|y| y.to_string()).unwrap_or_default())
+                .text_if(
+                    tr!("Year").to_string(),
+                    t.year.map(|y| y.to_string()).unwrap_or_default(),
+                )
                 .text_if(tr!("Track").to_string(), t.track_label())
                 .text_if(tr!("Disc").to_string(), t.disc_label())
                 .text_if(tr!("Duration").to_string(), t.duration_label())

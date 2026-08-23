@@ -482,13 +482,13 @@ pub fn same_volume(a: &Path, b: &Path) -> bool {
         // the serial is the ground truth MoveFileEx itself honors.
         fn serial_of(p: &Path) -> Option<u32> {
             use std::os::windows::ffi::OsStrExt;
+            use windows::core::PCWSTR;
             use windows::Win32::Foundation::CloseHandle;
             use windows::Win32::Storage::FileSystem::{
-                BY_HANDLE_FILE_INFORMATION, CreateFileW, FILE_FLAG_BACKUP_SEMANTICS,
-                FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GetFileInformationByHandle,
+                CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+                FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
                 OPEN_EXISTING,
             };
-            use windows::core::PCWSTR;
             let wide: Vec<u16> = p.as_os_str().encode_wide().chain(Some(0)).collect();
             // Access rights 0: attribute-only query; BACKUP_SEMANTICS lets
             // CreateFileW open directories.

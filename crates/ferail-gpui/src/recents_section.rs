@@ -40,7 +40,9 @@ impl gpui::Global for RecentsEnabled {}
 /// Whether the Recents feature is on. Defaults to `true` when the global
 /// hasn't been seeded yet.
 pub fn recents_enabled(cx: &App) -> bool {
-    cx.try_global::<RecentsEnabled>().map(|g| g.0).unwrap_or(true)
+    cx.try_global::<RecentsEnabled>()
+        .map(|g| g.0)
+        .unwrap_or(true)
 }
 
 /// Section payload for the Recents group. Cloned per frame; the
@@ -224,10 +226,7 @@ fn render_recent_row(
             div()
                 .flex_shrink_0()
                 .icon_px(crate::tree::SIDEBAR_ICON_PX)
-                .child(
-                    img(icon)
-                        .icon_px(crate::tree::SIDEBAR_ICON_PX),
-                ),
+                .child(img(icon).icon_px(crate::tree::SIDEBAR_ICON_PX)),
         )
         .child(
             div()

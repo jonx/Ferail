@@ -20,8 +20,8 @@ use std::path::Path;
 /// `NSGraphicsContext`, so concurrent fetches don't share drawing state.
 #[cfg(target_os = "macos")]
 pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
-    use objc2::ClassType;
     use objc2::msg_send;
+    use objc2::ClassType;
     use objc2_app_kit::{
         NSBitmapFormat, NSBitmapImageRep, NSCompositingOperation, NSDeviceRGBColorSpace,
         NSGraphicsContext, NSWorkspace,
@@ -106,13 +106,13 @@ pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)>
 #[cfg(windows)]
 pub fn fetch_icon_rgba(path: &Path, size_px: u32) -> Option<(Vec<u8>, u32, u32)> {
     use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
     use windows::Win32::Foundation::SIZE;
-    use windows::Win32::Graphics::Gdi::{DIBSECTION, DeleteObject, GetObjectW, HBITMAP};
-    use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
+    use windows::Win32::Graphics::Gdi::{DeleteObject, GetObjectW, DIBSECTION, HBITMAP};
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
     use windows::Win32::UI::Shell::{
         IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_ICONONLY, SIIGBF_RESIZETOFIT,
     };
-    use windows::core::PCWSTR;
 
     let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
     wide.push(0);

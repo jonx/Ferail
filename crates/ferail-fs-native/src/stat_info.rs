@@ -289,10 +289,10 @@ pub fn set_invisible(path: &Path, invisible: bool) -> Result<(), String> {
 #[cfg(windows)]
 fn set_win_attr(path: &Path, attr: u32, on: bool) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::Storage::FileSystem::{
-        FILE_FLAGS_AND_ATTRIBUTES, GetFileAttributesW, SetFileAttributesW,
-    };
     use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{
+        GetFileAttributesW, SetFileAttributesW, FILE_FLAGS_AND_ATTRIBUTES,
+    };
 
     let wide: Vec<u16> = path
         .as_os_str()
@@ -358,7 +358,11 @@ pub fn volume_fs_info(path: &Path) -> (Option<String>, Option<String>, bool) {
         // SAFETY: the array is a NUL-terminated C string from the kernel.
         let s = unsafe { std::ffi::CStr::from_ptr(arr.as_ptr()) };
         let s = s.to_string_lossy().into_owned();
-        if s.is_empty() { None } else { Some(s) }
+        if s.is_empty() {
+            None
+        } else {
+            Some(s)
+        }
     };
     // Boot-volume special case: the sealed system snapshot statfs's as
     // MNT_RDONLY on every modern macOS, but the "Macintosh HD" the user

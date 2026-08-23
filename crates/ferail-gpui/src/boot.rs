@@ -12,10 +12,10 @@ use crate::{
     settings::{SettingsView, category_from_arg},
     shell::{
         ClearRecents, CloseTab, CloseWindow, CopyPath, DeleteImmediately, EmptyTrash,
-        FindDuplicates, FindSimilarImages, FocusFilter, GoHome, GoToFolder, MoveToTrash,
-        NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab, OpenDiskUsage,
-        OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell, ShowDesktop,
-        ToggleFavoriteForTarget, ToggleHidden, TogglePreview,
+        FindDuplicates, FindSimilarImages, FocusFilter, GenerateSha256, GoHome, GoToFolder,
+        MoveToTrash, NavigateBack, NavigateForward, NavigateParent, NewFolder, NewTab,
+        OpenDiskUsage, OpenSelected, OpenSettings, Refresh, RenameSelected, RevealInFinder, Shell,
+        ShowDesktop, ToggleFavoriteForTarget, ToggleFlatView, ToggleHidden, TogglePreview,
     },
 };
 use ferail_core::commands::{CommandId, find};
@@ -501,6 +501,10 @@ pub(crate) fn install_app_menus(cx: &mut App) {
         title("view.toggle_hidden", "Show Hidden Files"),
         ToggleHidden,
     ));
+    view_items.push(MenuItem::action(
+        title("view.toggle_flat", "Include Subfolders"),
+        ToggleFlatView,
+    ));
     view_items.push(MenuItem::separator());
     view_items.push(MenuItem::action(title("file.refresh", "Refresh"), Refresh));
 
@@ -535,6 +539,10 @@ pub(crate) fn install_app_menus(cx: &mut App) {
                 MenuItem::action(
                     title("file.reveal_in_finder", ferail_core::commands::REVEAL_LABEL),
                     RevealInFinder,
+                ),
+                MenuItem::action(
+                    title("file.generate_sha256", "Generate SHA-256…"),
+                    GenerateSha256,
                 ),
                 MenuItem::separator(),
                 // Favorites (docs/features/FAVORITES.md). The Cmd+D toggle

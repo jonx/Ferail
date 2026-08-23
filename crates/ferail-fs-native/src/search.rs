@@ -18,10 +18,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use ferail_core::{EnumerationError, FileEntry};
+use ferail_core::{EnumerationError, FileEntry, NodeId};
 
 use crate::disk_usage_scanner::{is_icloud_path, is_mac_package};
-use crate::{NativeFs, map_io_error};
+use crate::{map_io_error, NativeFs};
 
 /// Default match-batch size, mirroring `DEFAULT_ENUMERATION_BATCH`.
 pub const DEFAULT_SEARCH_BATCH: usize = 256;
@@ -90,6 +90,72 @@ impl NativeFs {
         batch_size: usize,
         cancel: &AtomicBool,
         descend_packages: bool,
+        on_batch: impl FnMut(Vec<SearchHit>),
+        mut on_progress: impl FnMut(SearchStats),
+    ) -> Option<EnumerationError> {
+        let needle = query.needle.to_lowercase();
+        let expr = query.expr.as_ref();
+        let empty_query = match expr {
+            Some(e) => e.is_empty(),
+            None => needle.is_empty(),
+        };
+        if empty_query {
+            on_progress(SearchStats::default());
+            return None;
+        }
+        self.walk_subtree(
+            root,
+            Some(query),
+            batch_size,
+            cancel,
+            descend_packages,
+            query.include_hidden,
+            None,
+            on_batch,
+            on_progress,
+        )
+    }
+
+    /// Recursively enumerate every item below `root`, assigning sequential
+    /// scan-local NodeIds beginning above `id_base`. Unlike
+    /// [`Self::search_subtree`], this never registers result paths in
+    /// NativeFs's process-lifetime identity maps.
+    #[allow(clippy::too_many_arguments)]
+    pub fn flat_subtree(
+        &self,
+        root: &Path,
+        include_hidden: bool,
+        include_directories: bool,
+        batch_size: usize,
+        cancel: &AtomicBool,
+        descend_packages: bool,
+        id_base: u64,
+        on_batch: impl FnMut(Vec<SearchHit>),
+        on_progress: impl FnMut(SearchStats),
+    ) -> Option<EnumerationError> {
+        self.walk_subtree(
+            root,
+            None,
+            batch_size,
+            cancel,
+            descend_packages,
+            include_hidden,
+            Some((id_base, include_directories)),
+            on_batch,
+            on_progress,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn walk_subtree(
+        &self,
+        root: &Path,
+        query: Option<&SearchQuery>,
+        batch_size: usize,
+        cancel: &AtomicBool,
+        descend_packages: bool,
+        include_hidden: bool,
+        local_identity: Option<(u64, bool)>,
         mut on_batch: impl FnMut(Vec<SearchHit>),
         mut on_progress: impl FnMut(SearchStats),
     ) -> Option<EnumerationError> {
@@ -102,16 +168,8 @@ impl NativeFs {
             Err(e) => return Some(map_io_error(&e)),
         }
 
-        let needle = query.needle.to_lowercase();
-        let expr = query.expr.as_ref();
-        let empty_query = match expr {
-            Some(e) => e.is_empty(),
-            None => needle.is_empty(),
-        };
-        if empty_query {
-            on_progress(SearchStats::default());
-            return None;
-        }
+        let needle = query.map(|query| query.needle.to_lowercase());
+        let expr = query.and_then(|query| query.expr.as_ref());
 
         let mut buffer: Vec<SearchHit> = Vec::with_capacity(batch_size);
         let mut stats = SearchStats::default();
@@ -153,7 +211,7 @@ impl NativeFs {
 
                 // Hidden filter: gate both matching and descent so a
                 // hidden tree doesn't get walked when not requested.
-                if !query.include_hidden && crate::entry_is_hidden(name, &metadata) {
+                if !include_hidden && crate::entry_is_hidden(name, &metadata) {
                     continue;
                 }
                 // Never download an iCloud placeholder just to search it.
@@ -168,35 +226,46 @@ impl NativeFs {
                 let descend = is_dir && (!mac_pkg || descend_packages);
 
                 // Test the match against name or relative path.
-                let haystack = if query.match_path {
-                    child_path
-                        .strip_prefix(&canonical_root)
-                        .unwrap_or(&child_path)
-                        .to_string_lossy()
-                        .to_lowercase()
-                } else {
-                    name.to_lowercase()
+                let text_ok = match query {
+                    None => true,
+                    Some(query) => {
+                        let haystack = if query.match_path {
+                            child_path
+                                .strip_prefix(&canonical_root)
+                                .unwrap_or(&child_path)
+                                .to_string_lossy()
+                                .to_lowercase()
+                        } else {
+                            name.to_lowercase()
+                        };
+                        match expr {
+                            Some(e) => e.text_matches(&haystack),
+                            None => haystack.contains(needle.as_deref().unwrap_or_default()),
+                        }
+                    }
                 };
-                let text_ok = match expr {
-                    Some(e) => e.text_matches(&haystack),
-                    None => haystack.contains(&needle),
-                };
-                if text_ok {
-                    // `dirent.metadata()` (used by the shared builder)
-                    // does not follow symlinks, matching enumerate.
-                    // Metadata terms test the built row so they read the
-                    // same cached fields Tier 0 filters on.
-                    if let Some(entry) = self.dirent_to_file_entry(&dirent) {
-                        if expr.is_none_or(|e| e.metadata_matches(&entry)) {
-                            buffer.push(SearchHit {
-                                entry,
-                                path: child_path.clone(),
-                            });
-                            stats.matches = stats.matches.saturating_add(1);
-                            if buffer.len() >= batch_size {
-                                on_batch(std::mem::take(&mut buffer));
-                                buffer.reserve(batch_size);
-                            }
+                let include_directories = local_identity.is_none_or(|(_, include)| include);
+                let emit = text_ok && (include_directories || !is_dir || mac_pkg);
+                if emit {
+                    // Reuse the symlink metadata already read for traversal
+                    // policy. The former second metadata call dominated warm
+                    // all-entry walks and bought no additional information.
+                    let id = local_identity.and_then(|(base, _)| {
+                        NodeId::from_raw(base.saturating_add(stats.matches).saturating_add(1))
+                    });
+                    let entry = id.map_or_else(
+                        || self.file_entry_from_metadata(&child_path, name.to_owned(), &metadata),
+                        |id| self.file_entry_from_metadata_with_id(name.to_owned(), &metadata, id),
+                    );
+                    if expr.is_none_or(|e| e.metadata_matches(&entry)) {
+                        buffer.push(SearchHit {
+                            entry,
+                            path: child_path.clone(),
+                        });
+                        stats.matches = stats.matches.saturating_add(1);
+                        if buffer.len() >= batch_size {
+                            on_batch(std::mem::take(&mut buffer));
+                            buffer.reserve(batch_size);
                         }
                     }
                 }
@@ -303,7 +372,7 @@ mod tests {
             8,
             &cancel,
             false,
-            |batch| hits.extend(batch.into_iter().map(|h| h.entry.name)),
+            |batch| hits.extend(batch.into_iter().map(|h| h.entry.name.to_string())),
             |_| {},
         );
         hits.sort();
@@ -393,5 +462,58 @@ mod tests {
         );
         assert!(err.is_none());
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn flat_walk_is_files_only_and_uses_scan_local_identity() {
+        let tmp = fixture();
+        let fs = NativeFs::new();
+        let cancel = AtomicBool::new(false);
+        let base = 1_u64 << 60;
+        let mut hits = Vec::new();
+        let mut final_stats = SearchStats::default();
+        let err = fs.flat_subtree(
+            tmp.path(),
+            false,
+            false,
+            2,
+            &cancel,
+            false,
+            base,
+            |batch| hits.extend(batch),
+            |stats| final_stats = stats,
+        );
+        assert!(err.is_none());
+        assert_eq!(hits.len(), 4);
+        assert_eq!(final_stats.matches, 4);
+        assert!(hits
+            .iter()
+            .all(|hit| !matches!(hit.entry.kind, ferail_core::EntryKind::Directory)));
+        assert!(hits.iter().all(|hit| hit.entry.id.as_raw() > base));
+        assert!(hits.iter().all(|hit| fs.path_for(hit.entry.id).is_none()));
+        assert!(hits
+            .iter()
+            .all(|hit| !hit.path.starts_with(tmp.path().join(".hidden"))));
+    }
+
+    #[test]
+    fn flat_walk_can_include_hidden_trees() {
+        let tmp = fixture();
+        let fs = NativeFs::new();
+        let cancel = AtomicBool::new(false);
+        let mut names = Vec::new();
+        fs.flat_subtree(
+            tmp.path(),
+            true,
+            false,
+            8,
+            &cancel,
+            false,
+            1_u64 << 60,
+            |batch| names.extend(batch.into_iter().map(|hit| hit.entry.name)),
+            |_| {},
+        );
+        names.sort();
+        assert!(names.iter().any(|name| name.as_ref() == "secret.txt"));
     }
 }

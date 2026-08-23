@@ -27,9 +27,8 @@ Ferail would require a separate helper *process*, not another in-process thread.
 ## The hang report
 
 A plain-text file written to the same folder as the issue bundle:
-`<config>/reports/ferail-hang-<pid>-<seq>.txt`, echoed to stderr for
-terminal launches (AROS: also appended to `MacRW:ferail-hang.txt`). It
-contains:
+`<config>/reports/ferail-hang-<pid>-<seq>.txt` (AROS: also appended to
+`MacRW:ferail-hang.txt`). It contains:
 
 - header — version, OS/arch, pid, uptime, what triggered the report,
   whether the session ran in safe mode;
@@ -43,6 +42,33 @@ contains:
 
 The in-process half is persisted *before* the stack capture is attempted,
 so a misbehaving capture tool can never lose the report.
+
+### What the terminal shows
+
+The report itself is *not* echoed to stderr — a full one is thousands of
+lines (`sample` alone lists every loaded dyld image), which scrolls the
+one line that matters, where the file landed, past the top of the window.
+A terminal launch gets a digest instead: one line as soon as the freeze is
+noticed, and after the stack capture the few facts that identify it —
+build/pid/uptime, the innermost UI-thread frames (parsed out of the
+capture, tree glyphs, sample counts and symbol hashes stripped), the
+longest-running background task, the last activity-trail entry, and the
+report path.
+
+```
+─── Ferail hang: UI thread unresponsive for ~10s (heartbeat stalled) ───
+  where   : 0.6.0 macos/aarch64 · pid 70089 · up 15.1s
+  ui stack: __semwait_signal  (in libsystem_kernel.dylib) + 8
+          ← nanosleep  (in libsystem_c.dylib) + 220
+          ← std::thread::sleep  (in ferail-gpui) + 64
+  tasks   : FolderSize · running 2.0s · Sizing 36 folders…
+  last    : navigate → …
+  report  : …/reports/ferail-hang-70089-0.txt — attach it when reporting the freeze
+```
+
+`FERAIL_FULL_HANG_REPORT=1` restores the old behaviour and echoes the
+whole report, stacks included, to stderr as well — for a session where
+piping stderr is easier than fetching the file.
 
 ## Trigger 1: the watchdog (automatic — all platforms)
 

@@ -53,9 +53,7 @@ impl DiskUsageTree {
                 name,
                 is_cloud,
             } => {
-                self.ensure_node_with_meta(
-                    *node, *kind, *file_category, *mtime, name, *is_cloud,
-                );
+                self.ensure_node_with_meta(*node, *kind, *file_category, *mtime, name, *is_cloud);
             }
             DiskUsageFact::NodeLinked { container, node } => {
                 // Containers are always Container-kind even before they're
@@ -126,7 +124,10 @@ mod tests {
         assert_eq!(n.display_name, "p.png");
 
         assert_eq!(t.containers.get(&nid(1)).unwrap(), &vec![nid(2)]);
-        assert_eq!(t.nodes.get(&nid(1)).unwrap().scan_state, ScanState::Complete);
+        assert_eq!(
+            t.nodes.get(&nid(1)).unwrap().scan_state,
+            ScanState::Complete
+        );
     }
 
     #[test]

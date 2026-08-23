@@ -516,7 +516,7 @@ fn prefer_if_exists(preferred: PathBuf, fallback: PathBuf) -> PathBuf {
 fn known_folder_path(rfid: &windows::core::GUID) -> Option<PathBuf> {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::Com::CoTaskMemFree;
-    use windows::Win32::UI::Shell::{KF_FLAG_DEFAULT, SHGetKnownFolderPath};
+    use windows::Win32::UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT};
 
     unsafe {
         let pwstr = SHGetKnownFolderPath(rfid, KF_FLAG_DEFAULT, HANDLE::default()).ok()?;

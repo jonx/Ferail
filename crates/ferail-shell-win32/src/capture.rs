@@ -160,7 +160,7 @@ pub fn capture_window_rgba(hwnd_raw: isize) -> Result<(u32, u32, Vec<u8>), Strin
 pub fn present_offscreen_for_capture(hwnd_raw: isize) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, ShowWindow, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+        SetWindowPos, ShowWindow, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWNOACTIVATE,
     };
     if hwnd_raw == 0 {
         return;

@@ -19,10 +19,10 @@ use crate::VolumeInfo;
 
 #[cfg(windows)]
 pub fn list_volumes() -> Vec<VolumeInfo> {
+    use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{
         GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
     };
-    use windows::core::PCWSTR;
 
     // GetDriveTypeW return codes. Hardcoded because the `windows`
     // crate 0.58 doesn't re-export these constants — they've been
@@ -170,17 +170,17 @@ pub fn list_volumes() -> Vec<VolumeInfo> {
 /// failure (CD-ROM volumes and RAM disks have no disk extents).
 #[cfg(windows)]
 fn probe_volume_device(letter: char) -> (Option<String>, bool) {
+    use windows::core::PCWSTR;
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Storage::FileSystem::{
         BusTypeUsb, CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
         IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, OPEN_EXISTING,
     };
-    use windows::Win32::System::IO::DeviceIoControl;
     use windows::Win32::System::Ioctl::{
-        IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, STORAGE_DEVICE_DESCRIPTOR,
-        STORAGE_PROPERTY_QUERY, StorageDeviceProperty, VOLUME_DISK_EXTENTS,
+        PropertyStandardQuery, StorageDeviceProperty, IOCTL_STORAGE_QUERY_PROPERTY,
+        STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY, VOLUME_DISK_EXTENTS,
     };
-    use windows::core::PCWSTR;
+    use windows::Win32::System::IO::DeviceIoControl;
 
     let device = format!(r"\\.\{letter}:");
     let wide: Vec<u16> = device.encode_utf16().chain(std::iter::once(0)).collect();

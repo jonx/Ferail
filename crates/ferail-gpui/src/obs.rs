@@ -151,12 +151,7 @@ impl log::Log for ArosLogger {
     fn log(&self, record: &log::Record) {
         line(
             "log",
-            format_args!(
-                "{} {}: {}",
-                record.level(),
-                record.target(),
-                record.args()
-            ),
+            format_args!("{} {}: {}", record.level(), record.target(), record.args()),
         );
     }
 

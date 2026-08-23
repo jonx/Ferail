@@ -240,9 +240,7 @@ fn start_watchdog_thread() {
                     "UI thread unresponsive for ~{}s (heartbeat stalled)",
                     tracker.stale_checks
                 )),
-                WatchdogAction::None
-                | WatchdogAction::Suspect
-                | WatchdogAction::Rebaseline => {}
+                WatchdogAction::None | WatchdogAction::Suspect | WatchdogAction::Rebaseline => {}
             }
             STALLED.store(tracker.stalled(), Ordering::Release);
         }
@@ -344,10 +342,14 @@ fn render_report_body(reason: &str) -> String {
 }
 
 /// Write a hang report: persist the in-process half first (a report on
-/// disk beats a prettier one lost), echo it to stderr, then attempt the
-/// per-platform whole-process stack capture and append it. Callable from
-/// any thread except the (presumably wedged) UI thread.
+/// disk beats a prettier one lost), then attempt the per-platform
+/// whole-process stack capture and append it. The console gets a short
+/// digest, not the report — a screenful of dyld image addresses scrolls
+/// the one line that matters (where the report landed) out of view.
+/// Set `FERAIL_FULL_HANG_REPORT=1` to echo everything to stderr as well.
+/// Callable from any thread except the (presumably wedged) UI thread.
 pub fn write_hang_report(reason: &str) {
+    let verbose = std::env::var_os("FERAIL_FULL_HANG_REPORT").is_some();
     let body = render_report_body(reason);
     let path = report_file_path();
     if let Some(path) = &path {
@@ -355,7 +357,13 @@ pub fn write_hang_report(reason: &str) {
             crate::log_warn!(90, "hang report write failed ({}): {e}", path.display());
         }
     }
-    crate::obs::stderr_line(&body);
+    // One line before the (seconds-long, possibly wedged) stack capture,
+    // so a user watching the terminal knows the freeze was noticed even
+    // if the capture never returns.
+    crate::obs::stderr_line(&format!("─── Ferail hang: {reason} ───"));
+    if verbose {
+        crate::obs::stderr_line(&body);
+    }
     // AROS: stderr is console-bound and the config dir may not exist —
     // persist to the host-shared volume like the panic hook does.
     #[cfg(target_os = "aros")]
@@ -371,29 +379,244 @@ pub fn write_hang_report(reason: &str) {
         }
     }
 
-    match capture_thread_stacks() {
+    let captured = capture_thread_stacks();
+    match &captured {
         Some((tool, stacks)) => {
             let section = format!("\nthread stacks (via {tool}):\n{stacks}\n");
             if let Some(path) = &path {
                 append_to_file(path, &section);
             }
-            crate::obs::stderr_line(&section);
+            if verbose {
+                crate::obs::stderr_line(&section);
+            }
         }
         None => {
             let hint = format!("\nthread stacks : <unavailable> — {}\n", stack_hint());
             if let Some(path) = &path {
                 append_to_file(path, &hint);
             }
-            crate::obs::stderr_line(&hint);
+            if verbose {
+                crate::obs::stderr_line(&hint);
+            }
         }
     }
 
-    if let Some(path) = &path {
-        crate::obs::stderr_line(&format!(
-            "hang report saved: {} — please attach it when reporting the freeze",
-            path.display()
-        ));
+    crate::obs::stderr_line(&render_console_digest(
+        captured.as_ref().map(|(_, s)| s.as_str()),
+        path.as_deref(),
+    ));
+}
+
+/// The console half of a hang report: the few facts that identify the
+/// freeze — where the UI thread is stuck, what was running, what the
+/// user last did — plus the path to the file that holds the rest. Kept
+/// to well under a screenful on purpose.
+fn render_console_digest(stacks: Option<&str>, path: Option<&std::path::Path>) -> String {
+    use std::fmt::Write as _;
+    /// Innermost UI-thread frames worth showing before the file takes over.
+    const FRAMES: usize = 3;
+
+    let mut d = String::with_capacity(1024);
+    let _ = write!(
+        d,
+        "  where   : {} {}/{} · pid {} · up {:.1}s",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        std::process::id(),
+        crate::obs::elapsed_secs()
+    );
+    if crate::safe_mode::enabled() {
+        let _ = write!(d, " · safe mode");
     }
+    let _ = writeln!(d);
+
+    match stacks.map(|s| ui_thread_frames(s, FRAMES)) {
+        Some(frames) if !frames.is_empty() => {
+            for (i, frame) in frames.iter().enumerate() {
+                let label = if i == 0 {
+                    "  ui stack:"
+                } else {
+                    "          ←"
+                };
+                let _ = writeln!(d, "{label} {frame}");
+            }
+        }
+        Some(_) => {
+            let _ = writeln!(d, "  ui stack: <captured — see the report>");
+        }
+        None => {
+            let _ = writeln!(d, "  ui stack: <unavailable> — {}", stack_hint());
+        }
+    }
+
+    let tasks = match snapshot_cell().try_lock() {
+        Ok(snapshot) => snapshot.clone(),
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner().clone(),
+        Err(std::sync::TryLockError::WouldBlock) => Vec::new(),
+    };
+    let _ = writeln!(d, "  tasks   : {}", summarize(&tasks, "none running"));
+
+    let trail = crate::trail::try_render_lines_sanitized().unwrap_or_default();
+    let last = trail.last().cloned().unwrap_or_default();
+    let _ = writeln!(
+        d,
+        "  last    : {}",
+        if last.is_empty() {
+            "<no activity recorded>"
+        } else {
+            &last
+        }
+    );
+
+    match path {
+        Some(path) => {
+            let _ = writeln!(
+                d,
+                "  report  : {} — attach it when reporting the freeze",
+                path.display()
+            );
+            let _ = write!(
+                d,
+                "            (full stacks, breadcrumbs and trail are in there; FERAIL_FULL_HANG_REPORT=1 echoes them here)"
+            );
+        }
+        None => {
+            let _ = write!(
+                d,
+                "  report  : <could not be saved> — set FERAIL_FULL_HANG_REPORT=1 to get the details on stderr"
+            );
+        }
+    }
+    d
+}
+
+/// First entry of a list plus a `(+N more)` tail — the digest names the
+/// likely culprit without turning into the list the report already has.
+fn summarize(lines: &[String], empty: &str) -> String {
+    match lines.split_first() {
+        None => empty.to_string(),
+        Some((first, [])) => first.clone(),
+        Some((first, rest)) => format!("{first}  (+{} more)", rest.len()),
+    }
+}
+
+/// Innermost frames of the UI thread, pulled out of a whole-process
+/// stack capture for the console digest. Innermost first — the wedged
+/// call is what a reader wants on line one, the rest is context.
+///
+/// macOS `sample` prints an indented call graph per thread; the UI
+/// thread's block starts at a header naming the main thread and its
+/// deepest (last) line is the call that is stuck. `gdb` / `eu-stack`
+/// print `#0`-numbered frames already innermost-first, the first block
+/// being the main thread. Anything unrecognized yields nothing — the
+/// digest says so, and the file still has the raw capture.
+fn ui_thread_frames(stacks: &str, max: usize) -> Vec<String> {
+    let sample = sample_main_thread_frames(stacks, max);
+    if !sample.is_empty() {
+        return sample;
+    }
+    numbered_first_thread_frames(stacks, max)
+}
+
+fn sample_main_thread_frames(text: &str, max: usize) -> Vec<String> {
+    /// Depth in `sample`'s call graph is the indentation *after* the
+    /// tree glyphs it draws in the left gutter (`+ `, `! `, `: `), so a
+    /// raw `trim_start()` would read every frame as depth 4 and end the
+    /// block on its first line.
+    fn depth(line: &str) -> usize {
+        line.len() - line.trim_start_matches([' ', '+', '!', ':', '|']).len()
+    }
+    let mut header_indent: Option<usize> = None;
+    let mut frames: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        let indent = depth(line);
+        match header_indent {
+            None => {
+                let lower = line.to_ascii_lowercase();
+                if lower.contains("thread_")
+                    && (lower.contains("main-thread") || lower.contains("main thread"))
+                {
+                    header_indent = Some(indent);
+                }
+            }
+            Some(header) => {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                if indent <= header {
+                    break; // next thread's header — this block is done
+                }
+                frames.push(line);
+            }
+        }
+    }
+    frames
+        .iter()
+        .rev()
+        .map(|l| clean_frame(l))
+        .filter(|l| !l.is_empty())
+        .take(max)
+        .collect()
+}
+
+fn numbered_first_thread_frames(text: &str, max: usize) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with('#'))
+        .map(clean_frame)
+        .filter(|l| !l.is_empty())
+        .take(max)
+        .collect()
+}
+
+/// One capture-tool line → one readable frame: drop the tree glyphs and
+/// per-frame sample count `sample` prefixes, the `#N` and raw pc of a
+/// numbered backtrace, and the trailing address, then bound the width so
+/// one deep C++ symbol cannot blow the digest back up to a screenful.
+/// Drop the `::h<16 hex>` rustc appends to legacy-mangled symbols —
+/// pure noise in a three-line digest. Whatever `sample` printed after
+/// the symbol (`+ 44`, a source location) is kept.
+fn strip_symbol_hash(s: &str) -> String {
+    let Some(at) = s.rfind("::h") else {
+        return s.to_string();
+    };
+    let tail = &s[at + 3..];
+    let hash_len = tail
+        .find(|c: char| !c.is_ascii_hexdigit())
+        .unwrap_or(tail.len());
+    if hash_len != 16 {
+        return s.to_string();
+    }
+    format!("{}{}", &s[..at], &tail[hash_len..])
+}
+
+fn clean_frame(line: &str) -> String {
+    const MAX_WIDTH: usize = 96;
+    let mut s = line.trim_matches(|c: char| c.is_whitespace() || "+!:|".contains(c));
+    // `sample`: leading per-frame sample count. `gdb`/`eu-stack`: `#3`.
+    if let Some((head, rest)) = s.split_once(' ') {
+        let head = head.trim_start_matches('#');
+        if !head.is_empty() && head.chars().all(|c| c.is_ascii_digit()) {
+            s = rest.trim_start();
+        }
+    }
+    // `gdb`/`eu-stack` then lead with the raw pc: `0x0000… in foo ()`.
+    if let Some(rest) = s.strip_prefix("0x") {
+        let rest = rest
+            .trim_start_matches(|c: char| c.is_ascii_hexdigit())
+            .trim_start();
+        s = rest.strip_prefix("in ").unwrap_or(rest);
+    }
+    if let Some(at) = s.rfind(" [0x") {
+        s = s[..at].trim_end();
+    }
+    let s = strip_symbol_hash(s.trim());
+    if s.chars().count() > MAX_WIDTH {
+        let cut: String = s.chars().take(MAX_WIDTH - 1).collect();
+        return format!("{cut}…");
+    }
+    s
 }
 
 /// `<config>/reports/ferail-hang-<pid>-<seq>.txt` — the same folder the
@@ -624,6 +847,63 @@ mod tests {
         assert!(body.contains("breadcrumbs:"));
         assert!(body.contains("activity trail"));
         assert!(body.contains(env!("CARGO_PKG_VERSION")));
+    }
+
+    /// A real `sample` call graph is indented, count-prefixed and
+    /// address-suffixed; the digest wants the wedged call first, clean.
+    #[test]
+    fn digest_picks_innermost_main_thread_frames_from_sample() {
+        let text = "\
+Call graph:
+    884 Thread_8593187   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 884 start  (in dyld) + 6992  [0x18c5bc4e4]
+    +   884 main  (in ferail-gpui) + 52  [0x10430bb08]
+    +     884 ferail_gpui::boot::run_gui::hcdc44e5e9cb935bb  (in ferail-gpui) + 44  [0x1000c2d10]
+    +       884 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x18a0c1f30]
+    884 Thread_8593200
+    + 884 thread_start  (in libsystem_pthread.dylib) + 8  [0x18a0f0e10]
+";
+        let frames = ui_thread_frames(text, 3);
+        assert_eq!(
+            frames,
+            vec![
+                "__psynch_cvwait  (in libsystem_kernel.dylib) + 8",
+                "ferail_gpui::boot::run_gui  (in ferail-gpui) + 44",
+                "main  (in ferail-gpui) + 52",
+            ]
+        );
+    }
+
+    /// `gdb` / `eu-stack` numbered frames are already innermost-first.
+    #[test]
+    fn digest_reads_numbered_backtrace_frames() {
+        let text = "\
+Thread 1 (LWP 4242):
+#0  0x00007f1a2b3c4d5e in __futex_abstimed_wait () from /lib/libc.so.6
+#1  0x00007f1a2b3c9999 in ferail_fs_native::read_dir ()
+";
+        let frames = ui_thread_frames(text, 3);
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0], "__futex_abstimed_wait () from /lib/libc.so.6");
+        assert!(frames[1].contains("read_dir"));
+    }
+
+    #[test]
+    fn digest_is_short_and_names_the_report() {
+        let path = std::path::Path::new("/tmp/ferail-hang-1-0.txt");
+        let digest = render_console_digest(None, Some(path));
+        assert!(digest.lines().count() <= 8, "digest too long:\n{digest}");
+        assert!(digest.contains("/tmp/ferail-hang-1-0.txt"));
+        assert!(digest.contains("ui stack:"));
+    }
+
+    #[test]
+    fn digest_frame_width_is_bounded() {
+        let long = format!(
+            "      2001 {}  (in ferail-gpui) + 8  [0x1]",
+            "a".repeat(400)
+        );
+        assert!(clean_frame(&long).chars().count() <= 96);
     }
 
     #[test]

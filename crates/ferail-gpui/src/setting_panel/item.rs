@@ -10,12 +10,7 @@ use crate::setting_panel::{
         BoolField, DropdownField, NumberField, ResetHandler, SettingFieldRender, StringField,
     },
 };
-use gpui_component::{
-    ActiveTheme as _, AxisExt, StyledExt as _,
-    label::Label,
-    text::Text,
-    v_flex,
-};
+use gpui_component::{ActiveTheme as _, AxisExt, StyledExt as _, label::Label, text::Text, v_flex};
 
 /// Fork shim: upstream matches the search query against the description
 /// via `Text::get_text`, which is `pub(crate)` in gpui-component and not

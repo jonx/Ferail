@@ -132,8 +132,9 @@ const AUDIO_EXTS: &[&str] = &[
 /// mpv provider is selected (the native players lack these codecs: WMA is
 /// proprietary, and Vorbis/Opus/FLAC/APE/… aren't in AVFoundation). Mirrors
 /// [`MPV_VIDEO_EXTS`]: without mpv these stay a static cover/poster.
-const MPV_AUDIO_EXTS: &[&str] =
-    &["ogg", "oga", "opus", "wma", "ape", "wv", "mpc", "tta", "dsf", "dff", "mka"];
+const MPV_AUDIO_EXTS: &[&str] = &[
+    "ogg", "oga", "opus", "wma", "ape", "wv", "mpc", "tta", "dsf", "dff", "mka",
+];
 
 /// `M:SS` (or `H:MM:SS` past an hour) for the seek-bar time labels.
 fn fmt_time(secs: f64) -> String {
@@ -762,7 +763,14 @@ pub struct ViewerWindow {
     /// The `bool` is `preview`: a fast drag-time pass that skipped the heavy
     /// upscale — it satisfies further drag frames but is recomputed at full
     /// size once the drag releases.
-    processed: Option<(usize, u8, ColorAdjust, EnhanceParams, bool, Arc<RenderImage>)>,
+    processed: Option<(
+        usize,
+        u8,
+        ColorAdjust,
+        EnhanceParams,
+        bool,
+        Arc<RenderImage>,
+    )>,
     /// Monotonic token: a background process result is only accepted if its
     /// token still matches, so superseded runs (params changed mid-flight)
     /// are dropped instead of flashing a stale grade.
@@ -2504,9 +2512,8 @@ impl ViewerWindow {
             W_ZOOM,
             w_av_extra,
         ];
-        let mut need = W_BASE
-            + if is_playable { W_AV_BASIC } else { 0.0 }
-            + tiers.iter().sum::<f32>();
+        let mut need =
+            W_BASE + if is_playable { W_AV_BASIC } else { 0.0 } + tiers.iter().sum::<f32>();
         let mut hide = [false; 5];
         if need * scale > avail {
             need += W_MENU;
@@ -2518,7 +2525,13 @@ impl ViewerWindow {
                 need -= w;
             }
         }
-        let [hide_toggles, hide_slideshow, hide_actions, hide_zoom, hide_av_extra] = hide;
+        let [
+            hide_toggles,
+            hide_slideshow,
+            hide_actions,
+            hide_zoom,
+            hide_av_extra,
+        ] = hide;
         let overflow = hide.iter().any(|h| *h);
 
         // The "…" menu mirrors the folded clusters, in bar order. Action-
@@ -2569,7 +2582,11 @@ impl ViewerWindow {
                             .menu(tr!("Zoom In"), Box::new(ViewerZoomIn))
                             .menu(tr!("Zoom Out"), Box::new(ViewerZoomOut))
                             .menu(
-                                if actual { tr!("Fit to Window") } else { tr!("Actual Size") },
+                                if actual {
+                                    tr!("Fit to Window")
+                                } else {
+                                    tr!("Actual Size")
+                                },
                                 Box::new(ViewerActualSize),
                             );
                         sep = true;
@@ -2597,28 +2614,29 @@ impl ViewerWindow {
                         }
                         if is_video {
                             let e = menu_entity.clone();
-                            menu = menu.item(
-                                PopupMenuItem::new(tr!("Back One Frame")).on_click(move |_, _, cx| {
-                                    e.update(cx, |this, cx| this.step_video(-1, cx));
-                                }),
-                            );
-                            let e = menu_entity.clone();
-                            menu = menu.item(PopupMenuItem::new(tr!("Forward One Frame")).on_click(
+                            menu = menu.item(PopupMenuItem::new(tr!("Back One Frame")).on_click(
                                 move |_, _, cx| {
-                                    e.update(cx, |this, cx| this.step_video(1, cx));
+                                    e.update(cx, |this, cx| this.step_video(-1, cx));
                                 },
                             ));
+                            let e = menu_entity.clone();
+                            menu =
+                                menu.item(PopupMenuItem::new(tr!("Forward One Frame")).on_click(
+                                    move |_, _, cx| {
+                                        e.update(cx, |this, cx| this.step_video(1, cx));
+                                    },
+                                ));
                         }
                         let e = menu_entity.clone();
                         menu = menu.item(
-                            PopupMenuItem::new(tr!("Loop")).checked(video_loop).on_click(
-                                move |_, _, cx| {
+                            PopupMenuItem::new(tr!("Loop"))
+                                .checked(video_loop)
+                                .on_click(move |_, _, cx| {
                                     e.update(cx, |this, cx| {
                                         this.video_loop = !this.video_loop;
                                         cx.notify();
                                     });
-                                },
-                            ),
+                                }),
                         );
                         sep = true;
                     }
@@ -2628,19 +2646,20 @@ impl ViewerWindow {
                         }
                         let e = menu_entity.clone();
                         menu = menu.item(
-                            PopupMenuItem::new(tr!("Stay on Top")).checked(stay_on_top).on_click(
-                                move |_, window, cx| {
+                            PopupMenuItem::new(tr!("Stay on Top"))
+                                .checked(stay_on_top)
+                                .on_click(move |_, window, cx| {
                                     let on = !stay_on_top;
                                     e.update(cx, |this, cx| {
                                         this.set_stay_on_top(on, window, cx);
                                     });
-                                },
-                            ),
+                                }),
                         );
                         let e = menu_entity.clone();
                         menu = menu.item(
-                            PopupMenuItem::new(tr!("Transparent")).checked(transparent).on_click(
-                                move |_, window, cx| {
+                            PopupMenuItem::new(tr!("Transparent"))
+                                .checked(transparent)
+                                .on_click(move |_, window, cx| {
                                     let on = !transparent;
                                     window.set_background_appearance(if on {
                                         gpui::WindowBackgroundAppearance::Transparent
@@ -2651,8 +2670,7 @@ impl ViewerWindow {
                                         this.transparent = on;
                                         cx.notify();
                                     });
-                                },
-                            ),
+                                }),
                         );
                         for percent in [100_u32, 75, 50, 25] {
                             let e = menu_entity.clone();
@@ -2896,7 +2914,9 @@ impl ViewerWindow {
             })
             // Whole-window alpha is independent of the transparent-background
             // toggle above: it fades the media and chrome together.
-            .when(!hide_toggles, |bar| bar.child(self.window_opacity_control(cx)))
+            .when(!hide_toggles, |bar| {
+                bar.child(self.window_opacity_control(cx))
+            })
             // The filename already lives in the native title bar; flexible
             // space here keeps the trailing controls right-aligned without
             // repeating it inside the viewer.
@@ -3316,7 +3336,13 @@ impl ViewerWindow {
                                     }),
                                 ),
                         )
-                        .child(div().flex_1().text_scale_xs().text_color(foreground).child(hex))
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_scale_xs()
+                                .text_color(foreground)
+                                .child(hex),
+                        )
                         .child(
                             Button::new("viewer-chroma-pick")
                                 .label(if chroma_armed {
@@ -3871,9 +3897,7 @@ impl Render for ViewerWindow {
                 // doesn't render the layer — do it here so the trash
                 // success/failure toasts appear (same as the Get Info
                 // window).
-                .children(gpui_component::Root::render_notification_layer(
-                    window, cx,
-                ))
+                .children(gpui_component::Root::render_notification_layer(window, cx))
         } else {
             let toolbar = self.toolbar(window, cx);
             let status = self.status_strip(cx);
@@ -3881,9 +3905,7 @@ impl Render for ViewerWindow {
                 .child(stage_area)
                 .child(status)
                 .when_some(panel, Div::child)
-                .children(gpui_component::Root::render_notification_layer(
-                    window, cx,
-                ))
+                .children(gpui_component::Root::render_notification_layer(window, cx))
         }
     }
 }
@@ -4033,7 +4055,10 @@ mod grade_tests {
             }
         }
         let g = compute_auto_grade(&bgra);
-        assert!(g.contrast.abs() < 0.1, "full-range input stays near-neutral");
+        assert!(
+            g.contrast.abs() < 0.1,
+            "full-range input stays near-neutral"
+        );
         assert!(
             g.brightness.abs() < 0.1,
             "full-range input keeps brightness"

@@ -151,7 +151,10 @@ mod lab {
             })
             .on_drag_move(cx.listener(move |_, e: &DragMoveEvent<LabDrag>, _, _| {
                 if e.bounds.contains(&e.event.position) {
-                    log::info!("{name}: gpui DragMoveEvent<LabDrag> at {:?}", e.event.position);
+                    log::info!(
+                        "{name}: gpui DragMoveEvent<LabDrag> at {:?}",
+                        e.event.position
+                    );
                 }
             }))
             .on_drop(cx.listener(move |this, drag: &LabDrag, window, cx| {
@@ -177,9 +180,12 @@ mod lab {
                     cx.notify();
                 }
             }))
-            .on_mouse_down(MouseButton::Left, cx.listener(move |_, e: &MouseDownEvent, _, _| {
-                log::debug!("{name}: MouseDown at {:?}", e.position);
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |_, e: &MouseDownEvent, _, _| {
+                    log::debug!("{name}: MouseDown at {:?}", e.position);
+                }),
+            )
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(move |this, e: &MouseUpEvent, window, cx| {
@@ -235,19 +241,17 @@ mod lab {
                 .flex_col()
                 .bg(rgb(0xffffff))
                 .text_color(rgb(0x111827))
-                .on_mouse_down(MouseButton::Left, cx.listener(|_, e: &MouseDownEvent, _, _| {
-                    log::debug!("SOURCE root: MouseDown at {:?}", e.position);
-                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, e: &MouseDownEvent, _, _| {
+                        log::debug!("SOURCE root: MouseDown at {:?}", e.position);
+                    }),
+                )
                 // Fixed-height layout so synthetic-event drivers can compute
                 // row centres: header 40, status 24, rows 40 each, zone rest.
-                .child(
-                    div()
-                        .h(px(40.))
-                        .px_2()
-                        .flex()
-                        .items_center()
-                        .child("SOURCE — drag a row out of this window (to Target, Finder, or back here)"),
-                )
+                .child(div().h(px(40.)).px_2().flex().items_center().child(
+                    "SOURCE — drag a row out of this window (to Target, Finder, or back here)",
+                ))
                 .child(div().h(px(24.)).px_2().text_sm().child(self.status.clone()))
                 .children(rows.into_iter().enumerate().map(|(ix, (name, is_dir))| {
                     let drag = LabDrag {
@@ -265,9 +269,12 @@ mod lab {
                         .border_1()
                         .border_color(rgb(0xd1d5db))
                         .hover(|s| s.bg(rgb(0xe5e7eb)))
-                        .on_mouse_down(MouseButton::Left, cx.listener(move |_, e: &MouseDownEvent, _, _| {
-                            log::info!("SOURCE row {ix}: MouseDown at {:?}", e.position);
-                        }))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_, e: &MouseDownEvent, _, _| {
+                                log::info!("SOURCE row {ix}: MouseDown at {:?}", e.position);
+                            }),
+                        )
                         .child(format!("{}{}", if is_dir { "📁 " } else { "📄 " }, label))
                         .on_drag(drag, move |_d, _offset, _window, cx| {
                             cx.new(|_| Ghost {
@@ -280,7 +287,8 @@ mod lab {
                         })
                 }))
                 .child(drop_zone("Source", cx, |this, drag, _, cx| {
-                    this.status = format!("Source zone received native drop: {:?}", drag.entries).into();
+                    this.status =
+                        format!("Source zone received native drop: {:?}", drag.entries).into();
                     cx.notify();
                 }))
                 .child(
@@ -289,9 +297,12 @@ mod lab {
                         .text_xs()
                         .child("Esc cancels a native drag. Window ids are logged at startup."),
                 )
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
-                    window.focus(&this.focus, cx);
-                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        window.focus(&this.focus, cx);
+                    }),
+                )
         }
     }
 
@@ -347,7 +358,10 @@ mod lab {
                         .timer(std::time::Duration::from_millis(16))
                         .await;
                 }
-                log::info!("watcher: native session ended; clearing in-process payload (was_present={})", native_drag_active());
+                log::info!(
+                    "watcher: native session ended; clearing in-process payload (was_present={})",
+                    native_drag_active()
+                );
                 let _ = cx.update_window(source_window, |_, window, cx| {
                     cx.stop_active_drag(window);
                     set_native_drag(None);
@@ -377,10 +391,20 @@ mod lab {
                 .flex_col()
                 .bg(rgb(0xffffff))
                 .text_color(rgb(0x111827))
-                .on_mouse_down(MouseButton::Left, cx.listener(|_, e: &MouseDownEvent, _, _| {
-                    log::debug!("TARGET root: MouseDown at {:?}", e.position);
-                }))
-                .child(div().h(px(40.)).px_2().flex().items_center().child("TARGET — drop here"))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, e: &MouseDownEvent, _, _| {
+                        log::debug!("TARGET root: MouseDown at {:?}", e.position);
+                    }),
+                )
+                .child(
+                    div()
+                        .h(px(40.))
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .child("TARGET — drop here"),
+                )
                 .child(div().h(px(24.)).px_2().text_sm().child(self.status.clone()))
                 .child(drop_zone("Target", cx, |this, drag, _, cx| {
                     this.status = format!("Target received native drop: {:?}", drag.entries).into();
@@ -566,18 +590,54 @@ mod lab {
             };
             let class = class as *const AnyClass as *mut objc2::ffi::objc_class;
             unsafe {
-                replace(class, objc2::sel!(draggingEntered:), probe_entered as EnteredFn as *mut _, c"Q@:@", &ORIG_ENTERED);
-                replace(class, objc2::sel!(draggingUpdated:), probe_updated as EnteredFn as *mut _, c"Q@:@", &ORIG_UPDATED);
-                replace(class, objc2::sel!(draggingExited:), probe_exited as VoidInfoFn as *mut _, c"v@:@", &ORIG_EXITED);
+                replace(
+                    class,
+                    objc2::sel!(draggingEntered:),
+                    probe_entered as EnteredFn as *mut _,
+                    c"Q@:@",
+                    &ORIG_ENTERED,
+                );
+                replace(
+                    class,
+                    objc2::sel!(draggingUpdated:),
+                    probe_updated as EnteredFn as *mut _,
+                    c"Q@:@",
+                    &ORIG_UPDATED,
+                );
+                replace(
+                    class,
+                    objc2::sel!(draggingExited:),
+                    probe_exited as VoidInfoFn as *mut _,
+                    c"v@:@",
+                    &ORIG_EXITED,
+                );
                 // Type encoding: "B" (C99 _Bool) on arm64, "c" (signed char)
                 // on x86_64 — the same split as `ObjcBool` above.
                 #[cfg(target_arch = "aarch64")]
                 let bool_encoding = c"B@:@";
                 #[cfg(not(target_arch = "aarch64"))]
                 let bool_encoding = c"c@:@";
-                replace(class, objc2::sel!(performDragOperation:), probe_perform as PerformFn as *mut _, bool_encoding, &ORIG_PERFORM);
-                replace(class, objc2::sel!(concludeDragOperation:), probe_conclude as VoidInfoFn as *mut _, c"v@:@", &ORIG_CONCLUDE);
-                replace(class, objc2::sel!(draggingSession:endedAtPoint:operation:), probe_ended as EndedFn as *mut _, c"v@:@{CGPoint=dd}Q", &ORIG_ENDED);
+                replace(
+                    class,
+                    objc2::sel!(performDragOperation:),
+                    probe_perform as PerformFn as *mut _,
+                    bool_encoding,
+                    &ORIG_PERFORM,
+                );
+                replace(
+                    class,
+                    objc2::sel!(concludeDragOperation:),
+                    probe_conclude as VoidInfoFn as *mut _,
+                    c"v@:@",
+                    &ORIG_CONCLUDE,
+                );
+                replace(
+                    class,
+                    objc2::sel!(draggingSession:endedAtPoint:operation:),
+                    probe_ended as EndedFn as *mut _,
+                    c"v@:@{CGPoint=dd}Q",
+                    &ORIG_ENDED,
+                );
             }
             log::info!("probe: installed destination/session logging on {name}");
         }
@@ -646,13 +706,20 @@ mod lab {
                     status: "no drop yet".into(),
                 })
             });
-            log::info!("windows opened: source={:?} target={:?}", src.is_ok(), tgt.is_ok());
+            log::info!(
+                "windows opened: source={:?} target={:?}",
+                src.is_ok(),
+                tgt.is_ok()
+            );
             let installed = ferail_shell_mac::install_native_drag_operations();
             log::info!("ferail_shell_mac::install_native_drag_operations() = {installed}");
             install_probe();
             let out = std::env::temp_dir().join("dnd-lab-drops");
             let _ = std::fs::create_dir_all(&out);
-            log::info!("a Finder drop writes promised files wherever you drop; scratch dir: {}", out.display());
+            log::info!(
+                "a Finder drop writes promised files wherever you drop; scratch dir: {}",
+                out.display()
+            );
             let _ = PathBuf::new();
         });
     }

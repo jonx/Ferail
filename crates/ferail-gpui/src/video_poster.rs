@@ -227,10 +227,7 @@ fn poster_queue() -> &'static PosterQueue {
                             match jobs.pop_back() {
                                 Some(job) => break job,
                                 None => {
-                                    jobs = q
-                                        .ready
-                                        .wait(jobs)
-                                        .unwrap_or_else(|e| e.into_inner());
+                                    jobs = q.ready.wait(jobs).unwrap_or_else(|e| e.into_inner());
                                 }
                             }
                         }
@@ -318,10 +315,7 @@ fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
     /// the end of a shorter clip, so this is safe for any duration.
     const POSTER_SEEK_SECS: f64 = 3.0;
 
-    fn pull_frame(
-        stream: &mut dyn VideoStream,
-        deadline: Duration,
-    ) -> Option<(u32, u32, Vec<u8>)> {
+    fn pull_frame(stream: &mut dyn VideoStream, deadline: Duration) -> Option<(u32, u32, Vec<u8>)> {
         let t0 = std::time::Instant::now();
         loop {
             if let Some(frame) = stream.copy_frame() {
@@ -387,7 +381,10 @@ fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
             None => s.into_owned(),
         }
     };
-    let tmp = format!("RAM:ferail-poster-{}.ppm", SEQ.fetch_add(1, Ordering::Relaxed));
+    let tmp = format!(
+        "RAM:ferail-poster-{}.ppm",
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    );
     let out = match std::process::Command::new("C:FFThumb")
         .arg(&arg_path)
         .arg(&tmp)
@@ -406,7 +403,11 @@ fn poster_decode(path: &Path, size_px: u32) -> Option<ThumbPayload> {
     // success), and read_ppm_rgba validates the payload anyway.
     let stdout = String::from_utf8_lossy(&out.stdout);
     let ok = out.status.success();
-    let payload = if ok { read_ppm_rgba(Path::new(&tmp)) } else { None };
+    let payload = if ok {
+        read_ppm_rgba(Path::new(&tmp))
+    } else {
+        None
+    };
     crate::log_info!(
         95,
         "ffthumb: {} -> status={:?} ok={ok} payload={} ({})",
@@ -497,11 +498,7 @@ fn shrink_poster((w, h, mut bgra): (u32, u32, Vec<u8>), size_px: u32) -> (Vec<u8
     let nw = ((w as f32 * scale).round() as u32).max(1);
     let nh = ((h as f32 * scale).round() as u32).max(1);
     match image::RgbaImage::from_raw(w, h, bgra) {
-        Some(img) => (
-            image::imageops::thumbnail(&img, nw, nh).into_raw(),
-            nw,
-            nh,
-        ),
+        Some(img) => (image::imageops::thumbnail(&img, nw, nh).into_raw(), nw, nh),
         // Dimension mismatch can't happen for a frame we just packed, but
         // never panic on a background worker over a thumbnail.
         None => (Vec::new(), 0, 0),

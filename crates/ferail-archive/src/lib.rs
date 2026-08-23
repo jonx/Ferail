@@ -25,7 +25,7 @@ pub mod tree;
 pub use capability::Capabilities;
 pub use entry::{ArchiveEntry, Toc};
 pub use format::{CompressionLevel, Format};
-pub use safety::{UnsafePath, safe_relative_path};
+pub use safety::{safe_relative_path, UnsafePath};
 pub use tree::{ArchiveTree, TreeRow};
 
 #[cfg(test)]
