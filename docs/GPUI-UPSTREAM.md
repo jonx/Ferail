@@ -267,8 +267,9 @@ actually wired into the root `Cargo.toml`.
   existing render target (created at window construction, so no window need be
   shown), copies it into a `D3D11_USAGE_STAGING` texture, `Map`s it, and
   converts BGRA → RGBA — the Windows analogue of `gpui_macos`'s offscreen Metal
-  path. The batch loop is factored into a shared `draw_batches` so `draw`
-  (present) and `render_to_image` (readback) stay in sync. Gated on
+  path. The clear, scene upload and batch encoding are factored into a shared
+  `render()` so `draw` (which then presents) and `render_to_image` (which
+  reads the target back instead) cannot drift. Gated on
   `cfg(any(test, feature = "test-support"))` to match the trait method.
 - `WindowsWindow::render_to_image` overrides the `PlatformWindow` trait default.
 - The diff is captured at [`patches/gpui-windows-render-to-image.patch`](../patches/gpui-windows-render-to-image.patch)
@@ -281,7 +282,7 @@ actually wired into the root `Cargo.toml`.
   `render_to_image(&self, scene)` (background appearance no longer a
   parameter — the window impl reads it from state), and `draw` grew
   `skip_draws` device-lost recovery + per-batch debug annotations (both live
-  in the shared `draw_batches`; `render_to_image` bails during device-lost).
+  in the shared `render()`; `render_to_image` bails during device-lost).
   Cross-checked from macOS with `cargo check -p gpui_windows
   --no-default-features --features test-support --target
   x86_64-pc-windows-msvc` (clang-cl/llvm-lib + xwin headers in `~/.xwin` —
@@ -290,6 +291,25 @@ actually wired into the root `Cargo.toml`.
   download cache in the *current directory*;
   `--no-default-features` skips only the `windows-manifest` embed-resource
   step, irrelevant to the change).
+- **2026-08-23: revised on review feedback** (branch force-pushed to
+  `9f70fef0`; the patch file above is the regenerated diff). The earlier
+  factoring extracted only the batch loop as `draw_batches`, which left the
+  clear-colour `match` on `WindowBackgroundAppearance` duplicated between
+  `draw` and `render_to_image` — exactly the drift the factoring claimed to
+  prevent. It is now a single `render(scene, background_appearance)` covering
+  clear + upload + batch encoding. Also added: a SAFETY comment on the
+  staging-texture row copy, and the real justification for the `skip_draws`
+  guard (a pending device-lost recovery leaves the atlas holding tile
+  references from the previous device, and drawing before the forced
+  re-render rebuilds them panics in `DirectXAtlasState::texture`). The PR
+  body was rewritten onto zed's actual PR template, including the
+  `Release Notes:` block their Danger rule requires.
+- **Do not expect fork CI to validate this.** Every job in zed's workflows is
+  gated on `if: github.repository_owner == 'zed-industries' || 'zed-extensions'`,
+  so pushing the branch to a fork we own runs nothing — every job skips. A
+  native Windows build of a given revision has to come from the Windows box or
+  from a hand-written `windows-latest` workflow on a scratch branch (zed's own
+  jobs use `namespace-profile-*` runners we do not have).
 
 With the patch active, the screenshot harness opens the window with
 `show: false` and captures via `render_to_image` — **truly headless, no flash**.
