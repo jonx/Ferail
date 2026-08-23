@@ -11,6 +11,18 @@ and let git history plus release notes carry the record.
 
 ## Highest Priority — finish in-flight features
 
+- **Windows reliability and compatibility campaign.** The 0.6.5 tester report
+  is tracked item by item in
+  [docs/features/WINDOWS_COMPATIBILITY_PLAN.md](docs/features/WINDOWS_COMPATIBILITY_PLAN.md):
+  first make crashes diagnosable and isolate third-party preview handlers,
+  then bound preview/file-detail work to the viewport, repair Explorer open /
+  reveal / clipboard behavior, add the native Windows context menu strictly on
+  demand (no selection prefetch), and introduce Shell namespace locations
+  without touching the ordinary filesystem fast path. Windows-specific work is
+  accepted only after the exact
+  [Windows reliability test plan](docs/testing/WINDOWS_RELIABILITY_TEST_PLAN.md)
+  passes interactively on a real Windows machine, including its 4,194,304-row
+  regression gate.
 - **Notifications & undo coverage for mutations.** Success feedback is now
   intentionally quiet for immediate visible work: rename/new-folder stay silent
   on success, and task-backed copy/move/duplicate/compress only toast after the

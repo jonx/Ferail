@@ -48,6 +48,7 @@ the primary user-facing feature exists and the remaining work is tracked in
 | [TOOL_RESULTS.md](TOOL_RESULTS.md) | Shipped with follow-ups | Shared tab-local result surface for Search, Duplicate Finder, and docked Disk Usage ships; pop-out/state migration remains open. |
 | [VIDEO-MPV.md](VIDEO-MPV.md) | Planned | Replace the mpv video backend with libmpv (live filters, alpha) and build an N-layer transparent-colour (chroma-key) compositor on top. Phase 0 spike gates it; nothing shipped yet. |
 | [VIEWER.md](VIEWER.md) | Shipped with follow-ups | Viewer window, playlist navigation, images, Quick Look fallback, mpv-backed video, slideshow, zoom, and controls ship; richer playback/playlist polish remains open. |
+| [WINDOWS_COMPATIBILITY_PLAN.md](WINDOWS_COMPATIBILITY_PLAN.md) | Planned | Execution ledger for the 0.6.5 Windows tester report: crash containment, viewport-bounded background work, Explorer/Shell compatibility, virtual locations, native menu on demand, and clean-machine packaging. |
 | [ferail-selection-dnd-spec.md](ferail-selection-dnd-spec.md) | Partial | Selection, row drag, external file drops, and many acceptance points ship; edge auto-scroll and favorite-row drops remain open. |
 | [ferail-windows-instances-tabs-spec.md](ferail-windows-instances-tabs-spec.md) | Partial | Process/window state split, tabs, closed-tab undo, and shared caches are in place; full multi-window/tear-off completion remains open. |
 | [linux-port.md](linux-port.md) | Partial port | The Linux shell crate compiles behind stubs; real clipboard/trash/open-with/volume/power/preview integrations remain open. |
@@ -124,6 +125,13 @@ keep the UI off the I/O path.
 
 ## Porting & verification
 
+- [WINDOWS_COMPATIBILITY_PLAN.md](WINDOWS_COMPATIBILITY_PLAN.md) — the tracked
+  Windows reliability and compatibility campaign, including a per-report issue
+  ledger and Windows-only acceptance gates.
+- [../testing/WINDOWS_RELIABILITY_TEST_PLAN.md](../testing/WINDOWS_RELIABILITY_TEST_PLAN.md)
+  — the exact Windows environments, corpora, measurements, interactive cases,
+  evidence, and release sign-off procedure for that campaign, including the
+  four-million-row regression gate.
 - [windows-port.md](windows-port.md) — handoff notes and lessons from the
   Windows `Ferail-Win32` predecessor.
 - [linux-port.md](linux-port.md) — orientation for starting a Linux port:
