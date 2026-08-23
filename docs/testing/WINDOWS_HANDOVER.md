@@ -19,7 +19,7 @@ Windows-only exit gate complete from macOS or cross-compilation alone.
 ## Repository state at handover creation
 
 - Branch: `main`
-- Baseline commit: `b67754a` (`docs(windows): record implementation progress`)
+- Baseline commit: `5f1a8fd` (`fix(preview): coalesce rapid selection requests`)
 - Release under investigation: `0.6.5`
 - Tester bundle:
   `/Users/jkn/Downloads/reunabletofindprojectdjohnknipperpersonalshellba.zip`
@@ -50,6 +50,7 @@ worktree; do not stage them into a Windows feature commit.
 | `a213e4d` | Replace `cmd /C start` with `ShellExecuteExW`; replace Explorer `/select,` strings with PIDL-based `SHOpenFolderAndSelectItems`. | Run the complete open/reveal path matrix. |
 | `c4c1baa` | Make ordinary Format/Description/quarantine enrichment viewport-only and O(viewport) on apply. | Run 10k-media, 100k-wide and 4M Flat regressions. |
 | `eaa39a4` | Connect `view.toggle_flat` to `ToggleFlatView` in the GPUI keymap. | Confirm a clean and upgraded profile emits no unknown-command warning and Ctrl+Shift+L works. |
+| `5f1a8fd` | Bound selection-driven image and text preview scheduling to one active request plus one latest-wins waiting slot; expose active native preview work in task snapshots. | Hold Up/Down across `WCORPUS-MEDIA-10K`; verify bounded preview/STA concurrency, stable scrollbar, latest selection wins, and no stale-provider crash. |
 
 These changes passed native macOS tests and strict Clippy. macOS-to-MSVC
 cross-checking cannot validate the full application because C dependencies
@@ -87,6 +88,9 @@ in order:
    Unicode, spaces, `#`, `%`, `!`, UNC and long paths;
 5. Reveal in Explorer over the same difficult-path matrix;
 6. `WCORPUS-MEDIA-10K` with Format and Description visible while scrolling;
+   hold Up/Down continuously through long ranges and confirm preview work never
+   grows beyond one active image request, one active text request, and their
+   latest waiting selections;
 7. `WCORPUS-WIDE-100K`, then `WCORPUS-FLAT-4M`, checking that detail work is
    proportional to the viewport and Flat memory/scroll behavior is unchanged.
 
@@ -190,4 +194,6 @@ Working-tree files intentionally left unstaged:
 ## Session log
 
 No real-Windows acceptance session has been recorded yet for the post-0.6.5
-commits listed above.
+commits listed above. macOS preparation through `5f1a8fd` passes all 281
+`ferail-gpui` library tests and strict all-target Clippy; this is not Windows
+acceptance.
