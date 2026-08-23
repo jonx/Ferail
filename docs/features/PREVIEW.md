@@ -45,7 +45,10 @@ per-provider cancellation tokens.
 
 Selection change schedules preview work through the shared preview request path.
 Providers run off the UI thread and publish compact cached results back to the
-shell.
+shell. Selection-driven image and text providers each use a constant-space,
+latest-wins queue: one request may run and only the newest request behind it is
+retained. Holding an arrow key therefore cannot create one native provider or
+file read per crossed row.
 
 Paint reads only:
 
@@ -54,9 +57,11 @@ Paint reads only:
 - `TextPreviewCache`,
 - cached quarantine and magic metadata.
 
-Stale provider results are dropped at apply time by checking the active
-selection/request. Some providers still run to completion after they become
-stale; cooperative cancellation is the remaining architecture gap.
+Provider results are path-keyed and never mutate table rows or geometry. A
+result that finishes after the selection moved may remain useful in the small
+cache, but only the currently selected path is rendered. The one active native
+provider still runs to completion after it becomes stale; hard cancellation
+and Windows process isolation remain architecture gaps.
 
 ## Content Thumbnail Provider
 
@@ -126,7 +131,8 @@ gpui-component wraps Markdown prose.
 ## Provider Rules
 
 - Selection change schedules preview work.
-- Previous request is cancelled or ignored.
+- At most one selection preview runs per provider; only the newest waiting
+  request survives.
 - Worker returns compact preview data.
 - Paint draws placeholder, loading state, cached result, or error.
 - No provider reads file content on the UI thread.

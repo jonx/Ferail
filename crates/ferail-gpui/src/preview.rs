@@ -18,6 +18,7 @@ use gpui::{App, AsyncApp, RenderImage};
 use image::{Frame, RgbaImage};
 use smallvec::SmallVec;
 
+use crate::preview_queue::{Enqueue, LatestRequestQueue};
 use crate::shell::Shell;
 
 /// Largest physical-pixel side of the cached thumbnail. ~512 keeps
@@ -47,6 +48,7 @@ pub struct PreviewCache {
     /// Insertion-order ring for LRU-ish eviction (simple FIFO is
     /// plenty for the bounded cap).
     order: Vec<PathBuf>,
+    requests: LatestRequestQueue<PathBuf>,
 }
 
 impl Default for PreviewCache {
@@ -60,6 +62,7 @@ impl PreviewCache {
         Self {
             by_path: HashMap::new(),
             order: Vec::new(),
+            requests: LatestRequestQueue::default(),
         }
     }
 
@@ -76,6 +79,14 @@ impl PreviewCache {
             let oldest = self.order.remove(0);
             self.by_path.remove(&oldest);
         }
+    }
+
+    fn enqueue_request(&mut self, path: PathBuf) -> Enqueue {
+        self.requests.enqueue(path)
+    }
+
+    fn complete_request(&mut self, path: &PathBuf) -> Option<PathBuf> {
+        self.requests.complete(path)
     }
 }
 
@@ -97,6 +108,18 @@ pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) 
     if shell.process.preview_cache.borrow().get(&path).is_some() {
         return;
     }
+    let enqueue = shell
+        .process
+        .preview_cache
+        .borrow_mut()
+        .enqueue_request(path.clone());
+    if !matches!(enqueue, Enqueue::Start) {
+        return;
+    }
+    start_request(shell, path, cx);
+}
+
+fn start_request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) {
     shell
         .process
         .preview_cache
@@ -104,13 +127,20 @@ pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) 
         .insert(path.clone(), PreviewState::Pending);
 
     let weak = cx.weak_entity();
+    let process = shell.process.clone();
+    let tasks = process.tasks.clone();
+    let task_id = tasks.borrow_mut().begin(
+        crate::tasks::TaskKind::ThumbnailPrefetch,
+        tr!("Loading preview\u{2026}"),
+        false,
+    );
     cx.spawn(async move |_this, cx| {
         let p_for_bg = path.clone();
         let result = cx
             .background_executor()
             .spawn(async move { fetch_preview_thumbnail(p_for_bg).await })
             .await;
-        apply_result(weak, path, result, cx).await;
+        apply_result(weak, process, path, result, task_id, cx).await;
     })
     .detach();
 }
@@ -174,18 +204,31 @@ pub fn warm<T: 'static>(
 
 async fn apply_result(
     weak: gpui::WeakEntity<Shell>,
+    process: std::rc::Rc<crate::process_state::ProcessState>,
     path: PathBuf,
     rgba: Option<(Vec<u8>, u32, u32)>,
+    task_id: crate::tasks::TaskId,
     cx: &mut AsyncApp,
 ) {
     let state = match rgba {
         Some((rgba, w, h)) => PreviewState::Loaded(Arc::new(build_render_image(rgba, w, h))),
         None => PreviewState::Failed,
     };
+    let next = {
+        let mut cache = process.preview_cache.borrow_mut();
+        cache.insert(path.clone(), state);
+        cache.complete_request(&path)
+    };
+    process.tasks.borrow_mut().end(task_id);
     let Some(shell) = weak.upgrade() else { return };
     shell.update(cx, |shell, cx| {
-        shell.process.preview_cache.borrow_mut().insert(path, state);
         cx.notify();
+        if let Some(next) = next {
+            // Re-enter through `request`: a viewer warm may have filled this
+            // path while it was queued, in which case the cache check avoids
+            // redundant provider work.
+            request(shell, next, cx);
+        }
     });
 }
 

@@ -32,6 +32,12 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   final connection, so startup warned about `view.toggle_flat` and skipped
   Ctrl/Cmd+Shift+L. The shortcut now reaches the existing action normally.
 
+- **Rapid selection changes no longer accumulate preview providers.** Image
+  and text previews now keep one active request and only the newest request
+  waiting behind it. Holding an arrow key across a large media folder therefore
+  uses constant queue space and cannot start one native preview handler per
+  crossed row; active preview work is also visible in diagnostic task snapshots.
+
 ## 0.6.5 — 2026-08-23
 
 - **Include Subfolders — every file under this folder, in one list.** A third

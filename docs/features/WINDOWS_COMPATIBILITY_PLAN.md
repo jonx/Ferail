@@ -202,7 +202,9 @@ trigger.
   Task Manager full-dump fallback.
 - [ ] Add activity breadcrumbs around navigation, selection transitions,
   thumbnail/preview request generations, Shell calls, and table refreshes.
-- [ ] Make task snapshots include viewport preview and enrichment schedulers.
+- [~] Make task snapshots include viewport preview and enrichment schedulers.
+  Selection-driven native previews now register as ambient thumbnail tasks;
+  confirm the resulting watchdog snapshot on Windows.
 - [ ] Reproduce shutdown after zero, one, and multiple windows; use
   `LEAK_BACKTRACE=1` to locate every leaked `InputState` and `TableState`
   handle, then fix ownership rather than suppressing GPUI's assertion.
@@ -258,8 +260,11 @@ captured on Windows before changing code.
 - [ ] Record request, decode, upload, apply, and cancellation counters by
   generation while reproducing the supplied video scenario.
 - [ ] Limit requests to the viewport plus a small directional overscan.
-- [ ] Use fixed worker concurrency and a bounded queue; newest visible work
-  wins and old off-screen work is discarded.
+- [~] Use fixed worker concurrency and a bounded queue; newest visible work
+  wins and old off-screen work is discarded. The shared preview pane now runs
+  one image and one text request with a single latest-wins waiting slot; the
+  list/grid viewport scheduler and Windows broker still need the Windows
+  stress matrix.
 - [ ] Bound GPU uploads and table updates per frame.
 - [ ] Refresh only affected visible rows; never rebuild/sort the row source for
   a thumbnail completion.

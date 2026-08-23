@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{AsyncApp, SharedString};
 
+use crate::preview_queue::{Enqueue, LatestRequestQueue};
 use crate::shell::Shell;
 
 /// How much of the file to read for detection + preview. A code file
@@ -48,6 +49,7 @@ pub enum TextPreviewState {
 pub struct TextPreviewCache {
     by_path: HashMap<PathBuf, TextPreviewState>,
     order: Vec<PathBuf>,
+    requests: LatestRequestQueue<PathBuf>,
 }
 
 impl Default for TextPreviewCache {
@@ -61,6 +63,7 @@ impl TextPreviewCache {
         Self {
             by_path: HashMap::new(),
             order: Vec::new(),
+            requests: LatestRequestQueue::default(),
         }
     }
 
@@ -78,6 +81,14 @@ impl TextPreviewCache {
             self.by_path.remove(&oldest);
         }
     }
+
+    fn enqueue_request(&mut self, path: PathBuf) -> Enqueue {
+        self.requests.enqueue(path)
+    }
+
+    fn complete_request(&mut self, path: &PathBuf) -> Option<PathBuf> {
+        self.requests.complete(path)
+    }
 }
 
 /// Kick the background text read for `path` unless the cache already
@@ -94,6 +105,18 @@ pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) 
     {
         return;
     }
+    let enqueue = shell
+        .process
+        .text_preview_cache
+        .borrow_mut()
+        .enqueue_request(path.clone());
+    if !matches!(enqueue, Enqueue::Start) {
+        return;
+    }
+    start_request(shell, path, cx);
+}
+
+fn start_request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) {
     shell
         .process
         .text_preview_cache
@@ -101,13 +124,14 @@ pub fn request(shell: &mut Shell, path: PathBuf, cx: &mut gpui::Context<Shell>) 
         .insert(path.clone(), TextPreviewState::Pending);
 
     let weak = cx.weak_entity();
+    let process = shell.process.clone();
     cx.spawn(async move |_this, cx| {
         let p = path.clone();
         let result = cx
             .background_executor()
             .spawn(async move { read_text_preview(&p) })
             .await;
-        apply_result(weak, path, result, cx).await;
+        apply_result(weak, process, path, result, cx).await;
     })
     .detach();
 }
@@ -188,6 +212,7 @@ fn looks_like_single_byte_text(buf: &[u8]) -> bool {
 
 async fn apply_result(
     weak: gpui::WeakEntity<Shell>,
+    process: std::rc::Rc<crate::process_state::ProcessState>,
     path: PathBuf,
     result: Result<Option<String>, ()>,
     cx: &mut AsyncApp,
@@ -197,14 +222,17 @@ async fn apply_result(
         Ok(None) => TextPreviewState::NotText,
         Err(()) => TextPreviewState::Failed,
     };
+    let next = {
+        let mut cache = process.text_preview_cache.borrow_mut();
+        cache.insert(path.clone(), state);
+        cache.complete_request(&path)
+    };
     let Some(shell) = weak.upgrade() else { return };
     shell.update(cx, |shell, cx| {
-        shell
-            .process
-            .text_preview_cache
-            .borrow_mut()
-            .insert(path, state);
         cx.notify();
+        if let Some(next) = next {
+            request(shell, next, cx);
+        }
     });
 }
 
