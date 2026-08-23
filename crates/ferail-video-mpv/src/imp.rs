@@ -321,12 +321,17 @@ const PREINIT_OPTIONS: &[(&str, &str)] = &[
     // stream teardown; `vo=libmpv` leaves the SW render context in charge.
     ("vo", "libmpv"),
     ("config", "no"),
-    // `load-scripts` covers user scripts; mpv 0.41 has separate switches for
-    // its built-in Lua programs, so all four are required to keep LuaJIT idle.
+    // `load-scripts` covers only the user's scripts directory. mpv 0.41 has
+    // separate switches for every built-in Lua program, so each one must be
+    // disabled explicitly to keep LuaJIT idle in a hardened host process.
     ("load-scripts", "no"),
     ("load-console", "no"),
     ("load-stats-overlay", "no"),
     ("load-auto-profiles", "no"),
+    ("load-select", "no"),
+    ("load-positioning", "no"),
+    ("load-commands", "no"),
+    ("load-context-menu", "no"),
     ("osc", "no"),
     ("osd-level", "0"),
     ("input-default-bindings", "no"),
@@ -779,6 +784,10 @@ mod tests {
             "load-console",
             "load-stats-overlay",
             "load-auto-profiles",
+            "load-select",
+            "load-positioning",
+            "load-commands",
+            "load-context-menu",
         ] {
             assert_eq!(
                 PREINIT_OPTIONS

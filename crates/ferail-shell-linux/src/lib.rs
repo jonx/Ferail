@@ -1222,6 +1222,10 @@ pub fn prevent_idle_sleep(_reason: &str) -> Option<SleepBlocker> {
 /// impl will key off the gpui/compositor handle instead. No-op for now.
 pub fn set_window_floating(_handle: *mut c_void, _floating: bool) {}
 
+/// Whole-window opacity. Wayland has no universal equivalent and the X11
+/// property needs the real backend handle, so this remains a parity stub.
+pub fn set_window_opacity(_handle: *mut c_void, _opacity: f32) {}
+
 /// Window docking primitives (docs/features/DOCK.md). macOS-only feature; the
 /// `*mut c_void` handle is meaningless on Linux, so these are no-op stubs that
 /// keep the shared `platform_shell::*` surface compiling. A real impl would

@@ -998,6 +998,14 @@ pub struct Shell {
     /// it leaves the 96-px bar — the same reason the viewer's adjustment
     /// sliders track their drag at panel level.
     pub icon_size_dragging: bool,
+    /// Painted bounds for the two Similar Images criteria tracks. Like the
+    /// icon-size track, these are captured during paint so click/scrub x
+    /// positions map back to a value without a heavyweight widget.
+    pub(crate) similar_structure_track: Bounds<Pixels>,
+    pub(crate) similar_detail_track: Bounds<Pixels>,
+    /// Active tab and criterion being scrubbed, if any. The tab id prevents
+    /// a mid-gesture tab switch from changing the wrong result surface.
+    pub(crate) similar_criteria_dragging: Option<(TabId, dupes::SimilarCriterion)>,
     /// Whether the right-side preview pane is visible. Cmd+P toggles
     /// it; Cmd+I focuses the preview's Get Info section (today it's
     /// the only thing in the pane).
@@ -1864,6 +1872,9 @@ impl Shell {
             typeahead: None,
             icon_size_track: Bounds::default(),
             icon_size_dragging: false,
+            similar_structure_track: Bounds::default(),
+            similar_detail_track: Bounds::default(),
+            similar_criteria_dragging: None,
             _subscriptions: vec![breadcrumb_subscription, shortcuts_help_subscription],
         };
         shell.process.register_shell(cx.weak_entity());

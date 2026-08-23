@@ -188,7 +188,8 @@ another entry keeps `{mode, center}` verbatim:
   bounds), so multiple files can be viewed side by side. Each window owns
   its own playlist + view state and shares only the process `ProcessState`
   (preview cache, etc.). Closing a window just drops its entity.
-- Title: `"<filename> — 3 of 128"`; same counter repeated in the toolbar.
+- Title: `"<filename> — 3 of 128"`; the toolbar repeats only the counter, not
+  the filename.
 - Toolbar (gpui-component `Button`/`ButtonGroup`, icons consistent with
   `icons.rs`): prev / next, play–pause, interval dropdown (2 s / 3 s / 5 s /
   10 s), zoom out / percent label / zoom in, fit / actual toggle,
@@ -316,8 +317,12 @@ another entry keeps `{mode, center}` verbatim:
   backend-aware — `MPV_VIDEO_EXTS` only counts when mpv is active) and grades
   video natively. Both decode into a BGRA pull buffer drawn as a gpui `img`;
   the viewer never names a concrete player.
-- **Stay on top** checkbox raises the window to the floating `NSWindow`
-  level. (Both checkboxes are gpui-component `Checkbox`es.)
+- **Stay on top** raises the native window level; on macOS it also opts into
+  `CanJoinAllSpaces | FullScreenAuxiliary`, allowing a viewer to overlay
+  another app's native full-screen Space. **Transparent** still clears the
+  stage/window background for chroma-key composition, while the separate
+  **Opacity** scrub fades the entire window (media and chrome together) from
+  100% down to a recoverable 20%.
 - **Zoom / pan / fit apply to video for free**: the pulled frame is laid
   out through the exact same `stage::layout` call as a still, against the
   frame's own (post-rotation) pixel size. A window resize re-fits both

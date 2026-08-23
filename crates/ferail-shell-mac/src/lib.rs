@@ -1265,6 +1265,31 @@ pub fn set_window_floating(ns_view: *mut std::ffi::c_void, floating: bool) {
 #[cfg(not(target_os = "macos"))]
 pub fn set_window_floating(_ns_view: *mut std::ffi::c_void, _floating: bool) {}
 
+/// Set the opacity of an entire top-level window, including its content and
+/// chrome. `opacity` is clamped away from zero so the viewer can never become
+/// completely invisible and impossible to recover. Main-thread only.
+#[cfg(target_os = "macos")]
+pub fn set_window_opacity(ns_view: *mut std::ffi::c_void, opacity: f32) {
+    use objc2::{msg_send, msg_send_id, rc::Retained, runtime::AnyObject};
+    use objc2_app_kit::NSWindow;
+    use objc2_foundation::MainThreadMarker;
+
+    if MainThreadMarker::new().is_none() || ns_view.is_null() {
+        return;
+    }
+    let view: &AnyObject = unsafe { &*(ns_view as *const AnyObject) };
+    let window: Option<Retained<NSWindow>> = unsafe { msg_send_id![view, window] };
+    if let Some(window) = window {
+        let alpha = opacity.clamp(0.2, 1.0) as f64;
+        unsafe {
+            let _: () = msg_send![&*window, setAlphaValue: alpha];
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_window_opacity(_ns_view: *mut std::ffi::c_void, _opacity: f32) {}
+
 /// Widen gpui's outbound drag-and-drop operation mask to Finder parity.
 ///
 /// gpui's `NSDraggingSource` hardcodes `NSDragOperationCopy` for drag

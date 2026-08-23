@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, atomic::AtomicBool};
 
 use ferail_core::{EnumerationError, FileEntry, NodeId, navigation::NavigationState};
+use ferail_fs_native::perceptual::{PerceptualSignature, SimilarityCriteria};
 use ferail_fs_native::{DupeMode, PerceptualThumbnail};
 use gpui::{
     AppContext, Entity, FocusHandle, Pixels, RenderImage, SharedString, Subscription,
@@ -71,6 +72,8 @@ impl ToolResultSurface {
                 wasted_bytes: 0,
                 presentation,
                 mode,
+                similarity_criteria: SimilarityCriteria::RECOMMENDED,
+                progress: ferail_fs_native::DupeStats::default(),
             }),
         }
     }
@@ -203,6 +206,26 @@ pub struct DupeViewMode {
     pub presentation: crate::feature_settings::DupePresentation,
     /// Exact byte duplicates or perceptually similar images.
     pub mode: DupeMode,
+    /// Live, session-only thresholds for Similar Images regrouping.
+    pub similarity_criteria: SimilarityCriteria,
+    /// Latest phase/count snapshot from the worker for the panel's progress
+    /// explanation. No paths or filenames are included.
+    pub progress: ferail_fs_native::DupeStats,
+}
+
+/// Compact scan-local source used to rebuild Similar Images groups when the
+/// criteria sliders move. Paths, hashes, and previews are dropped with the tab
+/// and are never persisted or registered process-wide.
+#[derive(Clone)]
+pub struct SimilarImageIndexView {
+    pub node: NodeId,
+    pub path: PathBuf,
+    pub mtime_unix: i64,
+    pub bytes: u64,
+    pub file_id: Option<(u64, u64)>,
+    pub clone_key: Option<(u64, i64)>,
+    pub signature: PerceptualSignature,
+    pub thumbnail: Option<Arc<RenderImage>>,
 }
 
 /// Similar-image-only display data. The decoded preview begins as raw RGBA
@@ -510,6 +533,12 @@ pub struct Tab {
     /// rows in `apply_dupe_batch_in_tab`; the panel render borrows it without
     /// copying.
     pub dupe_groups: Vec<DupeGroupView>,
+    /// Widest-match Similar Images candidates retained for instant, no-I/O
+    /// regrouping as the two criteria sliders move.
+    pub similar_image_index: Arc<Vec<SimilarImageIndexView>>,
+    /// Invalidates background regroup results superseded by a newer slider
+    /// value or scan.
+    pub similar_regroup_generation: u64,
     /// Member last focused in the duplicate-card panel. Similar Images uses
     /// this as the starting item when Space opens the current group in the
     /// full-size viewer. It is presentation state only and never persisted.
@@ -625,6 +654,8 @@ impl Tab {
             load_staging: None,
             tool_result: None,
             dupe_groups: Vec::new(),
+            similar_image_index: Arc::new(Vec::new()),
+            similar_regroup_generation: 0,
             dupe_panel_focus: None,
             dupe_panel_scroll: VirtualListScrollHandle::new(),
             last_error: None,

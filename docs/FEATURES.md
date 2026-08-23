@@ -143,7 +143,7 @@ HTML** renders the exact same treemap as a self-contained snippet
 (no JavaScript) you can paste into any document, wiki, or web page.
 ([disk usage](features/DISK_USAGE.md))
 
-## Duplicate finder — built in, clone-aware
+## Exact duplicates and similar images — built in, private
 
 ![Duplicate finder](images/tour-dupes.png)
 
@@ -153,6 +153,19 @@ streams in constant memory. It knows APFS clones and hardlinks don't
 free space, so "reclaimable" is a number you can trust. Review groups
 in a dedicated panel, mark keepers, trash the rest — or deduplicate
 in place with APFS clonefile. ([duplicates](features/DUPLICATES.md))
+
+The same panel can find visually similar PNG, JPEG, GIF, WebP, BMP, and TIFF
+images—even after resizing or ordinary recompression. Dual perceptual hashes
+separately measure structure and detail; adjust either threshold live, compare
+full-size candidates with Space or a double-click, and let Ferail suggest the
+highest-resolution original as the keeper. Reclaimable space updates with your
+choice, and similar files can only go through the recoverable Trash flow:
+byte-replacing clone dedup is deliberately unavailable.
+
+Personal pictures stay private. Pixels, paths, perceptual signatures, and
+result thumbnails remain local, are never sent over the network or written to
+the metadata database, and disappear with the active scan, result tab, or
+viewer.
 
 ## Bulk rename — regex power with a live preview
 

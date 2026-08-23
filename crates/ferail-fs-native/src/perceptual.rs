@@ -16,6 +16,34 @@ use image::{DynamicImage, GenericImageView as _, ImageDecoder as _, ImageReader}
 pub const PERCEPTUAL_REVISION: u32 = 1;
 pub const DHASH_MAX_DISTANCE: u32 = 7;
 pub const PHASH_MAX_DISTANCE: u32 = 12;
+
+/// User-adjustable matching limits. Values are capped at the widest ranges
+/// for which the current banded candidate search is exact and tuned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SimilarityCriteria {
+    pub structure: u32,
+    pub detail: u32,
+}
+
+impl SimilarityCriteria {
+    pub const RECOMMENDED: Self = Self {
+        structure: DHASH_MAX_DISTANCE,
+        detail: PHASH_MAX_DISTANCE,
+    };
+
+    pub fn clamped(self) -> Self {
+        Self {
+            structure: self.structure.min(DHASH_MAX_DISTANCE),
+            detail: self.detail.min(PHASH_MAX_DISTANCE),
+        }
+    }
+}
+
+impl Default for SimilarityCriteria {
+    fn default() -> Self {
+        Self::RECOMMENDED
+    }
+}
 /// Euclidean distance in mean RGB space. Conservative enough to reject the
 /// classic all-flat dHash/pHash collision without excluding normal JPEG drift.
 pub const MEAN_RGB_MAX_DISTANCE: u32 = 72;
@@ -265,14 +293,23 @@ fn mean_rgb_distance(a: [u8; 3], b: [u8; 3]) -> u32 {
 }
 
 pub fn are_similar(a: PerceptualSignature, b: PerceptualSignature) -> bool {
+    are_similar_with(a, b, SimilarityCriteria::RECOMMENDED)
+}
+
+pub fn are_similar_with(
+    a: PerceptualSignature,
+    b: PerceptualSignature,
+    criteria: SimilarityCriteria,
+) -> bool {
     if a.luma_variance < MIN_LOW_INFORMATION_VARIANCE
         && b.luma_variance < MIN_LOW_INFORMATION_VARIANCE
     {
         return false;
     }
+    let criteria = criteria.clamped();
     let (dhash, phash) = hash_distances(a, b);
-    dhash <= DHASH_MAX_DISTANCE
-        && phash <= PHASH_MAX_DISTANCE
+    dhash <= criteria.structure
+        && phash <= criteria.detail
         && mean_rgb_distance(a.mean_rgb, b.mean_rgb) <= MEAN_RGB_MAX_DISTANCE
 }
 
@@ -281,6 +318,14 @@ pub fn are_similar(a: PerceptualSignature, b: PerceptualSignature) -> bool {
 /// accepted by [`are_similar`]. Degenerate buckets can still be quadratic;
 /// pHash and mean RGB reject their false edges before grouping.
 pub fn similarity_pairs(signatures: &[PerceptualSignature]) -> Vec<SimilarityPair> {
+    similarity_pairs_with(signatures, SimilarityCriteria::RECOMMENDED)
+}
+
+pub fn similarity_pairs_with(
+    signatures: &[PerceptualSignature],
+    criteria: SimilarityCriteria,
+) -> Vec<SimilarityPair> {
+    let criteria = criteria.clamped();
     let mut buckets: HashMap<(u8, u8), Vec<usize>> = HashMap::new();
     for (index, signature) in signatures.iter().enumerate() {
         for band in 0..8u8 {
@@ -304,7 +349,7 @@ pub fn similarity_pairs(signatures: &[PerceptualSignature]) -> Vec<SimilarityPai
         .filter_map(|(a, b)| {
             let sa = signatures[a];
             let sb = signatures[b];
-            if !are_similar(sa, sb) {
+            if !are_similar_with(sa, sb, criteria) {
                 return None;
             }
             let (dhash_distance, phash_distance) = hash_distances(sa, sb);
@@ -322,7 +367,15 @@ pub fn similarity_pairs(signatures: &[PerceptualSignature]) -> Vec<SimilarityPai
 /// each component. Every emitted member is within both thresholds of its
 /// group's medoid, preventing transitive A≈B≈C chains from drifting unchecked.
 pub fn similarity_clusters(signatures: &[PerceptualSignature]) -> Vec<SimilarityCluster> {
-    let pairs = similarity_pairs(signatures);
+    similarity_clusters_with(signatures, SimilarityCriteria::RECOMMENDED)
+}
+
+pub fn similarity_clusters_with(
+    signatures: &[PerceptualSignature],
+    criteria: SimilarityCriteria,
+) -> Vec<SimilarityCluster> {
+    let criteria = criteria.clamped();
+    let pairs = similarity_pairs_with(signatures, criteria);
     let mut adjacency = vec![Vec::<usize>::new(); signatures.len()];
     for pair in &pairs {
         adjacency[pair.a].push(pair.b);
@@ -364,7 +417,8 @@ pub fn similarity_clusters(signatures: &[PerceptualSignature]) -> Vec<Similarity
                 .iter()
                 .copied()
                 .filter(|&index| {
-                    index == medoid || are_similar(signatures[medoid], signatures[index])
+                    index == medoid
+                        || are_similar_with(signatures[medoid], signatures[index], criteria)
                 })
                 .collect();
             if members.len() < 2 {
@@ -431,9 +485,10 @@ mod tests {
     #[test]
     fn modest_crop_stays_similar() {
         let original = synthetic(640, 480, 0);
-        let cropped = original
-            .crop_imm(16, 12, 608, 456)
-            .resize_exact(640, 480, FilterType::Lanczos3);
+        let cropped =
+            original
+                .crop_imm(16, 12, 608, 456)
+                .resize_exact(640, 480, FilterType::Lanczos3);
         let a = signature(&original);
         let b = signature(&cropped);
         assert!(are_similar(a, b), "distances: {:?}", hash_distances(a, b));
@@ -481,6 +536,47 @@ mod tests {
     }
 
     #[test]
+    fn adjustable_criteria_can_tighten_structure_and_detail_independently() {
+        let base = PerceptualSignature {
+            dhash: 0,
+            phash: 0,
+            mean_rgb: [100; 3],
+            luma_variance: 100,
+            width: 100,
+            height: 100,
+        };
+        let changed = PerceptualSignature {
+            dhash: 0b111,
+            phash: 0b1_1111,
+            ..base
+        };
+        assert!(are_similar_with(
+            base,
+            changed,
+            SimilarityCriteria {
+                structure: 3,
+                detail: 5,
+            }
+        ));
+        assert!(!are_similar_with(
+            base,
+            changed,
+            SimilarityCriteria {
+                structure: 2,
+                detail: 5,
+            }
+        ));
+        assert!(!are_similar_with(
+            base,
+            changed,
+            SimilarityCriteria {
+                structure: 3,
+                detail: 4,
+            }
+        ));
+    }
+
+    #[test]
     fn transitive_chain_is_split_into_medoid_bounded_groups() {
         let sig = |dhash| PerceptualSignature {
             dhash,
@@ -496,12 +592,10 @@ mod tests {
         assert!(!clusters.is_empty());
         for cluster in clusters {
             assert!(cluster.members.len() >= 2);
-            assert!(
-                cluster
-                    .members
-                    .iter()
-                    .all(|&member| are_similar(signatures[cluster.medoid], signatures[member]))
-            );
+            assert!(cluster
+                .members
+                .iter()
+                .all(|&member| are_similar(signatures[cluster.medoid], signatures[member])));
         }
     }
 

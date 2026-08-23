@@ -1,10 +1,11 @@
 # Ferail
 
 **A power-user file manager that never freezes.** Native, fast, written in
-Rust — with the tools you normally install separately built in: a duplicate
-finder, a disk-usage treemap you can export as HTML, an archive browser that
-opens `.zip` / `.7z` / `.tar.*` / `.lha` in place, magic-byte file identification,
-regex bulk rename, a media viewer, and a command palette.
+Rust — with the tools you normally install separately built in: exact-duplicate
+and similar-image finders, a disk-usage treemap you can export as HTML, an
+archive browser that opens `.zip` / `.7z` / `.tar.*` / `.lha` in place,
+magic-byte file identification, regex bulk rename, a media viewer, and a
+command palette.
 
 ![Ferail main window](docs/images/tour-shell.png)
 
@@ -32,8 +33,9 @@ It targets the gap the default managers leave: **responsiveness under load** and
   ([how it's enforced](docs/ARCHITECTURE.md#prime-directive))
 - **It reads bytes, not extensions.** Content/magic detection identifies every
   file and reports real metadata no other manager shows.
-- **The power tools are built in.** Duplicate finder (hash-funnel,
-  clone/hard-link aware), disk-usage treemap (multi-select, act on squares,
+- **The power tools are built in.** Exact-duplicate finder (hash-funnel,
+  clone/hard-link aware), private on-device similar-image search, disk-usage
+  treemap (multi-select, act on squares,
   **export the picture as embeddable HTML**), regex bulk rename with live
   preview, sticky-zoom media viewer, Cmd+K command palette — zero extra
   downloads.
@@ -58,7 +60,7 @@ It targets the gap the default managers leave: **responsiveness under load** and
 The full tour with a picture per feature lives in
 **[docs/FEATURES.md](docs/FEATURES.md)**. A taste:
 
-| Disk-usage treemap → HTML export | Duplicate finder | Bulk rename |
+| Disk-usage treemap → HTML export | Duplicates + similar images | Bulk rename |
 |---|---|---|
 | ![Disk Usage](docs/images/tour-disk-usage.png) | ![Duplicates](docs/images/tour-dupes.png) | ![Bulk rename](docs/images/tour-bulk-rename.png) |
 | **Icon grid** | **Media viewer + live grading** | **Command palette** |
@@ -120,6 +122,7 @@ The ❌ rows are real gaps, not modesty.
 | **Content / magic detection** (sniff bytes, not extension) | ✅ | ❌ | ❌ | ⚠️ MIME |
 | **Built-in disk usage** (treemap, HTML export) | ✅ | ❌ (3rd-party) | ❌ (3rd-party) | ⚠️ separate app |
 | **Built-in duplicate finder** | ✅ hash funnel, clone/hard-link aware | ❌ (3rd-party) | ❌ (3rd-party) | ❌ (3rd-party) |
+| **Similar-image search** | ✅ adjustable dual perceptual hashes, local-only | ❌ (3rd-party) | ❌ (3rd-party) | ❌ (3rd-party) |
 | **Browse inside archives** (no extract-first) | ✅ zip, 7z, tar.*, lha — browse, add, extract selected | ❌ extract only | ⚠️ zip only | ✅ Ark / File Roller |
 | **Bulk rename** (regex + live preview) | ✅ | ❌ | ⚠️ PowerRename (PowerToys) | ✅ KRename etc. |
 | **Predictive navigation** (visit heat) | ✅ Ant Trail | ❌ | ❌ | ❌ |

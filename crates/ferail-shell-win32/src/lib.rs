@@ -2346,6 +2346,30 @@ pub fn set_window_floating(hwnd_raw: *mut std::ffi::c_void, floating: bool) {
 #[cfg(not(windows))]
 pub fn set_window_floating(_ns_view: *mut std::ffi::c_void, _floating: bool) {}
 
+/// Set whole-window opacity, matching macOS `NSWindow.alphaValue`.
+/// Keeps the layered style once enabled; other window effects may rely on it.
+#[cfg(windows)]
+pub fn set_window_opacity(hwnd_raw: *mut std::ffi::c_void, opacity: f32) {
+    use windows::Win32::Foundation::{COLORREF, HWND};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, GWL_EXSTYLE, LWA_ALPHA, SetLayeredWindowAttributes,
+        SetWindowLongPtrW, WS_EX_LAYERED,
+    };
+    if hwnd_raw.is_null() {
+        return;
+    }
+    let hwnd = HWND(hwnd_raw);
+    let alpha = (opacity.clamp(0.2, 1.0) * 255.0).round() as u8;
+    unsafe {
+        let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, current | WS_EX_LAYERED.0 as isize);
+        let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA);
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_window_opacity(_hwnd_raw: *mut std::ffi::c_void, _opacity: f32) {}
+
 // Window docking primitives — still macOS-only (docs/features/DOCK.md). These
 // stay no-op stubs deliberately: `dock.rs` computes frames in macOS *global
 // screen space* (origin bottom-left, y-up), so a Windows port is not "fill in

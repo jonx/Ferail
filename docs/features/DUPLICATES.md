@@ -56,6 +56,14 @@ decoder that does not route personal images through an external service.
 Similar results always use the existing virtualized card panel, with small
 in-card previews, dimensions, hash distance, and a **Best copy** badge. The
 default keeper is ranked by pixel area, then encoded bytes, then oldest mtime.
+Two inline, session-only controls independently tighten the structure/dHash
+(0–7) and detail/pHash (0–12) limits; lower values demand a closer match, and
+**Reset to recommended** restores 7/12. Regrouping uses the already decoded
+signatures in memory, so moving a control neither reopens photos nor rescans
+the folder. The worker reports honest phase-aware progress: folders scanned
+and eligible candidate images discovered while the tree is still growing,
+analyzed images out of the final total after enumeration, then the final
+grouping pass.
 Its reclaim total is keeper-dependent (`sum(member bytes) - keeper bytes`) and
 updates immediately when the keeper changes. The exact-mode global “keep
 newest” sweep is absent, and clone dedup is both hidden and hard-gated: similar
@@ -76,8 +84,11 @@ read or write `DupeHashCache`, does not add database columns or rows, does not
 use the process-level thumbnail cache or Quick Look, and performs no network
 I/O. It also bypasses both process-wide NodeId-to-path registries. Full decoded
 pixels are dropped after signature calculation; result paths and previews are
-retained only by the active matched-group cards and any explicitly opened group
-viewer, then dropped when those surfaces close. The viewer's full-size decode
+retained only by the active result tab's compact widest-match index, matched
+cards, and any explicitly opened group viewer, then dropped when those surfaces
+close. That compact index is what makes stricter/looser live regrouping possible;
+it contains signatures and result thumbnails, not full decoded images. The
+viewer's full-size decode
 cache is likewise scoped to that window and is never persisted. Decode errors
 are deliberately path-free. A regression test
 supplies a cache implementation that panics on any access and verifies result
@@ -275,7 +286,8 @@ suppressed. `clone_dedup` (macOS) backs "Dedup → clones".
   cancellation, stale-result drop.
 - Similar Images: dual perceptual hashes, exact banded candidate recall through
   dHash distance 7, medoid-bounded grouping, best-copy selection, dynamic
-  reclaim, in-card previews, and cache-isolation/privacy regression tests.
+  reclaim, adjustable in-memory structure/detail criteria, phase-aware scan
+  progress, in-card previews, and cache-isolation/privacy regression tests.
 
 ## Follow-ups
 

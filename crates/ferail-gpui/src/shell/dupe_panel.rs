@@ -31,7 +31,7 @@ use ferail_fs_native::DupeMode;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::Scrollbar;
 
-use super::dupes::location_with_note;
+use super::dupes::{SimilarCriterion, location_with_note, similar_criterion_range};
 use super::tab::DupeGroupView;
 use super::*;
 
@@ -39,7 +39,7 @@ impl Shell {
     /// Card-based duplicate panel for the active tab. Caller guarantees the
     /// active tool result is Duplicates with `presentation == Panel`.
     pub(super) fn dupe_panel_body(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
         let tab = self.active_tab();
         let Some(dm) = tab
             .tool_result
@@ -51,6 +51,27 @@ impl Shell {
         let selection = &tab.selection;
         let selected = selection.len();
         let scanning = tab.load_cancel.is_some();
+        let progress_label = if scanning && dm.mode == DupeMode::Similar {
+            Some(match dm.progress.phase {
+                ferail_fs_native::DupePhase::Enumerating => tr!(
+                    "Enumerating folders\u{2026} {folders} folders scanned \u{00B7} {images} candidate images found",
+                    folders = dm.progress.folders_scanned,
+                    images = dm.progress.images_discovered
+                ),
+                ferail_fs_native::DupePhase::Analyzing => tr!(
+                    "Analyzing images\u{2026} {done} of {total}",
+                    done = dm.progress.images_analyzed,
+                    total = dm.progress.images_total
+                ),
+                ferail_fs_native::DupePhase::Grouping => {
+                    tr!("Grouping similar images\u{2026}")
+                }
+            })
+        } else if scanning {
+            Some(tr!("scanning\u{2026}"))
+        } else {
+            None
+        };
 
         // Toolbar: a running summary plus the global actions. "Reclaimable"
         // is the whole-scan figure; the selected count tells the user how
@@ -70,20 +91,22 @@ impl Shell {
             .border_b_1()
             .border_color(theme.border)
             .child(
-                div()
-                    .text_scale_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.foreground)
-                    .child(summary),
+                v_flex()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .text_scale_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.foreground)
+                            .child(summary),
+                    )
+                    .children(progress_label.map(|label| {
+                        div()
+                            .text_scale_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(label)
+                    })),
             )
-            .when(scanning, |this| {
-                this.child(
-                    div()
-                        .text_scale_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(tr!("scanning\u{2026}")),
-                )
-            })
             .child(div().flex_1())
             .when(dm.mode == DupeMode::Exact, |this| {
                 this.child(
@@ -119,6 +142,98 @@ impl Shell {
                         cx.listener(|this, _, window, cx| this.dupe_trash_marked(window, cx)),
                     ),
             );
+
+        let criteria = (dm.mode == DupeMode::Similar).then(|| {
+            let values = dm.similarity_criteria;
+            let recommended = ferail_fs_native::perceptual::SimilarityCriteria::RECOMMENDED;
+            let disabled = scanning || tab.similar_image_index.is_empty();
+
+            v_flex()
+                .w_full()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .border_b_1()
+                .border_color(theme.border)
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_scale_sm()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.foreground)
+                                .child(tr!("Similarity criteria")),
+                        )
+                        .child(
+                            div()
+                                .text_scale_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(tr!("Lower values require a closer visual match.")),
+                        )
+                        .child(div().flex_1())
+                        .child(
+                            Button::new("similar-criteria-reset")
+                                .xsmall()
+                                .ghost()
+                                .label(tr!("Reset to recommended"))
+                                .disabled(scanning || values == recommended)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.reset_similar_criteria(cx)
+                                })),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .gap_4()
+                        .child(
+                            h_flex()
+                                .flex_1()
+                                .gap_2()
+                                .child(
+                                    self.similar_criteria_track(
+                                        SimilarCriterion::Structure,
+                                        values.structure,
+                                        disabled,
+                                        cx,
+                                    ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .w(px(112.0))
+                                        .text_scale_xs()
+                                        .text_color(theme.foreground)
+                                        .child(tr!(
+                                            "Structure ≤ {value}",
+                                            value = values.structure
+                                        )),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .flex_1()
+                                .gap_2()
+                                .child(self.similar_criteria_track(
+                                    SimilarCriterion::Detail,
+                                    values.detail,
+                                    disabled,
+                                    cx,
+                                ))
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .w(px(92.0))
+                                        .text_scale_xs()
+                                        .text_color(theme.foreground)
+                                        .child(tr!("Detail ≤ {value}", value = values.detail)),
+                                ),
+                        ),
+                )
+        });
 
         let list = if tab.dupe_groups.is_empty() {
             div()
@@ -213,8 +328,58 @@ impl Shell {
         v_flex()
             .size_full()
             .child(toolbar)
+            .children(criteria)
             .child(list)
             .into_any_element()
+    }
+
+    fn similar_criteria_track(
+        &self,
+        criterion: SimilarCriterion,
+        value: u32,
+        disabled: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let range = similar_criterion_range(criterion);
+        let entity = cx.entity();
+        let (id, tooltip) = match criterion {
+            SimilarCriterion::Structure => (
+                "similar-structure-slider",
+                tr!("Controls image layout and edges (dHash)."),
+            ),
+            SimilarCriterion::Detail => (
+                "similar-detail-slider",
+                tr!("Controls overall visual detail (pHash)."),
+            ),
+        };
+
+        crate::scrub_slider::track(id, range.fraction(value as f32), disabled, cx)
+            .flex_1()
+            .child(
+                canvas(
+                    move |bounds, _, cx| {
+                        entity.update(cx, |this, _| match criterion {
+                            SimilarCriterion::Structure => this.similar_structure_track = bounds,
+                            SimilarCriterion::Detail => this.similar_detail_track = bounds,
+                        })
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+            })
+            .when(!disabled, |this| {
+                this.on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.begin_similar_criteria_drag(criterion, event.position.x, cx);
+                    }),
+                )
+            })
     }
 
     /// One collapsible group card.

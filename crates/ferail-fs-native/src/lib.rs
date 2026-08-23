@@ -44,8 +44,8 @@ pub use archive::{
 };
 pub use disk_usage_scanner::{DEFAULT_DU_BATCH, SubtreeTotals, recursive_size, recursive_totals};
 pub use dupes::{
-    DEFAULT_DUPE_BATCH, DupeFact, DupeHashCache, DupeMember, DupeMode, DupeOpts, DupeStats,
-    PARTIAL_HASH_BYTES, SimilarImageInfo, clone_dedup,
+    DEFAULT_DUPE_BATCH, DupeFact, DupeHashCache, DupeMember, DupeMode, DupeOpts, DupePhase,
+    DupeStats, PARTIAL_HASH_BYTES, SimilarImageIndexEntry, SimilarImageInfo, clone_dedup,
 };
 pub use perceptual::PerceptualThumbnail;
 pub use icons::fetch_icon_rgba;

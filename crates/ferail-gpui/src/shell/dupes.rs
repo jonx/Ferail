@@ -16,12 +16,19 @@ use std::sync::{
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ferail_core::{EnumerationError, FileEntry, NodeId};
-use ferail_fs_native::{DEFAULT_DUPE_BATCH, DupeFact, DupeHashCache, DupeMode, DupeOpts, NativeFs};
-use gpui::{AnyWindowHandle, Context, SharedString};
+use ferail_fs_native::perceptual::SimilarityCluster;
+use ferail_fs_native::{
+    DEFAULT_DUPE_BATCH, DupeFact, DupeHashCache, DupeMode, DupeOpts, DupeStats, NativeFs,
+    SimilarImageIndexEntry,
+};
+use gpui::{AnyWindowHandle, Context, Pixels, SharedString};
 use gpui_component::WindowExt;
 
 use super::Shell;
-use super::tab::{DupeGroupMember, DupeGroupView, SimilarImageView, TabId, ToolResultSurface};
+use super::tab::{
+    DupeGroupMember, DupeGroupView, SimilarImageIndexView, SimilarImageView, TabId,
+    ToolResultSurface,
+};
 use crate::dupe_cache::DbHashCache;
 use crate::feature_settings::DupeConfig;
 use crate::tasks::TaskKind;
@@ -53,7 +60,18 @@ impl DupeBatch {
 
 pub(super) enum DupeMsg {
     Batch(DupeBatch),
+    SimilarIndex {
+        images: Vec<SimilarImageIndexEntry>,
+        clusters: Vec<SimilarityCluster>,
+    },
+    Progress(DupeStats),
     Done(Option<EnumerationError>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SimilarCriterion {
+    Structure,
+    Detail,
 }
 
 /// Worker body. Runs on the background executor; builds each confirmed
@@ -79,14 +97,21 @@ pub(super) fn run_dupe_load(
         &cancel,
         |facts| {
             let mut batch = DupeBatch::default();
+            let mut similar_index = None;
             for fact in facts {
-                let DupeFact::Group {
-                    mode,
-                    full_hash,
-                    bytes_each,
-                    members,
-                    ..
-                } = fact;
+                let (mode, full_hash, bytes_each, members) = match fact {
+                    DupeFact::Group {
+                        mode,
+                        full_hash,
+                        bytes_each,
+                        members,
+                        ..
+                    } => (mode, full_hash, bytes_each, members),
+                    DupeFact::SimilarIndex { images, clusters } => {
+                        similar_index = Some((images, clusters));
+                        continue;
+                    }
+                };
                 group_no += 1;
                 let mut gv_members = Vec::with_capacity(members.len());
                 for m in members {
@@ -97,14 +122,9 @@ pub(super) fn run_dupe_load(
                     let (node, path, entry) = if mode == DupeMode::Similar {
                         (m.node, m.path.clone(), None)
                     } else {
-                        let Some((entry, path)) = member_row(
-                            &fs,
-                            &m.path,
-                            &root,
-                            group_no,
-                            m.is_hardlink,
-                            m.is_clone,
-                        ) else {
+                        let Some((entry, path)) =
+                            member_row(&fs, &m.path, &root, group_no, m.is_hardlink, m.is_clone)
+                        else {
                             continue;
                         };
                         (entry.id, path, Some(entry))
@@ -157,8 +177,20 @@ pub(super) fn run_dupe_load(
             if !batch.groups.is_empty() && tx.send_blocking(DupeMsg::Batch(batch)).is_err() {
                 cancel.store(true, Ordering::Relaxed);
             }
+            if let Some((images, clusters)) = similar_index {
+                if tx
+                    .send_blocking(DupeMsg::SimilarIndex { images, clusters })
+                    .is_err()
+                {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            }
         },
-        |_| {},
+        |stats| {
+            if tx.send_blocking(DupeMsg::Progress(stats)).is_err() {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        },
     );
     let _ = tx.send_blocking(DupeMsg::Done(error));
 }
@@ -265,7 +297,11 @@ impl Shell {
             presentation,
             mode,
         ));
+        self.similar_criteria_dragging = None;
         self.tabs[idx].dupe_groups.clear();
+        self.tabs[idx].similar_image_index = Arc::new(Vec::new());
+        self.tabs[idx].similar_regroup_generation =
+            self.tabs[idx].similar_regroup_generation.wrapping_add(1);
         self.tabs[idx].dupe_panel_focus = None;
         self.tabs[idx].dupe_panel_scroll = crate::multi_table::VirtualListScrollHandle::new();
         let table = self.tabs[idx].table.clone();
@@ -313,12 +349,26 @@ impl Shell {
         cx.spawn(async move |this, cx| {
             while let Ok(msg) = rx.recv().await {
                 let mut batch: Option<DupeBatch> = None;
+                let mut similar_index = None;
+                let mut progress = None;
                 let mut done_error: Option<Option<EnumerationError>> = None;
 
-                absorb_dupe_msg(msg, &mut batch, &mut done_error);
+                absorb_dupe_msg(
+                    msg,
+                    &mut batch,
+                    &mut similar_index,
+                    &mut progress,
+                    &mut done_error,
+                );
                 while done_error.is_none() {
                     match rx.try_recv() {
-                        Ok(msg) => absorb_dupe_msg(msg, &mut batch, &mut done_error),
+                        Ok(msg) => absorb_dupe_msg(
+                            msg,
+                            &mut batch,
+                            &mut similar_index,
+                            &mut progress,
+                            &mut done_error,
+                        ),
                         Err(async_channel::TryRecvError::Empty) => break,
                         Err(async_channel::TryRecvError::Closed) => {
                             done_error = Some(None);
@@ -338,6 +388,12 @@ impl Shell {
                         }
                         if let Some(batch) = batch {
                             this.apply_dupe_batch_in_tab(idx, batch, cx);
+                        }
+                        if let Some((images, clusters)) = similar_index {
+                            this.apply_similar_index_in_tab(idx, images, clusters, cx);
+                        }
+                        if let Some(progress) = progress {
+                            this.apply_dupe_progress_in_tab(idx, progress, cx);
                         }
                         if let Some(error) = done_error {
                             this.apply_dupe_msg_in_tab(
@@ -367,6 +423,10 @@ impl Shell {
     ) {
         match msg {
             DupeMsg::Batch(batch) => self.apply_dupe_batch_in_tab(idx, batch, cx),
+            DupeMsg::SimilarIndex { images, clusters } => {
+                self.apply_similar_index_in_tab(idx, images, clusters, cx)
+            }
+            DupeMsg::Progress(progress) => self.apply_dupe_progress_in_tab(idx, progress, cx),
             DupeMsg::Done(error) => {
                 let groups = self.tabs[idx]
                     .tool_result
@@ -434,6 +494,263 @@ impl Shell {
                 }
             }
         }
+    }
+
+    fn apply_dupe_progress_in_tab(
+        &mut self,
+        idx: usize,
+        progress: DupeStats,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.get_mut(idx) else {
+            return;
+        };
+        if let Some(mode) = tab
+            .tool_result
+            .as_mut()
+            .and_then(|surface| surface.dupe_mode_mut())
+        {
+            mode.progress = progress;
+        }
+        if let Some(task) = tab.load_task {
+            match progress.phase {
+                ferail_fs_native::DupePhase::Enumerating => {}
+                ferail_fs_native::DupePhase::Analyzing if progress.images_total > 0 => {
+                    self.process.tasks.borrow_mut().update(
+                        task,
+                        0.9 * progress.images_analyzed as f32 / progress.images_total as f32,
+                    );
+                }
+                ferail_fs_native::DupePhase::Analyzing => {}
+                ferail_fs_native::DupePhase::Grouping => {
+                    // Pairing and result-thumbnail preparation have no cheap
+                    // exact denominator. Reserve the tail instead of showing
+                    // a misleading 100% before the result index is ready.
+                    self.process.tasks.borrow_mut().update(task, 0.95);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Land the one scan-local perceptual index. Raw thumbnails become GPUI
+    /// images exactly once; paths and signatures stay on this tab only.
+    fn apply_similar_index_in_tab(
+        &mut self,
+        idx: usize,
+        images: Vec<SimilarImageIndexEntry>,
+        clusters: Vec<SimilarityCluster>,
+        cx: &mut Context<Self>,
+    ) {
+        let index = images
+            .into_iter()
+            .map(|image| {
+                let thumbnail = image.thumbnail.as_ref().map(|raw| {
+                    Arc::new(crate::icons::build_render_image(
+                        raw.rgba.clone(),
+                        raw.width,
+                        raw.height,
+                    ))
+                });
+                SimilarImageIndexView {
+                    node: image.node,
+                    path: image.path,
+                    mtime_unix: image.mtime_unix,
+                    bytes: image.bytes,
+                    file_id: image.file_id,
+                    clone_key: image.clone_key,
+                    signature: image.signature,
+                    thumbnail,
+                }
+            })
+            .collect::<Vec<_>>();
+        let Some(tab) = self.tabs.get_mut(idx) else {
+            return;
+        };
+        tab.similar_image_index = Arc::new(index);
+        tab.similar_regroup_generation = tab.similar_regroup_generation.wrapping_add(1);
+        self.apply_similar_clusters_in_tab(idx, clusters, cx);
+    }
+
+    fn apply_similar_clusters_in_tab(
+        &mut self,
+        idx: usize,
+        clusters: Vec<SimilarityCluster>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.get_mut(idx) else {
+            return;
+        };
+        let groups = similar_group_views(&tab.similar_image_index, &clusters);
+        let old_focus_node = tab.dupe_panel_focus.map(|(_, node)| node);
+        tab.selection.clear();
+        tab.dupe_groups = groups;
+        tab.dupe_panel_focus = old_focus_node.and_then(|node| {
+            tab.dupe_groups.iter().find_map(|group| {
+                group
+                    .members
+                    .iter()
+                    .any(|member| member.node == node)
+                    .then_some((group.group_no, node))
+            })
+        });
+        if let Some(mode) = tab
+            .tool_result
+            .as_mut()
+            .and_then(|surface| surface.dupe_mode_mut())
+        {
+            mode.groups = tab.dupe_groups.len();
+            mode.wasted_bytes = tab
+                .dupe_groups
+                .iter()
+                .map(DupeGroupView::reclaimable_bytes)
+                .sum();
+        }
+        cx.notify();
+    }
+
+    /// Update one or both live criteria and debounce a pure, off-thread
+    /// regroup. The retained signatures are `Copy`; no path is opened and no
+    /// thumbnail is decoded on this path.
+    pub(super) fn update_similar_criteria(
+        &mut self,
+        tab_id: TabId,
+        structure: Option<u32>,
+        detail: Option<u32>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(idx) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+            return;
+        };
+        let Some(mode) = self.tabs[idx]
+            .tool_result
+            .as_mut()
+            .and_then(|surface| surface.dupe_mode_mut())
+        else {
+            return;
+        };
+        if mode.mode != DupeMode::Similar {
+            return;
+        }
+        let previous = mode.similarity_criteria;
+        if let Some(value) = structure {
+            mode.similarity_criteria.structure =
+                value.min(ferail_fs_native::perceptual::DHASH_MAX_DISTANCE);
+        }
+        if let Some(value) = detail {
+            mode.similarity_criteria.detail =
+                value.min(ferail_fs_native::perceptual::PHASH_MAX_DISTANCE);
+        }
+        let criteria = mode.similarity_criteria;
+        if criteria == previous {
+            return;
+        }
+        self.tabs[idx].similar_regroup_generation =
+            self.tabs[idx].similar_regroup_generation.wrapping_add(1);
+        let generation = self.tabs[idx].similar_regroup_generation;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(75))
+                .await;
+            let snapshot = this
+                .update(cx, |this, _cx| {
+                    let idx = this.tabs.iter().position(|tab| tab.id == tab_id)?;
+                    (this.tabs[idx].similar_regroup_generation == generation).then(|| {
+                        this.tabs[idx]
+                            .similar_image_index
+                            .iter()
+                            .map(|image| image.signature)
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .ok()
+                .flatten();
+            let Some(signatures) = snapshot else {
+                return;
+            };
+            let clusters = cx
+                .background_executor()
+                .spawn(async move {
+                    ferail_fs_native::perceptual::similarity_clusters_with(&signatures, criteria)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(idx) = this.tabs.iter().position(|tab| {
+                    tab.id == tab_id && tab.similar_regroup_generation == generation
+                }) {
+                    this.apply_similar_clusters_in_tab(idx, clusters, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn begin_similar_criteria_drag(
+        &mut self,
+        criterion: SimilarCriterion,
+        x: Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        let tab_id = self.active_tab().id;
+        self.similar_criteria_dragging = Some((tab_id, criterion));
+        self.set_similar_criterion_from_x(tab_id, criterion, x, cx);
+    }
+
+    fn set_similar_criterion_from_x(
+        &mut self,
+        tab_id: TabId,
+        criterion: SimilarCriterion,
+        x: Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        let bounds = match criterion {
+            SimilarCriterion::Structure => self.similar_structure_track,
+            SimilarCriterion::Detail => self.similar_detail_track,
+        };
+        let Some(value) = similar_criterion_range(criterion).value_at(bounds, x) else {
+            return;
+        };
+        let value = value as u32;
+        match criterion {
+            SimilarCriterion::Structure => {
+                self.update_similar_criteria(tab_id, Some(value), None, cx)
+            }
+            SimilarCriterion::Detail => {
+                self.update_similar_criteria(tab_id, None, Some(value), cx)
+            }
+        }
+    }
+
+    pub(super) fn on_similar_criteria_drag(
+        &mut self,
+        event: &gpui::MouseMoveEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((tab_id, criterion)) = self.similar_criteria_dragging else {
+            return;
+        };
+        if event.pressed_button != Some(gpui::MouseButton::Left) {
+            self.end_similar_criteria_drag();
+            return;
+        }
+        self.set_similar_criterion_from_x(tab_id, criterion, event.position.x, cx);
+    }
+
+    pub(super) fn end_similar_criteria_drag(&mut self) {
+        self.similar_criteria_dragging = None;
+    }
+
+    pub(super) fn reset_similar_criteria(&mut self, cx: &mut Context<Self>) {
+        let tab_id = self.active_tab().id;
+        self.similar_criteria_dragging = None;
+        self.update_similar_criteria(
+            tab_id,
+            Some(ferail_fs_native::perceptual::DHASH_MAX_DISTANCE),
+            Some(ferail_fs_native::perceptual::PHASH_MAX_DISTANCE),
+            cx,
+        );
     }
 
     /// Apply one worker-built batch. Pure data shuffling — the rows and
@@ -597,6 +914,32 @@ impl Shell {
         tab.current_dir = root.clone();
         tab.selection.clear();
         tab.dupe_groups = vec![group];
+        tab.similar_image_index = Arc::new(
+            tab.dupe_groups[0]
+                .members
+                .iter()
+                .map(|member| {
+                    let image = member.image.as_ref().expect("similar screenshot image");
+                    SimilarImageIndexView {
+                        node: member.node,
+                        path: member.path.clone(),
+                        mtime_unix: member.mtime_unix,
+                        bytes: member.bytes,
+                        file_id: None,
+                        clone_key: None,
+                        signature: ferail_fs_native::perceptual::PerceptualSignature {
+                            dhash: distance_mask(image.dhash_distance),
+                            phash: distance_mask(image.phash_distance),
+                            mean_rgb: [112, 138, 154],
+                            luma_variance: 96,
+                            width: image.width,
+                            height: image.height,
+                        },
+                        thumbnail: image.thumbnail.clone(),
+                    }
+                })
+                .collect(),
+        );
         tab.dupe_panel_focus = Some((1, NodeId::from(9_100_001)));
         tab.tool_result = Some(ToolResultSurface::duplicates(
             root,
@@ -613,6 +956,24 @@ impl Shell {
         }
         cx.notify();
     }
+}
+
+fn distance_mask(distance: u32) -> u64 {
+    if distance == 0 {
+        0
+    } else {
+        (1u64 << distance.min(63)) - 1
+    }
+}
+
+pub(super) fn similar_criterion_range(
+    criterion: SimilarCriterion,
+) -> crate::scrub_slider::ScrubRange {
+    let max = match criterion {
+        SimilarCriterion::Structure => ferail_fs_native::perceptual::DHASH_MAX_DISTANCE,
+        SimilarCriterion::Detail => ferail_fs_native::perceptual::PHASH_MAX_DISTANCE,
+    };
+    crate::scrub_slider::ScrubRange::new(0.0, max as f32, 1.0)
 }
 
 fn similar_fixture_preview(color: u32) -> Arc<gpui::RenderImage> {
@@ -641,6 +1002,8 @@ fn similar_fixture_preview(color: u32) -> Arc<gpui::RenderImage> {
 fn absorb_dupe_msg(
     msg: DupeMsg,
     batch: &mut Option<DupeBatch>,
+    similar_index: &mut Option<(Vec<SimilarImageIndexEntry>, Vec<SimilarityCluster>)>,
+    progress: &mut Option<DupeStats>,
     done_error: &mut Option<Option<EnumerationError>>,
 ) {
     match msg {
@@ -648,8 +1011,102 @@ fn absorb_dupe_msg(
             Some(acc) => acc.append(next),
             None => *batch = Some(next),
         },
+        DupeMsg::SimilarIndex { images, clusters } => {
+            *similar_index = Some((images, clusters));
+        }
+        DupeMsg::Progress(next) => *progress = Some(next),
         DupeMsg::Done(error) => *done_error = Some(error),
     }
+}
+
+/// Pure projection from compact index + clustering into the existing card
+/// model. Storage-sharing flags are recomputed from scan-captured identities,
+/// so changing criteria never stats or opens a path on the UI thread.
+fn similar_group_views(
+    index: &[SimilarImageIndexView],
+    clusters: &[SimilarityCluster],
+) -> Vec<DupeGroupView> {
+    clusters
+        .iter()
+        .filter_map(|cluster| {
+            let reference = index.get(cluster.medoid)?.signature;
+            let mut member_indices = cluster
+                .members
+                .iter()
+                .copied()
+                .filter(|member| *member < index.len())
+                .collect::<Vec<_>>();
+            if member_indices.len() < 2 {
+                return None;
+            }
+            member_indices.sort_by(|a, b| {
+                let a = &index[*a];
+                let b = &index[*b];
+                b.signature
+                    .pixel_area()
+                    .cmp(&a.signature.pixel_area())
+                    .then_with(|| b.bytes.cmp(&a.bytes))
+                    .then_with(|| {
+                        let a_time = if a.mtime_unix > 0 {
+                            a.mtime_unix
+                        } else {
+                            i64::MAX
+                        };
+                        let b_time = if b.mtime_unix > 0 {
+                            b.mtime_unix
+                        } else {
+                            i64::MAX
+                        };
+                        a_time.cmp(&b_time)
+                    })
+                    .then_with(|| a.path.cmp(&b.path))
+            });
+
+            let mut seen_files = std::collections::HashSet::new();
+            let mut seen_clones = std::collections::HashSet::new();
+            let mut members = Vec::with_capacity(member_indices.len());
+            for (position, member_index) in member_indices.into_iter().enumerate() {
+                let source = &index[member_index];
+                let is_hardlink = source.file_id.is_some_and(|id| !seen_files.insert(id));
+                let is_clone =
+                    !is_hardlink && source.clone_key.is_some_and(|key| !seen_clones.insert(key));
+                let (dhash_distance, phash_distance) =
+                    ferail_fs_native::perceptual::hash_distances(reference, source.signature);
+                members.push(DupeGroupMember {
+                    node: source.node,
+                    path: source.path.clone(),
+                    mtime_unix: source.mtime_unix,
+                    bytes: source.bytes,
+                    is_hardlink,
+                    is_clone,
+                    image: Some(SimilarImageView {
+                        width: source.signature.width,
+                        height: source.signature.height,
+                        dhash_distance,
+                        phash_distance,
+                        is_best: position == 0,
+                        raw_thumbnail: None,
+                        thumbnail: source.thumbnail.clone(),
+                    }),
+                });
+            }
+            let keeper = members.first().map(|member| member.node);
+            Some(DupeGroupView {
+                group_no: 0,
+                full_hash: String::new(),
+                mode: DupeMode::Similar,
+                bytes_each: 0,
+                members,
+                expanded: true,
+                keeper,
+            })
+        })
+        .enumerate()
+        .map(|(index, mut group)| {
+            group.group_no = index + 1;
+            group
+        })
+        .collect()
 }
 
 /// Last component of the scan root for the task label.
@@ -658,4 +1115,56 @@ fn short_root(root: &Path) -> String {
         .and_then(|s| s.to_str())
         .map(str::to_owned)
         .unwrap_or_else(|| root.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ferail_fs_native::perceptual::PerceptualSignature;
+
+    fn indexed(id: u64, width: u32, height: u32, bytes: u64) -> SimilarImageIndexView {
+        SimilarImageIndexView {
+            node: NodeId::from(id),
+            path: PathBuf::from(format!("/private/photo-{id}.jpg")),
+            mtime_unix: id as i64,
+            bytes,
+            file_id: None,
+            clone_key: None,
+            signature: PerceptualSignature {
+                dhash: id - 1,
+                phash: id - 1,
+                mean_rgb: [100; 3],
+                luma_variance: 100,
+                width,
+                height,
+            },
+            thumbnail: None,
+        }
+    }
+
+    #[test]
+    fn live_regroup_projection_keeps_the_highest_quality_image() {
+        let index = vec![
+            indexed(1, 800, 600, 300),
+            indexed(2, 4_000, 3_000, 8_000),
+            indexed(3, 2_000, 1_500, 3_000),
+        ];
+        let groups = similar_group_views(
+            &index,
+            &[SimilarityCluster {
+                medoid: 0,
+                members: vec![0, 1, 2],
+            }],
+        );
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].keeper, Some(NodeId::from(2)));
+        assert!(
+            groups[0].members[0]
+                .image
+                .as_ref()
+                .is_some_and(|image| image.is_best)
+        );
+        assert_eq!(groups[0].reclaimable_bytes(), 3_300);
+    }
 }

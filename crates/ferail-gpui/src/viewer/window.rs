@@ -89,6 +89,13 @@ const CHROME_REVEAL_STRIP: f32 = 56.0;
 /// long after the pointer was last near them — unless the pointer is
 /// hovering the bar itself (or a seek drag is live).
 const CHROME_AUTOHIDE: Duration = Duration::from_millis(2500);
+/// Keep enough of a translucent viewer visible that its controls can still be
+/// found and the window can be returned to full opacity.
+const WINDOW_OPACITY_MIN: f32 = 0.20;
+
+fn window_opacity_range() -> crate::scrub_slider::ScrubRange {
+    crate::scrub_slider::ScrubRange::new(WINDOW_OPACITY_MIN * 100.0, 100.0, 1.0)
+}
 
 /// Extensions the built-in (AVFoundation) player reliably plays. Routed to
 /// the video path for *any* backend. Everything else stays a Quick Look
@@ -671,6 +678,12 @@ pub struct ViewerWindow {
     /// the desktop, composited by the OS window server on the GPU
     /// (docs/features/VIDEO-MPV.md).
     transparent: bool,
+    /// Whole-window alpha, separate from `transparent`: this fades the media
+    /// and chrome together so the viewer can be used as a comparison overlay.
+    /// Ephemeral and per viewer window, like stay-on-top.
+    window_opacity: f32,
+    window_opacity_track: Bounds<Pixels>,
+    window_opacity_dragging: bool,
     /// Whether video audio is muted (the transport's mute toggle). Starts
     /// muted so opening a video — or several stacked viewer windows — never
     /// blasts audio unasked; the user opts in per window. `set_muted` no-ops
@@ -831,6 +844,9 @@ impl ViewerWindow {
             video_loop: false,
             stay_on_top: false,
             transparent: false,
+            window_opacity: 1.0,
+            window_opacity_track: Bounds::default(),
+            window_opacity_dragging: false,
             video_muted: true,
             video_position: (0.0, 0.0),
             cue_in: 0.0,
@@ -932,6 +948,106 @@ impl ViewerWindow {
             window.set_window_title(&title);
             self.last_title = title;
         }
+    }
+
+    /// Raise/lower the viewer and, on macOS, let a raised viewer accompany the
+    /// active Space as a full-screen auxiliary window. The latter is what lets
+    /// a small comparison viewer sit over another app's native full-screen
+    /// video instead of being stranded on Ferail's original Space.
+    fn set_stay_on_top(&mut self, on: bool, window: &Window, cx: &mut Context<Self>) {
+        self.stay_on_top = on;
+        if let Some(handle) = content_ns_view(window) {
+            crate::platform_shell::set_window_floating(handle, on);
+            crate::platform_shell::set_window_all_spaces(handle, on);
+        }
+        cx.notify();
+    }
+
+    fn window_opacity_at(&self, x: Pixels) -> Option<f32> {
+        window_opacity_range()
+            .value_at(self.window_opacity_track, x)
+            .map(|percent| percent / 100.0)
+    }
+
+    fn set_window_opacity(&mut self, opacity: f32, window: &Window, cx: &mut Context<Self>) {
+        self.window_opacity = opacity.clamp(WINDOW_OPACITY_MIN, 1.0);
+        if let Some(handle) = content_ns_view(window) {
+            crate::platform_shell::set_window_opacity(handle, self.window_opacity);
+        }
+        cx.notify();
+    }
+
+    /// Track a whole-window opacity scrub even after the pointer leaves the
+    /// compact toolbar track.
+    fn on_window_opacity_move(
+        &mut self,
+        e: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.window_opacity_dragging {
+            return;
+        }
+        if e.pressed_button != Some(MouseButton::Left) {
+            self.window_opacity_dragging = false;
+            return;
+        }
+        if let Some(opacity) = self.window_opacity_at(e.position.x) {
+            self.set_window_opacity(opacity, window, cx);
+        }
+    }
+
+    fn window_opacity_control(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let percent = (self.window_opacity * 100.0).round() as u32;
+        let entity = cx.entity();
+        let track = crate::scrub_slider::track(
+            "viewer-window-opacity-track",
+            window_opacity_range().fraction(percent as f32),
+            false,
+            cx,
+        )
+        .w(px(76.0))
+        .child(
+            canvas(
+                move |bounds, _, cx| {
+                    entity.update(cx, |this, _| this.window_opacity_track = bounds)
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        )
+        .tooltip(|window, cx| {
+            gpui_component::tooltip::Tooltip::new(tr!("Window opacity")).build(window, cx)
+        })
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, e: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                this.window_opacity_dragging = true;
+                if let Some(opacity) = this.window_opacity_at(e.position.x) {
+                    this.set_window_opacity(opacity, window, cx);
+                }
+            }),
+        );
+
+        h_flex()
+            .gap_1()
+            .items_center()
+            .child(
+                div()
+                    .text_scale_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(tr!("Opacity")),
+            )
+            .child(track)
+            .child(
+                div()
+                    .w(px(34.0))
+                    .text_scale_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("{percent}%")),
+            )
     }
 
     /// Kick the background decode for the current entry unless the
@@ -2335,7 +2451,6 @@ impl ViewerWindow {
             })
             .unwrap_or_else(|| "\u{2014}".to_string());
         let actual = self.stage.mode == ZoomMode::Actual;
-        let name = self.current().map(|e| e.name.clone()).unwrap_or_default();
         // Custom video/audio transport + window state (native controls
         // hidden). `is_playable` shows the play/pause + mute + loop + seek for
         // audio too; `is_video` keeps the frame-step buttons video-only (a
@@ -2347,6 +2462,7 @@ impl ViewerWindow {
         let video_loop = self.video_loop;
         let stay_on_top = self.stay_on_top;
         let transparent = self.transparent;
+        let window_opacity = self.window_opacity;
         let has_item = self.current().is_some();
         let entity = cx.entity().clone();
         let t_entity = cx.entity().clone();
@@ -2357,11 +2473,11 @@ impl ViewerWindow {
         // whole clusters into a trailing "…" dropdown instead of wrapping.
         // Widths are logical-px estimates at `ui_scale == 1` with the flex
         // gap folded in, scaled by the window rem size so UI zoom counts.
-        // They only steer *when* a cluster folds — a few px of error just
-        // shrinks the flex_1 filename, which truncates gracefully.
-        const W_BASE: f32 = 300.0; // padding + prev/counter/next + name reserve + fullscreen
+        // They only steer *when* a cluster folds — a few px of error merely
+        // changes the point at which the overflow menu appears.
+        const W_BASE: f32 = 200.0; // padding + prev/counter/next + fullscreen
         const W_AV_BASIC: f32 = 68.0; // media play/pause + mute (always inline)
-        const W_TOGGLES: f32 = 216.0; // "Stay on top" + "Transparent"
+        const W_TOGGLES: f32 = 360.0; // stay-on-top + transparent + opacity scrub
         const W_SLIDESHOW: f32 = 88.0; // slideshow play + interval
         const W_ACTIONS: f32 = 102.0; // rotate + adjust + trash
         const W_ZOOM: f32 = 175.0; // − / % / + / 1:1 + separator
@@ -2515,13 +2631,8 @@ impl ViewerWindow {
                             PopupMenuItem::new(tr!("Stay on Top")).checked(stay_on_top).on_click(
                                 move |_, window, cx| {
                                     let on = !stay_on_top;
-                                    let ns_view = content_ns_view(window);
                                     e.update(cx, |this, cx| {
-                                        this.stay_on_top = on;
-                                        if let Some(v) = ns_view {
-                                            crate::platform_shell::set_window_floating(v, on);
-                                        }
-                                        cx.notify();
+                                        this.set_stay_on_top(on, window, cx);
                                     });
                                 },
                             ),
@@ -2543,6 +2654,22 @@ impl ViewerWindow {
                                 },
                             ),
                         );
+                        for percent in [100_u32, 75, 50, 25] {
+                            let e = menu_entity.clone();
+                            let opacity = percent as f32 / 100.0;
+                            menu = menu.item(
+                                PopupMenuItem::new(tr!(
+                                    "Window opacity: {percent}%",
+                                    percent = percent
+                                ))
+                                .checked((window_opacity - opacity).abs() < 0.01)
+                                .on_click(move |_, window, cx| {
+                                    e.update(cx, |this, cx| {
+                                        this.set_window_opacity(opacity, window, cx);
+                                    });
+                                }),
+                            );
+                        }
                     }
                     menu
                 })
@@ -2738,13 +2865,8 @@ impl ViewerWindow {
                         .checked(stay_on_top)
                         .on_click(move |checked, window, app| {
                             let on = *checked;
-                            let ns_view = content_ns_view(window);
                             entity.update(app, |this, cx| {
-                                this.stay_on_top = on;
-                                if let Some(v) = ns_view {
-                                    crate::platform_shell::set_window_floating(v, on);
-                                }
-                                cx.notify();
+                                this.set_stay_on_top(on, window, cx);
                             });
                         }),
                 )
@@ -2772,16 +2894,13 @@ impl ViewerWindow {
                         }),
                 )
             })
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_scale_sm()
-                    .text_center()
-                    .truncate()
-                    .text_color(cx.theme().foreground)
-                    .child(name),
-            )
+            // Whole-window alpha is independent of the transparent-background
+            // toggle above: it fades the media and chrome together.
+            .when(!hide_toggles, |bar| bar.child(self.window_opacity_control(cx)))
+            // The filename already lives in the native title bar; flexible
+            // space here keeps the trailing controls right-aligned without
+            // repeating it inside the viewer.
+            .child(div().flex_1().min_w_0())
             // Everything the narrow window folded away, in one place.
             .when_some(overflow_menu, |bar, menu| bar.child(menu))
             .child(
@@ -3666,6 +3785,15 @@ impl Render for ViewerWindow {
         let root = v_flex()
             .key_context(VIEWER_CONTEXT)
             .track_focus(&self.focus_handle)
+            .on_mouse_move(cx.listener(Self::on_window_opacity_move))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.window_opacity_dragging = false),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.window_opacity_dragging = false),
+            )
             .on_action(cx.listener(Self::on_prev))
             .on_action(cx.listener(Self::on_next))
             .on_action(cx.listener(Self::on_left))

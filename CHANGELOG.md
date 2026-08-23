@@ -8,6 +8,26 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
 
 ## Unreleased
 
+## 0.6.0 — 2026-08-23
+
+- **The viewer is better suited to visual comparison and overlays.** Its
+  filename now appears only in the native title bar, a live opacity control
+  fades the whole window from 100% down to 20%, and Stay on top can accompany
+  another app's native full-screen Space on macOS. The mpv backend also
+  disables the four remaining built-in Lua scripts (`select`, `positioning`,
+  `commands`, and `context-menu`), closing the second LuaJIT hardened-runtime
+  crash path left in 0.5.2.
+
+- **The toolbar now folds into its ⋯ menu instead of running off the edge of
+  a narrow window.** As the window narrows the bar sheds clusters in order —
+  the icon-size bar first, then Dock and Show Desktop, then the icon-size
+  buttons, then Sort, and last of all New Folder and Refresh — and everything
+  it sheds turns up in the ⋯ menu in the same order it had in the bar. The
+  list/icon view switcher never folds, and the filter field gives up width
+  only once there is nothing left to fold. Previously a window under about
+  880 px wide pushed the ⋯ button itself off the edge, taking Get Info, Disk
+  Usage, Find Duplicates and Empty Trash out of reach along with it.
+
 - **Icon view has a size bar, and it reaches much smaller and much larger
   sizes than before.** Click or drag anywhere along it to pick any size you
   like instead of stepping between five fixed ones, and watch the grid
@@ -37,7 +57,10 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   pixels, thumbnails, and perceptual hashes are neither persisted nor sent
   over the network. Use Cmd+Shift+S to start a scan; in its results, Up/Down
   moves through candidates and Space or a double-click opens the current group
-  in the full-size viewer.
+  in the full-size viewer. Structure and detail controls can now tighten or
+  relax the live grouping without rereading photos, and the panel explains
+  whether it is enumerating folders, analyzing a known image total, or grouping
+  the results.
 
 - **The update check no longer hides an update you can actually install.**
   When a release ships for some platforms before others, Ferail now offers the

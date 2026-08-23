@@ -146,6 +146,14 @@ fn tab_drop_gap(pos: usize, cx: &mut Context<Shell>) -> impl IntoElement {
         )
 }
 
+fn icon_size_range() -> crate::scrub_slider::ScrubRange {
+    crate::scrub_slider::ScrubRange::new(
+        crate::grid::MIN_ICON_SIZE as f32,
+        crate::grid::MAX_ICON_SIZE as f32,
+        4.0,
+    )
+}
+
 impl Shell {
     fn tool_result_breadcrumb_summary(&self) -> Option<String> {
         let surface = self.active_tab().tool_result.as_ref()?;
@@ -1698,19 +1706,9 @@ impl Shell {
     /// The size a cursor x maps to on the icon-size track. `None` before
     /// the track has painted (so there are no bounds to map against).
     fn icon_size_at(&self, x: Pixels) -> Option<u32> {
-        let b = self.icon_size_track;
-        let w = b.size.width.as_f32();
-        if w <= 0.0 {
-            return None;
-        }
-        let lo = crate::grid::MIN_ICON_SIZE as f32;
-        let hi = crate::grid::MAX_ICON_SIZE as f32;
-        let frac = ((x.as_f32() - b.origin.x.as_f32()) / w).clamp(0.0, 1.0);
-        // Snap to 4 px: the grid re-lays-out on every change, and nobody can
-        // see a 1-px difference at these sizes, so a 96-px-wide drag emits a
-        // fraction of the sizes it has pixels.
-        let snapped = ((lo + frac * (hi - lo)) / 4.0).round() * 4.0;
-        Some(crate::grid::clamp_icon_size(snapped as u32))
+        icon_size_range()
+            .value_at(self.icon_size_track, x)
+            .map(|value| crate::grid::clamp_icon_size(value as u32))
     }
 
     /// Scrub in progress. Lives on the shell root so the drag keeps
@@ -1747,36 +1745,18 @@ impl Shell {
         cx.notify();
     }
 
-    /// The grid icon-size track: a click-anywhere fill bar with no knob.
-    /// The bright left side reads as how big icons are now, the dim right
-    /// side as how much bigger they could get.
-    ///
-    /// Hand-rolled rather than gpui-component's `Slider` because that one
-    /// always draws a thumb, and its thumb ring and track are tinted from a
-    /// single colour — there is no way to keep the two-tone bar and lose the
-    /// knob. Doing it here also keeps the scrub out of gpui's drag system,
-    /// so dragging it no longer makes `cx.has_active_drag()` true for the
-    /// whole app.
-    fn icon_size_track(&self, icon_px: u32, cx: &mut Context<Self>) -> Div {
+    /// Grid icon-size instance of the shared two-tone scrub track.
+    fn icon_size_track(&self, icon_px: u32, cx: &mut Context<Self>) -> impl IntoElement {
         const TRACK_W: f32 = 96.0;
-        const TRACK_H: f32 = 6.0;
-        // The visible bar is 6 px; the grab box is much taller, because a
-        // 6-px target in a toolbar is a miss waiting to happen.
-        const TRACK_HIT_H: f32 = 20.0;
-
-        let lo = crate::grid::MIN_ICON_SIZE as f32;
-        let hi = crate::grid::MAX_ICON_SIZE as f32;
-        let frac = ((icon_px as f32 - lo) / (hi - lo)).clamp(0.0, 1.0);
-        let filled = cx.theme().foreground;
-        let rest = cx.theme().muted_foreground.opacity(0.25);
         let entity = cx.entity();
 
-        div()
-            .relative()
-            .flex_shrink_0()
+        crate::scrub_slider::track(
+            "toolbar-icon-size-track",
+            icon_size_range().fraction(icon_px as f32),
+            false,
+            cx,
+        )
             .w(px(TRACK_W))
-            .h(px(TRACK_HIT_H))
-            .cursor_pointer()
             // Capture the painted bounds so a cursor x maps back to a size.
             .child(
                 canvas(
@@ -1787,31 +1767,6 @@ impl Shell {
                 )
                 .absolute()
                 .size_full(),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top(px(TRACK_HIT_H / 2.0 - TRACK_H / 2.0))
-                    .left_0()
-                    .right_0()
-                    .h(px(TRACK_H))
-                    .rounded_full()
-                    .bg(rest)
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .bottom_0()
-                            .left_0()
-                            .w(relative(frac))
-                            // At the minimum size the fill would otherwise be
-                            // zero-width, leaving a bar that reads as empty
-                            // rather than as "all the way down". Keep a round
-                            // nub so the control still shows where it is.
-                            .min_w(px(TRACK_H))
-                            .rounded_full()
-                            .bg(filled),
-                    ),
             )
             // Press anywhere on the bar jumps there and starts scrubbing.
             .on_mouse_down(
@@ -2163,6 +2118,7 @@ impl Shell {
     fn title_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> TitleBar {
         use crate::file_list::SortColumn;
         use gpui_component::menu::DropdownMenu;
+        use gpui_component::menu::PopupMenuItem;
         use gpui_component::sidebar::SidebarToggleButton;
         let can_back = self.active_tab().history_index > 0;
         let can_forward = self.active_tab().history_index + 1 < self.active_tab().history.len();
@@ -2196,27 +2152,91 @@ impl Shell {
         // global read, no I/O.
         let icon_px = crate::grid::icon_size(cx);
         let readout_color = cx.theme().muted_foreground;
-        // Narrowest window (logical px at `ui_scale == 1`) with room for the
-        // slider + readout beside everything else up here. Below it they
-        // fold away and the -/+/reset stepper — which is what the toolbar
-        // had before the slider — carries the size on its own; without the
-        // gate the whole right-hand cluster, overflow menu included, is
-        // pushed off the edge of a narrow window.
+        // ---- Width-tiered overflow ----------------------------------
+        // Same shape as the viewer's toolbar (`viewer/window.rs`): the bar
+        // keeps its height, so a narrow window folds whole clusters into the
+        // trailing "…" menu instead of wrapping or running off the edge.
+        // Unlike the viewer's, nothing up here is a flex_1 that can absorb a
+        // bad estimate — the two spacers collapse to zero and then the
+        // overflow button itself is pushed out of the window — so these lean
+        // deliberately generous and fold a touch early.
         //
-        // Deliberately a single local gate, not a tier system: the shell
-        // title bar has no width tiering (the viewer's toolbar does, and
-        // building the shell one is its own change).
-        const SLIDER_MIN_WINDOW_PX: f32 = 1060.0;
+        // Logical px at `ui_scale == 1`, each including the 8-px flex gap
+        // that follows it; scaled by the window rem size so UI zoom counts.
+        // Measured, not guessed: at 990 px the "…" lost its last dot off the
+        // right edge and at 1000 px it cleared, so the full grid-mode bar
+        // needs ~1005. This term appears in every tier, so correcting it here
+        // shifts all the fold points together.
+        const W_BASE: f32 = 528.0; // sidebar + brand + back/fwd + filter + (?) + "…" + padding
+        const W_VIEW: f32 = 68.0; // list / grid switcher — never folds
+        const W_SORT: f32 = 34.0;
+        const W_DESKTOP: f32 = 34.0;
+        const W_NEW_REFRESH: f32 = 68.0;
+        const W_DOCK: f32 = 34.0;
+        const W_SIZE_STEPS: f32 = 102.0; // − ＋ ⟲
+        const W_SIZE_BAR: f32 = 138.0; // track + px readout
+
         let ui_scale = window.rem_size().as_f32() / crate::text::BASE_REM_PX;
-        let show_size_slider =
-            is_grid && window.viewport_size().width.as_f32() >= SLIDER_MIN_WINDOW_PX * ui_scale;
+        let avail = window.viewport_size().width.as_f32();
+        let has_dock = cfg!(target_os = "macos");
+
+        // First-to-collapse first. The ordering is the judgement here: the
+        // size *bar* goes before the size *buttons* (which still express the
+        // same thing, just coarsely); window/system placement verbs go before
+        // anything that acts on the current folder; and New Folder / Refresh
+        // hold out longest because they are the two things people came to the
+        // toolbar for. The view switcher is not a tier at all — it is how you
+        // get back out of icon view, and it is the most-used pair up here.
+        let tiers = [
+            if is_grid { W_SIZE_BAR } else { 0.0 },
+            if has_dock { W_DOCK } else { 0.0 },
+            if show_desktop_available { W_DESKTOP } else { 0.0 },
+            if is_grid { W_SIZE_STEPS } else { 0.0 },
+            W_SORT,
+            W_NEW_REFRESH,
+        ];
+        let mut need = W_BASE + W_VIEW + tiers.iter().sum::<f32>();
+        let mut hide = [false; 6];
+        // No `W_MENU` term as the viewer has: this toolbar's "…" is always
+        // present, so folding never has to make room for it.
+        for (i, w) in tiers.iter().enumerate() {
+            if need * ui_scale <= avail {
+                break;
+            }
+            hide[i] = true;
+            need -= w;
+        }
+        let [hide_size_bar, hide_dock, hide_desktop, hide_size_steps, hide_sort, hide_new_refresh] =
+            hide;
+
+        // Below the last tier the remainder is still ~600 px, and a bar whose
+        // children are all `flex_shrink_0` just pushes its own tail — the view
+        // switcher and the "…" itself — off the edge. Flexbox cannot rescue
+        // that from in here: gpui-component's `#bar` takes its automatic
+        // minimum size from our total content width, so it overflows its own
+        // parent and no shrink pressure ever reaches our children. Size the
+        // one elastic element ourselves instead, from the width the tiers
+        // already measured.
+        const FILTER_W: f32 = 220.0;
+        const FILTER_MIN_W: f32 = 110.0;
+        // Without the margin the arithmetic lands the last element flush on
+        // the window edge, which costs the "…" its final dot.
+        const EDGE_MARGIN: f32 = 16.0;
+        let deficit = (need + EDGE_MARGIN - avail / ui_scale).max(0.0);
+        let filter_w = (FILTER_W - deficit).clamp(FILTER_MIN_W, FILTER_W);
+        let show_size_slider = is_grid && !hide_size_bar;
+        let show_size_steps = is_grid && !hide_size_steps;
         // SHELL_CONTEXT-bearing handle for the toolbar dropdowns, so
         // their items resolve keyboard-shortcut hints against the
         // shell's stable dispatch path instead of the focus-sensitive
         // previous-frame fallback (which left the hints blank for the
         // first frame or two after the menu opened).
         let sort_menu_focus = self.focus_handle.clone();
+        let sort_submenu_focus = self.focus_handle.clone();
         let overflow_menu_focus = self.focus_handle.clone();
+        // The folded icon-size items are click-backed, not action-backed, so
+        // the overflow menu needs a handle on the shell to call them.
+        let overflow_entity = cx.entity();
         let dock_menu_focus = self.focus_handle.clone();
         // Active dock edge (if any), captured for the toolbar dock menu's
         // checkmarks and pressed state.
@@ -2282,7 +2302,10 @@ impl Shell {
                 .child(
                     div()
                         .flex_shrink_0()
-                        .w(px(220.0))
+                        // Computed above: full width until every tier has
+                        // folded, then it gives way so the tail of the bar
+                        // stays on screen.
+                        .w(px(filter_w))
                         // Filter input — also lives inside TitleBar's
                         // drag region. Stop mouse-down propagation so
                         // Win32 doesn't capture the click as window
@@ -2333,7 +2356,7 @@ impl Shell {
                 // mouse-down-stopping div for the Win32 title-bar drag
                 // gotcha (the DropdownMenuPopover can't take the
                 // on_mouse_down handler itself).
-                .child(
+                .children((!hide_sort).then(|| {
                     div()
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                             cx.stop_propagation();
@@ -2367,12 +2390,12 @@ impl Shell {
                                             Box::new(SortByModified),
                                         )
                                 }),
-                        ),
-                )
+                        )
+                }))
                 // Show Desktop — left of New Folder. Present only when the
                 // private Dock symbol resolved on a supported OS; otherwise
                 // it silently doesn't render (no crash, no empty slot).
-                .children(show_desktop_available.then(|| {
+                .children((show_desktop_available && !hide_desktop).then(|| {
                     Button::new("toolbar-show-desktop")
                         .small()
                         .ghost()
@@ -2385,7 +2408,7 @@ impl Shell {
                             this.on_show_desktop(&ShowDesktop, window, cx);
                         }))
                 }))
-                .child(
+                .children((!hide_new_refresh).then(|| {
                     Button::new("toolbar-new-folder")
                         .small()
                         .ghost()
@@ -2396,9 +2419,9 @@ impl Shell {
                         })
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.on_new_folder(&NewFolder, window, cx);
-                        })),
-                )
-                .child(
+                        }))
+                }))
+                .children((!hide_new_refresh).then(|| {
                     Button::new("toolbar-refresh")
                         .small()
                         .ghost()
@@ -2409,8 +2432,8 @@ impl Shell {
                         })
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.on_refresh(&Refresh, window, cx);
-                        })),
-                )
+                        }))
+                }))
                 // Dock menu — park the whole window against a screen edge as
                 // an auto-hiding drawer (docs/features/DOCK.md). Pressed look
                 // while docked; the active edge carries a checkmark. Wrapped
@@ -2418,7 +2441,7 @@ impl Shell {
                 // gotcha, like the other dropdowns. macOS-only for now (the
                 // win32/linux window primitives are stubs) — hidden elsewhere
                 // so the menu isn't three silent no-ops.
-                .when(cfg!(target_os = "macos"), |bar| {
+                .when(has_dock && !hide_dock, |bar| {
                     bar.child(
                         div()
                             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
@@ -2487,7 +2510,7 @@ impl Shell {
                         })),
                 )
                 // Icon size stepper — only in grid mode.
-                .children(is_grid.then(|| {
+                .children(show_size_steps.then(|| {
                     Button::new("toolbar-icon-smaller")
                         .small()
                         .ghost()
@@ -2500,7 +2523,7 @@ impl Shell {
                             this.step_icon_size(-1, cx);
                         }))
                 }))
-                .children(is_grid.then(|| {
+                .children(show_size_steps.then(|| {
                     Button::new("toolbar-icon-larger")
                         .small()
                         .ghost()
@@ -2516,7 +2539,7 @@ impl Shell {
                 // Reset the icon size to the default, beside the stepper it
                 // undoes. Disabled when already there, so the button states
                 // what it would do.
-                .children(is_grid.then(|| {
+                .children(show_size_steps.then(|| {
                     Button::new("toolbar-icon-reset")
                         .small()
                         .ghost()
@@ -2573,9 +2596,113 @@ impl Shell {
                                 .ghost()
                                 .icon(gpui_component::Icon::empty().path("icons/ellipsis.svg"))
                                 .tooltip(tr!("More"))
-                                .dropdown_menu(move |menu, _window, _cx| {
-                                    menu.action_context(overflow_menu_focus.clone())
-                                        .menu_with_check(
+                                .dropdown_menu(move |mut menu, window, cx| {
+                                    menu = menu.action_context(overflow_menu_focus.clone());
+                                    // Clusters the width tiers folded away,
+                                    // in the order they sit in the bar, so
+                                    // the menu reads as the bar's tail rather
+                                    // than a second unrelated list. Each item
+                                    // dispatches the same action (or calls the
+                                    // same method) its button does.
+                                    let mut folded = false;
+                                    if hide_sort {
+                                        // Nested rather than inlined: "Size"
+                                        // means the sort column here and the
+                                        // icon size three items below, and
+                                        // flat neighbours would be a coin flip.
+                                        let focus = sort_submenu_focus.clone();
+                                        menu = menu.submenu(tr!("Sort"), window, cx, move |sub, _w, _c| {
+                                            sub.action_context(focus.clone())
+                                                .menu_with_check(
+                                                    tr!("Name"),
+                                                    sort_col == SortColumn::Name,
+                                                    Box::new(SortByName),
+                                                )
+                                                .menu_with_check(
+                                                    tr!("Size"),
+                                                    sort_col == SortColumn::Size,
+                                                    Box::new(SortBySize),
+                                                )
+                                                .menu_with_check(
+                                                    tr!("Kind"),
+                                                    sort_col == SortColumn::Format,
+                                                    Box::new(SortByKind),
+                                                )
+                                                .menu_with_check(
+                                                    tr!("Date Modified"),
+                                                    sort_col == SortColumn::Modified,
+                                                    Box::new(SortByModified),
+                                                )
+                                        });
+                                        folded = true;
+                                    }
+                                    if hide_new_refresh {
+                                        menu = menu
+                                            .menu(tr!("New Folder"), Box::new(NewFolder))
+                                            .menu(tr!("Refresh"), Box::new(Refresh));
+                                        folded = true;
+                                    }
+                                    if hide_desktop && show_desktop_available {
+                                        menu = menu
+                                            .menu(tr!("Show Desktop"), Box::new(ShowDesktop));
+                                        folded = true;
+                                    }
+                                    if hide_dock && has_dock {
+                                        menu = menu
+                                            .menu_with_check(
+                                                tr!("Dock Left"),
+                                                dock_edge == Some(crate::shell::dock::DockEdge::Left),
+                                                Box::new(DockLeft),
+                                            )
+                                            .menu_with_check(
+                                                tr!("Dock Right"),
+                                                dock_edge == Some(crate::shell::dock::DockEdge::Right),
+                                                Box::new(DockRight),
+                                            )
+                                            .menu(tr!("Undock"), Box::new(Undock));
+                                        folded = true;
+                                    }
+                                    if hide_size_steps && is_grid {
+                                        // No actions back these — the toolbar
+                                        // buttons call the methods directly —
+                                        // so they go through the shell entity.
+                                        // Labels are the buttons' own tooltip
+                                        // strings rather than Title Case
+                                        // variants, to avoid shipping
+                                        // near-duplicate msgids.
+                                        let smaller = overflow_entity.clone();
+                                        let larger = overflow_entity.clone();
+                                        let reset = overflow_entity.clone();
+                                        menu = menu
+                                            .item(PopupMenuItem::new(tr!("Smaller icons")).on_click(
+                                                move |_, _, cx| {
+                                                    smaller.update(cx, |this, cx| {
+                                                        this.step_icon_size(-1, cx)
+                                                    });
+                                                },
+                                            ))
+                                            .item(PopupMenuItem::new(tr!("Larger icons")).on_click(
+                                                move |_, _, cx| {
+                                                    larger.update(cx, |this, cx| {
+                                                        this.step_icon_size(1, cx)
+                                                    });
+                                                },
+                                            ))
+                                            .item(
+                                                PopupMenuItem::new(tr!("Reset icon size")).on_click(
+                                                    move |_, _, cx| {
+                                                        reset.update(cx, |this, cx| {
+                                                            this.reset_icon_size(cx)
+                                                        });
+                                                    },
+                                                ),
+                                            );
+                                        folded = true;
+                                    }
+                                    if folded {
+                                        menu = menu.separator();
+                                    }
+                                    menu.menu_with_check(
                                             tr!("Show Hidden Files"),
                                             show_hidden,
                                             Box::new(ToggleHidden),
@@ -3899,14 +4026,23 @@ impl Render for Shell {
                     // (and so a release anywhere still commits the size).
                     // Both handlers return immediately unless a scrub is
                     // actually in flight.
-                    .on_mouse_move(cx.listener(Self::on_icon_size_drag))
+                    .on_mouse_move(cx.listener(|this, event, window, cx| {
+                        this.on_icon_size_drag(event, window, cx);
+                        this.on_similar_criteria_drag(event, cx);
+                    }))
                     .on_mouse_up(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, cx| this.end_icon_size_drag(cx)),
+                        cx.listener(|this, _, _, cx| {
+                            this.end_icon_size_drag(cx);
+                            this.end_similar_criteria_drag();
+                        }),
                     )
                     .on_mouse_up_out(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, _, _, cx| this.end_icon_size_drag(cx)),
+                        cx.listener(|this, _, _, cx| {
+                            this.end_icon_size_drag(cx);
+                            this.end_similar_criteria_drag();
+                        }),
                     )
                     // Phase 7: TitleBar sits across the top with the
                     // app name + filter input + back/forward

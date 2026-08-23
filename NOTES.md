@@ -1721,3 +1721,60 @@ thumbnail fills the square icon slot. Size range widened from 64–256 to
   feature, not attempted.
 - No "Actual size" (never enlarge) mode; it is one more arm in the same match
   if a small PNG blown up to 512 px turns out to bother anyone.
+
+## 2026-08-23 — Shell toolbar width tiering
+
+The title bar folds clusters into its `…` menu on a narrow window, the way the
+viewer's toolbar already did. Same shape as `viewer/window.rs`: logical-px
+width estimates per cluster, scaled by rem size, folded first-to-last until
+the total fits.
+
+### Design choices
+
+- **Fold order is the judgement, and it is one array.** Size bar → Dock →
+  Show Desktop → size buttons → Sort → New Folder/Refresh. Reasoning: the size
+  *bar* goes before the size *buttons*, which still say the same thing more
+  coarsely; window/system placement verbs go before anything acting on the
+  current folder; New Folder and Refresh hold out longest because they are
+  what people reach up there for. The view switcher is deliberately **not** a
+  tier — it is how you get back out of icon view.
+
+- **Folded items keep bar order in the menu**, above a separator and the
+  pre-existing static block, so the menu reads as the bar's tail rather than a
+  second unrelated list.
+
+- **Sort folds to a submenu, not inline.** Flattened, its "Size" item would sit
+  three rows from the icon-size items and mean something completely different.
+
+- **No new strings.** Every folded item reuses the msgid its button tooltip or
+  dropdown already used, including sentence-case "Smaller icons" rather than a
+  Title Case twin, so translators do not get near-duplicate pairs.
+
+- **The filter field is sized by arithmetic, not flexbox.** Below the last tier
+  the fixed remainder is still ~600 px and the tail of the bar — view switcher,
+  then `…` itself — walks off the edge. Flex-shrink cannot rescue that from
+  inside: gpui-component's `#bar` takes its *automatic minimum size* from our
+  content, so it overflows its own parent and no shrink pressure reaches our
+  children (every one of which is `flex_shrink_0` anyway). So the one elastic
+  element is sized from the same measured width the tiers use.
+
+- **`EDGE_MARGIN` exists because exact fits clip.** Without it the arithmetic
+  lands the last element flush on the window edge and the `…` loses its third
+  dot — visible at 490–500 px before the margin went in.
+
+### Calibration / limits
+
+Widths were measured, not guessed: at 990 px the `…` lost a dot and at 1000 px
+it cleared, which fixed `W_BASE`. Since `W_BASE` is a term in every tier,
+correcting it moves all the fold points together. Verified by screenshot at
+1400/1200/1100/1010/1000/900/800/700/620/560/520 in grid and list mode.
+
+Floor is ~500 px, below which the `…` clips again (was ~880 px before this
+change). Fixing the last stretch would mean folding the "Ferail" wordmark too,
+or setting `window_min_size` on the shell window — neither attempted, since the
+default window is 1180 px and nothing real gets that narrow.
+
+**Not verified:** the folded items' *appearance* in the open menu. The
+screenshot harness can synthesise context menus but has no way to open a
+toolbar dropdown, so the menu contents are compile-checked and logic-checked
+only.
