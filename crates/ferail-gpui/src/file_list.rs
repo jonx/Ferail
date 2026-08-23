@@ -792,6 +792,18 @@ struct FlatPathStore {
     detail_states: Vec<u8>,
 }
 
+/// Empty a row buffer, optionally returning its backing allocation to the
+/// allocator. Ordinary directory reloads benefit from reusing their capacity;
+/// a Flat surface can be millions of rows, so retaining that capacity after
+/// leaving the surface would keep hundreds of megabytes alive indefinitely.
+fn clear_row_buffer<T>(buffer: &mut Vec<T>, release_capacity: bool) {
+    if release_capacity {
+        *buffer = Vec::new();
+    } else {
+        buffer.clear();
+    }
+}
+
 impl FlatPathStore {
     fn new(root: PathBuf, id_base: u64) -> Self {
         Self {
@@ -1015,6 +1027,29 @@ mod flat_path_store_tests {
             + std::mem::size_of::<Arc<str>>()
             + std::mem::size_of::<u8>();
         assert_eq!(bytes, 21);
+    }
+
+    #[test]
+    fn flat_exit_releases_row_buffer_capacity() {
+        let mut rows = Vec::with_capacity(4_096);
+        rows.extend([1_u8, 2, 3]);
+
+        clear_row_buffer(&mut rows, true);
+
+        assert!(rows.is_empty());
+        assert_eq!(rows.capacity(), 0);
+    }
+
+    #[test]
+    fn ordinary_reload_keeps_row_buffer_capacity() {
+        let mut rows = Vec::with_capacity(4_096);
+        rows.extend([1_u8, 2, 3]);
+        let capacity = rows.capacity();
+
+        clear_row_buffer(&mut rows, false);
+
+        assert!(rows.is_empty());
+        assert_eq!(rows.capacity(), capacity);
     }
 }
 
@@ -1400,10 +1435,15 @@ impl FileListDelegate {
         self.invalidate_drag_snapshot();
         self.slow_load = None;
         self.filtered_out = 0;
-        self.entries.clear();
+        // `Vec::clear` keeps the allocation. That is useful for an ordinary
+        // directory reload, but after a multi-million-row Flat surface it can
+        // leave ~600 MB of empty FileEntry capacity resident. The presence of
+        // the surface-local path arena tells us these buffers must be dropped,
+        // not merely emptied. This also covers filtered-out Flat rows.
+        let leaving_flat = self.flat_paths.take().is_some();
+        clear_row_buffer(&mut self.entries, leaving_flat);
         self.paths.clear();
-        self.flat_paths = None;
-        self.flat_filtered_entries.clear();
+        clear_row_buffer(&mut self.flat_filtered_entries, leaving_flat);
         self.flat_filter_text.clear();
         self.detail_in_flight = false;
         self.detail_pending = None;
@@ -1440,8 +1480,8 @@ impl FileListDelegate {
         // Include Subfolders closed kept an empty Path column and a
         // delegate that still believed it was a flat surface — which
         // then took the flat sort path for ordinary directory rows.
-        self.flat_paths = None;
-        self.flat_filtered_entries.clear();
+        let leaving_flat = self.flat_paths.take().is_some();
+        clear_row_buffer(&mut self.flat_filtered_entries, leaving_flat);
         self.flat_filter_text.clear();
         self.detail_in_flight = false;
         self.detail_pending = None;

@@ -38,6 +38,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   uses constant queue space and cannot start one native preview handler per
   crossed row; active preview work is also visible in diagnostic task snapshots.
 
+- **Leaving Include Subfolders now releases its large row buffers.** Clearing
+  a multi-million-file Flat listing destroyed its rows but retained the
+  backing vector's full capacity, which could leave hundreds of megabytes
+  resident until Ferail quit. Flat-only row and filtered-row storage is now
+  returned to the allocator while ordinary directory reloads still reuse
+  their much smaller buffers.
+
 ## 0.6.5 — 2026-08-23
 
 - **Include Subfolders — every file under this folder, in one list.** A third
