@@ -1990,9 +1990,9 @@ impl Shell {
 
         // Live file-detail-scan toggle (Settings → Performance). Turning
         // it on reloads each open tab in place — a same-path reload
-        // re-streams without flicker and re-fires the format-sniff + tag
-        // passes under the new setting; turning it off cancels any
-        // in-flight prefetch so scanning stops at once.
+        // re-streams without flicker and re-fires the viewport format-sniff +
+        // tag passes under the new setting; turning it off cancels any
+        // in-flight viewport worker so scanning stops at once.
         let scan_subscription = cx.observe_global::<crate::prefetch::FileDetailScan>(|this, cx| {
             if crate::prefetch::file_detail_scan_enabled(cx) {
                 let targets: Vec<(TabId, PathBuf)> = this
@@ -2005,10 +2005,10 @@ impl Shell {
                     this.load_path_for_tab(id, path, cx);
                 }
             } else {
-                for idx in 0..this.tabs.len() {
-                    if let Some(cancel) = this.tabs[idx].prefetch_cancel.take() {
-                        cancel.store(true, Ordering::Relaxed);
-                    }
+                for tab in &this.tabs {
+                    tab.table.update(cx, |state, _cx| {
+                        state.delegate_mut().cancel_visible_details();
+                    });
                 }
             }
             cx.notify();
@@ -4055,6 +4055,12 @@ impl Shell {
         if let Some(cancel) = self.tabs[tab_index].prefetch_cancel.take() {
             cancel.store(true, Ordering::Relaxed);
         }
+        // File-detail enrichment is table/viewport-owned now. Stop the old
+        // surface immediately rather than letting its bounded worker keep
+        // opening files until the replacement listing reaches Done.
+        self.tabs[tab_index].table.update(cx, |state, _cx| {
+            state.delegate_mut().cancel_visible_details();
+        });
         let task = self.process.tasks.borrow_mut().begin(
             TaskKind::Enumeration,
             tr!(
@@ -4507,37 +4513,20 @@ impl Shell {
         // any future external-mutation reload route through here.
         self.reconcile_done_in_tab(idx, cx);
 
-        // Stage 4: kick off magic + quarantine prefetch after the
-        // foreground table state has received the final snapshot.
-        // A Refresh-driven load re-sniffs from disk instead of trusting
-        // the cached magic/description (see `Tab::force_resniff`).
-        // Skipped when the user has disabled file-detail scanning
-        // (Settings → Performance) — the Format column then shows
-        // extension-based types with no per-row content sniff.
+        // Stage 4: arm viewport-owned magic/description/quarantine warming
+        // after the foreground table has received its final snapshot. The
+        // table callback schedules only visible rows as the user scrolls;
+        // opening a 10k- or million-file directory never starts 10k/million
+        // file opens. Refresh still bypasses cached magic/description once for
+        // every row that reaches the viewport (see `Tab::force_resniff`).
         let force_resniff = self.tabs[idx].force_resniff;
         let table = self.tabs[idx].table.clone();
+        table.update(cx, |state, _cx| {
+            state.delegate_mut().enable_visible_details(force_resniff);
+        });
         let fs = self.process.fs.clone();
         let db = self.process.db_snapshot();
         let tasks = self.process.tasks.clone();
-        if crate::prefetch::file_detail_scan_enabled(cx) {
-            let weak = cx.weak_entity();
-            let prefetch_cancel = Arc::new(AtomicBool::new(false));
-            let prefetch_tab_id = self.tabs[idx].id;
-            let prefetch_generation = self.tabs[idx].load_generation;
-            self.tabs[idx].prefetch_cancel = Some(prefetch_cancel.clone());
-            crate::prefetch::start(
-                table.clone(),
-                fs.clone(),
-                db.clone(),
-                tasks.clone(),
-                weak,
-                prefetch_tab_id,
-                prefetch_generation,
-                prefetch_cancel,
-                force_resniff,
-                cx,
-            );
-        }
         // Folder sizes for the directory rows: cache-validated
         // against each folder's mtime, recomputed off-thread on
         // miss, streamed back as they resolve. Skipped entirely when
@@ -4566,9 +4555,9 @@ impl Shell {
         }
         let icon_seeds = self.icon_seeds_from_table_in_tab(idx, cx);
         self.start_icon_warm(icon_seeds, cx);
-        // Real thumbnails for the first screen — without this they'd
-        // only appear after the first scroll on a folder whose visible
-        // range matches the previous one's.
+        // Real thumbnails and file details for the first screen — without
+        // this they'd only appear after the first scroll on a folder whose
+        // visible range matches the previous one's.
         self.warm_loaded_viewport_in_tab(idx, cx);
         self.refresh_volume_info_in_tab(idx, cx);
         cx.notify();
@@ -4837,7 +4826,8 @@ impl Shell {
         });
     }
 
-    /// Warm the just-loaded folder's first screen of thumbnails.
+    /// Warm the just-loaded folder's first screen of thumbnails and file
+    /// details.
     ///
     /// The table's `visible_rows_changed` hook only fires when the
     /// visible *row-index range* changes, and the table entity persists
@@ -4849,7 +4839,7 @@ impl Shell {
     /// first load (no layout yet) we fall back to a generous first
     /// screen so thumbnails still appear up front.
     fn warm_loaded_viewport_in_tab(&self, idx: usize, cx: &mut Context<Self>) {
-        if idx != self.active || !crate::thumbnails::show_thumbnails(cx) {
+        if idx != self.active {
             return;
         }
         // In grid mode the grid self-warms (at its bucket size) on the
@@ -4871,6 +4861,7 @@ impl Shell {
                     let n = ts.delegate().entries.len().min(48);
                     range = 0..n;
                 }
+                ts.delegate_mut().warm_visible_details(range.clone(), cx);
                 ts.delegate_mut().warm_thumbnails(range, cx);
             });
         })

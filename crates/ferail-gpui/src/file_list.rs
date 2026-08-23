@@ -15,6 +15,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ferail_core::{EntryKind, FileEntry, FormatFlag, NodeId};
 use ferail_fs_native::NativeFs;
@@ -459,8 +460,17 @@ pub struct FileListDelegate {
     /// At most one viewport detail worker runs per surface. Rapid scrolling
     /// replaces this pending range instead of spawning an unbounded train of
     /// magic/xattr workers for viewports the user has already left.
-    flat_detail_in_flight: bool,
-    flat_detail_pending: Option<Range<usize>>,
+    detail_in_flight: bool,
+    detail_pending: Option<Range<usize>>,
+    detail_cancel: Option<Arc<AtomicBool>>,
+    /// Incremented whenever row positions can change. A bounded worker applies
+    /// directly by captured row index, so this revision is what makes that O(1)
+    /// apply safe across sorts, filters, and navigation.
+    detail_revision: u64,
+    /// Ordinary listings enable detail warming only after enumeration reaches
+    /// Done; Flat enables it immediately because its scan streams indefinitely.
+    detail_ready: bool,
+    detail_force: bool,
     /// Shared icon cache. Lookup-or-fetch via NSWorkspace; subsequent
     /// renders for the same kind are a HashMap hit. Wrapped in
     /// Rc<RefCell> so render_td's `&mut self` can borrow without
@@ -943,6 +953,7 @@ mod flat_path_store_tests {
             display_kind: "TXT".into(),
             display_magic: ferail_core::empty_entry_text(),
             display_description: ferail_core::empty_entry_text(),
+            details_loaded: false,
             is_quarantined: false,
             quarantine: None,
             hidden: false,
@@ -1067,8 +1078,12 @@ impl FileListDelegate {
             flat_paths: None,
             flat_filtered_entries: Vec::new(),
             flat_filter_text: String::new(),
-            flat_detail_in_flight: false,
-            flat_detail_pending: None,
+            detail_in_flight: false,
+            detail_pending: None,
+            detail_cancel: None,
+            detail_revision: 0,
+            detail_ready: false,
+            detail_force: false,
             icons,
             thumbnails,
             tasks,
@@ -1272,6 +1287,7 @@ impl FileListDelegate {
         if self.entries.len() <= 1 {
             return;
         }
+        self.detail_revision = self.detail_revision.wrapping_add(1);
         let (col, asc) = resolve_ant_sort(col, asc, !self.heats.is_empty());
         // Row order changes: the drag snapshot's visible-order paths
         // are stale (totals unchanged by a re-order, but cheap to
@@ -1377,6 +1393,10 @@ impl FileListDelegate {
     // resurrects a Prime Directive violation.)
 
     pub fn clear(&mut self) {
+        if let Some(cancel) = self.detail_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        self.detail_revision = self.detail_revision.wrapping_add(1);
         self.invalidate_drag_snapshot();
         self.slow_load = None;
         self.filtered_out = 0;
@@ -1385,8 +1405,10 @@ impl FileListDelegate {
         self.flat_paths = None;
         self.flat_filtered_entries.clear();
         self.flat_filter_text.clear();
-        self.flat_detail_in_flight = false;
-        self.flat_detail_pending = None;
+        self.detail_in_flight = false;
+        self.detail_pending = None;
+        self.detail_ready = false;
+        self.detail_force = false;
         self.columns.retain(|column| column.key.as_ref() != "path");
         self.hidden_columns
             .retain(|column| column.key.as_ref() != "path");
@@ -1403,6 +1425,10 @@ impl FileListDelegate {
         paths: HashMap<NodeId, PathBuf>,
         heats: Vec<f32>,
     ) {
+        if let Some(cancel) = self.detail_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        self.detail_revision = self.detail_revision.wrapping_add(1);
         self.invalidate_drag_snapshot();
         self.slow_load = None;
         self.filtered_out = 0;
@@ -1417,8 +1443,10 @@ impl FileListDelegate {
         self.flat_paths = None;
         self.flat_filtered_entries.clear();
         self.flat_filter_text.clear();
-        self.flat_detail_in_flight = false;
-        self.flat_detail_pending = None;
+        self.detail_in_flight = false;
+        self.detail_pending = None;
+        self.detail_ready = false;
+        self.detail_force = false;
         self.columns.retain(|column| column.key.as_ref() != "path");
         self.hidden_columns
             .retain(|column| column.key.as_ref() != "path");
@@ -1487,6 +1515,7 @@ impl FileListDelegate {
     pub fn begin_flat(&mut self, root: PathBuf, id_base: u64) {
         self.clear();
         self.flat_paths = Some(FlatPathStore::new(root, id_base));
+        self.detail_ready = true;
         if !self.is_column_visible("path") {
             self.columns.push(flat_path_column());
         }
@@ -1539,21 +1568,41 @@ impl FileListDelegate {
         }
     }
 
-    /// Hydrate only the visible part of a Flat snapshot. The ordinary
-    /// prefetch pass intentionally stays disabled for Flat because it would
-    /// open every file in a multi-million-row tree; this viewport pass keeps
-    /// Format, Description, and quarantine badges fully functional with
-    /// bounded I/O and no persistent path cache.
-    fn warm_flat_details(
+    /// Enable viewport-owned detail enrichment after an ordinary listing has
+    /// reached Done. A forced refresh re-sniffs each row once as it first
+    /// enters a viewport instead of sweeping the entire directory upfront.
+    pub fn enable_visible_details(&mut self, force: bool) {
+        self.detail_ready = true;
+        self.detail_force = force;
+    }
+
+    /// Stop the current viewport worker immediately. Used by the live
+    /// performance setting; navigation/replace paths perform the same reset
+    /// while rotating the row model.
+    pub fn cancel_visible_details(&mut self) {
+        if let Some(cancel) = self.detail_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        self.detail_revision = self.detail_revision.wrapping_add(1);
+        self.detail_in_flight = false;
+        self.detail_pending = None;
+        self.detail_ready = false;
+        self.detail_force = false;
+    }
+
+    /// Hydrate only the visible part of an ordinary or Flat surface. This
+    /// keeps Format, Description, and quarantine badges fully functional while
+    /// bounding file opens, memory, and UI apply work to the viewport.
+    pub fn warm_visible_details(
         &mut self,
         visible_range: Range<usize>,
         cx: &mut Context<TableState<Self>>,
     ) {
-        if self.flat_paths.is_none() || !crate::prefetch::file_detail_scan_enabled(cx) {
+        if !self.detail_ready || !crate::prefetch::file_detail_scan_enabled(cx) {
             return;
         }
-        if self.flat_detail_in_flight {
-            self.flat_detail_pending = Some(visible_range);
+        if self.detail_in_flight {
+            self.detail_pending = Some(visible_range);
             return;
         }
         const OVERSCAN: usize = 16;
@@ -1562,33 +1611,49 @@ impl FileListDelegate {
             .end
             .saturating_add(OVERSCAN)
             .min(self.entries.len());
-        let (entries, flat_paths) = (&self.entries, &mut self.flat_paths);
-        let flat = flat_paths.as_mut().expect("checked above");
+        let is_flat = self.flat_paths.is_some();
         let mut seeds = Vec::with_capacity(end.saturating_sub(start));
-        for entry in &entries[start..end] {
-            if !flat.claim_detail(entry.id) {
+        let mut attempted = Vec::with_capacity(end.saturating_sub(start));
+        for row_ix in start..end {
+            let entry = &self.entries[row_ix];
+            if entry.details_loaded {
                 continue;
             }
-            let Some(path) = flat.path_for(entry.id) else {
-                flat.finish_detail(entry.id);
+            if let Some(flat) = &mut self.flat_paths
+                && !flat.claim_detail(entry.id)
+            {
+                continue;
+            }
+            let Some(path) = self.path_for_entry(entry.id) else {
+                if let Some(flat) = &mut self.flat_paths {
+                    flat.finish_detail(entry.id);
+                }
                 continue;
             };
+            attempted.push(entry.id);
             seeds.push(crate::prefetch::PrefetchSeed {
+                row_ix,
                 node: entry.id,
                 path,
                 mtime_unix: entry.mtime_unix,
                 size: entry.size,
                 is_dir: matches!(entry.kind, EntryKind::Directory),
-                has_magic: !entry.display_magic.is_empty(),
-                has_description: !entry.display_description.is_empty(),
-                has_quarantine: entry.is_quarantined,
+                details_loaded: entry.details_loaded,
             });
         }
         if seeds.is_empty() {
             return;
         }
-        self.flat_detail_in_flight = true;
-        let attempted: Vec<NodeId> = seeds.iter().map(|seed| seed.node).collect();
+        self.detail_in_flight = true;
+        let revision = self.detail_revision;
+        let force = self.detail_force;
+        let db = if is_flat {
+            None
+        } else {
+            crate::process_state::process_state(cx).db_snapshot()
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.detail_cancel = Some(cancel.clone());
         let tasks = self.tasks.clone();
         let task_id = tasks.borrow_mut().begin(
             TaskKind::MagicPrefetch,
@@ -1596,23 +1661,43 @@ impl FileListDelegate {
             false,
         );
         cx.spawn(async move |table, cx| {
+            let worker_cancel = cancel.clone();
             let batch = cx
                 .background_executor()
-                .spawn(async move { crate::prefetch::run_viewport(seeds) })
+                .spawn(async move {
+                    if is_flat {
+                        crate::prefetch::run_viewport(seeds)
+                    } else {
+                        crate::prefetch::run_cached_viewport(seeds, db, force, worker_cancel)
+                    }
+                })
                 .await;
             let _ = table.update(cx, |state, cx| {
                 let delegate = state.delegate_mut();
-                delegate.flat_detail_in_flight = false;
+                let owns_worker = delegate
+                    .detail_cancel
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &cancel));
+                if !owns_worker {
+                    return;
+                }
+                delegate.detail_cancel = None;
+                delegate.detail_in_flight = false;
                 if let Some(flat) = &mut delegate.flat_paths {
                     for node in attempted {
                         flat.finish_detail(node);
                     }
                 }
-                crate::prefetch::apply_batch(delegate, batch);
-                let pending = delegate.flat_detail_pending.take();
+                let revision_matches = delegate.detail_revision == revision;
+                if revision_matches {
+                    crate::prefetch::apply_viewport_batch(delegate, batch);
+                }
+                let pending = delegate.detail_pending.take();
                 state.refresh(cx);
-                if let Some(range) = pending {
-                    state.delegate_mut().warm_flat_details(range, cx);
+                if let Some(range) =
+                    pending.or_else(|| (!revision_matches).then_some(visible_range))
+                {
+                    state.delegate_mut().warm_visible_details(range, cx);
                 }
             });
             tasks.borrow_mut().end(task_id);
@@ -1627,6 +1712,7 @@ impl FileListDelegate {
             return;
         }
         self.invalidate_drag_snapshot();
+        self.detail_revision = self.detail_revision.wrapping_add(1);
         self.flat_filter_text.clear();
         self.flat_filter_text.push_str(text);
         let mut all = std::mem::take(&mut self.entries);
@@ -1659,6 +1745,14 @@ impl FileListDelegate {
         rows: Vec<ferail_archive::TreeRow>,
         view: WeakEntity<crate::archive::ArchiveView>,
     ) {
+        if let Some(cancel) = self.detail_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        self.detail_revision = self.detail_revision.wrapping_add(1);
+        self.detail_in_flight = false;
+        self.detail_pending = None;
+        self.detail_ready = false;
+        self.detail_force = false;
         debug_assert_eq!(entries.len(), rows.len());
         self.invalidate_drag_snapshot();
         self.slow_load = None;
@@ -2849,7 +2943,7 @@ impl TableDelegate for FileListDelegate {
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) {
-        self.warm_flat_details(visible_range.clone(), cx);
+        self.warm_visible_details(visible_range.clone(), cx);
         self.warm_thumbnails(visible_range, cx);
     }
 
@@ -4032,6 +4126,7 @@ mod sort_tests {
             display_kind: ferail_core::empty_entry_text(),
             display_magic: ferail_core::empty_entry_text(),
             display_description: ferail_core::empty_entry_text(),
+            details_loaded: false,
             is_quarantined: false,
             quarantine: None,
             hidden: false,
@@ -4215,6 +4310,7 @@ mod menu_targets_tests {
             display_kind: ferail_core::empty_entry_text(),
             display_magic: ferail_core::empty_entry_text(),
             display_description: ferail_core::empty_entry_text(),
+            details_loaded: false,
             is_quarantined: false,
             quarantine: None,
             hidden: false,

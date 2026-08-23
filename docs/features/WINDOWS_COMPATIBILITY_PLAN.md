@@ -304,14 +304,15 @@ fixing the architecture.
 
 **Work.**
 
-- [ ] Replace ordinary-folder whole-list prefetch with the viewport-scoped
+- [x] Replace ordinary-folder whole-list prefetch with the viewport-scoped
   model already used by Flat View: visible rows plus bounded overscan, cache
   first, cancel stale work.
-- [ ] Apply results by stable id only to affected rows and coalesce repaint
+- [x] Apply results by stable id only to affected rows and coalesce repaint
   notifications.
-- [ ] Separate **show file details** from an optional **index the entire
+- [~] Separate **show file details** from an optional **index the entire
   folder while idle** policy. Details remain available while scrolling; eager
-  full-folder indexing defaults off.
+  full-folder indexing has been removed from ordinary browsing; an explicit
+  idle indexing policy does not exist yet.
 - [ ] Give thumbnails, descriptions, tags, magic sniffing, and folder sizes a
   shared background-I/O budget so they do not all saturate a cold disk.
 - [ ] Pause speculative/idle work during active scrolling, input, battery
@@ -618,7 +619,7 @@ commands, and mismatched packaged resources fail CI.
 
 ### Phase 2 — restore the Prime Directive under Windows load
 
-- [ ] WIN-005 viewport-only details and shared I/O budget.
+- [~] WIN-005 viewport-only details complete; shared I/O budget remains.
 - [ ] WIN-006 Task Manager-compatible metrics and redraw audit.
 - [ ] Re-run the baseline and reject any navigation/scroll regression.
 

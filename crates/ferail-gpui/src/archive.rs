@@ -889,6 +889,7 @@ impl ArchiveView {
                     .into(),
                     display_magic: ferail_core::empty_entry_text(),
                     display_description: self.row_description(row).into(),
+                    details_loaded: true,
                     is_quarantined: false,
                     quarantine: None,
                     hidden: false,

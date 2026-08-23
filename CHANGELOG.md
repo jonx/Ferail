@@ -20,6 +20,13 @@ separately in [CHANGELOG-DEPS.md](CHANGELOG-DEPS.md).
   identity instead of an `/select,` string that failed on valid names with
   spaces or characters such as `#`, `é`, and `!`.
 
+- **File details now follow the viewport instead of scanning an entire
+  folder.** Format, Description, and quarantine information still appears as
+  rows enter view, but opening a 10,000-file or multi-million-file location no
+  longer opens every file in the background. Rapid scrolling coalesces work,
+  navigation cancels stale reads, and the UI applies each result directly to
+  its handful of rows rather than walking the whole listing again.
+
 ## 0.6.5 — 2026-08-23
 
 - **Include Subfolders — every file under this folder, in one list.** A third

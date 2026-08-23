@@ -149,6 +149,7 @@ mod filter_tests {
             display_kind: "Document".into(),
             display_magic: ferail_core::empty_entry_text(),
             display_description: ferail_core::empty_entry_text(),
+            details_loaded: false,
             is_quarantined: false,
             quarantine: None,
             hidden,

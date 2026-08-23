@@ -1,12 +1,12 @@
 //! Background prefetch — magic byte sniffing + quarantine xattr lookup.
 //!
-//! Magic detection and quarantine lookup are fused into one cx.spawn
-//! call per `load_path`:
-//! a background task iterates the active tab's entries, hydrates
+//! Magic detection and quarantine lookup are fused into one viewport-owned
+//! background pass. The worker hydrates those visible entries
 //! from the metadata DB cache where possible, falls back to
 //! `ferail_fs_native::{detect_magic, fetch_quarantine_info}` on
-//! cache miss, writes through to the DB, and posts a single batch
-//! of mutations back to the foreground executor.
+//! cache miss, writes through to the DB, and posts a bounded batch
+//! of mutations back to the foreground executor. It never opens every file
+//! merely because a directory was displayed.
 //!
 //! Background → foreground bridge: `cx.background_executor().spawn`
 //! does the I/O off the main thread; `this.update(cx, …)` applies
@@ -14,21 +14,15 @@
 //! The Shell entity's weak handle is passed in so a closed window
 //! causes the update call to fail gracefully — no leak, no crash.
 
-use std::cell::RefCell;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use ferail_core::{FileEntry, NodeId};
-use ferail_fs_native::{NativeFs, detect_magic_info, fetch_quarantine_info};
+use ferail_core::NodeId;
+use ferail_fs_native::{detect_magic_info, fetch_quarantine_info};
 use ferail_meta::{FileMetaRecord, MetadataDb};
-use gpui::Entity;
 
 use crate::file_list::FileListDelegate;
-use crate::multi_table::TableState;
-use crate::shell::{Shell, TabId};
-use crate::tasks::{TaskKind, TaskRegistry};
 
 /// Process-wide master switch for the per-row file-detail scans that run
 /// on every folder load (Settings → Performance). Covers both the magic
@@ -54,6 +48,9 @@ pub fn file_detail_scan_enabled(cx: &gpui::App) -> bool {
 /// so a batch can never land on the wrong row (raw indices shift
 /// whenever the model changes under an in-flight pass).
 pub(crate) struct PrefetchRow {
+    /// Model row captured with the seed. Applying a viewport batch uses this
+    /// direct index (plus the NodeId guard below), never a whole-model scan.
+    row_ix: usize,
     pub(crate) node: NodeId,
     /// Same-or-newer snapshot of `display_magic`. Empty string when
     /// we couldn't determine.
@@ -76,6 +73,7 @@ pub(crate) struct PrefetchRow {
 /// (not Send + lifetime); copy the bits the worker needs.
 #[derive(Clone)]
 pub(crate) struct PrefetchSeed {
+    pub(crate) row_ix: usize,
     pub(crate) node: NodeId,
     pub(crate) path: PathBuf,
     pub(crate) mtime_unix: i64,
@@ -87,9 +85,7 @@ pub(crate) struct PrefetchSeed {
     /// folder "Binary". The folder-size worker owns folder
     /// descriptions; the Format column falls back to the kind label.
     pub(crate) is_dir: bool,
-    pub(crate) has_magic: bool,
-    pub(crate) has_description: bool,
-    pub(crate) has_quarantine: bool,
+    pub(crate) details_loaded: bool,
 }
 
 /// Derive details for a small viewport-owned seed set without persisting its
@@ -100,121 +96,16 @@ pub(crate) fn run_viewport(seeds: Vec<PrefetchSeed>) -> Vec<PrefetchRow> {
     run_worker(seeds, None, false, Arc::new(AtomicBool::new(false)))
 }
 
-/// Spawn a prefetch pass over the current entries. Called from
-/// `Shell::load_path` after the table refresh. Cheap: returns
-/// immediately; the worker runs on the background executor.
-///
-/// `force` bypasses the metadata-DB read cache for magic/description
-/// so every row is re-sniffed from disk (Refresh). The fresh result
-/// is still written through, so the cache self-heals. Quarantine
-/// state stays cache-first either way.
-///
-/// Field references (table, fs, db, weak handle) come in by
-/// parameter rather than being looked up via `shell.read(cx)`,
-/// because `load_path` runs inside its own `&mut self` borrow —
-/// reading the Shell entity again from the same context would
-/// trigger the gpui "cannot read while already being updated"
-/// panic.
-// Ten parameters by design: each is a field handed across the `&mut self`
-// borrow described above; bundling them would just move the list.
-#[allow(clippy::too_many_arguments)]
-pub fn start(
-    table: Entity<TableState<FileListDelegate>>,
-    fs: Arc<NativeFs>,
+/// Derive a bounded ordinary-listing viewport, using and updating the
+/// persistent metadata cache. `force` preserves Refresh semantics: every row
+/// is re-sniffed the first time that refreshed viewport reaches it.
+pub(crate) fn run_cached_viewport(
+    seeds: Vec<PrefetchSeed>,
     db: Option<Arc<Mutex<MetadataDb>>>,
-    tasks: Rc<RefCell<TaskRegistry>>,
-    shell_weak: gpui::WeakEntity<Shell>,
-    tab_id: TabId,
-    generation: u64,
-    cancel: Arc<AtomicBool>,
     force: bool,
-    cx: &mut gpui::Context<Shell>,
-) {
-    // Snapshot the entries on the foreground executor. The worker
-    // gets `Send` data only.
-    let seeds: Vec<PrefetchSeed> = table
-        .read(cx)
-        .delegate()
-        .entries
-        .iter()
-        .filter_map(|e| {
-            let path = fs.path_for(e.id)?;
-            Some(PrefetchSeed {
-                node: e.id,
-                path,
-                mtime_unix: e.mtime_unix,
-                size: e.size,
-                is_dir: matches!(e.kind, ferail_core::EntryKind::Directory),
-                has_magic: !e.display_magic.is_empty(),
-                has_description: !e.display_description.is_empty(),
-                has_quarantine: e.is_quarantined,
-            })
-        })
-        .collect();
-
-    if seeds.is_empty() {
-        return;
-    }
-    let seed_count = seeds.len();
-    crate::log_info!(90, "prefetch: starting for {seed_count} rows");
-
-    // Register a Task in the shared registry so the status bar
-    // reflects the in-flight work. We fuse magic + quarantine into
-    // one MagicPrefetch entry; the label still mentions both so the
-    // panel is honest about what's happening.
-    let task_id = tasks.borrow_mut().begin(
-        TaskKind::MagicPrefetch,
-        trn!(
-            "Indexing {n} entry\u{2026}",
-            "Indexing {n} entries\u{2026}",
-            seed_count
-        ),
-        false,
-    );
-
-    let table_for_apply = table.clone();
-    let tasks_for_end = tasks.clone();
-    let worker_cancel = cancel.clone();
-    cx.spawn(async move |_this, cx| {
-        let batch: Vec<PrefetchRow> = cx
-            .background_executor()
-            .spawn(async move { run_worker(seeds, db, force, worker_cancel) })
-            .await;
-        let n = batch.len();
-        crate::log_info!(90, "prefetch: worker returned {n} rows");
-        if let Some(shell) = shell_weak.upgrade() {
-            shell.update(cx, |shell, cx| {
-                // Staleness rule shared with folder_sizes/search/dupes:
-                // the tab may have closed or navigated on. Without this
-                // guard a slow pass for the previous directory would
-                // stamp its magic/quarantine data onto the new one
-                // (quarantine badges on the wrong files).
-                let fresh = shell
-                    .tabs
-                    .iter()
-                    .any(|t| t.id == tab_id && t.load_generation == generation);
-                if fresh && !batch.is_empty() {
-                    table_for_apply.update(cx, |state, cx| {
-                        apply_batch(state.delegate_mut(), batch);
-                        state.refresh(cx);
-                    });
-                }
-                tasks_for_end.borrow_mut().end(task_id);
-                // Force the Shell to re-render. `state.refresh` on
-                // the inner TableState alone doesn't propagate up
-                // to the outer view tree in all cases.
-                cx.notify();
-            });
-            crate::log_info!(90, "prefetch: apply ran");
-        } else {
-            // Shell already gone: still drop the task so its row
-            // doesn't leak in the registry singleton (though in
-            // practice the whole Shell is going away).
-            tasks_for_end.borrow_mut().end(task_id);
-            crate::log_warn!(90, "prefetch: shell entity gone before apply");
-        }
-    })
-    .detach();
+    cancel: Arc<AtomicBool>,
+) -> Vec<PrefetchRow> {
+    run_worker(seeds, db, force, cancel)
 }
 
 /// Body of the background pass. For each seed: cache lookup first
@@ -245,7 +136,7 @@ fn run_worker(
         // If FileEntry already carries everything (rare — only when
         // hydrate-from-DB on enumerate gets implemented), skip — unless
         // a forced re-sniff is in effect.
-        if !force && seed.has_magic && seed.has_description && seed.has_quarantine {
+        if !force && seed.details_loaded {
             continue;
         }
         let path_str = seed.path.to_string_lossy().into_owned();
@@ -369,6 +260,7 @@ fn run_worker(
         }
 
         out.push(PrefetchRow {
+            row_ix: seed.row_ix,
             node: seed.node,
             magic_label,
             description,
@@ -390,18 +282,21 @@ fn run_worker(
     out
 }
 
-/// Apply the worker's batch back to the live `FileEntry` slice.
-/// Keyed by `NodeId`: a row whose id no longer exists in the model
-/// (deleted, filtered, re-enumerated away) skips silently, and a
-/// re-sort between snapshot and apply can't misdeliver a result.
-pub(crate) fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<PrefetchRow>) {
-    let mut by_node: std::collections::HashMap<NodeId, PrefetchRow> =
-        batch.into_iter().map(|row| (row.node, row)).collect();
-    let entries: &mut [FileEntry] = &mut delegate.entries;
-    for e in entries.iter_mut() {
-        let Some(row) = by_node.remove(&e.id) else {
+/// Apply a viewport worker's batch directly to its captured row slots.
+/// `FileListDelegate::detail_revision` rejects a structurally changed model;
+/// the per-slot `NodeId` check below is the final identity guard. Work is
+/// therefore O(batch), not O(the potentially multi-million-row listing).
+pub(crate) fn apply_viewport_batch(delegate: &mut FileListDelegate, batch: Vec<PrefetchRow>) {
+    for row in batch {
+        let Some(e) = delegate.entries.get_mut(row.row_ix) else {
             continue;
         };
+        // A sort/filter/load may have moved another file into the captured
+        // slot while I/O was running. Never apply across that identity guard;
+        // the delegate's model revision schedules the live viewport again.
+        if e.id != row.node {
+            continue;
+        }
         // Belt-and-suspenders (mirrors `format_label`'s folder guard):
         // a directory row never takes a magic label or description, even
         // if a stale path-keyed cache row arrives carrying one — the
@@ -415,6 +310,7 @@ pub(crate) fn apply_batch(delegate: &mut FileListDelegate, batch: Vec<PrefetchRo
             e.display_description = row.description.into();
         }
         e.is_quarantined = row.is_quarantined;
+        e.details_loaded = true;
         // Provenance rides along so the preview pane can show
         // where a marked file came from without touching xattrs.
         e.quarantine = if row.is_quarantined {
@@ -527,16 +423,15 @@ mod tests {
 
     fn seed_for(path: &std::path::Path) -> PrefetchSeed {
         PrefetchSeed {
+            row_ix: 0,
             node: NodeId::from(7u64),
             path: path.to_path_buf(),
             mtime_unix: 100,
             size: AROS_ELF.len() as u64,
             is_dir: false,
-            // Fresh enumeration: no derived data carried on the entry,
-            // so the worker always reaches the cache/sniff decision.
-            has_magic: false,
-            has_description: false,
-            has_quarantine: false,
+            // Fresh enumeration: no derived data carried on the entry, so
+            // the worker always reaches the cache/sniff decision.
+            details_loaded: false,
         }
     }
 

@@ -283,6 +283,7 @@ impl NativeFs {
             display_kind: display_kind.into(),
             display_magic: empty.clone(),
             display_description: empty,
+            details_loaded: false,
             is_quarantined: false,
             quarantine: None,
             hidden,

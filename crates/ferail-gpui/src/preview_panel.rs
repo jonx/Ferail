@@ -88,6 +88,7 @@ pub fn synthetic_entry(path: &std::path::Path, name: &str) -> FileEntry {
         display_kind: ferail_core::empty_entry_text(),
         display_magic: ferail_core::empty_entry_text(),
         display_description: ferail_core::empty_entry_text(),
+        details_loaded: false,
         is_quarantined: false,
         quarantine: None,
         hidden: false,

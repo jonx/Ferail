@@ -432,6 +432,7 @@ mod tests {
             display_kind: crate::empty_entry_text(),
             display_magic: crate::empty_entry_text(),
             display_description: crate::empty_entry_text(),
+            details_loaded: false,
             is_quarantined: false,
             quarantine: None,
             hidden: false,

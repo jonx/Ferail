@@ -102,6 +102,12 @@ pub struct FileEntry {
     /// Populated lazily by the host (prefetch worker), same contract as
     /// `display_magic`.
     pub display_description: Arc<str>,
+    /// Whether the lazy detail worker has inspected this row, including the
+    /// valid "no magic/description/quarantine data" outcome. Keeping that
+    /// outcome distinct from "not inspected yet" prevents viewport-driven
+    /// warming from reopening an unrecognised file every time it scrolls
+    /// back into view.
+    pub details_loaded: bool,
     /// Hot-path flag for the icon-overlay dot. True when the file carries
     /// `com.apple.quarantine` (macOS Mark-of-the-Web equivalent). Populated
     /// lazily by the host alongside `quarantine`; defaults to false.
@@ -701,6 +707,7 @@ mod format_label_tests {
             display_kind: kind.into(),
             display_magic: magic.into(),
             display_description: empty_entry_text(),
+            details_loaded: false,
             is_quarantined: false,
             quarantine: None,
             hidden: false,
