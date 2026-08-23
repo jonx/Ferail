@@ -332,9 +332,9 @@ self-explanatory.
 
 **Work.**
 
-- [ ] Normalize the user-facing CPU number by logical processor count so it
+- [x] Normalize the user-facing CPU number by logical processor count so it
   matches Task Manager semantics; retain core-equivalent CPU in diagnostics.
-- [ ] Rename or explain redraw rate in a tooltip/localized label; do not imply
+- [x] Rename or explain redraw rate in a tooltip/localized label; do not imply
   filesystem requests or network traffic.
 - [ ] Verify the sampler itself does not cause redraws and that an idle window
   does not repaint merely to keep the number animated.
@@ -621,15 +621,16 @@ commands, and mismatched packaged resources fail CI.
 ### Phase 2 — restore the Prime Directive under Windows load
 
 - [~] WIN-005 viewport-only details complete; shared I/O budget remains.
-- [ ] WIN-006 Task Manager-compatible metrics and redraw audit.
+- [~] WIN-006 Task Manager-compatible metrics complete; idle redraw audit and
+  expanded diagnostics remain.
 - [ ] Re-run the baseline and reject any navigation/scroll regression.
 
 ### Phase 3 — filesystem interoperability
 
-- [ ] WIN-008 Shell Item/default open.
-- [ ] WIN-009 PIDL-based Reveal in Explorer.
+- [~] WIN-008 Shell API/default open implemented; Windows matrix remains.
+- [~] WIN-009 PIDL-based Reveal implemented; Windows matrix remains.
 - [ ] WIN-012 Explorer clipboard/drag matrix and missing formats.
-- [ ] WIN-016 keymap/artifact consistency.
+- [~] WIN-016 missing keymap dispatch fixed; artifact consistency remains.
 
 ### Phase 4 — native compatibility on demand
 
