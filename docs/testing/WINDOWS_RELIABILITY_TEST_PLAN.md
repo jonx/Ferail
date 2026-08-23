@@ -1,6 +1,7 @@
 # Windows Reliability Test Plan
 
 ← [Windows compatibility campaign](../features/WINDOWS_COMPATIBILITY_PLAN.md) ·
+[Windows handover](WINDOWS_HANDOVER.md) ·
 [Windows port notes](../features/windows-port.md) · [Open work](../../TODO.md)
 
 ## Purpose

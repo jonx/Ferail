@@ -22,7 +22,8 @@ and let git history plus release notes carry the record.
   accepted only after the exact
   [Windows reliability test plan](docs/testing/WINDOWS_RELIABILITY_TEST_PLAN.md)
   passes interactively on a real Windows machine, including its 4,194,304-row
-  regression gate.
+  regression gate. Resume work on that machine from the live
+  [Windows handover](docs/testing/WINDOWS_HANDOVER.md).
 - **Notifications & undo coverage for mutations.** Success feedback is now
   intentionally quiet for immediate visible work: rename/new-folder stay silent
   on success, and task-backed copy/move/duplicate/compress only toast after the

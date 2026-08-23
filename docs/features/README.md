@@ -128,6 +128,9 @@ keep the UI off the I/O path.
 - [WINDOWS_COMPATIBILITY_PLAN.md](WINDOWS_COMPATIBILITY_PLAN.md) — the tracked
   Windows reliability and compatibility campaign, including a per-report issue
   ledger and Windows-only acceptance gates.
+- [../testing/WINDOWS_HANDOVER.md](../testing/WINDOWS_HANDOVER.md) — the live
+  operational handover: starting revision, completed commits, first Windows
+  commands, implementation order, evidence locations, and session handback.
 - [../testing/WINDOWS_RELIABILITY_TEST_PLAN.md](../testing/WINDOWS_RELIABILITY_TEST_PLAN.md)
   — the exact Windows environments, corpora, measurements, interactive cases,
   evidence, and release sign-off procedure for that campaign, including the

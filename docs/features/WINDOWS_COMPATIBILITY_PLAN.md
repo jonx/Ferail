@@ -1,6 +1,7 @@
 # Windows Reliability and Compatibility Plan
 
 ← [Windows port notes](windows-port.md) ·
+[Windows handover](../testing/WINDOWS_HANDOVER.md) ·
 [Windows test plan](../testing/WINDOWS_RELIABILITY_TEST_PLAN.md) ·
 [Feature index](README.md) · [Open work](../../TODO.md)
 
